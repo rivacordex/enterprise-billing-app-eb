@@ -1,0 +1,251 @@
+@import "tailwindcss";
+@import "tw-animate-css"; /* shadcn v4 animation utilities */
+@import "shadcn/tailwind.css"; /* shadcn v4 vendor base layer (keyframes, data-state variants) */
+@custom-variant dark (&:is(.dark *)); /* defined but unused in v1 */
+
+:root {
+  /* 1. Brand scales (UI-context §1) */
+  --color-primary-50: #edf0fb;
+  --color-primary-100: #d4dbf4;
+  --color-primary-200: #a9b6e9;
+  --color-primary-300: #7c8eda;
+  --color-primary-400: #5067c8;
+  --color-primary-500: #2e45a9;
+  --color-primary-600: #233686;
+  --color-primary-700: #1b2a68;
+  --color-primary-800: #131d49;
+  --color-primary-900: #0c122e;
+  --color-accent-50: #fde6f1;
+  --color-accent-100: #fab9d8;
+  --color-accent-300: #f052a0;
+  --color-accent-500: #e6007e;
+  --color-accent-600: #bc0067;
+  --color-accent-700: #91004f;
+  --color-cyan-50: #e2f8fa;
+  --color-cyan-100: #b6eef2;
+  --color-cyan-300: #4cd3df;
+  --color-cyan-500: #00a9bc;
+  --color-cyan-600: #00899a;
+  --color-cyan-700: #006975;
+
+  /* 2. Neutrals (UI-context §2) */
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f7f8fa;
+  --color-neutral-100: #eef0f4;
+  --color-neutral-200: #e0e4eb;
+  --color-neutral-300: #cad0da;
+  --color-neutral-400: #99a1b0;
+  --color-neutral-500: #6a7283;
+  --color-neutral-600: #4c5462;
+  --color-neutral-700: #353b46;
+  --color-neutral-800: #1f242c;
+  --color-neutral-900: #11141a;
+
+  /* Status scales (base/-fg/-bg) (UI-context §3.4) */
+  --color-success-500: #1f9d57;
+  --color-success-700: #0f5c32;
+  --color-success-50: #e6f6ec;
+  --color-warning-500: #e08600;
+  --color-warning-700: #8a5200;
+  --color-warning-50: #fef4e6;
+  --color-danger-500: #d92d2d;
+  --color-danger-700: #8a1717;
+  --color-danger-50: #fdeaea;
+  --color-info-500: #1a73d9;
+  --color-info-700: #0c4084;
+  --color-info-50: #e7f1fd;
+
+  /* 3.1 Surfaces & text */
+  --surface-app: var(--color-neutral-50);
+  --surface-card: var(--color-neutral-0);
+  --surface-sunken: var(--color-neutral-100);
+  --surface-selected: var(--color-primary-50);
+  --surface-nav: var(--color-primary-800);
+  --surface-topbar: var(--color-primary-700);
+  --text-primary: var(--color-neutral-900);
+  --text-body: var(--color-neutral-700);
+  --text-muted: var(--color-neutral-500);
+  --text-disabled: var(--color-neutral-400);
+  --text-on-brand: #ffffff;
+  --text-link: var(--color-primary-500);
+  --text-link-hover: var(--color-primary-600);
+
+  /* 3.2 Borders */
+  --border-subtle: var(--color-neutral-100);
+  --border-default: var(--color-neutral-200);
+  --border-strong: var(--color-neutral-300);
+  --border-focus: var(--color-primary-500);
+  --border-accent: var(--color-accent-500);
+
+  /* 3.3 Interactive */
+  --action-primary-bg: var(--color-primary-500);
+  --action-primary-bg-hover: var(--color-primary-600);
+  --action-primary-bg-active: var(--color-primary-700);
+  --action-cta-bg: var(--color-accent-500);
+  --action-cta-bg-hover: var(--color-accent-600);
+  --action-secondary-bg: #ffffff;
+  --action-secondary-border: var(--color-neutral-300);
+  --action-secondary-text: var(--color-neutral-700);
+  --action-ghost-hover: var(--color-neutral-100);
+  --action-disabled-bg: var(--color-neutral-200);
+
+  /* Domain badge tokens — define now, consumed by later badge components
+     (StatusBadge, AuthMethodBadge, RoleBadge, PermissionLevelTag, AuditLogTable):
+     user-status (§3.4), auth-method (§3.5), role + permission-level (§3.6), audit category (§3.7).
+     These reuse the status/brand scales above; map them as named aliases. */
+
+  /* 4. RESERVED — AI/Iris + gradients (defined, NOT used in v1, UI-context §0/§4) */
+  --ai-50: #f0edff;
+  --ai-100: #dad2ff;
+  --ai-300: #a793ff;
+  --ai-500: #6d45f0;
+  --ai-600: #5a2fd8;
+  --ai-700: #4621b0;
+  --gradient-brand: linear-gradient(135deg, #2e45a9 0%, #e6007e 100%);
+  --gradient-5g: linear-gradient(120deg, #00a9bc 0%, #6d45f0 50%, #e6007e 100%);
+  --gradient-ai: linear-gradient(135deg, #6d45f0 0%, #e6007e 100%);
+  --gradient-chrome: linear-gradient(180deg, #1b2a68 0%, #0c122e 100%);
+
+  /* 5. Typography */
+  --font-sans:
+    "IBM Plex Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+
+  /* text-* size/line tokens (UI-context §5); weights applied via font-* utilities */
+  --text-display: 2rem; /* 32px */
+  --text-display--line-height: 2.5rem; /* 40px */
+  --text-h1: 1.75rem; /* 28px */
+  --text-h1--line-height: 2.25rem; /* 36px */
+  --text-h2: 1.375rem; /* 22px */
+  --text-h2--line-height: 1.875rem; /* 30px */
+  --text-h3: 1.125rem; /* 18px */
+  --text-h3--line-height: 1.625rem; /* 26px */
+  --text-h4: 1rem; /* 16px */
+  --text-h4--line-height: 1.5rem; /* 24px */
+  --text-body-lg: 1rem; /* 16px */
+  --text-body-lg--line-height: 1.5rem; /* 24px */
+  --text-body: 0.875rem; /* 14px */
+  --text-body--line-height: 1.375rem; /* 22px */
+  --text-body-sm: 0.8125rem; /* 13px */
+  --text-body-sm--line-height: 1.25rem; /* 20px */
+  --text-caption: 0.75rem; /* 12px */
+  --text-caption--line-height: 1rem; /* 16px */
+  --text-overline: 0.6875rem; /* 11px */
+  --text-overline--line-height: 1rem; /* 16px */
+  --text-mono: 0.8125rem; /* 13px */
+  --text-mono--line-height: 1.25rem; /* 20px */
+
+  /* 6. Radius */
+  --radius-none: 0;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-pill: 9999px;
+
+  /* 7. Elevation */
+  --shadow-sm: 0 1px 2px rgba(17, 20, 26, 0.06);
+  --shadow-md: 0 2px 8px rgba(17, 20, 26, 0.08);
+  --shadow-lg: 0 8px 24px rgba(17, 20, 26, 0.12);
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #2e45a9;
+
+  /* shadcn semantic contract mapped onto our tokens */
+  --background: var(--surface-app);
+  --foreground: var(--text-primary);
+  --card: var(--surface-card);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-card);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--color-primary-500);
+  --primary-foreground: var(--text-on-brand);
+  --secondary: var(--color-cyan-500);
+  --secondary-foreground: var(--text-on-brand);
+  --muted: var(--color-neutral-100);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--color-accent-500);
+  --accent-foreground: var(--text-on-brand);
+  --destructive: var(--color-danger-500);
+  --destructive-foreground: #ffffff;
+  --border: var(--border-default);
+  --input: var(--border-strong);
+  --ring: var(--border-focus);
+  --radius: var(--radius-md);
+}
+
+@theme inline {
+  /* expose tokens as Tailwind utilities: bg-background, text-foreground, bg-primary,
+     border-border, bg-destructive, rounded-md, font-sans, font-mono, etc. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --text-display: var(--text-display);
+  --text-display--line-height: var(--text-display--line-height);
+  --text-h1: var(--text-h1);
+  --text-h1--line-height: var(--text-h1--line-height);
+  --text-h2: var(--text-h2);
+  --text-h2--line-height: var(--text-h2--line-height);
+  --text-h3: var(--text-h3);
+  --text-h3--line-height: var(--text-h3--line-height);
+  --text-h4: var(--text-h4);
+  --text-h4--line-height: var(--text-h4--line-height);
+  --text-body-lg: var(--text-body-lg);
+  --text-body-lg--line-height: var(--text-body-lg--line-height);
+  --text-body: var(--text-body);
+  --text-body--line-height: var(--text-body--line-height);
+  --text-body-sm: var(--text-body-sm);
+  --text-body-sm--line-height: var(--text-body-sm--line-height);
+  --text-caption: var(--text-caption);
+  --text-caption--line-height: var(--text-caption--line-height);
+  --text-overline: var(--text-overline);
+  --text-overline--line-height: var(--text-overline--line-height);
+  --text-mono: var(--text-mono);
+  --text-mono--line-height: var(--text-mono--line-height);
+
+  --radius-none: var(--radius-none);
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+  --radius-pill: var(--radius-pill);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
