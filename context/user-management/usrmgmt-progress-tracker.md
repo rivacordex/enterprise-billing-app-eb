@@ -1,34 +1,170 @@
-# Unit NN: [Feature Name]
+# User Management — Progress Tracker
 
-## Goal
+## Status
 
-One or two sentences describing the concrete output
-of this unit.
+| Unit | Name                                                        | Status   |
+| ---- | ----------------------------------------------------------- | -------- |
+| um01 | Project Scaffold & Themed App Shell                         | **Done** |
+| um02 | Database Foundation & Better-Auth Identity Schema           | **Done** |
+| um03 | Local Sign-in + Seeded Break-glass Admin + Audit Foundation | **Done** |
+| um04 | Custom Per-Account Lockout (LOCAL)                          | **Done** |
 
-## Design
+## um01 — Project Scaffold & Themed App Shell
 
-Visual and structural decisions specific to this unit.
-Reference ui-context.md tokens where relevant.
+**Spec:** `context/user-management/specs/um01-spec.md`
 
-## Implementation
+### Scope
 
-### [Component or Sub-section Name]
+Tooling + themed shell only. No DB, no Better-Auth, no admin pages, no Dockerfile/deploy.
 
-Detailed description of what to build.
+### What shipped
 
-### [Next sub-section]
+- Completed the existing `create-next-app` scaffold (Next 16.2.9, React 19.2.4, Tailwind v4, no `src/`, `@/*` alias) out to the full um01 spec rather than re-running `create-next-app`.
+- `tsconfig.json`: added `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `forceConsistentCasingInFileNames`, `target: ES2022`.
+- `package.json`: `engines.node >=22`, `typecheck`/`lint`/`lint:fix`/`format`/`format:check`/`test`/`test:watch` scripts. `.nvmrc` (22), `.env.example` (NODE_ENV/APP_URL/LOG_LEVEL only).
+- Layered folder skeleton (`app/`, `components/`+`ui/`, `actions/`, `validation/`, `services/`, `db/`, `auth/`, `types/`, `lib/`, `tests/`, `infra/`) with `.gitkeep` in the still-empty layers.
+- `shadcn@latest init` (Tailwind v4, base color neutral, icon library lucide, aliases per spec) → generated `components/ui/button.tsx` and `lib/utils.ts` (`cn()`).
+- `app/globals.css`: full design-token system from ui-context §1–§7 on `:root`, curated subset re-exposed via `@theme inline` (background/foreground/card/primary/secondary/muted/accent/destructive/border/ring, font-sans/mono, full text-_/radius-_/shadow-\* scales). AI/Iris + marketing-gradient tokens defined but unused; `--gradient-chrome` used on the placeholder chrome only.
+- `lib/` leaf modules: `utils.ts` (`cn()`), `errors.ts` (`AppError`, `AppErrorCode`, `Result<T>`, factory helpers), `http.ts` (`toHttpResponse`), `logger.ts` (`logger`, `reportError`; sole sanctioned `console.*` call site), `config.ts` (Zod-validated, frozen, server-only env loader).
+- `app/layout.tsx` (IBM Plex Sans/Mono via `next/font/google`, title template, no chrome), `loading.tsx`, `error.tsx`, `global-error.tsx`, `not-found.tsx`.
+- `app/page.tsx`: themed public placeholder (dark-navy `--gradient-chrome` top bar, light `--surface-card` panel, no AI/marketing-gradient tokens, no nav/auth/data-fetching).
+- `eslint.config.mjs`: `next/core-web-vitals` + `next/typescript`, type-aware linting (`projectService`), `no-explicit-any`/`no-floating-promises`/`consistent-type-imports`/`no-console` as `error`, `eslint-plugin-boundaries` inward-only import graph, `eslint-config-prettier` last.
+- `.prettierrc` (+ `prettier-plugin-tailwindcss`), `.prettierignore`.
+- `vitest.config.ts` + `tests/setup.ts`; seed tests: `tests/lib/cn.test.ts`, `tests/lib/errors.test.ts`, `tests/lib/config.test.ts`, `tests/app/page.test.tsx`.
+- `infra/azure-pipelines.yml`: PR + main gates — typecheck, lint, format:check, test, Semgrep SAST (`p/typescript`, `p/javascript`, `p/nextjs`, `p/owasp-top-ten`, `p/secrets`).
+- `.gitignore`: added `!.env.example` exception (the blanket `.env*` rule was also swallowing the example file).
 
-Description.
+### Toolchain deviations from the spec's literal text (breaking changes vs. training-data versions — see `node_modules/next/dist/docs/`)
 
-## Dependencies
+- **Next 16.2**: `error.tsx`/`global-error.tsx` use the `unstable_retry` prop, not `reset`.
+- **shadcn CLI (v4.11, "Nova" preset)**: `components.json` has no `style` field anymore (replaced by `"style": "radix-nova"`); functionally equivalent to the spec's `new-york`/neutral/lucide intent. Init also added `shadcn` and `radix-ui` as runtime dependencies — required because `app/globals.css` now imports the vendor base layer as `shadcn/tailwind.css` and `button.tsx` imports `Slot` from the unified `radix-ui` package.
+- **eslint-plugin-boundaries v6**: `element-types` rule renamed to `dependencies` (legacy name kept but deprecated); selectors use `{ from: { type }, allow: { to: { type: [...] } } }` object form. Used `mode: "full"` on each element descriptor so patterns anchor to the project root (default `"folder"` mode otherwise matched any folder literally named e.g. `app` at any depth, such as `tests/app/`).
+- Added `{ type: "app" }` to its own allow-list (not listed in the spec's table) so same-folder imports inside `app/` work (e.g. `layout.tsx`/`error.tsx`/`global-error.tsx` importing `./globals.css`).
 
-- package-name (reason)
+### Verification (spec §5)
 
-## Verify when done
+All local: `npm run typecheck`, `npm run lint` (incl. boundary-violation proof, added/removed), `npm run format:check`, `npm run test` (17/17), `npm run build` green. Semgrep (`p/typescript p/javascript p/nextjs p/owasp-top-ten p/secrets`, via `docker run returntocorp/semgrep`) — 0 findings. Dev server verified visually (Playwright screenshot): dark-navy gradient chrome top bar, light card with radius/shadow, IBM Plex fonts, no raw hex/palette classes, no AI/marketing-gradient tokens rendered.
 
-- [ ] Condition one
-- [ ] Condition two
-- [ ] No TypeScript errors
-- [ ] No console errors
-- [ ] Responsive at mobile and desktop
-- [ ] npm run build passes
+### Next steps
+
+- um02 (DB/Drizzle schema) per the build plan. — **done, see below.**
+
+## um02 — Database Foundation & Better-Auth Identity Schema
+
+**Spec:** `context/user-management/specs/um02-db-foundation-identity-schema.md`
+
+### Scope
+
+DB plumbing + the four Better-Auth identity tables only. No Better-Auth config/field-mapping, no `auth/` code, no `AUDIT_LOG`/RBAC/`SYSTEM_CONFIG`, no seeds/row writes, no Dockerfile/compose/Key Vault/DB-role/pipeline stage.
+
+### What shipped
+
+- Installed `drizzle-orm` + `postgres` (runtime), `drizzle-kit` + `tsx` (dev). Added `db:generate`/`db:migrate`/`db:introspect` npm scripts; `test` now runs the DB-free unit project then the DB integration project (`vitest run && vitest run --config vitest.integration.config.ts`).
+- `lib/config.ts`: added required `DATABASE_URL` (validated as a `postgresql://` URL); the loader fails loud when it's absent/malformed. `tests/lib/config.test.ts` extended to cover it.
+- `drizzle.config.ts` (project root): `dialect: postgresql`, `schema: ./db/schema`, `out: ./db/migrations`, `schemaFilter: ['core']`, reads `process.env.DATABASE_URL` directly (the documented CLI-only exception to the one-config-reader rule).
+- `db/schema/identity.ts`: `core` Postgres schema (`pgSchema('core')`) with `appuser`, `account`, `session`, `verification` — every Better-Auth field remapped to snake_case per spec §3.4, plus `APPUSER`'s custom columns. `email_verified` included, `image` omitted. Partial unique index `appuser_email_unique` (`WHERE status <> 'DELETED'`), CHECKs on `auth_method`/`status`/`provider_id`, FKs `account.user_id`/`session.user_id` → `appuser.user_id` (`ON DELETE CASCADE`), `UNIQUE(provider_id, provider_account_id)`, `session_token` UNIQUE, secondary indexes on `user_id`/`expires_at`/`identifier`. Row types derived via `$inferSelect`/`$inferInsert`.
+- `db/client.ts`: server-only postgres.js client (`max: 10`, `idle_timeout: 30`, `connect_timeout: 10`) wrapped by Drizzle, reading `config.DATABASE_URL`; Key Vault/Managed Identity sourcing documented as a um25 placeholder.
+- `db/migrate.ts`: standalone runner (`max: 1` connection, `migrationsSchema: 'drizzle'`), closes the connection in `finally`, exits non-zero on failure, logs via `lib/logger`. Never imported by application code.
+- `db/repositories/identity-repository.ts`: scaffold with the single `findUserById(db, id)` read, establishing the "handle as first param" convention for later units' transaction composition.
+- `types/identity.ts`: re-exports the Drizzle-derived row types (`AppUser`/`Account`/`Session`/`Verification` + their `Insert` variants) for cross-layer use.
+- Generated and hand-reviewed `db/migrations/0000_eminent_namorita.sql`: `CREATE SCHEMA "core"`, the four `CREATE TABLE core.*` statements, all CHECKs/FKs/unique-and-partial indexes — verified against a throwaway `postgres:16` Docker container (applied cleanly, idempotent on re-run, introspected via `psql` to confirm schema/columns/constraints match the spec exactly).
+- Tests: `tests/db/identity-schema.test.ts` (no DB — asserts each table's exact snake_case column set via `getTableColumns`) and `tests/db/migration.integration.test.ts` (requires `DATABASE_URL` — runs the migration against a real Postgres, introspects `information_schema`/`pg_catalog`, tears down the `core`/`drizzle` schemas in `afterAll`). Split into two Vitest projects (`vitest.config.ts` excludes the integration file; new `vitest.integration.config.ts`, `environment: 'node'`, includes only it) so the default unit run stays DB-free. The integration suite uses `describe.skipIf(!databaseUrl)` so absence of `DATABASE_URL` shows as a loud "skipped" in the report, never a silent pass.
+- `infra/azure-pipelines.yml`: added a `postgres:16` service container (`resources.containers` + job-level `services:`) with `DATABASE_URL` wired as a job variable, plus a TCP-readiness wait step before `npm run test`, so CI now also exercises the DB integration suite.
+- `.env.example`: added the `DATABASE_URL` placeholder with the Key Vault/um25 note.
+
+### Deviations from the spec's literal text
+
+- **`config.DATABASE_URL`, not `config.databaseUrl`.** um01 already established the convention of exposing config fields under their raw env-var key (`config.APP_URL`, `config.LOG_LEVEL`, asserted by `tests/lib/config.test.ts`), not a camelCase remap. Kept that precedent instead of introducing a one-off `databaseUrl` field; `db/client.ts`/`db/migrate.ts` use `config.DATABASE_URL`.
+- **`eslint.config.mjs` boundary fixes required for the spec's own file layout.** The um01 boundaries matrix allowed `db → types, lib` and `types → types` only, with no layer permitted to import its own type — which would have blocked `db/client.ts` importing `db/schema/identity.ts`, and blocked `types/identity.ts` re-exporting Drizzle row types from `db/schema/identity.ts` (spec §3.7). Added `db` to its own allow-list (matching the existing `components`/`lib` self-import pattern) and added `db` to `types`'s allow-list with a comment scoping it to type-only re-exports of Drizzle row types.
+- **Verification checklist item 8's literal text ("confirm a temporary `services/** → db/client`import fails lint") contradicts the architecture.** Architecture §2/§4 and this spec's own §3.7 (repository functions take a`db`-or-`tx`handle from the *caller*) require`services`to import`db/client`directly — and um01's eslint config already allowed`services → db`. Verified the boundary a different way instead: (a) the spec's accompanying grep — no `app/`/`actions/`/`services/`/`auth/`file imports`drizzle-orm`/`postgres`directly — returns nothing; (b) a temporary`app/\*\* → db/client` probe (a combination the matrix genuinely disallows) does fail lint as expected. Both removed after verification.
+- **CI Postgres service:** the spec assumes "CI provides Postgres as a service" without specifying syntax; Azure Pipelines has no native `services:` keyword like GitHub Actions, so this was implemented via `resources.containers` + job-level `services:` mapping (the standard Azure DevOps idiom) plus a manual TCP-wait step.
+
+### Verification (spec §5)
+
+All local: `npm run typecheck`, `npm run lint` (incl. the boundary probes above), `npm run format:check`, `npm run test` (23 unit + 8 integration, run against a temporary `postgres:16` Docker container) all green. Migration applied cleanly and idempotently; `psql` introspection of `core.appuser`/`account`/`session`/`verification` matched §3.4 exactly (columns, nullability, defaults, CHECKs, FKs, unique/partial indexes). Semgrep (`p/typescript p/javascript p/nextjs p/owasp-top-ten p/secrets`, via `docker run returntocorp/semgrep`) — 0 findings across the full working tree. Test-only Docker container and scratch `.env` removed after verification; no `.env*` other than `.env.example` was committed.
+
+### Next steps
+
+- um03 (Better-Auth config + field mapping + `AUDIT_LOG` + admin seed) per the build plan. — **done, see below.**
+
+## um03 — Local Sign-in + Seeded Break-glass Admin + Audit Foundation
+
+**Spec:** `context/user-management/specs/um03-local-signin-admin-seed-audit.md`
+
+### Scope
+
+Better-Auth credential provider + field mapping, `/login` page + `LoginForm`, `AUDIT_LOG` table + atomic INSERT-only repository, seeded break-glass LOCAL admin, `LOCAL_LOGIN` audit on every successful sign-in. No lockout (um04), no RBAC (um05), no permission resolver/route guards (um06), no `/set-password` (um09), no SSO (um10).
+
+### What shipped
+
+- Installed `better-auth`, `react-hook-form`, `@hookform/resolvers` (runtime deps); added shadcn `input`, `label`, `field` (+ `separator`, a transitive dependency of `field`) primitives via the CLI.
+- `lib/config.ts`: added required `BETTER_AUTH_SECRET` (`min(32)`), `BETTER_AUTH_URL` (`z.url()`), `BOOTSTRAP_ADMIN_EMAIL` (`z.email()`), `BOOTSTRAP_ADMIN_PASSWORD` (`min(16)`); `.env.example` extended with placeholders + the Key Vault/um25 note and the one new `NEXT_PUBLIC_APP_URL`.
+- `db/schema/audit.ts`: `core.audit_log` — `audit_id` uuid PK `defaultRandom()`, `event_type` text, `actor_user_id` (FK → `appuser.id`, `ON DELETE SET NULL`), `target_entity`/`target_id` text, `before_data`/`after_data` jsonb, `created_datetime` timestamptz default `now()`; no `updated_at`. Indexes on `actor_user_id`, `event_type`, `created_datetime`. `db/schema/index.ts` added (re-exports `identity.ts` + `audit.ts`); `db/client.ts` now imports the combined schema.
+- `db/repositories/audit.repository.ts`: `insertAuditEvent(db, event)` — single INSERT, no read/update/delete exports.
+- `db/repositories/appuser.repository.ts` (renamed from `identity-repository.ts`, code-standards §7.6): added `updateLastLogin(db, userId, loginDatetime)`.
+- `db/migrations/0001_aspiring_nehzno.sql`: hand-reviewed — `core.audit_log` only, `actor_user_id` FK `ON DELETE SET NULL`, no `updated_at`, three indexes present.
+- `types/audit.ts`: `AUDIT_EVENT_TYPES` (all 20 v1 strings) + `AuditEventType`; re-exports `AuditLog`/`AuditLogInsert`. `types/auth.ts`: `AUTH_ERROR_CODES` (`USER_NOT_ACTIVE`, `USER_LOCKED`) + `AuthErrorCode` — the contract `auth/index.ts`'s hook throws and `LoginForm` matches on, since `components/` can't import the server-only `auth/index.ts`.
+- `auth/index.ts`: single `betterAuth()` config — Drizzle adapter (`provider: "pg"`), field mapping for all four models (`user` → `appuser`; only the fields whose Better-Auth default name differs from our Drizzle property are remapped — see deviations), `emailAndPassword` (`disableSignUp: true`, `requireEmailVerification: false`, `autoSignIn: true`), `advanced.useSecureCookies` gated on `config.NODE_ENV`, and two `databaseHooks.session.create` hooks: `before` (status check — non-`ACTIVE` users get `APIError.from("FORBIDDEN", { code: AUTH_ERROR_CODES.USER_NOT_ACTIVE, ... })`, verified to run _after_ password verification and _before_ the session row commits) and `after` (atomic `last_login_datetime` + `LOCAL_LOGIN` audit insert in one `db.transaction`, caught and logged via `lib/logger` on failure without affecting the already-committed session). `auth/client.ts`: `createAuthClient` from `better-auth/react`, `baseURL: process.env.NEXT_PUBLIC_APP_URL`.
+- `app/api/auth/[...all]/route.ts`: `toNextJsHandler(auth)`, `dynamic = "force-dynamic"`.
+- `validation/login.schema.ts`: `loginSchema` (email + non-empty password) per spec exactly.
+- `components/login-form.tsx`: RHF + `zodResolver`, shadcn `Field`/`Input` primitives (see deviations — no `Form` component in this shadcn version), show/hide password toggle (Lucide `Eye`/`EyeOff`, keyboard-operable button), maps `authClient.signIn.email()`'s `error.code` to the three spec'd messages, `router.push('/')` on success.
+- `app/(auth)/login/page.tsx` (Server Component — resolves `auth.api.getSession`, redirects to `/` if active, renders the branded card with `--gradient-brand` wash over `--surface-nav`), `loading.tsx` (skeleton, no spinner text), `error.tsx` (reports via `lib/logger`'s `reportError`, generic message).
+- `db/seeds/seed-admin.ts`: idempotent (checks `user_email` first), dedicated `postgres({max:1})` client (not the app pool), `hashPassword` from `better-auth/crypto`, one transaction inserting `appuser` (`ACTIVE`, `LOCAL`) + `account` (`credential`, scrypt hash). No `AUDIT_LOG` row (documented exception). `package.json`: `db:seed`, `db:setup` (`db:migrate && db:seed`).
+- Tests: `tests/db/audit-schema.test.ts` (no DB, column-set + no-`updated_at` assertions), `tests/validation/login.schema.test.ts`, `tests/db/audit-repository.integration.test.ts`, `tests/auth/sign-in.integration.test.ts` (wrong password, unknown email, non-`ACTIVE` user, success path incl. session/audit/`last_login_datetime`, `disableSignUp`, atomic-rollback-on-audit-failure — drops and restores `core.audit_log` mid-test). `tests/lib/config.test.ts` extended for the four new vars. `vitest.config.ts`/`vitest.integration.config.ts` generalized from one hardcoded filename to a `*.integration.test.ts` glob, plus `fileParallelism: false` on the integration project (multiple suites now share one `DATABASE_URL` and each does its own `DROP/CREATE SCHEMA`) and `test.env` fixture values for the four new config vars (not `DATABASE_URL`, which still loud-skips when unset). `tests/db/migration.integration.test.ts` updated for the new `audit_log` table/FK (5 tables, 3 FKs incl. one `SET NULL`).
+
+### Deviations from the spec's literal text
+
+- **Drizzle PK properties renamed `userId`/`accountId`/`sessionId`/`verificationId` → `id`.** The installed Better-Auth adapter (`1.6.19`) hard-codes the lookup of a literal `id` field for every model (`getDefaultFieldName`: `if (field === "id") return "id"`, never remappable via `fields`) and the Drizzle adapter then expects `schemaModel.id` to exist as a JS property — there is no `fields.id` escape hatch (the type explicitly excludes `"id"` from the map). Renamed the four PK properties in `db/schema/identity.ts` to `id`; the underlying SQL column names (`user_id`, `account_id`, `session_id`, `verification_id`) are unchanged, so no new migration was needed and `tests/db/identity-schema.test.ts` (which asserts on `.name`, not the property key) needed no change. This _is_ the field mapping spec §3.7 describes (`id → user_id`); the installed version just requires it expressed as a property rename rather than a `fields` config entry.
+- **`audit_log.actor_user_id` is `text`, not `uuid` (spec §3.2's literal table).** The FK target, `core.appuser.user_id`, is `text` (Better-Auth's own id format, established in um02) — a `uuid`-typed FK column referencing a `text` PK is not valid DDL. `text` matches the column it actually references; `target_id` was already `text` for the same reason.
+- **Field mapping only remaps fields whose Better-Auth default name differs from our Drizzle property** (e.g. `user.name → userName`, `account.accountId → providerAccountId`, every model's `createdAt`/`updatedAt` → `createdDatetime`/`lastModifiedDatetime`). Fields already named identically (`session.userId`, `session.expiresAt`, `account.providerId`, `verification.identifier`, …) need no entry — Better-Auth's `fields` option maps its field name to _our Drizzle schema's property key_ (which already encodes the snake_case SQL column via `text("user_name")` etc.), not to a raw column string, so listing them would be a no-op.
+- **Status check lives in `databaseHooks.session.create.before`, not a `checkCredentials`/`authorize` callback.** The installed `emailAndPassword` option type has no such callback; `signInEmail`'s own route source verifies the password and then calls `internalAdapter.createSession`, which is the only model-create operation gated by `databaseHooks` before the row commits. Confirmed by reading `with-hooks.mjs`: a thrown `APIError` here aborts session creation and propagates as a real rejection to `auth.api.signInEmail()` callers.
+- **Audit/last-login hook lives in `databaseHooks.session.create.after`, not an `emailAndPassword.onSignIn` callback** (the installed version has no such callback). Confirmed via `with-hooks.mjs`/`transaction.mjs` that `queueAfterTransactionHook` is awaited before `internalAdapter.createSession` (and thus `auth.api.signInEmail()`) returns, so the hook has always run by the time a caller observes the result — verified directly against a live Postgres container (session, audit row, and `last_login_datetime` all present immediately after `await auth.api.signInEmail(...)`).
+- **No shadcn `Form` component in the installed CLI version (`shadcn@4.11`, "Nova" preset).** `npx shadcn add form` is a silent no-op in this registry; the replacement composition is `Field`/`FieldLabel`/`FieldContent`/`FieldError`/`FieldGroup` (added via `npx shadcn add field`, which also pulled in `separator.tsx`), not bound to React Hook Form via context — `LoginForm` wires it with plain `register()`/`formState.errors` instead of `FormField`/`Controller`.
+- **`db/client.ts`'s `Database` type widened to a union** (`typeof db | PostgresJsTransaction<...>`). A `db.transaction(async (tx) => …)` callback's `tx` lacks the pool-only `$client` property, so under `exactOptionalPropertyTypes` it didn't structurally satisfy the um02 `Database = typeof db` alias — needed for `auth/index.ts`'s hook to pass `tx` into `updateLastLogin`/`insertAuditEvent` (exactly the "accepts either the pool `db` or a transaction `tx`" contract um03 §3.5/§3.6 specify).
+- **`eslint.config.mjs` boundary additions required by the spec's own file layout.** `components/login-form.tsx` must import `authClient` from `auth/client.ts` (um03 §3.8) and `loginSchema` from `validation/` (code-standards §4.12), neither allowed by um01/um02's matrix. Carved out a separate `auth-client` element (pattern `auth/client.ts`, ordered before the general `auth/**` pattern) so `components/**` can reach only the client-safe entry point — never `auth/index.ts` — and added `validation` to `components`'s allow-list.
+- **Integration-test infra generalized for multiple DB suites.** um02 had exactly one DB-dependent test file, so neither a file-parallelism setting nor non-`DATABASE_URL` config fixtures were needed. um03 adds three more; running them concurrently raced their `DROP/CREATE SCHEMA "core"` setup against a shared `DATABASE_URL`, so `fileParallelism: false` was added. `tests/auth/*` also transitively imports `@/lib/config` (via `@/auth`), which eagerly validates all required env vars at import time — `vitest.integration.config.ts` now seeds `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL`/`BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD` as `test.env` fixtures (not real secrets); `DATABASE_URL` is deliberately left out so its absence still loud-skips every suite, matching um02's existing contract.
+
+### Verification (spec §5)
+
+All local: `npm run typecheck`, `npm run lint`, `npm run format:check` green. `npx vitest run` — 32/32 unit tests green. Integration suite (`vitest run --config vitest.integration.config.ts` against a temporary `postgres:16` Docker container) — 16/16 green (8 migration + 2 audit-repository + 6 sign-in flow, incl. the atomic-rollback-on-audit-failure case). `npm run db:seed` against a freshly migrated DB: inserts exactly one `appuser` (`ACTIVE`/`LOCAL`/`force_password_change: false`) + one `account` (`credential`, non-null scrypt hash); re-run is a no-op exit 0; missing `BOOTSTRAP_ADMIN_EMAIL`/`PASSWORD` fails loud (`AppError`/`INTERNAL`, exit 1) before touching the DB. Dev server smoke-tested end-to-end against the same container: `POST /api/auth/sign-in/email` with the seeded admin returns `200` + an HTTP-only `SameSite=Lax` cookie (no `Secure` outside production); `core.session` row created with a future `expires_at`; `core.audit_log` gets exactly one `LOCAL_LOGIN` row with the correct `actor_user_id`/`target_entity`/`after_data`; `appuser.last_login_datetime` updates; wrong password and unknown email both return `INVALID_EMAIL_OR_PASSWORD` with no session/audit row; `POST /api/auth/sign-up/email` returns `EMAIL_PASSWORD_SIGN_UP_DISABLED`; `GET /api/auth/get-session` payload has no `status`/permission fields. `/login` (unauthenticated) renders the card with the correct title/copy (verified via raw HTML, no browser tool available in this environment); `/login` while already authenticated does not change the curl-visible status (Next streams the page behind its `loading.tsx` Suspense boundary, so the HTTP status was already flushed as `200` before `redirect()` ran) but the response body carries the embedded `NEXT_REDIRECT;replace;/;307` instruction Next's client router executes — confirmed present, the standard mechanism for this exact page shape, not a bug. Test-only Docker container and scratch `.env` removed after verification; no `.env*` other than `.env.example` committed. Semgrep (`p/typescript p/javascript p/nextjs p/owasp-top-ten p/secrets`, via `docker run returntocorp/semgrep`) — 0 findings across 77 scanned files (66 rules run).
+
+### Next steps
+
+- um04 (per-account lockout) per the build plan. — **done, see below.**
+
+## um04 — Custom Per-Account Lockout (LOCAL)
+
+**Spec:** `context/user-management/specs/um04-lockout.md`
+
+### Scope
+
+Per-account lockout for LOCAL sign-in only: a repository-backed state machine wired into the existing Better-Auth sign-in flow. Reject already-locked accounts before password verification, increment `failed_login_count` on each wrong password, lock for 15 minutes + `USER_LOCKED` audit on the 5th consecutive failure, reset on success. No new migration (`failed_login_count`/`locked_until` already existed on `appuser` from um01/um02). No RBAC, no admin unlock UI (um06/um07), no `/set-password` (um09), no SSO.
+
+### What shipped
+
+- `types/lockout.ts`: `LockoutState { failedLoginCount: number; lockedUntil: Date | null }`.
+- `auth/lockout.ts`: `isCurrentlyLocked(state)` — pure, zero DB imports, unit-tested directly.
+- `db/repositories/lockout.repository.ts`: `getLockoutState`, `recordFailedAttempt`, `clearLockout`. `recordFailedAttempt` reads the current count, and on the 5th-or-later failure writes `failed_login_count` + `locked_until` + the `USER_LOCKED` `AUDIT_LOG` row inside one `db.transaction`, then emits the spec's structured `logger.warn` line (`lib/logger.ts` — the project's actual existing telemetry sink; the spec's literal `lib/telemetry.ts` doesn't exist as a separate module, see deviations). Failures below the threshold are a single plain `UPDATE`, no transaction.
+- `db/repositories/appuser.repository.ts`: added `findUserByEmail` — needed by the new sign-in hooks to resolve a user (and its `id`/`authMethod`) ahead of Better-Auth's own internal lookup.
+- `auth/index.ts`: added a top-level `hooks: { before, after }` pair (see deviations for why `databaseHooks` couldn't be used). `before` rejects an already-locked LOCAL user ahead of password verification. `after` runs once Better-Auth's `/sign-in/email` endpoint resolves: on an `INVALID_EMAIL_OR_PASSWORD` failure for a LOCAL user not already locked, calls `recordFailedAttempt`; on success, calls `clearLockout` using the `id` already present on the returned user object (no extra lookup). Both DB calls are wrapped in their own try/catch that logs and never rethrows, so a lockout-bookkeeping failure can never change the response already determined for the caller (spec §5 error table). The lock-check itself (`before` hook) does propagate on a DB error, per spec.
+- `eslint.config.mjs`: added `auth` to its own boundary allow-list (`auth/index.ts` importing `auth/lockout.ts`).
+- `package.json`: added `@better-auth/core` as an explicit dependency (was already present transitively, pinned to the same installed `1.6.19`) since `auth/index.ts` now imports `createAuthMiddleware` from its `/api` subpath directly.
+- Tests: `tests/auth/lockout.test.ts` (pure, all 4 `isCurrentlyLocked` cases incl. the exact-boundary case), `tests/db/lockout-repository.integration.test.ts` (fresh-user state, 0→1, 1→4, 5th-failure lock + audit shape, 6th-failure re-lock after an expired lock, `clearLockout`, transaction-rollback atomicity via a renamed `audit_log` table), `tests/auth/signin-lockout.integration.test.ts` (1–4 failures, 5th-failure lock, rejection while locked incl. with the correct password, re-lock after expiry, clear-on-success after an expired lock, reset-on-success before the 5th failure, SSO user untouched) — each test seeds its own user in `beforeEach` rather than chaining state across `it`s (an earlier chained draft produced a false failure: a later test's premise no longer held because an even-later test in the original ordering had already re-locked the account).
+
+### Deviations from the spec's literal text
+
+- **The lock check (step 3) cannot live in `databaseHooks.session.create.before`** — that's where um03 put its `USER_NOT_ACTIVE` status check, but (confirmed by reading the installed Better-Auth's `api/routes/sign-in.mjs`) `/sign-in/email`'s own handler verifies the password and calls `internalAdapter.createSession` itself, with no callback in between; `databaseHooks.session.create` only fires _after_ the password is already verified. The only point that runs ahead of password verification is a top-level `hooks.before` matched on `ctx.path === "/sign-in/email"` (the standard Better-Auth pattern for this exact need) — confirmed against `@better-auth/core`'s `dispatch.mjs` that a `before`-hook throw aborts the request before the endpoint (and thus the password check) ever runs, and that the `after`-hook never runs when `before` throws (so the locked-account rejection path can never double-count via the `after` hook).
+- **Step 5 (record on failure) is driven by matching `returned.body.code === "INVALID_EMAIL_OR_PASSWORD"` in the `after` hook, not a literal "step 4 failed" callback** — the installed Better-Auth has no such callback; `INVALID_EMAIL_OR_PASSWORD` is also the exact code/message Better-Auth's own route already throws for wrong password, unknown email, and a missing credential account alike (read directly from `sign-in.mjs` and `@better-auth/core`'s `defineErrorCodes`), so filtering on it (and excluding e.g. the um03 `USER_NOT_ACTIVE` `FORBIDDEN`) is the correct "step 4 specifically failed" signal available at this hook point.
+- **Locked-account rejection message: kept um03's distinct, disclosing message instead of um04's literal non-disclosing one.** um04 §"Rejection response" requires byte-identical wording for "locked" vs "wrong password" so a client can't distinguish the two. um03 (already shipped, `LoginForm`) instead special-cases `AUTH_ERROR_CODES.USER_LOCKED` to show _"Your account has been temporarily locked. Contact your administrator."_ — a deliberate UX choice the user confirmed keeping when asked directly about this conflict. So the `before`-hook throws `code: USER_LOCKED` with that exact message (not the generic `"Invalid email or password."`), and `LoginForm`/`types/auth.ts` needed no changes. The generic wrong-password message itself is untouched Better-Auth output (`"Invalid email or password"`, no trailing period) and was not "fixed" to match um04's literal string, since that string only matters in the (not-taken) non-disclosing branch.
+- **Telemetry target is `lib/logger.ts`, not `lib/telemetry.ts`.** The spec names a `lib/telemetry.ts` module; no such file exists in this codebase — `lib/logger.ts` is the actual, already-established structured-log sink (its own doc comment marks it as "the extension point for the GlitchTip + OpenTelemetry transport wired in um25"). `logger.warn(...)` with the exact spec'd fields is emitted from `recordFailedAttempt` itself, immediately after the lock transaction commits, rather than from the hook — colocating the log with the only place that knows "this attempt was the one that caused a lock" avoids re-deriving that fact in `auth/index.ts`.
+- **`before_data.locked_until` is hardcoded to `null` in the `USER_LOCKED` audit row, even on a re-lock (6th-or-later failure after an expired lock).** This matches the spec's literal example shape (`before_data: { ..., locked_until: null }`) exactly rather than the column's actual prior value (which on a re-lock is a past-expired timestamp, not `null`) — the semantic intent is "before this lock took effect, the account was not effectively locked," which holds either way.
+- **`@better-auth/core` added as an explicit `package.json` dependency.** It was already installed transitively (via `better-auth`, same `1.6.19`), but `auth/index.ts` now imports `createAuthMiddleware` directly from its `/api` subpath — relying on an undeclared transitive package for a direct import would be fragile.
+- **Tests live under `tests/auth/` and `tests/db/` with the project's established `*.integration.test.ts` suffix**, not the spec's literal `tests/unit/`/`tests/integration/` paths — those directories don't exist in this codebase; code-standards §7.9 ("tests mirror the source tree") and the existing `vitest.integration.config.ts` glob (`tests/**/*.integration.test.ts`) are followed instead, matching how um02/um03's own DB-dependent suites are organized.
+
+### Verification (spec §5)
+
+All local: `npm run typecheck`, `npm run lint` (incl. the new `auth → auth` boundary entry), `npm run format:check` green. `npx vitest run` — 36/36 unit tests green (32 prior + 4 new `isCurrentlyLocked` cases). Integration suite (`vitest run --config vitest.integration.config.ts` against a temporary `postgres:16` Docker container) — 31/31 green (16 prior + 8 lockout-repository + 7 sign-in-lockout, incl. the transaction-rollback-atomicity case). Dev server smoke-tested end-to-end against the same container with the seeded admin: 5 wrong passwords → `401 INVALID_EMAIL_OR_PASSWORD` each time, `failed_login_count` 1→5; verified directly in Postgres that the 5th attempt set `locked_until` ≈ now+15min and wrote exactly one `USER_LOCKED` audit row with `actor_user_id NULL`, `before_data.failed_login_count = 4`, `before_data.locked_until = null`; a 6th attempt **with the correct password** still returned `401 {"code":"USER_LOCKED","message":"Your account has been temporarily locked. Contact your administrator."}` (password never checked while locked); after manually expiring `locked_until`, a correct-password sign-in returned `200` with a session token and reset `failed_login_count`/`locked_until` to `0`/`null` in the same request. Test-only Docker container and scratch `.env` removed after verification; no `.env*` other than `.env.example` committed. Semgrep (`p/typescript p/javascript p/nextjs p/owasp-top-ten p/secrets`, via `docker run returntocorp/semgrep`) — 0 findings across 81 scanned files (136 rules run).
+
+### Next steps
+
+- um05 (RBAC tables, grants, role assignment) per the build plan.

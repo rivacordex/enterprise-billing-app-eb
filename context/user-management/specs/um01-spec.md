@@ -3,7 +3,7 @@
 - **Boundary:** APP / INFRA (tooling)
 - **Dependencies:** none (this is the first unit)
 - **Confirmed toolchain choices:** Tailwind **v4** (CSS-first `@theme`), **Vitest + React Testing Library** for the test gate, **Semgrep** for the SAST gate, **npm** (package-lock.json).
-- **Source sections:** build plan §"Phase 1 / um01"; architecture §1 (stack), §2 (folder ownership); code-standards §2 (TS), §3 (Next.js), §4 (styling), §7 (file org), §10 (CI gates); UI-context §1–§8 (all tokens); workflow §1–§8. Invariants touched: #14 (DB only in `db/`), #16 (Zod at the boundary), #17 (stateless), #18 (no secrets in repo/image), #19 (snake_case mapping — *declared later*), #23 (security gates block the pipeline).
+- **Source sections:** build plan §"Phase 1 / um01"; architecture §1 (stack), §2 (folder ownership); code-standards §2 (TS), §3 (Next.js), §4 (styling), §7 (file org), §10 (CI gates); UI-context §1–§8 (all tokens); workflow §1–§8. Invariants touched: #14 (DB only in `db/`), #16 (Zod at the boundary), #17 (stateless), #18 (no secrets in repo/image), #19 (snake*case mapping — \_declared later*), #23 (security gates block the pipeline).
 
 > This unit ships **tooling and a themed shell only**. There is **no database, no Better-Auth, no real authentication, no admin pages, and no Dockerfile/deploy** here. Those arrive in later units (DB → um02, auth → um03, admin pages → um06+, deploy/DAST → um25). The single deliverable is a project that boots, renders a themed public placeholder, and passes every quality gate on an otherwise empty tree.
 
@@ -64,9 +64,9 @@ Enable the mandated strict surface (code-standards §2.1) on top of the Next gen
     "moduleResolution": "bundler",
     "module": "esnext",
     "target": "ES2022",
-    "paths": { "@/*": ["./*"] }
+    "paths": { "@/*": ["./*"] },
     // ...plus the Next.js defaults (jsx: preserve, lib, plugins: next, etc.)
-  }
+  },
 }
 ```
 
@@ -84,17 +84,17 @@ lib/            tests/                infra/
 
 Define the inward-only dependency rule with **`eslint-plugin-boundaries`** (see §3.9). Element types and their **allowed** imports (everything else is denied — deny-by-default):
 
-| Layer (element) | Path | May import |
-|---|---|---|
-| `app` | `app/**` | `actions`, `services`, `auth`, `components`, `validation`, `types`, `lib` |
-| `actions` | `actions/**` | `services`, `auth`, `validation`, `types`, `lib` |
-| `services` | `services/**` | `db`, `types`, `lib` |
-| `auth` | `auth/**` | `db`, `services`, `validation`, `types`, `lib` |
-| `db` | `db/**` | `types`, `lib` |
-| `validation` | `validation/**` | `types` (+ `zod`) |
-| `components` | `components/**` | `components`, `types`, `lib` |
-| `types` | `types/**` | `types` |
-| `lib` | `lib/**` | `lib` (+ external libs only) |
+| Layer (element) | Path            | May import                                                                |
+| --------------- | --------------- | ------------------------------------------------------------------------- |
+| `app`           | `app/**`        | `actions`, `services`, `auth`, `components`, `validation`, `types`, `lib` |
+| `actions`       | `actions/**`    | `services`, `auth`, `validation`, `types`, `lib`                          |
+| `services`      | `services/**`   | `db`, `types`, `lib`                                                      |
+| `auth`          | `auth/**`       | `db`, `services`, `validation`, `types`, `lib`                            |
+| `db`            | `db/**`         | `types`, `lib`                                                            |
+| `validation`    | `validation/**` | `types` (+ `zod`)                                                         |
+| `components`    | `components/**` | `components`, `types`, `lib`                                              |
+| `types`         | `types/**`      | `types`                                                                   |
+| `lib`           | `lib/**`        | `lib` (+ external libs only)                                              |
 
 Rules that fall out and must be enforced: UI never imports `db/**`; `services/`, `db/`, `validation/`, `auth/` (except its Next-facing handler wiring, added later) never import `next/*`; no barrels across layers (only `components/ui/` may have an `index.ts`). Configure the `@/*` alias resolver so boundary checks and `tsc` agree.
 
@@ -110,51 +110,94 @@ Author the complete token system from UI-context §1–§7 as CSS custom propert
 
 ```css
 @import "tailwindcss";
-@import "tw-animate-css";              /* shadcn v4 animation utilities */
-@custom-variant dark (&:is(.dark *));  /* defined but unused in v1 */
+@import "tw-animate-css"; /* shadcn v4 animation utilities */
+@custom-variant dark (&:is(.dark *)); /* defined but unused in v1 */
 
 :root {
   /* 1. Brand scales (UI-context §1) */
-  --color-primary-50:#EDF0FB; --color-primary-100:#D4DBF4; --color-primary-200:#A9B6E9;
-  --color-primary-300:#7C8EDA; --color-primary-400:#5067C8; --color-primary-500:#2E45A9;
-  --color-primary-600:#233686; --color-primary-700:#1B2A68; --color-primary-800:#131D49;
-  --color-primary-900:#0C122E;
-  --color-accent-50:#FDE6F1; --color-accent-100:#FAB9D8; --color-accent-300:#F052A0;
-  --color-accent-500:#E6007E; --color-accent-600:#BC0067; --color-accent-700:#91004F;
-  --color-cyan-50:#E2F8FA; --color-cyan-100:#B6EEF2; --color-cyan-300:#4CD3DF;
-  --color-cyan-500:#00A9BC; --color-cyan-600:#00899A; --color-cyan-700:#006975;
+  --color-primary-50: #edf0fb;
+  --color-primary-100: #d4dbf4;
+  --color-primary-200: #a9b6e9;
+  --color-primary-300: #7c8eda;
+  --color-primary-400: #5067c8;
+  --color-primary-500: #2e45a9;
+  --color-primary-600: #233686;
+  --color-primary-700: #1b2a68;
+  --color-primary-800: #131d49;
+  --color-primary-900: #0c122e;
+  --color-accent-50: #fde6f1;
+  --color-accent-100: #fab9d8;
+  --color-accent-300: #f052a0;
+  --color-accent-500: #e6007e;
+  --color-accent-600: #bc0067;
+  --color-accent-700: #91004f;
+  --color-cyan-50: #e2f8fa;
+  --color-cyan-100: #b6eef2;
+  --color-cyan-300: #4cd3df;
+  --color-cyan-500: #00a9bc;
+  --color-cyan-600: #00899a;
+  --color-cyan-700: #006975;
 
   /* 2. Neutrals (UI-context §2) */
-  --color-neutral-0:#FFFFFF;  --color-neutral-50:#F7F8FA;  --color-neutral-100:#EEF0F4;
-  --color-neutral-200:#E0E4EB; --color-neutral-300:#CAD0DA; --color-neutral-400:#99A1B0;
-  --color-neutral-500:#6A7283; --color-neutral-600:#4C5462; --color-neutral-700:#353B46;
-  --color-neutral-800:#1F242C; --color-neutral-900:#11141A;
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f7f8fa;
+  --color-neutral-100: #eef0f4;
+  --color-neutral-200: #e0e4eb;
+  --color-neutral-300: #cad0da;
+  --color-neutral-400: #99a1b0;
+  --color-neutral-500: #6a7283;
+  --color-neutral-600: #4c5462;
+  --color-neutral-700: #353b46;
+  --color-neutral-800: #1f242c;
+  --color-neutral-900: #11141a;
 
   /* Status scales (base/-fg/-bg) (UI-context §3.4) */
-  --color-success-500:#1F9D57; --color-success-700:#0F5C32; --color-success-50:#E6F6EC;
-  --color-warning-500:#E08600; --color-warning-700:#8A5200; --color-warning-50:#FEF4E6;
-  --color-danger-500:#D92D2D;  --color-danger-700:#8A1717;  --color-danger-50:#FDEAEA;
-  --color-info-500:#1A73D9;    --color-info-700:#0C4084;    --color-info-50:#E7F1FD;
+  --color-success-500: #1f9d57;
+  --color-success-700: #0f5c32;
+  --color-success-50: #e6f6ec;
+  --color-warning-500: #e08600;
+  --color-warning-700: #8a5200;
+  --color-warning-50: #fef4e6;
+  --color-danger-500: #d92d2d;
+  --color-danger-700: #8a1717;
+  --color-danger-50: #fdeaea;
+  --color-info-500: #1a73d9;
+  --color-info-700: #0c4084;
+  --color-info-50: #e7f1fd;
 
   /* 3.1 Surfaces & text */
-  --surface-app:var(--color-neutral-50);   --surface-card:var(--color-neutral-0);
-  --surface-sunken:var(--color-neutral-100); --surface-selected:var(--color-primary-50);
-  --surface-nav:var(--color-primary-800);   --surface-topbar:var(--color-primary-700);
-  --text-primary:var(--color-neutral-900);  --text-body:var(--color-neutral-700);
-  --text-muted:var(--color-neutral-500);    --text-disabled:var(--color-neutral-400);
-  --text-on-brand:#FFFFFF; --text-link:var(--color-primary-500); --text-link-hover:var(--color-primary-600);
+  --surface-app: var(--color-neutral-50);
+  --surface-card: var(--color-neutral-0);
+  --surface-sunken: var(--color-neutral-100);
+  --surface-selected: var(--color-primary-50);
+  --surface-nav: var(--color-primary-800);
+  --surface-topbar: var(--color-primary-700);
+  --text-primary: var(--color-neutral-900);
+  --text-body: var(--color-neutral-700);
+  --text-muted: var(--color-neutral-500);
+  --text-disabled: var(--color-neutral-400);
+  --text-on-brand: #ffffff;
+  --text-link: var(--color-primary-500);
+  --text-link-hover: var(--color-primary-600);
 
   /* 3.2 Borders */
-  --border-subtle:var(--color-neutral-100); --border-default:var(--color-neutral-200);
-  --border-strong:var(--color-neutral-300); --border-focus:var(--color-primary-500);
-  --border-accent:var(--color-accent-500);
+  --border-subtle: var(--color-neutral-100);
+  --border-default: var(--color-neutral-200);
+  --border-strong: var(--color-neutral-300);
+  --border-focus: var(--color-primary-500);
+  --border-accent: var(--color-accent-500);
 
   /* 3.3 Interactive */
-  --action-primary-bg:var(--color-primary-500); --action-primary-bg-hover:var(--color-primary-600);
-  --action-primary-bg-active:var(--color-primary-700); --action-cta-bg:var(--color-accent-500);
-  --action-cta-bg-hover:var(--color-accent-600); --action-secondary-bg:#FFFFFF;
-  --action-secondary-border:var(--color-neutral-300); --action-secondary-text:var(--color-neutral-700);
-  --action-ghost-hover:var(--color-neutral-100); --action-disabled-bg:var(--color-neutral-200);
+  --action-primary-bg: var(--color-primary-500);
+  --action-primary-bg-hover: var(--color-primary-600);
+  --action-primary-bg-active: var(--color-primary-700);
+  --action-cta-bg: var(--color-accent-500);
+  --action-cta-bg-hover: var(--color-accent-600);
+  --action-secondary-bg: #ffffff;
+  --action-secondary-border: var(--color-neutral-300);
+  --action-secondary-text: var(--color-neutral-700);
+  --action-ghost-hover: var(--color-neutral-100);
+  --action-disabled-bg: var(--color-neutral-200);
 
   /* Domain badge tokens — define now, consumed by later badge components
      (StatusBadge, AuthMethodBadge, RoleBadge, PermissionLevelTag, AuditLogTable):
@@ -162,48 +205,78 @@ Author the complete token system from UI-context §1–§7 as CSS custom propert
      These reuse the status/brand scales above; map them as named aliases. */
 
   /* 4. RESERVED — AI/Iris + gradients (defined, NOT used in v1, UI-context §0/§4) */
-  --ai-50:#F0EDFF; --ai-100:#DAD2FF; --ai-300:#A793FF; --ai-500:#6D45F0; --ai-600:#5A2FD8; --ai-700:#4621B0;
-  --gradient-brand:linear-gradient(135deg,#2E45A9 0%,#E6007E 100%);
-  --gradient-5g:linear-gradient(120deg,#00A9BC 0%,#6D45F0 50%,#E6007E 100%);
-  --gradient-ai:linear-gradient(135deg,#6D45F0 0%,#E6007E 100%);
-  --gradient-chrome:linear-gradient(180deg,#1B2A68 0%,#0C122E 100%);
+  --ai-50: #f0edff;
+  --ai-100: #dad2ff;
+  --ai-300: #a793ff;
+  --ai-500: #6d45f0;
+  --ai-600: #5a2fd8;
+  --ai-700: #4621b0;
+  --gradient-brand: linear-gradient(135deg, #2e45a9 0%, #e6007e 100%);
+  --gradient-5g: linear-gradient(120deg, #00a9bc 0%, #6d45f0 50%, #e6007e 100%);
+  --gradient-ai: linear-gradient(135deg, #6d45f0 0%, #e6007e 100%);
+  --gradient-chrome: linear-gradient(180deg, #1b2a68 0%, #0c122e 100%);
 
   /* 5. Typography */
-  --font-sans:"IBM Plex Sans","Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --font-mono:"IBM Plex Mono","SFMono-Regular","Consolas",monospace;
+  --font-sans:
+    "IBM Plex Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
   /* text-* size/line/weight tokens per UI-context §5 (display, h1–h4, body-lg/body/body-sm, caption, overline, mono) */
 
   /* 6. Radius */
-  --radius-none:0; --radius-xs:2px; --radius-sm:4px; --radius-md:6px;
-  --radius-lg:8px; --radius-xl:12px; --radius-2xl:16px; --radius-pill:9999px;
+  --radius-none: 0;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-pill: 9999px;
 
   /* 7. Elevation */
-  --shadow-sm:0 1px 2px rgba(17,20,26,0.06);
-  --shadow-md:0 2px 8px rgba(17,20,26,0.08);
-  --shadow-lg:0 8px 24px rgba(17,20,26,0.12);
-  --focus-ring:0 0 0 2px #FFFFFF, 0 0 0 4px #2E45A9;
+  --shadow-sm: 0 1px 2px rgba(17, 20, 26, 0.06);
+  --shadow-md: 0 2px 8px rgba(17, 20, 26, 0.08);
+  --shadow-lg: 0 8px 24px rgba(17, 20, 26, 0.12);
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #2e45a9;
 
   /* shadcn semantic contract mapped onto our tokens */
-  --background:var(--surface-app);  --foreground:var(--text-primary);
-  --card:var(--surface-card);       --card-foreground:var(--text-primary);
-  --popover:var(--surface-card);    --popover-foreground:var(--text-primary);
-  --primary:var(--color-primary-500); --primary-foreground:var(--text-on-brand);
-  --secondary:var(--color-cyan-500);  --secondary-foreground:var(--text-on-brand);
-  --muted:var(--color-neutral-100);   --muted-foreground:var(--text-muted);
-  --accent:var(--color-accent-500);   --accent-foreground:var(--text-on-brand);
-  --destructive:var(--color-danger-500); --destructive-foreground:#FFFFFF;
-  --border:var(--border-default);     --input:var(--border-strong);
-  --ring:var(--border-focus);         --radius:var(--radius-md);
+  --background: var(--surface-app);
+  --foreground: var(--text-primary);
+  --card: var(--surface-card);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-card);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--color-primary-500);
+  --primary-foreground: var(--text-on-brand);
+  --secondary: var(--color-cyan-500);
+  --secondary-foreground: var(--text-on-brand);
+  --muted: var(--color-neutral-100);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--color-accent-500);
+  --accent-foreground: var(--text-on-brand);
+  --destructive: var(--color-danger-500);
+  --destructive-foreground: #ffffff;
+  --border: var(--border-default);
+  --input: var(--border-strong);
+  --ring: var(--border-focus);
+  --radius: var(--radius-md);
 }
 
 @theme inline {
   /* expose tokens as Tailwind utilities: bg-background, text-foreground, bg-primary,
      border-border, bg-destructive, rounded-md, font-sans, font-mono, etc. */
-  --color-background:var(--background); --color-foreground:var(--foreground);
-  --color-card:var(--card); --color-primary:var(--primary); --color-destructive:var(--destructive);
-  --color-border:var(--border); --color-ring:var(--ring);
-  --font-sans:var(--font-sans); --font-mono:var(--font-mono);
-  --radius-sm:var(--radius-sm); --radius-md:var(--radius-md); --radius-lg:var(--radius-lg);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
   /* …complete the mapping for every token the components consume… */
 }
 ```

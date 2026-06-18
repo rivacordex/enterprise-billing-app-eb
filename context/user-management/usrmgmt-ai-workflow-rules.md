@@ -1,8 +1,9 @@
 # User Management — AI Coding Agent Workflow Rules
 
-Binding rules for any AI coding agent building the **User Management Module** — first module of the rebuilt **wholesale enterprise billing application** (billing other MNOs for wholesale 5G services). They govern *how you work* — scope, sequence, split, clarify, verify, keep docs in sync — not the product or technical design.
+Binding rules for any AI coding agent building the **User Management Module** — first module of the rebuilt **wholesale enterprise billing application** (billing other MNOs for wholesale 5G services). They govern _how you work_ — scope, sequence, split, clarify, verify, keep docs in sync — not the product or technical design.
 
 **Companion docs (authoritative — do not restate or contradict):**
+
 - `usrmgmt-project-overview.md` — product spec: user flows, 4 pages, 10-table data model, roles, permission seed, audit events.
 - `usrmgmt-architecture.md` — technical design: stack, folder boundaries, enforcement, multi-module DB, numbered **Invariants**.
 - `usrmgmt-code-standards.md` — coding conventions and CI gates.

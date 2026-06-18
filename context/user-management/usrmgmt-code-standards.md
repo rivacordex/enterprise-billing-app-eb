@@ -2,7 +2,7 @@
 
 Coding standards for **User Management Module** — first module of **wholesale enterprise billing application** rebuild (which bills other MNOs for wholesale services). They turn the architecture and product spec into enforceable conventions, binding for this module and inherited by every later module (Product, Customer, Billing Service, Bill Run, Accounting).
 
-**Companion docs:** `usrmgmt-project-overview.md` (product spec) and `usrmgmt-architecture.md` (technical design, numbered **Invariants**). Referenced by section, not restated. Where this doc conflicts with the architecture *Invariants*, the **Invariants win** and the conflict is a bug to fix here.
+**Companion docs:** `usrmgmt-project-overview.md` (product spec) and `usrmgmt-architecture.md` (technical design, numbered **Invariants**). Referenced by section, not restated. Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
 
 **Stack baseline (architecture §1):** Next.js ≥ 15 (App Router, RSC) · Node ≥ 22 (Active LTS) · TypeScript `strict` · Better-Auth (scrypt) · Drizzle ORM · PostgreSQL ≥ 16 (Azure Flexible Server) · Tailwind CSS + shadcn/ui · Azure Container Apps · Azure DevOps CI/CD with SAST + OWASP ZAP DAST gates.
 
@@ -26,8 +26,8 @@ Non-negotiable, every file.
 12. **Fail loud, never silent.** Catch only to translate into a typed `AppError` (§2) or an HTTP response. Never swallow an exception or hide a failure behind a fallback.
 13. **Pure functions and small modules.** One thing per file; functions stay short and side-effect-free except at documented boundaries (`actions`, `app/api`, `db` repositories, the `auth/` sign-in hook).
 14. **Commits are scoped and tested.** Every PR passes type-check, lint, tests (incl. the route × level matrix), and the security scan before merge (§10).
-15. Stdlib does it? :use it 
-16. Native Platform feature? :use it 
+15. Stdlib does it? :use it
+16. Native Platform feature? :use it
 17. Installed dependency? :use it
 18. One line? :one line
 19. Only then: the minimum that works
@@ -43,15 +43,15 @@ Non-negotiable, every file.
 5. **`import type { … }`** for type-only imports; group them separately from value imports.
 6. **Model fixed sets as `as const` string-literal unions, not `enum`s.**
    ```ts
-   export const PERMISSION_LEVELS = ['READ', 'EDIT', 'DELETE'] as const
-   export type PermissionLevel = (typeof PERMISSION_LEVELS)[number]
+   export const PERMISSION_LEVELS = ["READ", "EDIT", "DELETE"] as const;
+   export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
    ```
    Same for `AuthMethod` (`'SSO' | 'LOCAL'`) and `UserStatus` (`'PENDING' | 'ACTIVE' | 'DISABLED' | 'DELETED'`).
 7. **Derive DB row types from Drizzle**, never hand-written: `typeof appUser.$inferSelect` / `$inferInsert`. Because Better-Auth's fields are remapped to snake_case in the Drizzle definitions (architecture §3, inv. #19), always derive from the Drizzle table — never Better-Auth's default field names. Compose with UI/request shapes in `types/`.
 8. **Zod is the single source of truth for input shapes.** Derive the type with `z.infer<typeof schema>`; never declare type and schema separately.
 9. **Return typed results from services; do not throw for expected control flow.**
    ```ts
-   type Result<T> = { ok: true; value: T } | { ok: false; error: AppError }
+   type Result<T> = { ok: true; value: T } | { ok: false; error: AppError };
    ```
    Throw only `AppError` subclasses (in `lib/`) for exceptional failures; map codes to HTTP status at the boundary (§5).
 10. **Naming.** `PascalCase` for types/interfaces/components/classes; `camelCase` for variables/functions/keys; `SCREAMING_SNAKE_CASE` for module constants. Permission names, statuses, and levels are string literals exactly as seeded (`'users'` lowercase as a **name**; `'READ'` uppercase as a **level**).
@@ -122,7 +122,7 @@ Route Handlers are the only HTTP API surface — thin and uniform.
 
 One PostgreSQL database; no file storage or cache tier in v1 (architecture §3, §4).
 
-1. **`db/**` is the only place SQL/queries live.** No `app/**`, `actions/**`, `services/**`, or `auth/**` file imports the DB client or runs raw SQL; all access via repositories (inv. #14). The `auth/` sign-in hook reads/writes lockout state through a repository.
+1. **`db/**`is the only place SQL/queries live.** No`app/**`, `actions/**`, `services/**`, or `auth/**`file imports the DB client or runs raw SQL; all access via repositories (inv. #14). The`auth/` sign-in hook reads/writes lockout state through a repository.
 2. **Drizzle owns schema and migrations.** No manual production DDL; schema/seed changes are committed migration files applied as one ordered, gated CI/CD step (inv. #15).
 3. **One shared DB, one `core` schema.** The 10 shared-core tables live in `core`. No module creates its own identity/RBAC/session/config/audit tables; module domain tables go in their own schema (`product`, `customer`, `billing`, `accounting`, …) and reference `core` by FK (architecture §4).
 4. **The whole database uses snake_case columns.** Better-Auth's managed tables (`APPUSER`/`user`, `account`, `session`, `verification`) keep their semantics but have fields mapped to snake_case via Better-Auth's field mapping, declared once in `auth/` (inv. #19). Our tables are snake_case natively. No camelCase columns; the mapping is never bypassed by hand-written SQL.
@@ -173,7 +173,7 @@ infra/               # IaC, pipelines (incl. OWASP ZAP DAST stage), Dockerfile, 
 6. **Repositories** live in `db/repositories/<entity>.ts` (only exporters of query functions). Tables in `db/schema/<area>.ts`; migrations in `db/migrations/`; seeds in `db/seeds/`.
 7. **Shared types go in `types/`** only when cross-layer; single-component types stay co-located.
 8. **`auth/` holds** the Better-Auth config + field mapping, providers, the sign-in/lockout hook, the code-seeded permission registry, and the single resolver. No page-specific logic.
-9. **Tests mirror the source tree** and must include the route × level matrix (overview *Success Criteria* #3). A guarded route isn't done until its matrix tests exist.
+9. **Tests mirror the source tree** and must include the route × level matrix (overview _Success Criteria_ #3). A guarded route isn't done until its matrix tests exist.
 10. **No deep relative import chains.** Use the `@/…` alias cross-folder; relative imports only for same-folder siblings.
 11. **Barrels (`index.ts`) only for `components/ui/`**, no import cycles, no cross-boundary re-exports.
 
@@ -193,22 +193,22 @@ infra/               # IaC, pipelines (incl. OWASP ZAP DAST stage), Dockerfile, 
 
 Authoritative for v1; mirrors architecture §6. New pages are appended before they ship. **In v1 only ADMIN holds the `users`/`roles`/`system_config`/`audit_log` grants, so the four Administration pages are ADMIN-only; MANAGER and USER land on `/no-access`.**
 
-| Page | Route | Top-level component | Folder | Permission : level |
-|---|---|---|---|---|
-| Login | `/login` | `LoginPage` → `LoginForm` | `app/(auth)/login/` | **Public** (redirects if authenticated) |
-| Entra sign-in / callback | `/api/auth/*` | Better-Auth handler | `app/api/auth/[...all]/` | **Public, provider-gated** — valid Entra identity matching a pre-created SSO user |
-| Set password (forced first-login change) | `/set-password` | `SetPasswordPage` → `SetPasswordForm` | `app/(auth)/set-password/` | **Session-gated** — `force_password_change = TRUE`, own credential only |
-| Root | `/` | `RootRedirect` | `app/` | **Authenticated** — first page the user can READ, else `/no-access` |
-| No access | `/no-access` | `NoAccessPage` | `app/(admin)/no-access/` | **Authenticated** — any `ACTIVE` session; no nav. v1 landing for MANAGER/USER. |
-| Users — list/detail | `/administration/users` | `UsersPage` → `UserTable`, `UserDetail` | `app/(admin)/administration/users/` | `users` : **READ** (ADMIN only in v1) |
-| Users — create/edit, assign/revoke roles, reset password, unlock, change auth method | (actions under `/administration/users`) | `UserForm`, `RoleAssignmentPanel` | `actions/users/` | `users` : **EDIT** (role assignment is ADMIN-only, architecture §5) |
-| Users — tombstone (delete) | (action under `/administration/users`) | `DeleteUserDialog` | `actions/users/` | `users` : **DELETE** (target DISABLED first) |
-| Roles — list/detail | `/administration/roles` | `RolesPage` → `RoleTable`, `RoleDetail` | `app/(admin)/administration/roles/` | `roles` : **READ** (ADMIN only in v1) |
-| Roles — create/edit, change permission mappings | (actions under `/administration/roles`) | `RoleForm`, `PermissionMatrixEditor` | `actions/roles/` | `roles` : **EDIT** |
-| Roles — delete | (action under `/administration/roles`) | `DeleteRoleDialog` | `actions/roles/` | `roles` : **DELETE** |
-| System Configuration — view | `/administration/system-config` | `SystemConfigPage` → `ConfigTable` | `app/(admin)/administration/system-config/` | `system_config` : **READ** (ADMIN only in v1) |
-| System Configuration — change values | (action under `/administration/system-config`) | `ConfigEditor` | `actions/system-config/` | `system_config` : **EDIT** |
-| Audit Log — view | `/administration/audit-log` | `AuditLogPage` → `AuditLogTable`, `AuditLogFilters` | `app/(admin)/administration/audit-log/` | `audit_log` : **READ** (READ-max) |
+| Page                                                                                 | Route                                          | Top-level component                                 | Folder                                      | Permission : level                                                                |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------- | --------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
+| Login                                                                                | `/login`                                       | `LoginPage` → `LoginForm`                           | `app/(auth)/login/`                         | **Public** (redirects if authenticated)                                           |
+| Entra sign-in / callback                                                             | `/api/auth/*`                                  | Better-Auth handler                                 | `app/api/auth/[...all]/`                    | **Public, provider-gated** — valid Entra identity matching a pre-created SSO user |
+| Set password (forced first-login change)                                             | `/set-password`                                | `SetPasswordPage` → `SetPasswordForm`               | `app/(auth)/set-password/`                  | **Session-gated** — `force_password_change = TRUE`, own credential only           |
+| Root                                                                                 | `/`                                            | `RootRedirect`                                      | `app/`                                      | **Authenticated** — first page the user can READ, else `/no-access`               |
+| No access                                                                            | `/no-access`                                   | `NoAccessPage`                                      | `app/(admin)/no-access/`                    | **Authenticated** — any `ACTIVE` session; no nav. v1 landing for MANAGER/USER.    |
+| Users — list/detail                                                                  | `/administration/users`                        | `UsersPage` → `UserTable`, `UserDetail`             | `app/(admin)/administration/users/`         | `users` : **READ** (ADMIN only in v1)                                             |
+| Users — create/edit, assign/revoke roles, reset password, unlock, change auth method | (actions under `/administration/users`)        | `UserForm`, `RoleAssignmentPanel`                   | `actions/users/`                            | `users` : **EDIT** (role assignment is ADMIN-only, architecture §5)               |
+| Users — tombstone (delete)                                                           | (action under `/administration/users`)         | `DeleteUserDialog`                                  | `actions/users/`                            | `users` : **DELETE** (target DISABLED first)                                      |
+| Roles — list/detail                                                                  | `/administration/roles`                        | `RolesPage` → `RoleTable`, `RoleDetail`             | `app/(admin)/administration/roles/`         | `roles` : **READ** (ADMIN only in v1)                                             |
+| Roles — create/edit, change permission mappings                                      | (actions under `/administration/roles`)        | `RoleForm`, `PermissionMatrixEditor`                | `actions/roles/`                            | `roles` : **EDIT**                                                                |
+| Roles — delete                                                                       | (action under `/administration/roles`)         | `DeleteRoleDialog`                                  | `actions/roles/`                            | `roles` : **DELETE**                                                              |
+| System Configuration — view                                                          | `/administration/system-config`                | `SystemConfigPage` → `ConfigTable`                  | `app/(admin)/administration/system-config/` | `system_config` : **READ** (ADMIN only in v1)                                     |
+| System Configuration — change values                                                 | (action under `/administration/system-config`) | `ConfigEditor`                                      | `actions/system-config/`                    | `system_config` : **EDIT**                                                        |
+| Audit Log — view                                                                     | `/administration/audit-log`                    | `AuditLogPage` → `AuditLogTable`, `AuditLogFilters` | `app/(admin)/administration/audit-log/`     | `audit_log` : **READ** (READ-max)                                                 |
 
 **Notes**
 
@@ -225,7 +225,7 @@ A change merges only when all pass:
 1. **`tsc --noEmit`** clean under the strict config (§2).
 2. **ESLint** clean, incl. the import-boundary rule (§1.4, §7.1), `no-floating-promises`, `no-explicit-any` (only justified, line-scoped disables).
 3. **Prettier** applied (one shared config).
-4. **Test suite** green, incl. the route × level matrix (§7.9) and the guardrail tests from *Success Criteria* (ADMIN-only administration, instant revocation, exclusive auth paths, tombstone end-to-end, unified audit trail).
+4. **Test suite** green, incl. the route × level matrix (§7.9) and the guardrail tests from _Success Criteria_ (ADMIN-only administration, instant revocation, exclusive auth paths, tombstone end-to-end, unified audit trail).
 5. **Migrations** present and ordered for any schema/permission-seed change; no manual DDL (§6.2).
 6. **No secret** added to repo, image, or DB (§1.6); secret scanning passes.
 7. **Security scan passes.** SAST plus the **OWASP ZAP** DAST baseline against the staging revision; no high/critical finding ships (architecture §1, inv. #23). Burp Suite Community for manual pen-testing outside the gating pipeline.
