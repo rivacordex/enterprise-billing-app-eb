@@ -14,12 +14,9 @@ const envSchema = z.object({
     message: "DATABASE_URL must be a postgresql:// connection string.",
   }),
   // Production sourcing moves to Azure Key Vault via Managed Identity (um25);
-  // here BETTER_AUTH_SECRET and BOOTSTRAP_ADMIN_PASSWORD are read directly
-  // from the env (um03).
+  // here BETTER_AUTH_SECRET is read directly from the env (um03).
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.url(),
-  BOOTSTRAP_ADMIN_EMAIL: z.email(),
-  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(16),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -32,8 +29,6 @@ function loadConfig(): Config {
     DATABASE_URL: process.env.DATABASE_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
-    BOOTSTRAP_ADMIN_EMAIL: process.env.BOOTSTRAP_ADMIN_EMAIL,
-    BOOTSTRAP_ADMIN_PASSWORD: process.env.BOOTSTRAP_ADMIN_PASSWORD,
   });
 
   if (!parsed.success) {
