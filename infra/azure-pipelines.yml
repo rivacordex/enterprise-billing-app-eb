@@ -1,0 +1,70 @@
+# um01 quality-gate pipeline. Deployment stages (Dockerfile, Container Apps,
+# migrations, Key Vault/Managed Identity, OWASP ZAP DAST) are appended in um25.
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+resources:
+  containers:
+    # Postgres 16 service for the um02 DB migration integration suite
+    # (tests/db/migration.integration.test.ts) — see vitest.integration.config.ts.
+    - container: postgres
+      image: postgres:16
+      env:
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_DB: enterprise_billing
+      ports:
+        - 5432:5432
+
+jobs:
+  - job: quality_gates
+    displayName: Quality gates
+    services:
+      postgres: postgres
+    variables:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/enterprise_billing
+    steps:
+      - task: NodeTool@0
+        inputs:
+          versionSpec: "22.x"
+        displayName: Use Node 22
+
+      - script: npm ci
+        displayName: Install dependencies
+
+      - script: npm run typecheck
+        displayName: Type check (tsc --noEmit)
+
+      - script: npm run lint
+        displayName: Lint (ESLint incl. import boundaries)
+
+      - script: npm run format:check
+        displayName: Format check (Prettier)
+
+      - script: |
+          for i in $(seq 1 30); do
+            (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && break
+            sleep 1
+          done
+        displayName: Wait for Postgres service
+
+      - script: npm run test
+        displayName: Test (Vitest, incl. DB migration integration)
+
+      - script: |
+          docker run --rm \
+            -v "$(System.DefaultWorkingDirectory):/src" \
+            returntocorp/semgrep \
+            semgrep scan --config p/typescript --config p/javascript --config p/nextjs \
+              --config p/owasp-top-ten --config p/secrets --error /src
+        displayName: SAST (Semgrep)

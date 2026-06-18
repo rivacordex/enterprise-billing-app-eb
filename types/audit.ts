@@ -1,0 +1,26 @@
+export const AUDIT_EVENT_TYPES = [
+  "LOCAL_LOGIN",
+  "SSO_LOGIN",
+  "USER_FIRST_LOGIN",
+  "USER_CREATED",
+  "USER_UPDATED",
+  "USER_DISABLED",
+  "USER_ENABLED",
+  "USER_DELETED",
+  "USER_LOCKED",
+  "USER_UNLOCKED",
+  "USER_PASSWORD_RESET",
+  "USER_PASSWORD_CHANGED",
+  "USER_AUTH_METHOD_CHANGED",
+  "ROLE_CREATED",
+  "ROLE_UPDATED",
+  "ROLE_DELETED",
+  "ROLE_ASSIGNED",
+  "ROLE_REVOKED",
+  "PERMISSION_MAPPING_CHANGED",
+  "SYSTEM_CONFIG_CHANGED",
+] as const;
+
+export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
+
+export type { AuditLog, AuditLogInsert } from "@/db/schema/audit";
