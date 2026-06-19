@@ -19,7 +19,10 @@ export function TempPasswordDisplay({
   function handleCopy(): void {
     // Clipboard access can be denied by browser policy (e.g. permissions,
     // insecure context) — that failure shouldn't surface as an unhandled
-    // rejection or block the optimistic "Copied" feedback.
+    // rejection or block the optimistic "Copied" feedback. The API itself
+    // may also simply not exist (e.g. a non-secure context), hence the
+    // presence guard.
+    if (!navigator.clipboard) return;
     navigator.clipboard.writeText(tempPassword).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);

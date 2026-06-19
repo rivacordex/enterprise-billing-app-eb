@@ -24,6 +24,7 @@ import { rolePermissionAssign } from "@/db/schema/role-permission-assign";
 import { roleAssign } from "@/db/schema/role-assign";
 import type { disableUserAction as DisableUserAction } from "@/actions/users/disable-user.action";
 import type { enableUserAction as EnableUserAction } from "@/actions/users/enable-user.action";
+import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // Exercises the real `disableUserAction`/`enableUserAction` (guard +
 // validation + service + revalidatePath) against a live Postgres database,
@@ -59,6 +60,7 @@ describe.skipIf(!databaseUrl)(
     }
 
     beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');

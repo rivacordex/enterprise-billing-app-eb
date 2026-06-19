@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { hashPassword } from "better-auth/crypto";
 
 import { config } from "@/lib/config";
@@ -20,10 +20,19 @@ async function main(): Promise<void> {
   const db = drizzle(sql, { schema: { appuser, account } });
 
   try {
+    // `appuser_email_unique` is a partial index (`WHERE status <> 'DELETED'`,
+    // um02-spec §3.4) — a DELETED row sharing this email is not a live
+    // admin and must not be mistaken for one, or this script would skip
+    // reseeding and leave the system with zero working admins.
     const [existing] = await db
       .select()
       .from(appuser)
-      .where(eq(appuser.userEmail, bootstrapAdmin.BOOTSTRAP_ADMIN_EMAIL))
+      .where(
+        and(
+          eq(appuser.userEmail, bootstrapAdmin.BOOTSTRAP_ADMIN_EMAIL),
+          ne(appuser.status, "DELETED"),
+        ),
+      )
       .limit(1);
 
     if (existing) {

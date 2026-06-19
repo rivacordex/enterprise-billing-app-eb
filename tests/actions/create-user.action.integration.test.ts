@@ -23,6 +23,7 @@ import { permissions } from "@/db/schema/permissions";
 import { rolePermissionAssign } from "@/db/schema/role-permission-assign";
 import { roleAssign } from "@/db/schema/role-assign";
 import type { createUserAction as CreateUserAction } from "@/actions/users/create-user.action";
+import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // Exercises the real `createUserAction` (guard + validation + service +
 // revalidatePath) against a live Postgres database. `@/auth` is replaced
@@ -58,6 +59,7 @@ describe.skipIf(!databaseUrl)(
     }
 
     beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');

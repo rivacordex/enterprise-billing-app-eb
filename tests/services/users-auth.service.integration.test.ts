@@ -11,6 +11,7 @@ import * as schema from "@/db/schema";
 import { appuser } from "@/db/schema/identity";
 import { auditLog } from "@/db/schema/audit";
 import type { handleSsoSignIn as HandleSsoSignIn } from "@/services/users/users-auth.service";
+import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // um10-spec §10.10 integration coverage for `handleSsoSignIn` — unlike
 // `setPasswordAction`'s integration suite, this function never touches
@@ -38,6 +39,7 @@ describe.skipIf(!databaseUrl)("handleSsoSignIn (requires DATABASE_URL)", () => {
   }
 
   beforeAll(async () => {
+    assertTestDatabaseUrl(databaseUrl as string);
     sql = postgres(databaseUrl as string, { max: 1 });
     await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');

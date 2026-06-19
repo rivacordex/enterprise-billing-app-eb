@@ -196,9 +196,15 @@ export type RevokeRoleResult =
   | { ok: false; code: "ASSIGNMENT_NOT_FOUND" }
   | { ok: false; code: "LAST_ADMIN_ROLE" };
 
+// Internal sentinel thrown inside `revokeRole`'s transaction to roll back
+// and signal `LAST_ADMIN_ROLE` without treating it as an unexpected error.
+class LastAdminRoleGuardError extends Error {}
+
 // um12-spec §12.7. Invariant #13 (last ADMIN-capable account never
 // removed): a revoke of the ADMIN role is blocked while it is the only
-// non-DELETED user holding it.
+// non-DELETED user holding it. The count re-check runs inside the same
+// transaction as the delete (using `tx`, not `db`) so a concurrent revoke
+// can't both pass the pre-check and remove the last admin.
 export async function revokeRole(
   input: RevokeRoleInput,
   actorId: string,
@@ -222,41 +228,49 @@ export async function revokeRole(
     return { ok: false, code: "ASSIGNMENT_NOT_FOUND" };
   }
 
-  if (role.roleName === "ADMIN") {
-    const adminCount = await roleAssignRepository.countNonDeletedUsersWithRole(
-      db,
-      input.roleId,
-    );
-    if (adminCount <= 1) {
+  try {
+    await db.transaction(async (tx) => {
+      if (role.roleName === "ADMIN") {
+        const adminCount =
+          await roleAssignRepository.countNonDeletedUsersWithRole(
+            tx,
+            input.roleId,
+          );
+        if (adminCount <= 1) {
+          throw new LastAdminRoleGuardError();
+        }
+      }
+
+      const deleted = await roleAssignRepository.deleteRoleAssign(tx, {
+        refUserId: input.userId,
+        refRoleId: input.roleId,
+      });
+      if (!deleted) {
+        throw new Error(
+          `revokeRole: role assignment disappeared mid-transaction for user ${input.userId}, role ${input.roleId}`,
+        );
+      }
+
+      await insertAuditEvent(tx, {
+        eventType: "ROLE_REVOKED",
+        actorUserId: actorId,
+        targetEntity: "ROLE_ASSIGN",
+        targetId: existing.roleAssignId,
+        beforeData: {
+          userId: input.userId,
+          roleId: input.roleId,
+          roleName: role.roleName,
+          assignedBy: existing.assignedBy,
+        },
+        afterData: null,
+      });
+    });
+  } catch (error) {
+    if (error instanceof LastAdminRoleGuardError) {
       return { ok: false, code: "LAST_ADMIN_ROLE" };
     }
+    throw error;
   }
-
-  await db.transaction(async (tx) => {
-    const deleted = await roleAssignRepository.deleteRoleAssign(tx, {
-      refUserId: input.userId,
-      refRoleId: input.roleId,
-    });
-    if (!deleted) {
-      throw new Error(
-        `revokeRole: role assignment disappeared mid-transaction for user ${input.userId}, role ${input.roleId}`,
-      );
-    }
-
-    await insertAuditEvent(tx, {
-      eventType: "ROLE_REVOKED",
-      actorUserId: actorId,
-      targetEntity: "ROLE_ASSIGN",
-      targetId: existing.roleAssignId,
-      beforeData: {
-        userId: input.userId,
-        roleId: input.roleId,
-        roleName: role.roleName,
-        assignedBy: existing.assignedBy,
-      },
-      afterData: null,
-    });
-  });
 
   return { ok: true };
 }
@@ -267,10 +281,15 @@ export type DisableUserResult =
   | { ok: false; code: "LAST_ADMIN" }
   | { ok: false; code: "INVALID_STATE" };
 
+// Internal sentinel thrown inside `disableUser`'s transaction to roll back
+// and signal `LAST_ADMIN` without treating it as an unexpected error.
+class LastAdminGuardError extends Error {}
+
 // um13-spec §13.3.1. Disabling kills the target's sessions inside the same
 // transaction as the status update so their next request fails at once
-// (Invariant #8). The last-admin guard (Invariant #13) runs ahead of the
-// transaction.
+// (Invariant #8). The last-admin guard (Invariant #13) re-checks inside
+// that same transaction (using `tx`, not `db`) so a concurrent disable
+// can't both pass the pre-check and remove the last sign-in-capable admin.
 export async function disableUser(
   input: DisableUserInput,
   actorId: string,
@@ -283,28 +302,35 @@ export async function disableUser(
     return { ok: false, code: "INVALID_STATE" };
   }
 
-  if (await userHasAdminRole(db, input.userId)) {
-    const remainingAdmins = await countRemainingAdmins(db, input.userId);
-    if (remainingAdmins === 0) {
-      return { ok: false, code: "LAST_ADMIN" };
-    }
-  }
-
   const before = { status: existingUser.status };
 
-  await db.transaction(async (tx) => {
-    await setUserStatus(tx, input.userId, "DISABLED");
-    await deleteByUserId(tx, input.userId);
+  try {
+    await db.transaction(async (tx) => {
+      if (await userHasAdminRole(tx, input.userId)) {
+        const remainingAdmins = await countRemainingAdmins(tx, input.userId);
+        if (remainingAdmins === 0) {
+          throw new LastAdminGuardError();
+        }
+      }
 
-    await insertAuditEvent(tx, {
-      eventType: "USER_DISABLED",
-      actorUserId: actorId,
-      targetEntity: "APPUSER",
-      targetId: input.userId,
-      beforeData: before,
-      afterData: { status: "DISABLED" },
+      await setUserStatus(tx, input.userId, "DISABLED");
+      await deleteByUserId(tx, input.userId);
+
+      await insertAuditEvent(tx, {
+        eventType: "USER_DISABLED",
+        actorUserId: actorId,
+        targetEntity: "APPUSER",
+        targetId: input.userId,
+        beforeData: before,
+        afterData: { status: "DISABLED" },
+      });
     });
-  });
+  } catch (error) {
+    if (error instanceof LastAdminGuardError) {
+      return { ok: false, code: "LAST_ADMIN" };
+    }
+    throw error;
+  }
 
   return { ok: true };
 }

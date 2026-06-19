@@ -105,6 +105,15 @@ describe("assignRoleAction", () => {
     expect(mockAssignRole).not.toHaveBeenCalled();
   });
 
+  it("returns SERVER_ERROR when requirePermission throws a non-redirect error", async () => {
+    mockRequirePermission.mockRejectedValue(new Error("db exploded"));
+
+    const result = await assignRoleAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
+    expect(mockAssignRole).not.toHaveBeenCalled();
+  });
+
   it("returns SERVER_ERROR when the service throws", async () => {
     mockAssignRole.mockRejectedValue(new Error("db exploded"));
 

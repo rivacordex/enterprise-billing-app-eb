@@ -34,7 +34,17 @@ export async function GET(): Promise<Response> {
     );
   }
 
-  const { url } = (await response.json()) as { url?: string };
+  let url: string | undefined;
+  try {
+    ({ url } = (await response.json()) as { url?: string });
+  } catch (err) {
+    logger.error("Failed to parse Microsoft sign-in response.", {
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+    return NextResponse.redirect(
+      new URL("/login?error=sso_unavailable", config.APP_URL),
+    );
+  }
   if (!url) {
     logger.error("Microsoft sign-in did not return an authorization URL.");
     return NextResponse.redirect(

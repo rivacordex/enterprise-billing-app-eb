@@ -70,7 +70,9 @@ describe("UsersPage", () => {
 
     await expect(
       UsersPage({ searchParams: Promise.resolve({}) }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      digest: expect.stringContaining(";/no-access;"),
+    });
     expect(mockListUsers).not.toHaveBeenCalled();
   });
 
@@ -79,7 +81,7 @@ describe("UsersPage", () => {
 
     await expect(
       UsersPage({ searchParams: Promise.resolve({}) }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ digest: expect.stringContaining(";/login;") });
     expect(mockListUsers).not.toHaveBeenCalled();
   });
 });

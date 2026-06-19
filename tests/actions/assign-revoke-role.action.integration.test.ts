@@ -182,6 +182,15 @@ describe.skipIf(!databaseUrl)(
     it("admin_user revokes a previously assigned role, deleting the row and writing a ROLE_REVOKED audit row", async () => {
       mockSession(adminUserId);
       await assignRoleAction({ userId: targetUserId, roleId: testRoleId });
+      const [assignedRow] = await db
+        .select()
+        .from(roleAssign)
+        .where(
+          and(
+            eq(roleAssign.refUserId, targetUserId),
+            eq(roleAssign.refRoleId, testRoleId),
+          ),
+        );
 
       const result = await revokeRoleAction({
         userId: targetUserId,
@@ -196,11 +205,22 @@ describe.skipIf(!databaseUrl)(
         .where(eq(roleAssign.refUserId, targetUserId));
       expect(remaining).toHaveLength(0);
 
+      // Scoped to this specific assignment's id *and* the REVOKED event —
+      // the ROLE_ASSIGNED row written moments earlier shares the same
+      // targetId (the same role_assign row's id), and other tests in this
+      // suite write ROLE_REVOKED rows for other users/roles.
       const auditRows = await db
         .select()
         .from(auditLog)
-        .where(eq(auditLog.eventType, "ROLE_REVOKED"));
-      expect(auditRows.length).toBeGreaterThan(0);
+        .where(
+          and(
+            eq(auditLog.targetId, assignedRow!.roleAssignId),
+            eq(auditLog.eventType, "ROLE_REVOKED"),
+          ),
+        );
+      expect(auditRows).toHaveLength(1);
+      expect(auditRows[0]?.eventType).toBe("ROLE_REVOKED");
+      expect(auditRows[0]?.actorUserId).toBe(adminUserId);
     });
 
     it("assigning the same role twice returns ALREADY_ASSIGNED on the second call", async () => {

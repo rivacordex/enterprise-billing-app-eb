@@ -151,6 +151,12 @@ export function UserDetail({
         toast.error("Something went wrong. Please try again.");
         setIsConfirmOpen(false);
       }
+    } catch {
+      // The action itself never throws (its own internal try/catch always
+      // returns a typed result) — this guards against a transport-level
+      // failure invoking it (e.g. a network drop) rejecting instead.
+      toast.error("Something went wrong. Please try again.");
+      setIsConfirmOpen(false);
     } finally {
       setIsDisabling(false);
     }
@@ -172,6 +178,8 @@ export function UserDetail({
         }
       }
       // On success, `revalidatePath` re-renders with the updated status.
+    } catch {
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setIsEnabling(false);
     }
@@ -197,6 +205,8 @@ export function UserDetail({
       } else {
         toast.error("Something went wrong. Please try again.");
       }
+    } catch {
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setIsSaving(false);
     }

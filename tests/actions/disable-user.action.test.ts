@@ -110,6 +110,15 @@ describe("disableUserAction", () => {
     expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
   });
 
+  it("returns SERVER_ERROR when requirePermission throws a non-redirect error", async () => {
+    mockRequirePermission.mockRejectedValue(new Error("db exploded"));
+
+    const result = await disableUserAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
+    expect(mockDisableUser).not.toHaveBeenCalled();
+  });
+
   it("returns SERVER_ERROR when the service throws", async () => {
     mockDisableUser.mockRejectedValue(new Error("db exploded"));
 

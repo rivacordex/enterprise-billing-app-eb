@@ -10,6 +10,7 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { account, appuser } from "@/db/schema/identity";
 import type { createUser as CreateUser } from "@/services/users/users-write.service";
+import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -28,6 +29,7 @@ describe.skipIf(!databaseUrl)(
     let actorUserId: string;
 
     beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
