@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -6,6 +8,15 @@ import tsconfigPaths from "vite-tsconfig-paths";
 // `DATABASE_URL`; skip loudly when it is unset rather than passing silently.
 export default defineConfig({
   plugins: [tsconfigPaths()],
+  resolve: {
+    alias: {
+      // See tests/mocks/server-only.ts — Vitest never sets the
+      // "react-server" condition that makes the real package a no-op.
+      "server-only": fileURLToPath(
+        new URL("./tests/mocks/server-only.ts", import.meta.url),
+      ),
+    },
+  },
   test: {
     environment: "node",
     globals: true,

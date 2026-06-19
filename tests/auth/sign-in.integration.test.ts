@@ -26,9 +26,11 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
 
   const ADMIN_EMAIL = "active-admin@example.com";
   const ADMIN_PASSWORD = "correct-password-123";
+  const DISABLED_EMAIL = "disabled-user@example.com";
   const PENDING_EMAIL = "pending-user@example.com";
 
   let activeUserId: string;
+  let disabledUserId: string;
   let pendingUserId: string;
 
   beforeAll(async () => {
@@ -64,6 +66,28 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
       password: hashedPassword,
     });
 
+    disabledUserId = randomUUID();
+    await db.insert(appuser).values({
+      id: disabledUserId,
+      userName: "Disabled User",
+      userEmail: DISABLED_EMAIL,
+      emailVerified: false,
+      authMethod: "LOCAL",
+      status: "DISABLED",
+      forcePasswordChange: false,
+      failedLoginCount: 0,
+    });
+    await db.insert(account).values({
+      id: randomUUID(),
+      userId: disabledUserId,
+      providerId: "credential",
+      providerAccountId: disabledUserId,
+      password: hashedPassword,
+    });
+
+    // PENDING (um08): a newly created LOCAL user signs in with this status
+    // before completing the forced first-login `/set-password` flow (um09) —
+    // unlike DISABLED/DELETED, PENDING must be allowed past this hook.
     pendingUserId = randomUUID();
     await db.insert(appuser).values({
       id: pendingUserId,
@@ -72,7 +96,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
       emailVerified: false,
       authMethod: "LOCAL",
       status: "PENDING",
-      forcePasswordChange: false,
+      forcePasswordChange: true,
       failedLoginCount: 0,
     });
     await db.insert(account).values({
@@ -118,18 +142,31 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
     expect(audits).toHaveLength(0);
   });
 
-  it("rejects sign-in for a non-ACTIVE user", async () => {
+  it("rejects sign-in for a DISABLED user", async () => {
     await expect(
       auth.api.signInEmail({
-        body: { email: PENDING_EMAIL, password: ADMIN_PASSWORD },
+        body: { email: DISABLED_EMAIL, password: ADMIN_PASSWORD },
       }),
     ).rejects.toThrow();
 
     const sessions = await db
       .select()
       .from(session)
-      .where(eq(session.userId, pendingUserId));
+      .where(eq(session.userId, disabledUserId));
     expect(sessions).toHaveLength(0);
+  });
+
+  it("allows sign-in for a PENDING user (um09: forced first-login flow)", async () => {
+    const result = await auth.api.signInEmail({
+      body: { email: PENDING_EMAIL, password: ADMIN_PASSWORD },
+    });
+    expect(result.token).toBeTruthy();
+
+    const sessions = await db
+      .select()
+      .from(session)
+      .where(eq(session.userId, pendingUserId));
+    expect(sessions).toHaveLength(1);
   });
 
   it("creates a session and a LOCAL_LOGIN audit row, and updates last_login_datetime, on success", async () => {
