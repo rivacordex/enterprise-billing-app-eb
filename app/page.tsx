@@ -1,33 +1,63 @@
-// `/` is a temporary public placeholder, replaced by the authenticated root
-// redirect in um06. No auth, no nav, no data fetching — theme demo only.
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 
-export default function Home(): React.JSX.Element {
-  return (
-    <div className="flex min-h-screen flex-col bg-[var(--surface-app)]">
-      <header className="bg-[image:var(--gradient-chrome)] px-6 py-4">
-        <span className="text-h4 font-semibold text-[var(--text-on-brand)]">
-          Enterprise Billing
-        </span>
-      </header>
+import { auth } from "@/auth";
+import { resolveEffectivePermissions } from "@/auth/resolver";
+import { PERMISSIONS } from "@/auth/permission-constants";
+import { db } from "@/db/client";
+import { findUserById } from "@/db/repositories/appuser.repository";
+import { deleteByUserId } from "@/db/repositories/session.repository";
+import { resolveRootRedirect, type RouteOrderEntry } from "@/lib/root-redirect";
 
-      <main className="flex flex-1 items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md rounded-lg bg-card p-8 shadow-md">
-          <h1 className="text-display font-semibold text-foreground">
-            User Management
-          </h1>
-          <p className="mt-2 text-body text-foreground">
-            User Management — coming online
-          </p>
+export const dynamic = "force-dynamic";
 
-          <span className="mt-6 inline-flex items-center rounded-sm bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground">
-            Module scaffold ready
-          </span>
+// Routing policy, not permission logic (um06-spec §6.8) — lives here, not
+// in `auth/`. A new module appends a row here when it adds a page; no
+// changes to `auth/` are required.
+export const ROUTE_ORDER: RouteOrderEntry[] = [
+  { name: PERMISSIONS.USERS, route: "/administration/users" },
+  { name: PERMISSIONS.ROLES, route: "/administration/roles" },
+  {
+    name: PERMISSIONS.SYSTEM_CONFIG,
+    route: "/administration/system-config",
+  },
+  { name: PERMISSIONS.AUDIT_LOG, route: "/administration/audit-log" },
+];
 
-          <p className="mt-4 text-caption text-muted-foreground">
-            Tooling and themed shell only — see um01.
-          </p>
-        </div>
-      </main>
-    </div>
+// Does not call `requirePermission`/`requireAuthenticated`: both redirect
+// unauthenticated users to `/login` internally, but this page must check
+// `force_password_change` before computing permissions, and reusing the
+// guard here would risk a redirect loop (um06-spec §6.8). Renders nothing —
+// every path ends in `redirect()`.
+export default async function Home(): Promise<never> {
+  const session = await auth.api.getSession({ headers: await headers() });
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  const user = await findUserById(db, session.user.id);
+
+  // Mirrors `auth/guard.ts`'s `getActiveUser()` stale-session cleanup for
+  // a missing/DISABLED/DELETED user — but, unlike that guard, lets PENDING
+  // through (forcePasswordChange below sends them to `/set-password`,
+  // um09-spec §9.2), since this page deliberately can't reuse the guard
+  // (redirect-loop risk on `force_password_change`, um06-spec §6.8).
+  if (!user || user.status === "DISABLED" || user.status === "DELETED") {
+    await deleteByUserId(db, session.user.id);
+    redirect("/login");
+  }
+
+  const forcePasswordChange = user.forcePasswordChange;
+  const permissionMap = forcePasswordChange
+    ? null
+    : await resolveEffectivePermissions(session.user.id);
+
+  const route = await resolveRootRedirect(
+    { forcePasswordChange },
+    permissionMap,
+    ROUTE_ORDER,
   );
+
+  redirect(route);
 }

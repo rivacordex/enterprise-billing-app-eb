@@ -13,9 +13,6 @@
 # testing
 /coverage
 
-# context
-/context
-
 # next.js
 /.next/
 /out/
@@ -43,3 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code — local project config (never commit)
+.claude/*
+

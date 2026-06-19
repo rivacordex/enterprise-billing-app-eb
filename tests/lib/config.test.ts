@@ -7,6 +7,10 @@ const ENV_KEYS = [
   "DATABASE_URL",
   "BETTER_AUTH_SECRET",
   "BETTER_AUTH_URL",
+  "MICROSOFT_CLIENT_ID",
+  "MICROSOFT_CLIENT_SECRET",
+  "ENTRA_TENANT_ID",
+  "NEXT_PUBLIC_APP_URL",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -84,8 +88,6 @@ describe("config", () => {
         LOG_LEVEL: "warn",
         BETTER_AUTH_SECRET: VALID_BETTER_AUTH_SECRET,
         BETTER_AUTH_URL: VALID_BETTER_AUTH_URL,
-        BOOTSTRAP_ADMIN_EMAIL: VALID_BOOTSTRAP_ADMIN_EMAIL,
-        BOOTSTRAP_ADMIN_PASSWORD: VALID_BOOTSTRAP_ADMIN_PASSWORD,
       }),
     ).rejects.toMatchObject({
       name: "AppError",
@@ -119,5 +121,62 @@ describe("config", () => {
         BETTER_AUTH_URL: "not-a-url",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("entraConfig / isSsoConfigured", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is unconfigured when all three Entra vars are absent", async () => {
+    const { entraConfig, isSsoConfigured } =
+      await loadConfigWithEnv(VALID_REQUIRED_ENV);
+
+    expect(isSsoConfigured).toBe(false);
+    expect(entraConfig.tenantId).toBeNull();
+    expect(entraConfig.clientId).toBeNull();
+    expect(entraConfig.clientSecret).toBeNull();
+  });
+
+  it("is unconfigured when only some of the three Entra vars are present", async () => {
+    const { isSsoConfigured } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      MICROSOFT_CLIENT_ID: "client-id",
+      ENTRA_TENANT_ID: "tenant-id",
+    });
+
+    expect(isSsoConfigured).toBe(false);
+  });
+
+  it("is configured when all three Entra vars are present", async () => {
+    const { entraConfig, isSsoConfigured } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      MICROSOFT_CLIENT_ID: "client-id",
+      MICROSOFT_CLIENT_SECRET: "client-secret",
+      ENTRA_TENANT_ID: "tenant-id",
+    });
+
+    expect(isSsoConfigured).toBe(true);
+    expect(entraConfig.tenantId).toBe("tenant-id");
+    expect(entraConfig.clientId).toBe("client-id");
+    expect(entraConfig.clientSecret).toBe("client-secret");
+  });
+
+  it("computes the redirect URI from NEXT_PUBLIC_APP_URL", async () => {
+    const { entraConfig } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      NEXT_PUBLIC_APP_URL: "https://billing.example.com",
+    });
+
+    expect(entraConfig.redirectUri).toBe(
+      "https://billing.example.com/api/auth/callback/microsoft",
+    );
+  });
+
+  it("leaves the redirect URI null when NEXT_PUBLIC_APP_URL is absent", async () => {
+    const { entraConfig } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+
+    expect(entraConfig.redirectUri).toBeNull();
   });
 });

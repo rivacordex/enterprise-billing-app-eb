@@ -47,12 +47,22 @@ describe.skipIf(!databaseUrl)(
       expect(publicTables).toEqual([]);
     });
 
-    test("the four identity tables plus audit_log exist in core", async () => {
+    test("the four identity tables, audit_log, and the four RBAC tables exist in core", async () => {
       const tables = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.tables WHERE table_schema = 'core'
       `;
       expect(tables.map((r) => r.table_name).sort()).toEqual(
-        ["account", "appuser", "audit_log", "session", "verification"].sort(),
+        [
+          "account",
+          "appuser",
+          "audit_log",
+          "session",
+          "verification",
+          "roles",
+          "permissions",
+          "role_permission_assign",
+          "role_assign",
+        ].sort(),
       );
     });
 
@@ -79,30 +89,122 @@ describe.skipIf(!databaseUrl)(
       expect(indexes[0]?.indexdef).toContain("WHERE (status <> 'DELETED'");
     });
 
-    test("account and session have FKs to core.appuser with ON DELETE CASCADE; audit_log with ON DELETE SET NULL", async () => {
+    test("account, session, audit_log, and role_assign have FKs to core.appuser with the expected delete rules", async () => {
       const fks = await sql<
-        { table_name: string; delete_rule: string; foreign_table: string }[]
+        {
+          table_name: string;
+          column_name: string;
+          delete_rule: string;
+          foreign_table: string;
+        }[]
       >`
         SELECT
           tc.table_name,
+          kcu.column_name,
           rc.delete_rule,
           ccu.table_name AS foreign_table
         FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
         JOIN information_schema.referential_constraints rc
           ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
         JOIN information_schema.constraint_column_usage ccu
           ON rc.unique_constraint_name = ccu.constraint_name
         WHERE tc.table_schema = 'core' AND tc.constraint_type = 'FOREIGN KEY'
+          AND ccu.table_name = 'appuser'
       `;
-      expect(fks).toHaveLength(3);
-      for (const fk of fks) {
-        expect(fk.foreign_table).toBe("appuser");
-      }
+      const byColumn = new Map(
+        fks.map((fk) => [`${fk.table_name}.${fk.column_name}`, fk.delete_rule]),
+      );
+      expect(byColumn.get("account.user_id")).toBe("CASCADE");
+      expect(byColumn.get("session.user_id")).toBe("CASCADE");
+      expect(byColumn.get("audit_log.actor_user_id")).toBe("SET NULL");
+      expect(byColumn.get("role_assign.ref_user_id")).toBe("RESTRICT");
+      expect(byColumn.get("role_assign.assigned_by")).toBe("SET NULL");
+      expect(fks).toHaveLength(5);
+    });
 
-      const byTable = new Map(fks.map((fk) => [fk.table_name, fk.delete_rule]));
-      expect(byTable.get("account")).toBe("CASCADE");
-      expect(byTable.get("session")).toBe("CASCADE");
-      expect(byTable.get("audit_log")).toBe("SET NULL");
+    test("role_permission_assign and role_assign have FKs to core.roles/core.permissions with ON DELETE RESTRICT", async () => {
+      const fks = await sql<
+        { table_name: string; column_name: string; delete_rule: string }[]
+      >`
+        SELECT
+          tc.table_name,
+          kcu.column_name,
+          rc.delete_rule
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.referential_constraints rc
+          ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON rc.unique_constraint_name = ccu.constraint_name
+        WHERE tc.table_schema = 'core' AND tc.constraint_type = 'FOREIGN KEY'
+          AND ccu.table_name IN ('roles', 'permissions')
+      `;
+      const byColumn = new Map(
+        fks.map((fk) => [`${fk.table_name}.${fk.column_name}`, fk.delete_rule]),
+      );
+      expect(byColumn.get("role_permission_assign.ref_role_id")).toBe(
+        "RESTRICT",
+      );
+      expect(byColumn.get("role_permission_assign.ref_permission_id")).toBe(
+        "RESTRICT",
+      );
+      expect(byColumn.get("role_assign.ref_role_id")).toBe("RESTRICT");
+      expect(fks).toHaveLength(3);
+    });
+
+    test("named unique constraints exist on roles, permissions, role_permission_assign, role_assign", async () => {
+      const indexes = await sql<{ indexname: string }[]>`
+        SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'core' AND indexname IN (
+          'roles_role_name_unique',
+          'permissions_permission_name_unique',
+          'role_permission_assign_role_permission_unique',
+          'role_assign_user_role_unique'
+        )
+      `;
+      expect(indexes.map((i) => i.indexname).sort()).toEqual(
+        [
+          "roles_role_name_unique",
+          "permissions_permission_name_unique",
+          "role_permission_assign_role_permission_unique",
+          "role_assign_user_role_unique",
+        ].sort(),
+      );
+    });
+
+    test("role_permission_assign has the permission_type CHECK constraint", async () => {
+      const checks = await sql<{ conname: string; def: string }[]>`
+        SELECT con.conname, pg_get_constraintdef(con.oid) AS def
+        FROM pg_constraint con
+        JOIN pg_namespace ns ON con.connamespace = ns.oid
+        WHERE ns.nspname = 'core' AND con.contype = 'c'
+          AND con.conname = 'role_permission_assign_type_check'
+      `;
+      expect(checks).toHaveLength(1);
+      expect(checks[0]?.def).toContain("READ");
+      expect(checks[0]?.def).toContain("EDIT");
+      expect(checks[0]?.def).toContain("DELETE");
+    });
+
+    test("permissions has no timestamp columns; role_assign has no last_modified_datetime", async () => {
+      const permissionsColumns = await sql<{ column_name: string }[]>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'core' AND table_name = 'permissions'
+      `;
+      expect(permissionsColumns.map((c) => c.column_name)).not.toContain(
+        "created_datetime",
+      );
+
+      const roleAssignColumns = await sql<{ column_name: string }[]>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'core' AND table_name = 'role_assign'
+      `;
+      expect(roleAssignColumns.map((c) => c.column_name)).not.toContain(
+        "last_modified_datetime",
+      );
     });
 
     test("session_token is unique", async () => {
