@@ -16,9 +16,14 @@ import {
   recordFailedAttempt,
 } from "@/db/repositories/lockout.repository";
 import { isCurrentlyLocked } from "@/auth/lockout";
-import { config } from "@/lib/config";
+import {
+  isMicrosoftCallback,
+  rejectNonSsoAccountLink,
+} from "@/auth/sso-linking";
+import { config, entraConfig, isSsoConfigured } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { AUTH_ERROR_CODES } from "@/types/auth";
+import { handleSsoSignIn } from "@/services/users/users-auth.service";
 
 // um03-spec §2.1 deliberately surfaces a distinct message for a locked
 // account (unlike um04-spec §"Rejection response", which calls for an
@@ -59,6 +64,18 @@ export const auth = betterAuth({
       createdAt: "createdDatetime",
       updatedAt: "lastModifiedDatetime",
     },
+    accountLinking: {
+      // Entra is a corporate IdP we configure ourselves (um10-spec §"Auth-
+      // method exclusivity") — trusting it bypasses Better-Auth's default
+      // `userInfo.emailVerified` gate on implicit linking. Microsoft Entra
+      // ID does not return the `email_verified` claim unless separately
+      // configured as an optional claim, so without this, every Entra
+      // sign-in would otherwise be rejected as "account not linked".
+      // `requireLocalEmailVerified` (default true) still requires the
+      // pre-created APPUSER itself to have `email_verified = true`, which
+      // um08's `insertAppUser` always sets.
+      trustedProviders: ["microsoft"],
+    },
   },
   verification: {
     fields: {
@@ -72,6 +89,35 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     autoSignIn: true,
   },
+  // um10-spec §"SSO rejection error display": redirect-driven flows (the
+  // Entra OAuth callback) land back on `/login` with `?error=<code>` on
+  // failure instead of Better-Auth's default `/api/auth/error` page.
+  onAPIError: {
+    errorURL: "/login",
+  },
+  // Better-Auth resolves the `microsoft` key to its built-in provider
+  // factory internally — `socialProviders.microsoft` takes the provider's
+  // raw options directly, not the result of calling a factory function
+  // (confirmed via the installed package's types; no import needed here).
+  socialProviders: isSsoConfigured
+    ? {
+        microsoft: {
+          clientId: entraConfig.clientId!,
+          clientSecret: entraConfig.clientSecret!,
+          tenantId: entraConfig.tenantId!,
+          // No JIT provisioning (Inv. #10) — an Entra identity with no
+          // pre-created SSO APPUSER must create nothing at all. Without
+          // this, Better-Auth's default OAuth flow would create a brand
+          // new `appuser` row for any unmatched email.
+          disableSignUp: true,
+          // `getUserInfo`'s default `id` is the `sub` claim. The spec
+          // prefers `oid` (stable across token issuances within a tenant);
+          // `mapProfileToUser`'s return is spread last over the default
+          // shape, so this overrides just `id`.
+          mapProfileToUser: (profile) => ({ id: profile.oid }),
+        },
+      }
+    : {},
   advanced: {
     useSecureCookies: config.NODE_ENV === "production",
   },
@@ -156,13 +202,31 @@ export const auth = betterAuth({
     }),
   },
   databaseHooks: {
+    // Email-match exclusivity for Entra sign-in (um10-spec §10.3, Inv. #9).
+    // Better-Auth's own `accountLinking` (above) already resolved *which*
+    // user this Microsoft identity matched by email before this fires —
+    // see auth/sso-linking.ts for why this hook validates rather than
+    // resolves the match.
+    account: {
+      create: {
+        before: rejectNonSsoAccountLink,
+      },
+    },
     session: {
       create: {
-        // Status check (um03-spec §3.7, Inv. #4): runs after Better-Auth
-        // verifies the credential, before the session row is committed.
+        // Status check (um03-spec §3.7, Inv. #4), widened by um09: a PENDING
+        // LOCAL user (um08) must be able to sign in with their temp password
+        // to reach the forced first-login `/set-password` flow — the
+        // product overview's Core User Flow #4 and um09-spec's own
+        // integration fixtures presuppose this. DISABLED/DELETED remain
+        // rejected. Applies to every provider (incl. Microsoft) since it's
+        // keyed only on `session.userId`.
         before: async (session) => {
           const user = await findUserById(db, session.userId);
-          if (!user || user.status !== "ACTIVE") {
+          if (
+            !user ||
+            (user.status !== "ACTIVE" && user.status !== "PENDING")
+          ) {
             throw APIError.from("FORBIDDEN", {
               code: AUTH_ERROR_CODES.USER_NOT_ACTIVE,
               message:
@@ -170,11 +234,24 @@ export const auth = betterAuth({
             });
           }
         },
-        // `last_login_datetime` + the `LOCAL_LOGIN` audit row, atomic with
-        // each other (code-standards §1.7, §6.5). The session itself is
-        // already committed by Better-Auth; a failure here is logged and
-        // never undoes the sign-in (um03-spec §3.7).
-        after: async (session) => {
+        // Branches on provider (um10-spec §10.4's "single-hook strategy"):
+        // a Microsoft-provider session runs the SSO activation/audit path
+        // (`SSO_LOGIN` + conditional `USER_FIRST_LOGIN`) instead of writing
+        // `LOCAL_LOGIN` — `handleSsoSignIn` owns its own atomic transaction.
+        // The session itself is already committed by Better-Auth either
+        // way; a failure here is logged and never undoes the sign-in.
+        after: async (session, context) => {
+          if (isMicrosoftCallback(context)) {
+            const result = await handleSsoSignIn({ userId: session.userId });
+            if (!result.ok) {
+              logger.error("SSO post-sign-in hook failed.", {
+                code: result.code,
+                userId: session.userId,
+              });
+            }
+            return;
+          }
+
           const loginDatetime = new Date();
           try {
             await db.transaction(async (tx) => {
