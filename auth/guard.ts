@@ -78,6 +78,7 @@ export async function resolveForcePasswordChangeSession(): Promise<{
 
   const user = await findUserById(db, session.user.id);
   if (!user || user.status === "DISABLED" || user.status === "DELETED") {
+    await deleteByUserId(db, session.user.id);
     redirect("/login");
   }
 

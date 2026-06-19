@@ -18,6 +18,7 @@ export function CopyRedirectUriButton({
   const [copied, setCopied] = useState(false);
 
   function handleCopy(): void {
+    if (!navigator.clipboard) return;
     navigator.clipboard.writeText(value).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);

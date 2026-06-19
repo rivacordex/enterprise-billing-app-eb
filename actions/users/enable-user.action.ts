@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import * as usersWriteService from "@/services/users/users-write.service";
 import { enableUserSchema } from "@/validation/enable-user.schema";
 
@@ -19,7 +20,8 @@ export type EnableUserActionResult =
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
-// um13-spec §13.4.2. Mirrors `disableUserAction`'s structure; no
+// um13-spec §13.4.2. Mirrors `disableUserAction`'s structure (incl. telling
+// an actual authorization redirect apart from an unexpected error); no
 // `LAST_ADMIN` code here — not applicable to enabling.
 export async function enableUserAction(
   rawInput: unknown,
@@ -30,8 +32,11 @@ export async function enableUserAction(
       PERMISSIONS.USERS,
       LEVELS.EDIT,
     ));
-  } catch {
-    return { ok: false, code: "FORBIDDEN" };
+  } catch (error) {
+    if (isRedirectError(error)) {
+      return { ok: false, code: "FORBIDDEN" };
+    }
+    return { ok: false, code: "SERVER_ERROR" };
   }
 
   const parsed = enableUserSchema.safeParse(rawInput);

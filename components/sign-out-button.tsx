@@ -24,8 +24,12 @@ export function SignOutButton({
 
   async function handleSignOut(): Promise<void> {
     setIsPending(true);
-    await authClient.signOut();
-    router.push("/login");
+    try {
+      await authClient.signOut();
+      router.push("/login");
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (

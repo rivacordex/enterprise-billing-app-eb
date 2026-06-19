@@ -162,8 +162,16 @@ export function UserTable({
                 <tr
                   key={user.userId}
                   onClick={() => handleRowClick(user.userId)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleRowClick(user.userId);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
                   className={cn(
-                    "cursor-pointer border-b border-border last:border-0 hover:bg-[color:var(--action-ghost-hover)]",
+                    "cursor-pointer border-b border-border outline-none last:border-0 hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)]",
                     isSelected &&
                       "border-l-[3px] border-l-[color:var(--color-primary-500)] bg-[color:var(--surface-selected)]",
                     isDeleted &&

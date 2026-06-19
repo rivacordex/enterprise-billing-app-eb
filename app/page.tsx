@@ -6,6 +6,7 @@ import { resolveEffectivePermissions } from "@/auth/resolver";
 import { PERMISSIONS } from "@/auth/permission-constants";
 import { db } from "@/db/client";
 import { findUserById } from "@/db/repositories/appuser.repository";
+import { deleteByUserId } from "@/db/repositories/session.repository";
 import { resolveRootRedirect, type RouteOrderEntry } from "@/lib/root-redirect";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +37,18 @@ export default async function Home(): Promise<never> {
   }
 
   const user = await findUserById(db, session.user.id);
-  const forcePasswordChange = user?.forcePasswordChange ?? false;
+
+  // Mirrors `auth/guard.ts`'s `getActiveUser()` stale-session cleanup for
+  // a missing/DISABLED/DELETED user — but, unlike that guard, lets PENDING
+  // through (forcePasswordChange below sends them to `/set-password`,
+  // um09-spec §9.2), since this page deliberately can't reuse the guard
+  // (redirect-loop risk on `force_password_change`, um06-spec §6.8).
+  if (!user || user.status === "DISABLED" || user.status === "DELETED") {
+    await deleteByUserId(db, session.user.id);
+    redirect("/login");
+  }
+
+  const forcePasswordChange = user.forcePasswordChange;
   const permissionMap = forcePasswordChange
     ? null
     : await resolveEffectivePermissions(session.user.id);

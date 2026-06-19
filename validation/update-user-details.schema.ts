@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const updateUserDetailsSchema = z.object({
   userId: z.string().uuid("Invalid user ID"),
-  userName: z.string().min(1, "Name is required").max(255).trim(),
+  userName: z.string().trim().min(1, "Name is required").max(255),
   userPhonenum: z
     .string()
     .max(50, "Phone number is too long")

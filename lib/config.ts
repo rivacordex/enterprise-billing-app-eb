@@ -60,8 +60,11 @@ export const entraConfig = {
   tenantId: config.ENTRA_TENANT_ID ?? null,
   clientId: config.MICROSOFT_CLIENT_ID ?? null,
   clientSecret: config.MICROSOFT_CLIENT_SECRET ?? null,
+  // Strips a trailing slash so a `NEXT_PUBLIC_APP_URL` like
+  // `http://localhost:3000/` doesn't produce a `//api/auth/...` redirect URI
+  // that no longer byte-matches what's registered with the SSO provider.
   redirectUri: process.env.NEXT_PUBLIC_APP_URL
-    ? `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/callback/microsoft`
+    ? `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/+$/, "")}/api/auth/callback/microsoft`
     : null,
 } as const;
 

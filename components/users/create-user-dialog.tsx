@@ -90,6 +90,8 @@ export function CreateUserDialog({
       } else {
         toast.error("Something went wrong. Please try again.");
       }
+    } catch {
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setIsSubmitting(false);
     }

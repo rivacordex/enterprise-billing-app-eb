@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import * as usersWriteService from "@/services/users/users-write.service";
 import { disableUserSchema } from "@/validation/disable-user.schema";
 
@@ -22,8 +23,11 @@ export type DisableUserActionResult =
 
 // um13-spec §13.4.1. Mirrors `updateUserDetailsAction`'s FORBIDDEN-mapping
 // pattern — this action is called from a client panel, not a page
-// navigation, so an unauthorized caller gets a typed result instead of
-// letting the guard's `redirect()` propagate.
+// navigation, so an actual authorization failure (the guard's `redirect()`,
+// a thrown `NEXT_REDIRECT` digest error) maps to a typed `FORBIDDEN` result
+// instead of letting it propagate. Any other thrown error is a real
+// unexpected failure (e.g. a DB failure inside the guard) and must not be
+// misreported as `FORBIDDEN`.
 export async function disableUserAction(
   rawInput: unknown,
 ): Promise<DisableUserActionResult> {
@@ -33,8 +37,11 @@ export async function disableUserAction(
       PERMISSIONS.USERS,
       LEVELS.EDIT,
     ));
-  } catch {
-    return { ok: false, code: "FORBIDDEN" };
+  } catch (error) {
+    if (isRedirectError(error)) {
+      return { ok: false, code: "FORBIDDEN" };
+    }
+    return { ok: false, code: "SERVER_ERROR" };
   }
 
   const parsed = disableUserSchema.safeParse(rawInput);
