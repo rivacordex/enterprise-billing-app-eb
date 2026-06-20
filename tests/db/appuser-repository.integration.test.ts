@@ -22,6 +22,7 @@ import {
   setUserStatus,
   userHasAdminRole,
 } from "@/db/repositories/appuser.repository";
+import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -37,6 +38,7 @@ describe.skipIf(!databaseUrl)(
     let managerRoleId: string;
 
     beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');

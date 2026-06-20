@@ -106,7 +106,7 @@ After a successful tombstone, `revalidatePath('/administration/users')` triggers
 Confirm that the migration from um02 created the partial unique index:
 
 ```sql
-CREATE UNIQUE INDEX idx_appuser_email_active
+CREATE UNIQUE INDEX appuser_email_unique
   ON core.appuser (user_email)
   WHERE status != 'DELETED';
 ```
