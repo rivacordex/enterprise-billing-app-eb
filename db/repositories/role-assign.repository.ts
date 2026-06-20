@@ -107,4 +107,16 @@ export const roleAssignRepository = {
       );
     return row?.count ?? 0;
   },
+
+  // Backs the ROLE_IN_USE delete guard (um21-spec §21.3.3) — unlike
+  // `countNonDeletedUsersWithRole` above, this counts every `role_assign`
+  // row regardless of the assigned user's status, since deletion must be
+  // blocked while any assignment row exists at all.
+  async countByRoleId(db: Database, roleId: string): Promise<number> {
+    const [row] = await db
+      .select({ count: count() })
+      .from(roleAssign)
+      .where(eq(roleAssign.refRoleId, roleId));
+    return row?.count ?? 0;
+  },
 };
