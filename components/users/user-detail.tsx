@@ -653,7 +653,8 @@ export function UserDetail({
                       isEnabling ||
                       isResetting ||
                       isUnlocking ||
-                      isSwitching
+                      isSwitching ||
+                      isDeleteDialogOpen
                     }
                     className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--border-subtle)] bg-transparent px-2 py-0.5 text-body-sm text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
                   >
