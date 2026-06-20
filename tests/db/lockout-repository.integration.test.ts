@@ -11,6 +11,7 @@ import * as schema from "@/db/schema";
 import { appuser } from "@/db/schema/identity";
 import { auditLog } from "@/db/schema/audit";
 import {
+  adminClearLockout,
   clearLockout,
   getLockoutState,
   recordFailedAttempt,
@@ -147,6 +148,92 @@ describe.skipIf(!databaseUrl)(
 
       const state = await getLockoutState(db, userId);
       expect(state).toEqual({ failedLoginCount: 0, lockedUntil: null });
+    });
+
+    it("adminClearLockout resets failed_login_count and locked_until for a locked user", async () => {
+      for (let i = 0; i < 5; i++) {
+        await recordFailedAttempt(db, userId);
+      }
+
+      await db.transaction(async (tx) => {
+        await adminClearLockout(tx, userId);
+      });
+
+      const state = await getLockoutState(db, userId);
+      expect(state).toEqual({ failedLoginCount: 0, lockedUntil: null });
+    });
+
+    it("adminClearLockout updates last_modified_datetime", async () => {
+      const [before] = await db
+        .select({ lastModifiedDatetime: appuser.lastModifiedDatetime })
+        .from(appuser)
+        .where(eq(appuser.id, userId));
+
+      await db.transaction(async (tx) => {
+        await adminClearLockout(tx, userId);
+      });
+
+      const [after] = await db
+        .select({ lastModifiedDatetime: appuser.lastModifiedDatetime })
+        .from(appuser)
+        .where(eq(appuser.id, userId));
+      expect(after!.lastModifiedDatetime.getTime()).toBeGreaterThanOrEqual(
+        before!.lastModifiedDatetime.getTime(),
+      );
+    });
+
+    it("adminClearLockout does not affect any other column on APPUSER", async () => {
+      const [before] = await db
+        .select()
+        .from(appuser)
+        .where(eq(appuser.id, userId));
+
+      await db.transaction(async (tx) => {
+        await adminClearLockout(tx, userId);
+      });
+
+      const [after] = await db
+        .select()
+        .from(appuser)
+        .where(eq(appuser.id, userId));
+      expect(after?.userName).toBe(before?.userName);
+      expect(after?.userEmail).toBe(before?.userEmail);
+      expect(after?.status).toBe(before?.status);
+      expect(after?.authMethod).toBe(before?.authMethod);
+    });
+
+    it("adminClearLockout is idempotent on an already-unlocked user", async () => {
+      await db.transaction(async (tx) => {
+        await adminClearLockout(tx, userId);
+      });
+
+      await expect(
+        db.transaction(async (tx) => {
+          await adminClearLockout(tx, userId);
+        }),
+      ).resolves.not.toThrow();
+
+      const state = await getLockoutState(db, userId);
+      expect(state).toEqual({ failedLoginCount: 0, lockedUntil: null });
+    });
+
+    it("adminClearLockout does not write an audit row", async () => {
+      for (let i = 0; i < 5; i++) {
+        await recordFailedAttempt(db, userId);
+      }
+
+      await db.transaction(async (tx) => {
+        await adminClearLockout(tx, userId);
+      });
+
+      const audits = await db
+        .select()
+        .from(auditLog)
+        .where(eq(auditLog.targetId, userId));
+      // The 5th `recordFailedAttempt` writes its own `USER_LOCKED` row;
+      // `adminClearLockout` itself must not add a second row.
+      expect(audits).toHaveLength(1);
+      expect(audits[0]?.eventType).toBe("USER_LOCKED");
     });
 
     it("rolls back both the column change and the audit row when the transaction fails", async () => {

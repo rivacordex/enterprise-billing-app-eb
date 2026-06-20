@@ -148,6 +148,48 @@ export async function insertCredentialAccount(
   });
 }
 
+// Sets the `auth_method` plus its dependent flags for the auth-method
+// switch (um16-spec §16.2.1). SSO → LOCAL passes `forcePasswordChange: true`
+// (the temp password must be changed on next sign-in); LOCAL → SSO passes
+// `false` and clears any lockout state (`failedLoginCount: 0`,
+// `lockedUntil: null`). Runs inside the switch transaction.
+export async function updateAuthMethodFields(
+  tx: Database,
+  userId: string,
+  fields: {
+    authMethod: AuthMethod;
+    forcePasswordChange: boolean;
+    failedLoginCount: number;
+    lockedUntil: Date | null;
+  },
+): Promise<void> {
+  await tx
+    .update(appuser)
+    .set({
+      authMethod: fields.authMethod,
+      forcePasswordChange: fields.forcePasswordChange,
+      failedLoginCount: fields.failedLoginCount,
+      lockedUntil: fields.lockedUntil,
+      lastModifiedDatetime: new Date(),
+    })
+    .where(eq(appuser.id, userId));
+}
+
+// Deletes the user's `account` row for a single provider (um16-spec
+// §16.2.2). A no-op when no matching row exists (e.g. SSO → LOCAL on a
+// PENDING user who never signed in via Entra and so has no `'microsoft'`
+// row). The switch caller picks the provider per direction: `'microsoft'`
+// for SSO → LOCAL, `'credential'` for LOCAL → SSO.
+export async function deleteAccountByProvider(
+  tx: Database,
+  userId: string,
+  providerId: "credential" | "microsoft",
+): Promise<void> {
+  await tx
+    .delete(account)
+    .where(and(eq(account.userId, userId), eq(account.providerId, providerId)));
+}
+
 // Updates a user's editable name/phone fields (um11-spec §11.2). Does not
 // return the updated row — the service reads the before-snapshot via
 // `findUserById` before opening the transaction this runs inside of.
@@ -166,18 +208,78 @@ export async function updateUserNamePhone(
     .where(eq(appuser.id, userId));
 }
 
-// Sets ACTIVE/DISABLED status for the disable/enable flow (um13-spec
-// §13.2.1). Does not return the updated row — the service reads the
-// before-snapshot via `findUserById` before opening the transaction this
-// runs inside of.
+// Sets ACTIVE/DISABLED/DELETED status for the disable/enable (um13-spec
+// §13.2.1) and tombstone-delete (um17-spec §17.2.1) flows. Does not return
+// the updated row — the service reads the before-snapshot via `findUserById`
+// before opening the transaction this runs inside of. The `'DELETED'` value
+// is the only widening for um17; the `UPDATE` itself is unchanged and the
+// `appuser_status_check` CHECK already permits it (um02).
 export async function setUserStatus(
   tx: Database,
   userId: string,
-  status: "ACTIVE" | "DISABLED",
+  status: "ACTIVE" | "DISABLED" | "DELETED",
 ): Promise<void> {
   await tx
     .update(appuser)
     .set({ status, lastModifiedDatetime: new Date() })
+    .where(eq(appuser.id, userId));
+}
+
+// Deletes every `role_assign` row for a user and returns how many were
+// removed (um17-spec §17.2.2). Used by the tombstone flow to strip all role
+// grants in the same transaction as the status change. Zero rows is not an
+// error — a user with no roles at delete time is valid.
+export async function removeUserRoleAssignments(
+  tx: Database,
+  userId: string,
+): Promise<number> {
+  const result = await tx
+    .delete(roleAssign)
+    .where(eq(roleAssign.refUserId, userId))
+    .returning({ id: roleAssign.roleAssignId });
+  return result.length;
+}
+
+// Deletes every `account` row for a user (um17-spec §17.2.3) — both the
+// `'credential'` (password hash) and `'microsoft'` (Entra OID) rows if
+// present, releasing the Entra identity for reuse. A no-op when no rows
+// exist (e.g. a PENDING user with no credential and no SSO link). Intentional
+// direct deletion of a Better-Auth-managed table: the user is being made
+// permanently inactive and their credentials no longer serve any purpose.
+export async function deleteAllUserAccounts(
+  tx: Database,
+  userId: string,
+): Promise<void> {
+  await tx.delete(account).where(eq(account.userId, userId));
+}
+
+// Returns the role names currently assigned to a user (um17-spec §17.2.4).
+// Read-only — the tombstone service calls it before the transaction opens to
+// build the `USER_DELETED` before-snapshot. Returns an empty array when the
+// user has no assignments.
+export async function getUserRoleNames(
+  db: Database,
+  userId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ roleName: roles.roleName })
+    .from(roleAssign)
+    .innerJoin(roles, eq(roles.roleId, roleAssign.refRoleId))
+    .where(eq(roleAssign.refUserId, userId));
+  return rows.map((r) => r.roleName);
+}
+
+// Sets the forced-password-change flag for the admin-reset flow (um14-spec
+// §14.2.1) — the symmetric counterpart to um09's `clearForcePasswordChange`.
+// Idempotent: setting it on a user where it's already TRUE succeeds without
+// error.
+export async function setForcePasswordChange(
+  tx: Database,
+  userId: string,
+): Promise<void> {
+  await tx
+    .update(appuser)
+    .set({ forcePasswordChange: true, lastModifiedDatetime: new Date() })
     .where(eq(appuser.id, userId));
 }
 

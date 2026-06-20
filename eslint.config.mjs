@@ -32,6 +32,12 @@ const BOUNDARIES_ELEMENTS = [
     mode: "full",
     pattern: "auth/permission-constants.ts",
   },
+  // Carved out ahead of the general "auth" pattern (um15-spec verification
+  // checklist: `isCurrentlyLocked` must be reused, not inlined). A pure
+  // decision helper with zero DB/Next.js imports — safe for `services/**`
+  // to import directly, same shape as the `auth-permission-constants`
+  // carve-out above.
+  { type: "auth-lockout", mode: "full", pattern: "auth/lockout.ts" },
   { type: "auth", mode: "full", pattern: "auth/**" },
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
@@ -130,7 +136,11 @@ const eslintConfig = defineConfig([
               // service) — a type-only coupling to the schema's inferred
               // shape, not a runtime Zod dependency.
               from: { type: "services" },
-              allow: { to: { type: ["db", "validation", "types", "lib"] } },
+              allow: {
+                to: {
+                  type: ["db", "auth-lockout", "validation", "types", "lib"],
+                },
+              },
             },
             {
               // "auth" self-import added for um04's `auth/lockout.ts` — the
@@ -141,6 +151,7 @@ const eslintConfig = defineConfig([
                   type: [
                     "auth",
                     "auth-permission-constants",
+                    "auth-lockout",
                     "db",
                     "services",
                     "validation",
@@ -152,6 +163,10 @@ const eslintConfig = defineConfig([
             },
             {
               from: { type: "auth-permission-constants" },
+              allow: { to: { type: ["types"] } },
+            },
+            {
+              from: { type: "auth-lockout" },
               allow: { to: { type: ["types"] } },
             },
             {
