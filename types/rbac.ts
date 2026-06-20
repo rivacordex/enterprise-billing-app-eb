@@ -12,6 +12,13 @@ export type PermissionType = (typeof PERMISSION_TYPES)[number];
 export const SEEDED_ROLE_NAMES = ["ADMIN", "MANAGER", "USER"] as const;
 export type SeededRoleName = (typeof SEEDED_ROLE_NAMES)[number];
 
+// Guards role deletion (um21-spec §21.1, Invariant #22) — seeded roles are
+// never deletable, regardless of UI state. Pure: no imports from `db/**`,
+// `auth/**`, or `next/*`, so both the service and `RoleDetail` can use it.
+export function isSeededRole(roleName: string): roleName is SeededRoleName {
+  return (SEEDED_ROLE_NAMES as readonly string[]).includes(roleName);
+}
+
 // Mirrors the `appuser_auth_method_check`/`appuser_status_check` CHECK
 // constraints (db/schema/identity.ts) — the authoritative string sets for
 // these two columns (um07-spec §7.1, code-standards §2.6).

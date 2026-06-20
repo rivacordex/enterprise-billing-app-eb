@@ -25,7 +25,10 @@ export const roles = core.table(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [uniqueIndex("roles_role_name_unique").on(t.roleName)],
+  // Case-insensitive uniqueness: `findRoleByName`'s pre-check uses `ilike`,
+  // so the DB constraint must match it, not just the literal `role_name`
+  // (otherwise "Admin" and "ADMIN" could both be inserted under a race).
+  (t) => [uniqueIndex("roles_role_name_unique").on(sql`lower(${t.roleName})`)],
 );
 
 export type Role = typeof roles.$inferSelect;
