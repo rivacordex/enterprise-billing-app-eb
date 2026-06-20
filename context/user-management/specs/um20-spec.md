@@ -283,7 +283,7 @@ export async function setPermissionMappingAction(
 
 Steps:
 
-1. `const { userId: actorId } = await requirePermission(PERMISSIONS.ROLES, LEVELS.EDIT)` — wrap in try/catch; catch `NEXT_REDIRECT` and re-throw; all other auth failures → `{ ok: false, code: 'FORBIDDEN' }`.
+1. `const { userId: actorId } = await requirePermission(PERMISSIONS.ROLES, LEVELS.EDIT)` — wrap in try/catch; catch `NEXT_REDIRECT` and return `{ ok: false, code: 'FORBIDDEN' }`; all other auth failures → `{ ok: false, code: 'SERVER_ERROR' }`.
 
 2. `const parsed = setPermissionLevelSchema.safeParse(rawInput)`. If `!parsed.success` → `{ ok: false, code: 'VALIDATION_ERROR', fieldErrors: parsed.error.flatten().fieldErrors }`.
 

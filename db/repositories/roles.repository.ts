@@ -40,12 +40,15 @@ export const rolesRepository = {
   },
 
   // Case-insensitive name-uniqueness guard used by `createRole`/`updateRole`
-  // (um19-spec §19.2.1) ahead of opening a transaction.
+  // (um19-spec §19.2.1) ahead of opening a transaction. `lower(role_name)`
+  // has a matching unique index, so a concurrent duplicate that slips past
+  // this pre-check is still rejected at the DB level.
   async findRoleByName(db: Database, name: string): Promise<Role | null> {
+    const escaped = name.replace(/[%_\\]/g, "\\$&");
     const [row] = await db
       .select()
       .from(roles)
-      .where(ilike(roles.roleName, name))
+      .where(ilike(roles.roleName, escaped))
       .limit(1);
     return row ?? null;
   },

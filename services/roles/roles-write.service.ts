@@ -142,17 +142,20 @@ export async function setRolePermissionLevel(
     return { ok: false, code: "PERMISSION_NOT_FOUND" };
   }
 
-  const currentMappings =
-    await rolePermissionAssignRepository.findMappingsForRole(db, input.roleId);
-  const previousLevel =
-    currentMappings.find((m) => m.permissionName === input.permissionName)
-      ?.permissionType ?? null;
-
-  if (previousLevel === input.level) {
-    return { ok: true };
-  }
-
   await db.transaction(async (tx) => {
+    const currentMappings =
+      await rolePermissionAssignRepository.findMappingsForRole(
+        tx,
+        input.roleId,
+      );
+    const previousLevel =
+      currentMappings.find((m) => m.permissionName === input.permissionName)
+        ?.permissionType ?? null;
+
+    if (previousLevel === input.level) {
+      return;
+    }
+
     if (input.level === null) {
       await rolePermissionAssignRepository.deleteRolePermission(tx, {
         roleId: input.roleId,
@@ -193,12 +196,14 @@ export type DeleteRoleResult =
   | { ok: false; code: "SEEDED_ROLE" }
   | { ok: false; code: "ROLE_IN_USE"; assignedCount: number };
 
-// um21-spec §21.4. Checks (not-found, seeded, in-use) run ahead of the
-// transaction, mirroring `updateRole`'s before-snapshot pattern; the before
-// snapshot — role fields plus its permission mappings, captured before they
-// are deleted — feeds `ROLE_DELETED`'s `before_data`. The mapping delete and
-// role delete run in FK order inside the same transaction as the audit
-// write so the mutation and audit entry are atomic (Invariant #11).
+// um21-spec §21.4. Not-found and seeded checks run ahead of the transaction;
+// the in-use check is re-run inside it (atomically with the delete) so a
+// role assignment can't be inserted between the check and the delete. The
+// before snapshot — role fields plus its permission mappings, captured
+// before they are deleted — feeds `ROLE_DELETED`'s `before_data`. The
+// mapping delete and role delete run in FK order inside the same
+// transaction as the audit write so the mutation and audit entry are
+// atomic (Invariant #11).
 export async function deleteRole(
   input: DeleteRoleInput,
   actorId: string,
@@ -212,39 +217,62 @@ export async function deleteRole(
     return { ok: false, code: "SEEDED_ROLE" };
   }
 
-  const assignedCount = await roleAssignRepository.countByRoleId(
-    db,
-    input.roleId,
-  );
-  if (assignedCount > 0) {
-    return { ok: false, code: "ROLE_IN_USE", assignedCount };
+  try {
+    await db.transaction(async (tx) => {
+      // Re-checked inside the transaction (not just ahead of it) so a
+      // concurrent role assignment can't sneak in between the count and the
+      // delete below.
+      const assignedCount = await roleAssignRepository.countByRoleId(
+        tx,
+        input.roleId,
+      );
+      if (assignedCount > 0) {
+        throw new RoleInUseError(assignedCount);
+      }
+
+      const mappings = await rolePermissionAssignRepository.findMappingsForRole(
+        tx,
+        input.roleId,
+      );
+
+      await rolePermissionAssignRepository.deleteMappingsForRole(
+        tx,
+        input.roleId,
+      );
+      await rolesRepository.deleteRoleById(tx, input.roleId);
+
+      await insertAuditEvent(tx, {
+        eventType: "ROLE_DELETED",
+        actorUserId: actorId,
+        targetEntity: "ROLES",
+        targetId: input.roleId,
+        beforeData: {
+          roleName: role.roleName,
+          roleDescr: role.roleDescr,
+          permissionMappings: mappings,
+        },
+        afterData: null,
+      });
+    });
+  } catch (error) {
+    if (error instanceof RoleInUseError) {
+      return {
+        ok: false,
+        code: "ROLE_IN_USE",
+        assignedCount: error.assignedCount,
+      };
+    }
+    throw error;
   }
 
-  const mappings = await rolePermissionAssignRepository.findMappingsForRole(
-    db,
-    input.roleId,
-  );
-
-  await db.transaction(async (tx) => {
-    await rolePermissionAssignRepository.deleteMappingsForRole(
-      tx,
-      input.roleId,
-    );
-    await rolesRepository.deleteRoleById(tx, input.roleId);
-
-    await insertAuditEvent(tx, {
-      eventType: "ROLE_DELETED",
-      actorUserId: actorId,
-      targetEntity: "ROLES",
-      targetId: input.roleId,
-      beforeData: {
-        roleName: role.roleName,
-        roleDescr: role.roleDescr,
-        permissionMappings: mappings,
-      },
-      afterData: null,
-    });
-  });
-
   return { ok: true };
+}
+
+// Carries `assignedCount` out of `db.transaction`'s callback so the
+// in-use check below can run inside the transaction (atomically with the
+// delete) while still surfacing a typed `ROLE_IN_USE` result.
+class RoleInUseError extends Error {
+  constructor(readonly assignedCount: number) {
+    super("Role has active assignments");
+  }
 }

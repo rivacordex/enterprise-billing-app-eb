@@ -97,7 +97,7 @@ export function CreateRoleDialog({
           >
             Cancel
           </Button>
-          <Button type="submit" form="role-form" disabled={isSubmitting}>
+          <Button type="submit" form="role-form-create" disabled={isSubmitting}>
             {isSubmitting && <Loader2 className="animate-spin" />}
             Create Role
           </Button>

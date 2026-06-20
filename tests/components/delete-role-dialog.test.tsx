@@ -253,7 +253,12 @@ describe("DeleteRoleDialog", () => {
     });
   });
 
-  it("clears a prior error when isOpen transitions false -> true", () => {
+  it("clears a prior error when isOpen transitions false -> true", async () => {
+    mockDeleteRoleAction.mockResolvedValue({
+      ok: false,
+      code: "SERVER_ERROR",
+    });
+    const user = userEvent.setup();
     const { rerender } = render(
       <DeleteRoleDialog
         roleId="role-1"
@@ -263,6 +268,11 @@ describe("DeleteRoleDialog", () => {
         onSuccess={vi.fn()}
       />,
     );
+
+    await user.click(screen.getByRole("button", { name: "Delete role" }));
+    expect(
+      await screen.findByText("Something went wrong. Please try again."),
+    ).toBeInTheDocument();
 
     rerender(
       <DeleteRoleDialog

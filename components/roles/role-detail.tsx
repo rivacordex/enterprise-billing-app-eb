@@ -278,7 +278,7 @@ export function RoleDetail({
           >
             Cancel
           </Button>
-          <Button type="submit" form="role-form" disabled={isSaving}>
+          <Button type="submit" form="role-form-edit" disabled={isSaving}>
             {isSaving && <Loader2 className="animate-spin" size={14} />}
             Save changes
           </Button>

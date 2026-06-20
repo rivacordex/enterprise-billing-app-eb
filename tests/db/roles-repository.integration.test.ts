@@ -176,6 +176,20 @@ describe.skipIf(!databaseUrl)(
           before!.lastModifiedDatetime.getTime(),
         );
       });
+
+      it("rejects a name that differs only in case from an existing role (DB-level case-insensitive unique index)", async () => {
+        await rolesRepository.insertRole(db, {
+          roleName: "CaseTest",
+          roleDescr: null,
+        });
+
+        await expect(
+          rolesRepository.insertRole(db, {
+            roleName: "CASETEST",
+            roleDescr: null,
+          }),
+        ).rejects.toThrow();
+      });
     });
 
     describe("rolePermissionAssignRepository.findMappingsForRole", () => {

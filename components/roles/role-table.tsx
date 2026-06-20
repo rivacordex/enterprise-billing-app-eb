@@ -25,7 +25,7 @@ export function RoleTable({
   const router = useRouter();
 
   function handleRowClick(roleId: string): void {
-    router.push(`/administration/roles?roleId=${roleId}`);
+    router.push(`/administration/roles?roleId=${encodeURIComponent(roleId)}`);
   }
 
   const canAddRole = hasLevel(permissionMap, PERMISSIONS.ROLES, LEVELS.EDIT);

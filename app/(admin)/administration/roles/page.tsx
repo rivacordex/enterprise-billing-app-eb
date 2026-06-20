@@ -18,14 +18,15 @@ export const metadata: Metadata = {
 export default async function RolesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ roleId?: string }>;
+  searchParams: Promise<{ roleId?: string | string[] }>;
 }): Promise<React.JSX.Element> {
   const { permissionMap } = await requirePermission(
     PERMISSIONS.ROLES,
     LEVELS.READ,
   );
 
-  const { roleId: selectedRoleId } = await searchParams;
+  const { roleId } = await searchParams;
+  const selectedRoleId = Array.isArray(roleId) ? roleId[0] : roleId;
 
   const [roles, selectedRole] = await Promise.all([
     getAllRolesWithMappings(),

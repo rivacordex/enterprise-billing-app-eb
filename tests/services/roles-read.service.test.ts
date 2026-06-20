@@ -16,6 +16,7 @@ vi.mock("@/db/repositories/roles.repository", () => ({
 vi.mock("@/db/repositories/role-permission-assign.repository", () => ({
   rolePermissionAssignRepository: {
     findMappingsForRole: vi.fn(),
+    findMappingsForRoles: vi.fn(),
     findGrantsByRoleIds: vi.fn(),
   },
 }));
@@ -31,6 +32,9 @@ const mockFindAll = vi.mocked(rolesRepository.findAll);
 const mockFindRoleById = vi.mocked(rolesRepository.findRoleById);
 const mockFindMappingsForRole = vi.mocked(
   rolePermissionAssignRepository.findMappingsForRole,
+);
+const mockFindMappingsForRoles = vi.mocked(
+  rolePermissionAssignRepository.findMappingsForRoles,
 );
 
 const ADMIN_ROLE = {
@@ -61,13 +65,14 @@ beforeEach(() => {
   mockFindAll.mockReset();
   mockFindRoleById.mockReset();
   mockFindMappingsForRole.mockReset();
+  mockFindMappingsForRoles.mockReset();
 });
 
 describe("getAllRolesWithMappings", () => {
   it("returns 3 RoleWithMappings objects; ADMIN has 4 mapped entries, MANAGER/USER are all null", async () => {
     mockFindAll.mockResolvedValue([ADMIN_ROLE, MANAGER_ROLE, USER_ROLE]);
-    mockFindMappingsForRole.mockImplementation(async (_db, roleId) =>
-      roleId === "role-admin" ? ADMIN_ASSIGNMENTS : [],
+    mockFindMappingsForRoles.mockResolvedValue(
+      ADMIN_ASSIGNMENTS.map((a) => ({ ...a, roleId: "role-admin" })),
     );
 
     const result = await getAllRolesWithMappings();
@@ -86,7 +91,9 @@ describe("getAllRolesWithMappings", () => {
 
   it("every mappings array has exactly PERMISSION_NAMES.length entries", async () => {
     mockFindAll.mockResolvedValue([ADMIN_ROLE]);
-    mockFindMappingsForRole.mockResolvedValue(ADMIN_ASSIGNMENTS);
+    mockFindMappingsForRoles.mockResolvedValue(
+      ADMIN_ASSIGNMENTS.map((a) => ({ ...a, roleId: "role-admin" })),
+    );
 
     const [role] = await getAllRolesWithMappings();
     expect(role!.mappings).toHaveLength(4);
@@ -95,7 +102,11 @@ describe("getAllRolesWithMappings", () => {
   it("mappings are always ordered users, roles, system_config, audit_log", async () => {
     mockFindAll.mockResolvedValue([ADMIN_ROLE]);
     // Returned out of order on purpose.
-    mockFindMappingsForRole.mockResolvedValue([...ADMIN_ASSIGNMENTS].reverse());
+    mockFindMappingsForRoles.mockResolvedValue(
+      [...ADMIN_ASSIGNMENTS]
+        .reverse()
+        .map((a) => ({ ...a, roleId: "role-admin" })),
+    );
 
     const [role] = await getAllRolesWithMappings();
     expect(role!.mappings.map((m) => m.permissionName)).toEqual([

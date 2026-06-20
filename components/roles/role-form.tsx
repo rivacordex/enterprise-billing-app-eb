@@ -87,7 +87,7 @@ function EditRoleForm({
 
   return (
     <form
-      id="role-form"
+      id="role-form-edit"
       noValidate
       onSubmit={(e) => void handleSubmit(onSubmit)(e)}
     >
@@ -150,7 +150,7 @@ function CreateRoleForm({
 
   return (
     <form
-      id="role-form"
+      id="role-form-create"
       noValidate
       onSubmit={(e) => void handleSubmit(onSubmit)(e)}
     >
