@@ -1,24 +1,40 @@
+import { isCurrentlyLocked } from "@/auth/lockout";
 import { db } from "@/db/client";
 import {
   countRemainingAdmins,
+  deleteAllUserAccounts,
+  deleteAccountByProvider,
   findUserByEmail,
   findUserById,
+  getUserRoleNames,
   insertAppUser,
   insertCredentialAccount,
+  removeUserRoleAssignments,
+  setForcePasswordChange,
   setUserStatus,
+  updateAccountPassword,
+  updateAuthMethodFields,
   updateUserNamePhone,
   userHasAdminRole,
 } from "@/db/repositories/appuser.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import {
+  adminClearLockout,
+  getLockoutState,
+} from "@/db/repositories/lockout.repository";
 import { roleAssignRepository } from "@/db/repositories/role-assign.repository";
 import { rolesRepository } from "@/db/repositories/roles.repository";
 import { deleteByUserId } from "@/db/repositories/session.repository";
 import { generateTempPassword, hashTempPassword } from "@/lib/temp-password";
 import type { AssignRoleInput } from "@/validation/assign-role.schema";
 import type { CreateUserInput } from "@/validation/create-user.schema";
+import type { DeleteUserInput } from "@/validation/delete-user.schema";
 import type { DisableUserInput } from "@/validation/disable-user.schema";
 import type { EnableUserInput } from "@/validation/enable-user.schema";
+import type { ResetPasswordInput } from "@/validation/reset-password.schema";
 import type { RevokeRoleInput } from "@/validation/revoke-role.schema";
+import type { SwitchAuthMethodInput } from "@/validation/switch-auth-method.schema";
+import type { UnlockAccountInput } from "@/validation/unlock-account.schema";
 import type { UpdateUserDetailsInput } from "@/validation/update-user-details.schema";
 
 export type CreateUserResult =
@@ -368,6 +384,256 @@ export async function enableUser(
       targetId: input.userId,
       beforeData: before,
       afterData: { status: "ACTIVE" },
+    });
+  });
+
+  return { ok: true };
+}
+
+export type ResetLocalPasswordResult =
+  | { ok: true; tempPassword: string }
+  | { ok: false; code: "USER_NOT_FOUND" }
+  | { ok: false; code: "NOT_LOCAL_USER" }
+  | { ok: false; code: "INVALID_STATE" };
+
+// um14-spec §14.3. Generates a new one-time temp password, hashes it, and
+// atomically writes the hash + forces a password change + revokes every
+// active session (Invariant #8) + writes `USER_PASSWORD_RESET`. The
+// plaintext only ever lives in this function's local scope and the success
+// return value — never logged, persisted, or included in the audit event
+// (Invariant #1).
+export async function resetLocalPassword(
+  input: ResetPasswordInput,
+  actorId: string,
+): Promise<ResetLocalPasswordResult> {
+  const existingUser = await findUserById(db, input.userId);
+  if (!existingUser) {
+    return { ok: false, code: "USER_NOT_FOUND" };
+  }
+  if (existingUser.authMethod !== "LOCAL") {
+    return { ok: false, code: "NOT_LOCAL_USER" };
+  }
+  if (existingUser.status === "DELETED") {
+    return { ok: false, code: "INVALID_STATE" };
+  }
+
+  const tempPasswordPlaintext = generateTempPassword();
+  const passwordHash = await hashTempPassword(tempPasswordPlaintext);
+
+  const before = { forcePasswordChange: existingUser.forcePasswordChange };
+
+  await db.transaction(async (tx) => {
+    await updateAccountPassword(tx, input.userId, passwordHash);
+    await setForcePasswordChange(tx, input.userId);
+    await deleteByUserId(tx, input.userId);
+
+    await insertAuditEvent(tx, {
+      eventType: "USER_PASSWORD_RESET",
+      actorUserId: actorId,
+      targetEntity: "APPUSER",
+      targetId: input.userId,
+      beforeData: before,
+      afterData: { forcePasswordChange: true },
+    });
+  });
+
+  return { ok: true, tempPassword: tempPasswordPlaintext };
+}
+
+export type UnlockAccountResult =
+  | { ok: true }
+  | { ok: false; code: "USER_NOT_FOUND" }
+  | { ok: false; code: "NOT_LOCKED" }
+  | { ok: false; code: "INVALID_STATE" };
+
+// um15-spec §15.3. The lock-state re-check (`isCurrentlyLocked`, not an
+// inline comparison) runs immediately before the transaction so a lock that
+// expired between the page render and the action firing is reported as
+// NOT_LOCKED rather than silently "succeeding" against an already-clear
+// account.
+export async function unlockAccount(
+  input: UnlockAccountInput,
+  actorId: string,
+): Promise<UnlockAccountResult> {
+  const existingUser = await findUserById(db, input.userId);
+  if (!existingUser) {
+    return { ok: false, code: "USER_NOT_FOUND" };
+  }
+  if (existingUser.status === "DELETED") {
+    return { ok: false, code: "INVALID_STATE" };
+  }
+
+  const lockState = await getLockoutState(db, input.userId);
+  if (!isCurrentlyLocked(lockState)) {
+    return { ok: false, code: "NOT_LOCKED" };
+  }
+
+  const before = {
+    failedLoginCount: lockState.failedLoginCount,
+    lockedUntil: lockState.lockedUntil?.toISOString() ?? null,
+  };
+
+  await db.transaction(async (tx) => {
+    await adminClearLockout(tx, input.userId);
+
+    await insertAuditEvent(tx, {
+      eventType: "USER_UNLOCKED",
+      actorUserId: actorId,
+      targetEntity: "APPUSER",
+      targetId: input.userId,
+      beforeData: before,
+      afterData: { failedLoginCount: 0, lockedUntil: null },
+    });
+  });
+
+  return { ok: true };
+}
+
+export type SwitchAuthMethodResult =
+  | { ok: true; newAuthMethod: "LOCAL"; tempPassword: string }
+  | { ok: true; newAuthMethod: "SSO" }
+  | { ok: false; code: "USER_NOT_FOUND" }
+  | { ok: false; code: "USER_DELETED" }
+  | { ok: false; code: "ALREADY_METHOD" };
+
+// um16-spec §16.3. Switches a user's `auth_method` between SSO and LOCAL,
+// enforcing the two methods as mutually exclusive (Invariant #9) and
+// revoking every active session in the same transaction (Invariant #8).
+//
+// SSO → LOCAL generates a one-time temp password (the plaintext only ever
+// lives in this function's scope and the success return value — never
+// logged, persisted, or placed in the audit event, Invariant #1), forces a
+// password change, and swaps the `'microsoft'` account row for a fresh
+// `'credential'` one. LOCAL → SSO removes the `'credential'` row and clears
+// any lockout state; the `'microsoft'` row is (re)created by um10's SSO
+// first-sign-in linking flow on the user's next Entra sign-in.
+export async function switchAuthMethod(
+  input: SwitchAuthMethodInput,
+  actorId: string,
+): Promise<SwitchAuthMethodResult> {
+  const existingUser = await findUserById(db, input.userId);
+  if (!existingUser) {
+    return { ok: false, code: "USER_NOT_FOUND" };
+  }
+  if (existingUser.status === "DELETED") {
+    return { ok: false, code: "USER_DELETED" };
+  }
+  if (existingUser.authMethod === input.newAuthMethod) {
+    return { ok: false, code: "ALREADY_METHOD" };
+  }
+
+  if (input.newAuthMethod === "LOCAL") {
+    const tempPasswordPlaintext = generateTempPassword();
+    const passwordHash = await hashTempPassword(tempPasswordPlaintext);
+
+    await db.transaction(async (tx) => {
+      await updateAuthMethodFields(tx, input.userId, {
+        authMethod: "LOCAL",
+        forcePasswordChange: true,
+        failedLoginCount: 0,
+        lockedUntil: null,
+      });
+      await deleteAccountByProvider(tx, input.userId, "microsoft");
+      await insertCredentialAccount(tx, input.userId, passwordHash);
+      const revokedCount = await deleteByUserId(tx, input.userId);
+
+      await insertAuditEvent(tx, {
+        eventType: "USER_AUTH_METHOD_CHANGED",
+        actorUserId: actorId,
+        targetEntity: "APPUSER",
+        targetId: input.userId,
+        beforeData: { authMethod: "SSO" },
+        afterData: { authMethod: "LOCAL", sessionsRevoked: revokedCount },
+      });
+    });
+
+    return {
+      ok: true,
+      newAuthMethod: "LOCAL",
+      tempPassword: tempPasswordPlaintext,
+    };
+  }
+
+  await db.transaction(async (tx) => {
+    await updateAuthMethodFields(tx, input.userId, {
+      authMethod: "SSO",
+      forcePasswordChange: false,
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+    await deleteAccountByProvider(tx, input.userId, "credential");
+    const revokedCount = await deleteByUserId(tx, input.userId);
+
+    await insertAuditEvent(tx, {
+      eventType: "USER_AUTH_METHOD_CHANGED",
+      actorUserId: actorId,
+      targetEntity: "APPUSER",
+      targetId: input.userId,
+      beforeData: { authMethod: "LOCAL" },
+      afterData: { authMethod: "SSO", sessionsRevoked: revokedCount },
+    });
+  });
+
+  return { ok: true, newAuthMethod: "SSO" };
+}
+
+export type TombstoneDeleteUserResult =
+  | { ok: true }
+  | { ok: false; code: "USER_NOT_FOUND" }
+  | { ok: false; code: "INVALID_STATE" }
+  | { ok: false; code: "LAST_ADMIN" };
+
+// um17-spec §17.3. Tombstone-deletes a user: flips `status` to DELETED,
+// strips every role assignment and `account` credential row, cleans up any
+// residual sessions, and writes `USER_DELETED` capturing the pre-deletion
+// name, email, status, and role names — all atomically in one transaction
+// (Invariant #11). The `appuser` row itself is preserved (Invariant #12, no
+// physical delete); removing its `account` rows and relying on the partial
+// unique index that excludes DELETED frees the email and Entra identity for
+// reuse. Only a DISABLED user can be tombstoned; the last-admin guard
+// (Invariant #13) is defence in depth — a DISABLED admin already implies
+// another sign-in-capable admin exists (um13's disable guard enforced it).
+export async function tombstoneDeleteUser(
+  input: DeleteUserInput,
+  actorId: string,
+): Promise<TombstoneDeleteUserResult> {
+  const existingUser = await findUserById(db, input.userId);
+  if (!existingUser) {
+    return { ok: false, code: "USER_NOT_FOUND" };
+  }
+  if (existingUser.status !== "DISABLED") {
+    return { ok: false, code: "INVALID_STATE" };
+  }
+
+  if (await userHasAdminRole(db, input.userId)) {
+    const remainingAdmins = await countRemainingAdmins(db, input.userId);
+    if (remainingAdmins === 0) {
+      return { ok: false, code: "LAST_ADMIN" };
+    }
+  }
+
+  const roleNames = await getUserRoleNames(db, input.userId);
+
+  const before = {
+    userName: existingUser.userName,
+    userEmail: existingUser.userEmail,
+    status: existingUser.status,
+    roles: roleNames,
+  };
+
+  await db.transaction(async (tx) => {
+    await setUserStatus(tx, input.userId, "DELETED");
+    await removeUserRoleAssignments(tx, input.userId);
+    await deleteAllUserAccounts(tx, input.userId);
+    await deleteByUserId(tx, input.userId);
+
+    await insertAuditEvent(tx, {
+      eventType: "USER_DELETED",
+      actorUserId: actorId,
+      targetEntity: "APPUSER",
+      targetId: input.userId,
+      beforeData: before,
+      afterData: { status: "DELETED" },
     });
   });
 

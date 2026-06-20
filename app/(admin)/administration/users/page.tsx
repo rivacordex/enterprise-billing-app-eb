@@ -18,7 +18,7 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<{ userId?: string }>;
 }): Promise<React.JSX.Element> {
-  const { permissionMap } = await requirePermission(
+  const { userId: actorId, permissionMap } = await requirePermission(
     PERMISSIONS.USERS,
     LEVELS.READ,
   );
@@ -50,6 +50,7 @@ export default async function UsersPage({
           notFound={selectedUserId !== undefined && selectedUser === null}
           permissionMap={permissionMap}
           allRoles={roles}
+          actorId={actorId}
         />
       </div>
     </div>

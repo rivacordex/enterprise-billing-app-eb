@@ -80,3 +80,22 @@ export async function clearLockout(
     .set({ failedLoginCount: 0, lockedUntil: null })
     .where(eq(appuser.id, userId));
 }
+
+// Transaction-aware counterpart to `clearLockout` for the admin-initiated
+// unlock flow (um15-spec §15.2.1). Unlike `clearLockout` (an independent
+// UPDATE used on sign-in success, no audit), this accepts the caller's
+// transaction handle and writes no audit entry itself — the service wraps
+// it with `writeAuditEvent` in the same transaction.
+export async function adminClearLockout(
+  tx: Database,
+  userId: string,
+): Promise<void> {
+  await tx
+    .update(appuser)
+    .set({
+      failedLoginCount: 0,
+      lockedUntil: null,
+      lastModifiedDatetime: new Date(),
+    })
+    .where(eq(appuser.id, userId));
+}
