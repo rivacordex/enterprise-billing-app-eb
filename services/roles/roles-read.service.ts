@@ -34,16 +34,24 @@ function buildMappings(
 export async function getAllRolesWithMappings(): Promise<RoleWithMappings[]> {
   const roles = await rolesRepository.findAll(db);
 
-  return Promise.all(
-    roles.map(async (role) => {
-      const assignments =
-        await rolePermissionAssignRepository.findMappingsForRole(
-          db,
-          role.roleId,
-        );
-      return { ...role, mappings: buildMappings(assignments) };
-    }),
+  const assignments = await rolePermissionAssignRepository.findMappingsForRoles(
+    db,
+    roles.map((role) => role.roleId),
   );
+  const assignmentsByRoleId = new Map<string, typeof assignments>();
+  for (const assignment of assignments) {
+    const existing = assignmentsByRoleId.get(assignment.roleId);
+    if (existing) {
+      existing.push(assignment);
+    } else {
+      assignmentsByRoleId.set(assignment.roleId, [assignment]);
+    }
+  }
+
+  return roles.map((role) => ({
+    ...role,
+    mappings: buildMappings(assignmentsByRoleId.get(role.roleId) ?? []),
+  }));
 }
 
 // Backs the Roles page detail panel (um18-spec §18.3, §18.4). Returns `null`

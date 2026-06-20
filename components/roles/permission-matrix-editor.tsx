@@ -168,6 +168,7 @@ export function PermissionMatrixEditor({
       (m) => m.permissionName === permissionName,
     );
     if (current?.assignedLevel === newLevel) return;
+    const previousLevel = current?.assignedLevel ?? null;
 
     startTransition(() => {
       updateOptimisticMappings({ permissionName, level: newLevel });
@@ -182,9 +183,15 @@ export function PermissionMatrixEditor({
       });
 
       if (!result.ok) {
+        startTransition(() => {
+          updateOptimisticMappings({ permissionName, level: previousLevel });
+        });
         toast.error("Failed to update permission. Please try again.");
       }
     } catch {
+      startTransition(() => {
+        updateOptimisticMappings({ permissionName, level: previousLevel });
+      });
       toast.error("Failed to update permission. Please try again.");
     } finally {
       setSavingPermission(null);

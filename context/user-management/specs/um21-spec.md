@@ -107,25 +107,25 @@ No other changes to the file.
 
 Add one function:
 
-**`deleteById(roleId: string, tx: DrizzleTransaction): Promise<void>`**
+**`deleteRoleById(tx: Database, roleId: string): Promise<void>`**
 
-Executes `DELETE FROM core.roles WHERE role_id = $roleId` using Drizzle's `delete().where(eq(roles.roleId, roleId))`, scoped to the provided transaction. Returns `void`; throws if the row does not exist or if a FK constraint is violated (the FK on `core.role_assign.ref_role_id` will reject the delete if any assignments remain — the service prevents this, but the DB is a final backstop). Does not write audit entries. Does not perform permission checks.
+Executes `DELETE FROM core.roles WHERE role_id = $roleId` using Drizzle's `delete().where(eq(roles.roleId, roleId))`. Returns `void`; throws if the row does not exist or if a FK constraint is violated (the FK on `core.role_assign.ref_role_id` will reject the delete if any assignments remain — the service prevents this, but the DB is a final backstop). Does not write audit entries. Does not perform permission checks.
 
-`DrizzleTransaction` is the type inferred from Drizzle's `db.transaction()` callback parameter; define it once in `db/types.ts` as `export type DrizzleTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]` (or the equivalent Drizzle-provided type) and import it across repositories that accept transactions.
+`Database` is the existing repository-boundary handle from `db/client.ts` (`typeof db | PostgresJsTransaction<...>`) — the same type every other repository method already accepts for either the pooled client or a `db.transaction()` callback's `tx`. No new transaction type is introduced.
 
 #### 21.3.2 — `rolePermissionAssignRepository` (`db/repositories/role-permission-assign.repository.ts`)
 
 Add one function:
 
-**`deleteByRoleId(roleId: string, tx: DrizzleTransaction): Promise<void>`**
+**`deleteMappingsForRole(db: Database, roleId: string): Promise<void>`**
 
-Executes `DELETE FROM core.role_permission_assign WHERE ref_role_id = $roleId` using Drizzle's `delete().where(eq(rolePermissionAssign.refRoleId, roleId))`, scoped to the provided transaction. Returns `void`. Does not throw if no rows match (deletion of an unassigned role is valid). Does not write audit entries.
+Executes `DELETE FROM core.role_permission_assign WHERE ref_role_id = $roleId` using Drizzle's `delete().where(eq(rolePermissionAssign.refRoleId, roleId))`. Returns `void`. Does not throw if no rows match (deletion of an unassigned role is valid). Does not write audit entries.
 
 #### 21.3.3 — `roleAssignRepository` (`db/repositories/role-assign.repository.ts`)
 
 This file has a stub from um05. Add one function:
 
-**`countByRoleId(roleId: string, tx: DrizzleTransaction): Promise<number>`**
+**`countByRoleId(db: Database, roleId: string): Promise<number>`**
 
 Executes `SELECT COUNT(*) FROM core.role_assign WHERE ref_role_id = $roleId` within the transaction. Returns the integer count. Used to block deletion when users are still assigned.
 
@@ -184,13 +184,14 @@ where `DeleteRoleActionResult` is the discriminated union returned to the client
 
 **Algorithm:**
 
-1. `const parsed = deleteRoleSchema.safeParse(rawInput)` — if `!parsed.success`, return `{ ok: false, code: 'SERVER_ERROR' }`. (Malformed UUIDs are a client bug, not a user-facing flow.)
-2. `const { user } = await requirePermission(PERMISSIONS.ROLES, LEVELS.DELETE)` — if insufficient, return `{ ok: false, code: 'FORBIDDEN' }`. (`requirePermission` redirects on unauthenticated; on insufficient level in an action context it returns the error rather than redirecting — follow the pattern established in um19/um20.)
-3. `const result = await deleteRole({ roleId: parsed.data.roleId, actorUserId: user.id })`.
-4. If `result.ok`, call `revalidatePath('/administration/roles')`.
-5. Return `result`.
+1. `const { userId: actorId } = await requirePermission(PERMISSIONS.ROLES, LEVELS.DELETE)` — wrap in try/catch, ahead of parsing (auth first, mirroring `createRoleAction`/`updateRoleAction`/`setPermissionMappingAction`); catch `NEXT_REDIRECT` and return `{ ok: false, code: 'FORBIDDEN' }`; all other auth failures → `{ ok: false, code: 'SERVER_ERROR' }`.
+2. `const parsed = deleteRoleSchema.safeParse(rawInput)` — if `!parsed.success`, return `{ ok: false, code: 'VALIDATION_ERROR', fieldErrors: parsed.error.flatten().fieldErrors }` (matches the other role actions' contract, not `SERVER_ERROR`).
+3. Wrap in try/catch: `const result = await rolesWriteService.deleteRole(parsed.data, actorId)`. On thrown exception → `{ ok: false, code: 'SERVER_ERROR' }`.
+4. If `!result.ok` → return `result`.
+5. `revalidatePath('/administration/roles')`.
+6. Return `{ ok: true }`.
 
-No `try/catch` at the action boundary beyond what the service returns — the service already wraps in `try/catch` and returns `SERVER_ERROR`. No business logic in this file beyond parse → auth → service → revalidate.
+No business logic in this file beyond auth → parse → service → revalidate.
 
 ### 21.6 — `DeleteRoleDialog` component (`components/roles/delete-role-dialog.tsx`)
 
@@ -338,16 +339,16 @@ const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   </div>
 </div>
 
-{isDeleteOpen && (
-  <DeleteRoleDialog
-    role={role}
-    open={isDeleteOpen}
-    onOpenChange={setIsDeleteOpen}
-  />
-)}
+<DeleteRoleDialog
+  roleId={role.roleId}
+  roleName={role.roleName}
+  isOpen={isDeleteOpen}
+  onOpenChange={setIsDeleteOpen}
+  onSuccess={handleDeleteSuccess}
+/>
 ```
 
-Mount `DeleteRoleDialog` conditionally only when `isDeleteOpen` is true (avoids mounting an inactive dialog; also resets dialog's internal state on each open).
+`DeleteRoleDialog` stays mounted unconditionally (no `{isDeleteOpen && ...}` guard) — visibility is controlled entirely through the `isOpen`/`onOpenChange` props, matching the `Dialog`/`AlertDialog` pattern used elsewhere in this codebase. Conditionally mounting it would unmount-then-remount on every open, which is unnecessary churn for a controlled dialog.
 
 No other changes to `RoleDetail`'s rendering logic.
 

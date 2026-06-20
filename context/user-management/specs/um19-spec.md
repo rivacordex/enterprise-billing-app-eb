@@ -321,7 +321,7 @@ export async function createRoleAction(
 
 Steps:
 
-1. `const { userId: actorId } = await requirePermission(PERMISSIONS.ROLES, LEVELS.EDIT)` — wrap in try/catch; catch `NEXT_REDIRECT` and re-throw; other auth failures → `{ ok: false, code: 'FORBIDDEN' }`.
+1. `const { userId: actorId } = await requirePermission(PERMISSIONS.ROLES, LEVELS.EDIT)` — wrap in try/catch; catch `NEXT_REDIRECT` and return `{ ok: false, code: 'FORBIDDEN' }`; other auth failures → `{ ok: false, code: 'SERVER_ERROR' }`.
 
 2. `const parsed = createRoleSchema.safeParse(rawInput)`. If `!parsed.success` → `{ ok: false, code: 'VALIDATION_ERROR', fieldErrors: parsed.error.flatten().fieldErrors }`.
 
@@ -436,12 +436,12 @@ useEffect(() => {
 
 Called when the role being edited changes (e.g. the user selects a different role while edit mode is open from a prior selection).
 
-**Form `id`:** `id="role-form"` in both modes. Only one role form is ever mounted at a time (either the dialog or the detail panel, never both simultaneously), so a fixed id is safe.
+**Form `id`:** `id="role-form-create"` (create mode) / `id="role-form-edit"` (edit mode). The create dialog and the detail panel's edit form can both be mounted at once — e.g. opening "Add Role" while another role's edit panel is open — so the id must vary per mode rather than being fixed.
 
 **Field rendering:**
 
 ```tsx
-<form id="role-form" onSubmit={form.handleSubmit(handleSubmit)}>
+<form id={`role-form-${props.mode}`} onSubmit={form.handleSubmit(handleSubmit)}>
   {/* Role Name */}
   <FormField
     control={form.control}
@@ -595,7 +595,7 @@ Uses `useRouter` from `next/navigation`.
       >
         Cancel
       </Button>
-      <Button type="submit" form="role-form" disabled={isSubmitting}>
+      <Button type="submit" form="role-form-create" disabled={isSubmitting}>
         {isSubmitting && <Loader2 size={14} className="mr-1 animate-spin" />}
         Create Role
       </Button>
@@ -719,7 +719,7 @@ Replace the Role info `<dl>` group with `RoleForm`:
       <Button variant="ghost" onClick={() => setMode('view')} disabled={isSaving}>
         Cancel
       </Button>
-      <Button type="submit" form="role-form" disabled={isSaving}>
+      <Button type="submit" form="role-form-edit" disabled={isSaving}>
         {isSaving && <Loader2 size={14} className="animate-spin mr-1" />}
         Save changes
       </Button>
@@ -890,7 +890,7 @@ New file. Use `@testing-library/react` + `vitest`.
 - Edit mode: `onSubmit` is called with updated `RoleFormValues` shape.
 - Both modes: `externalFieldErrors.roleName` renders an error below Role Name when set.
 - Both modes: `isSubmitting=true` disables both inputs.
-- Both modes: form uses `id="role-form"` so external submit buttons can wire via `form="role-form"`.
+- Both modes: form uses `id="role-form-create"` / `id="role-form-edit"` so external submit buttons can wire via `form="role-form-create"` / `form="role-form-edit"`.
 
 #### Unit tests: `CreateRoleDialog` (`tests/unit/components/roles/create-role-dialog.test.tsx`)
 
@@ -1071,7 +1071,7 @@ No new `PERMISSIONS` migration rows — `roles:EDIT` is already seeded (ADMIN ho
 - [ ] `RoleForm` renders Role Name and Description fields in both create and edit modes
 - [ ] Create mode: Role Name has `autoFocus`; Description is optional
 - [ ] Edit mode: inputs pre-populate from `defaultValues`
-- [ ] Form `id="role-form"` in both modes so external submit buttons wire via `form="role-form"`
+- [ ] Form `id="role-form-create"` / `id="role-form-edit"` per mode so external submit buttons wire via `form="role-form-create"` / `form="role-form-edit"`
 - [ ] `externalFieldErrors.roleName` renders below Role Name when set, using danger color
 - [ ] `isSubmitting=true` disables both inputs
 - [ ] Empty-string `roleDescr` submits as `null`
@@ -1082,7 +1082,7 @@ No new `PERMISSIONS` migration rows — `roles:EDIT` is already seeded (ADMIN ho
 - [ ] Dialog opens when "Add Role" trigger is clicked
 - [ ] "Add Role" button in `RoleTable` is no longer disabled; `CreateRoleDialog` is mounted when `hasLevel(permissionMap, PERMISSIONS.ROLES, LEVELS.EDIT)` is true
 - [ ] "Add Role" trigger is absent when `hasLevel(...)` returns false
-- [ ] Submit button wired via `form="role-form"`; calls `createRoleAction`
+- [ ] Submit button wired via `form="role-form-create"`; calls `createRoleAction`
 - [ ] "Cancel" closes the dialog without calling the action
 - [ ] `onOpenChange` is suppressed while `isSubmitting` is true (backdrop/Escape blocked mid-flight)
 - [ ] Dialog unmounts `RoleForm` on close (no `keepMounted`/`forceMount`); form state resets on next open

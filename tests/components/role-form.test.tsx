@@ -21,7 +21,7 @@ describe("RoleForm create mode", () => {
     const onSubmit = vi.fn();
     render(<RoleForm mode="create" onSubmit={onSubmit} isSubmitting={false} />);
 
-    const form = document.getElementById("role-form") as HTMLFormElement;
+    const form = document.getElementById("role-form-create") as HTMLFormElement;
     form.requestSubmit();
 
     await waitFor(() => {
@@ -37,7 +37,7 @@ describe("RoleForm create mode", () => {
 
     await user.type(screen.getByLabelText("Role Name"), "Finance");
     await user.type(screen.getByLabelText(/Description/), "Finance team");
-    const form = document.getElementById("role-form") as HTMLFormElement;
+    const form = document.getElementById("role-form-create") as HTMLFormElement;
     form.requestSubmit();
 
     await waitFor(() => {
@@ -54,7 +54,7 @@ describe("RoleForm create mode", () => {
     render(<RoleForm mode="create" onSubmit={onSubmit} isSubmitting={false} />);
 
     await user.type(screen.getByLabelText("Role Name"), "Finance");
-    const form = document.getElementById("role-form") as HTMLFormElement;
+    const form = document.getElementById("role-form-create") as HTMLFormElement;
     form.requestSubmit();
 
     await waitFor(() => {
@@ -89,9 +89,9 @@ describe("RoleForm create mode", () => {
     expect(screen.getByLabelText(/Description/)).toBeDisabled();
   });
 
-  it("uses the role-form id so an external submit button can submit it", () => {
+  it("uses the role-form-create id so an external submit button can submit it", () => {
     render(<RoleForm mode="create" onSubmit={vi.fn()} isSubmitting={false} />);
-    expect(document.getElementById("role-form")).toBeInTheDocument();
+    expect(document.getElementById("role-form-create")).toBeInTheDocument();
   });
 });
 
@@ -140,7 +140,7 @@ describe("RoleForm edit mode", () => {
 
     await user.clear(screen.getByLabelText("Role Name"));
     await user.type(screen.getByLabelText("Role Name"), "Finance Renamed");
-    const form = document.getElementById("role-form") as HTMLFormElement;
+    const form = document.getElementById("role-form-edit") as HTMLFormElement;
     form.requestSubmit();
 
     await waitFor(() => {
@@ -183,7 +183,7 @@ describe("RoleForm edit mode", () => {
     expect(screen.getByLabelText(/Description/)).toBeDisabled();
   });
 
-  it("uses the role-form id so an external submit button can submit it", () => {
+  it("uses the role-form-edit id so an external submit button can submit it", () => {
     render(
       <RoleForm
         mode="edit"
@@ -192,6 +192,6 @@ describe("RoleForm edit mode", () => {
         isSubmitting={false}
       />,
     );
-    expect(document.getElementById("role-form")).toBeInTheDocument();
+    expect(document.getElementById("role-form-edit")).toBeInTheDocument();
   });
 });

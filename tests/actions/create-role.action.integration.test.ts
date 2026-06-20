@@ -22,6 +22,7 @@ import { roles } from "@/db/schema/roles";
 import { permissions } from "@/db/schema/permissions";
 import { rolePermissionAssign } from "@/db/schema/role-permission-assign";
 import { roleAssign } from "@/db/schema/role-assign";
+import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { createRoleAction as CreateRoleAction } from "@/actions/roles/create-role.action";
 
 // Exercises the real `createRoleAction` (guard + validation + service +
@@ -56,6 +57,7 @@ describe.skipIf(!databaseUrl)(
     }
 
     beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');

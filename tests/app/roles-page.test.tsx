@@ -19,10 +19,14 @@ vi.mock("@/db/client", () => ({ db: {} }));
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import RolesPage from "@/app/(admin)/administration/roles/page";
-import { getAllRolesWithMappings } from "@/services/roles/roles-read.service";
+import {
+  getAllRolesWithMappings,
+  getRoleWithMappings,
+} from "@/services/roles/roles-read.service";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockGetAllRolesWithMappings = vi.mocked(getAllRolesWithMappings);
+const mockGetRoleWithMappings = vi.mocked(getRoleWithMappings);
 
 function redirectError(target: string): Error & { digest: string } {
   const error = new Error("NEXT_REDIRECT") as Error & { digest: string };
@@ -33,6 +37,7 @@ function redirectError(target: string): Error & { digest: string } {
 beforeEach(() => {
   mockRequirePermission.mockReset();
   mockGetAllRolesWithMappings.mockReset();
+  mockGetRoleWithMappings.mockReset();
 });
 
 describe("RolesPage", () => {
@@ -56,6 +61,25 @@ describe("RolesPage", () => {
       LEVELS.READ,
     );
     expect(mockGetAllRolesWithMappings).toHaveBeenCalled();
+  });
+
+  it("fetches the selected role via getRoleWithMappings when ?roleId is present", async () => {
+    mockRequirePermission.mockResolvedValue({
+      userId: "admin-1",
+      userEmail: "admin@example.com",
+      permissionMap: {
+        users: "DELETE",
+        roles: "DELETE",
+        system_config: "DELETE",
+        audit_log: "READ",
+      },
+    });
+    mockGetAllRolesWithMappings.mockResolvedValue([]);
+    mockGetRoleWithMappings.mockResolvedValue(null);
+
+    await RolesPage({ searchParams: Promise.resolve({ roleId: "role-1" }) });
+
+    expect(mockGetRoleWithMappings).toHaveBeenCalledWith("role-1");
   });
 
   it("propagates the /no-access redirect for a no-grants user without fetching data", async () => {

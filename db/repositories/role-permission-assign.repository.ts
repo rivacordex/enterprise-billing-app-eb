@@ -69,6 +69,42 @@ export const rolePermissionAssignRepository = {
     }));
   },
 
+  // Multi-role variant of `findMappingsForRole` above, used by the Roles
+  // page table (um18-spec §18.3) to avoid one query per role. Unlike
+  // `findGrantsByRoleIds`, this keeps `roleId` on each row so the caller can
+  // group mappings back by role.
+  async findMappingsForRoles(
+    db: Database,
+    roleIds: string[],
+  ): Promise<
+    Array<{
+      roleId: string;
+      permissionName: PermissionName;
+      permissionType: PermissionType;
+    }>
+  > {
+    if (roleIds.length === 0) return [];
+
+    const rows = await db
+      .select({
+        roleId: rolePermissionAssign.refRoleId,
+        permissionName: permissions.permissionName,
+        permissionType: rolePermissionAssign.permissionType,
+      })
+      .from(rolePermissionAssign)
+      .innerJoin(
+        permissions,
+        eq(permissions.permissionId, rolePermissionAssign.refPermissionId),
+      )
+      .where(inArray(rolePermissionAssign.refRoleId, roleIds));
+
+    return rows.map((row) => ({
+      roleId: row.roleId,
+      permissionName: assertPermissionName(row.permissionName),
+      permissionType: row.permissionType as PermissionType,
+    }));
+  },
+
   // Upserts the (role, permission) → level mapping (um20-spec §20.2.2),
   // targeting the `role_permission_assign_role_permission_unique` constraint
   // so a role never carries more than one row per permission. No business

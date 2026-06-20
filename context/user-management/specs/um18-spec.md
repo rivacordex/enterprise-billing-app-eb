@@ -181,7 +181,7 @@ JOIN core.permissions p ON p.permission_id = rpa.ref_permission_id
 WHERE rpa.ref_role_id = $roleId
 ```
 
-Use Drizzle's `eq` operator (not raw SQL). Map result rows to `{ permissionName, permissionType }` using the same type-guard narrowing as `findGrantsByRoleIds` from um06 (check `PERMISSION_NAMES.includes(v)` before casting; throw `AppError` with code `INTERNAL_ERROR` for unrecognised names). If no rows, return `[]`.
+Use Drizzle's `eq` operator (not raw SQL). Map result rows to `{ permissionName, permissionType }` using the same type-guard narrowing as `findGrantsByRoleIds` from um06 (check `PERMISSION_NAMES.includes(v)` before casting; throw `AppError` with code `INTERNAL` for unrecognised names — `lib/errors.ts`'s `AppErrorCode` union has no `INTERNAL_ERROR` variant). If no rows, return `[]`.
 
 Do not modify `findGrantsByRoleIds` from um06.
 
@@ -226,7 +226,7 @@ export const metadata = { title: "Roles — Enterprise Billing" };
 4. Render the two-column layout: `<RoleTable>` on the left, `<RoleDetail>` on the right.
 
 Pass to `RoleTable`: `roles`, `selectedRoleId` (string or `null`), `permissionMap`.
-Pass to `RoleDetail`: `role` (the `RoleWithMappings` or `null`).
+Pass to `RoleDetail`: `role` (the `RoleWithMappings` or `null`) and `selectedRoleId` (string or `null`) — `RoleDetail` needs both to distinguish "nothing selected" (`selectedRoleId === null`) from "selected role failed to load" (`selectedRoleId` set but `role === null`, rendered as "Role not found").
 
 No DB access in this file — delegates entirely to the service. No business rules.
 
@@ -236,7 +236,7 @@ Required by code-standards §3.11. Renders a minimal skeleton matching the two-c
 
 ### 18.6 — `error.tsx` (`app/(admin)/administration/roles/error.tsx`)
 
-Required by code-standards §3.11. Calls the `lib/` telemetry helper (`GlitchTip`) with the error. Renders a non-leaking message ("Something went wrong loading the Roles page.") with a "Try again" reload button. No stack traces, no internal codes visible in the rendered page.
+Required by code-standards §3.11. Calls `reportError` from `lib/logger.ts` (the sanctioned telemetry sink — GlitchTip is wired in as its transport in um25) with the error. Renders a non-leaking message ("Something went wrong loading the Roles page.") with a "Try again" reload button. No stack traces, no internal codes visible in the rendered page.
 
 ### 18.7 — `PermissionLevelTag` component (`components/roles/permission-level-tag.tsx`)
 
