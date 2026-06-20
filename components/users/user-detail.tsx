@@ -442,151 +442,155 @@ export function UserDetail({
   return (
     <>
       <div className="h-full rounded-md bg-card shadow-md">
-        <div className="flex items-start justify-between border-b border-border px-4 py-3">
-          <div>
-            <h3
-              className={
-                isDeletedView && mode !== "edit"
-                  ? "text-h3 font-semibold text-[color:var(--color-neutral-400)]"
-                  : "text-h3 font-semibold text-foreground"
-              }
-            >
-              {mode === "edit" ? "Edit User Details" : user.userName}
-              {mode !== "edit" && isDeletedView && (
-                <span className="ml-2 text-xs text-[color:var(--color-danger-700)]">
-                  · Deleted
-                </span>
-              )}
-            </h3>
-            {mode === "view" && !isDeletedView && (
-              <div className="mt-1">
-                <StatusBadge status={user.status} isLocked={user.isLocked} />
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {mode === "view" && showDisable && (
-              <button
-                type="button"
-                onClick={() => {
-                  setActionError(null);
-                  setIsConfirmOpen(true);
-                }}
-                disabled={isDisabling || isDeleteDialogOpen}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--color-danger-500)] bg-transparent px-2 py-1 text-sm text-[color:var(--color-danger-700)] outline-none hover:bg-[color:var(--color-danger-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+        <div className="border-b border-border px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3
+                className={
+                  isDeletedView && mode !== "edit"
+                    ? "text-h3 font-semibold text-[color:var(--color-neutral-400)]"
+                    : "text-h3 font-semibold text-foreground"
+                }
               >
-                <Ban size={14} />
-                Disable
-              </button>
-            )}
-            {mode === "view" && showEnable && (
-              <button
-                type="button"
-                onClick={() => void handleEnable()}
-                disabled={isEnabling || isDeleteDialogOpen}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--color-success-500)] bg-transparent px-2 py-1 text-sm text-[color:var(--color-success-700)] outline-none hover:bg-[color:var(--color-success-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
-              >
-                {isEnabling ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <CheckCircle size={14} />
+                {mode === "edit" ? "Edit User Details" : user.userName}
+                {mode !== "edit" && isDeletedView && (
+                  <span className="ml-2 text-xs text-[color:var(--color-danger-700)]">
+                    · Deleted
+                  </span>
                 )}
-                Enable
-              </button>
-            )}
-            {mode === "view" && showDelete && (
-              <button
-                type="button"
-                onClick={() => setIsDeleteDialogOpen(true)}
-                disabled={actionsDisabled}
-                className="inline-flex items-center gap-1.5 rounded-sm bg-[color:var(--color-danger-500)] px-2 py-1 text-sm text-white outline-none hover:bg-[color:var(--color-danger-700)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
-              >
-                <Trash2 size={14} />
-                Delete user
-              </button>
-            )}
-            {mode === "view" && showUnlock && (
-              <button
-                type="button"
-                onClick={() => {
-                  setUnlockError(null);
-                  setIsUnlockConfirmOpen(true);
-                }}
-                disabled={
-                  isDisabling ||
-                  isEnabling ||
-                  isResetting ||
-                  isUnlocking ||
-                  isDeleteDialogOpen
-                }
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--color-success-500)] bg-transparent px-2 py-1 text-sm text-[color:var(--color-success-700)] outline-none hover:bg-[color:var(--color-success-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
-              >
-                <Unlock size={14} />
-                Unlock
-              </button>
-            )}
-            {mode === "view" && showReset && (
-              <button
-                type="button"
-                onClick={() => {
-                  setResetError(null);
-                  setIsResetConfirmOpen(true);
-                }}
-                disabled={
-                  isDisabling ||
-                  isEnabling ||
-                  isResetting ||
-                  isUnlocking ||
-                  isDeleteDialogOpen
-                }
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--color-warning-500)] bg-transparent px-2 py-1 text-sm text-[color:var(--color-warning-700)] outline-none hover:bg-[color:var(--color-warning-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
-              >
-                <KeyRound size={14} />
-                Reset Password
-              </button>
-            )}
-            {mode === "view" && canEdit && !isDeletedView && (
-              <button
-                type="button"
-                onClick={handleEdit}
-                disabled={isDeleteDialogOpen}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--border-subtle)] bg-transparent px-2 py-1 text-sm text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
-              >
-                <Pencil size={14} />
-                Edit
-              </button>
-            )}
-            {mode === "view" && canEdit && !isDeletedView && (
-              <button
-                type="button"
-                onClick={handleManageRoles}
-                disabled={isDeleteDialogOpen}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--border-subtle)] bg-transparent px-2 py-1 text-sm text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
-              >
-                <ShieldPlus size={14} />
-                Manage roles
-              </button>
-            )}
+              </h3>
+              {mode === "view" && !isDeletedView && (
+                <div className="mt-1">
+                  <StatusBadge status={user.status} isLocked={user.isLocked} />
+                </div>
+              )}
+            </div>
             {mode === "view" && (
               <Link
                 href="/administration/users"
                 aria-label="Close"
-                className="rounded-sm p-1 text-muted-foreground hover:bg-[color:var(--action-ghost-hover)] hover:text-foreground"
+                className="shrink-0 rounded-sm p-1 text-muted-foreground hover:bg-[color:var(--action-ghost-hover)] hover:text-foreground"
               >
                 <X size={16} />
               </Link>
             )}
-            {mode === "manageRoles" && (
-              <button
-                type="button"
-                onClick={() => setMode("view")}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-[color:var(--border-subtle)] bg-transparent px-2 py-1 text-sm text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)]"
-              >
-                <Check size={14} />
-                Done
-              </button>
-            )}
           </div>
+          {mode !== "edit" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {mode === "view" && showDisable && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionError(null);
+                    setIsConfirmOpen(true);
+                  }}
+                  disabled={isDisabling || isDeleteDialogOpen}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--color-danger-500)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-[color:var(--color-danger-700)] outline-none hover:bg-[color:var(--color-danger-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  <Ban size={14} />
+                  Disable
+                </button>
+              )}
+              {mode === "view" && showEnable && (
+                <button
+                  type="button"
+                  onClick={() => void handleEnable()}
+                  disabled={isEnabling || isDeleteDialogOpen}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--color-success-500)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-[color:var(--color-success-700)] outline-none hover:bg-[color:var(--color-success-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  {isEnabling ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <CheckCircle size={14} />
+                  )}
+                  Enable
+                </button>
+              )}
+              {mode === "view" && showDelete && (
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  disabled={actionsDisabled}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm bg-[color:var(--color-danger-500)] px-2 py-1 text-sm whitespace-nowrap text-white outline-none hover:bg-[color:var(--color-danger-700)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  Delete user
+                </button>
+              )}
+              {mode === "view" && showUnlock && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUnlockError(null);
+                    setIsUnlockConfirmOpen(true);
+                  }}
+                  disabled={
+                    isDisabling ||
+                    isEnabling ||
+                    isResetting ||
+                    isUnlocking ||
+                    isDeleteDialogOpen
+                  }
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--color-success-500)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-[color:var(--color-success-700)] outline-none hover:bg-[color:var(--color-success-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  <Unlock size={14} />
+                  Unlock
+                </button>
+              )}
+              {mode === "view" && showReset && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetError(null);
+                    setIsResetConfirmOpen(true);
+                  }}
+                  disabled={
+                    isDisabling ||
+                    isEnabling ||
+                    isResetting ||
+                    isUnlocking ||
+                    isDeleteDialogOpen
+                  }
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--color-warning-500)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-[color:var(--color-warning-700)] outline-none hover:bg-[color:var(--color-warning-50)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  <KeyRound size={14} />
+                  Reset Password
+                </button>
+              )}
+              {mode === "view" && canEdit && !isDeletedView && (
+                <button
+                  type="button"
+                  onClick={handleEdit}
+                  disabled={isDeleteDialogOpen}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--border-subtle)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  <Pencil size={14} />
+                  Edit
+                </button>
+              )}
+              {mode === "view" && canEdit && !isDeletedView && (
+                <button
+                  type="button"
+                  onClick={handleManageRoles}
+                  disabled={isDeleteDialogOpen}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--border-subtle)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
+                >
+                  <ShieldPlus size={14} />
+                  Manage roles
+                </button>
+              )}
+              {mode === "manageRoles" && (
+                <button
+                  type="button"
+                  onClick={() => setMode("view")}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[color:var(--border-subtle)] bg-transparent px-2 py-1 text-sm whitespace-nowrap text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)]"
+                >
+                  <Check size={14} />
+                  Done
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {mode === "view" && !isConfirmOpen && actionError && (
