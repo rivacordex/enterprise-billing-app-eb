@@ -1,6 +1,13 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/actions/users/update-user-details.action", () => ({
   updateUserDetailsAction: vi.fn(),
@@ -17,12 +24,28 @@ vi.mock("@/actions/users/disable-user.action", () => ({
 vi.mock("@/actions/users/enable-user.action", () => ({
   enableUserAction: vi.fn(),
 }));
+vi.mock("@/actions/users/reset-password.action", () => ({
+  resetPasswordAction: vi.fn(),
+}));
+vi.mock("@/actions/users/unlock-account.action", () => ({
+  unlockAccountAction: vi.fn(),
+}));
+vi.mock("@/actions/users/switch-auth-method.action", () => ({
+  switchAuthMethodAction: vi.fn(),
+}));
+vi.mock("@/actions/users/delete-user.action", () => ({
+  deleteUserAction: vi.fn(),
+}));
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
 import { disableUserAction } from "@/actions/users/disable-user.action";
 import { enableUserAction } from "@/actions/users/enable-user.action";
+import { resetPasswordAction } from "@/actions/users/reset-password.action";
+import { switchAuthMethodAction } from "@/actions/users/switch-auth-method.action";
+import { deleteUserAction } from "@/actions/users/delete-user.action";
+import { unlockAccountAction } from "@/actions/users/unlock-account.action";
 import { updateUserDetailsAction } from "@/actions/users/update-user-details.action";
 import { toast } from "sonner";
 
@@ -34,7 +57,12 @@ import type { UserDetailView } from "@/types/users";
 const mockUpdateUserDetailsAction = vi.mocked(updateUserDetailsAction);
 const mockDisableUserAction = vi.mocked(disableUserAction);
 const mockEnableUserAction = vi.mocked(enableUserAction);
+const mockResetPasswordAction = vi.mocked(resetPasswordAction);
+const mockUnlockAccountAction = vi.mocked(unlockAccountAction);
+const mockSwitchAuthMethodAction = vi.mocked(switchAuthMethodAction);
+const mockDeleteUserAction = vi.mocked(deleteUserAction);
 const mockToastError = vi.mocked(toast.error);
+const mockToastSuccess = vi.mocked(toast.success);
 
 const BASE_USER: UserDetailView = {
   userId: "user-1",
@@ -74,7 +102,12 @@ beforeEach(() => {
   mockUpdateUserDetailsAction.mockReset();
   mockDisableUserAction.mockReset();
   mockEnableUserAction.mockReset();
+  mockResetPasswordAction.mockReset();
+  mockUnlockAccountAction.mockReset();
+  mockSwitchAuthMethodAction.mockReset();
+  mockDeleteUserAction.mockReset();
   mockToastError.mockReset();
+  mockToastSuccess.mockReset();
 });
 
 describe("UserDetail edit mode", () => {
@@ -591,5 +624,1122 @@ describe("UserDetail disable/enable", () => {
         "Something went wrong. Please try again.",
       );
     });
+  });
+});
+
+describe("UserDetail reset password", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders the Reset Password button for a LOCAL ACTIVE user with EDIT", () => {
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Reset Password" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the Reset Password button for PENDING and DISABLED LOCAL users", () => {
+    const { rerender } = render(
+      <UserDetail
+        user={{ ...BASE_USER, status: "PENDING" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Reset Password" }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <UserDetail
+        user={{ ...BASE_USER, status: "DISABLED" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Reset Password" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render the Reset Password button for an SSO user", () => {
+    render(
+      <UserDetail
+        user={{ ...BASE_USER, authMethod: "SSO" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reset Password" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the Reset Password button for a DELETED user", () => {
+    render(
+      <UserDetail
+        user={{ ...BASE_USER, status: "DELETED" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reset Password" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the Reset Password button when the user only has READ", () => {
+    render(
+      <UserDetail user={BASE_USER} permissionMap={READ_MAP} allRoles={[]} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reset Password" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the confirmation dialog when Reset Password is clicked, without calling the action", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Reset Ada Lovelace's password?" }),
+    ).toBeInTheDocument();
+    expect(mockResetPasswordAction).not.toHaveBeenCalled();
+  });
+
+  it("closes the dialog without calling the action when Cancel is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: "Reset Ada Lovelace's password?",
+        }),
+      ).not.toBeInTheDocument();
+    });
+    expect(mockResetPasswordAction).not.toHaveBeenCalled();
+  });
+
+  it("calls resetPasswordAction with the userId when confirmed", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: true,
+      tempPassword: "TmpPass123!",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    await waitFor(() => {
+      expect(mockResetPasswordAction).toHaveBeenCalledWith({
+        userId: "user-1",
+      });
+    });
+  });
+
+  it("closes the confirmation dialog and opens the reveal modal on success", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: true,
+      tempPassword: "TmpPass123!",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Temporary Password — Ada Lovelace",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("TmpPass123!")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Reset Ada Lovelace's password?",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows the inline error on USER_NOT_FOUND", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: false,
+      code: "USER_NOT_FOUND",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    expect(
+      await screen.findByText(
+        "User not found. The record may have been deleted.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Reset Ada Lovelace's password?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows the inline error on NOT_LOCAL_USER", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: false,
+      code: "NOT_LOCAL_USER",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    expect(
+      await screen.findByText(
+        "Password reset is only available for LOCAL users.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Reset Ada Lovelace's password?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows the inline error on INVALID_STATE", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: false,
+      code: "INVALID_STATE",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    expect(
+      await screen.findByText(
+        "Password reset cannot be applied to this user's current state.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Reset Ada Lovelace's password?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a toast and closes the dialog on FORBIDDEN", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: false,
+      code: "FORBIDDEN",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Something went wrong. Please try again.",
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: "Reset Ada Lovelace's password?",
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows a toast and closes the dialog on SERVER_ERROR", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: false,
+      code: "SERVER_ERROR",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Something went wrong. Please try again.",
+      );
+    });
+  });
+
+  it("the reveal modal cannot be closed by pressing Escape", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: true,
+      tempPassword: "TmpPass123!",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await screen.findByText("TmpPass123!");
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByText("TmpPass123!")).toBeInTheDocument();
+  });
+
+  it("clicking Copy calls navigator.clipboard.writeText and shows Copied! for 2 seconds", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: true,
+      tempPassword: "TmpPass123!",
+    });
+    const user = userEvent.setup();
+    // `userEvent.setup()` installs its own clipboard stub on the window
+    // (for `user.copy()`/`paste()` support) — defining our mock must happen
+    // *after* setup, or the stub overwrites it.
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: writeTextMock },
+      configurable: true,
+    });
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await screen.findByText("TmpPass123!");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Copy password" }));
+
+    expect(writeTextMock).toHaveBeenCalledWith("TmpPass123!");
+    expect(screen.getByText("Copied!")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+  });
+
+  it("clicking Done closes the reveal modal and clears the temp password", async () => {
+    mockResetPasswordAction.mockResolvedValue({
+      ok: true,
+      tempPassword: "TmpPass123!",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await user.click(screen.getByRole("button", { name: "Reset Password" }));
+    await screen.findByText("TmpPass123!");
+
+    await user.click(
+      screen.getByRole("button", { name: "Done — I've saved the password" }),
+    );
+
+    expect(screen.queryByText("TmpPass123!")).not.toBeInTheDocument();
+  });
+
+  it("disables the Reset Password button while mode is edit", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(
+      screen.queryByRole("button", { name: "Reset Password" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+const LOCKED_USER: UserDetailView = {
+  ...BASE_USER,
+  isLocked: true,
+  lockedUntil: new Date("2026-06-20T10:00:00Z"),
+};
+
+describe("UserDetail unlock", () => {
+  it("renders the Unlock button for a locked ACTIVE user with EDIT", () => {
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+    expect(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
+  });
+
+  it("renders the Unlock button for locked PENDING and DISABLED users", () => {
+    const { rerender } = render(
+      <UserDetail
+        user={{ ...LOCKED_USER, status: "PENDING" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
+
+    rerender(
+      <UserDetail
+        user={{ ...LOCKED_USER, status: "DISABLED" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
+  });
+
+  it("does not render the Unlock button when the user is not locked", () => {
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Unlock" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the Unlock button for a DELETED user", () => {
+    render(
+      <UserDetail
+        user={{ ...LOCKED_USER, status: "DELETED" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Unlock" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the Unlock button when the user only has READ", () => {
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={READ_MAP} allRoles={[]} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Unlock" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the confirmation dialog when Unlock is clicked, without calling the action", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Unlock Ada Lovelace?" }),
+    ).toBeInTheDocument();
+    expect(mockUnlockAccountAction).not.toHaveBeenCalled();
+  });
+
+  it("closes the dialog without calling the action when Cancel is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "Unlock Ada Lovelace?" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(mockUnlockAccountAction).not.toHaveBeenCalled();
+  });
+
+  it("calls unlockAccountAction with the userId when confirmed", async () => {
+    mockUnlockAccountAction.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    await waitFor(() => {
+      expect(mockUnlockAccountAction).toHaveBeenCalledWith({
+        userId: "user-1",
+      });
+    });
+  });
+
+  it("closes the dialog after a successful unlock", async () => {
+    mockUnlockAccountAction.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "Unlock Ada Lovelace?" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the dialog open and shows the inline error on USER_NOT_FOUND", async () => {
+    mockUnlockAccountAction.mockResolvedValue({
+      ok: false,
+      code: "USER_NOT_FOUND",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect(
+      await screen.findByText(
+        "User not found. The record may have been deleted.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Unlock Ada Lovelace?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows the inline error on NOT_LOCKED", async () => {
+    mockUnlockAccountAction.mockResolvedValue({
+      ok: false,
+      code: "NOT_LOCKED",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect(
+      await screen.findByText(
+        "This account is no longer locked. Refresh the page to see the current state.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Unlock Ada Lovelace?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows the inline error on INVALID_STATE", async () => {
+    mockUnlockAccountAction.mockResolvedValue({
+      ok: false,
+      code: "INVALID_STATE",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect(
+      await screen.findByText(
+        "Unlock cannot be applied to this user's current state.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Unlock Ada Lovelace?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a toast and closes the dialog on FORBIDDEN", async () => {
+    mockUnlockAccountAction.mockResolvedValue({
+      ok: false,
+      code: "FORBIDDEN",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Something went wrong. Please try again.",
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "Unlock Ada Lovelace?" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows a toast and closes the dialog on SERVER_ERROR", async () => {
+    mockUnlockAccountAction.mockResolvedValue({
+      ok: false,
+      code: "SERVER_ERROR",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Something went wrong. Please try again.",
+      );
+    });
+  });
+
+  it("disables the Unlock button while mode is edit", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(
+      screen.queryByRole("button", { name: "Unlock" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables the Unlock button while mode is manageRoles", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Manage roles" }));
+
+    expect(
+      screen.queryByRole("button", { name: "Unlock" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("existing field groups render without regression for a locked user", () => {
+    render(
+      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+    expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reset Password" }),
+    ).toBeInTheDocument();
+  });
+});
+
+const SSO_USER: UserDetailView = { ...BASE_USER, authMethod: "SSO" };
+
+describe("UserDetail switch auth method", () => {
+  it("renders 'Switch to SSO' for a LOCAL user with EDIT and an actorId", () => {
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Switch to SSO" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders 'Switch to LOCAL' for an SSO user", () => {
+    render(
+      <UserDetail
+        user={SSO_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Switch to LOCAL" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render the switch button when actorId is absent", () => {
+    render(
+      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Switch to SSO" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the switch button when the user only has READ", () => {
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Switch to SSO" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the switch button for a DELETED user", () => {
+    render(
+      <UserDetail
+        user={{ ...BASE_USER, status: "DELETED" }}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Switch to SSO" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the confirmation dialog without calling the action", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Switch to SSO authentication" }),
+    ).toBeInTheDocument();
+    expect(mockSwitchAuthMethodAction).not.toHaveBeenCalled();
+  });
+
+  it("shows the self-switch warning when the actor switches their own account", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="user-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    expect(
+      screen.getByText(/You are switching your own account/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the self-switch warning for another user", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    expect(
+      screen.queryByText(/You are switching your own account/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("calls switchAuthMethodAction with the userId and target method when confirmed", async () => {
+    mockSwitchAuthMethodAction.mockResolvedValue({
+      ok: true,
+      newAuthMethod: "SSO",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    await waitFor(() => {
+      expect(mockSwitchAuthMethodAction).toHaveBeenCalledWith({
+        userId: "user-1",
+        newAuthMethod: "SSO",
+      });
+    });
+  });
+
+  it("closes the dialog and fires a success toast on a LOCAL → SSO switch", async () => {
+    mockSwitchAuthMethodAction.mockResolvedValue({
+      ok: true,
+      newAuthMethod: "SSO",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        "Authentication method switched to SSO. Ada Lovelace must sign in via Microsoft.",
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "Switch to SSO authentication" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("reveals the temp password on an SSO → LOCAL switch", async () => {
+    mockSwitchAuthMethodAction.mockResolvedValue({
+      ok: true,
+      newAuthMethod: "LOCAL",
+      tempPassword: "TmpPass123!",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={SSO_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to LOCAL" }));
+    await user.click(screen.getByRole("button", { name: "Switch to LOCAL" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Temporary Password — Ada Lovelace",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("TmpPass123!")).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows the inline error on ALREADY_METHOD", async () => {
+    mockSwitchAuthMethodAction.mockResolvedValue({
+      ok: false,
+      code: "ALREADY_METHOD",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    expect(
+      await screen.findByText("User already uses this authentication method."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Switch to SSO authentication" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a toast and closes the dialog on SERVER_ERROR", async () => {
+    mockSwitchAuthMethodAction.mockResolvedValue({
+      ok: false,
+      code: "SERVER_ERROR",
+    });
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+    await user.click(screen.getByRole("button", { name: "Switch to SSO" }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Something went wrong. Please try again.",
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "Switch to SSO authentication" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+});
+
+const DELETE_MAP: EffectivePermissionMap = {
+  users: "DELETE",
+  roles: null,
+  system_config: null,
+  audit_log: null,
+};
+
+const DISABLED_USER: UserDetailView = { ...BASE_USER, status: "DISABLED" };
+
+describe("UserDetail tombstone delete", () => {
+  it("renders Delete user for a DISABLED user with the DELETE level", () => {
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Delete user" }),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["ACTIVE", "PENDING", "DELETED"] as const)(
+    "does not render Delete user for a %s user",
+    (status) => {
+      render(
+        <UserDetail
+          user={{ ...BASE_USER, status }}
+          permissionMap={DELETE_MAP}
+          allRoles={[]}
+          actorId="admin-1"
+        />,
+      );
+      expect(
+        screen.queryByRole("button", { name: "Delete user" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not render Delete user when only EDIT is held (no DELETE)", () => {
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Delete user" }),
+    ).not.toBeInTheDocument();
+    // Enable and Edit remain available with EDIT.
+    expect(screen.getByRole("button", { name: "Enable" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("hides Edit and shows the muted Deleted header for a DELETED user", () => {
+    render(
+      <UserDetail
+        user={{ ...BASE_USER, status: "DELETED" }}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(screen.getByText("· Deleted")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Enable" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete user" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Close" })).toBeInTheDocument();
+  });
+
+  it("Delete user and Enable coexist for a DISABLED user with DELETE", () => {
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Enable" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete user" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("does not open the dialog on initial render", () => {
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(
+      screen.queryByText("Permanently delete Ada Lovelace?"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens DeleteUserDialog when Delete user is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete user" }));
+    expect(
+      screen.getByText("Permanently delete Ada Lovelace?"),
+    ).toBeInTheDocument();
+  });
+
+  it("disables Delete user, Enable, and Edit while the dialog is open", async () => {
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete user" }));
+    // While the dialog is open Radix marks the panel aria-hidden, so query with
+    // `hidden: true` to reach the header buttons. Two "Delete user" buttons now
+    // exist (header + dialog confirm); assert the header one (not in the dialog).
+    const dialog = screen.getByRole("alertdialog");
+    const headerDelete = screen
+      .getAllByRole("button", { name: "Delete user", hidden: true })
+      .find((b) => !dialog.contains(b));
+    expect(headerDelete).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Enable", hidden: true }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Edit", hidden: true }),
+    ).toBeDisabled();
+  });
+
+  it("transitions the header to the Deleted state on a successful delete", async () => {
+    mockDeleteUserAction.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(
+      <UserDetail
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete user" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete user",
+      }),
+    );
+    expect(await screen.findByText("· Deleted")).toBeInTheDocument();
+  });
+
+  it("resets the deleted/dialog state when the selected user changes (key remount)", async () => {
+    mockDeleteUserAction.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <UserDetail
+        key={DISABLED_USER.userId}
+        user={DISABLED_USER}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete user" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete user",
+      }),
+    );
+    await screen.findByText("· Deleted");
+
+    const otherUser: UserDetailView = {
+      ...BASE_USER,
+      userId: "user-2",
+      userName: "Grace Hopper",
+      status: "DISABLED",
+    };
+    rerender(
+      <UserDetail
+        key={otherUser.userId}
+        user={otherUser}
+        permissionMap={DELETE_MAP}
+        allRoles={[]}
+        actorId="admin-1"
+      />,
+    );
+    expect(screen.queryByText("· Deleted")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete user" }),
+    ).toBeInTheDocument();
   });
 });
