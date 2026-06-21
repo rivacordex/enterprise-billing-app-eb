@@ -20,11 +20,13 @@ const ROLE_SEEDS: { roleName: SeededRoleName; roleDescr: string }[] = [
   },
   {
     roleName: "MANAGER",
-    roleDescr: "Reserved for future module access. No grants in v1.",
+    roleDescr:
+      "Rights to perform administrative functions on business related pages",
   },
   {
     roleName: "USER",
-    roleDescr: "Reserved for future module access. No grants in v1.",
+    roleDescr:
+      "Rights to perform operational or support functions on business related pages",
   },
 ];
 

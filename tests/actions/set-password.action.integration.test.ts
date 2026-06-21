@@ -66,7 +66,7 @@ describe.skipIf(!databaseUrl)(
     let auth: typeof AuthModule.auth;
 
     const OLD_TEMP_PASSWORD = "old-temp-password-123";
-    const NEW_PASSWORD = "BrandNewPassword123";
+    const NEW_PASSWORD = "BrandNewPassword123!";
 
     function mockSession(userId: string | null): void {
       getSessionMock.mockResolvedValue(

@@ -29,6 +29,13 @@
       "when": 1781971188469,
       "tag": "0003_roles_name_ci_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781998129393,
+      "tag": "0004_system_config",
+      "breakpoints": true
     }
   ]
 }

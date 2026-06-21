@@ -20,7 +20,7 @@ export function AdminNav(): React.JSX.Element {
 
   return (
     <nav className="flex flex-col py-2">
-      <span className="px-4 pt-2 pb-1 text-overline text-[color:var(--text-on-brand)]/60">
+      <span className="px-4 pt-2 pb-1 text-[15px] font-semibold text-[color:var(--text-on-brand)]/60">
         Administration
       </span>
       {NAV_ITEMS.map((item) => {
