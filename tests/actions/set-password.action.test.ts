@@ -7,6 +7,19 @@ vi.mock("@/services/users/users-auth.service", () => ({
   setPassword: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+// `setPasswordSchema` (imported by the action) is built from `passwordPolicy`
+// at module load — mocked to the documented defaults so this suite never
+// depends on `lib/config`'s eager env validation.
+vi.mock("@/lib/password-policy", () => ({
+  passwordPolicy: {
+    minLength: 15,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+  },
+}));
 
 import { resolveForcePasswordChangeSession } from "@/auth/guard";
 import { redirect } from "next/navigation";
@@ -25,8 +38,8 @@ function redirectError(target: string): Error & { digest: string } {
 }
 
 const VALID_INPUT = {
-  newPassword: "ValidPassword123",
-  confirmPassword: "ValidPassword123",
+  newPassword: "ValidPassword123!",
+  confirmPassword: "ValidPassword123!",
 };
 
 beforeEach(() => {

@@ -17,6 +17,18 @@ vi.mock("@/services/roles/roles-read.service", () => ({
 // otherwise trigger `lib/config`'s eager env validation just from importing
 // this page module, mirroring tests/services/users-read.service.test.ts.
 vi.mock("@/db/client", () => ({ db: {} }));
+// `users-write.service.ts` also imports `passwordPolicy` directly from
+// `@/lib/config` (um25) — mocked for the same reason as `@/db/client` above.
+vi.mock("@/lib/config", () => ({
+  passwordPolicy: {
+    minLength: 15,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+  },
+}));
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";

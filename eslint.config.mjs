@@ -42,6 +42,16 @@ const BOUNDARIES_ELEMENTS = [
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
   { type: "types", mode: "full", pattern: "types/**" },
+  // Carved out ahead of the general "lib" pattern (um25-spec §"Policy
+  // source"): `validation/password.ts` needs `passwordPolicy` to build
+  // `defaultPasswordSchema`, but `validation/**` stays restricted from the
+  // general `lib/**` boundary otherwise. A narrow, non-secret re-export —
+  // same shape as the `auth-permission-constants` carve-out.
+  {
+    type: "lib-password-policy",
+    mode: "full",
+    pattern: "lib/password-policy.ts",
+  },
   { type: "lib", mode: "full", pattern: "lib/**" },
 ];
 
@@ -134,11 +144,20 @@ const eslintConfig = defineConfig([
               // whose `createUser` signature takes the already-parsed
               // `CreateUserInput` (the action validates before calling the
               // service) — a type-only coupling to the schema's inferred
-              // shape, not a runtime Zod dependency.
+              // shape, not a runtime Zod dependency. "services" self-import
+              // added for um25's `services/password.ts` (`generateTempPassword`),
+              // reused by `services/users/users-write.service.ts`.
               from: { type: "services" },
               allow: {
                 to: {
-                  type: ["db", "auth-lockout", "validation", "types", "lib"],
+                  type: [
+                    "db",
+                    "auth-lockout",
+                    "validation",
+                    "types",
+                    "lib",
+                    "services",
+                  ],
                 },
               },
             },
@@ -174,8 +193,19 @@ const eslintConfig = defineConfig([
               allow: { to: { type: ["db", "types", "lib"] } },
             },
             {
+              // "validation" self-import added for um25's `validation/set-
+              // password.schema.ts`, which imports `defaultPasswordSchema`
+              // from `validation/password.ts`. "lib-password-policy" added
+              // for `validation/password.ts` itself, which needs
+              // `passwordPolicy` to build that schema.
               from: { type: "validation" },
-              allow: { to: { type: ["types"] } },
+              allow: {
+                to: { type: ["types", "validation", "lib-password-policy"] },
+              },
+            },
+            {
+              from: { type: "lib-password-policy" },
+              allow: { to: { type: ["lib", "types"] } },
             },
             {
               // "validation" and "auth-client" added for um03's LoginForm:

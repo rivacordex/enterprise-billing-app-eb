@@ -47,7 +47,7 @@ describe.skipIf(!databaseUrl)(
       expect(publicTables).toEqual([]);
     });
 
-    test("the four identity tables, audit_log, and the four RBAC tables exist in core", async () => {
+    test("the four identity tables, audit_log, the four RBAC tables, and system_config exist in core", async () => {
       const tables = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.tables WHERE table_schema = 'core'
       `;
@@ -62,8 +62,53 @@ describe.skipIf(!databaseUrl)(
           "permissions",
           "role_permission_assign",
           "role_assign",
+          "system_config",
         ].sort(),
       );
+    });
+
+    test("system_config has the seeded app_name row and its unique/check constraints", async () => {
+      const rows = await sql<
+        {
+          config_group: string;
+          config_version: number;
+          config_key: string;
+          config_value: string;
+          is_secret: boolean;
+          status: string;
+          modified_by: string | null;
+        }[]
+      >`SELECT config_group, config_version, config_key, config_value, is_secret, status, modified_by
+        FROM core.system_config WHERE config_key = 'app_name'`;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        config_group: "app",
+        config_version: 1,
+        config_key: "app_name",
+        config_value: "Enterprise Billing System",
+        is_secret: false,
+        status: "ACTIVE",
+        modified_by: null,
+      });
+
+      const indexes = await sql<{ indexname: string }[]>`
+        SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'core' AND tablename = 'system_config'
+          AND indexname = 'system_config_group_version_key_unique'
+      `;
+      expect(indexes).toHaveLength(1);
+
+      const checks = await sql<{ conname: string; def: string }[]>`
+        SELECT con.conname, pg_get_constraintdef(con.oid) AS def
+        FROM pg_constraint con
+        JOIN pg_namespace ns ON con.connamespace = ns.oid
+        WHERE ns.nspname = 'core' AND con.contype = 'c'
+          AND con.conname = 'system_config_status_check'
+      `;
+      expect(checks).toHaveLength(1);
+      expect(checks[0]?.def).toContain("DRAFT");
+      expect(checks[0]?.def).toContain("ACTIVE");
+      expect(checks[0]?.def).toContain("RETIRED");
     });
 
     test("appuser columns match the spec, including email_verified, excluding image", async () => {
@@ -89,7 +134,7 @@ describe.skipIf(!databaseUrl)(
       expect(indexes[0]?.indexdef).toContain("WHERE (status <> 'DELETED'");
     });
 
-    test("account, session, audit_log, and role_assign have FKs to core.appuser with the expected delete rules", async () => {
+    test("account, session, audit_log, role_assign, and system_config have FKs to core.appuser with the expected delete rules", async () => {
       const fks = await sql<
         {
           table_name: string;
@@ -121,7 +166,8 @@ describe.skipIf(!databaseUrl)(
       expect(byColumn.get("audit_log.actor_user_id")).toBe("SET NULL");
       expect(byColumn.get("role_assign.ref_user_id")).toBe("RESTRICT");
       expect(byColumn.get("role_assign.assigned_by")).toBe("SET NULL");
-      expect(fks).toHaveLength(5);
+      expect(byColumn.get("system_config.modified_by")).toBe("SET NULL");
+      expect(fks).toHaveLength(6);
     });
 
     test("role_permission_assign and role_assign have FKs to core.roles/core.permissions with ON DELETE RESTRICT", async () => {

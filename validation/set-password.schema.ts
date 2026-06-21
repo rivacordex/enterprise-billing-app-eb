@@ -1,11 +1,10 @@
 import { z } from "zod";
 
+import { defaultPasswordSchema } from "@/validation/password";
+
 export const setPasswordSchema = z
   .object({
-    newPassword: z
-      .string()
-      .min(12, "Password must be at least 12 characters.")
-      .max(128, "Password must be at most 128 characters."),
+    newPassword: defaultPasswordSchema,
     confirmPassword: z.string(),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
