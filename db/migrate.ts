@@ -6,7 +6,9 @@ import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 // One-shot CLI tool (npm run db:migrate). Never imported by application
-// code; the gated CI/CD step in um25 calls this before traffic shifts.
+// code; the gated CI/CD `migrate` stage (um30) calls this before traffic
+// shifts — also the migration Container Apps Job's entrypoint, reusing the
+// app's own image (see infra/bicep/modules/container-app-job.bicep).
 async function main(): Promise<void> {
   const sql = postgres(config.DATABASE_URL, { max: 1 });
   try {

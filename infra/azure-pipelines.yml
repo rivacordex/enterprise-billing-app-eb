@@ -1,5 +1,18 @@
-# um01 quality-gate pipeline. Deployment stages (Dockerfile, Container Apps,
-# migrations, Key Vault/Managed Identity, OWASP ZAP DAST) are appended in um25.
+# um30-spec — five sequential, gated stages: build -> test_scan ->
+# containerize -> migrate -> deploy -> zap_scan. SAST is Semgrep, not
+# CodeQL (deviation, codebase wins — Semgrep was already established here
+# in um01; no CodeQL extension is installed on this org). Promotion across
+# environments (dev -> staging -> prod) is gated by Azure DevOps Environment
+# approvals on the `deploy` stage's `environment:` — configured in the
+# Azure DevOps project UI, not in this file.
+#
+# Required service connections / variable groups (created once in the Azure
+# DevOps project, not in source control):
+#   - Azure Resource Manager service connection: "azure-service-connection"
+#   - Variable group "um30-infra" (non-secret, per environment): ACR_NAME,
+#     RESOURCE_GROUP, CONTAINERAPP_NAME, CONTAINERAPP_JOB_NAME,
+#     CONTAINER_APPS_ENV, KEYVAULT_NAME, APP_MI_RESOURCE_ID,
+#     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN.
 trigger:
   branches:
     include:
@@ -9,9 +22,6 @@ pr:
   branches:
     include:
       - main
-
-pool:
-  vmImage: ubuntu-latest
 
 resources:
   containers:
@@ -26,45 +36,247 @@ resources:
       ports:
         - 5432:5432
 
-jobs:
-  - job: quality_gates
-    displayName: Quality gates
-    services:
-      postgres: postgres
+variables:
+  - group: um30-infra
+  - name: imageRepository
+    value: enterprise-billing-app
+
+stages:
+  # ---------------------------------------------------------------------
+  - stage: build
+    displayName: Build
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: build
+        displayName: Type check, lint, format, env-schema smoke
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "22.x"
+            displayName: Use Node 22
+
+          - task: Cache@2
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              path: $(Pipeline.Workspace)/.npm
+            displayName: Cache npm packages
+
+          - script: npm ci --cache $(Pipeline.Workspace)/.npm
+            displayName: Install dependencies
+
+          - script: npm run typecheck
+            displayName: Type check (tsc --noEmit)
+
+          - script: npm run lint
+            displayName: Lint (ESLint incl. import boundaries)
+
+          - script: npm run format:check
+            displayName: Format check (Prettier)
+
+          - script: npm run validate:env
+            displayName: Zod env-schema smoke (lib/config.ts against .env.example)
+
+  # ---------------------------------------------------------------------
+  - stage: test_scan
+    displayName: Test + SAST
+    dependsOn: build
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: test_scan
+        displayName: Jest/Vitest + Semgrep SAST
+        services:
+          postgres: postgres
+        variables:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/enterprise_billing
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "22.x"
+            displayName: Use Node 22
+
+          - script: npm ci
+            displayName: Install dependencies
+
+          - script: |
+              for i in $(seq 1 30); do
+                (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && break
+                sleep 1
+              done
+            displayName: Wait for Postgres service
+
+          - script: npm run test
+            displayName: Test (Vitest, incl. DB migration integration)
+
+          # SAST — fails (non-zero exit) and blocks containerize on any
+          # high/critical finding. `--error` makes Semgrep exit 1 on findings.
+          - script: |
+              docker run --rm \
+                -v "$(System.DefaultWorkingDirectory):/src" \
+                returntocorp/semgrep \
+                semgrep scan --config p/typescript --config p/javascript --config p/nextjs \
+                  --config p/owasp-top-ten --config p/secrets --error /src
+            displayName: SAST (Semgrep)
+
+  # ---------------------------------------------------------------------
+  - stage: containerize
+    displayName: Containerize
+    dependsOn: test_scan
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: build_and_push
+        displayName: Build image, push to ACR
+        steps:
+          - script: |
+              SHORT_SHA=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+              TAG="$(Build.BuildId)-$SHORT_SHA"
+              echo "Image tag: $TAG"
+              echo "##vso[task.setvariable variable=imageTag;isOutput=true]$TAG"
+            name: setImageTag
+            displayName: Compute image tag (BuildId-gitSHA)
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr build \
+                  --registry $(ACR_NAME) \
+                  --image $(imageRepository):$(setImageTag.imageTag) \
+                  --build-arg BUILD_VERSION=$(setImageTag.imageTag) \
+                  .
+            displayName: az acr build (no secrets baked into the image)
+
+  # ---------------------------------------------------------------------
+  - stage: migrate
+    displayName: Migrate (no traffic shift)
+    dependsOn: containerize
     variables:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/enterprise_billing
-    steps:
-      - task: NodeTool@0
-        inputs:
-          versionSpec: "22.x"
-        displayName: Use Node 22
+      imageTag: $[ stageDependencies.containerize.build_and_push.outputs['setImageTag.imageTag'] ]
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: run_migrations
+        displayName: Run drizzle-kit migrate as a Container Apps Job
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
 
-      - script: npm ci
-        displayName: Install dependencies
+                az containerapp job update \
+                  --name $(CONTAINERAPP_JOB_NAME) \
+                  --resource-group $(RESOURCE_GROUP) \
+                  --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag)
 
-      - script: npm run typecheck
-        displayName: Type check (tsc --noEmit)
+                EXECUTION_NAME=$(az containerapp job start \
+                  --name $(CONTAINERAPP_JOB_NAME) \
+                  --resource-group $(RESOURCE_GROUP) \
+                  --query name -o tsv)
 
-      - script: npm run lint
-        displayName: Lint (ESLint incl. import boundaries)
+                echo "Migration job execution: $EXECUTION_NAME"
 
-      - script: npm run format:check
-        displayName: Format check (Prettier)
+                # Poll for completion, 5-minute timeout (30 x 10s).
+                for i in $(seq 1 30); do
+                  STATUS=$(az containerapp job execution show \
+                    --name $(CONTAINERAPP_JOB_NAME) \
+                    --resource-group $(RESOURCE_GROUP) \
+                    --job-execution-name "$EXECUTION_NAME" \
+                    --query properties.status -o tsv)
+                  echo "Status: $STATUS"
+                  if [ "$STATUS" = "Succeeded" ]; then
+                    exit 0
+                  fi
+                  if [ "$STATUS" = "Failed" ]; then
+                    echo "Migration job failed — blocking deploy. App still serves the previous image."
+                    exit 1
+                  fi
+                  sleep 10
+                done
 
-      - script: |
-          for i in $(seq 1 30); do
-            (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && break
-            sleep 1
-          done
-        displayName: Wait for Postgres service
+                echo "Migration job timed out after 5 minutes."
+                exit 1
+            displayName: Run app_migrate Container Apps Job (DATABASE_URL via Key Vault)
 
-      - script: npm run test
-        displayName: Test (Vitest, incl. DB migration integration)
+  # ---------------------------------------------------------------------
+  - stage: deploy
+    displayName: Deploy (blue-green)
+    dependsOn: migrate
+    variables:
+      imageTag: $[ stageDependencies.containerize.build_and_push.outputs['setImageTag.imageTag'] ]
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - deployment: deploy_dev
+        displayName: Deploy to dev
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: azure-service-connection
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
 
-      - script: |
-          docker run --rm \
-            -v "$(System.DefaultWorkingDirectory):/src" \
-            returntocorp/semgrep \
-            semgrep scan --config p/typescript --config p/javascript --config p/nextjs \
-              --config p/owasp-top-ten --config p/secrets --error /src
-        displayName: SAST (Semgrep)
+                      # 1. New revision at 0% traffic.
+                      az containerapp update \
+                        --name $(CONTAINERAPP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
+                        --revision-suffix $(imageTag) \
+                        --set-env-vars \
+                          "DATABASE_URL=secretref:pg-connection-string-app" \
+                          "BETTER_AUTH_SECRET=secretref:better-auth-secret" \
+                          "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
+
+                      az containerapp ingress traffic set \
+                        --name $(CONTAINERAPP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --revision-weight latest=0
+
+                      NEW_REVISION=$(az containerapp revision list \
+                        --name $(CONTAINERAPP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --query "[0].name" -o tsv)
+
+                      # 2. Smoke test against the new revision's own FQDN, 3 retries 5s apart.
+                      REVISION_FQDN=$(az containerapp revision show \
+                        --name $(CONTAINERAPP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --revision "$NEW_REVISION" \
+                        --query "properties.fqdn" -o tsv)
+
+                      SMOKE_OK=false
+                      for i in 1 2 3; do
+                        if curl -fsS "https://$REVISION_FQDN/api/health"; then
+                          SMOKE_OK=true
+                          break
+                        fi
+                        sleep 5
+                      done
+
+                      # 3/4. Shift traffic only on success; otherwise leave the
+                      # previous revision at 100% and fail the stage.
+                      if [ "$SMOKE_OK" = true ]; then
+                        az containerapp ingress traffic set \
+                          --name $(CONTAINERAPP_NAME) \
+                          --resource-group $(RESOURCE_GROUP) \
+                          --revision-weight "$NEW_REVISION=100"
+                      else
+                        echo "Smoke test failed — leaving previous revision at 100% traffic."
+                        exit 1
+                      fi
+                  displayName: Create revision, migrate-gated smoke test, traffic shift
+
+  # ---------------------------------------------------------------------
+  - template: zap-scan-stage.yml
