@@ -11,6 +11,12 @@ const ENV_KEYS = [
   "MICROSOFT_CLIENT_SECRET",
   "ENTRA_TENANT_ID",
   "NEXT_PUBLIC_APP_URL",
+  "PASSWORD_MIN_LENGTH",
+  "PASSWORD_REQUIRE_UPPERCASE",
+  "PASSWORD_REQUIRE_LOWERCASE",
+  "PASSWORD_REQUIRE_NUMBER",
+  "PASSWORD_REQUIRE_SPECIAL",
+  "PASSWORD_SPECIAL_CHARS",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -56,6 +62,12 @@ describe("config", () => {
       APP_URL: "https://billing.example.com",
       LOG_LEVEL: "warn",
       ...VALID_REQUIRED_ENV,
+      PASSWORD_MIN_LENGTH: 15,
+      PASSWORD_REQUIRE_UPPERCASE: true,
+      PASSWORD_REQUIRE_LOWERCASE: true,
+      PASSWORD_REQUIRE_NUMBER: true,
+      PASSWORD_REQUIRE_SPECIAL: true,
+      PASSWORD_SPECIAL_CHARS: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
     });
   });
 
@@ -64,6 +76,14 @@ describe("config", () => {
 
     expect(config.APP_URL).toBe("http://localhost:3000");
     expect(config.LOG_LEVEL).toBe("info");
+    expect(config.PASSWORD_MIN_LENGTH).toBe(15);
+    expect(config.PASSWORD_REQUIRE_UPPERCASE).toBe(true);
+    expect(config.PASSWORD_REQUIRE_LOWERCASE).toBe(true);
+    expect(config.PASSWORD_REQUIRE_NUMBER).toBe(true);
+    expect(config.PASSWORD_REQUIRE_SPECIAL).toBe(true);
+    expect(config.PASSWORD_SPECIAL_CHARS).toBe(
+      `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
+    );
   });
 
   it("fails loud on an invalid env", async () => {
@@ -119,6 +139,79 @@ describe("config", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BETTER_AUTH_URL: "not-a-url",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("passwordPolicy", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("applies all defaults when no PASSWORD_* vars are set", async () => {
+    const { passwordPolicy } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+
+    expect(passwordPolicy).toEqual({
+      minLength: 15,
+      requireUppercase: true,
+      requireLowercase: true,
+      requireNumber: true,
+      requireSpecial: true,
+      specialChars: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
+    });
+  });
+
+  it("overrides PASSWORD_MIN_LENGTH", async () => {
+    const { passwordPolicy } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      PASSWORD_MIN_LENGTH: "8",
+    });
+
+    expect(passwordPolicy.minLength).toBe(8);
+  });
+
+  it("disables a rule when its PASSWORD_REQUIRE_* var is false", async () => {
+    const { passwordPolicy } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      PASSWORD_REQUIRE_SPECIAL: "false",
+    });
+
+    expect(passwordPolicy.requireSpecial).toBe(false);
+  });
+
+  it("throws a descriptive startup error when PASSWORD_MIN_LENGTH is not a number", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        PASSWORD_MIN_LENGTH: "abc",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("throws when PASSWORD_MIN_LENGTH is less than 1", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        PASSWORD_MIN_LENGTH: "0",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("throws when a PASSWORD_REQUIRE_* var is neither true nor false", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        PASSWORD_REQUIRE_UPPERCASE: "yes",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("throws when PASSWORD_SPECIAL_CHARS is empty", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        PASSWORD_SPECIAL_CHARS: "",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });

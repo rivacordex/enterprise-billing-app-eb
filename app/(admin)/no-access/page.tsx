@@ -21,8 +21,8 @@ export default async function NoAccessPage(): Promise<React.JSX.Element> {
           No Access
         </h1>
         <p className="mt-2 text-body text-muted-foreground">
-          Your account doesn&apos;t have access to any modules yet. Contact an
-          administrator.
+          Your account doesn&apos;t have access to this module yet. Contact an
+          administrator if you believe this is an error.
         </p>
 
         <div className="mt-6 flex justify-center">

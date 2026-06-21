@@ -1,6 +1,21 @@
 import { z } from "zod";
 
 import { AppError } from "@/lib/errors";
+import type { PasswordPolicy } from "@/types/password";
+
+// um25-spec §"Policy source". Default allowed special-character set —
+// shared between the env-var default and the doc comment in `.env.example`.
+const DEFAULT_PASSWORD_SPECIAL_CHARS = `!@#$%^&*()_+-=[]{}|;':\\",./<>?`;
+
+// Coerces the env var strings "true"/"false" to a boolean, defaulting when
+// absent. Anything else (e.g. "yes") fails loud via the enum check, matching
+// the "throw at startup on malformed input" rule for every PASSWORD_* var.
+function booleanEnvSchema(defaultValue: "true" | "false") {
+  return z
+    .enum(["true", "false"])
+    .default(defaultValue)
+    .transform((value) => value === "true");
+}
 
 const envSchema = z.object({
   NODE_ENV: z
@@ -23,6 +38,23 @@ const envSchema = z.object({
   MICROSOFT_CLIENT_ID: z.string().optional(),
   MICROSOFT_CLIENT_SECRET: z.string().optional(),
   ENTRA_TENANT_ID: z.string().optional(),
+  // LOCAL password policy (um25-spec §"Policy source"). All optional with
+  // enforced defaults; not stored in `system_config` — this is an
+  // operational parameter that requires a redeploy to change, consistent
+  // with how the Entra secrets above are handled.
+  PASSWORD_MIN_LENGTH: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? 15 : Number(value)))
+    .pipe(z.number().int().min(1, "PASSWORD_MIN_LENGTH must be at least 1.")),
+  PASSWORD_REQUIRE_UPPERCASE: booleanEnvSchema("true"),
+  PASSWORD_REQUIRE_LOWERCASE: booleanEnvSchema("true"),
+  PASSWORD_REQUIRE_NUMBER: booleanEnvSchema("true"),
+  PASSWORD_REQUIRE_SPECIAL: booleanEnvSchema("true"),
+  PASSWORD_SPECIAL_CHARS: z
+    .string()
+    .min(1, "PASSWORD_SPECIAL_CHARS must not be empty.")
+    .default(DEFAULT_PASSWORD_SPECIAL_CHARS),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -38,6 +70,12 @@ function loadConfig(): Config {
     MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
     MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
     ENTRA_TENANT_ID: process.env.ENTRA_TENANT_ID,
+    PASSWORD_MIN_LENGTH: process.env.PASSWORD_MIN_LENGTH,
+    PASSWORD_REQUIRE_UPPERCASE: process.env.PASSWORD_REQUIRE_UPPERCASE,
+    PASSWORD_REQUIRE_LOWERCASE: process.env.PASSWORD_REQUIRE_LOWERCASE,
+    PASSWORD_REQUIRE_NUMBER: process.env.PASSWORD_REQUIRE_NUMBER,
+    PASSWORD_REQUIRE_SPECIAL: process.env.PASSWORD_REQUIRE_SPECIAL,
+    PASSWORD_SPECIAL_CHARS: process.env.PASSWORD_SPECIAL_CHARS,
   });
 
   if (!parsed.success) {
@@ -75,3 +113,15 @@ export const isSsoConfigured: boolean =
   !!entraConfig.tenantId &&
   !!entraConfig.clientId &&
   !!entraConfig.clientSecret;
+
+// um25-spec §"Policy source". The single LOCAL password policy object —
+// `validation/password.ts` and `services/password.ts` take this as an
+// explicit parameter rather than reading `process.env` themselves.
+export const passwordPolicy: PasswordPolicy = Object.freeze({
+  minLength: config.PASSWORD_MIN_LENGTH,
+  requireUppercase: config.PASSWORD_REQUIRE_UPPERCASE,
+  requireLowercase: config.PASSWORD_REQUIRE_LOWERCASE,
+  requireNumber: config.PASSWORD_REQUIRE_NUMBER,
+  requireSpecial: config.PASSWORD_REQUIRE_SPECIAL,
+  specialChars: config.PASSWORD_SPECIAL_CHARS,
+});

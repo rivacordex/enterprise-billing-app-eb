@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { FieldError as RhfFieldError } from "react-hook-form";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
@@ -20,13 +21,35 @@ import {
   type SetPasswordInput,
 } from "@/validation/set-password.schema";
 
-export function SetPasswordForm(): React.JSX.Element {
+// um25-spec §"Error messages". `criteriaMode: "all"` makes the zod resolver
+// collect every failing `.superRefine()` rule into `error.types` instead of
+// just the first; this flattens that (or a single `setError({ types })` call
+// from the server VALIDATION_ERROR path below) into a flat message list so
+// every violated rule renders simultaneously.
+function fieldErrorMessages(error: RhfFieldError | undefined): string[] {
+  if (!error) return [];
+  if (error.types) {
+    return Object.values(error.types).flatMap((value) =>
+      Array.isArray(value) ? value : [value],
+    ) as string[];
+  }
+  return error.message ? [error.message] : [];
+}
+
+export interface SetPasswordFormProps {
+  passwordPolicyHints?: string[];
+}
+
+export function SetPasswordForm({
+  passwordPolicyHints,
+}: SetPasswordFormProps = {}): React.JSX.Element {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
   const form = useForm<SetPasswordInput>({
     resolver: zodResolver(setPasswordSchema),
+    criteriaMode: "all",
     defaultValues: { newPassword: "", confirmPassword: "" },
   });
   const {
@@ -45,9 +68,11 @@ export function SetPasswordForm(): React.JSX.Element {
     if (!result?.ok) {
       if (result?.code === "VALIDATION_ERROR") {
         Object.entries(result.fieldErrors).forEach(([field, messages]) => {
-          const message = messages[0];
-          if (message) {
-            form.setError(field as keyof SetPasswordInput, { message });
+          if (messages.length > 0) {
+            form.setError(field as keyof SetPasswordInput, {
+              type: "server",
+              types: { server: messages },
+            });
           }
         });
       } else {
@@ -88,10 +113,18 @@ export function SetPasswordForm(): React.JSX.Element {
               )}
             </button>
           </div>
-          <p className="text-body-sm text-muted-foreground">
-            At least 12 characters.
-          </p>
-          <FieldError errors={[errors.newPassword]} />
+          {passwordPolicyHints && passwordPolicyHints.length > 0 && (
+            <ul className="ml-4 list-disc text-body-sm text-muted-foreground">
+              {passwordPolicyHints.map((hint) => (
+                <li key={hint}>{hint}</li>
+              ))}
+            </ul>
+          )}
+          <FieldError
+            errors={fieldErrorMessages(errors.newPassword).map((message) => ({
+              message,
+            }))}
+          />
         </Field>
 
         <Field>
@@ -119,7 +152,11 @@ export function SetPasswordForm(): React.JSX.Element {
               )}
             </button>
           </div>
-          <FieldError errors={[errors.confirmPassword]} />
+          <FieldError
+            errors={fieldErrorMessages(errors.confirmPassword).map(
+              (message) => ({ message }),
+            )}
+          />
         </Field>
 
         {serverError && (

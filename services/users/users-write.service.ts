@@ -25,7 +25,9 @@ import {
 import { roleAssignRepository } from "@/db/repositories/role-assign.repository";
 import { rolesRepository } from "@/db/repositories/roles.repository";
 import { deleteByUserId } from "@/db/repositories/session.repository";
-import { generateTempPassword, hashTempPassword } from "@/lib/temp-password";
+import { passwordPolicy } from "@/lib/config";
+import { hashTempPassword } from "@/lib/temp-password";
+import { generateTempPassword } from "@/services/password";
 import type { AssignRoleInput } from "@/validation/assign-role.schema";
 import type { CreateUserInput } from "@/validation/create-user.schema";
 import type { DeleteUserInput } from "@/validation/delete-user.schema";
@@ -57,7 +59,7 @@ export async function createUser(
   let tempPassword: string | null = null;
   let passwordHash: string | null = null;
   if (input.authMethod === "LOCAL") {
-    tempPassword = generateTempPassword();
+    tempPassword = generateTempPassword(passwordPolicy);
     passwordHash = await hashTempPassword(tempPassword);
   }
 
@@ -417,7 +419,7 @@ export async function resetLocalPassword(
     return { ok: false, code: "INVALID_STATE" };
   }
 
-  const tempPasswordPlaintext = generateTempPassword();
+  const tempPasswordPlaintext = generateTempPassword(passwordPolicy);
   const passwordHash = await hashTempPassword(tempPasswordPlaintext);
 
   const before = { forcePasswordChange: existingUser.forcePasswordChange };
@@ -523,7 +525,7 @@ export async function switchAuthMethod(
   }
 
   if (input.newAuthMethod === "LOCAL") {
-    const tempPasswordPlaintext = generateTempPassword();
+    const tempPasswordPlaintext = generateTempPassword(passwordPolicy);
     const passwordHash = await hashTempPassword(tempPasswordPlaintext);
 
     await db.transaction(async (tx) => {

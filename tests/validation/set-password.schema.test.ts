@@ -1,20 +1,36 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// `defaultPasswordSchema` (imported by `setPasswordSchema`) is built from
+// `passwordPolicy` at module load — mocked to the documented defaults so
+// this suite never depends on `lib/config`'s eager env validation.
+vi.mock("@/lib/password-policy", () => ({
+  passwordPolicy: {
+    minLength: 15,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+  },
+}));
 
 import { setPasswordSchema } from "@/validation/set-password.schema";
 
+const VALID = "ValidPassword123!";
+
 describe("setPasswordSchema", () => {
-  it("accepts matching passwords of at least 12 characters", () => {
+  it("accepts matching, policy-compliant passwords", () => {
     const result = setPasswordSchema.safeParse({
-      newPassword: "ValidPassword123",
-      confirmPassword: "ValidPassword123",
+      newPassword: VALID,
+      confirmPassword: VALID,
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects a newPassword shorter than 12 characters", () => {
+  it("rejects a newPassword shorter than the policy minimum", () => {
     const result = setPasswordSchema.safeParse({
-      newPassword: "short1",
-      confirmPassword: "short1",
+      newPassword: "Short1!",
+      confirmPassword: "Short1!",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -22,35 +38,23 @@ describe("setPasswordSchema", () => {
     }
   });
 
-  it("rejects a newPassword longer than 128 characters", () => {
-    const tooLong = "a".repeat(129);
+  it("rejects a newPassword missing a required character class", () => {
     const result = setPasswordSchema.safeParse({
-      newPassword: tooLong,
-      confirmPassword: tooLong,
+      newPassword: "alllowercase12345",
+      confirmPassword: "alllowercase12345",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.flatten().fieldErrors.newPassword).toBeDefined();
+      expect(result.error.flatten().fieldErrors.newPassword).toContain(
+        "Password must contain at least one uppercase letter.",
+      );
     }
-  });
-
-  it("accepts exactly 12 and exactly 128 characters", () => {
-    const min = "a".repeat(12);
-    const max = "a".repeat(128);
-    expect(
-      setPasswordSchema.safeParse({ newPassword: min, confirmPassword: min })
-        .success,
-    ).toBe(true);
-    expect(
-      setPasswordSchema.safeParse({ newPassword: max, confirmPassword: max })
-        .success,
-    ).toBe(true);
   });
 
   it("rejects mismatched passwords with an error on confirmPassword", () => {
     const result = setPasswordSchema.safeParse({
-      newPassword: "ValidPassword123",
-      confirmPassword: "DifferentPassword123",
+      newPassword: VALID,
+      confirmPassword: "DifferentPassword123!",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
