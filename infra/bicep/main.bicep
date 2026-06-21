@@ -9,6 +9,11 @@ param minReplicas int = 2
 param maxReplicas int = 5
 
 var namePrefix = 'ebill-${environmentName}'
+// ACR and Key Vault names must be globally unique (DNS-resolvable). A prefix
+// alone risks collisions in shared tenants/clouds; mix in a deterministic
+// per-resource-group suffix. The pipeline reads the actual names from this
+// template's outputs.
+var uniqueSuffix = uniqueString(resourceGroup().id)
 
 resource appManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-app-mi'
@@ -46,7 +51,7 @@ module acr 'modules/acr.bicep' = {
   name: 'acr'
   params: {
     location: location
-    acrName: replace('${namePrefix}acr', '-', '')
+    acrName: take(replace('${namePrefix}acr${uniqueSuffix}', '-', ''), 50)
     appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
     migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
   }
@@ -56,7 +61,7 @@ module keyVault 'modules/key-vault.bicep' = {
   name: 'keyVault'
   params: {
     location: location
-    keyVaultName: '${namePrefix}-kv'
+    keyVaultName: take('${namePrefix}-kv-${uniqueSuffix}', 24)
     appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
     migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
     pipelineServicePrincipalId: pipelineServicePrincipalId
@@ -66,7 +71,6 @@ module keyVault 'modules/key-vault.bicep' = {
 module postgres 'modules/postgres.bicep' = {
   name: 'postgres'
   params: {
-    location: location
     postgresServerName: postgresServerName
   }
 }

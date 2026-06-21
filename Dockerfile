@@ -9,10 +9,12 @@ RUN npm ci --omit=dev
 
 FROM node:22-alpine AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-# Full deps (incl. devDependencies) are required to run `next build`.
+# Install full deps (incl. devDependencies, required to run `next build`)
+# before copying the source so the npm layer caches on lockfile changes only.
+# No COPY of the deps stage's node_modules — npm ci recreates it anyway.
+COPY package.json package-lock.json ./
 RUN npm ci
+COPY . .
 ARG BUILD_VERSION=local
 ENV BUILD_VERSION=$BUILD_VERSION
 RUN npm run build
@@ -45,4 +47,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
+# Bind standalone server.js to all interfaces. Without this, a platform-injected
+# HOSTNAME (e.g. the container name) would make it bind to an unreachable host,
+# failing the Container Apps liveness/readiness probes against /api/health.
+ENV HOSTNAME=0.0.0.0
 ENTRYPOINT ["node", "server.js"]

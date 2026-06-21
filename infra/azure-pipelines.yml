@@ -101,9 +101,14 @@ stages:
 
           - script: |
               for i in $(seq 1 30); do
-                (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && break
+                if (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; then
+                  echo "Postgres is reachable on localhost:5432."
+                  exit 0
+                fi
                 sleep 1
               done
+              echo "Postgres not reachable on localhost:5432 after 30 attempts." >&2
+              exit 1
             displayName: Wait for Postgres service
 
           - script: npm run test
@@ -244,10 +249,12 @@ stages:
                         --resource-group $(RESOURCE_GROUP) \
                         --revision-weight latest=0
 
+                      # Revision list order is not guaranteed newest-first;
+                      # sort by createdTime and take the most recent.
                       NEW_REVISION=$(az containerapp revision list \
                         --name $(CONTAINERAPP_NAME) \
                         --resource-group $(RESOURCE_GROUP) \
-                        --query "[0].name" -o tsv)
+                        --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
 
                       # 2. Smoke test against the new revision's own FQDN, 3 retries 5s apart.
                       REVISION_FQDN=$(az containerapp revision show \

@@ -49,3 +49,6 @@ next-env.d.ts
 # context docs UM moving forward
 /context
 
+# um30: ZAP context rendered with real FQDN + test credentials at CI time
+/infra/zap/zap-context.rendered.xml
+

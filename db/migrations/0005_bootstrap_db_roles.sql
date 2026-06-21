@@ -34,7 +34,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "core" TO app_runti
 --> statement-breakpoint
 REVOKE UPDATE, DELETE, TRUNCATE ON "core"."audit_log" FROM app_runtime;
 --> statement-breakpoint
-ALTER DEFAULT PRIVILEGES IN SCHEMA "core" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+-- Default privileges must be attached to the role that creates future
+-- tables (app_migrate, which runs the automated migrate stage), NOT to the
+-- superuser/owner running this one-time bootstrap — otherwise they would
+-- never apply to app_migrate-created tables. Hence FOR ROLE app_migrate.
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "core" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
 --> statement-breakpoint
 -- app_migrate: full DDL + DML, same audit_log constraint as app_runtime.
 DO $$
@@ -48,6 +52,6 @@ GRANT ALL ON SCHEMA "core" TO app_migrate;
 --> statement-breakpoint
 GRANT ALL ON ALL TABLES IN SCHEMA "core" TO app_migrate;
 --> statement-breakpoint
-ALTER DEFAULT PRIVILEGES IN SCHEMA "core" GRANT ALL ON TABLES TO app_migrate;
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "core" GRANT ALL ON TABLES TO app_migrate;
 --> statement-breakpoint
 REVOKE UPDATE, DELETE, TRUNCATE ON "core"."audit_log" FROM app_migrate;

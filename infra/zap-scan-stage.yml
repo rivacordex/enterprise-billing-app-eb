@@ -16,6 +16,18 @@
       displayName: ZAP Baseline Scan
       steps:
         - script: |
+            set -euo pipefail
+            # zap-context.xml ships with literal placeholder tokens; substitute
+            # the real FQDN + seeded test credentials before the scan so scope
+            # matching and authenticated crawling work.
+            envsubst < infra/zap/zap-context.xml > infra/zap/zap-context.rendered.xml
+          displayName: Render ZAP context (substitute FQDN + test credentials)
+          env:
+            STAGING_FQDN: $(STAGING_FQDN)
+            ZAP_TEST_USER_EMAIL: $(ZAP_TEST_USER_EMAIL)
+            ZAP_TEST_USER_PASSWORD: $(ZAP_TEST_USER_PASSWORD)
+
+        - script: |
             mkdir -p $(System.DefaultWorkingDirectory)/zap-out
             docker run --rm \
               -v "$(System.DefaultWorkingDirectory)/infra/zap:/zap/wrk" \
@@ -25,8 +37,8 @@
                 -t https://$(STAGING_FQDN) \
                 -x out/zap-report.xml \
                 -r out/zap-report.html \
-                -c /zap/wrk/zap-context.xml \
-                --hook=/zap/wrk/rules.tsv \
+                -n /zap/wrk/zap-context.rendered.xml \
+                -c /zap/wrk/rules.tsv \
                 -I
           displayName: Run ZAP baseline scan against $(STAGING_FQDN)
 

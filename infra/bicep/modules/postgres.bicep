@@ -6,11 +6,10 @@
 // connection — see infra/docs/db-role-verification.md — not something
 // Bicep can express as idempotent ARM state, so it is not run from here.
 param postgresServerName string
-param location string
 
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' existing = {
   name: postgresServerName
 }
 
 output postgresServerFqdn string = postgresServer.properties.fullyQualifiedDomainName
-output postgresServerLocation string = location
+output postgresServerLocation string = postgresServer.location
