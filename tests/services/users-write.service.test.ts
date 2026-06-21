@@ -98,6 +98,7 @@ import {
 import { roleAssignRepository } from "@/db/repositories/role-assign.repository";
 import { rolesRepository } from "@/db/repositories/roles.repository";
 import { deleteByUserId } from "@/db/repositories/session.repository";
+import { passwordPolicy } from "@/lib/config";
 import { hashTempPassword } from "@/lib/temp-password";
 import { generateTempPassword } from "@/services/password";
 import {
@@ -835,7 +836,7 @@ describe("resetLocalPassword", () => {
 
     const result = await resetLocalPassword(RESET_INPUT, "actor-1");
 
-    expect(mockGenerateTempPassword).toHaveBeenCalled();
+    expect(mockGenerateTempPassword).toHaveBeenCalledWith(passwordPolicy);
     expect(mockHashTempPassword).toHaveBeenCalledWith("plaintext-temp-pw");
     expect(mockUpdateAccountPassword).toHaveBeenCalledWith(
       expect.anything(),

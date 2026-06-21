@@ -19,14 +19,14 @@ Password policy is loaded from environment variables at startup via a typed conf
 
 Env vars (all optional; defaults apply when absent):
 
-| Env var                      | Default                 | Description                       |
-| ---------------------------- | ----------------------- | --------------------------------- | ---------------------------------------------------------------- |
-| `PASSWORD_MIN_LENGTH`        | `15`                    | Minimum character count           |
-| `PASSWORD_REQUIRE_UPPERCASE` | `true`                  | At least 1 uppercase letter (A–Z) |
-| `PASSWORD_REQUIRE_LOWERCASE` | `true`                  | At least 1 lowercase letter (a–z) |
-| `PASSWORD_REQUIRE_NUMBER`    | `true`                  | At least 1 digit (0–9)            |
-| `PASSWORD_REQUIRE_SPECIAL`   | `true`                  | At least 1 special character      |
-| `PASSWORD_SPECIAL_CHARS`     | `` !@#$%^&\*()\_+-=[]{} | ;':\",./<>? ``                    | Allowed special character set for both validation and generation |
+| Env var                      | Default                             | Description                                                      |
+| ---------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| `PASSWORD_MIN_LENGTH`        | `15`                                | Minimum character count                                          |
+| `PASSWORD_REQUIRE_UPPERCASE` | `true`                              | At least 1 uppercase letter (A–Z)                                |
+| `PASSWORD_REQUIRE_LOWERCASE` | `true`                              | At least 1 lowercase letter (a–z)                                |
+| `PASSWORD_REQUIRE_NUMBER`    | `true`                              | At least 1 digit (0–9)                                           |
+| `PASSWORD_REQUIRE_SPECIAL`   | `true`                              | At least 1 special character                                     |
+| `PASSWORD_SPECIAL_CHARS`     | `!@#$%^&\*()\_+-=[]{}\|;':\",./<>?` | Allowed special character set for both validation and generation |
 
 The config object is a plain export (no singleton class) from `lib/config.ts`, parsed once at module load and typed with Zod.
 
@@ -40,7 +40,7 @@ A single Zod schema factory `buildPasswordSchema(policy: PasswordPolicy): ZodStr
 
 1. Draw one character randomly from each required character class (uppercase, lowercase, digit, special).
 2. Fill remaining slots (up to `min_length`) from the full allowed set (union of all classes).
-3. Shuffle the result using a cryptographically secure source (`crypto.randomBytes`).
+3. Shuffle the result using a cryptographically secure source (`crypto.randomInt`).
 
 This ensures generated temp passwords are always policy-compliant without a retry loop.
 

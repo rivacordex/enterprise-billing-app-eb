@@ -185,34 +185,36 @@ export interface AuditLogActorOption {
 }
 ```
 
-### 24.2 — Validation schema (`validation/audit-log.ts`)
+### 24.2 — Validation schema (`validation/audit-log-filters.schema.ts`)
 
 New file. Parses raw URL `searchParams` strings into typed filter values. No imports from `auth/**`, `db/**`, `services/**`, or `next/*`.
 
 ```ts
 import { z } from "zod";
-import { AUDIT_EVENT_CATEGORY_MAP } from "@/types/audit-log";
+import { AUDIT_EVENT_TYPES, type AuditEventType } from "@/types/audit";
 
-const VALID_EVENT_TYPES = Object.keys(AUDIT_EVENT_CATEGORY_MAP);
+const eventTypeSchema = z
+  .string()
+  .refine((v): v is AuditEventType =>
+    (AUDIT_EVENT_TYPES as readonly string[]).includes(v),
+  )
+  .nullable()
+  .catch(null);
 
 export const auditLogSearchParamsSchema = z.object({
-  eventType: z
-    .string()
-    .refine((v) => VALID_EVENT_TYPES.includes(v))
-    .nullable()
-    .default(null),
-  actorUserId: z.string().uuid().nullable().default(null),
-  dateFrom: z.string().date().nullable().default(null), // ISO date string YYYY-MM-DD
-  dateTo: z.string().date().nullable().default(null),
-  page: z.coerce.number().int().min(1).default(1),
+  eventType: eventTypeSchema,
+  actorUserId: z.string().uuid().nullable().catch(null),
+  dateFrom: z.string().date().nullable().catch(null), // ISO date string YYYY-MM-DD
+  dateTo: z.string().date().nullable().catch(null),
+  page: z.coerce.number().int().min(1).catch(1),
 });
 
 export type AuditLogSearchParams = z.infer<typeof auditLogSearchParamsSchema>;
 ```
 
-All fields are optional/nullable and default gracefully. An invalid `eventType` string (not in the 20-event set) is treated as `null` (no filter). An invalid UUID `actorUserId` is treated as `null`. An invalid date string is treated as `null`. This means a tampered URL never throws — the page simply loads unfiltered.
+All fields are optional/nullable and fall back gracefully. An invalid `eventType` string (not in the 20-event set) is treated as `null` (no filter). An invalid UUID `actorUserId` is treated as `null`. An invalid date string is treated as `null`. A missing field is treated the same as an invalid one. This means a tampered or absent URL param never throws — the page simply loads unfiltered.
 
-Parsing is done with `.safeParse()` in the page; failures for individual fields fall back to their defaults via the schema's `.default()` clauses. Because Zod coerces only the `page` field and the rest use `.nullable().default(null)`, invalid values on optional string fields do not cause a parse failure — the schema is written to be lenient on URL input.
+Parsing is done with `.parse()` (not `.safeParse()`) in the page: each field uses `.catch(<fallback>)` rather than `.default(<fallback>)`, so an invalid _or_ missing value for that field is replaced with the fallback at the point of failure — the call never throws and never needs an outer `safeParse`/`success` check. (`.default()` would only cover the missing-field case; an invalid-but-present value would still fail the parse.)
 
 ### 24.3 — Repository (`db/repositories/audit-log.repository.ts`)
 
@@ -746,7 +748,7 @@ Async Server Component. `'use server'` is NOT added — this is a Next.js page, 
 import type { Metadata } from 'next'
 import { requirePermission } from '@/auth'
 import { PERMISSIONS, LEVELS } from '@/auth'
-import { auditLogSearchParamsSchema } from '@/validation/audit-log'
+import { auditLogSearchParamsSchema } from '@/validation/audit-log-filters.schema'
 import { getAuditLog, getAuditLogActors } from '@/services/audit-log/audit-log-read.service'
 import { AuditLogFilters }    from '@/components/audit-log/audit-log-filters'
 import { AuditLogTable }      from '@/components/audit-log/audit-log-table'
@@ -835,7 +837,7 @@ No new npm packages. All required packages are already installed from prior unit
 - `drizzle-orm` — `and()`, `eq()`, `gte()`, `lte()`, `desc()`, `asc()`, `selectDistinct()` — for repository queries.
 - `next` — `useRouter`, `usePathname`, `useSearchParams` in client components; `Metadata` type on the page.
 - `react` — `useState`, `Suspense` in client components.
-- `zod` — `auditLogSearchParamsSchema` in `validation/audit-log.ts`.
+- `zod` — `auditLogSearchParamsSchema` in `validation/audit-log-filters.schema.ts`.
 - `lucide-react` — `ChevronDown`, `ChevronLeft`, `ChevronRight`, `FileSearch` — already installed.
 - shadcn `Button` — already installed.
 - `vitest`, `@testing-library/react` — already installed.
@@ -858,7 +860,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 
 ### Validation schema
 
-- [ ] `auditLogSearchParamsSchema` is in `validation/audit-log.ts`
+- [ ] `auditLogSearchParamsSchema` is in `validation/audit-log-filters.schema.ts`
 - [ ] Invalid `eventType` (not in the 20-event set) is coerced to `null` (parse does not throw)
 - [ ] Invalid UUID `actorUserId` is coerced to `null` (parse does not throw)
 - [ ] Invalid date strings for `dateFrom`/`dateTo` are coerced to `null` (parse does not throw)
@@ -993,7 +995,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 
 ### Tests
 
-#### Unit — validation schema (`tests/unit/validation/audit-log.test.ts`)
+#### Unit — validation schema (`tests/validation/audit-log-filters.schema.test.ts`)
 
 | Scenario                             | Expected                                                                                  |
 | ------------------------------------ | ----------------------------------------------------------------------------------------- |
@@ -1008,7 +1010,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | `page = '0'`                         | Fails min(1) → parse error or coerces to 1 (verify consistent behavior)                   |
 | `page` absent                        | `page = 1`                                                                                |
 
-#### Unit — repository (`tests/unit/db/audit-log.repository.test.ts`)
+#### Integration — repository (`tests/db/audit-log-repository.integration.test.ts`)
 
 | Scenario                                                         | Expected                                                      |
 | ---------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -1025,7 +1027,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | `findActors` — multiple distinct actors                          | Returns one entry per distinct actor, ordered by name asc     |
 | `findActors` — tombstoned actor                                  | Included; `isDeleted = true`                                  |
 
-#### Unit — read service (`tests/unit/services/audit-log-read.service.test.ts`)
+#### Unit — read service (`tests/services/audit-log-read.service.test.ts`)
 
 | Scenario                     | Expected                                                   |
 | ---------------------------- | ---------------------------------------------------------- |
@@ -1036,7 +1038,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | `page = 3`                   | `findFiltered` called with `page = 3`                      |
 | `getAuditLogActors`          | Delegates to `findActors()`                                |
 
-#### Unit — `AuditEventCategoryBadge` (`tests/unit/components/audit-log/audit-event-category-badge.test.tsx`)
+#### Unit — `AuditEventCategoryBadge` (`tests/components/audit-event-category-badge.test.tsx`)
 
 | Scenario                    | Expected                                                                     |
 | --------------------------- | ---------------------------------------------------------------------------- |
@@ -1044,7 +1046,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | Renders "Removal"           | Badge with text "Removal"; `style.backgroundColor` contains `danger` token   |
 | Renders all five categories | Each renders correct label; no throws                                        |
 
-#### Unit — `AuditLogFilters` (`tests/unit/components/audit-log/audit-log-filters.test.tsx`)
+#### Unit — `AuditLogFilters` (`tests/components/audit-log-filters.test.tsx`)
 
 | Scenario                                            | Expected                                                                                |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -1056,7 +1058,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | Actor dropdown renders tombstoned actor with suffix | Option text contains "(deleted)"                                                        |
 | All 20 event types appear in the select             | Each in the correct `<optgroup>`                                                        |
 
-#### Unit — `AuditLogTable` (`tests/unit/components/audit-log/audit-log-table.test.tsx`)
+#### Unit — `AuditLogTable` (`tests/components/audit-log-table.test.tsx`)
 
 | Scenario                             | Expected                                                     |
 | ------------------------------------ | ------------------------------------------------------------ |
@@ -1072,7 +1074,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | Multiple rows expanded independently | Each row tracks own expand state                             |
 | `formatAuditTimestamp` output        | `"2026-06-17 09:14:22 UTC"` format (no "T", no milliseconds) |
 
-#### Unit — `AuditLogPagination` (`tests/unit/components/audit-log/audit-log-pagination.test.tsx`)
+#### Unit — `AuditLogPagination` (`tests/components/audit-log-pagination.test.tsx`)
 
 | Scenario       | Expected                                                                |
 | -------------- | ----------------------------------------------------------------------- |
@@ -1083,7 +1085,7 @@ No new schema migrations. No new `PERMISSIONS` rows — the `audit_log` permissi
 | Next click     | `router.replace` called with `page=<current+1>`, other params preserved |
 | Previous click | `router.replace` called with `page=<current-1>`, other params preserved |
 
-#### Unit — page (`tests/unit/app/audit-log.page.test.tsx`)
+#### Unit — page (`tests/app/audit-log-page.test.tsx`)
 
 | Scenario                          | Expected                                                           |
 | --------------------------------- | ------------------------------------------------------------------ |
@@ -1118,7 +1120,7 @@ Uses test DB with all prior migrations applied (has real `AUDIT_LOG` rows from s
 
 ### Boundary enforcement
 
-- [ ] `validation/audit-log.ts` has no imports from `auth/**`, `db/**`, `services/**`, or `next/*`
+- [ ] `validation/audit-log-filters.schema.ts` has no imports from `auth/**`, `db/**`, `services/**`, or `next/*`
 - [ ] `services/audit-log/audit-log-read.service.ts` has no imports from `next/*`, `app/**`, or `actions/**`
 - [ ] `components/audit-log/*.tsx` files have no imports from `db/**` or `services/**`
 - [ ] `app/(admin)/administration/audit-log/page.tsx` has no direct imports from `db/**`

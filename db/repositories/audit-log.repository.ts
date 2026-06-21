@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { auditLog } from "@/db/schema/audit";
@@ -96,24 +96,15 @@ export const auditLogRepository = {
       })
       .from(auditLog)
       .leftJoin(appuser, eq(auditLog.actorUserId, appuser.id))
+      .where(isNotNull(auditLog.actorUserId))
       // Postgres's default ASC ordering is NULLS LAST, so tombstoned actors
       // (null `userName` from a left-join miss) sort to the end naturally.
       .orderBy(asc(appuser.userName));
 
-    return rows
-      .filter(
-        (
-          row,
-        ): row is {
-          userId: string;
-          userName: string | null;
-          status: string | null;
-        } => row.userId !== null,
-      )
-      .map((row) => ({
-        userId: row.userId,
-        userName: row.userName,
-        isDeleted: row.status === "DELETED",
-      }));
+    return rows.map((row) => ({
+      userId: row.userId as string,
+      userName: row.userName,
+      isDeleted: row.status === "DELETED",
+    }));
   },
 };

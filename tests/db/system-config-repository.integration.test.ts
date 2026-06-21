@@ -178,6 +178,8 @@ describe.skipIf(!databaseUrl)(
           })
           .returning({ configId: systemConfig.configId });
 
+        const beforeUpdate = Date.now();
+
         await systemConfigRepository.updateValue(
           db,
           inserted!.configId,
@@ -191,8 +193,8 @@ describe.skipIf(!databaseUrl)(
         );
         expect(found?.configValue).toBe("new");
         expect(found?.modifiedByUserId).toBe(adminUserId);
-        expect(found?.lastModifiedDatetime.getTime()).toBeGreaterThan(
-          Date.now() - 5_000,
+        expect(found?.lastModifiedDatetime.getTime()).toBeGreaterThanOrEqual(
+          beforeUpdate,
         );
       });
 
