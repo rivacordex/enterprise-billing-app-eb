@@ -1,0 +1,56 @@
+# um30-spec §"5. OWASP ZAP DAST stage". Stage-list template included by
+# infra/azure-pipelines.yml via `- template: zap-scan-stage.yml` directly
+# under the parent's `stages:` list — this file is a bare list of stage
+# objects (not wrapped in its own `stages:` key), as Azure Pipelines'
+# stage-list template inclusion requires. Runs against the dev/staging
+# revision deployed by the `deploy` stage — never against production.
+# High/critical findings fail this stage, which blocks the staging -> prod
+# promotion gate; medium and below are reported but do not block.
+- stage: zap_scan
+  displayName: OWASP ZAP DAST
+  dependsOn: deploy
+  pool:
+    vmImage: ubuntu-latest
+  jobs:
+    - job: zap_baseline
+      displayName: ZAP Baseline Scan
+      steps:
+        - script: |
+            mkdir -p $(System.DefaultWorkingDirectory)/zap-out
+            docker run --rm \
+              -v "$(System.DefaultWorkingDirectory)/infra/zap:/zap/wrk" \
+              -v "$(System.DefaultWorkingDirectory)/zap-out:/zap/wrk/out" \
+              owasp/zap2docker-stable \
+              zap-baseline.py \
+                -t https://$(STAGING_FQDN) \
+                -x out/zap-report.xml \
+                -r out/zap-report.html \
+                -c /zap/wrk/zap-context.xml \
+                --hook=/zap/wrk/rules.tsv \
+                -I
+          displayName: Run ZAP baseline scan against $(STAGING_FQDN)
+
+        - script: |
+            REPORT="$(System.DefaultWorkingDirectory)/zap-out/zap-report.xml"
+            # riskcode 3 = High, 4 = Critical. Any match fails the stage.
+            if grep -E '<riskcode>(3|4)</riskcode>' "$REPORT" > /dev/null; then
+              echo "ZAP found one or more High/Critical findings — failing the stage."
+              exit 1
+            fi
+            echo "No High/Critical ZAP findings."
+          displayName: Gate on High/Critical findings
+
+        - task: CopyFiles@2
+          condition: succeededOrFailed()
+          inputs:
+            sourceFolder: $(System.DefaultWorkingDirectory)/zap-out
+            contents: "**"
+            targetFolder: $(Build.ArtifactStagingDirectory)/zap
+          displayName: Stage ZAP reports
+
+        - task: PublishBuildArtifacts@1
+          condition: succeededOrFailed()
+          inputs:
+            pathToPublish: $(Build.ArtifactStagingDirectory)/zap
+            artifactName: zap-reports
+          displayName: Publish ZAP HTML + XML reports

@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   // cross-origin, the client bundle never loads, and the page silently never
   // hydrates (every form submit falls back to a native browser GET).
   allowedDevOrigins: ["100.68.190.22"],
+  // um30: the Dockerfile's runner stage copies `.next/standalone`, which only
+  // `next build` produces when this is set.
+  output: "standalone",
 };
 
 export default nextConfig;

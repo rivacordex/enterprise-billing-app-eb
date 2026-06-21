@@ -23,13 +23,14 @@ const envSchema = z.object({
     .default("development"),
   APP_URL: z.url().default("http://localhost:3000"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  // Production sourcing moves to Azure Key Vault via Managed Identity (um25);
-  // here it is read directly from the env (um02).
+  // In production this value is a Container Apps Key Vault secret reference
+  // (um30) — `lib/config.ts` itself always reads it from the env either way
+  // (um02); the platform resolves the reference before the process starts.
   DATABASE_URL: z.string().refine((v) => v.startsWith("postgresql://"), {
     message: "DATABASE_URL must be a postgresql:// connection string.",
   }),
-  // Production sourcing moves to Azure Key Vault via Managed Identity (um25);
-  // here BETTER_AUTH_SECRET is read directly from the env (um03).
+  // Production sourcing is a Key Vault secret reference (um30); here
+  // BETTER_AUTH_SECRET is read directly from the env (um03).
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.url(),
   // Entra SSO (um10). All three optional — absence disables the Microsoft
