@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { resolveForcePasswordChangeSession } from "@/auth/guard";
 import { SetPasswordForm } from "@/components/auth/set-password-form";
 import { SignOutButton } from "@/components/sign-out-button";
+import { passwordPolicy } from "@/lib/config";
+import { formatPasswordPolicyHints } from "@/lib/formatters";
 
 export const metadata: Metadata = {
   title: "Set Password",
@@ -38,7 +40,9 @@ export default async function SetPasswordPage(): Promise<React.JSX.Element> {
         )}
 
         <div className="mt-6">
-          <SetPasswordForm />
+          <SetPasswordForm
+            passwordPolicyHints={formatPasswordPolicyHints(passwordPolicy)}
+          />
         </div>
 
         <div className="mt-4 flex justify-center">

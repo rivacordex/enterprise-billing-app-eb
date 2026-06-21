@@ -54,8 +54,22 @@ vi.mock("@/db/repositories/session.repository", () => ({
   deleteByUserId: vi.fn(),
 }));
 vi.mock("@/lib/temp-password", () => ({
-  generateTempPassword: vi.fn(),
   hashTempPassword: vi.fn(),
+}));
+vi.mock("@/services/password", () => ({
+  generateTempPassword: vi.fn(),
+}));
+// Mocked for the same reason as `@/db/client` above — `users-write.service.ts`
+// now also imports `passwordPolicy` directly from `@/lib/config` (um25).
+vi.mock("@/lib/config", () => ({
+  passwordPolicy: {
+    minLength: 15,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+  },
 }));
 
 import {
@@ -84,7 +98,8 @@ import {
 import { roleAssignRepository } from "@/db/repositories/role-assign.repository";
 import { rolesRepository } from "@/db/repositories/roles.repository";
 import { deleteByUserId } from "@/db/repositories/session.repository";
-import { generateTempPassword, hashTempPassword } from "@/lib/temp-password";
+import { hashTempPassword } from "@/lib/temp-password";
+import { generateTempPassword } from "@/services/password";
 import {
   assignRole,
   createUser,

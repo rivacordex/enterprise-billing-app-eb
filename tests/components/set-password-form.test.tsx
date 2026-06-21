@@ -5,12 +5,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/actions/auth/set-password.action", () => ({
   setPasswordAction: vi.fn(),
 }));
+// `setPasswordSchema` (used by the form's `zodResolver`) is built from
+// `passwordPolicy` at module load — mocked to the documented defaults so
+// this suite never depends on `lib/config`'s eager env validation.
+vi.mock("@/lib/password-policy", () => ({
+  passwordPolicy: {
+    minLength: 15,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+  },
+}));
 
 import { setPasswordAction } from "@/actions/auth/set-password.action";
 
 import { SetPasswordForm } from "@/components/auth/set-password-form";
 
 const mockSetPasswordAction = vi.mocked(setPasswordAction);
+
+const VALID = "ValidPassword123!";
 
 beforeEach(() => {
   mockSetPasswordAction.mockReset();
@@ -72,7 +87,25 @@ describe("SetPasswordForm", () => {
     await user.click(screen.getByRole("button", { name: "Set Password" }));
 
     expect(
-      await screen.findByText("Password must be at least 12 characters."),
+      await screen.findByText("Password must be at least 15 characters."),
+    ).toBeInTheDocument();
+    expect(mockSetPasswordAction).not.toHaveBeenCalled();
+  });
+
+  it("shows every violated rule at once for a weak password", async () => {
+    const user = userEvent.setup();
+    render(<SetPasswordForm />);
+
+    // Too short, no uppercase, no special char.
+    await user.type(screen.getByLabelText("New Password"), "weak123");
+    await user.type(screen.getByLabelText("Confirm Password"), "weak123");
+    await user.click(screen.getByRole("button", { name: "Set Password" }));
+
+    expect(
+      await screen.findByText("Password must be at least 15 characters."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Password must contain at least one uppercase letter."),
     ).toBeInTheDocument();
     expect(mockSetPasswordAction).not.toHaveBeenCalled();
   });
@@ -81,10 +114,10 @@ describe("SetPasswordForm", () => {
     const user = userEvent.setup();
     render(<SetPasswordForm />);
 
-    await user.type(screen.getByLabelText("New Password"), "ValidPassword123");
+    await user.type(screen.getByLabelText("New Password"), VALID);
     await user.type(
       screen.getByLabelText("Confirm Password"),
-      "DifferentPassword123",
+      "DifferentPassword123!",
     );
     await user.click(screen.getByRole("button", { name: "Set Password" }));
 
@@ -99,17 +132,14 @@ describe("SetPasswordForm", () => {
     const user = userEvent.setup();
     render(<SetPasswordForm />);
 
-    await user.type(screen.getByLabelText("New Password"), "ValidPassword123");
-    await user.type(
-      screen.getByLabelText("Confirm Password"),
-      "ValidPassword123",
-    );
+    await user.type(screen.getByLabelText("New Password"), VALID);
+    await user.type(screen.getByLabelText("Confirm Password"), VALID);
     await user.click(screen.getByRole("button", { name: "Set Password" }));
 
     await waitFor(() =>
       expect(mockSetPasswordAction).toHaveBeenCalledWith({
-        newPassword: "ValidPassword123",
-        confirmPassword: "ValidPassword123",
+        newPassword: VALID,
+        confirmPassword: VALID,
       }),
     );
   });
@@ -122,11 +152,8 @@ describe("SetPasswordForm", () => {
     const user = userEvent.setup();
     render(<SetPasswordForm />);
 
-    await user.type(screen.getByLabelText("New Password"), "ValidPassword123");
-    await user.type(
-      screen.getByLabelText("Confirm Password"),
-      "ValidPassword123",
-    );
+    await user.type(screen.getByLabelText("New Password"), VALID);
+    await user.type(screen.getByLabelText("Confirm Password"), VALID);
     await user.click(screen.getByRole("button", { name: "Set Password" }));
 
     expect(
@@ -143,15 +170,41 @@ describe("SetPasswordForm", () => {
     const user = userEvent.setup();
     render(<SetPasswordForm />);
 
-    await user.type(screen.getByLabelText("New Password"), "ValidPassword123");
-    await user.type(
-      screen.getByLabelText("Confirm Password"),
-      "ValidPassword123",
-    );
+    await user.type(screen.getByLabelText("New Password"), VALID);
+    await user.type(screen.getByLabelText("Confirm Password"), VALID);
     await user.click(screen.getByRole("button", { name: "Set Password" }));
 
     expect(
       await screen.findByText("Server says this is too weak."),
     ).toBeInTheDocument();
+  });
+
+  it("shows every server-returned field error simultaneously", async () => {
+    mockSetPasswordAction.mockResolvedValue({
+      ok: false,
+      code: "VALIDATION_ERROR",
+      fieldErrors: {
+        newPassword: ["Server rule one failed.", "Server rule two failed."],
+      },
+    });
+    const user = userEvent.setup();
+    render(<SetPasswordForm />);
+
+    await user.type(screen.getByLabelText("New Password"), VALID);
+    await user.type(screen.getByLabelText("Confirm Password"), VALID);
+    await user.click(screen.getByRole("button", { name: "Set Password" }));
+
+    expect(
+      await screen.findByText("Server rule one failed."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Server rule two failed.")).toBeInTheDocument();
+  });
+
+  it("renders the password policy hints when provided", () => {
+    render(
+      <SetPasswordForm passwordPolicyHints={["At least 15 characters"]} />,
+    );
+
+    expect(screen.getByText("At least 15 characters")).toBeInTheDocument();
   });
 });
