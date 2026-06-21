@@ -6,13 +6,7 @@ import { auditLogSearchParamsSchema } from "@/validation/audit-log-filters.schem
 
 describe("auditLogSearchParamsSchema", () => {
   it("parses a bare object (all fields null/page absent) to all-null filters and page 1", () => {
-    const result = auditLogSearchParamsSchema.parse({
-      eventType: null,
-      actorUserId: null,
-      dateFrom: null,
-      dateTo: null,
-      page: 1,
-    });
+    const result = auditLogSearchParamsSchema.parse({});
     expect(result).toEqual({
       eventType: null,
       actorUserId: null,

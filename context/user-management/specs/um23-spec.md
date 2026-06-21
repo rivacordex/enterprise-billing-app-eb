@@ -199,7 +199,7 @@ export async function updateConfigValue(input: {
         {
           eventType: "SYSTEM_CONFIG_CHANGED",
           actorUserId: input.actorUserId,
-          targetEntity: "system_config",
+          targetEntity: "SYSTEM_CONFIG",
           targetId: input.configId,
           beforeData,
           afterData,
@@ -226,39 +226,70 @@ New file. `'use server'` at the top.
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { updateConfigValueSchema } from "@/validation/system-config";
-import { requirePermission } from "@/auth";
-import { PERMISSIONS, LEVELS } from "@/auth";
+
+import { requirePermission } from "@/auth/guard";
+import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import { updateConfigValue } from "@/services/system-config/system-config-write.service";
-import type { UpdateConfigResult } from "@/types/system-config";
+import { updateConfigValueSchema } from "@/validation/update-config.schema";
+
+export type UpdateConfigActionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code: "VALIDATION_ERROR";
+      fieldErrors: Record<string, string[]>;
+    }
+  | { ok: false; code: "NOT_FOUND" }
+  | { ok: false; code: "SECRET_ROW" }
+  | { ok: false; code: "FORBIDDEN" }
+  | { ok: false; code: "SERVER_ERROR" };
 
 export async function updateConfigAction(
   rawInput: unknown,
-): Promise<UpdateConfigResult> {
-  // 1. Parse
-  const parsed = updateConfigValueSchema.safeParse(rawInput);
-  if (!parsed.success) return { ok: false, code: "SERVER_ERROR" };
-
-  // 2. Auth
-  const authResult = await requirePermission(
-    PERMISSIONS.SYSTEM_CONFIG,
-    LEVELS.EDIT,
-  );
-  if (!authResult.ok) return { ok: false, code: "FORBIDDEN" };
-
-  // 3. Service
-  const result = await updateConfigValue({
-    configId: parsed.data.configId,
-    configValue: parsed.data.configValue,
-    actorUserId: authResult.userId,
-  });
-
-  // 4. Revalidate on success
-  if (result.ok) {
-    revalidatePath("/administration/system-config");
+): Promise<UpdateConfigActionResult> {
+  // 1. Auth — requirePermission redirects on FORBIDDEN (mirrors
+  // updateRoleAction/deleteRoleAction's pattern); isRedirectError maps that
+  // redirect back to a returnable code instead of propagating it.
+  let actorId: string;
+  try {
+    ({ userId: actorId } = await requirePermission(
+      PERMISSIONS.SYSTEM_CONFIG,
+      LEVELS.EDIT,
+    ));
+  } catch (error) {
+    if (isRedirectError(error)) {
+      return { ok: false, code: "FORBIDDEN" };
+    }
+    return { ok: false, code: "SERVER_ERROR" };
   }
 
-  return result;
+  // 2. Parse
+  const parsed = updateConfigValueSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: "VALIDATION_ERROR",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  // 3. Service
+  let result;
+  try {
+    result = await updateConfigValue(parsed.data, actorId);
+  } catch {
+    return { ok: false, code: "SERVER_ERROR" };
+  }
+
+  if (!result.ok) {
+    return result;
+  }
+
+  // 4. Revalidate on success
+  revalidatePath("/administration/system-config");
+
+  return { ok: true };
 }
 ```
 
@@ -553,22 +584,23 @@ New file. Mock `systemConfigRepository`, `writeAuditEvent`, and `db.transaction`
 | `after_data` sets `modifiedBy` to actor      | —                                                                      | `afterData.modifiedBy = actorUserId`                                                         |
 | `before_data` captures original `modifiedBy` | `findById` returns row with `modifiedByUserId: 'prev-actor-id'`        | `beforeData.modifiedBy = 'prev-actor-id'`                                                    |
 | Audit event type                             | Successful path                                                        | `writeAuditEvent` called with `eventType: 'SYSTEM_CONFIG_CHANGED'`                           |
-| `targetEntity` and `targetId`                | Successful path                                                        | `targetEntity: 'system_config'`; `targetId: configId`                                        |
+| `targetEntity` and `targetId`                | Successful path                                                        | `targetEntity: 'SYSTEM_CONFIG'`; `targetId: configId`                                        |
 | All operations in one transaction            | Successful path                                                        | `findById`, `updateValue`, `writeAuditEvent` all receive the same `tx` reference             |
 | Repository throws                            | `updateValue` throws `Error('db failure')`                             | `{ ok: false, code: 'SERVER_ERROR' }`                                                        |
 
-### 23.8.4 — Unit tests: Server Action (`tests/unit/actions/update-config.action.test.ts`)
+### 23.8.4 — Unit tests: Server Action (`tests/actions/update-config.action.test.ts`)
 
-New file. Mock `updateConfigValueSchema`, `requirePermission`, `updateConfigValue`, `revalidatePath`.
+New file. Mock `requirePermission`, `updateConfigValueSchema`, `updateConfigValue`, `revalidatePath`.
 
-| Scenario                               | Setup                                                                   | Expected                                                                 |
-| -------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Invalid input (malformed UUID)         | `rawInput = { configId: 'bad', configValue: 'x' }`                      | `{ ok: false, code: 'SERVER_ERROR' }` returned; service not called       |
-| Insufficient permission                | `requirePermission` returns `{ ok: false }`                             | `{ ok: false, code: 'FORBIDDEN' }`; service not called                   |
-| Service returns `NOT_FOUND`            | Valid input, authed; service returns `{ ok: false, code: 'NOT_FOUND' }` | `{ ok: false, code: 'NOT_FOUND' }`; `revalidatePath` not called          |
-| Service returns `SERVER_ERROR`         | —                                                                       | `{ ok: false, code: 'SERVER_ERROR' }`; `revalidatePath` not called       |
-| Successful update                      | Valid input; authed; service returns `{ ok: true }`                     | `{ ok: true }`; `revalidatePath('/administration/system-config')` called |
-| Action passes `actorUserId` to service | `requirePermission` returns `{ ok: true, userId: 'actor-id' }`          | Service called with `actorUserId: 'actor-id'`                            |
+| Scenario                                        | Setup                                                                   | Expected                                                                   |
+| ----------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Insufficient permission                         | `requirePermission` throws a redirect error                             | `{ ok: false, code: 'FORBIDDEN' }`; schema not parsed; service not called  |
+| `requirePermission` throws a non-redirect error | —                                                                       | `{ ok: false, code: 'SERVER_ERROR' }`; service not called                  |
+| Invalid input (malformed UUID)                  | Authed; `rawInput = { configId: 'bad', configValue: 'x' }`              | `{ ok: false, code: 'VALIDATION_ERROR', fieldErrors }`; service not called |
+| Service returns `NOT_FOUND`                     | Valid input, authed; service returns `{ ok: false, code: 'NOT_FOUND' }` | `{ ok: false, code: 'NOT_FOUND' }`; `revalidatePath` not called            |
+| Service throws                                  | —                                                                       | `{ ok: false, code: 'SERVER_ERROR' }`; `revalidatePath` not called         |
+| Successful update                               | Valid input; authed; service returns `{ ok: true }`                     | `{ ok: true }`; `revalidatePath('/administration/system-config')` called   |
+| Action passes `actorId` to service              | `requirePermission` resolves `{ userId: 'actor-id' }`                   | Service called with `(parsed.data, 'actor-id')`                            |
 
 ### 23.8.5 — Unit tests: `ConfigEditDialog` (`tests/unit/components/system-config/config-edit-dialog.test.tsx`)
 
@@ -701,7 +733,7 @@ No new schema migrations. No new `PERMISSIONS` rows (the `system_config` permiss
 - [ ] All operations (`findById`, `updateValue`, `writeAuditEvent`) run within a single `db.transaction()`
 - [ ] `before_data` contains `configGroup`, `configKey`, `configValue` (original), `status`, `modifiedBy` (original actor or null)
 - [ ] `after_data` contains `configGroup`, `configKey`, `configValue` (new), `status`, `modifiedBy` (actorUserId)
-- [ ] `writeAuditEvent` receives `eventType: 'SYSTEM_CONFIG_CHANGED'`, `targetEntity: 'system_config'`, `targetId: configId`
+- [ ] `writeAuditEvent` receives `eventType: 'SYSTEM_CONFIG_CHANGED'`, `targetEntity: 'SYSTEM_CONFIG'`, `targetId: configId`
 - [ ] Entire function body wrapped in `try/catch`; any thrown error → `{ ok: false, code: 'SERVER_ERROR' }`
 - [ ] Service has no imports from `next/*`, `app/**`, or `actions/**`
 - [ ] Service does not call `requirePermission`
@@ -709,14 +741,14 @@ No new schema migrations. No new `PERMISSIONS` rows (the `system_config` permiss
 ### Server Action
 
 - [ ] `'use server'` directive at the top of `actions/system-config/update-config.action.ts`
-- [ ] `updateConfigValueSchema.safeParse(rawInput)` called before any auth check
-- [ ] Parse failure → `{ ok: false, code: 'SERVER_ERROR' }` returned; service not called
-- [ ] `requirePermission(PERMISSIONS.SYSTEM_CONFIG, LEVELS.EDIT)` called; insufficient level → `{ ok: false, code: 'FORBIDDEN' }`
+- [ ] `requirePermission(PERMISSIONS.SYSTEM_CONFIG, LEVELS.EDIT)` called before parsing; a thrown redirect error (via `isRedirectError`) maps to `{ ok: false, code: 'FORBIDDEN' }`; any other thrown error maps to `{ ok: false, code: 'SERVER_ERROR' }`
+- [ ] `updateConfigValueSchema.safeParse(rawInput)` called after auth succeeds
+- [ ] Parse failure → `{ ok: false, code: 'VALIDATION_ERROR', fieldErrors: parsed.error.flatten().fieldErrors }`; service not called
 - [ ] `PERMISSIONS.SYSTEM_CONFIG` and `LEVELS.EDIT` constants used (not raw strings)
 - [ ] `revalidatePath('/administration/system-config')` called only when `result.ok === true`
-- [ ] `actorUserId` sourced from `requirePermission` return value (not from input)
-- [ ] No business logic beyond parse → auth → service → revalidate
-- [ ] Explicit return type `Promise<UpdateConfigResult>` declared
+- [ ] `actorId` sourced from `requirePermission`'s destructured return value (not from input)
+- [ ] No business logic beyond auth → parse → service → revalidate
+- [ ] Explicit return type `Promise<UpdateConfigActionResult>` declared
 
 ### `ConfigEditDialog` component
 
@@ -758,7 +790,7 @@ No new schema migrations. No new `PERMISSIONS` rows (the `system_config` permiss
 ### Audit
 
 - [ ] `event_type` is `'SYSTEM_CONFIG_CHANGED'` (not any other string)
-- [ ] `target_entity` is `'system_config'`; `target_id` is the row's `configId`
+- [ ] `target_entity` is `'SYSTEM_CONFIG'`; `target_id` is the row's `configId`
 - [ ] `before_data.configValue` contains the value before the update
 - [ ] `after_data.configValue` contains the new value (including `null` if cleared)
 - [ ] `after_data.modifiedBy` equals `actorUserId`

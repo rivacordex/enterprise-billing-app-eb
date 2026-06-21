@@ -8,6 +8,7 @@ vi.mock("@/db/repositories/system-config.repository", () => ({
   systemConfigRepository: { findAllNonSecret: vi.fn() },
 }));
 
+import { db } from "@/db/client";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
 import { getSystemConfigParams } from "@/services/system-config/system-config-read.service";
 import type { SystemConfigDisplayRow } from "@/types/system-config";
@@ -39,6 +40,7 @@ describe("getSystemConfigParams", () => {
 
     expect(result).toEqual([ROW]);
     expect(mockFindAllNonSecret).toHaveBeenCalledTimes(1);
+    expect(mockFindAllNonSecret).toHaveBeenCalledWith(db);
   });
 
   it("returns [] when the repository returns []", async () => {

@@ -21,24 +21,28 @@ export async function updateConfigValue(
   input: UpdateConfigInput,
   actorId: string,
 ): Promise<UpdateConfigResult> {
-  const row = await systemConfigRepository.findById(db, input.configId);
-  if (!row) {
-    return { ok: false, code: "NOT_FOUND" };
-  }
-
-  if (row.isSecret) {
-    return { ok: false, code: "SECRET_ROW" };
-  }
-
-  const beforeData = {
-    configGroup: row.configGroup,
-    configKey: row.configKey,
-    configValue: row.configValue,
-    status: row.status,
-    modifiedBy: row.modifiedByUserId,
-  };
+  let outcome: UpdateConfigResult = { ok: true };
 
   await db.transaction(async (tx) => {
+    const row = await systemConfigRepository.findById(tx, input.configId);
+    if (!row) {
+      outcome = { ok: false, code: "NOT_FOUND" };
+      return;
+    }
+
+    if (row.isSecret) {
+      outcome = { ok: false, code: "SECRET_ROW" };
+      return;
+    }
+
+    const beforeData = {
+      configGroup: row.configGroup,
+      configKey: row.configKey,
+      configValue: row.configValue,
+      status: row.status,
+      modifiedBy: row.modifiedByUserId,
+    };
+
     await systemConfigRepository.updateValue(
       tx,
       input.configId,
@@ -62,5 +66,5 @@ export async function updateConfigValue(
     });
   });
 
-  return { ok: true };
+  return outcome;
 }

@@ -18,7 +18,7 @@ Introduce the `SYSTEM_CONFIG` table via a just-in-time Drizzle migration with a 
 
 Single-panel layout — no detail panel or selection mechanism in this unit (config has no row-level drill-down in v1). Structure top to bottom:
 
-- **Page header**: `<h1>` "System Configuration", breadcrumb "Administration › System Configuration", using the same `PageHeader` component established in prior admin pages (um07/um18).
+- **Page header**: a plain `<h1>` "System Configuration" — no `PageHeader`/breadcrumb component exists anywhere in the codebase (the Users/Roles pages have no page-level title either), so this doesn't invent one for a single caller.
 - **Configuration Parameters section**: `<h2>` "Configuration Parameters" + a `ConfigTable` component rendering DB rows grouped by `config_group`.
 - **Separator**: a `<hr>` with `--border-default` styling.
 - **Entra ID Settings section**: `<h2>` "Entra ID Settings" + a descriptor paragraph + `EntraConfigRow` entries for Tenant ID, Client ID, and Redirect URI.
@@ -111,7 +111,7 @@ CREATE TABLE core.system_config (
 
 `modified_by` = `NULL`, `created_datetime` = `now()`, `last_modified_datetime` = `now()` for all seeded rows.
 
-**Drizzle schema file** (`db/schema/system-config.schema.ts`): define the `systemConfig` Drizzle table object within the `core` pgSchema, matching the columns above. Status column: `text('status').$type<ConfigStatus>().notNull().default('ACTIVE')` with the CHECK constraint applied via Drizzle's `.check()` or via the raw migration SQL. Export the `SystemConfig` inferred type (`typeof systemConfig.$inferSelect`). Import the `pgSchema` from `db/schema/core.schema.ts` (already established in um02).
+**Drizzle schema file** (`db/schema/system-config.ts`): define the `systemConfig` Drizzle table object within the `core` pgSchema, matching the columns above. Status column: `text('status').$type<ConfigStatus>().notNull().default('ACTIVE')` with the CHECK constraint applied via Drizzle's `.check()` or via the raw migration SQL. Export the `SystemConfig` inferred type (`typeof systemConfig.$inferSelect`). Import the `pgSchema` from `db/schema/core.schema.ts` (already established in um02).
 
 ### 22.2 — Types (`types/system-config.ts`)
 
@@ -461,7 +461,7 @@ No new `PERMISSIONS` migration rows — `system_config` was seeded in um05. No n
 - [ ] `UNIQUE (config_group, config_version, config_key)` constraint is enforced (duplicate insert raises error)
 - [ ] `CHECK (status IN ('DRAFT', 'ACTIVE', 'RETIRED'))` is enforced (invalid value raises error)
 - [ ] Seeded row: `config_group='app'`, `config_key='app_name'`, `config_value='Enterprise Billing System'`, `is_secret=FALSE`, `status='ACTIVE'`, `modified_by=NULL`
-- [ ] Drizzle `systemConfig` schema object is defined in `db/schema/system-config.schema.ts` within the `core` pgSchema
+- [ ] Drizzle `systemConfig` schema object is defined in `db/schema/system-config.ts` within the `core` pgSchema
 - [ ] `SystemConfig` inferred type is exported from the schema file
 - [ ] No new `PERMISSIONS` rows were added (the `system_config` permission row exists from um05)
 

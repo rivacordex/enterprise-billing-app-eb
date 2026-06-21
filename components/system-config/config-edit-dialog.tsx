@@ -96,6 +96,10 @@ export function ConfigEditDialog({
         setOpen(false);
         toast.success("Configuration updated.");
       } else if (result.code === "VALIDATION_ERROR") {
+        // result.fieldErrors is intentionally discarded: configValueFormSchema
+        // above mirrors updateConfigValueSchema's configValue rule exactly, so
+        // this path is only reachable via a stale/forged configId (a uuid
+        // check the form has no field for) — not a user-actionable validation.
         setError("SERVER_ERROR");
       } else {
         setError(result.code);
