@@ -1,15 +1,30 @@
 -- um30-spec §"4. Least-privilege DB role bootstrap migration". One-time
 -- bootstrap: creates `app_runtime`/`app_migrate` and grants/revokes their
--- privileges on the `core` schema. Idempotent via `DO` blocks (Postgres has
--- no `CREATE ROLE IF NOT EXISTS`, unlike `CREATE TABLE`/`CREATE INDEX`,
--- hence the spec's literal syntax doesn't run as-is — deviation, corrected
--- to valid Postgres). Run once under a superuser/owner connection during
--- initial provisioning — NOT by the automated `migrate` stage's
--- `app_migrate` role, which lacks rights to create roles. Deliberately
--- contains no password: see infra/docs/db-role-verification.md for the
--- manual `ALTER ROLE ... PASSWORD` follow-up (never committed to source
--- control). Only schema `core` exists today; repeat the GRANT/REVOKE block
--- for `product`/`customer`/`billing`/`accounting` as those schemas ship.
+-- privileges on the `core` schema.
+--
+-- NOT a Drizzle migration. It lives outside `db/migrations/` on purpose:
+-- creating roles requires a superuser/owner connection (CREATEROLE), whereas
+-- the automated `migrate` stage runs `db/migrate.ts` as the least-privilege
+-- `app_migrate` role — which this script itself creates, and which has no
+-- right to create roles. A role-bootstrap step therefore cannot sit in the
+-- migration sequence the migrate stage iterates (chicken-and-egg). The
+-- grants/revokes below also reference tables that must already exist, so run
+-- it once per environment during provisioning, AFTER the initial
+-- superuser/owner `db:migrate` has created the schema — via
+-- `npm run db:bootstrap-roles` (a superuser/owner connection string in
+-- `BOOTSTRAP_DATABASE_URL`) or directly with `psql`. See the provisioning
+-- order in infra/docs/db-role-verification.md.
+--
+-- Idempotent via `DO` blocks (Postgres has no `CREATE ROLE IF NOT EXISTS`,
+-- unlike `CREATE TABLE`/`CREATE INDEX`). Deliberately contains no password:
+-- see infra/docs/db-role-verification.md for the manual `ALTER ROLE ...
+-- PASSWORD` follow-up (never committed to source control). Only schema
+-- `core` exists today; repeat the GRANT/REVOKE block for
+-- `product`/`customer`/`billing`/`accounting` as those schemas ship.
+--
+-- The statement-breakpoint marker lines below let `db/bootstrap/
+-- bootstrap-db-roles.ts` split the file into individual statements; they are
+-- SQL line comments, so running the whole file through `psql` works too.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'app_runtime') THEN
