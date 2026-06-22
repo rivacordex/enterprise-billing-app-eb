@@ -25,11 +25,15 @@ async function main(): Promise<void> {
 void main().catch((err: unknown) => {
   // Surface the Postgres error fields (`postgres` attaches code/detail/where
   // to the error) — logging only `message` truncates the actual failure.
+  const pgErr =
+    typeof err === "object" && err !== null
+      ? (err as { code?: string; detail?: string; where?: string })
+      : {};
   logger.error("Migration failed.", {
     message: err instanceof Error ? err.message : "Unknown error",
-    code: (err as { code?: string }).code,
-    detail: (err as { detail?: string }).detail,
-    where: (err as { where?: string }).where,
+    code: pgErr.code,
+    detail: pgErr.detail,
+    where: pgErr.where,
   });
   process.exit(1);
 });

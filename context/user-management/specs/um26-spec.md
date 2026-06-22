@@ -37,6 +37,8 @@ The existing `SignOutButton` was designed for the `/no-access` page (light surfa
 
 **Option B — separate component:** Create `components/nav-sign-out-button.tsx` as a thin wrapper around the same sign-out action, styled for the dark surface. Avoids touching `SignOutButton` but adds a second file.
 
+**Implementation note:** Option B was chosen. A new `NavSignOutButton` client component was created in `components/nav-sign-out-button.tsx` for the dark-surface styling, and the original `SignOutButton` was left unchanged so the `/no-access` page keeps its light-mode appearance. The §26.2 `variant`-prop changes below were therefore not applied.
+
 Whichever option is chosen, the visual spec for the button in the sidebar is:
 
 - Full-width, `px-4 py-3`, `flex items-center gap-2`
@@ -58,7 +60,18 @@ Whichever option is chosen, the visual spec for the button in the sidebar is:
 
 ### 26.1 — `app/(admin)/layout.tsx` update
 
-The layout already resolves the current user to perform the permission guard (via `requirePermission` or equivalent). The resolved `user_name` and `user_email` from `APPUSER` are already in scope — no new DB query is needed.
+**Breaking change — `AdminLayout` becomes async.** Contrary to this spec's original assumption, `app/(admin)/layout.tsx` runs **no** permission guard (each child page guards itself), so it has no resolved user in scope. To get the identity for the footer, `AdminLayout` must be declared `async` and `await` a dedicated helper:
+
+```tsx
+import { getCurrentUserIdentity } from "@/auth/guard";
+
+export default async function AdminLayout({ children }) {
+  const identity = await getCurrentUserIdentity();
+  // ...
+}
+```
+
+`getCurrentUserIdentity()` (in `auth/guard.ts`) resolves the session-bound `APPUSER` and returns `{ userName, userEmail }`, or `null` when there is no session — it never redirects, so it can't alter the layout's behavior. Living in `auth/` means `layout.tsx` needn't import `db/**` directly. The footer is rendered only when `identity` is non-null.
 
 The `<aside>` currently renders:
 
@@ -95,20 +108,22 @@ Update to add the footer:
   <div className="mt-auto">
     <div className="border-t border-white/10" />
     <div className="px-4 py-3">
-      <p className="truncate text-sm font-medium text-white">{user.userName}</p>
+      <p className="truncate text-sm font-medium text-white">
+        {identity.userName}
+      </p>
       <p className="mt-0.5 truncate text-xs text-[--color-primary-300]">
-        {user.userEmail}
+        {identity.userEmail}
       </p>
     </div>
     <div className="border-t border-white/10" />
     <div className="p-2">
-      <SignOutButton variant="nav" /> {/* if Option A */}
+      <NavSignOutButton /> {/* Option B — see Implementation note above */}
     </div>
   </div>
 </aside>
 ```
 
-`user.userName` and `user.userEmail` come from the existing resolved `APPUSER` — already fetched by the layout's session/permission resolution. No additional `db/**` import.
+`identity.userName` and `identity.userEmail` come from `await getCurrentUserIdentity()` (resolved at the top of the async `AdminLayout`), not from any guard-resolved user. The helper encapsulates the `APPUSER` read, so `layout.tsx` needs no additional `db/**` import.
 
 ### 26.2 — `SignOutButton` update (if Option A)
 
