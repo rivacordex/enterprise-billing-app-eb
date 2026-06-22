@@ -41,6 +41,30 @@ export async function requireAuthenticated(): Promise<{
   return getActiveUser();
 }
 
+// um26-spec §26.1: the admin layout's sidebar footer shows the signed-in
+// user's name + email. Unlike the spec's assumption, this codebase's
+// `(admin)/layout.tsx` runs no guard (each child page guards itself), so it
+// has no resolved user. This read-only helper resolves the session-bound
+// APPUSER identity for display — it returns `null` rather than redirecting so
+// it can't alter the layout's redirect behavior, and living in `auth/` means
+// `layout.tsx` needn't import `db/**` directly.
+export async function getCurrentUserIdentity(): Promise<{
+  userName: string;
+  userEmail: string;
+} | null> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) {
+    return null;
+  }
+
+  const user = await findUserById(db, session.user.id);
+  if (!user) {
+    return null;
+  }
+
+  return { userName: user.userName, userEmail: user.userEmail };
+}
+
 // The page/layout guard (Invariant #3, #4): called at the top of `page.tsx`
 // or `layout.tsx` before rendering. Never returns a `Response` — it either
 // returns the resolved context or calls `redirect()`.

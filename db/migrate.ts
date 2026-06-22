@@ -6,7 +6,9 @@ import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 // One-shot CLI tool (npm run db:migrate). Never imported by application
-// code; the gated CI/CD step in um25 calls this before traffic shifts.
+// code; the gated CI/CD `migrate` stage (um30) calls this before traffic
+// shifts — also the migration Container Apps Job's entrypoint, reusing the
+// app's own image (see infra/bicep/modules/container-app-job.bicep).
 async function main(): Promise<void> {
   const sql = postgres(config.DATABASE_URL, { max: 1 });
   try {
@@ -21,8 +23,17 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err: unknown) => {
+  // Surface the Postgres error fields (`postgres` attaches code/detail/where
+  // to the error) — logging only `message` truncates the actual failure.
+  const pgErr =
+    typeof err === "object" && err !== null
+      ? (err as { code?: string; detail?: string; where?: string })
+      : {};
   logger.error("Migration failed.", {
     message: err instanceof Error ? err.message : "Unknown error",
+    code: pgErr.code,
+    detail: pgErr.detail,
+    where: pgErr.where,
   });
   process.exit(1);
 });

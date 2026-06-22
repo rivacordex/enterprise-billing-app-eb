@@ -1,0 +1,108 @@
+// um30-spec §"3. Infrastructure as Code (Bicep)" — main.bicep. Orchestrates
+// all modules, parameterized per environment via parameters/*.bicepparam.
+@allowed(['dev', 'staging', 'prod'])
+param environmentName string
+param location string = resourceGroup().location
+param postgresServerName string
+param pipelineServicePrincipalId string
+param minReplicas int = 2
+param maxReplicas int = 5
+
+var namePrefix = 'ebill-${environmentName}'
+
+resource appManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-app-mi'
+  location: location
+}
+
+resource migrateManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-migrate-mi'
+  location: location
+}
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: '${namePrefix}-logs'
+  location: location
+  properties: {
+    sku: { name: 'PerGB2018' }
+  }
+}
+
+resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' = {
+  name: '${namePrefix}-env'
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: logAnalytics.listKeys().primarySharedKey
+      }
+    }
+  }
+}
+
+module acr 'modules/acr.bicep' = {
+  name: 'acr'
+  params: {
+    location: location
+    acrName: replace('${namePrefix}acr', '-', '')
+    appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
+    migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
+  }
+}
+
+module keyVault 'modules/key-vault.bicep' = {
+  name: 'keyVault'
+  params: {
+    location: location
+    keyVaultName: '${namePrefix}-kv'
+    appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
+    migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
+    pipelineServicePrincipalId: pipelineServicePrincipalId
+  }
+}
+
+module postgres 'modules/postgres.bicep' = {
+  name: 'postgres'
+  params: {
+    location: location
+    postgresServerName: postgresServerName
+  }
+}
+
+module containerApp 'modules/container-app.bicep' = {
+  name: 'containerApp'
+  params: {
+    location: location
+    containerAppName: '${namePrefix}-app'
+    containerAppsEnvironmentId: containerAppsEnvironment.id
+    acrLoginServer: acr.outputs.acrLoginServer
+    keyVaultUri: keyVault.outputs.keyVaultUri
+    appManagedIdentityId: appManagedIdentity.id
+    // Placeholder tag — the pipeline's `deploy` stage immediately overwrites
+    // this with the real `$(Build.BuildId)-$(Build.SourceVersion)` tag.
+    imageName: '${acr.outputs.acrLoginServer}/enterprise-billing-app:bootstrap'
+    minReplicas: minReplicas
+    maxReplicas: maxReplicas
+  }
+}
+
+module containerAppJob 'modules/container-app-job.bicep' = {
+  name: 'containerAppJob'
+  params: {
+    location: location
+    jobName: '${namePrefix}-migrate-job'
+    containerAppsEnvironmentId: containerAppsEnvironment.id
+    acrLoginServer: acr.outputs.acrLoginServer
+    keyVaultUri: keyVault.outputs.keyVaultUri
+    migrateManagedIdentityId: migrateManagedIdentity.id
+    imageName: '${acr.outputs.acrLoginServer}/enterprise-billing-app:bootstrap'
+  }
+}
+
+output appFqdn string = containerApp.outputs.fqdn
+output acrLoginServer string = acr.outputs.acrLoginServer
+output keyVaultName string = keyVault.outputs.keyVaultName
+output appManagedIdentityPrincipalId string = appManagedIdentity.properties.principalId
+output migrateManagedIdentityPrincipalId string = migrateManagedIdentity.properties.principalId

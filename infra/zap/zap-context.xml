@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  um30-spec §"5. OWASP ZAP DAST stage". ZAP context for the dev/staging
+  Container Apps revision. Authentication uses a seeded test user's session
+  cookie (set via the local credential sign-in flow, not Entra — ZAP cannot
+  drive an interactive Microsoft login). /api/auth/callback/microsoft is
+  out of scope for the same reason.
+-->
+<configuration>
+  <context>
+    <name>enterprise-billing-app</name>
+    <desc>Enterprise Billing App — dev/staging DAST scan</desc>
+    <inscope>true</inscope>
+    <incregexes>https://STAGING_FQDN/administration/.*</incregexes>
+    <incregexes>https://STAGING_FQDN/api/.*</incregexes>
+    <excregexes>https://STAGING_FQDN/api/auth/callback/microsoft.*</excregexes>
+    <authentication>
+      <type>2</type>
+      <!-- Form-based auth against the local /login credential flow.
+           ZAP_TEST_USER_EMAIL / ZAP_TEST_USER_PASSWORD are seeded by
+           db/seeds/seed-admin.ts in the dev/staging environment only. -->
+      <form>
+        <loginurl>https://STAGING_FQDN/login</loginurl>
+        <loginbody>email={%username%}&amp;password={%password%}</loginbody>
+      </form>
+      <users>
+        <user>
+          <name>zap-dast-user</name>
+          <credentials>
+            <username>ZAP_TEST_USER_EMAIL</username>
+            <password>ZAP_TEST_USER_PASSWORD</password>
+          </credentials>
+        </user>
+      </users>
+    </authentication>
+  </context>
+</configuration>

@@ -1,0 +1,91 @@
+import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/auth/guard", () => ({
+  getCurrentUserIdentity: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/administration/users",
+  useRouter: () => ({ push: vi.fn() }),
+}));
+vi.mock("@/auth/client", () => ({
+  authClient: { signOut: vi.fn() },
+}));
+vi.mock("@/components/ui/sonner", () => ({
+  Toaster: () => null,
+}));
+
+import AdminLayout from "@/app/(admin)/layout";
+import { getCurrentUserIdentity } from "@/auth/guard";
+
+const mockGetCurrentUserIdentity = vi.mocked(getCurrentUserIdentity);
+
+beforeEach(() => {
+  mockGetCurrentUserIdentity.mockReset();
+});
+
+describe("AdminLayout sidebar footer", () => {
+  it("renders the signed-in user's name and email in the footer", async () => {
+    mockGetCurrentUserIdentity.mockResolvedValue({
+      userName: "Ada Lovelace",
+      userEmail: "ada@example.com",
+    });
+
+    render(await AdminLayout({ children: <main>content</main> }));
+
+    expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+    expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+  });
+
+  it("truncates a long user name (truncate class present)", async () => {
+    mockGetCurrentUserIdentity.mockResolvedValue({
+      userName:
+        "A Very Long User Name That Would Otherwise Overflow The Sidebar",
+      userEmail: "averylongemailaddress.that.overflows@example.com",
+    });
+
+    render(await AdminLayout({ children: <main>content</main> }));
+
+    const name = screen.getByText(/A Very Long User Name/);
+    expect(name.className).toContain("truncate");
+  });
+
+  it("renders the sidebar sign-out button in the footer", async () => {
+    mockGetCurrentUserIdentity.mockResolvedValue({
+      userName: "Ada Lovelace",
+      userEmail: "ada@example.com",
+    });
+
+    render(await AdminLayout({ children: <main>content</main> }));
+
+    expect(
+      screen.getByRole("button", { name: "Sign out" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still renders all four admin nav links", async () => {
+    mockGetCurrentUserIdentity.mockResolvedValue({
+      userName: "Ada Lovelace",
+      userEmail: "ada@example.com",
+    });
+
+    render(await AdminLayout({ children: <main>content</main> }));
+
+    expect(screen.getByRole("link", { name: "Users" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Roles" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "System Configuration" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Audit Log" })).toBeInTheDocument();
+  });
+
+  it("omits the footer when no user identity resolves", async () => {
+    mockGetCurrentUserIdentity.mockResolvedValue(null);
+
+    render(await AdminLayout({ children: <main>content</main> }));
+
+    expect(
+      screen.queryByRole("button", { name: "Sign out" }),
+    ).not.toBeInTheDocument();
+  });
+});

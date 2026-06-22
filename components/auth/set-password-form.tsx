@@ -95,6 +95,7 @@ export function SetPasswordForm({
               id="newPassword"
               type={showNew ? "text" : "password"}
               autoComplete="new-password"
+              maxLength={128}
               aria-invalid={!!errors.newPassword}
               className="pr-9"
               {...register("newPassword")}
@@ -134,6 +135,7 @@ export function SetPasswordForm({
               id="confirmPassword"
               type={showConfirm ? "text" : "password"}
               autoComplete="new-password"
+              maxLength={128}
               aria-invalid={!!errors.confirmPassword}
               className="pr-9"
               {...register("confirmPassword")}
