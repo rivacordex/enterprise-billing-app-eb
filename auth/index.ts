@@ -113,8 +113,25 @@ export const auth = betterAuth({
           // `getUserInfo`'s default `id` is the `sub` claim. The spec
           // prefers `oid` (stable across token issuances within a tenant);
           // `mapProfileToUser`'s return is spread last over the default
-          // shape, so this overrides just `id`.
-          mapProfileToUser: (profile) => ({ id: profile.oid }),
+          // shape, so this overrides just `id` and `email`.
+          //
+          // `email` fallback: Better-Auth's Microsoft provider maps the user
+          // email from the `email` claim alone (`getUserInfo` →
+          // `email: user.email`), but Entra omits that claim for accounts with
+          // no mailbox — notably `*.onmicrosoft.com` test users. Without an
+          // email, Better-Auth's native email→APPUSER matching (which our
+          // account-linking relies on, see auth/sso-linking.ts) finds nothing
+          // and `disableSignUp` rejects the sign-in as "not authorized". The
+          // `preferred_username`/`upn` claim carries the UPN in that case,
+          // which is what such users are provisioned under. `email` is used
+          // only for allowlist matching here — the stable identity key is
+          // still `oid` (`id` above) — so the UPN fallback is safe.
+          mapProfileToUser: (profile) => {
+            return {
+              id: profile.oid,
+              email: profile.email ?? profile.preferred_username ?? profile.upn,
+            };
+          },
         },
       }
     : {},

@@ -108,6 +108,27 @@ describe("buildPasswordSchema", () => {
     }
   });
 
+  it("rejects a password longer than 128 characters with the max-length message", () => {
+    const schema = buildPasswordSchema(FIXTURE_POLICY);
+    // 129 chars, otherwise fully compliant (upper/lower/number/special).
+    const tooLong = "Aa1!" + "a".repeat(125);
+    expect(tooLong.length).toBe(129);
+    const result = schema.safeParse(tooLong);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.message)).toContain(
+        "Password must be at most 128 characters.",
+      );
+    }
+  });
+
+  it("accepts a fully compliant password of exactly 128 characters", () => {
+    const schema = buildPasswordSchema(FIXTURE_POLICY);
+    const atLimit = "Aa1!" + "a".repeat(124);
+    expect(atLimit.length).toBe(128);
+    expect(schema.safeParse(atLimit).success).toBe(true);
+  });
+
   it("omits a rule's refine when that rule is disabled", () => {
     const policy: PasswordPolicy = { ...FIXTURE_POLICY, requireSpecial: false };
     const schema = buildPasswordSchema(policy);

@@ -1,0 +1,12 @@
+.git
+node_modules
+.env
+.env.*
+!.env.example
+infra
+tests
+*.md
+.next
+.claude
+.agents
+coverage

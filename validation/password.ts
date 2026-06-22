@@ -20,38 +20,45 @@ export function buildPasswordSchema(policy: PasswordPolicy) {
     `[${escapeForCharacterClass(policy.specialChars)}]`,
   );
 
-  return z
-    .string()
-    .min(
-      policy.minLength,
-      `Password must be at least ${policy.minLength} characters.`,
-    )
-    .superRefine((value, ctx) => {
-      if (policy.requireUppercase && !/[A-Z]/.test(value)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Password must contain at least one uppercase letter.",
-        });
-      }
-      if (policy.requireLowercase && !/[a-z]/.test(value)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Password must contain at least one lowercase letter.",
-        });
-      }
-      if (policy.requireNumber && !/[0-9]/.test(value)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Password must contain at least one number.",
-        });
-      }
-      if (policy.requireSpecial && !specialCharRegex.test(value)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Password must contain at least one special character (${policy.specialChars}).`,
-        });
-      }
-    });
+  return (
+    z
+      .string()
+      .min(
+        policy.minLength,
+        `Password must be at least ${policy.minLength} characters.`,
+      )
+      // Upper bound on the password change input. In Zod v4 here a base-string
+      // length failure does not abort the chained `.superRefine` (verified for
+      // `.min` in um25), so an over-long value still surfaces every complexity
+      // violation alongside this one.
+      .max(128, "Password must be at most 128 characters.")
+      .superRefine((value, ctx) => {
+        if (policy.requireUppercase && !/[A-Z]/.test(value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Password must contain at least one uppercase letter.",
+          });
+        }
+        if (policy.requireLowercase && !/[a-z]/.test(value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Password must contain at least one lowercase letter.",
+          });
+        }
+        if (policy.requireNumber && !/[0-9]/.test(value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Password must contain at least one number.",
+          });
+        }
+        if (policy.requireSpecial && !specialCharRegex.test(value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Password must contain at least one special character (${policy.specialChars}).`,
+          });
+        }
+      })
+  );
 }
 
 // The app-level schema action schemas import — built from `passwordPolicy`

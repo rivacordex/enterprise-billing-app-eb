@@ -1,0 +1,8 @@
+# um30-spec §"5. OWASP ZAP DAST stage". False-positive suppressions.
+# Format: <ruleId>\tIGNORE\t<justification>
+# Reviewed in PR — every suppressed rule must have a documented justification.
+#
+# 10015	IGNORE	Re-examine-Cache-control-directives: Next.js sets its own
+# cache-control headers per route (ISR/SSG); not a finding worth suppressing
+# pre-emptively — left commented out until/unless a real false positive
+# is observed against this app.
