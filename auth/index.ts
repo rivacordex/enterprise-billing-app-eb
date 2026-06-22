@@ -127,17 +127,6 @@ export const auth = betterAuth({
           // only for allowlist matching here — the stable identity key is
           // still `oid` (`id` above) — so the UPN fallback is safe.
           mapProfileToUser: (profile) => {
-            // TEMP DIAGNOSTIC (remove after SSO debugging): dump the
-            // email-relevant Entra claims so we can see exactly what the
-            // matcher receives vs. the stored `user_email`.
-            logger.warn("SSO_DEBUG entra profile claims", {
-              email: profile.email,
-              preferred_username: profile.preferred_username,
-              upn: profile.upn,
-              oid: profile.oid,
-              sub: profile.sub,
-              tid: profile.tid,
-            });
             return {
               id: profile.oid,
               email: profile.email ?? profile.preferred_username ?? profile.upn,
