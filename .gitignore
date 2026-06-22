@@ -46,6 +46,7 @@ next-env.d.ts
 # Claude Code — local project config (never commit)
 .claude/*
 
-# context docs UM moving forward
-/context
+
+# um30: ZAP context rendered with real FQDN + test credentials at CI time
+/infra/zap/zap-context.rendered.xml
 

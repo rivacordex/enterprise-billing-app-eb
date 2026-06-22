@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file=.env --import tsx db/migrate.ts",
+    "db:bootstrap-roles": "node --env-file=.env --import tsx db/bootstrap/bootstrap-db-roles.ts",
     "db:seed": "node --env-file=.env --import tsx db/seeds/seed-admin.ts",
     "db:seed-rbac": "node --env-file=.env --import tsx db/seeds/seed-rbac.ts",
     "db:setup": "npm run db:migrate && npm run db:seed && npm run db:seed-rbac",

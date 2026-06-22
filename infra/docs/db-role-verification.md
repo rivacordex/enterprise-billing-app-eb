@@ -1,9 +1,38 @@
 # DB role bootstrap — manual steps & verification
 
-`db/migrations/0005_bootstrap_db_roles.sql` creates `app_runtime`/`app_migrate`
+`db/bootstrap/bootstrap-db-roles.sql` creates `app_runtime`/`app_migrate`
 and grants/revokes their privileges, but deliberately contains **no
-password** — see the migration file's header comment. Two manual,
-never-committed steps complete the bootstrap.
+password** — see the script's header comment.
+
+## Provisioning order (once per environment)
+
+This script is **not** a Drizzle migration: creating roles needs a
+superuser/owner connection, while the automated `migrate` stage runs as the
+least-privilege `app_migrate` role this script itself creates — a role-creation
+step therefore cannot live in the migration sequence that stage iterates.
+
+The bootstrap grants/revokes privileges on tables that must already exist
+(`core.audit_log`, `ALL TABLES IN SCHEMA core`), so it runs **after** the
+schema is created. The whole provisioning sequence is run once, by a
+human/operator, on a single superuser/owner connection:
+
+1. `npm run db:migrate` pointed at the **superuser/owner** connection — creates
+   the `core` schema and all tables. They are owned by that superuser/owner,
+   **not** by `app_migrate`; this matters because the audit-log REVOKEs in
+   step 2 are only effective against non-owner roles (a table owner always
+   keeps every privilege regardless of `REVOKE`).
+2. `npm run db:bootstrap-roles` — runs `db/bootstrap/bootstrap-db-roles.ts`,
+   which reads `BOOTSTRAP_DATABASE_URL` (a superuser/owner connection string,
+   never committed) and executes the SQL: creates the two roles, grants/revokes
+   on the now-existing tables, and sets `ALTER DEFAULT PRIVILEGES FOR ROLE
+app_migrate` so future tables `app_migrate` creates auto-grant to
+   `app_runtime`. Idempotent.
+3. Set passwords + store connection strings in Key Vault (steps below).
+
+After provisioning, every subsequent deploy's `migrate` Container Apps Job
+runs as `app_migrate` via `pg-connection-string-migrate`, applying ordinary
+schema migrations only; new tables it creates inherit the default privileges
+configured in step 2.
 
 ## 1. Set passwords (once per environment, superuser/owner connection)
 
@@ -52,5 +81,8 @@ RESET ROLE;
 ```
 
 All of the above were verified against a throwaway local Docker Postgres 16
-container during um30 implementation (migrated via `npm run db:migrate`
-pointed at that container) — every assertion behaved as listed.
+container during um30 implementation — every assertion behaved as listed.
+Note the container connected as the `postgres` superuser, which is why role
+creation succeeded there; against a least-privilege database the bootstrap
+**must** run via step 1 above on a superuser/owner connection, never through
+the `app_migrate`-scoped `migrate` stage.
