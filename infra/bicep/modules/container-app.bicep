@@ -13,6 +13,11 @@ param acrLoginServer string
 param keyVaultUri string
 param appManagedIdentityId string
 param imageName string
+// Public base URL of this app. Required at runtime by lib/config.ts
+// (BETTER_AUTH_URL has no default) and used for auth redirects (APP_URL /
+// NEXT_PUBLIC_APP_URL). Derived in main.bicep from the Container Apps
+// environment's default domain.
+param appBaseUrl string
 param minReplicas int = 2
 param maxReplicas int = 5
 
@@ -58,7 +63,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         traffic: [
           {
             latestRevision: true
-            weight: 0
+            weight: 100
           }
         ]
       }
@@ -72,6 +77,9 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'DATABASE_URL', secretRef: 'pg-connection-string-app' }
             { name: 'BETTER_AUTH_SECRET', secretRef: 'better-auth-secret' }
             { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
+            { name: 'BETTER_AUTH_URL', value: appBaseUrl }
+            { name: 'APP_URL', value: appBaseUrl }
+            { name: 'NEXT_PUBLIC_APP_URL', value: appBaseUrl }
           ]
           probes: [
             {
