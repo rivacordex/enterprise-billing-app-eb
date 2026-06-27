@@ -6,6 +6,9 @@ using '../main.bicep'
 // DevOps service connection exist; left as placeholders here.
 param environmentName = 'dev'
 param postgresServerName = 'ebill-dev-pg'
-param pipelineServicePrincipalId = '00000000-0000-0000-0000-000000000000'
+param pipelineServicePrincipalId = '4e6834e0-6b11-42ce-980b-4d014e3b73ba'
 param minReplicas = 2
 param maxReplicas = 3
+// Phase-2: infra (Key Vault + secrets, ACR + image) is in place, so deploy
+// the Container App + migrate Job that consume them.
+param deployWorkloads = true

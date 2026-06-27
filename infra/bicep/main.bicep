@@ -8,6 +8,9 @@ param pipelineServicePrincipalId string
 param minReplicas int = 2
 param maxReplicas int = 5
 
+@description('Gates the Container App + migrate Job (phase-2 workloads). Deploy with false first so the Key Vault exists and its secret references can be populated + the ACR image pushed, then true.')
+param deployWorkloads bool = true
+
 var namePrefix = 'ebill-${environmentName}'
 // ACR and Key Vault names must be globally unique (DNS-resolvable). A prefix
 // alone risks collisions in shared tenants/clouds; mix in a deterministic
@@ -75,7 +78,7 @@ module postgres 'modules/postgres.bicep' = {
   }
 }
 
-module containerApp 'modules/container-app.bicep' = {
+module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
   name: 'containerApp'
   params: {
     location: location
@@ -87,12 +90,13 @@ module containerApp 'modules/container-app.bicep' = {
     // Placeholder tag — the pipeline's `deploy` stage immediately overwrites
     // this with the real `$(Build.BuildId)-$(Build.SourceVersion)` tag.
     imageName: '${acr.outputs.acrLoginServer}/enterprise-billing-app:bootstrap'
+    appBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
     minReplicas: minReplicas
     maxReplicas: maxReplicas
   }
 }
 
-module containerAppJob 'modules/container-app-job.bicep' = {
+module containerAppJob 'modules/container-app-job.bicep' = if (deployWorkloads) {
   name: 'containerAppJob'
   params: {
     location: location
@@ -105,7 +109,7 @@ module containerAppJob 'modules/container-app-job.bicep' = {
   }
 }
 
-output appFqdn string = containerApp.outputs.fqdn
+output appFqdn string = deployWorkloads ? containerApp.outputs.fqdn : ''
 output acrLoginServer string = acr.outputs.acrLoginServer
 output keyVaultName string = keyVault.outputs.keyVaultName
 output appManagedIdentityPrincipalId string = appManagedIdentity.properties.principalId
