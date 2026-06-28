@@ -50,11 +50,11 @@ resources):
 > Azure image ships pg_partman v4.x, the signature and `p_type` values differ
 > (`'native'`) — pin and verify the installed major before running.
 >
-> **pg_cron database scoping.** pg_cron objects live in the database named by
-> the `cron.database_name` server parameter (default `postgres`). If
-> `core.audit_log` lives in a different database, either set
-> `cron.database_name` to the app DB, or replace the `cron.schedule(...)` call
-> with `cron.schedule_in_database(..., target_database := '<app-db>')`.
+> **pg_cron database scoping.** The maintenance job is registered with
+> `cron.schedule_in_database(..., current_database())` so it runs in
+> `core.audit_log`'s database (the bootstrap connection's DB) rather than
+> whatever `cron.database_name` points at (default `postgres`). The `database`
+> column of the `cron.job` verification query below should show that app DB.
 
 ## Verification
 
@@ -66,7 +66,7 @@ SELECT core.generate_ulid();
 -- audit_log is a partitioned table (relkind 'p') with a composite PK.
 SELECT relkind FROM pg_class WHERE oid = 'core.audit_log'::regclass;   -- 'p'
 SELECT conname FROM pg_constraint
-WHERE conrelid = 'core.audit_log'::regclass AND contype = 'p';         -- audit_log_pkey
+WHERE conrelid = 'core.audit_log'::regclass AND contype = 'p';         -- audit_log_audit_id_created_datetime_pk
 
 -- Premake: N future monthly partitions exist ahead of the current month.
 SELECT inhrelid::regclass FROM pg_inherits

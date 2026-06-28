@@ -54,13 +54,19 @@ CALL partman.run_maintenance_proc();
 --> statement-breakpoint
 
 -- Daily maintenance: create-ahead + drop-old in one pass.
--- NOTE: pg_cron objects live in the database named by the `cron.database_name`
--- server parameter (default `postgres`). If core.audit_log lives in a different
--- database, either set cron.database_name to the app DB or replace the call
--- below with cron.schedule_in_database(..., target_database := '<app-db>').
--- See infra/docs/audit-partman-setup.md.
-SELECT cron.schedule(
-  'audit-log-partman-maintenance',
-  '0 3 * * *',                       -- 03:00 daily
-  $$CALL partman.run_maintenance_proc()$$
-);
+-- Pin the job to core.audit_log's database explicitly via
+-- cron.schedule_in_database(), using current_database() (the bootstrap
+-- connection's DB — the one 0001_audit.sql created core.audit_log in). Plain
+-- cron.schedule() would run the job in whatever `cron.database_name` points at
+-- (default `postgres`), which can be the wrong database. See
+-- infra/docs/audit-partman-setup.md.
+DO $$
+BEGIN
+  PERFORM cron.schedule_in_database(
+    'audit-log-partman-maintenance',
+    '0 3 * * *',                       -- 03:00 daily
+    $job$CALL partman.run_maintenance_proc()$job$,
+    current_database()
+  );
+END
+$$;
