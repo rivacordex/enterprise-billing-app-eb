@@ -4,6 +4,15 @@
 param environmentName string
 param location string = resourceGroup().location
 param postgresServerName string
+
+// Full-replacement server settings (um27) — passed explicitly to the postgres
+// module, which requires them so a hidden default can't clobber the server's
+// existing config. Override per-environment to carry any extension/library the
+// server already relies on. Changing sharedPreloadLibraries needs a one-time
+// server restart.
+param allowedExtensions string = 'PG_PARTMAN,PG_CRON,PGCRYPTO'
+param sharedPreloadLibraries string = 'pg_cron'
+
 param pipelineServicePrincipalId string
 param minReplicas int = 2
 param maxReplicas int = 5
@@ -75,6 +84,8 @@ module postgres 'modules/postgres.bicep' = {
   name: 'postgres'
   params: {
     postgresServerName: postgresServerName
+    allowedExtensions: allowedExtensions
+    sharedPreloadLibraries: sharedPreloadLibraries
   }
 }
 
@@ -109,7 +120,7 @@ module containerAppJob 'modules/container-app-job.bicep' = if (deployWorkloads) 
   }
 }
 
-output appFqdn string = deployWorkloads ? containerApp.outputs.fqdn : ''
+output appFqdn string = deployWorkloads ? containerApp!.outputs.fqdn : ''
 output acrLoginServer string = acr.outputs.acrLoginServer
 output keyVaultName string = keyVault.outputs.keyVaultName
 output appManagedIdentityPrincipalId string = appManagedIdentity.properties.principalId
