@@ -109,7 +109,7 @@ module containerAppJob 'modules/container-app-job.bicep' = if (deployWorkloads) 
   }
 }
 
-output appFqdn string = deployWorkloads ? containerApp.outputs.fqdn : ''
+output appFqdn string = deployWorkloads ? containerApp!.outputs.fqdn : ''
 output acrLoginServer string = acr.outputs.acrLoginServer
 output keyVaultName string = keyVault.outputs.keyVaultName
 output appManagedIdentityPrincipalId string = appManagedIdentity.properties.principalId

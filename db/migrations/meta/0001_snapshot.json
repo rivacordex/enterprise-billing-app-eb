@@ -11,9 +11,9 @@
         "audit_id": {
           "name": "audit_id",
           "type": "uuid",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true,
-          "default": "gen_random_uuid()"
+          "default": "core.generate_ulid()"
         },
         "event_type": {
           "name": "event_type",
@@ -118,7 +118,12 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "audit_log_audit_id_created_datetime_pk": {
+          "name": "audit_log_audit_id_created_datetime_pk",
+          "columns": ["audit_id", "created_datetime"]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
