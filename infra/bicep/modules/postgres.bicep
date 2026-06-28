@@ -22,11 +22,14 @@
 // every extension/library the server already relies on, not only the new ones.
 param postgresServerName string
 
+// Required (no default): azure.extensions and shared_preload_libraries are
+// full-replacement settings, so a silent module default would overwrite
+// whatever the server already has. The caller must pass the complete value.
 @description('Comma-separated azure.extensions allow-list. Must include PG_PARTMAN, PG_CRON, PGCRYPTO (um27) plus any extension the server already allows.')
-param allowedExtensions string = 'PG_PARTMAN,PG_CRON,PGCRYPTO'
+param allowedExtensions string
 
 @description('Comma-separated shared_preload_libraries. Must include pg_cron (um27) plus any library already preloaded. Changing this requires a one-time server restart.')
-param sharedPreloadLibraries string = 'pg_cron'
+param sharedPreloadLibraries string
 
 @description('Server display timezone (IANA name) for the `timezone` GUC. Controls how timestamptz values and now() RENDER, not how they are stored (storage stays UTC). Kept at UTC by default so audit_log range-partition boundaries (um27, computed against the session/server zone) stay aligned; override per-role/session for local display instead of changing this in place after partitions exist.')
 param serverTimezone string = 'UTC'

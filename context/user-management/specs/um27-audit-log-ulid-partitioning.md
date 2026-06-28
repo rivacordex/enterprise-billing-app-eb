@@ -157,7 +157,7 @@ CREATE TABLE "core"."audit_log" (
   "before_data"      jsonb,
   "after_data"       jsonb,
   "created_datetime" timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT "audit_log_pkey" PRIMARY KEY ("audit_id", "created_datetime")
+  CONSTRAINT "audit_log_audit_id_created_datetime_pk" PRIMARY KEY ("audit_id", "created_datetime")
 ) PARTITION BY RANGE ("created_datetime");
 --> statement-breakpoint
 
