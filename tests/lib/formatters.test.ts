@@ -2,25 +2,58 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatDatetime,
+  formatMoney,
   formatRelativeTime,
   groupConfigRows,
 } from "@/lib/formatters";
+import { DEFAULT_LOCALE } from "@/lib/locale";
 import type { SystemConfigDisplayRow } from "@/types/system-config";
 
 describe("formatDatetime", () => {
   it('returns "Never" for null with no fallback given', () => {
-    expect(formatDatetime(null)).toBe("Never");
+    expect(formatDatetime(null, DEFAULT_LOCALE)).toBe("Never");
   });
 
   it("returns the custom fallback for null", () => {
-    expect(formatDatetime(null, "N/A")).toBe("N/A");
+    expect(formatDatetime(null, DEFAULT_LOCALE, "N/A")).toBe("N/A");
   });
 
   it("formats a valid date in day-month-year, 24h, UTC order", () => {
-    const result = formatDatetime(new Date("2026-06-15T09:32:00Z"));
+    const result = formatDatetime(new Date("2026-06-15T09:32:00Z"), "en-GB");
     expect(result).toContain("Jun");
     expect(result).toContain("2026");
     expect(result).toContain("09:32");
+  });
+
+  // um28-spec §5: the locale wiring is proven live, not just defaulting.
+  // The seeded `en-MY` must reproduce today's `en-GB` output exactly (locks
+  // the behavior-preserving invariant)...
+  it("reproduces en-GB output exactly for the seeded en-MY locale", () => {
+    const date = new Date("2026-03-09T07:05:00Z");
+    expect(formatDatetime(date, "en-MY")).toBe(formatDatetime(date, "en-GB"));
+    expect(formatDatetime(date, "en-GB")).toBe("09 Mar 2026, 07:05");
+  });
+
+  // ...and a non-en locale must genuinely differ, so a silently-inert
+  // thread-through can't pass (`ms-MY` renders the month as "Mac").
+  it("renders a non-en locale differently (ms-MY uses localized month names)", () => {
+    const date = new Date("2026-03-09T07:05:00Z");
+    const result = formatDatetime(date, "ms-MY");
+    expect(result).toContain("Mac");
+    expect(result).not.toBe(formatDatetime(date, "en-GB"));
+  });
+});
+
+describe("formatMoney", () => {
+  // um28-spec §2.9: Intl.NumberFormat separates the currency symbol from the
+  // amount with a non-breaking space (U+00A0), not an ASCII space — the test
+  // must account for the exact codepoint.
+  it("formats MYR for en-MY with the NBSP-separated RM symbol", () => {
+    expect(formatMoney(1234.56, "en-MY", "MYR")).toBe("RM 1,234.56");
+  });
+
+  it("formats USD for en-US with no separator", () => {
+    expect(formatMoney(1234.56, "en-US", "USD")).toBe("$1,234.56");
   });
 });
 
@@ -66,6 +99,7 @@ function row(
     configVersion: 1,
     configKey: "app_name",
     configValue: "Enterprise Billing System",
+    description: null,
     isSecret: false,
     status: "ACTIVE",
     modifiedByUserId: null,

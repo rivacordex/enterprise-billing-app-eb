@@ -4,6 +4,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { UserDetail } from "@/components/users/user-detail";
 import { UserTable } from "@/components/users/user-table";
+import { getAppLocale } from "@/services/system-config/app-config-read.service";
 import * as rolesReadService from "@/services/roles/roles-read.service";
 import * as usersReadService from "@/services/users/users-read.service";
 
@@ -25,12 +26,13 @@ export default async function UsersPage({
 
   const { userId: selectedUserId } = await searchParams;
 
-  const [users, selectedUser, roles] = await Promise.all([
+  const [users, selectedUser, roles, locale] = await Promise.all([
     usersReadService.listUsers(),
     selectedUserId
       ? usersReadService.getUserById(selectedUserId)
       : Promise.resolve(null),
     rolesReadService.listRoles(),
+    getAppLocale(),
   ]);
 
   return (
@@ -41,6 +43,7 @@ export default async function UsersPage({
           selectedUserId={selectedUserId}
           permissionMap={permissionMap}
           roles={roles}
+          locale={locale}
         />
       </div>
       <div className="min-w-0 flex-[1]">
@@ -51,6 +54,7 @@ export default async function UsersPage({
           permissionMap={permissionMap}
           allRoles={roles}
           actorId={actorId}
+          locale={locale}
         />
       </div>
     </div>

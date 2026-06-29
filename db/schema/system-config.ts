@@ -24,6 +24,10 @@ export const systemConfig = core.table(
     configVersion: integer("config_version").notNull().default(1),
     configKey: text("config_key").notNull(),
     configValue: text("config_value"),
+    // Read-only, seeded documentation for each config row, surfaced as a
+    // sublabel under the key on the System Configuration page (um28-spec
+    // §2.10). Nullable: existing/secret rows without a description are fine.
+    description: text("description"),
     isSecret: boolean("is_secret").notNull().default(false),
     status: text("status").notNull().default("ACTIVE"),
     modifiedBy: text("modified_by").references(() => appuser.id, {

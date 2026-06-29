@@ -25,6 +25,7 @@ const ROW: SystemConfigDisplayRow = {
   configVersion: 1,
   configKey: "app_name",
   configValue: "Enterprise Billing System",
+  description: null,
   isSecret: false,
   status: "ACTIVE",
   modifiedByUserId: null,

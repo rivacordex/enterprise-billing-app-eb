@@ -1,5 +1,5 @@
 {
-  "id": "3479135b-6eb4-4a7c-937b-8a57b6d8560e",
+  "id": "8584735d-8449-4eb2-8001-9b7922d02022",
   "prevId": "73012abf-9bd6-4a1b-8325-882567158bbf",
   "version": "7",
   "dialect": "postgresql",
@@ -11,9 +11,9 @@
         "audit_id": {
           "name": "audit_id",
           "type": "uuid",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true,
-          "default": "gen_random_uuid()"
+          "default": "core.generate_ulid()"
         },
         "event_type": {
           "name": "event_type",
@@ -118,7 +118,12 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "audit_log_audit_id_created_datetime_pk": {
+          "name": "audit_log_audit_id_created_datetime_pk",
+          "columns": ["audit_id", "created_datetime"]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -911,6 +916,12 @@
         },
         "config_value": {
           "name": "config_value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
           "type": "text",
           "primaryKey": false,
           "notNull": false

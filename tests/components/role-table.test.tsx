@@ -64,6 +64,7 @@ describe("RoleTable", () => {
   it("renders 3 rows when given 3 roles", () => {
     render(
       <RoleTable
+        locale="en-GB"
         roles={[ADMIN_ROLE, MANAGER_ROLE, USER_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -75,6 +76,7 @@ describe("RoleTable", () => {
   it("ADMIN row shows 4 permission chips", () => {
     render(
       <RoleTable
+        locale="en-GB"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -90,6 +92,7 @@ describe("RoleTable", () => {
   it("MANAGER row shows 'No permissions'", () => {
     render(
       <RoleTable
+        locale="en-GB"
         roles={[MANAGER_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -102,6 +105,7 @@ describe("RoleTable", () => {
     const user = userEvent.setup();
     render(
       <RoleTable
+        locale="en-GB"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -116,6 +120,7 @@ describe("RoleTable", () => {
   it("applies the selected-row class to the matching role", () => {
     render(
       <RoleTable
+        locale="en-GB"
         roles={[ADMIN_ROLE, MANAGER_ROLE]}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -129,6 +134,7 @@ describe("RoleTable", () => {
   it("does not render the Add Role trigger for a no-grants permission map", () => {
     render(
       <RoleTable
+        locale="en-GB"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -140,6 +146,7 @@ describe("RoleTable", () => {
   it("renders an enabled Add Role trigger when the permission map grants roles:EDIT", () => {
     render(
       <RoleTable
+        locale="en-GB"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={{ ...emptyMap(), roles: "DELETE" }}
@@ -150,7 +157,12 @@ describe("RoleTable", () => {
 
   it("renders 'No roles found.' when roles is empty", () => {
     render(
-      <RoleTable roles={[]} selectedRoleId={null} permissionMap={emptyMap()} />,
+      <RoleTable
+        locale="en-GB"
+        roles={[]}
+        selectedRoleId={null}
+        permissionMap={emptyMap()}
+      />,
     );
     expect(screen.getByText("No roles found.")).toBeInTheDocument();
   });
