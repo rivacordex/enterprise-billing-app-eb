@@ -106,6 +106,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={null}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -120,6 +121,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={null}
         selectedRoleId="role-missing"
         permissionMap={emptyMap()}
@@ -132,6 +134,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={null}
         selectedRoleId="role-missing"
         permissionMap={emptyMap()}
@@ -147,6 +150,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -161,6 +165,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -177,6 +182,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -190,6 +196,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={emptyMap()}
@@ -202,6 +209,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -215,6 +223,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -228,6 +237,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -242,6 +252,7 @@ describe("RoleDetail", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -257,6 +268,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -280,6 +292,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -299,6 +312,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -320,6 +334,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -346,6 +361,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -371,6 +387,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -397,6 +414,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -425,6 +443,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -455,6 +474,7 @@ describe("RoleDetail edit mode", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -483,6 +503,7 @@ describe("RoleDetail edit mode", () => {
     const { rerender } = render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         key={MANAGER_ROLE.roleId}
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
@@ -497,6 +518,7 @@ describe("RoleDetail edit mode", () => {
     rerender(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         key={ADMIN_ROLE.roleId}
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
@@ -518,6 +540,7 @@ describe("RoleDetail permissions section (um20)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -535,6 +558,7 @@ describe("RoleDetail permissions section (um20)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -552,6 +576,7 @@ describe("RoleDetail permissions section (um20)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -573,6 +598,7 @@ describe("RoleDetail permissions section (um20)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -593,6 +619,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}
@@ -605,6 +632,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={editMap()}
@@ -619,6 +647,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={deleteMap()}
@@ -636,6 +665,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={deleteMap()}
@@ -653,6 +683,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}
@@ -668,6 +699,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}
@@ -689,6 +721,7 @@ describe("RoleDetail delete button (um21)", () => {
     render(
       <RoleDetail
         locale="en-GB"
+        timezone="UTC"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}

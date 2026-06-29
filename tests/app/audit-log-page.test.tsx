@@ -10,6 +10,11 @@ vi.mock("@/services/audit-log/audit-log-read.service", () => ({
   getAuditLog: vi.fn(),
   getAuditLogActors: vi.fn(),
 }));
+// um29: the page resolves the business zone server-side; mock the synchronous
+// accessor so importing the page never reaches the real `lib/config`/`db`.
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("UTC"),
+}));
 vi.mock("@/components/audit-log/audit-log-filters", () => ({
   AuditLogFilters: vi.fn(() => null),
 }));

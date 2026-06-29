@@ -8,7 +8,10 @@ import {
   getAllRolesWithMappings,
   getRoleWithMappings,
 } from "@/services/roles/roles-read.service";
-import { getAppLocale } from "@/services/system-config/app-config-read.service";
+import {
+  getAppLocale,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +32,8 @@ export default async function RolesPage({
   const { roleId } = await searchParams;
   const selectedRoleId = Array.isArray(roleId) ? roleId[0] : roleId;
 
+  // Synchronous config accessor (um29-spec §2.3) — resolved outside Promise.all.
+  const timezone = getAppTimezone();
   const [roles, selectedRole, locale] = await Promise.all([
     getAllRolesWithMappings(),
     selectedRoleId
@@ -45,6 +50,7 @@ export default async function RolesPage({
           selectedRoleId={selectedRoleId ?? null}
           permissionMap={permissionMap}
           locale={locale}
+          timezone={timezone}
         />
       </div>
       <div className="min-w-0 flex-[1]">
@@ -54,6 +60,7 @@ export default async function RolesPage({
           selectedRoleId={selectedRoleId ?? null}
           permissionMap={permissionMap}
           locale={locale}
+          timezone={timezone}
         />
       </div>
     </div>

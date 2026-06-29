@@ -4,10 +4,14 @@ import { ChevronDown, FileSearch } from "lucide-react";
 import { useState } from "react";
 
 import { AuditEventCategoryBadge } from "@/components/audit-log/audit-event-category-badge";
+import { formatZoneTimestamp } from "@/lib/timezone";
 import type { AuditEventCategory, AuditLogRow } from "@/types/audit-log";
 
 interface AuditLogTableProps {
   rows: AuditLogRow[];
+  // Resolved server-side from the `APP_TIMEZONE` env var and threaded in as a
+  // prop (um29-spec §2.5) — the row timestamp renders in this zone.
+  timezone: string;
 }
 
 const CATEGORY_BORDER_COLORS: Record<AuditEventCategory, string> = {
@@ -18,21 +22,15 @@ const CATEGORY_BORDER_COLORS: Record<AuditEventCategory, string> = {
   Security: "var(--color-warning-500)",
 };
 
-// e.g. "2026-06-17 09:14:22 UTC" — always UTC, never locale-formatted
-// (um24-spec §"Table columns and row design").
-function formatAuditTimestamp(date: Date): string {
-  return `${date
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d{3}Z$/, "")} UTC`;
-}
-
 function formatJsonPanel(value: unknown): string {
   if (value === null || value === undefined) return "null";
   return JSON.stringify(value, null, 2);
 }
 
-export function AuditLogTable({ rows }: AuditLogTableProps): React.JSX.Element {
+export function AuditLogTable({
+  rows,
+  timezone,
+}: AuditLogTableProps): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   function toggleRow(auditId: string): void {
@@ -87,6 +85,7 @@ export function AuditLogTable({ rows }: AuditLogTableProps): React.JSX.Element {
               <AuditLogTableRow
                 key={row.auditId}
                 row={row}
+                timezone={timezone}
                 isExpanded={isExpanded}
                 onToggle={() => toggleRow(row.auditId)}
               />
@@ -100,10 +99,12 @@ export function AuditLogTable({ rows }: AuditLogTableProps): React.JSX.Element {
 
 function AuditLogTableRow({
   row,
+  timezone,
   isExpanded,
   onToggle,
 }: {
   row: AuditLogRow;
+  timezone: string;
   isExpanded: boolean;
   onToggle: () => void;
 }): React.JSX.Element {
@@ -118,12 +119,16 @@ function AuditLogTableRow({
         <td className="px-4 py-3">
           <AuditEventCategoryBadge category={row.category} />
         </td>
+        {/* Cell text renders in the configured zone (local + Intl offset
+            suffix, or the literal `… UTC` when the zone is UTC — byte-identical
+            to today); the hover `title` keeps the raw UTC ISO instant for
+            forensics (um29-spec §2.5). */}
         <td
           className="px-4 py-3 whitespace-nowrap"
           title={row.createdDatetime.toISOString()}
         >
           <span className="font-mono text-mono text-muted-foreground">
-            {formatAuditTimestamp(row.createdDatetime)}
+            {formatZoneTimestamp(row.createdDatetime, timezone)}
           </span>
         </td>
         <td className="px-4 py-3 whitespace-nowrap">

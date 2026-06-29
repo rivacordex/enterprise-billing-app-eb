@@ -4,7 +4,10 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { UserDetail } from "@/components/users/user-detail";
 import { UserTable } from "@/components/users/user-table";
-import { getAppLocale } from "@/services/system-config/app-config-read.service";
+import {
+  getAppLocale,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 import * as rolesReadService from "@/services/roles/roles-read.service";
 import * as usersReadService from "@/services/users/users-read.service";
 
@@ -26,6 +29,9 @@ export default async function UsersPage({
 
   const { userId: selectedUserId } = await searchParams;
 
+  // `getAppTimezone()` is a synchronous config accessor (um29-spec §2.3), so
+  // it is resolved outside the `Promise.all` that awaits the DB reads.
+  const timezone = getAppTimezone();
   const [users, selectedUser, roles, locale] = await Promise.all([
     usersReadService.listUsers(),
     selectedUserId
@@ -44,6 +50,7 @@ export default async function UsersPage({
           permissionMap={permissionMap}
           roles={roles}
           locale={locale}
+          timezone={timezone}
         />
       </div>
       <div className="min-w-0 flex-[1]">
@@ -55,6 +62,7 @@ export default async function UsersPage({
           allRoles={roles}
           actorId={actorId}
           locale={locale}
+          timezone={timezone}
         />
       </div>
     </div>

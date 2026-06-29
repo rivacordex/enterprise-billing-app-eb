@@ -7,6 +7,7 @@ import { CopyRedirectUriButton } from "@/components/system-config/copy-redirect-
 import { EntraConfigRow } from "@/components/system-config/entra-config-row";
 import { entraConfig } from "@/lib/config";
 import { groupConfigRows } from "@/lib/formatters";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import { getSystemConfigParams } from "@/services/system-config/system-config-read.service";
 import { hasLevel } from "@/types/permissions";
 
@@ -31,6 +32,7 @@ export default async function SystemConfigPage(): Promise<React.JSX.Element> {
 
   const rows = await getSystemConfigParams();
   const groups = groupConfigRows(rows);
+  const timezone = getAppTimezone();
   const canEdit = hasLevel(
     permissionMap,
     PERMISSIONS.SYSTEM_CONFIG,
@@ -48,8 +50,30 @@ export default async function SystemConfigPage(): Promise<React.JSX.Element> {
           Configuration Parameters
         </h2>
         <div className="overflow-hidden rounded-md border border-border bg-card">
-          <ConfigTable groups={groups} canEdit={canEdit} />
+          <ConfigTable groups={groups} canEdit={canEdit} timezone={timezone} />
         </div>
+      </section>
+
+      <hr className="border-border" />
+
+      {/* um29-spec §2.9: read-only env-sourced "Application Settings" strip,
+          mirroring the Entra ID Settings pattern below. The business timezone
+          is env-sourced (APP_TIMEZONE), not a `system_config` row, so it is
+          shown read-only and cannot be edited in-app. Gated by the existing
+          `system_config:READ` (this page's guard); no new permission. */}
+      <section className="max-w-2xl rounded-md bg-card p-6 shadow-sm">
+        <h2 className="text-h3 font-semibold text-foreground">
+          Application Settings
+        </h2>
+        <p className="mt-1 text-body-sm text-muted-foreground">
+          Read-only. These values are sourced from environment variables. The
+          business timezone governs how datetimes are displayed and how local
+          day boundaries (e.g. the Audit Log date filter) are resolved.
+        </p>
+
+        <dl className="mt-4">
+          <EntraConfigRow label="Business Timezone" value={timezone} />
+        </dl>
       </section>
 
       <hr className="border-border" />

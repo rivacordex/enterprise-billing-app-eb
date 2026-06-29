@@ -114,6 +114,9 @@ interface UserDetailProps {
   // Resolved server-side from the `app/locale` config row and threaded in as
   // a prop (um28-spec §2.9) — this client component can't read config itself.
   locale: string;
+  // Resolved server-side from the `APP_TIMEZONE` env var and threaded in as a
+  // prop (um29-spec §2.4) — same reason: the client can't read config.
+  timezone: string;
 }
 
 function Field({
@@ -140,6 +143,7 @@ export function UserDetail({
   allRoles,
   actorId,
   locale,
+  timezone,
 }: UserDetailProps): React.JSX.Element {
   const [mode, setMode] = useState<"view" | "edit" | "manageRoles">("view");
   const [isSaving, setIsSaving] = useState(false);
@@ -695,7 +699,8 @@ export function UserDetail({
             <Field label="Locked">
               {user.isLocked ? (
                 <span className="font-mono text-mono text-[color:var(--color-danger-700)]">
-                  Locked until {formatDatetime(user.lockedUntil, locale)}
+                  Locked until{" "}
+                  {formatDatetime(user.lockedUntil, locale, timezone)}
                 </span>
               ) : (
                 <span className="text-muted-foreground">Not locked</span>
@@ -703,17 +708,17 @@ export function UserDetail({
             </Field>
             <Field label="Last Login">
               <span className="font-mono text-mono">
-                {formatDatetime(user.lastLoginDatetime, locale)}
+                {formatDatetime(user.lastLoginDatetime, locale, timezone)}
               </span>
             </Field>
             <Field label="Created">
               <span className="font-mono text-mono">
-                {formatDatetime(user.createdDatetime, locale)}
+                {formatDatetime(user.createdDatetime, locale, timezone)}
               </span>
             </Field>
             <Field label="Last Modified">
               <span className="font-mono text-mono">
-                {formatDatetime(user.lastModifiedDatetime, locale)}
+                {formatDatetime(user.lastModifiedDatetime, locale, timezone)}
               </span>
             </Field>
           </div>
