@@ -15,6 +15,12 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/services/system-config/system-config-read.service", () => ({
   getSystemConfigParams: vi.fn(),
 }));
+// um29: the page resolves the business zone server-side (read-only strip +
+// ConfigTable prop); mock the synchronous accessor so importing the page never
+// reaches the real `lib/config`/`db`.
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("UTC"),
+}));
 vi.mock("@/components/system-config/config-table", () => ({
   ConfigTable: vi.fn(() => null),
 }));

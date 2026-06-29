@@ -65,6 +65,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE, MANAGER_ROLE, USER_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -73,10 +74,28 @@ describe("RoleTable", () => {
     expect(screen.getAllByRole("button")).toHaveLength(3);
   });
 
+  // um29-spec §2.4: the `timezone` prop must thread through formatDatetime in
+  // the Created column. ADMIN_ROLE.createdDatetime is 2026-01-01T00:00:00Z,
+  // which renders 08:00 in Asia/Kuala_Lumpur (UTC+8) rather than 00:00 (UTC).
+  it("renders the created-date cell in the configured non-UTC timezone", () => {
+    render(
+      <RoleTable
+        locale="en-GB"
+        timezone="Asia/Kuala_Lumpur"
+        roles={[ADMIN_ROLE]}
+        selectedRoleId={null}
+        permissionMap={emptyMap()}
+      />,
+    );
+    const cell = screen.getByText("ADMIN").closest("tr") as HTMLElement;
+    expect(within(cell).getByText("01 Jan 2026, 08:00")).toBeInTheDocument();
+  });
+
   it("ADMIN row shows 4 permission chips", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -93,6 +112,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[MANAGER_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -106,6 +126,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -121,6 +142,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE, MANAGER_ROLE]}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -135,6 +157,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -147,6 +170,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={{ ...emptyMap(), roles: "DELETE" }}
@@ -159,6 +183,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[]}
         selectedRoleId={null}
         permissionMap={emptyMap()}

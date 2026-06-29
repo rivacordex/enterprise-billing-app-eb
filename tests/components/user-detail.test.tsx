@@ -115,6 +115,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -127,6 +128,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={[]}
@@ -141,6 +143,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={null}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -156,6 +159,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -185,6 +189,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -211,6 +216,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -236,6 +242,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -262,6 +269,7 @@ describe("UserDetail edit mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -282,11 +290,33 @@ describe("UserDetail edit mode", () => {
   });
 });
 
+describe("UserDetail timezone rendering", () => {
+  // um29-spec §2.4: the `timezone` prop must thread through formatDatetime for
+  // the timestamp fields, not just default to UTC. BASE_USER.createdDatetime
+  // is 2026-01-01T00:00:00Z, which renders 08:00 in Asia/Kuala_Lumpur (UTC+8)
+  // rather than 00:00 (UTC).
+  it("renders timestamp fields in the configured non-UTC timezone", () => {
+    render(
+      <UserDetail
+        locale="en-GB"
+        timezone="Asia/Kuala_Lumpur"
+        user={BASE_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(screen.getByText("Created").nextSibling?.textContent).toBe(
+      "01 Jan 2026, 08:00",
+    );
+  });
+});
+
 describe("UserDetail manageRoles mode", () => {
   it("renders the Manage roles button when the user has EDIT and a user is selected", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -301,6 +331,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={ALL_ROLES}
@@ -316,6 +347,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -334,6 +366,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{
           ...BASE_USER,
           roles: [{ roleId: "role-1", roleName: "MANAGER", assignedBy: null }],
@@ -356,6 +389,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -378,6 +412,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -400,6 +435,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -417,6 +453,7 @@ describe("UserDetail manageRoles mode", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{
           ...BASE_USER,
           roles: [{ roleId: "role-1", roleName: "MANAGER", assignedBy: null }],
@@ -437,6 +474,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -449,6 +487,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "PENDING" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -461,6 +500,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -473,6 +513,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -490,6 +531,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={[]}
@@ -508,6 +550,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -527,6 +570,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -550,6 +594,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -572,6 +617,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -594,6 +640,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -618,6 +665,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -646,6 +694,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -668,6 +717,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -690,6 +740,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -712,6 +763,7 @@ describe("UserDetail disable/enable", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -737,6 +789,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -751,6 +804,7 @@ describe("UserDetail reset password", () => {
     const { rerender } = render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "PENDING" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -763,6 +817,7 @@ describe("UserDetail reset password", () => {
     rerender(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -777,6 +832,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, authMethod: "SSO" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -791,6 +847,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -805,6 +862,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={[]}
@@ -820,6 +878,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -839,6 +898,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -867,6 +927,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -892,6 +953,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -923,6 +985,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -951,6 +1014,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -979,6 +1043,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1007,6 +1072,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1039,6 +1105,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1064,6 +1131,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1096,6 +1164,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1128,6 +1197,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1150,6 +1220,7 @@ describe("UserDetail reset password", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1175,6 +1246,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1187,6 +1259,7 @@ describe("UserDetail unlock", () => {
     const { rerender } = render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...LOCKED_USER, status: "PENDING" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1197,6 +1270,7 @@ describe("UserDetail unlock", () => {
     rerender(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...LOCKED_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1209,6 +1283,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1223,6 +1298,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...LOCKED_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1237,6 +1313,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={READ_MAP}
         allRoles={[]}
@@ -1252,6 +1329,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1271,6 +1349,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1294,6 +1373,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1316,6 +1396,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1341,6 +1422,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1369,6 +1451,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1397,6 +1480,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1425,6 +1509,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1455,6 +1540,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1476,6 +1562,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1494,6 +1581,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1511,6 +1599,7 @@ describe("UserDetail unlock", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={LOCKED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1531,6 +1620,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1546,6 +1636,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={SSO_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1561,6 +1652,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1575,6 +1667,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={[]}
@@ -1590,6 +1683,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1606,6 +1700,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1626,6 +1721,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1645,6 +1741,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1668,6 +1765,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1695,6 +1793,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1727,6 +1826,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={SSO_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1754,6 +1854,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1781,6 +1882,7 @@ describe("UserDetail switch auth method", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1818,6 +1920,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1835,6 +1938,7 @@ describe("UserDetail tombstone delete", () => {
       render(
         <UserDetail
           locale="en-GB"
+          timezone="UTC"
           user={{ ...BASE_USER, status }}
           permissionMap={DELETE_MAP}
           allRoles={[]}
@@ -1851,6 +1955,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1869,6 +1974,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1892,6 +1998,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1909,6 +2016,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1925,6 +2033,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1942,6 +2051,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1971,6 +2081,7 @@ describe("UserDetail tombstone delete", () => {
     render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1992,6 +2103,7 @@ describe("UserDetail tombstone delete", () => {
     const { rerender } = render(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         key={DISABLED_USER.userId}
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
@@ -2016,6 +2128,7 @@ describe("UserDetail tombstone delete", () => {
     rerender(
       <UserDetail
         locale="en-GB"
+        timezone="UTC"
         key={otherUser.userId}
         user={otherUser}
         permissionMap={DELETE_MAP}

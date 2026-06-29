@@ -17,6 +17,7 @@ const ENV_KEYS = [
   "PASSWORD_REQUIRE_NUMBER",
   "PASSWORD_REQUIRE_SPECIAL",
   "PASSWORD_SPECIAL_CHARS",
+  "APP_TIMEZONE",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -68,6 +69,7 @@ describe("config", () => {
       PASSWORD_REQUIRE_NUMBER: true,
       PASSWORD_REQUIRE_SPECIAL: true,
       PASSWORD_SPECIAL_CHARS: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
+      APP_TIMEZONE: "UTC",
     });
   });
 
@@ -84,6 +86,7 @@ describe("config", () => {
     expect(config.PASSWORD_SPECIAL_CHARS).toBe(
       `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
     );
+    expect(config.APP_TIMEZONE).toBe("UTC");
   });
 
   it("fails loud on an invalid env", async () => {
@@ -139,6 +142,43 @@ describe("config", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BETTER_AUTH_URL: "not-a-url",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("APP_TIMEZONE (um29)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to UTC when unset (behavior-preserving)", async () => {
+    const { config } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(config.APP_TIMEZONE).toBe("UTC");
+  });
+
+  it("accepts a supported IANA zone", async () => {
+    const { config } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      APP_TIMEZONE: "Asia/Kuala_Lumpur",
+    });
+    expect(config.APP_TIMEZONE).toBe("Asia/Kuala_Lumpur");
+  });
+
+  it("fails loud at boot on an unsupported zone (like PASSWORD_MIN_LENGTH=abc)", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        APP_TIMEZONE: "Mars/Olympus",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("fails loud at boot on a raw offset (IANA names only)", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        APP_TIMEZONE: "+08",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });

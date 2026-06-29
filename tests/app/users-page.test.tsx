@@ -16,6 +16,7 @@ vi.mock("@/services/roles/roles-read.service", () => ({
 // guard-level test never reaches the real repository/db.
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn().mockResolvedValue("en-GB"),
+  getAppTimezone: vi.fn().mockReturnValue("UTC"),
 }));
 // `UserTable` now renders `CreateUserDialog`, whose import chain (the
 // `create-user.action` -> `users-write.service` -> `db/client`) would

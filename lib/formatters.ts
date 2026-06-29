@@ -5,15 +5,18 @@ import type {
 import type { PasswordPolicy } from "@/types/password";
 
 // Pure, framework-agnostic — importable from both server and client modules
-// (um07-spec §7.4). `locale` is resolved server-side from the `app/locale`
-// config row and threaded in as a parameter (um28-spec §2.9) so the formatter
-// stays pure (it never reads config). The seeded `en-MY` reproduces today's
-// `en-GB` output exactly for these options; `timeZone: "UTC"` stays hardcoded
-// (display timezone deferred). `fallback` keeps its position after `locale`,
-// matching all existing single-argument call sites (no positional collision).
+// (um07-spec §7.4). `locale` (um28-spec §2.9) and `timezone` (um29-spec §2.4)
+// are resolved server-side — from the `app/locale` config row and the
+// `APP_TIMEZONE` env var respectively — and threaded in as parameters so the
+// formatter stays pure (it never reads config). `timezone` is **required** so
+// TypeScript forces every call site to pass the resolved zone — the mechanism
+// that guarantees no displayed datetime is silently left in UTC. With
+// `timezone: "UTC"` the output is byte-identical to today. `fallback` keeps
+// its position after `timezone`, matching all existing call sites.
 export function formatDatetime(
   date: Date | null,
   locale: string,
+  timezone: string,
   fallback = "Never",
 ): string {
   if (date === null) return fallback;
@@ -25,7 +28,7 @@ export function formatDatetime(
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-    timeZone: "UTC",
+    timeZone: timezone,
   }).format(date);
 }
 
