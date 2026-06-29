@@ -16,6 +16,7 @@ describe("core.system_config", () => {
         "config_version",
         "config_key",
         "config_value",
+        "description",
         "is_secret",
         "status",
         "modified_by",

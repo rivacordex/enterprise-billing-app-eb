@@ -105,6 +105,7 @@ describe("RoleDetail", () => {
   it("renders the empty-state placeholder when role is null and selectedRoleId is null", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={null}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -118,6 +119,7 @@ describe("RoleDetail", () => {
   it("renders 'Role not found.' when role is null and selectedRoleId is non-null", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={null}
         selectedRoleId="role-missing"
         permissionMap={emptyMap()}
@@ -129,6 +131,7 @@ describe("RoleDetail", () => {
   it("'Back to roles' link points to /administration/roles", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={null}
         selectedRoleId="role-missing"
         permissionMap={emptyMap()}
@@ -143,6 +146,7 @@ describe("RoleDetail", () => {
   it("renders the role name as an h3 heading when role is provided", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -156,6 +160,7 @@ describe("RoleDetail", () => {
   it("renders all 4 permission rows in PERMISSION_NAMES order", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -171,6 +176,7 @@ describe("RoleDetail", () => {
   it("ADMIN: shows DELETE for users/roles/system_config and READ for audit_log", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -183,6 +189,7 @@ describe("RoleDetail", () => {
   it("MANAGER: all 4 matrix rows show '—'", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={emptyMap()}
@@ -194,6 +201,7 @@ describe("RoleDetail", () => {
   it("renders '—' for description when roleDescr is null", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -206,6 +214,7 @@ describe("RoleDetail", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -218,6 +227,7 @@ describe("RoleDetail", () => {
   it("does not render the Edit button for a no-grants permission map", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -231,6 +241,7 @@ describe("RoleDetail", () => {
   it("renders the Edit button when the permission map grants roles:EDIT", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -245,6 +256,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -267,6 +279,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -285,6 +298,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -305,6 +319,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -330,6 +345,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -354,6 +370,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -379,6 +396,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -406,6 +424,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -435,6 +454,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={editMap()}
@@ -462,6 +482,7 @@ describe("RoleDetail edit mode", () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <RoleDetail
+        locale="en-GB"
         key={MANAGER_ROLE.roleId}
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
@@ -475,6 +496,7 @@ describe("RoleDetail edit mode", () => {
 
     rerender(
       <RoleDetail
+        locale="en-GB"
         key={ADMIN_ROLE.roleId}
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
@@ -495,6 +517,7 @@ describe("RoleDetail permissions section (um20)", () => {
   it("renders PermissionMatrixEditor (not the read-only matrix) when roles:EDIT is granted", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -511,6 +534,7 @@ describe("RoleDetail permissions section (um20)", () => {
   it("renders the read-only matrix (not PermissionMatrixEditor) when roles:EDIT is not granted", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -527,6 +551,7 @@ describe("RoleDetail permissions section (um20)", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -547,6 +572,7 @@ describe("RoleDetail permissions section (um20)", () => {
   it("never mounts both the read-only matrix and PermissionMatrixEditor at once", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={editMap()}
@@ -566,6 +592,7 @@ describe("RoleDetail delete button (um21)", () => {
   it("renders Delete in the header when roles:DELETE is granted and the role is non-seeded", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}
@@ -577,6 +604,7 @@ describe("RoleDetail delete button (um21)", () => {
   it("does not render Delete when the actor lacks roles:DELETE", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={editMap()}
@@ -590,6 +618,7 @@ describe("RoleDetail delete button (um21)", () => {
   it("Delete is disabled with a title for the seeded ADMIN role", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={ADMIN_ROLE}
         selectedRoleId="role-admin"
         permissionMap={deleteMap()}
@@ -606,6 +635,7 @@ describe("RoleDetail delete button (um21)", () => {
   it("Delete is disabled with a title for the seeded MANAGER/USER roles", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={MANAGER_ROLE}
         selectedRoleId="role-manager"
         permissionMap={deleteMap()}
@@ -622,6 +652,7 @@ describe("RoleDetail delete button (um21)", () => {
   it("Delete is enabled (no title) for a non-seeded role", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}
@@ -636,6 +667,7 @@ describe("RoleDetail delete button (um21)", () => {
     const user = userEvent.setup();
     render(
       <RoleDetail
+        locale="en-GB"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}
@@ -656,6 +688,7 @@ describe("RoleDetail delete button (um21)", () => {
   it("DeleteRoleDialog is not mounted (no dialog content) before Delete is clicked", () => {
     render(
       <RoleDetail
+        locale="en-GB"
         role={CUSTOM_ROLE}
         selectedRoleId="role-finance"
         permissionMap={deleteMap()}

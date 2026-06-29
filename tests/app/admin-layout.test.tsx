@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/auth/guard", () => ({
   getCurrentUserIdentity: vi.fn(),
 }));
+// um28: the layout now reads the collapse cookie + branding logo server-side.
+vi.mock("next/headers", () => ({
+  cookies: vi.fn(async () => ({ get: () => undefined })),
+}));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getBrandingLogo: vi.fn(async () => null),
+}));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/administration/users",
   useRouter: () => ({ push: vi.fn() }),

@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { BrandLogo } from "@/components/brand-logo";
 import { LoginForm } from "@/components/login-form";
 import { MicrosoftLogo } from "@/components/icons/microsoft-logo";
 import { isSsoConfigured } from "@/lib/config";
+import { getBrandingLogo } from "@/services/system-config/app-config-read.service";
 
 export const metadata: Metadata = {
   title: "Sign In",
@@ -41,6 +43,7 @@ export default async function LoginPage({
   }
 
   const { error } = await searchParams;
+  const logo = await getBrandingLogo();
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[color:var(--surface-nav)] px-4 py-12">
@@ -50,9 +53,7 @@ export default async function LoginPage({
       {/* 440px cap is spec'd exactly (um03-spec §2.1), not on the radius/spacing scale. */}
       <div className="relative z-10 w-full max-w-[440px] rounded-lg bg-card p-8 shadow-lg">
         <div className="flex flex-col items-center">
-          <span className="text-h4 font-semibold text-foreground">
-            Enterprise Billing
-          </span>
+          <BrandLogo variant="login" logo={logo} />
         </div>
 
         <h1 className="mt-6 text-h2 font-semibold text-foreground">Sign in</h1>

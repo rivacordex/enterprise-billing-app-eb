@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
@@ -23,6 +23,7 @@ export const systemConfigRepository = {
         configVersion: systemConfig.configVersion,
         configKey: systemConfig.configKey,
         configValue: systemConfig.configValue,
+        description: systemConfig.description,
         isSecret: systemConfig.isSecret,
         status: systemConfig.status,
         modifiedByUserId: systemConfig.modifiedBy,
@@ -56,6 +57,7 @@ export const systemConfigRepository = {
         configVersion: systemConfig.configVersion,
         configKey: systemConfig.configKey,
         configValue: systemConfig.configValue,
+        description: systemConfig.description,
         isSecret: systemConfig.isSecret,
         status: systemConfig.status,
         modifiedByUserId: systemConfig.modifiedBy,
@@ -75,6 +77,38 @@ export const systemConfigRepository = {
       status: row.status as ConfigStatus,
       modifiedByName: row.modifiedByName ?? null,
     };
+  },
+
+  // Resolves a single non-secret ACTIVE config value by (group, key) for the
+  // app-config read path (um28-spec §2.6) — branding logo, locale, currency.
+  // The `ORDER BY config_version DESC` is load-bearing, not cosmetic: the
+  // unique index is `(config_group, config_version, config_key)`, so two
+  // ACTIVE rows for the same `(group, key)` at different versions can legally
+  // coexist; without a deterministic order the returned row is
+  // nondeterministic. `config_version DESC` makes "latest active version
+  // wins" explicit. (All current seeds are version 1 — forward-hardening,
+  // not a present bug.) Returns the value, or `null` for missing/RETIRED/
+  // secret.
+  async findActiveValue(
+    db: Database,
+    group: string,
+    key: string,
+  ): Promise<string | null> {
+    const rows = await db
+      .select({ configValue: systemConfig.configValue })
+      .from(systemConfig)
+      .where(
+        and(
+          eq(systemConfig.configGroup, group),
+          eq(systemConfig.configKey, key),
+          eq(systemConfig.status, "ACTIVE"),
+          eq(systemConfig.isSecret, false),
+        ),
+      )
+      .orderBy(desc(systemConfig.configVersion))
+      .limit(1);
+
+    return rows[0]?.configValue ?? null;
   },
 
   // Writes the new value + modifier (um23-spec §23.3). No permission check,
