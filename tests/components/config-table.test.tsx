@@ -24,6 +24,7 @@ function row(
     configVersion: 1,
     configKey: "app_name",
     configValue: "Enterprise Billing System",
+    description: null,
     isSecret: false,
     status: "ACTIVE",
     modifiedByUserId: null,
@@ -57,6 +58,35 @@ describe("ConfigTable", () => {
     expect(screen.getByText("app_version")).toBeInTheDocument();
     expect(screen.getByText("Foo")).toBeInTheDocument();
     expect(screen.getByText("1.0")).toBeInTheDocument();
+  });
+
+  it("renders the seeded description as a sublabel under the key (um28)", () => {
+    const groups: SystemConfigGroup[] = [
+      {
+        group: "app",
+        rows: [
+          row({
+            configKey: "locale",
+            description: "BCP-47 locale for date/number formatting.",
+          }),
+        ],
+      },
+    ];
+    render(<ConfigTable groups={groups} />);
+    expect(screen.getByText("locale")).toBeInTheDocument();
+    expect(
+      screen.getByText("BCP-47 locale for date/number formatting."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no description sublabel when description is null (um28)", () => {
+    const groups: SystemConfigGroup[] = [
+      { group: "app", rows: [row({ configKey: "x", description: null })] },
+    ];
+    render(<ConfigTable groups={groups} />);
+    // The key cell holds only the mono key, no second <p> sublabel.
+    const keyCell = screen.getByText("x").closest("td");
+    expect(keyCell?.querySelector("p")).toBeNull();
   });
 
   it("truncates a value longer than 80 characters and sets the full value as title", () => {

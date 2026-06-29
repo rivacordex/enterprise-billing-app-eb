@@ -102,8 +102,18 @@ function SystemConfigGroupRows({
               row.status === "RETIRED" && "opacity-60",
             )}
           >
-            <td className="px-4 py-3 font-mono text-sm text-foreground">
-              {row.configKey}
+            <td className="px-4 py-3 align-top">
+              <div className="font-mono text-sm text-foreground">
+                {row.configKey}
+              </div>
+              {/* um28-spec §2.10: the seeded description renders as a muted
+                  second-line sublabel under the key (not a new column). Blank
+                  ⇒ no sublabel (no placeholder). */}
+              {row.description && (
+                <p className="mt-0.5 text-caption text-[color:var(--text-muted)]">
+                  {row.description}
+                </p>
+              )}
             </td>
             <td
               className={cn(

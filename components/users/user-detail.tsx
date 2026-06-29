@@ -111,6 +111,9 @@ interface UserDetailProps {
   // switch control; the Server Action re-resolves the actor server-side and
   // never trusts this value for authorization.
   actorId?: string;
+  // Resolved server-side from the `app/locale` config row and threaded in as
+  // a prop (um28-spec §2.9) — this client component can't read config itself.
+  locale: string;
 }
 
 function Field({
@@ -136,6 +139,7 @@ export function UserDetail({
   permissionMap,
   allRoles,
   actorId,
+  locale,
 }: UserDetailProps): React.JSX.Element {
   const [mode, setMode] = useState<"view" | "edit" | "manageRoles">("view");
   const [isSaving, setIsSaving] = useState(false);
@@ -691,7 +695,7 @@ export function UserDetail({
             <Field label="Locked">
               {user.isLocked ? (
                 <span className="font-mono text-mono text-[color:var(--color-danger-700)]">
-                  Locked until {formatDatetime(user.lockedUntil)}
+                  Locked until {formatDatetime(user.lockedUntil, locale)}
                 </span>
               ) : (
                 <span className="text-muted-foreground">Not locked</span>
@@ -699,17 +703,17 @@ export function UserDetail({
             </Field>
             <Field label="Last Login">
               <span className="font-mono text-mono">
-                {formatDatetime(user.lastLoginDatetime)}
+                {formatDatetime(user.lastLoginDatetime, locale)}
               </span>
             </Field>
             <Field label="Created">
               <span className="font-mono text-mono">
-                {formatDatetime(user.createdDatetime)}
+                {formatDatetime(user.createdDatetime, locale)}
               </span>
             </Field>
             <Field label="Last Modified">
               <span className="font-mono text-mono">
-                {formatDatetime(user.lastModifiedDatetime)}
+                {formatDatetime(user.lastModifiedDatetime, locale)}
               </span>
             </Field>
           </div>

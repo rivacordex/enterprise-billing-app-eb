@@ -5,13 +5,20 @@ import type {
 import type { PasswordPolicy } from "@/types/password";
 
 // Pure, framework-agnostic — importable from both server and client modules
-// (um07-spec §7.4).
-export function formatDatetime(date: Date | null, fallback = "Never"): string {
+// (um07-spec §7.4). `locale` is resolved server-side from the `app/locale`
+// config row and threaded in as a parameter (um28-spec §2.9) so the formatter
+// stays pure (it never reads config). The seeded `en-MY` reproduces today's
+// `en-GB` output exactly for these options; `timeZone: "UTC"` stays hardcoded
+// (display timezone deferred). `fallback` keeps its position after `locale`,
+// matching all existing single-argument call sites (no positional collision).
+export function formatDatetime(
+  date: Date | null,
+  locale: string,
+  fallback = "Never",
+): string {
   if (date === null) return fallback;
 
-  // Locale fixed to `en-GB` (not the runtime default) so day-month-year
-  // order and 24-hour time are guaranteed regardless of host locale.
-  return new Intl.DateTimeFormat("en-GB", {
+  return new Intl.DateTimeFormat(locale, {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -20,6 +27,23 @@ export function formatDatetime(date: Date | null, fallback = "Never"): string {
     hour12: false,
     timeZone: "UTC",
   }).format(date);
+}
+
+// Configuration-driven money formatting (um28-spec §2.9). `locale` +
+// `currency` are resolved server-side from `app/locale` + `app/default_currency`
+// and threaded in as parameters — the formatter stays pure. No callers in the
+// current admin module (no money is displayed yet); ships ready for billing,
+// unit-tested only. Note: `Intl.NumberFormat` separates the currency symbol
+// from the amount with a non-breaking space (U+00A0), not an ASCII space.
+export function formatMoney(
+  amount: number,
+  locale: string,
+  currency: string,
+): string {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+  }).format(amount);
 }
 
 // Used by `ConfigTable`'s "Last Modified" column (um22-spec §22.5).

@@ -15,12 +15,16 @@ interface RoleTableProps {
   roles: RoleWithMappings[];
   selectedRoleId: string | null;
   permissionMap: EffectivePermissionMap;
+  // Resolved server-side from the `app/locale` config row and threaded in as
+  // a prop (um28-spec §2.9) — this client component can't read config itself.
+  locale: string;
 }
 
 export function RoleTable({
   roles,
   selectedRoleId,
   permissionMap,
+  locale,
 }: RoleTableProps): React.JSX.Element {
   const router = useRouter();
 
@@ -115,7 +119,7 @@ export function RoleTable({
                     )}
                   </td>
                   <td className="px-4 py-2 font-mono text-mono text-muted-foreground">
-                    {formatDatetime(role.createdDatetime)}
+                    {formatDatetime(role.createdDatetime, locale)}
                   </td>
                 </tr>
               );

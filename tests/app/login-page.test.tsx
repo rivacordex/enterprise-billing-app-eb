@@ -20,6 +20,12 @@ vi.mock("@/lib/config", () => ({
     return mockIsSsoConfigured;
   },
 }));
+// um28: the login page now resolves the branding logo server-side; mock it so
+// importing the page never reaches `db/client` (and `lib/config`'s eager env
+// validation).
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getBrandingLogo: vi.fn().mockResolvedValue(null),
+}));
 
 import LoginPage from "@/app/(auth)/login/page";
 

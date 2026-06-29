@@ -12,6 +12,11 @@ vi.mock("@/services/users/users-read.service", () => ({
 vi.mock("@/services/roles/roles-read.service", () => ({
   listRoles: vi.fn(),
 }));
+// um28: the page now resolves the app locale server-side; mock it so the
+// guard-level test never reaches the real repository/db.
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppLocale: vi.fn().mockResolvedValue("en-GB"),
+}));
 // `UserTable` now renders `CreateUserDialog`, whose import chain (the
 // `create-user.action` -> `users-write.service` -> `db/client`) would
 // otherwise trigger `lib/config`'s eager env validation just from importing
