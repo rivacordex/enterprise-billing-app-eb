@@ -74,11 +74,12 @@ describe.skipIf(!databaseUrl)(
           config_version: number;
           config_key: string;
           config_value: string;
+          description: string | null;
           is_secret: boolean;
           status: string;
           modified_by: string | null;
         }[]
-      >`SELECT config_group, config_version, config_key, config_value, is_secret, status, modified_by
+      >`SELECT config_group, config_version, config_key, config_value, description, is_secret, status, modified_by
         FROM core.system_config WHERE config_key = 'app_name'`;
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
@@ -86,6 +87,8 @@ describe.skipIf(!databaseUrl)(
         config_version: 1,
         config_key: "app_name",
         config_value: "Enterprise Billing System",
+        // um28: the pre-existing app_name row was given its description by 0005.
+        description: "Application display name.",
         is_secret: false,
         status: "ACTIVE",
         modified_by: null,
@@ -109,6 +112,68 @@ describe.skipIf(!databaseUrl)(
       expect(checks[0]?.def).toContain("DRAFT");
       expect(checks[0]?.def).toContain("ACTIVE");
       expect(checks[0]?.def).toContain("RETIRED");
+    });
+
+    test("system_config has the nullable description column (um28 / 0005)", async () => {
+      const columns = await sql<{ column_name: string; is_nullable: string }[]>`
+        SELECT column_name, is_nullable FROM information_schema.columns
+        WHERE table_schema = 'core' AND table_name = 'system_config'
+          AND column_name = 'description'
+      `;
+      expect(columns).toHaveLength(1);
+      expect(columns[0]?.is_nullable).toBe("YES");
+    });
+
+    test("0005 seeds the six new config rows with correct group/secret/status and non-null descriptions", async () => {
+      const rows = await sql<
+        {
+          config_group: string;
+          config_key: string;
+          config_value: string;
+          description: string | null;
+          is_secret: boolean;
+          status: string;
+          modified_by: string | null;
+        }[]
+      >`SELECT config_group, config_key, config_value, description, is_secret, status, modified_by
+        FROM core.system_config
+        WHERE config_key IN (
+          'app_logo_path', 'locale', 'default_currency',
+          'company_name', 'company_address', 'company_billing_pic'
+        )
+        ORDER BY config_key`;
+
+      expect(rows).toHaveLength(6);
+      const byKey = new Map(rows.map((r) => [r.config_key, r]));
+
+      // Every seeded row is non-secret, ACTIVE, NULL modifier, non-null doc.
+      for (const r of rows) {
+        expect(r.is_secret).toBe(false);
+        expect(r.status).toBe("ACTIVE");
+        expect(r.modified_by).toBeNull();
+        expect(r.description).not.toBeNull();
+      }
+
+      // locale/default_currency live in `app`; the three company rows in
+      // the new `company` group, seeded blank.
+      expect(byKey.get("locale")).toMatchObject({
+        config_group: "app",
+        config_value: "en-MY",
+      });
+      expect(byKey.get("default_currency")).toMatchObject({
+        config_group: "app",
+        config_value: "MYR",
+      });
+      expect(byKey.get("app_logo_path")?.config_group).toBe("app");
+      expect(byKey.get("app_logo_path")?.config_value).toBe("");
+      for (const key of [
+        "company_name",
+        "company_address",
+        "company_billing_pic",
+      ]) {
+        expect(byKey.get(key)?.config_group).toBe("company");
+        expect(byKey.get(key)?.config_value).toBe("");
+      }
     });
 
     test("appuser columns match the spec, including email_verified, excluding image", async () => {

@@ -113,14 +113,24 @@ beforeEach(() => {
 describe("UserDetail edit mode", () => {
   it("renders the Edit button when the user has EDIT and a user is selected", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
   });
 
   it("does not render the Edit button when the user only has READ", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={READ_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "Edit" }),
@@ -128,7 +138,14 @@ describe("UserDetail edit mode", () => {
   });
 
   it("does not render the Edit button when no user is selected", () => {
-    render(<UserDetail user={null} permissionMap={EDIT_MAP} allRoles={[]} />);
+    render(
+      <UserDetail
+        locale="en-GB"
+        user={null}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
+    );
     expect(
       screen.queryByRole("button", { name: "Edit" }),
     ).not.toBeInTheDocument();
@@ -137,7 +154,12 @@ describe("UserDetail edit mode", () => {
   it("switches to the edit form when Edit is clicked, and back on Cancel", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -161,7 +183,12 @@ describe("UserDetail edit mode", () => {
     mockUpdateUserDetailsAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -182,7 +209,12 @@ describe("UserDetail edit mode", () => {
     mockUpdateUserDetailsAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -202,7 +234,12 @@ describe("UserDetail edit mode", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -223,7 +260,12 @@ describe("UserDetail edit mode", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -244,6 +286,7 @@ describe("UserDetail manageRoles mode", () => {
   it("renders the Manage roles button when the user has EDIT and a user is selected", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -257,6 +300,7 @@ describe("UserDetail manageRoles mode", () => {
   it("does not render the Manage roles button when the user only has READ", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={ALL_ROLES}
@@ -271,6 +315,7 @@ describe("UserDetail manageRoles mode", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -288,6 +333,7 @@ describe("UserDetail manageRoles mode", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={{
           ...BASE_USER,
           roles: [{ roleId: "role-1", roleName: "MANAGER", assignedBy: null }],
@@ -309,6 +355,7 @@ describe("UserDetail manageRoles mode", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -330,6 +377,7 @@ describe("UserDetail manageRoles mode", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -351,6 +399,7 @@ describe("UserDetail manageRoles mode", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={ALL_ROLES}
@@ -367,6 +416,7 @@ describe("UserDetail manageRoles mode", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={{
           ...BASE_USER,
           roles: [{ roleId: "role-1", roleName: "MANAGER", assignedBy: null }],
@@ -385,7 +435,12 @@ describe("UserDetail manageRoles mode", () => {
 describe("UserDetail disable/enable", () => {
   it("renders the Disable button for an ACTIVE user with EDIT", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
   });
@@ -393,6 +448,7 @@ describe("UserDetail disable/enable", () => {
   it("renders the Disable button for a PENDING user with EDIT", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "PENDING" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -404,6 +460,7 @@ describe("UserDetail disable/enable", () => {
   it("renders the Enable button for a DISABLED user with EDIT", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -415,6 +472,7 @@ describe("UserDetail disable/enable", () => {
   it("renders neither button for a DELETED user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -430,7 +488,12 @@ describe("UserDetail disable/enable", () => {
 
   it("renders neither button when the user only has READ", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={READ_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "Disable" }),
@@ -443,7 +506,12 @@ describe("UserDetail disable/enable", () => {
   it("opens the confirmation dialog when Disable is clicked, without calling the action", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -457,7 +525,12 @@ describe("UserDetail disable/enable", () => {
   it("closes the dialog without calling the action when Cancel is clicked", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -475,7 +548,12 @@ describe("UserDetail disable/enable", () => {
     mockDisableUserAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -492,7 +570,12 @@ describe("UserDetail disable/enable", () => {
     mockDisableUserAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -509,7 +592,12 @@ describe("UserDetail disable/enable", () => {
     mockDisableUserAction.mockResolvedValue({ ok: false, code: "LAST_ADMIN" });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -528,7 +616,12 @@ describe("UserDetail disable/enable", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -551,7 +644,12 @@ describe("UserDetail disable/enable", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Disable" }));
@@ -569,6 +667,7 @@ describe("UserDetail disable/enable", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -590,6 +689,7 @@ describe("UserDetail disable/enable", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -611,6 +711,7 @@ describe("UserDetail disable/enable", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -634,7 +735,12 @@ describe("UserDetail reset password", () => {
 
   it("renders the Reset Password button for a LOCAL ACTIVE user with EDIT", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.getByRole("button", { name: "Reset Password" }),
@@ -644,6 +750,7 @@ describe("UserDetail reset password", () => {
   it("renders the Reset Password button for PENDING and DISABLED LOCAL users", () => {
     const { rerender } = render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "PENDING" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -655,6 +762,7 @@ describe("UserDetail reset password", () => {
 
     rerender(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -668,6 +776,7 @@ describe("UserDetail reset password", () => {
   it("does not render the Reset Password button for an SSO user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, authMethod: "SSO" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -681,6 +790,7 @@ describe("UserDetail reset password", () => {
   it("does not render the Reset Password button for a DELETED user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -693,7 +803,12 @@ describe("UserDetail reset password", () => {
 
   it("does not render the Reset Password button when the user only has READ", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={READ_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "Reset Password" }),
@@ -703,7 +818,12 @@ describe("UserDetail reset password", () => {
   it("opens the confirmation dialog when Reset Password is clicked, without calling the action", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -717,7 +837,12 @@ describe("UserDetail reset password", () => {
   it("closes the dialog without calling the action when Cancel is clicked", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -740,7 +865,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -760,7 +890,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -786,7 +921,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -809,7 +949,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -832,7 +977,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -855,7 +1005,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -882,7 +1037,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -902,7 +1062,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -929,7 +1094,12 @@ describe("UserDetail reset password", () => {
       configurable: true,
     });
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -956,7 +1126,12 @@ describe("UserDetail reset password", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Reset Password" }));
@@ -973,7 +1148,12 @@ describe("UserDetail reset password", () => {
   it("disables the Reset Password button while mode is edit", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -993,7 +1173,12 @@ const LOCKED_USER: UserDetailView = {
 describe("UserDetail unlock", () => {
   it("renders the Unlock button for a locked ACTIVE user with EDIT", () => {
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
   });
@@ -1001,6 +1186,7 @@ describe("UserDetail unlock", () => {
   it("renders the Unlock button for locked PENDING and DISABLED users", () => {
     const { rerender } = render(
       <UserDetail
+        locale="en-GB"
         user={{ ...LOCKED_USER, status: "PENDING" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1010,6 +1196,7 @@ describe("UserDetail unlock", () => {
 
     rerender(
       <UserDetail
+        locale="en-GB"
         user={{ ...LOCKED_USER, status: "DISABLED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1020,7 +1207,12 @@ describe("UserDetail unlock", () => {
 
   it("does not render the Unlock button when the user is not locked", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "Unlock" }),
@@ -1030,6 +1222,7 @@ describe("UserDetail unlock", () => {
   it("does not render the Unlock button for a DELETED user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...LOCKED_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1042,7 +1235,12 @@ describe("UserDetail unlock", () => {
 
   it("does not render the Unlock button when the user only has READ", () => {
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={READ_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "Unlock" }),
@@ -1052,7 +1250,12 @@ describe("UserDetail unlock", () => {
   it("opens the confirmation dialog when Unlock is clicked, without calling the action", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1066,7 +1269,12 @@ describe("UserDetail unlock", () => {
   it("closes the dialog without calling the action when Cancel is clicked", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1084,7 +1292,12 @@ describe("UserDetail unlock", () => {
     mockUnlockAccountAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1101,7 +1314,12 @@ describe("UserDetail unlock", () => {
     mockUnlockAccountAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1121,7 +1339,12 @@ describe("UserDetail unlock", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1144,7 +1367,12 @@ describe("UserDetail unlock", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1167,7 +1395,12 @@ describe("UserDetail unlock", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1190,7 +1423,12 @@ describe("UserDetail unlock", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1215,7 +1453,12 @@ describe("UserDetail unlock", () => {
     });
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Unlock" }));
@@ -1231,7 +1474,12 @@ describe("UserDetail unlock", () => {
   it("disables the Unlock button while mode is edit", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -1244,7 +1492,12 @@ describe("UserDetail unlock", () => {
   it("disables the Unlock button while mode is manageRoles", async () => {
     const user = userEvent.setup();
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Manage roles" }));
@@ -1256,7 +1509,12 @@ describe("UserDetail unlock", () => {
 
   it("existing field groups render without regression for a locked user", () => {
     render(
-      <UserDetail user={LOCKED_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={LOCKED_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(screen.getByText("ada@example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
@@ -1272,6 +1530,7 @@ describe("UserDetail switch auth method", () => {
   it("renders 'Switch to SSO' for a LOCAL user with EDIT and an actorId", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1286,6 +1545,7 @@ describe("UserDetail switch auth method", () => {
   it("renders 'Switch to LOCAL' for an SSO user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={SSO_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1299,7 +1559,12 @@ describe("UserDetail switch auth method", () => {
 
   it("does not render the switch button when actorId is absent", () => {
     render(
-      <UserDetail user={BASE_USER} permissionMap={EDIT_MAP} allRoles={[]} />,
+      <UserDetail
+        locale="en-GB"
+        user={BASE_USER}
+        permissionMap={EDIT_MAP}
+        allRoles={[]}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "Switch to SSO" }),
@@ -1309,6 +1574,7 @@ describe("UserDetail switch auth method", () => {
   it("does not render the switch button when the user only has READ", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={READ_MAP}
         allRoles={[]}
@@ -1323,6 +1589,7 @@ describe("UserDetail switch auth method", () => {
   it("does not render the switch button for a DELETED user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1338,6 +1605,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1357,6 +1625,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1375,6 +1644,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1397,6 +1667,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1423,6 +1694,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1454,6 +1726,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={SSO_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1480,6 +1753,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1506,6 +1780,7 @@ describe("UserDetail switch auth method", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={BASE_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1542,6 +1817,7 @@ describe("UserDetail tombstone delete", () => {
   it("renders Delete user for a DISABLED user with the DELETE level", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1558,6 +1834,7 @@ describe("UserDetail tombstone delete", () => {
     (status) => {
       render(
         <UserDetail
+          locale="en-GB"
           user={{ ...BASE_USER, status }}
           permissionMap={DELETE_MAP}
           allRoles={[]}
@@ -1573,6 +1850,7 @@ describe("UserDetail tombstone delete", () => {
   it("does not render Delete user when only EDIT is held (no DELETE)", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={EDIT_MAP}
         allRoles={[]}
@@ -1590,6 +1868,7 @@ describe("UserDetail tombstone delete", () => {
   it("hides Edit and shows the muted Deleted header for a DELETED user", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={{ ...BASE_USER, status: "DELETED" }}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1612,6 +1891,7 @@ describe("UserDetail tombstone delete", () => {
   it("Delete user and Enable coexist for a DISABLED user with DELETE", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1628,6 +1908,7 @@ describe("UserDetail tombstone delete", () => {
   it("does not open the dialog on initial render", () => {
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1643,6 +1924,7 @@ describe("UserDetail tombstone delete", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1659,6 +1941,7 @@ describe("UserDetail tombstone delete", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1687,6 +1970,7 @@ describe("UserDetail tombstone delete", () => {
     const user = userEvent.setup();
     render(
       <UserDetail
+        locale="en-GB"
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
         allRoles={[]}
@@ -1707,6 +1991,7 @@ describe("UserDetail tombstone delete", () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <UserDetail
+        locale="en-GB"
         key={DISABLED_USER.userId}
         user={DISABLED_USER}
         permissionMap={DELETE_MAP}
@@ -1730,6 +2015,7 @@ describe("UserDetail tombstone delete", () => {
     };
     rerender(
       <UserDetail
+        locale="en-GB"
         key={otherUser.userId}
         user={otherUser}
         permissionMap={DELETE_MAP}

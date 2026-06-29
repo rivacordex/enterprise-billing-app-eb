@@ -25,6 +25,9 @@ interface RoleDetailProps {
   role: RoleWithMappings | null;
   selectedRoleId: string | null;
   permissionMap: EffectivePermissionMap;
+  // Resolved server-side from the `app/locale` config row and threaded in as
+  // a prop (um28-spec §2.9) — this client component can't read config itself.
+  locale: string;
 }
 
 function Field({
@@ -48,6 +51,7 @@ export function RoleDetail({
   role,
   selectedRoleId,
   permissionMap,
+  locale,
 }: RoleDetailProps): React.JSX.Element {
   const router = useRouter();
   const [mode, setMode] = useState<"view" | "edit">("view");
@@ -209,12 +213,12 @@ export function RoleDetail({
               <Field label="Description">{role.roleDescr ?? "—"}</Field>
               <Field label="Created">
                 <span className="font-mono text-mono">
-                  {formatDatetime(role.createdDatetime)}
+                  {formatDatetime(role.createdDatetime, locale)}
                 </span>
               </Field>
               <Field label="Last Modified">
                 <span className="font-mono text-mono">
-                  {formatDatetime(role.lastModifiedDatetime)}
+                  {formatDatetime(role.lastModifiedDatetime, locale)}
                 </span>
               </Field>
             </>

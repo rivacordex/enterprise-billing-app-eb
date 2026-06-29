@@ -222,5 +222,96 @@ describe.skipIf(!databaseUrl)(
         expect(found?.configValue).toBeNull();
       });
     });
+
+    describe("um28: findActiveValue", () => {
+      it("returns null for a missing (group, key)", async () => {
+        const value = await systemConfigRepository.findActiveValue(
+          db,
+          "fav_missing",
+          "nope",
+        );
+        expect(value).toBeNull();
+      });
+
+      it("returns the value for an ACTIVE non-secret row", async () => {
+        await db.insert(systemConfig).values({
+          configGroup: "fav_active",
+          configKey: "k",
+          configValue: "the-value",
+          status: "ACTIVE",
+          isSecret: false,
+        });
+
+        const value = await systemConfigRepository.findActiveValue(
+          db,
+          "fav_active",
+          "k",
+        );
+        expect(value).toBe("the-value");
+      });
+
+      it("returns null for a RETIRED row", async () => {
+        await db.insert(systemConfig).values({
+          configGroup: "fav_retired",
+          configKey: "k",
+          configValue: "retired-value",
+          status: "RETIRED",
+        });
+
+        const value = await systemConfigRepository.findActiveValue(
+          db,
+          "fav_retired",
+          "k",
+        );
+        expect(value).toBeNull();
+      });
+
+      it("returns null for a secret row", async () => {
+        await db.insert(systemConfig).values({
+          configGroup: "fav_secret",
+          configKey: "k",
+          configValue: "secret-value",
+          status: "ACTIVE",
+          isSecret: true,
+        });
+
+        const value = await systemConfigRepository.findActiveValue(
+          db,
+          "fav_secret",
+          "k",
+        );
+        expect(value).toBeNull();
+      });
+
+      // The ORDER BY config_version DESC is load-bearing: two ACTIVE rows for
+      // the same (group, key) at different versions can legally coexist (the
+      // unique index is (config_group, config_version, config_key)). The
+      // highest version must win deterministically.
+      it("returns the highest config_version when two ACTIVE rows coexist", async () => {
+        await db.insert(systemConfig).values([
+          {
+            configGroup: "fav_versioned",
+            configVersion: 1,
+            configKey: "k",
+            configValue: "v1",
+            status: "ACTIVE",
+          },
+          {
+            configGroup: "fav_versioned",
+            configVersion: 2,
+            configKey: "k",
+            configValue: "v2",
+            status: "ACTIVE",
+          },
+        ]);
+
+        const value = await systemConfigRepository.findActiveValue(
+          db,
+          "fav_versioned",
+          "k",
+        );
+        expect(value).toBe("v2");
+      });
+    });
   },
 );

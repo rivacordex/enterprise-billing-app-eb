@@ -8,6 +8,7 @@ import {
   getAllRolesWithMappings,
   getRoleWithMappings,
 } from "@/services/roles/roles-read.service";
+import { getAppLocale } from "@/services/system-config/app-config-read.service";
 
 export const dynamic = "force-dynamic";
 
@@ -28,11 +29,12 @@ export default async function RolesPage({
   const { roleId } = await searchParams;
   const selectedRoleId = Array.isArray(roleId) ? roleId[0] : roleId;
 
-  const [roles, selectedRole] = await Promise.all([
+  const [roles, selectedRole, locale] = await Promise.all([
     getAllRolesWithMappings(),
     selectedRoleId
       ? getRoleWithMappings(selectedRoleId)
       : Promise.resolve(null),
+    getAppLocale(),
   ]);
 
   return (
@@ -42,6 +44,7 @@ export default async function RolesPage({
           roles={roles}
           selectedRoleId={selectedRoleId ?? null}
           permissionMap={permissionMap}
+          locale={locale}
         />
       </div>
       <div className="min-w-0 flex-[1]">
@@ -50,6 +53,7 @@ export default async function RolesPage({
           role={selectedRole}
           selectedRoleId={selectedRoleId ?? null}
           permissionMap={permissionMap}
+          locale={locale}
         />
       </div>
     </div>

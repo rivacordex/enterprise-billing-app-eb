@@ -42,6 +42,7 @@ function row(
     configVersion: 1,
     configKey: "app_name",
     configValue: "old",
+    description: null,
     isSecret: false,
     status: "ACTIVE",
     modifiedByUserId: "prev-actor-id",
