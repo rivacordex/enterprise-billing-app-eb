@@ -55,9 +55,10 @@ export const getAppLocale = cache(async (): Promise<string> => {
     "app",
     "locale",
   );
-  return value !== null &&
-    (SUPPORTED_LOCALES as readonly string[]).includes(value)
-    ? value
+  const trimmed = value?.trim() ?? null;
+  return trimmed !== null &&
+    (SUPPORTED_LOCALES as readonly string[]).includes(trimmed)
+    ? trimmed
     : DEFAULT_LOCALE;
 });
 
@@ -67,8 +68,9 @@ export const getAppCurrency = cache(async (): Promise<string> => {
     "app",
     "default_currency",
   );
-  return value !== null &&
-    (SUPPORTED_CURRENCIES as readonly string[]).includes(value)
-    ? value
+  const trimmed = value?.trim() ?? null;
+  return trimmed !== null &&
+    (SUPPORTED_CURRENCIES as readonly string[]).includes(trimmed)
+    ? trimmed
     : DEFAULT_CURRENCY;
 });

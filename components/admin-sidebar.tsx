@@ -81,29 +81,28 @@ export function AdminSidebar({
         <AdminNav collapsed={collapsed} />
       </div>
 
-      {/* Footer — identity strip + sign-out (um26). Collapsed: sign-out icon
-          only, no identity strip (um28-spec §2.5). */}
-      {identity && (
-        <div className="mt-auto">
-          <div className="border-t border-[color:var(--text-on-brand)]/10" />
-          {!collapsed && (
-            <>
-              <div className="px-4 py-3">
-                <p className="truncate text-sm font-medium text-[color:var(--text-on-brand)]">
-                  {identity.userName}
-                </p>
-                <p className="mt-0.5 truncate text-xs text-[color:var(--color-primary-300)]">
-                  {identity.userEmail}
-                </p>
-              </div>
-              <div className="border-t border-[color:var(--text-on-brand)]/10" />
-            </>
-          )}
-          <div className="p-2">
-            <NavSignOutButton collapsed={collapsed} />
-          </div>
+      {/* Footer — identity strip + sign-out (um26). The sign-out action always
+          renders; only the identity strip depends on a resolved identity.
+          Collapsed: sign-out icon only, no identity strip (um28-spec §2.5). */}
+      <div className="mt-auto">
+        <div className="border-t border-[color:var(--text-on-brand)]/10" />
+        {identity && !collapsed && (
+          <>
+            <div className="px-4 py-3">
+              <p className="truncate text-sm font-medium text-[color:var(--text-on-brand)]">
+                {identity.userName}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-[color:var(--color-primary-300)]">
+                {identity.userEmail}
+              </p>
+            </div>
+            <div className="border-t border-[color:var(--text-on-brand)]/10" />
+          </>
+        )}
+        <div className="p-2">
+          <NavSignOutButton collapsed={collapsed} />
         </div>
-      )}
+      </div>
     </aside>
   );
 }
