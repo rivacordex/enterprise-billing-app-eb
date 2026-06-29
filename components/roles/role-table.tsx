@@ -18,6 +18,9 @@ interface RoleTableProps {
   // Resolved server-side from the `app/locale` config row and threaded in as
   // a prop (um28-spec §2.9) — this client component can't read config itself.
   locale: string;
+  // Resolved server-side from the `APP_TIMEZONE` env var and threaded in as a
+  // prop (um29-spec §2.4) — same reason: the client can't read config.
+  timezone: string;
 }
 
 export function RoleTable({
@@ -25,6 +28,7 @@ export function RoleTable({
   selectedRoleId,
   permissionMap,
   locale,
+  timezone,
 }: RoleTableProps): React.JSX.Element {
   const router = useRouter();
 
@@ -119,7 +123,7 @@ export function RoleTable({
                     )}
                   </td>
                   <td className="px-4 py-2 font-mono text-mono text-muted-foreground">
-                    {formatDatetime(role.createdDatetime, locale)}
+                    {formatDatetime(role.createdDatetime, locale, timezone)}
                   </td>
                 </tr>
               );

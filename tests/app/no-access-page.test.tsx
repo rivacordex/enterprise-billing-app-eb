@@ -29,7 +29,7 @@ describe("NoAccessPage", () => {
       screen.getByRole("heading", { name: "No Access" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/doesn.t have access to any modules yet/i),
+      screen.getByText(/doesn.t have access to this module yet/i),
     ).toBeInTheDocument();
   });
 

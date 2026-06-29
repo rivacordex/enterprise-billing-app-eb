@@ -2,11 +2,13 @@ import { cache } from "react";
 
 import { db } from "@/db/client";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
+import { config } from "@/lib/config";
 import {
   DEFAULT_CURRENCY,
   DEFAULT_LOCALE,
   SUPPORTED_CURRENCIES,
   SUPPORTED_LOCALES,
+  type SupportedTimezone,
 } from "@/lib/locale";
 import type { BrandingLogo } from "@/types/system-config";
 
@@ -74,3 +76,13 @@ export const getAppCurrency = cache(async (): Promise<string> => {
     ? trimmed
     : DEFAULT_CURRENCY;
 });
+
+// The configured business timezone (um29-spec §2.3). Unlike the locale/
+// currency readers above this is NOT a DB read — `config.APP_TIMEZONE` is
+// validated and frozen at boot — so it is a plain synchronous accessor with
+// no `React.cache` (caching a constant buys nothing). It lives here purely
+// for call-site symmetry with `getAppLocale()` (a server component resolves
+// locale + timezone together).
+export function getAppTimezone(): SupportedTimezone {
+  return config.APP_TIMEZONE;
+}

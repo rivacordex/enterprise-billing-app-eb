@@ -86,13 +86,17 @@ describe("AdminLayout sidebar footer", () => {
     expect(screen.getByRole("link", { name: "Audit Log" })).toBeInTheDocument();
   });
 
-  it("omits the footer when no user identity resolves", async () => {
+  it("omits the identity strip but keeps the sign-out button when no identity resolves", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue(null);
 
     render(await AdminLayout({ children: <main>content</main> }));
 
+    // um28 (admin-sidebar.tsx footer): the sign-out action ALWAYS renders so a
+    // user can sign out even if the identity lookup fails; only the identity
+    // strip (name + email) is gated on a resolved identity.
     expect(
-      screen.queryByRole("button", { name: "Sign out" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Sign out" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/@/)).not.toBeInTheDocument();
   });
 });

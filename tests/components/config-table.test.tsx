@@ -36,7 +36,7 @@ function row(
 
 describe("ConfigTable", () => {
   it("renders the empty state with no table when groups is []", () => {
-    const { container } = render(<ConfigTable groups={[]} />);
+    const { container } = render(<ConfigTable timezone="UTC" groups={[]} />);
     expect(screen.getByText("No configuration parameters")).toBeInTheDocument();
     expect(container.querySelector("table")).toBeNull();
     expect(container.querySelector("svg")).toBeInTheDocument();
@@ -52,7 +52,7 @@ describe("ConfigTable", () => {
         ],
       },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.getByText("app")).toBeInTheDocument();
     expect(screen.getByText("app_name")).toBeInTheDocument();
     expect(screen.getByText("app_version")).toBeInTheDocument();
@@ -72,7 +72,7 @@ describe("ConfigTable", () => {
         ],
       },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.getByText("locale")).toBeInTheDocument();
     expect(
       screen.getByText("BCP-47 locale for date/number formatting."),
@@ -83,7 +83,7 @@ describe("ConfigTable", () => {
     const groups: SystemConfigGroup[] = [
       { group: "app", rows: [row({ configKey: "x", description: null })] },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     // The key cell holds only the mono key, no second <p> sublabel.
     const keyCell = screen.getByText("x").closest("td");
     expect(keyCell?.querySelector("p")).toBeNull();
@@ -94,7 +94,7 @@ describe("ConfigTable", () => {
     const groups: SystemConfigGroup[] = [
       { group: "app", rows: [row({ configValue: longValue })] },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     const cell = screen.getByText(longValue);
     expect(cell).toHaveClass("truncate");
     expect(cell).toHaveAttribute("title", longValue);
@@ -107,7 +107,7 @@ describe("ConfigTable", () => {
         rows: [row({ configValue: "https://example.com/callback" })],
       },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.getByText("https://example.com/callback")).toHaveClass(
       "font-mono",
     );
@@ -117,7 +117,7 @@ describe("ConfigTable", () => {
     const groups: SystemConfigGroup[] = [
       { group: "app", rows: [row({ modifiedByName: "Jane Admin" })] },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.getByText("by Jane Admin")).toBeInTheDocument();
   });
 
@@ -125,7 +125,7 @@ describe("ConfigTable", () => {
     const groups: SystemConfigGroup[] = [
       { group: "app", rows: [row({ modifiedByName: null })] },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.queryByText(/^by /)).not.toBeInTheDocument();
   });
 
@@ -136,7 +136,7 @@ describe("ConfigTable", () => {
         rows: [row({ status: "RETIRED", configKey: "old_key" })],
       },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.getByText("old_key").closest("tr")).toHaveClass("opacity-60");
   });
 
@@ -147,7 +147,7 @@ describe("ConfigTable", () => {
         rows: [row({ configKey: "visible_key", isSecret: false })],
       },
     ];
-    render(<ConfigTable groups={groups} />);
+    render(<ConfigTable timezone="UTC" groups={groups} />);
     expect(screen.getByText("visible_key")).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(3); // header + group header + 1 data row
   });
@@ -156,7 +156,9 @@ describe("ConfigTable", () => {
     const groups: SystemConfigGroup[] = [
       { group: "app", rows: [row({ configKey: "app_name" })] },
     ];
-    const { container } = render(<ConfigTable groups={groups} />);
+    const { container } = render(
+      <ConfigTable timezone="UTC" groups={groups} />,
+    );
     expect(screen.queryByTestId("edit-app_name")).not.toBeInTheDocument();
     expect(container.querySelector("td[colspan]")).toHaveAttribute(
       "colspan",
@@ -168,7 +170,9 @@ describe("ConfigTable", () => {
     const groups: SystemConfigGroup[] = [
       { group: "app", rows: [row({ configKey: "app_name" })] },
     ];
-    const { container } = render(<ConfigTable groups={groups} canEdit />);
+    const { container } = render(
+      <ConfigTable timezone="UTC" groups={groups} canEdit />,
+    );
     expect(container.querySelectorAll("th")).toHaveLength(5);
     expect(container.querySelector("td[colspan]")).toHaveAttribute(
       "colspan",
@@ -190,7 +194,7 @@ describe("ConfigTable", () => {
         ],
       },
     ];
-    render(<ConfigTable groups={groups} canEdit />);
+    render(<ConfigTable timezone="UTC" groups={groups} canEdit />);
     expect(screen.getByTestId("edit-currency")).toBeInTheDocument();
   });
 
@@ -201,13 +205,53 @@ describe("ConfigTable", () => {
         rows: [row({ configKey: "old_key", status: "RETIRED" })],
       },
     ];
-    render(<ConfigTable groups={groups} canEdit />);
+    render(<ConfigTable timezone="UTC" groups={groups} canEdit />);
     expect(screen.getByTestId("edit-old_key")).toBeInTheDocument();
   });
 
   it("canEdit=true, empty groups: empty-state renders, no table or Actions column", () => {
-    const { container } = render(<ConfigTable groups={[]} canEdit />);
+    const { container } = render(
+      <ConfigTable timezone="UTC" groups={[]} canEdit />,
+    );
     expect(screen.getByText("No configuration parameters")).toBeInTheDocument();
     expect(container.querySelector("table")).toBeNull();
+  });
+
+  // um29-spec §2.7: the "Last Modified" cell's machine-readable `dateTime`
+  // attribute stays ISO-8601 UTC, while the human-visible hover `title`
+  // shows the configured-zone instant (here +08 ⇒ 8-hour shift).
+  it("renders dateTime as ISO-UTC and title in the configured zone", () => {
+    const groups: SystemConfigGroup[] = [
+      {
+        group: "app",
+        rows: [
+          row({ lastModifiedDatetime: new Date("2026-01-01T00:00:00.000Z") }),
+        ],
+      },
+    ];
+    const { container } = render(
+      <ConfigTable timezone="Asia/Kuala_Lumpur" groups={groups} />,
+    );
+    const time = container.querySelector("time");
+    expect(time).toHaveAttribute("datetime", "2026-01-01T00:00:00.000Z");
+    expect(time).toHaveAttribute("title", "2026-01-01 08:00:00 (GMT+8)");
+  });
+
+  it("keeps the literal ' UTC' title suffix when the zone is UTC", () => {
+    const groups: SystemConfigGroup[] = [
+      {
+        group: "app",
+        rows: [
+          row({ lastModifiedDatetime: new Date("2026-01-01T00:00:00.000Z") }),
+        ],
+      },
+    ];
+    const { container } = render(
+      <ConfigTable timezone="UTC" groups={groups} />,
+    );
+    expect(container.querySelector("time")).toHaveAttribute(
+      "title",
+      "2026-01-01 00:00:00 UTC",
+    );
   });
 });
