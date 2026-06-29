@@ -51,9 +51,9 @@ stages:
       - job: build
         displayName: Type check, lint, format, env-schema smoke
         steps:
-          - task: NodeTool@0
+          - task: UseNode@1
             inputs:
-              versionSpec: "22.x"
+              version: "22.x"
             displayName: Use Node 22
 
           - task: Cache@2
@@ -91,9 +91,9 @@ stages:
         variables:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/enterprise_billing
         steps:
-          - task: NodeTool@0
+          - task: UseNode@1
             inputs:
-              versionSpec: "22.x"
+              version: "22.x"
             displayName: Use Node 22
 
           - script: npm ci
@@ -148,12 +148,18 @@ stages:
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
-                az acr build \
-                  --registry $(ACR_NAME) \
-                  --image $(imageRepository):$(setImageTag.imageTag) \
+                set -euo pipefail
+                IMAGE="$(ACR_NAME).azurecr.io/$(imageRepository):$(setImageTag.imageTag)"
+                # ACR Tasks (az acr build) is blocked on this subscription type,
+                # so build on the agent and push instead. Contributor on the RG
+                # (inherited by the service connection's SP) grants the push.
+                az acr login --name $(ACR_NAME)
+                docker build \
                   --build-arg BUILD_VERSION=$(setImageTag.imageTag) \
+                  -t "$IMAGE" \
                   .
-            displayName: az acr build (no secrets baked into the image)
+                docker push "$IMAGE"
+            displayName: docker build + push to ACR (agent-side; ACR Tasks unavailable)
 
   # ---------------------------------------------------------------------
   - stage: migrate
