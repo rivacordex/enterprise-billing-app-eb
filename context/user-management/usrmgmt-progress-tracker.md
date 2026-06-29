@@ -32,9 +32,10 @@
 | um26 | Logout (sidebar sign-out button)                              | Done   |
 | um27 | Audit Log → ULID + Range Partitioning (pg_partman) (INFRA)    | Done   |
 | um28 | Side Panel & System Config (chrome + branding + locale)       | Done   |
+| um29 | Configurable Business Timezone (display + boundary)           | Done   |
 | um30 | Deployment, Secrets & Security Gates (INFRA)                  | Done   |
 
-**Next:** um29 not yet implemented/specced. Specs in `context/user-management/specs/`.
+**Next:** all specced units implemented. um29 automated gates green (`tsc`, ESLint, `vitest run`, `next build`); manual `/qa` runtime pass (set `APP_TIMEZONE=Asia/Kuala_Lumpur`, click through Users/Roles/System Config/Audit Log, confirm +08 display + correct local-day filter across UTC midnight) still pending.
 
 ## Conventions (apply to every unit; specs often contradict these — codebase wins)
 
@@ -73,7 +74,7 @@
 - **`/administration/system-config`** (um10's Entra-ID-only page) was extended in um22 with a DB-sourced "Configuration Parameters" `ConfigTable` section above the existing Entra section; the Entra section itself is unmodified. Entra values stay env-only; only the new `system_config` table is DB-sourced.
 - **`.env` was deleted from the working tree during um18** (user confirmed they have a backup copy) to avoid integration tests running destructively against the shared Tailscale dev DB (`100.112.98.112`) it pointed at. Restore it before running `next dev` or any `db:*`/`npm test` (full, incl. integration) script again.
 - **Pre-existing "(um25)" comment clash — resolved in um30:** `lib/config.ts`, `.env.example`, and `db/migrate.ts` had `// ... (um25)` comments from um02/um03 anticipating that um25 would be the "secrets sourced from Azure Key Vault via Managed Identity" unit. um30 is that actual unit, so those comments were updated to reference `(um30)` instead.
-- **Pre-existing unrelated test failure:** `tests/app/no-access-page.test.tsx` still fails (re-confirmed during um30's and um28's full unit-suite runs) against an already-modified (uncommitted, pre-dates um25) `app/(admin)/no-access/page.tsx` copy-text change — not touched by or related to um25/um28/um30.
+- **Resolved during um29** (were the two long-standing pre-existing failures): both were stale tests contradicting deliberate source, fixed by aligning the test to the codebase ("codebase wins"). (1) `tests/app/no-access-page.test.tsx` asserted the old "any modules yet" copy after `app/(admin)/no-access/page.tsx` was changed (uncommitted, pre-dates um25) to "this module yet" — test updated to match. (2) `tests/app/admin-layout.test.tsx` asserted the whole footer is omitted when `getCurrentUserIdentity()` resolves `null`, but um28's `admin-sidebar.tsx` (`b516ac9`) deliberately renders the Sign-out action **always** (only the identity strip is gated) — test updated to assert sign-out present + identity strip absent. Full unit suite now **920/920 green**.
 - **Pre-existing integration drift from um27's partitioning (surfaced during um28's throwaway-Docker run):** `tests/db/migration.integration.test.ts`'s exact-table-list assertion (`expect …toEqual([10 tables])`) and the appuser-FK-count assertion (`expect(fks).toHaveLength(6)`) fail on a fresh PG16 `migrate` because um27's `audit_log_default` DEFAULT partition appears in `information_schema.tables` (→ 11 tables) and its FK to `appuser` is duplicated on the partition (→ 13 FKs). Not caused by um28 (0005 adds no table and no appuser FK — those two queries return identical results with/without 0005); left unfixed (out of scope per workflow §2.5). Fix when next touching the audit/migration tests: exclude partition children (e.g. `AND c.relispartition = false`, or filter out `audit_log_default`) from both assertions.
 - **`.env` still points at the shared Tailscale dev DB** (`100.112.98.112`) — unchanged since um18. um30's DB work (bootstrap-roles migration, integration suite re-run) was verified against throwaway local Docker Postgres containers created and destroyed for this unit only; the shared dev DB was never touched.
 

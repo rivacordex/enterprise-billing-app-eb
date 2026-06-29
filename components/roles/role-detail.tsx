@@ -28,6 +28,9 @@ interface RoleDetailProps {
   // Resolved server-side from the `app/locale` config row and threaded in as
   // a prop (um28-spec §2.9) — this client component can't read config itself.
   locale: string;
+  // Resolved server-side from the `APP_TIMEZONE` env var and threaded in as a
+  // prop (um29-spec §2.4) — same reason: the client can't read config.
+  timezone: string;
 }
 
 function Field({
@@ -52,6 +55,7 @@ export function RoleDetail({
   selectedRoleId,
   permissionMap,
   locale,
+  timezone,
 }: RoleDetailProps): React.JSX.Element {
   const router = useRouter();
   const [mode, setMode] = useState<"view" | "edit">("view");
@@ -213,12 +217,12 @@ export function RoleDetail({
               <Field label="Description">{role.roleDescr ?? "—"}</Field>
               <Field label="Created">
                 <span className="font-mono text-mono">
-                  {formatDatetime(role.createdDatetime, locale)}
+                  {formatDatetime(role.createdDatetime, locale, timezone)}
                 </span>
               </Field>
               <Field label="Last Modified">
                 <span className="font-mono text-mono">
-                  {formatDatetime(role.lastModifiedDatetime, locale)}
+                  {formatDatetime(role.lastModifiedDatetime, locale, timezone)}
                 </span>
               </Field>
             </>

@@ -11,15 +11,19 @@ import type { SystemConfigDisplayRow } from "@/types/system-config";
 
 describe("formatDatetime", () => {
   it('returns "Never" for null with no fallback given', () => {
-    expect(formatDatetime(null, DEFAULT_LOCALE)).toBe("Never");
+    expect(formatDatetime(null, DEFAULT_LOCALE, "UTC")).toBe("Never");
   });
 
   it("returns the custom fallback for null", () => {
-    expect(formatDatetime(null, DEFAULT_LOCALE, "N/A")).toBe("N/A");
+    expect(formatDatetime(null, DEFAULT_LOCALE, "UTC", "N/A")).toBe("N/A");
   });
 
   it("formats a valid date in day-month-year, 24h, UTC order", () => {
-    const result = formatDatetime(new Date("2026-06-15T09:32:00Z"), "en-GB");
+    const result = formatDatetime(
+      new Date("2026-06-15T09:32:00Z"),
+      "en-GB",
+      "UTC",
+    );
     expect(result).toContain("Jun");
     expect(result).toContain("2026");
     expect(result).toContain("09:32");
@@ -30,17 +34,41 @@ describe("formatDatetime", () => {
   // the behavior-preserving invariant)...
   it("reproduces en-GB output exactly for the seeded en-MY locale", () => {
     const date = new Date("2026-03-09T07:05:00Z");
-    expect(formatDatetime(date, "en-MY")).toBe(formatDatetime(date, "en-GB"));
-    expect(formatDatetime(date, "en-GB")).toBe("09 Mar 2026, 07:05");
+    expect(formatDatetime(date, "en-MY", "UTC")).toBe(
+      formatDatetime(date, "en-GB", "UTC"),
+    );
+    expect(formatDatetime(date, "en-GB", "UTC")).toBe("09 Mar 2026, 07:05");
   });
 
   // ...and a non-en locale must genuinely differ, so a silently-inert
   // thread-through can't pass (`ms-MY` renders the month as "Mac").
   it("renders a non-en locale differently (ms-MY uses localized month names)", () => {
     const date = new Date("2026-03-09T07:05:00Z");
-    const result = formatDatetime(date, "ms-MY");
+    const result = formatDatetime(date, "ms-MY", "UTC");
     expect(result).toContain("Mac");
-    expect(result).not.toBe(formatDatetime(date, "en-GB"));
+    expect(result).not.toBe(formatDatetime(date, "en-GB", "UTC"));
+  });
+
+  // um29-spec §5: the same instant renders an 8-hour-shifted wall clock for
+  // Asia/Kuala_Lumpur (UTC+8) vs UTC — proving the `timezone` thread-through
+  // is live, not inert.
+  it("shifts the wall clock by the configured zone (UTC+8 vs UTC)", () => {
+    const date = new Date("2026-03-09T07:05:00Z");
+    expect(formatDatetime(date, "en-GB", "UTC")).toBe("09 Mar 2026, 07:05");
+    expect(formatDatetime(date, "en-GB", "Asia/Kuala_Lumpur")).toBe(
+      "09 Mar 2026, 15:05",
+    );
+  });
+
+  it("honors locale and timezone together", () => {
+    const date = new Date("2026-03-09T20:05:00Z");
+    // +08 pushes this past local midnight to 2026-03-10 04:05; ms-MY localizes
+    // the (unchanged) month label to "Mac". Loose assertion to tolerate
+    // locale-specific separators/ordering.
+    const result = formatDatetime(date, "ms-MY", "Asia/Kuala_Lumpur");
+    expect(result).toContain("Mac");
+    expect(result).toContain("10");
+    expect(result).toContain("04:05");
   });
 });
 

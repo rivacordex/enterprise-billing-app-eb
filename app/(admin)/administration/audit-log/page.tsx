@@ -10,6 +10,7 @@ import {
   getAuditLog,
   getAuditLogActors,
 } from "@/services/audit-log/audit-log-read.service";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import { auditLogSearchParamsSchema } from "@/validation/audit-log-filters.schema";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,8 @@ export default async function AuditLogPage({
     page: firstValue(raw.page) ?? 1,
   });
 
+  // Synchronous config accessor (um29-spec §2.3) — resolved outside Promise.all.
+  const timezone = getAppTimezone();
   const [auditPage, actors] = await Promise.all([
     getAuditLog(parsed),
     getAuditLogActors(),
@@ -67,7 +70,7 @@ export default async function AuditLogPage({
       </Suspense>
 
       <div className="overflow-hidden rounded-md bg-card shadow-sm">
-        <AuditLogTable rows={auditPage.rows} />
+        <AuditLogTable rows={auditPage.rows} timezone={timezone} />
         {auditPage.total > 0 && (
           <div className="px-4 pb-4">
             <Suspense>

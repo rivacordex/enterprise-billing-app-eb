@@ -65,6 +65,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE, MANAGER_ROLE, USER_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -77,6 +78,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -93,6 +95,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[MANAGER_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -106,6 +109,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -121,6 +125,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE, MANAGER_ROLE]}
         selectedRoleId="role-admin"
         permissionMap={emptyMap()}
@@ -135,6 +140,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={emptyMap()}
@@ -147,6 +153,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[ADMIN_ROLE]}
         selectedRoleId={null}
         permissionMap={{ ...emptyMap(), roles: "DELETE" }}
@@ -159,6 +166,7 @@ describe("RoleTable", () => {
     render(
       <RoleTable
         locale="en-GB"
+        timezone="UTC"
         roles={[]}
         selectedRoleId={null}
         permissionMap={emptyMap()}

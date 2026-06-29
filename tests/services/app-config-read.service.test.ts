@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // eager env validation (mirrors system-config-read.service.test.ts).
 vi.mock("@/db/client", () => ({ db: {} }));
 
+// um29: `getAppTimezone` reads `config.APP_TIMEZONE` directly, so the service
+// now imports `@/lib/config`. Mock it (the `@/db/client` mock no longer covers
+// the chain) — both to avoid eager env validation and to fix the zone.
+vi.mock("@/lib/config", () => ({
+  config: { APP_TIMEZONE: "Asia/Kuala_Lumpur" },
+}));
+
 vi.mock("@/db/repositories/system-config.repository", () => ({
   systemConfigRepository: { findActiveValue: vi.fn() },
 }));
@@ -12,6 +19,7 @@ import { systemConfigRepository } from "@/db/repositories/system-config.reposito
 import {
   getAppCurrency,
   getAppLocale,
+  getAppTimezone,
   getBrandingLogo,
 } from "@/services/system-config/app-config-read.service";
 
@@ -114,5 +122,13 @@ describe("getAppCurrency", () => {
   it("falls back to DEFAULT_CURRENCY for an unknown value", async () => {
     stub({ "app/default_currency": "XXX" });
     expect(await getAppCurrency()).toBe("MYR");
+  });
+});
+
+describe("getAppTimezone (um29)", () => {
+  // A plain synchronous accessor over `config.APP_TIMEZONE` (no DB read, no
+  // `React.cache`); the mocked config above fixes the zone.
+  it("returns the configured APP_TIMEZONE", () => {
+    expect(getAppTimezone()).toBe("Asia/Kuala_Lumpur");
   });
 });

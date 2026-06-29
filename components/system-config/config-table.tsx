@@ -3,12 +3,17 @@ import { Settings } from "lucide-react";
 import { ConfigEditDialog } from "@/components/system-config/config-edit-dialog";
 import { ConfigStatusBadge } from "@/components/system-config/config-status-badge";
 import { formatRelativeTime } from "@/lib/formatters";
+import { formatZoneTimestamp } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 import type { SystemConfigGroup } from "@/types/system-config";
 
 interface ConfigTableProps {
   groups: SystemConfigGroup[];
   canEdit?: boolean;
+  // Resolved server-side from the `APP_TIMEZONE` env var (um29-spec §2.7) —
+  // the "Last Modified" cell's hover `title` shows the local-zone instant
+  // while the machine-readable `dateTime` attribute stays ISO-8601 UTC.
+  timezone: string;
 }
 
 const URI_PREFIXES = ["http://", "https://"];
@@ -21,6 +26,7 @@ const URI_PREFIXES = ["http://", "https://"];
 export function ConfigTable({
   groups,
   canEdit = false,
+  timezone,
 }: ConfigTableProps): React.JSX.Element {
   const hasRows = groups.some((group) => group.rows.length > 0);
 
@@ -65,6 +71,7 @@ export function ConfigTable({
             key={group.group}
             group={group}
             canEdit={canEdit}
+            timezone={timezone}
           />
         ))}
       </tbody>
@@ -75,9 +82,11 @@ export function ConfigTable({
 function SystemConfigGroupRows({
   group,
   canEdit,
+  timezone,
 }: {
   group: SystemConfigGroup;
   canEdit: boolean;
+  timezone: string;
 }): React.JSX.Element {
   return (
     <>
@@ -131,7 +140,7 @@ function SystemConfigGroupRows({
             <td className="px-4 py-3">
               <time
                 dateTime={row.lastModifiedDatetime.toISOString()}
-                title={row.lastModifiedDatetime.toISOString()}
+                title={formatZoneTimestamp(row.lastModifiedDatetime, timezone)}
               >
                 {formatRelativeTime(row.lastModifiedDatetime)}
               </time>

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { AppError } from "@/lib/errors";
+import { DEFAULT_TIMEZONE, SUPPORTED_TIMEZONES } from "@/lib/locale";
 import type { PasswordPolicy } from "@/types/password";
 
 // um25-spec §"Policy source". Default allowed special-character set —
@@ -56,6 +57,13 @@ const envSchema = z.object({
     .string()
     .min(1, "PASSWORD_SPECIAL_CHARS must not be empty.")
     .default(DEFAULT_PASSWORD_SPECIAL_CHARS),
+  // Business timezone (um29-spec §2.1). Optional IANA name validated against
+  // the curated `SUPPORTED_TIMEZONES`; defaults to `UTC` when unset, so date
+  // output is byte-identical to today until set. An unsupported/misspelled
+  // zone throws at startup with a descriptive message — identical fail-fast
+  // posture to `PASSWORD_MIN_LENGTH=abc`. Read once at boot, never at runtime
+  // (Inv. #17 — the zone defines billing-period boundaries).
+  APP_TIMEZONE: z.enum(SUPPORTED_TIMEZONES).default(DEFAULT_TIMEZONE),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -77,6 +85,7 @@ function loadConfig(): Config {
     PASSWORD_REQUIRE_NUMBER: process.env.PASSWORD_REQUIRE_NUMBER,
     PASSWORD_REQUIRE_SPECIAL: process.env.PASSWORD_REQUIRE_SPECIAL,
     PASSWORD_SPECIAL_CHARS: process.env.PASSWORD_SPECIAL_CHARS,
+    APP_TIMEZONE: process.env.APP_TIMEZONE,
   });
 
   if (!parsed.success) {

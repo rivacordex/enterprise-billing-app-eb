@@ -9,21 +9,31 @@ vi.mock("@/db/repositories/audit-log.repository", () => ({
   auditLogRepository: { findFiltered: vi.fn(), findActors: vi.fn() },
 }));
 
+// um29: `getAuditLog` resolves the business zone via `getAppTimezone()` and
+// converts the picked local day to UTC bounds. Mock the resolver so the test
+// can vary the zone (and so importing it never reaches the real `lib/config`).
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn(() => "UTC"),
+}));
+
 import { auditLogRepository } from "@/db/repositories/audit-log.repository";
 import {
   getAuditLog,
   getAuditLogActors,
 } from "@/services/audit-log/audit-log-read.service";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { AuditLogRow } from "@/types/audit-log";
 import type { AuditLogSearchParams } from "@/validation/audit-log-filters.schema";
 
 const mockFindFiltered = vi.mocked(auditLogRepository.findFiltered);
 const mockFindActors = vi.mocked(auditLogRepository.findActors);
+const mockGetAppTimezone = vi.mocked(getAppTimezone);
 
 beforeEach(() => {
   mockFindFiltered.mockReset();
   mockFindActors.mockReset();
   mockFindFiltered.mockResolvedValue({ rows: [], total: 0 });
+  mockGetAppTimezone.mockReset().mockReturnValue("UTC");
 });
 
 function baseParams(
@@ -40,21 +50,47 @@ function baseParams(
 }
 
 describe("getAuditLog", () => {
-  it("converts a dateFrom string to a start-of-day UTC Date", async () => {
+  // um29-spec §2.6: with the UTC zone the conversion is the identity, so the
+  // existing day-boundary behavior is preserved exactly.
+  it("converts a dateFrom string to a start-of-day UTC Date (UTC zone identity)", async () => {
     await getAuditLog(baseParams({ dateFrom: "2026-01-15" }));
 
     const [, filters] = mockFindFiltered.mock.calls[0]!;
     expect(filters.dateFrom).toEqual(new Date("2026-01-15T00:00:00.000Z"));
   });
 
-  it("converts a dateTo string to an end-of-day UTC Date", async () => {
+  it("converts a dateTo string to an end-of-day UTC Date (UTC zone identity)", async () => {
     await getAuditLog(baseParams({ dateTo: "2026-01-20" }));
 
     const [, filters] = mockFindFiltered.mock.calls[0]!;
     expect(filters.dateTo).toEqual(new Date("2026-01-20T23:59:59.999Z"));
   });
 
+  // um29-spec §2.6: a +08 zone shifts the local-day boundary back 8 hours.
+  it("converts a local day to UTC bounds for Asia/Kuala_Lumpur (UTC+8)", async () => {
+    mockGetAppTimezone.mockReturnValue("Asia/Kuala_Lumpur");
+    await getAuditLog(
+      baseParams({ dateFrom: "2026-06-27", dateTo: "2026-06-27" }),
+    );
+
+    const [, filters] = mockFindFiltered.mock.calls[0]!;
+    expect(filters.dateFrom).toEqual(new Date("2026-06-26T16:00:00.000Z"));
+    expect(filters.dateTo).toEqual(new Date("2026-06-27T15:59:59.999Z"));
+  });
+
+  // um29-spec §2.6: validates the non-integer (half-hour) offset.
+  it("handles the half-hour offset for Asia/Kolkata (UTC+5:30)", async () => {
+    mockGetAppTimezone.mockReturnValue("Asia/Kolkata");
+    await getAuditLog(baseParams({ dateFrom: "2026-06-27" }));
+
+    const [, filters] = mockFindFiltered.mock.calls[0]!;
+    expect(filters.dateFrom).toEqual(new Date("2026-06-26T18:30:00.000Z"));
+  });
+
+  // um29-spec §2.6: a null filter stays null (unfiltered), preserving um24's
+  // "never 500s" lenient-filter contract regardless of zone.
   it("passes dateFrom/dateTo through as null when absent", async () => {
+    mockGetAppTimezone.mockReturnValue("Asia/Kuala_Lumpur");
     await getAuditLog(baseParams());
 
     const [, filters] = mockFindFiltered.mock.calls[0]!;

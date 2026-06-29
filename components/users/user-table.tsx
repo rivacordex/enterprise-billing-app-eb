@@ -26,6 +26,9 @@ interface UserTableProps {
   // Resolved server-side from the `app/locale` config row and threaded in as
   // a prop (um28-spec §2.9) — this client component can't read config itself.
   locale: string;
+  // Resolved server-side from the `APP_TIMEZONE` env var and threaded in as a
+  // prop (um29-spec §2.4) — same reason: the client can't read config.
+  timezone: string;
 }
 
 type SortKey = "userName" | "userEmail" | "lastLoginDatetime";
@@ -61,6 +64,7 @@ export function UserTable({
   permissionMap,
   roles,
   locale,
+  timezone,
 }: UserTableProps): React.JSX.Element {
   const router = useRouter();
   const [showDeleted, setShowDeleted] = useState(false);
@@ -186,7 +190,7 @@ export function UserTable({
                   <td className="px-4 py-2 text-body">{user.userEmail}</td>
                   <td className="px-4 py-2 font-mono text-mono">
                     {user.lastLoginDatetime ? (
-                      formatDatetime(user.lastLoginDatetime, locale)
+                      formatDatetime(user.lastLoginDatetime, locale, timezone)
                     ) : (
                       <span className="text-muted-foreground">Never</span>
                     )}
