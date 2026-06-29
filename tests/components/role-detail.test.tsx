@@ -218,6 +218,24 @@ describe("RoleDetail", () => {
     expect(screen.getByText("Description").nextSibling?.textContent).toBe("—");
   });
 
+  // um29-spec §2.4: the `timezone` prop must thread through to the timestamp
+  // fields, not just default to UTC. ADMIN_ROLE.createdDatetime is
+  // 2026-01-01T00:00:00Z, which renders 08:00 in Asia/Kuala_Lumpur (UTC+8).
+  it("renders timestamps in the configured non-UTC timezone", () => {
+    render(
+      <RoleDetail
+        locale="en-GB"
+        timezone="Asia/Kuala_Lumpur"
+        role={ADMIN_ROLE}
+        selectedRoleId="role-admin"
+        permissionMap={emptyMap()}
+      />,
+    );
+    expect(screen.getByText("Created").nextSibling?.textContent).toBe(
+      "01 Jan 2026, 08:00",
+    );
+  });
+
   it("close button navigates to /administration/roles", async () => {
     const user = userEvent.setup();
     render(

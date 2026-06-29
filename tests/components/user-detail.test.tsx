@@ -290,6 +290,27 @@ describe("UserDetail edit mode", () => {
   });
 });
 
+describe("UserDetail timezone rendering", () => {
+  // um29-spec §2.4: the `timezone` prop must thread through formatDatetime for
+  // the timestamp fields, not just default to UTC. BASE_USER.createdDatetime
+  // is 2026-01-01T00:00:00Z, which renders 08:00 in Asia/Kuala_Lumpur (UTC+8)
+  // rather than 00:00 (UTC).
+  it("renders timestamp fields in the configured non-UTC timezone", () => {
+    render(
+      <UserDetail
+        locale="en-GB"
+        timezone="Asia/Kuala_Lumpur"
+        user={BASE_USER}
+        permissionMap={READ_MAP}
+        allRoles={[]}
+      />,
+    );
+    expect(screen.getByText("Created").nextSibling?.textContent).toBe(
+      "01 Jan 2026, 08:00",
+    );
+  });
+});
+
 describe("UserDetail manageRoles mode", () => {
   it("renders the Manage roles button when the user has EDIT and a user is selected", () => {
     render(
