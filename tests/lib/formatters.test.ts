@@ -30,14 +30,14 @@ describe("formatDatetime", () => {
   });
 
   // um28-spec §5: the locale wiring is proven live, not just defaulting.
-  // The seeded `en-MY` must reproduce today's `en-GB` output exactly (locks
-  // the behavior-preserving invariant)...
-  it("reproduces en-GB output exactly for the seeded en-MY locale", () => {
+  // The seeded `en-MY` produces the same behavior-preserving output as today's
+  // `en-GB`. Assert each locale directly against the expected string rather
+  // than comparing the two — a cross-locale equality couples the test to
+  // ICU/CLDR data that can drift between runtime updates.
+  it("renders the seeded en-MY locale in the expected behavior-preserving format", () => {
     const date = new Date("2026-03-09T07:05:00Z");
-    expect(formatDatetime(date, "en-MY", "UTC")).toBe(
-      formatDatetime(date, "en-GB", "UTC"),
-    );
     expect(formatDatetime(date, "en-GB", "UTC")).toBe("09 Mar 2026, 07:05");
+    expect(formatDatetime(date, "en-MY", "UTC")).toBe("09 Mar 2026, 07:05");
   });
 
   // ...and a non-en locale must genuinely differ, so a silently-inert
