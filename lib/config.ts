@@ -50,7 +50,16 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? 15 : Number(value)))
-    .pipe(z.number().int().min(1, "PASSWORD_MIN_LENGTH must be at least 1.")),
+    .pipe(
+      z
+        .number()
+        .int()
+        .min(1, "PASSWORD_MIN_LENGTH must be at least 1.")
+        // Mirror `buildPasswordSchema`'s `.max(128)` hard cap: a min above it
+        // makes every password schema unsatisfiable, so reject at boot
+        // (fail-fast) instead of failing every validation at runtime.
+        .max(128, "PASSWORD_MIN_LENGTH must be at most 128."),
+    ),
   PASSWORD_REQUIRE_UPPERCASE: booleanEnvSchema("true"),
   PASSWORD_REQUIRE_LOWERCASE: booleanEnvSchema("true"),
   PASSWORD_REQUIRE_NUMBER: booleanEnvSchema("true"),
