@@ -228,7 +228,13 @@ stages:
   # ---------------------------------------------------------------------
   - stage: deploy
     displayName: Deploy (blue-green)
-    dependsOn: migrate
+    # Must depend on `containerize` directly, not just transitively via `migrate`:
+    # stageDependencies only exposes output variables from stages listed in
+    # dependsOn. Without `containerize` here, `imageTag` resolves empty and the
+    # deploy fails with "argument --revision-suffix: expected one argument".
+    dependsOn:
+      - containerize
+      - migrate
     variables:
       imageTag: $[ stageDependencies.containerize.build_and_push.outputs['setImageTag.imageTag'] ]
     pool:
