@@ -59,10 +59,17 @@ resource migrationJob 'Microsoft.App/jobs@2023-05-01' = {
           // — the real secret is used by the app revision (deploy stage), never
           // here. Mirrors the Dockerfile builder stage. Without them the Job
           // crashes at import with "Invalid environment configuration".
+          // NODE_OPTIONS sets the `react-server` export condition so the
+          // `import "server-only"` at the top of lib/config.ts resolves to its
+          // no-op instead of throwing under this Job's plain `node ... tsx`
+          // command (the Job never serves a client bundle). Without it the
+          // import aborts with "This module cannot be imported from a Client
+          // Component module." Mirrors the `validate:env` script's flag.
           env: [
             { name: 'DATABASE_URL', secretRef: 'pg-connection-string-migrate' }
             { name: 'BETTER_AUTH_SECRET', value: 'build_time_placeholder_secret_min_32_chars' }
             { name: 'BETTER_AUTH_URL', value: 'http://localhost:3000' }
+            { name: 'NODE_OPTIONS', value: '--conditions=react-server' }
           ]
         }
       ]
