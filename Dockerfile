@@ -54,6 +54,10 @@ COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/db/migrate.ts ./db/migrate.ts
 COPY --from=builder --chown=nextjs:nodejs /app/db/migrations ./db/migrations
 COPY --from=builder --chown=nextjs:nodejs /app/lib/config.ts ./lib/config.ts
+# lib/config.ts imports lib/locale.ts (um29: DEFAULT_TIMEZONE/SUPPORTED_TIMEZONES).
+# Without it the migrate Job's `node --import tsx db/migrate.ts` fails at import
+# with MODULE_NOT_FOUND '@/lib/locale'.
+COPY --from=builder --chown=nextjs:nodejs /app/lib/locale.ts ./lib/locale.ts
 COPY --from=builder --chown=nextjs:nodejs /app/lib/errors.ts ./lib/errors.ts
 COPY --from=builder --chown=nextjs:nodejs /app/lib/logger.ts ./lib/logger.ts
 COPY --from=builder --chown=nextjs:nodejs /app/types/password.ts ./types/password.ts
