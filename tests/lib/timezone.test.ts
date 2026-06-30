@@ -11,8 +11,10 @@ import {
 
 // um29-spec §2.8 / §5. The helper is the reusable boundary primitive for
 // future "today"/cut-off features (billing runs), so it is unit-tested in
-// isolation. DST is NOT tested (out of scope, §2.2) — no transition-day
-// assertions.
+// isolation. DST transition days ARE now asserted (post-v1 follow-up to the
+// §2.2 single-offset approximation): the boundary helper samples the zone
+// offset at the resolved instant, so a day that straddles a spring-forward /
+// fall-back transition still maps to the correct UTC instants.
 
 describe("localDayToUtcBounds", () => {
   it("converts a local day to UTC bounds for Asia/Kuala_Lumpur (UTC+8)", () => {
@@ -34,6 +36,43 @@ describe("localDayToUtcBounds", () => {
     const { start, end } = localDayToUtcBounds("2026-06-27", "UTC");
     expect(start.toISOString()).toBe("2026-06-27T00:00:00.000Z");
     expect(end.toISOString()).toBe("2026-06-27T23:59:59.999Z");
+  });
+
+  // DST transition days — the cases the old single-offset helper got wrong by
+  // one hour. Australia/Sydney is the clearest: its day-start straddles the
+  // 02:00-local transition (true local midnight is on the other side of the
+  // switch from the wall-clock-as-UTC guess), so a one-offset helper is off by
+  // an hour; the two-pass helper lands on the correct instant.
+  it("handles Australia/Sydney spring-forward (2026-10-04, AEST→AEDT)", () => {
+    const { start, end } = localDayToUtcBounds(
+      "2026-10-04",
+      "Australia/Sydney",
+    );
+    // 00:00 local is still AEST (UTC+10) — the switch is at 02:00.
+    expect(start.toISOString()).toBe("2026-10-03T14:00:00.000Z");
+    // 23:59:59.999 local is AEDT (UTC+11) — after the switch.
+    expect(end.toISOString()).toBe("2026-10-04T12:59:59.999Z");
+  });
+
+  it("handles Australia/Sydney fall-back (2026-04-05, AEDT→AEST)", () => {
+    const { start, end } = localDayToUtcBounds(
+      "2026-04-05",
+      "Australia/Sydney",
+    );
+    // 00:00 local is still AEDT (UTC+11) — the switch is at 03:00.
+    expect(start.toISOString()).toBe("2026-04-04T13:00:00.000Z");
+    // 23:59:59.999 local is AEST (UTC+10) — after the switch.
+    expect(end.toISOString()).toBe("2026-04-05T13:59:59.999Z");
+  });
+
+  it("handles America/New_York spring-forward (2026-03-08, EST→EDT)", () => {
+    const { start, end } = localDayToUtcBounds(
+      "2026-03-08",
+      "America/New_York",
+    );
+    // 00:00 local is EST (UTC-5); 23:59:59.999 is EDT (UTC-4) — switch at 02:00.
+    expect(start.toISOString()).toBe("2026-03-08T05:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-03-09T03:59:59.999Z");
   });
 
   // um29-spec §2.6: the helper is total — it never throws for any valid
@@ -75,6 +114,23 @@ describe("getZoneOffsetMinutes", () => {
 
   it("returns 0 for UTC", () => {
     expect(getZoneOffsetMinutes(instant, "UTC")).toBe(0);
+  });
+
+  // The offset reflects DST for the given instant: America/New_York is EST
+  // (UTC-5, -300) in winter and EDT (UTC-4, -240) in summer.
+  it("reflects DST for the queried instant (America/New_York)", () => {
+    expect(
+      getZoneOffsetMinutes(
+        new Date("2026-01-15T00:00:00.000Z"),
+        "America/New_York",
+      ),
+    ).toBe(-300);
+    expect(
+      getZoneOffsetMinutes(
+        new Date("2026-07-15T00:00:00.000Z"),
+        "America/New_York",
+      ),
+    ).toBe(-240);
   });
 });
 

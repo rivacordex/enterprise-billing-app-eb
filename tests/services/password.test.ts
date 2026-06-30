@@ -1,21 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-// `validation/password.ts` builds `defaultPasswordSchema` from
-// `passwordPolicy` (`@/lib/password-policy` -> `@/lib/config`) at module
-// load — mocked here purely to avoid triggering `lib/config`'s eager env
-// validation; this suite only exercises `buildPasswordSchema` with explicit
-// policy fixtures, never the app-level default.
-vi.mock("@/lib/password-policy", () => ({
-  passwordPolicy: {
-    minLength: 15,
-    requireUppercase: true,
-    requireLowercase: true,
-    requireNumber: true,
-    requireSpecial: true,
-    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
-  },
-}));
-
 import { generateTempPassword } from "@/services/password";
 import type { PasswordPolicy } from "@/types/password";
 import { buildPasswordSchema } from "@/validation/password";

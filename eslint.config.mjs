@@ -42,16 +42,6 @@ const BOUNDARIES_ELEMENTS = [
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
   { type: "types", mode: "full", pattern: "types/**" },
-  // Carved out ahead of the general "lib" pattern (um25-spec §"Policy
-  // source"): `validation/password.ts` needs `passwordPolicy` to build
-  // `defaultPasswordSchema`, but `validation/**` stays restricted from the
-  // general `lib/**` boundary otherwise. A narrow, non-secret re-export —
-  // same shape as the `auth-permission-constants` carve-out.
-  {
-    type: "lib-password-policy",
-    mode: "full",
-    pattern: "lib/password-policy.ts",
-  },
   { type: "lib", mode: "full", pattern: "lib/**" },
 ];
 
@@ -195,17 +185,14 @@ const eslintConfig = defineConfig([
             {
               // "validation" self-import added for um25's `validation/set-
               // password.schema.ts`, which imports `defaultPasswordSchema`
-              // from `validation/password.ts`. "lib-password-policy" added
-              // for `validation/password.ts` itself, which needs
-              // `passwordPolicy` to build that schema.
+              // from `validation/password.ts`. Both validation files are now
+              // zod-only — the client-safe `DEFAULT_PASSWORD_POLICY` lives in
+              // `validation/password.ts`, so no `lib` dependency remains (the
+              // server threads the env-derived policy in as a parameter).
               from: { type: "validation" },
               allow: {
-                to: { type: ["types", "validation", "lib-password-policy"] },
+                to: { type: ["types", "validation"] },
               },
-            },
-            {
-              from: { type: "lib-password-policy" },
-              allow: { to: { type: ["lib", "types"] } },
             },
             {
               // "validation" and "auth-client" added for um03's LoginForm:

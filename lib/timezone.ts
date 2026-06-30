@@ -3,11 +3,12 @@
 // `Intl.DateTimeFormat`/`formatToParts`. Importable from both server and
 // client modules, like `lib/formatters.ts`.
 //
-// DST is NOT specially handled (v1 limitation, um29-spec §2.2): a single
-// offset is derived per call, so for `America/New_York`,
-// `America/Los_Angeles`, and `Australia/Sydney` an audit day-boundary may be
-// off by one hour for roughly one day around each DST transition. Accepted
-// and documented; non-integer offsets (`Asia/Kolkata` UTC+5:30) ARE handled.
+// DST IS handled (post-v1 follow-up to um29-spec §2.2, which shipped a single-
+// offset approximation). `localDayToUtcBounds` samples the zone offset twice —
+// once at the wall-clock guess, once at the refined instant — so a local-day
+// boundary lands on the correct UTC instant even on a transition day for
+// `America/New_York`, `America/Los_Angeles`, and `Australia/Sydney`. Non-
+// integer offsets (`Asia/Kolkata` UTC+5:30) are handled the same way.
 
 interface ZoneParts {
   year: number;
@@ -52,8 +53,10 @@ function getZoneParts(date: Date, timeZone: string): ZoneParts {
 
 // The zone's UTC offset in minutes at `date` (e.g. +480 for UTC+8, +330 for
 // UTC+5:30). Wall-clock-parts subtraction: interpret the zone's wall-clock as
-// if it were UTC, then diff against the true instant. DST is not specially
-// handled (§2.2).
+// if it were UTC, then diff against the true instant. The offset returned is
+// the one in effect at `date` itself, so it already reflects DST for that
+// instant — transition-day correctness for day boundaries then comes from
+// sampling at the right instant (see `localDayToUtcBounds`).
 export function getZoneOffsetMinutes(date: Date, timeZone: string): number {
   const p = getZoneParts(date, timeZone);
   const asUtc = Date.UTC(
@@ -69,11 +72,32 @@ export function getZoneOffsetMinutes(date: Date, timeZone: string): number {
   return Math.round((asUtc - actual) / 60000);
 }
 
+// Converts a wall-clock value (interpreted as if it were UTC) into the true UTC
+// instant for `timeZone`, correct across DST transitions. The offset must be
+// sampled at the ACTUAL instant, not at the wall-clock-as-UTC value — which
+// sits up to one offset away and can fall in the wrong DST regime (the source
+// of the old single-offset, one-hour-off-on-transition-days approximation). One
+// refinement pass converges for every IANA zone: sample the offset at the
+// wall-clock-as-UTC guess, apply it to land near the real instant, then
+// re-sample there for the authoritative offset. Day boundaries (00:00 /
+// 23:59:59.999) never land inside a spring-forward gap or fall-back fold for
+// the supported zones (all transition at 02:00–03:00 local), so the converted
+// instant is unambiguous.
+function wallClockAsUtcToInstant(asUtc: number, timeZone: string): number {
+  const firstOffset = getZoneOffsetMinutes(new Date(asUtc), timeZone);
+  const candidate = asUtc - firstOffset * 60000;
+  const secondOffset = getZoneOffsetMinutes(new Date(candidate), timeZone);
+  return asUtc - secondOffset * 60000;
+}
+
 // Returns the UTC instants bounding a local calendar day in `timeZone`:
 // local `00:00:00.000` and `23:59:59.999`. Total and pure — NEVER throws
 // (precondition: `day` is a valid `YYYY-MM-DD`, which callers guarantee via
 // `z.string().date()`), preserving the audit filter's "never 500s" contract
-// (um29-spec §2.6). For the `UTC` zone the conversion is the identity.
+// (um29-spec §2.6). For the `UTC` zone the conversion is the identity. DST
+// transition days are handled (each bound is resolved independently via
+// `wallClockAsUtcToInstant`, so a day that starts and ends in different DST
+// regimes still maps to the correct UTC instants).
 export function localDayToUtcBounds(
   day: string,
   timeZone: string,
@@ -83,17 +107,12 @@ export function localDayToUtcBounds(
   const month = Number(parts[1]);
   const dayOfMonth = Number(parts[2]);
 
-  // The target local wall-clock interpreted as if it were UTC, then shifted by
-  // the zone's offset at that instant to recover the true UTC instant.
   const startAsUtc = Date.UTC(year, month - 1, dayOfMonth, 0, 0, 0, 0);
   const endAsUtc = Date.UTC(year, month - 1, dayOfMonth, 23, 59, 59, 999);
 
-  const startOffset = getZoneOffsetMinutes(new Date(startAsUtc), timeZone);
-  const endOffset = getZoneOffsetMinutes(new Date(endAsUtc), timeZone);
-
   return {
-    start: new Date(startAsUtc - startOffset * 60000),
-    end: new Date(endAsUtc - endOffset * 60000),
+    start: new Date(wallClockAsUtcToInstant(startAsUtc, timeZone)),
+    end: new Date(wallClockAsUtcToInstant(endAsUtc, timeZone)),
   };
 }
 

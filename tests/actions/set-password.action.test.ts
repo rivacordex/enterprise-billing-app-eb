@@ -7,10 +7,11 @@ vi.mock("@/services/users/users-auth.service", () => ({
   setPassword: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
-// `setPasswordSchema` (imported by the action) is built from `passwordPolicy`
-// at module load — mocked to the documented defaults so this suite never
-// depends on `lib/config`'s eager env validation.
-vi.mock("@/lib/password-policy", () => ({
+// The action builds its schema from `passwordPolicy`, imported directly from
+// `@/lib/config` — mocked to the documented defaults so this suite never
+// triggers lib/config's eager env validation (which otherwise throws unless
+// the full env happens to be present, making the suite order-dependent).
+vi.mock("@/lib/config", () => ({
   passwordPolicy: {
     minLength: 15,
     requireUppercase: true,

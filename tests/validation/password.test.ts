@@ -1,19 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-
-// `defaultPasswordSchema` is built from `passwordPolicy` at module load —
-// mocked so this suite never depends on `lib/config`'s eager env validation.
-// (The factory can't reference an outer `const` — `vi.mock` calls are
-// hoisted above all other top-level statements.)
-vi.mock("@/lib/password-policy", () => ({
-  passwordPolicy: {
-    minLength: 15,
-    requireUppercase: true,
-    requireLowercase: true,
-    requireNumber: true,
-    requireSpecial: true,
-    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
-  },
-}));
+import { describe, expect, it } from "vitest";
 
 const FIXTURE_POLICY = {
   minLength: 15,

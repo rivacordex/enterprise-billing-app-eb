@@ -17,6 +17,16 @@ param pipelineServicePrincipalId string
 param minReplicas int = 2
 param maxReplicas int = 5
 
+// Non-secret Microsoft SSO identifiers (tenant + client ID), passed straight
+// through to the container-app module. Supplied at deploy time from the
+// `um30-infra` variable group (e.g. `az deployment group create --parameters
+// entraTenantId=$(ENTRA_TENANT_ID) microsoftClientId=$(MICROSOFT_CLIENT_ID)`),
+// NOT hardcoded in the committed `*.bicepparam` — the concrete IDs stay out of
+// source control. Empty (default) disables SSO env wiring for the environment;
+// the client SECRET is always a Key Vault reference, never a parameter.
+param entraTenantId string = ''
+param microsoftClientId string = ''
+
 @description('Gates the Container App + migrate Job (phase-2 workloads). Deploy with false first so the Key Vault exists and its secret references can be populated + the ACR image pushed, then true.')
 param deployWorkloads bool = true
 
@@ -104,6 +114,8 @@ module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
     appBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
     minReplicas: minReplicas
     maxReplicas: maxReplicas
+    entraTenantId: entraTenantId
+    microsoftClientId: microsoftClientId
   }
 }
 

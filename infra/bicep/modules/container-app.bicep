@@ -21,6 +21,19 @@ param appBaseUrl string
 param minReplicas int = 2
 param maxReplicas int = 5
 
+// Non-secret Microsoft SSO identifiers read by lib/config.ts. The tenant
+// (directory) ID and client (application) ID are PUBLIC identifiers — not
+// credentials — so they are plain `value` env vars, not Key Vault secretRefs
+// (the only SSO secret is `microsoft-client-secret`, above). They are still
+// injected as DEPLOY-TIME PARAMETERS from the `um30-infra` pipeline variable
+// group rather than hardcoded in the committed `*.bicepparam`, so the concrete
+// tenant/client IDs never enter source control. Empty (the default, e.g. an
+// environment without an Entra app registration) omits the env vars entirely,
+// so lib/config sees them as absent (`?? null` → SSO stays disabled) rather
+// than present-but-empty.
+param entraTenantId string = ''
+param microsoftClientId string = ''
+
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
@@ -73,14 +86,23 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'enterprise-billing-app'
           image: imageName
-          env: [
-            { name: 'DATABASE_URL', secretRef: 'pg-connection-string-app' }
-            { name: 'BETTER_AUTH_SECRET', secretRef: 'better-auth-secret' }
-            { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
-            { name: 'BETTER_AUTH_URL', value: appBaseUrl }
-            { name: 'APP_URL', value: appBaseUrl }
-            { name: 'NEXT_PUBLIC_APP_URL', value: appBaseUrl }
-          ]
+          env: concat(
+            [
+              { name: 'DATABASE_URL', secretRef: 'pg-connection-string-app' }
+              { name: 'BETTER_AUTH_SECRET', secretRef: 'better-auth-secret' }
+              { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
+              { name: 'BETTER_AUTH_URL', value: appBaseUrl }
+              { name: 'APP_URL', value: appBaseUrl }
+              { name: 'NEXT_PUBLIC_APP_URL', value: appBaseUrl }
+            ],
+            // Emitted only when supplied — see the param note above.
+            empty(microsoftClientId)
+              ? []
+              : [{ name: 'MICROSOFT_CLIENT_ID', value: microsoftClientId }],
+            empty(entraTenantId)
+              ? []
+              : [{ name: 'ENTRA_TENANT_ID', value: entraTenantId }]
+          )
           probes: [
             {
               type: 'Liveness'
