@@ -69,13 +69,30 @@ const envSchema = z.object({
 export type Config = Readonly<z.infer<typeof envSchema>>;
 
 function loadConfig(): Config {
+  // TEMPORARY guard (proper fix: keep this module out of client bundles).
+  // `passwordPolicy` below is re-exported into client bundles via
+  // validation/password.ts → the set-password form, which drags this whole
+  // module — and its top-level loadConfig() — into the browser. There the
+  // server-only vars are undefined, so without inert placeholders this throws
+  // "Invalid environment configuration" during hydration and crashes the page
+  // (e.g. /set-password). The placeholders are never read client-side; only the
+  // client-safe `passwordPolicy` (from PASSWORD_*, which fall back to schema
+  // defaults) is consumed. On the server (window undefined) the real env is
+  // used and missing vars still fail loud.
+  const inBrowser = typeof window !== "undefined";
   const parsed = envSchema.safeParse({
     NODE_ENV: process.env.NODE_ENV,
     APP_URL: process.env.APP_URL,
     LOG_LEVEL: process.env.LOG_LEVEL,
-    DATABASE_URL: process.env.DATABASE_URL,
-    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
-    BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
+    DATABASE_URL:
+      process.env.DATABASE_URL ??
+      (inBrowser ? "postgresql://client-bundle-stub" : undefined),
+    BETTER_AUTH_SECRET:
+      process.env.BETTER_AUTH_SECRET ??
+      (inBrowser ? "client-bundle-stub-not-used-client-side" : undefined),
+    BETTER_AUTH_URL:
+      process.env.BETTER_AUTH_URL ??
+      (inBrowser ? "http://localhost" : undefined),
     MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
     MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
     ENTRA_TENANT_ID: process.env.ENTRA_TENANT_ID,
