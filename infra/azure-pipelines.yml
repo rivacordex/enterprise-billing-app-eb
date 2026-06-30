@@ -283,20 +283,35 @@ stages:
                         --resource-group $(RESOURCE_GROUP) \
                         --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
 
-                      # 2. Smoke test against the new revision's own FQDN, 3 retries 5s apart.
-                      REVISION_FQDN=$(az containerapp revision show \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --revision "$NEW_REVISION" \
-                        --query "properties.fqdn" -o tsv)
-
+                      # 2. Readiness gate via the revision's healthState — the
+                      #    authoritative signal from its readiness probe (internal
+                      #    GET /api/health on the container). An external curl can't
+                      #    be used: the app's ingress may enforce an IP allowlist
+                      #    (ipSecurityRestrictions) that 403s the hosted agent, and
+                      #    the probe runs inside the environment, bypassing ingress.
+                      #    Poll up to ~3 min; fail fast if the revision goes Failed.
                       SMOKE_OK=false
-                      for i in 1 2 3; do
-                        if curl -fsS "https://$REVISION_FQDN/api/health"; then
+                      for i in $(seq 1 18); do
+                        HEALTH=$(az containerapp revision show \
+                          --name $(CONTAINERAPP_NAME) \
+                          --resource-group $(RESOURCE_GROUP) \
+                          --revision "$NEW_REVISION" \
+                          --query "properties.healthState" -o tsv)
+                        RUNNING=$(az containerapp revision show \
+                          --name $(CONTAINERAPP_NAME) \
+                          --resource-group $(RESOURCE_GROUP) \
+                          --revision "$NEW_REVISION" \
+                          --query "properties.runningState" -o tsv)
+                        echo "attempt $i: health=$HEALTH running=$RUNNING"
+                        if [ "$HEALTH" = "Healthy" ]; then
                           SMOKE_OK=true
                           break
                         fi
-                        sleep 5
+                        if [ "$RUNNING" = "Failed" ]; then
+                          echo "New revision entered Failed state."
+                          break
+                        fi
+                        sleep 10
                       done
 
                       # 3/4. Shift traffic only on success; otherwise leave the
