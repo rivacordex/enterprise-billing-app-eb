@@ -53,8 +53,16 @@ resource migrationJob 'Microsoft.App/jobs@2023-05-01' = {
           name: 'db-migrate'
           image: imageName
           command: ['node', '--import', 'tsx', 'db/migrate.ts']
+          // lib/config.ts validates the FULL env schema at import time, and
+          // db/migrate.ts imports it. The Job never serves auth, so BETTER_AUTH_*
+          // are inert placeholders that only satisfy the schema (.min(32) / .url())
+          // — the real secret is used by the app revision (deploy stage), never
+          // here. Mirrors the Dockerfile builder stage. Without them the Job
+          // crashes at import with "Invalid environment configuration".
           env: [
             { name: 'DATABASE_URL', secretRef: 'pg-connection-string-migrate' }
+            { name: 'BETTER_AUTH_SECRET', value: 'build_time_placeholder_secret_min_32_chars' }
+            { name: 'BETTER_AUTH_URL', value: 'http://localhost:3000' }
           ]
         }
       ]

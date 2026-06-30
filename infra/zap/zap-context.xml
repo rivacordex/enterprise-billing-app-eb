@@ -11,24 +11,29 @@
     <name>enterprise-billing-app</name>
     <desc>Enterprise Billing App — dev/staging DAST scan</desc>
     <inscope>true</inscope>
-    <incregexes>https://STAGING_FQDN/administration/.*</incregexes>
-    <incregexes>https://STAGING_FQDN/api/.*</incregexes>
-    <excregexes>https://STAGING_FQDN/api/auth/callback/microsoft.*</excregexes>
+    <!-- Whole host in scope. The spider seed (`-t https://<FQDN>` root) and the
+         form-auth login URL (/login) must both be in context — scoping only to
+         /administration and /api makes ZAP reject the seed with
+         URL_NOT_IN_CONTEXT and prevents authentication from reaching /login.
+         The Microsoft OAuth callback stays excluded below (ZAP can't drive an
+         interactive Entra login). -->
+    <incregexes>https://${STAGING_FQDN}.*</incregexes>
+    <excregexes>https://${STAGING_FQDN}/api/auth/callback/microsoft.*</excregexes>
     <authentication>
       <type>2</type>
       <!-- Form-based auth against the local /login credential flow.
            ZAP_TEST_USER_EMAIL / ZAP_TEST_USER_PASSWORD are seeded by
            db/seeds/seed-admin.ts in the dev/staging environment only. -->
       <form>
-        <loginurl>https://STAGING_FQDN/login</loginurl>
+        <loginurl>https://${STAGING_FQDN}/login</loginurl>
         <loginbody>email={%username%}&amp;password={%password%}</loginbody>
       </form>
       <users>
         <user>
           <name>zap-dast-user</name>
           <credentials>
-            <username>ZAP_TEST_USER_EMAIL</username>
-            <password>ZAP_TEST_USER_PASSWORD</password>
+            <username>${ZAP_TEST_USER_EMAIL}</username>
+            <password>${ZAP_TEST_USER_PASSWORD}</password>
           </credentials>
         </user>
       </users>
