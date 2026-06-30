@@ -41,6 +41,7 @@ export default async function SetPasswordPage(): Promise<React.JSX.Element> {
 
         <div className="mt-6">
           <SetPasswordForm
+            policy={passwordPolicy}
             passwordPolicyHints={formatPasswordPolicyHints(passwordPolicy)}
           />
         </div>

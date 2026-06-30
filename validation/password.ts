@@ -1,7 +1,22 @@
 import { z } from "zod";
 
-import { passwordPolicy } from "@/lib/password-policy";
 import type { PasswordPolicy } from "@/types/password";
+
+// um25-spec §"Policy source". The hardcoded default LOCAL password policy, kept
+// in sync with lib/config.ts's schema defaults. `validation/**` is
+// client-importable, so it must NOT import lib/config (server-only — it
+// validates env at module load and would crash client bundles). The server
+// threads the real, env-derived policy through explicitly via
+// `buildSetPasswordSchema(passwordPolicy)`; this constant is the client-safe
+// fallback that builds `defaultPasswordSchema`.
+export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
+  minLength: 15,
+  requireUppercase: true,
+  requireLowercase: true,
+  requireNumber: true,
+  requireSpecial: true,
+  specialChars: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
+};
 
 // Escapes the chars that are special inside a `[...]` regex character class
 // (`\`, `]`, `^`, `-`); every other character is safe to drop in as-is.
@@ -61,6 +76,10 @@ export function buildPasswordSchema(policy: PasswordPolicy) {
   );
 }
 
-// The app-level schema action schemas import — built from `passwordPolicy`
-// (`lib/config.ts`).
-export const defaultPasswordSchema = buildPasswordSchema(passwordPolicy);
+// Default-policy schema for tests and default validation. The server builds
+// its authoritative schema from the env-derived policy via
+// `buildSetPasswordSchema(passwordPolicy)` (set-password.schema.ts +
+// set-password.action.ts), so this module never needs lib/config.
+export const defaultPasswordSchema = buildPasswordSchema(
+  DEFAULT_PASSWORD_POLICY,
+);
