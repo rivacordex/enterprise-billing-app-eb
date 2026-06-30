@@ -34,7 +34,7 @@ stages:
               docker run --rm \
                 -v "$(System.DefaultWorkingDirectory)/infra/zap:/zap/wrk" \
                 -v "$(System.DefaultWorkingDirectory)/zap-out:/zap/wrk/out" \
-                owasp/zap2docker-stable \
+                ghcr.io/zaproxy/zaproxy:stable \
                 zap-baseline.py \
                   -t https://$(STAGING_FQDN) \
                   -x out/zap-report.xml \
@@ -64,6 +64,10 @@ stages:
 
           - task: PublishBuildArtifacts@1
             condition: succeededOrFailed()
+            # Don't let a missing-reports publish mask the real failure: if the
+            # scan dies before writing reports, the gate step already fails the
+            # stage — a "PathtoPublish not found" error here would just add noise.
+            continueOnError: true
             inputs:
               pathToPublish: $(Build.ArtifactStagingDirectory)/zap
               artifactName: zap-reports
