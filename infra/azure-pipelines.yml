@@ -276,12 +276,12 @@ stages:
                       # the only traffic write needed, which also heals any prior
                       # weight state.
 
-                      # Revision list order is not guaranteed newest-first;
-                      # sort by createdTime and take the most recent.
-                      NEW_REVISION=$(az containerapp revision list \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
+                      # The revision name is deterministic: Container Apps names
+                      # it "<app>--<suffix>", and the suffix is the $(imageTag)
+                      # passed to --revision-suffix above. Target that exact
+                      # revision instead of querying the newest by createdTime,
+                      # which could pick an unrelated concurrent/manual revision.
+                      NEW_REVISION="$(CONTAINERAPP_NAME)--$(imageTag)"
 
                       # 2. Readiness gate via the revision's healthState — the
                       #    authoritative signal from its readiness probe (internal

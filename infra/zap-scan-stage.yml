@@ -22,7 +22,32 @@ stages:
               # zap-context.xml ships with literal placeholder tokens; substitute
               # the real FQDN + seeded test credentials before the scan so scope
               # matching and authenticated crawling work.
-              envsubst < infra/zap/zap-context.xml > infra/zap/zap-context.rendered.xml
+
+              # Fail loudly rather than render a context with empty values.
+              : "${STAGING_FQDN:?STAGING_FQDN is required to render the ZAP context}"
+              : "${ZAP_TEST_USER_EMAIL:?ZAP_TEST_USER_EMAIL is required to render the ZAP context}"
+              : "${ZAP_TEST_USER_PASSWORD:?ZAP_TEST_USER_PASSWORD is required to render the ZAP context}"
+
+              # Escape XML-sensitive chars so secrets containing & < > can't
+              # produce malformed XML.
+              xml_escape() {
+                printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+              }
+              # Escape every non-alphanumeric char so the FQDN matches literally
+              # inside the context regexes (dots stay dots, not "any char").
+              regex_escape() {
+                printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/\\&/g'
+              }
+
+              # Compute the regex form before reassigning STAGING_FQDN.
+              export STAGING_FQDN_REGEX="$(xml_escape "$(regex_escape "$STAGING_FQDN")")"
+              export STAGING_FQDN="$(xml_escape "$STAGING_FQDN")"
+              export ZAP_TEST_USER_EMAIL="$(xml_escape "$ZAP_TEST_USER_EMAIL")"
+              export ZAP_TEST_USER_PASSWORD="$(xml_escape "$ZAP_TEST_USER_PASSWORD")"
+
+              # Substitute only the known tokens (leaves ZAP's {%username%} etc. intact).
+              envsubst '${STAGING_FQDN} ${STAGING_FQDN_REGEX} ${ZAP_TEST_USER_EMAIL} ${ZAP_TEST_USER_PASSWORD}' \
+                < infra/zap/zap-context.xml > infra/zap/zap-context.rendered.xml
             displayName: Render ZAP context (substitute FQDN + test credentials)
             env:
               STAGING_FQDN: $(STAGING_FQDN)
@@ -51,6 +76,12 @@ stages:
 
           - script: |
               REPORT="$(System.DefaultWorkingDirectory)/zap-out/zap-report.xml"
+              # A missing report means the scan never produced results — treat it
+              # as a failure, not a silent pass (grep would just error out below).
+              if [ ! -f "$REPORT" ]; then
+                echo "ZAP report not found at $REPORT — the scan produced no report. Failing the stage."
+                exit 1
+              fi
               # riskcode 3 = High, 4 = Critical. Any match fails the stage.
               if grep -E '<riskcode>(3|4)</riskcode>' "$REPORT" > /dev/null; then
                 echo "ZAP found one or more High/Critical findings — failing the stage."
