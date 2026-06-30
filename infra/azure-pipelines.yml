@@ -181,10 +181,20 @@ stages:
               inlineScript: |
                 set -euo pipefail
 
+                # lib/config.ts validates the FULL env schema at import, and
+                # db/migrate.ts imports it. The Job never serves auth, so
+                # BETTER_AUTH_* are inert placeholders here (mirroring the
+                # Dockerfile builder stage) — without them the import throws
+                # "Invalid environment configuration". DATABASE_URL is re-set so
+                # the secretref survives regardless of --set-env-vars semantics.
                 az containerapp job update \
                   --name $(CONTAINERAPP_JOB_NAME) \
                   --resource-group $(RESOURCE_GROUP) \
-                  --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag)
+                  --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
+                  --set-env-vars \
+                    "DATABASE_URL=secretref:pg-connection-string-migrate" \
+                    "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars" \
+                    "BETTER_AUTH_URL=http://localhost:3000"
 
                 EXECUTION_NAME=$(az containerapp job start \
                   --name $(CONTAINERAPP_JOB_NAME) \
