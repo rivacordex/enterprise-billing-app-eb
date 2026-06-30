@@ -14,7 +14,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "validate:env": "node --env-file=.env.example --import tsx -e \"import('./lib/config.ts').then(() => console.log('Config schema OK'))\"",
+    "validate:env": "node --conditions=react-server --env-file=.env.example --import tsx -e \"import('./lib/config.ts').then(() => console.log('Config schema OK'))\"",
     "test": "vitest run && vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
