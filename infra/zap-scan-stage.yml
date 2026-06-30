@@ -31,6 +31,11 @@ stages:
 
           - script: |
               mkdir -p $(System.DefaultWorkingDirectory)/zap-out
+              # ZAP runs as uid 1000 (the `zap` user) inside the container, but the
+              # agent-created zap-out dir is owned by a different uid, so the report
+              # write fails: "Permission denied: /zap/wrk/out/zap-report.html".
+              # Make the mounted output dir world-writable.
+              chmod 777 $(System.DefaultWorkingDirectory)/zap-out
               docker run --rm \
                 -v "$(System.DefaultWorkingDirectory)/infra/zap:/zap/wrk" \
                 -v "$(System.DefaultWorkingDirectory)/zap-out:/zap/wrk/out" \
