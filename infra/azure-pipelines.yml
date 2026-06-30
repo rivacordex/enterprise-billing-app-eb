@@ -266,10 +266,15 @@ stages:
                           "BETTER_AUTH_SECRET=secretref:better-auth-secret" \
                           "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
 
-                      az containerapp ingress traffic set \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --revision-weight latest=0
+                      # No explicit "new revision to 0%" step: in multiple-revision
+                      # mode `az containerapp update` already creates the new
+                      # revision at 0% and preserves the previous revision's weight.
+                      # `traffic set --revision-weight latest=0` REPLACES the whole
+                      # traffic map with just {latest:0} (sum 0) → fails with
+                      # ContainerAppTrafficWeightIncorrectValue. The new revision is
+                      # smoke-tested via its own FQDN below, then promoted to 100% —
+                      # the only traffic write needed, which also heals any prior
+                      # weight state.
 
                       # Revision list order is not guaranteed newest-first;
                       # sort by createdTime and take the most recent.
