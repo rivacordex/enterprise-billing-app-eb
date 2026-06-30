@@ -12,7 +12,11 @@
 #   - Variable group "um30-infra" (non-secret, per environment): ACR_NAME,
 #     RESOURCE_GROUP, CONTAINERAPP_NAME, CONTAINERAPP_JOB_NAME,
 #     CONTAINER_APPS_ENV, KEYVAULT_NAME, APP_MI_RESOURCE_ID,
-#     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN.
+#     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN, MICROSOFT_CLIENT_ID,
+#     ENTRA_TENANT_ID. The last two are non-secret Microsoft SSO identifiers
+#     (the client SECRET is a Key Vault reference, never a variable) — defined
+#     here, not in source control, so the concrete tenant/client IDs stay out
+#     of git; leave them empty in the group for an environment without SSO.
 trigger:
   branches:
     include:
@@ -255,16 +259,31 @@ stages:
                     inlineScript: |
                       set -euo pipefail
 
+                      # Non-secret Microsoft SSO identifiers from the variable
+                      # group. Appended only when present so an environment
+                      # without SSO doesn't get an empty MICROSOFT_CLIENT_ID
+                      # (which lib/config would read as present-but-empty and
+                      # mis-enable the SSO path; absent → null → SSO off). The
+                      # client SECRET stays a Key Vault secretref, below.
+                      ENV_VARS=(
+                        "DATABASE_URL=secretref:pg-connection-string-app"
+                        "BETTER_AUTH_SECRET=secretref:better-auth-secret"
+                        "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
+                      )
+                      if [ -n "$(MICROSOFT_CLIENT_ID)" ]; then
+                        ENV_VARS+=("MICROSOFT_CLIENT_ID=$(MICROSOFT_CLIENT_ID)")
+                      fi
+                      if [ -n "$(ENTRA_TENANT_ID)" ]; then
+                        ENV_VARS+=("ENTRA_TENANT_ID=$(ENTRA_TENANT_ID)")
+                      fi
+
                       # 1. New revision at 0% traffic.
                       az containerapp update \
                         --name $(CONTAINERAPP_NAME) \
                         --resource-group $(RESOURCE_GROUP) \
                         --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
                         --revision-suffix $(imageTag) \
-                        --set-env-vars \
-                          "DATABASE_URL=secretref:pg-connection-string-app" \
-                          "BETTER_AUTH_SECRET=secretref:better-auth-secret" \
-                          "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
+                        --set-env-vars "${ENV_VARS[@]}"
 
                       # No explicit "new revision to 0%" step: in multiple-revision
                       # mode `az containerapp update` already creates the new

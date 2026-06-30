@@ -5,19 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/actions/auth/set-password.action", () => ({
   setPasswordAction: vi.fn(),
 }));
-// `setPasswordSchema` (used by the form's `zodResolver`) is built from
-// `passwordPolicy` at module load — mocked to the documented defaults so
-// this suite never depends on `lib/config`'s eager env validation.
-vi.mock("@/lib/password-policy", () => ({
-  passwordPolicy: {
-    minLength: 15,
-    requireUppercase: true,
-    requireLowercase: true,
-    requireNumber: true,
-    requireSpecial: true,
-    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
-  },
-}));
 
 import { setPasswordAction } from "@/actions/auth/set-password.action";
 

@@ -39,11 +39,10 @@ export const DEFAULT_CURRENCY = "MYR";
 // names only — never raw offsets like "+08": offsets don't encode DST and
 // `Intl` expects IANA. The offset is computed per request from the IANA name
 // (lib/timezone.ts), so non-integer zones like `Asia/Kolkata` (UTC+5:30)
-// render correctly. DST is NOT supported in v1 — a single offset is derived
-// per call, so the three DST zones below may be off by one hour for ~1 day
-// around each transition (accepted limitation, revisit if a DST zone becomes
-// a primary deployment). Extend as the carrier's footprint grows — a one-line
-// edit, no migration.
+// render correctly. DST is handled (the boundary helper samples the offset at
+// the resolved instant), so the three DST zones below stay correct across
+// spring-forward / fall-back transition days. Extend as the carrier's
+// footprint grows — a one-line edit, no migration.
 export const SUPPORTED_TIMEZONES = [
   "Asia/Kuala_Lumpur", // UTC+8  (primary business zone)
   "Asia/Singapore", // UTC+8
