@@ -48,8 +48,17 @@ describe.skipIf(!databaseUrl)(
     });
 
     test("the four identity tables, audit_log, the four RBAC tables, and system_config exist in core", async () => {
+      // um27 made audit_log a partitioned parent, so its partition children
+      // (e.g. audit_log_default) also surface in information_schema.tables.
+      // Query pg_class and exclude partition children — assert only the logical
+      // tables: relkind 'r' (ordinary) + 'p' (partitioned parent).
       const tables = await sql<{ table_name: string }[]>`
-        SELECT table_name FROM information_schema.tables WHERE table_schema = 'core'
+        SELECT c.relname AS table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'core'
+          AND c.relkind IN ('r', 'p')
+          AND NOT c.relispartition
       `;
       expect(tables.map((r) => r.table_name).sort()).toEqual(
         [
@@ -200,28 +209,37 @@ describe.skipIf(!databaseUrl)(
     });
 
     test("account, session, audit_log, role_assign, and system_config have FKs to core.appuser with the expected delete rules", async () => {
+      // um27 made audit_log partitioned; the FK declared on the parent
+      // propagates to every partition child, which inflated the old
+      // information_schema query. Read pg_constraint directly and exclude
+      // partition children (relispartition) so only the logical parent-table
+      // FKs to appuser are counted.
       const fks = await sql<
         {
           table_name: string;
           column_name: string;
           delete_rule: string;
-          foreign_table: string;
         }[]
       >`
         SELECT
-          tc.table_name,
-          kcu.column_name,
-          rc.delete_rule,
-          ccu.table_name AS foreign_table
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-        JOIN information_schema.referential_constraints rc
-          ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
-        JOIN information_schema.constraint_column_usage ccu
-          ON rc.unique_constraint_name = ccu.constraint_name
-        WHERE tc.table_schema = 'core' AND tc.constraint_type = 'FOREIGN KEY'
-          AND ccu.table_name = 'appuser'
+          c.relname AS table_name,
+          att.attname AS column_name,
+          CASE con.confdeltype
+            WHEN 'c' THEN 'CASCADE'
+            WHEN 'n' THEN 'SET NULL'
+            WHEN 'r' THEN 'RESTRICT'
+            WHEN 'a' THEN 'NO ACTION'
+            WHEN 'd' THEN 'SET DEFAULT'
+          END AS delete_rule
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute att
+          ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+        WHERE n.nspname = 'core'
+          AND con.contype = 'f'
+          AND con.confrelid = 'core.appuser'::regclass
+          AND NOT c.relispartition
       `;
       const byColumn = new Map(
         fks.map((fk) => [`${fk.table_name}.${fk.column_name}`, fk.delete_rule]),

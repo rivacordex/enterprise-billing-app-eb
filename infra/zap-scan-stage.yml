@@ -1,56 +1,110 @@
-# um30-spec §"5. OWASP ZAP DAST stage". Stage-list template included by
+# um30-spec §"5. OWASP ZAP DAST stage". Stages template included by
 # infra/azure-pipelines.yml via `- template: zap-scan-stage.yml` directly
-# under the parent's `stages:` list — this file is a bare list of stage
-# objects (not wrapped in its own `stages:` key), as Azure Pipelines'
-# stage-list template inclusion requires. Runs against the dev/staging
-# revision deployed by the `deploy` stage — never against production.
-# High/critical findings fail this stage, which blocks the staging -> prod
-# promotion gate; medium and below are reported but do not block.
-- stage: zap_scan
-  displayName: OWASP ZAP DAST
-  dependsOn: deploy
-  pool:
-    vmImage: ubuntu-latest
-  jobs:
-    - job: zap_baseline
-      displayName: ZAP Baseline Scan
-      steps:
-        - script: |
-            mkdir -p $(System.DefaultWorkingDirectory)/zap-out
-            docker run --rm \
-              -v "$(System.DefaultWorkingDirectory)/infra/zap:/zap/wrk" \
-              -v "$(System.DefaultWorkingDirectory)/zap-out:/zap/wrk/out" \
-              owasp/zap2docker-stable \
-              zap-baseline.py \
-                -t https://$(STAGING_FQDN) \
-                -x out/zap-report.xml \
-                -r out/zap-report.html \
-                -c /zap/wrk/zap-context.xml \
-                --hook=/zap/wrk/rules.tsv \
-                -I
-          displayName: Run ZAP baseline scan against $(STAGING_FQDN)
+# under the parent's `stages:` list. A stages template must declare its own
+# top-level `stages:` key — Azure Pipelines splices these entries into the
+# parent's stage list. (A bare top-level sequence raises "A sequence was not
+# expected" during template expansion.) Runs against the dev/staging revision
+# deployed by the `deploy` stage — never against production. High/critical
+# findings fail this stage, which blocks the staging -> prod promotion gate;
+# medium and below are reported but do not block.
+stages:
+  - stage: zap_scan
+    displayName: OWASP ZAP DAST
+    dependsOn: deploy
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: zap_baseline
+        displayName: ZAP Baseline Scan
+        steps:
+          - script: |
+              set -euo pipefail
+              # zap-context.xml ships with literal placeholder tokens; substitute
+              # the real FQDN + seeded test credentials before the scan so scope
+              # matching and authenticated crawling work.
 
-        - script: |
-            REPORT="$(System.DefaultWorkingDirectory)/zap-out/zap-report.xml"
-            # riskcode 3 = High, 4 = Critical. Any match fails the stage.
-            if grep -E '<riskcode>(3|4)</riskcode>' "$REPORT" > /dev/null; then
-              echo "ZAP found one or more High/Critical findings — failing the stage."
-              exit 1
-            fi
-            echo "No High/Critical ZAP findings."
-          displayName: Gate on High/Critical findings
+              # Fail loudly rather than render a context with empty values.
+              : "${STAGING_FQDN:?STAGING_FQDN is required to render the ZAP context}"
+              : "${ZAP_TEST_USER_EMAIL:?ZAP_TEST_USER_EMAIL is required to render the ZAP context}"
+              : "${ZAP_TEST_USER_PASSWORD:?ZAP_TEST_USER_PASSWORD is required to render the ZAP context}"
 
-        - task: CopyFiles@2
-          condition: succeededOrFailed()
-          inputs:
-            sourceFolder: $(System.DefaultWorkingDirectory)/zap-out
-            contents: "**"
-            targetFolder: $(Build.ArtifactStagingDirectory)/zap
-          displayName: Stage ZAP reports
+              # Escape XML-sensitive chars so secrets containing & < > can't
+              # produce malformed XML.
+              xml_escape() {
+                printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+              }
+              # Escape every non-alphanumeric char so the FQDN matches literally
+              # inside the context regexes (dots stay dots, not "any char").
+              regex_escape() {
+                printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/\\&/g'
+              }
 
-        - task: PublishBuildArtifacts@1
-          condition: succeededOrFailed()
-          inputs:
-            pathToPublish: $(Build.ArtifactStagingDirectory)/zap
-            artifactName: zap-reports
-          displayName: Publish ZAP HTML + XML reports
+              # Compute the regex form before reassigning STAGING_FQDN.
+              export STAGING_FQDN_REGEX="$(xml_escape "$(regex_escape "$STAGING_FQDN")")"
+              export STAGING_FQDN="$(xml_escape "$STAGING_FQDN")"
+              export ZAP_TEST_USER_EMAIL="$(xml_escape "$ZAP_TEST_USER_EMAIL")"
+              export ZAP_TEST_USER_PASSWORD="$(xml_escape "$ZAP_TEST_USER_PASSWORD")"
+
+              # Substitute only the known tokens (leaves ZAP's {%username%} etc. intact).
+              envsubst '${STAGING_FQDN} ${STAGING_FQDN_REGEX} ${ZAP_TEST_USER_EMAIL} ${ZAP_TEST_USER_PASSWORD}' \
+                < infra/zap/zap-context.xml > infra/zap/zap-context.rendered.xml
+            displayName: Render ZAP context (substitute FQDN + test credentials)
+            env:
+              STAGING_FQDN: $(STAGING_FQDN)
+              ZAP_TEST_USER_EMAIL: $(ZAP_TEST_USER_EMAIL)
+              ZAP_TEST_USER_PASSWORD: $(ZAP_TEST_USER_PASSWORD)
+
+          - script: |
+              mkdir -p $(System.DefaultWorkingDirectory)/zap-out
+              # ZAP runs as uid 1000 (the `zap` user) inside the container, but the
+              # agent-created zap-out dir is owned by a different uid, so the report
+              # write fails: "Permission denied: /zap/wrk/out/zap-report.html".
+              # Make the mounted output dir world-writable.
+              chmod 777 $(System.DefaultWorkingDirectory)/zap-out
+              docker run --rm \
+                -v "$(System.DefaultWorkingDirectory)/infra/zap:/zap/wrk" \
+                -v "$(System.DefaultWorkingDirectory)/zap-out:/zap/wrk/out" \
+                ghcr.io/zaproxy/zaproxy:stable \
+                zap-baseline.py \
+                  -t https://$(STAGING_FQDN) \
+                  -x out/zap-report.xml \
+                  -r out/zap-report.html \
+                  -n /zap/wrk/zap-context.rendered.xml \
+                  -c /zap/wrk/rules.tsv \
+                  -I
+            displayName: Run ZAP baseline scan against $(STAGING_FQDN)
+
+          - script: |
+              REPORT="$(System.DefaultWorkingDirectory)/zap-out/zap-report.xml"
+              # A missing report means the scan never produced results — treat it
+              # as a failure, not a silent pass (grep would just error out below).
+              if [ ! -f "$REPORT" ]; then
+                echo "ZAP report not found at $REPORT — the scan produced no report. Failing the stage."
+                exit 1
+              fi
+              # riskcode 3 = High, 4 = Critical. Any match fails the stage.
+              if grep -E '<riskcode>(3|4)</riskcode>' "$REPORT" > /dev/null; then
+                echo "ZAP found one or more High/Critical findings — failing the stage."
+                exit 1
+              fi
+              echo "No High/Critical ZAP findings."
+            displayName: Gate on High/Critical findings
+
+          - task: CopyFiles@2
+            condition: succeededOrFailed()
+            inputs:
+              sourceFolder: $(System.DefaultWorkingDirectory)/zap-out
+              contents: "**"
+              targetFolder: $(Build.ArtifactStagingDirectory)/zap
+            displayName: Stage ZAP reports
+
+          - task: PublishBuildArtifacts@1
+            condition: succeededOrFailed()
+            # Don't let a missing-reports publish mask the real failure: if the
+            # scan dies before writing reports, the gate step already fails the
+            # stage — a "PathtoPublish not found" error here would just add noise.
+            continueOnError: true
+            inputs:
+              pathToPublish: $(Build.ArtifactStagingDirectory)/zap
+              artifactName: zap-reports
+            displayName: Publish ZAP HTML + XML reports

@@ -51,9 +51,9 @@ stages:
       - job: build
         displayName: Type check, lint, format, env-schema smoke
         steps:
-          - task: NodeTool@0
+          - task: UseNode@1
             inputs:
-              versionSpec: "22.x"
+              version: "22.x"
             displayName: Use Node 22
 
           - task: Cache@2
@@ -91,9 +91,9 @@ stages:
         variables:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/enterprise_billing
         steps:
-          - task: NodeTool@0
+          - task: UseNode@1
             inputs:
-              versionSpec: "22.x"
+              version: "22.x"
             displayName: Use Node 22
 
           - script: npm ci
@@ -101,9 +101,14 @@ stages:
 
           - script: |
               for i in $(seq 1 30); do
-                (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && break
+                if (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; then
+                  echo "Postgres is reachable on localhost:5432."
+                  exit 0
+                fi
                 sleep 1
               done
+              echo "Postgres not reachable on localhost:5432 after 30 attempts." >&2
+              exit 1
             displayName: Wait for Postgres service
 
           - script: npm run test
@@ -143,12 +148,18 @@ stages:
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
-                az acr build \
-                  --registry $(ACR_NAME) \
-                  --image $(imageRepository):$(setImageTag.imageTag) \
+                set -euo pipefail
+                IMAGE="$(ACR_NAME).azurecr.io/$(imageRepository):$(setImageTag.imageTag)"
+                # ACR Tasks (az acr build) is blocked on this subscription type,
+                # so build on the agent and push instead. Contributor on the RG
+                # (inherited by the service connection's SP) grants the push.
+                az acr login --name $(ACR_NAME)
+                docker build \
                   --build-arg BUILD_VERSION=$(setImageTag.imageTag) \
+                  -t "$IMAGE" \
                   .
-            displayName: az acr build (no secrets baked into the image)
+                docker push "$IMAGE"
+            displayName: docker build + push to ACR (agent-side; ACR Tasks unavailable)
 
   # ---------------------------------------------------------------------
   - stage: migrate
@@ -170,10 +181,20 @@ stages:
               inlineScript: |
                 set -euo pipefail
 
+                # lib/config.ts validates the FULL env schema at import, and
+                # db/migrate.ts imports it. The Job never serves auth, so
+                # BETTER_AUTH_* are inert placeholders here (mirroring the
+                # Dockerfile builder stage) — without them the import throws
+                # "Invalid environment configuration". DATABASE_URL is re-set so
+                # the secretref survives regardless of --set-env-vars semantics.
                 az containerapp job update \
                   --name $(CONTAINERAPP_JOB_NAME) \
                   --resource-group $(RESOURCE_GROUP) \
-                  --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag)
+                  --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
+                  --set-env-vars \
+                    "DATABASE_URL=secretref:pg-connection-string-migrate" \
+                    "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars" \
+                    "BETTER_AUTH_URL=http://localhost:3000"
 
                 EXECUTION_NAME=$(az containerapp job start \
                   --name $(CONTAINERAPP_JOB_NAME) \
@@ -207,7 +228,13 @@ stages:
   # ---------------------------------------------------------------------
   - stage: deploy
     displayName: Deploy (blue-green)
-    dependsOn: migrate
+    # Must depend on `containerize` directly, not just transitively via `migrate`:
+    # stageDependencies only exposes output variables from stages listed in
+    # dependsOn. Without `containerize` here, `imageTag` resolves empty and the
+    # deploy fails with "argument --revision-suffix: expected one argument".
+    dependsOn:
+      - containerize
+      - migrate
     variables:
       imageTag: $[ stageDependencies.containerize.build_and_push.outputs['setImageTag.imageTag'] ]
     pool:
@@ -239,30 +266,52 @@ stages:
                           "BETTER_AUTH_SECRET=secretref:better-auth-secret" \
                           "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
 
-                      az containerapp ingress traffic set \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --revision-weight latest=0
+                      # No explicit "new revision to 0%" step: in multiple-revision
+                      # mode `az containerapp update` already creates the new
+                      # revision at 0% and preserves the previous revision's weight.
+                      # `traffic set --revision-weight latest=0` REPLACES the whole
+                      # traffic map with just {latest:0} (sum 0) → fails with
+                      # ContainerAppTrafficWeightIncorrectValue. The new revision is
+                      # smoke-tested via its own FQDN below, then promoted to 100% —
+                      # the only traffic write needed, which also heals any prior
+                      # weight state.
 
-                      NEW_REVISION=$(az containerapp revision list \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --query "[0].name" -o tsv)
+                      # The revision name is deterministic: Container Apps names
+                      # it "<app>--<suffix>", and the suffix is the $(imageTag)
+                      # passed to --revision-suffix above. Target that exact
+                      # revision instead of querying the newest by createdTime,
+                      # which could pick an unrelated concurrent/manual revision.
+                      NEW_REVISION="$(CONTAINERAPP_NAME)--$(imageTag)"
 
-                      # 2. Smoke test against the new revision's own FQDN, 3 retries 5s apart.
-                      REVISION_FQDN=$(az containerapp revision show \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --revision "$NEW_REVISION" \
-                        --query "properties.fqdn" -o tsv)
-
+                      # 2. Readiness gate via the revision's healthState — the
+                      #    authoritative signal from its readiness probe (internal
+                      #    GET /api/health on the container). An external curl can't
+                      #    be used: the app's ingress may enforce an IP allowlist
+                      #    (ipSecurityRestrictions) that 403s the hosted agent, and
+                      #    the probe runs inside the environment, bypassing ingress.
+                      #    Poll up to ~3 min; fail fast if the revision goes Failed.
                       SMOKE_OK=false
-                      for i in 1 2 3; do
-                        if curl -fsS "https://$REVISION_FQDN/api/health"; then
+                      for i in $(seq 1 18); do
+                        HEALTH=$(az containerapp revision show \
+                          --name $(CONTAINERAPP_NAME) \
+                          --resource-group $(RESOURCE_GROUP) \
+                          --revision "$NEW_REVISION" \
+                          --query "properties.healthState" -o tsv)
+                        RUNNING=$(az containerapp revision show \
+                          --name $(CONTAINERAPP_NAME) \
+                          --resource-group $(RESOURCE_GROUP) \
+                          --revision "$NEW_REVISION" \
+                          --query "properties.runningState" -o tsv)
+                        echo "attempt $i: health=$HEALTH running=$RUNNING"
+                        if [ "$HEALTH" = "Healthy" ]; then
                           SMOKE_OK=true
                           break
                         fi
-                        sleep 5
+                        if [ "$RUNNING" = "Failed" ]; then
+                          echo "New revision entered Failed state."
+                          break
+                        fi
+                        sleep 10
                       done
 
                       # 3/4. Shift traffic only on success; otherwise leave the

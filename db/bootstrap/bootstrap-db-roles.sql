@@ -70,3 +70,18 @@ GRANT ALL ON ALL TABLES IN SCHEMA "core" TO app_migrate;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "core" GRANT ALL ON TABLES TO app_migrate;
 --> statement-breakpoint
 REVOKE UPDATE, DELETE, TRUNCATE ON "core"."audit_log" FROM app_migrate;
+--> statement-breakpoint
+-- app_migrate's drizzle-kit migration bookkeeping lives in the `drizzle`
+-- schema (drizzle.__drizzle_migrations). When the initial migrate runs under
+-- the superuser/owner (infra/docs/db-role-verification.md step 1), that schema
+-- and its table are owner-owned, so app_migrate — which the automated migrate
+-- stage runs as — gets "permission denied" on the migrator's first statement
+-- (CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations). Grant it the
+-- access the migrator needs: USAGE/CREATE on the schema, DML on the bookkeeping
+-- table, and USAGE on its SERIAL sequence. Idempotent; the `drizzle` schema
+-- already exists by the time this script runs (after step 1's migrate).
+GRANT USAGE, CREATE ON SCHEMA "drizzle" TO app_migrate;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "drizzle" TO app_migrate;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "drizzle" TO app_migrate;
