@@ -187,18 +187,24 @@ stages:
 
                 # lib/config.ts validates the FULL env schema at import, and
                 # db/migrate.ts imports it. The Job never serves auth, so
-                # BETTER_AUTH_* are inert placeholders here (mirroring the
-                # Dockerfile builder stage) — without them the import throws
-                # "Invalid environment configuration". DATABASE_URL is re-set so
-                # the secretref survives regardless of --set-env-vars semantics.
+                # BETTER_AUTH_* are inert placeholders that only satisfy the
+                # schema (.min(32)/.url()); the real secret is used by the app
+                # revision (deploy stage), never here. Passed via a bash array
+                # like the deploy stage — the old multi-line "--set-env-vars \"
+                # continuation form silently dropped the plain VALUE entries,
+                # leaving BETTER_AUTH_* empty and crashing the import (the
+                # secretref entry survived, the plain values did not).
+                JOB_ENV_VARS=(
+                  "DATABASE_URL=secretref:pg-connection-string-migrate"
+                  "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars"
+                  "BETTER_AUTH_URL=http://localhost:3000"
+                )
+
                 az containerapp job update \
                   --name $(CONTAINERAPP_JOB_NAME) \
                   --resource-group $(RESOURCE_GROUP) \
                   --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
-                  --set-env-vars \
-                    "DATABASE_URL=secretref:pg-connection-string-migrate" \
-                    "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars" \
-                    "BETTER_AUTH_URL=http://localhost:3000"
+                  --set-env-vars "${JOB_ENV_VARS[@]}"
 
                 EXECUTION_NAME=$(az containerapp job start \
                   --name $(CONTAINERAPP_JOB_NAME) \
