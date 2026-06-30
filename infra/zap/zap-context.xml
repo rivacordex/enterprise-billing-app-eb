@@ -17,8 +17,11 @@
          URL_NOT_IN_CONTEXT and prevents authentication from reaching /login.
          The Microsoft OAuth callback stays excluded below (ZAP can't drive an
          interactive Entra login). -->
-    <incregexes>https://${STAGING_FQDN}.*</incregexes>
-    <excregexes>https://${STAGING_FQDN}/api/auth/callback/microsoft.*</excregexes>
+    <!-- STAGING_FQDN_REGEX is the regex-escaped host (literal dots etc.),
+         rendered by the pipeline. Anchoring with (/.*)? keeps scope to the
+         exact host + its paths so https://<host>.evil.com/... cannot match. -->
+    <incregexes>https://${STAGING_FQDN_REGEX}(/.*)?</incregexes>
+    <excregexes>https://${STAGING_FQDN_REGEX}/api/auth/callback/microsoft(/.*)?</excregexes>
     <authentication>
       <type>2</type>
       <!-- Form-based auth against the local /login credential flow.
