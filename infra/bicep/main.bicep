@@ -3,6 +3,13 @@
 @allowed(['dev', 'staging', 'prod'])
 param environmentName string
 param location string = resourceGroup().location
+
+// Name of the existing Postgres Flexible Server this environment targets. A real
+// per-environment Azure resource identifier — supplied at DEPLOY TIME from the
+// `um30-infra` variable group (`--parameters postgresServerName=$(POSTGRES_SERVER_NAME)`),
+// NOT hardcoded in the committed `*.bicepparam`, so concrete server names stay out
+// of source control (mirrors the SSO-ID handling below). Required — no default, so
+// a deploy that forgets to supply it fails fast rather than targeting the wrong server.
 param postgresServerName string
 
 // Full-replacement server settings (um27) — passed explicitly to the postgres
@@ -13,6 +20,11 @@ param postgresServerName string
 param allowedExtensions string = 'PG_PARTMAN,PG_CRON,PGCRYPTO'
 param sharedPreloadLibraries string = 'pg_cron'
 
+// Object (principal) ID of the Azure DevOps deployment service principal, granted
+// Key Vault Secrets Officer (key-vault module) so the pipeline can seed secrets. A
+// real per-environment identity — supplied at DEPLOY TIME from the `um30-infra`
+// variable group (`--parameters pipelineServicePrincipalId=$(PIPELINE_SP_ID)`), NOT
+// committed to `*.bicepparam`, so the concrete object ID stays out of source control.
 param pipelineServicePrincipalId string
 param minReplicas int = 2
 param maxReplicas int = 5
@@ -26,6 +38,26 @@ param maxReplicas int = 5
 // the client SECRET is always a Key Vault reference, never a parameter.
 param entraTenantId string = ''
 param microsoftClientId string = ''
+
+// Business timezone (IANA name) surfaced to the app as APP_TIMEZONE (um29-spec):
+// governs how every admin datetime is displayed and how local day boundaries
+// (e.g. the Audit Log date filter) resolve; storage stays UTC. Non-secret and
+// environment-specific, so — unlike entraTenantId/microsoftClientId above — it
+// lives in the committed `*.bicepparam`. @allowed mirrors lib/locale.ts
+// SUPPORTED_TIMEZONES so an unsupported value fails at deploy time (the app also
+// fails fast at boot). Defaults to UTC (behavior-preserving).
+@allowed([
+  'Asia/Kuala_Lumpur'
+  'Asia/Singapore'
+  'Asia/Kolkata'
+  'Africa/Johannesburg'
+  'Asia/Dubai'
+  'America/New_York'
+  'America/Los_Angeles'
+  'Australia/Sydney'
+  'UTC'
+])
+param appTimezone string = 'UTC'
 
 @description('Gates the Container App + migrate Job (phase-2 workloads). Deploy with false first so the Key Vault exists and its secret references can be populated + the ACR image pushed, then true.')
 param deployWorkloads bool = true
@@ -116,6 +148,7 @@ module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
     maxReplicas: maxReplicas
     entraTenantId: entraTenantId
     microsoftClientId: microsoftClientId
+    appTimezone: appTimezone
   }
 }
 
