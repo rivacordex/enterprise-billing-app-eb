@@ -1,18 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-
-// `defaultPasswordSchema` (imported by `setPasswordSchema`) is built from
-// `passwordPolicy` at module load — mocked to the documented defaults so
-// this suite never depends on `lib/config`'s eager env validation.
-vi.mock("@/lib/password-policy", () => ({
-  passwordPolicy: {
-    minLength: 15,
-    requireUppercase: true,
-    requireLowercase: true,
-    requireNumber: true,
-    requireSpecial: true,
-    specialChars: "!@#$%^&*()_+-=[]{}|;':\",./<>?",
-  },
-}));
+import { describe, expect, it } from "vitest";
 
 import { setPasswordSchema } from "@/validation/set-password.schema";
 
