@@ -238,6 +238,15 @@ describe("passwordPolicy", () => {
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
 
+  it("throws when PASSWORD_MIN_LENGTH exceeds the 128 hard cap", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        PASSWORD_MIN_LENGTH: "129",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
   it("throws when a PASSWORD_REQUIRE_* var is neither true nor false", async () => {
     await expect(
       loadConfigWithEnv({
