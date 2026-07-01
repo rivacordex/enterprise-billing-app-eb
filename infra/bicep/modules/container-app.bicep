@@ -34,6 +34,14 @@ param maxReplicas int = 5
 param entraTenantId string = ''
 param microsoftClientId string = ''
 
+// Business timezone (IANA name) read by lib/config.ts as APP_TIMEZONE (um29-spec).
+// Non-secret and environment-specific, so — unlike the SSO IDs above — it is a
+// plain `value` env var supplied from the committed `*.bicepparam`. The caller
+// (main.bicep) constrains it to lib/locale.ts SUPPORTED_TIMEZONES via @allowed;
+// the app additionally fails fast at boot on an unsupported value. Defaults to
+// UTC, matching the app's DEFAULT_TIMEZONE (behavior-preserving).
+param appTimezone string = 'UTC'
+
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
@@ -94,6 +102,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
               { name: 'BETTER_AUTH_URL', value: appBaseUrl }
               { name: 'APP_URL', value: appBaseUrl }
               { name: 'NEXT_PUBLIC_APP_URL', value: appBaseUrl }
+              { name: 'APP_TIMEZONE', value: appTimezone }
             ],
             // Emitted only when supplied — see the param note above.
             empty(microsoftClientId)
