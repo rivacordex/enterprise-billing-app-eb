@@ -36,7 +36,12 @@ RUN npm run build
 # Fail the build if eval( appears in any shipped JS chunk (ZAP PR13v2 fix 2.4,
 # rule 10110). eval() at runtime would also throw due to script-src 'self'
 # (no 'unsafe-eval'), but catching it here prevents a CSP violation on users.
-RUN ! grep -rl "eval(" .next/static
+# grep exit codes: 0 = match found (fail), 1 = no match (pass), >1 = grep
+# itself errored (e.g. .next/static missing/unreadable) — must also fail,
+# not be swallowed by a bare `! grep`.
+RUN grep -rl "eval(" .next/static; rc=$?; \
+  if [ "$rc" -eq 0 ]; then echo "eval( found in shipped JS chunks" >&2; exit 1; fi; \
+  if [ "$rc" -ne 1 ]; then echo "grep failed inspecting .next/static (exit $rc)" >&2; exit "$rc"; fi
 
 FROM node:22-alpine AS runner
 WORKDIR /app
