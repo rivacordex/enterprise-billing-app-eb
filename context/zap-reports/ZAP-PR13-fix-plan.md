@@ -11,6 +11,7 @@
 ## Medium Priority Fixes (must clear before prod promotion)
 
 ### 1. Content Security Policy (CSP) Header Not Set
+
 - **ZAP rule:** 10038 | **Instances:** Systemic (all routes)
 - **Fix:** Add `Content-Security-Policy` header in Next.js `next.config.js` `headers()` or via middleware.
 - **Measurable outcome:** ZAP rule 10038 produces 0 alerts on next scan.
@@ -20,11 +21,13 @@
   ```
 
 ### 2. Missing Anti-clickjacking Header
+
 - **ZAP rule:** 10020 | **Instances:** 4
 - **Fix:** Set `X-Frame-Options: DENY` (or use `frame-ancestors 'none'` in CSP above — fixes both 1 and 2 together).
 - **Measurable outcome:** ZAP rule 10020 produces 0 alerts on next scan.
 
 ### 3. Absence of Anti-CSRF Tokens
+
 - **ZAP rule:** 10202 | **Instances:** 2 (both on `/login` GET + POST)
 - **Fix:** Add a CSRF token to the `/login` form. Since this is Next.js with a server action or API route, use the `next-csrf` package or generate a signed token via `crypto.randomBytes` and store it in a `HttpOnly` cookie, then validate on POST.
 - **Measurable outcome:** ZAP rule 10202 produces 0 alerts; the login form renders with a hidden `_csrf` input on every GET and rejects POST requests without a matching token.
@@ -34,36 +37,43 @@
 ## Low Priority Fixes
 
 ### 4. Strict-Transport-Security (HSTS) Header Not Set
+
 - **ZAP rule:** 10035 | **Instances:** Systemic
 - **Fix:** Add `Strict-Transport-Security: max-age=31536000; includeSubDomains` to all responses.
 - **Measurable outcome:** ZAP rule 10035 produces 0 alerts; all responses include HSTS with `max-age ≥ 31536000`.
 
 ### 5. X-Content-Type-Options Header Missing
+
 - **ZAP rule:** 10021 | **Instances:** Systemic
 - **Fix:** Add `X-Content-Type-Options: nosniff` to all responses.
 - **Measurable outcome:** ZAP rule 10021 produces 0 alerts.
 
 ### 6. Permissions Policy Header Not Set
+
 - **ZAP rule:** 10063 | **Instances:** Systemic
 - **Fix:** Add `Permissions-Policy: camera=(), microphone=(), geolocation=()` (expand as needed).
 - **Measurable outcome:** ZAP rule 10063 produces 0 alerts.
 
 ### 7. Server Leaks Information via `X-Powered-By`
+
 - **ZAP rule:** 10037 | **Instances:** Systemic
 - **Fix:** In `next.config.js`, set `poweredByHeader: false`.
 - **Measurable outcome:** ZAP rule 10037 produces 0 alerts; no `X-Powered-By` header present in responses.
 
 ### 8. Cross-Origin-Embedder-Policy (COEP) Header Missing
+
 - **ZAP rule:** 90004 | **Instances:** 2
 - **Fix:** Add `Cross-Origin-Embedder-Policy: require-corp`.
 - **Measurable outcome:** ZAP rule 90004 (COEP) produces 0 alerts.
 
 ### 9. Cross-Origin-Opener-Policy (COOP) Header Missing
+
 - **ZAP rule:** 90004 | **Instances:** 2
 - **Fix:** Add `Cross-Origin-Opener-Policy: same-origin`.
 - **Measurable outcome:** ZAP rule 90004 (COOP) produces 0 alerts.
 
 ### 10. Cross-Origin-Resource-Policy (CORP) Header Missing
+
 - **ZAP rule:** 90004 | **Instances:** 5
 - **Fix:** Add `Cross-Origin-Resource-Policy: same-origin` (use `cross-origin` only for public assets that must be loaded cross-origin).
 - **Measurable outcome:** ZAP rule 90004 (CORP) produces 0 alerts.
@@ -100,13 +110,13 @@ poweredByHeader: false,
 
 ## Informational (No Action Required)
 
-| Alert | Notes |
-|---|---|
-| Authentication Request Identified | ZAP detected the login flow correctly — expected behaviour. |
-| Modern Web Application | Informational only. |
-| Non-Storable Content | 4 API responses correctly prevent caching — no action needed. |
-| Storable and Cacheable Content | Systemic — static assets; review if any sensitive routes are included. |
-| Storable but Non-Cacheable Content | 1 instance — verify it is not a sensitive endpoint. |
+| Alert                              | Notes                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| Authentication Request Identified  | ZAP detected the login flow correctly — expected behaviour.            |
+| Modern Web Application             | Informational only.                                                    |
+| Non-Storable Content               | 4 API responses correctly prevent caching — no action needed.          |
+| Storable and Cacheable Content     | Systemic — static assets; review if any sensitive routes are included. |
+| Storable but Non-Cacheable Content | 1 instance — verify it is not a sensitive endpoint.                    |
 
 ---
 
