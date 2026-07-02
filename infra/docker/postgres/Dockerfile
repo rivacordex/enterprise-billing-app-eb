@@ -19,6 +19,15 @@ RUN apt-get update \
        "postgresql-${PG_MAJOR}-partman" \
   && rm -rf /var/lib/apt/lists/*
 
+# Run as the non-root `postgres` account (uid 999) the base image already creates,
+# so the container never ends as root (SAST: dockerfile.security.missing-user).
+# The base entrypoint normally starts as root only to chown the data dir and then
+# drops to `postgres` via gosu; pinning USER here skips that root phase. It's safe
+# because the compose stack uses named volumes, which inherit the image's postgres
+# ownership at /var/lib/postgresql/data — no root-time chown needed. (A host bind
+# mount would need matching ownership on the host side instead.)
+USER postgres
+
 # pg_cron must be loaded at server start (shared_preload_libraries is static), and
 # its scheduler must target the database where `CREATE EXTENSION pg_cron` runs —
 # audit-partman-setup.sql creates it in the app DB, so point cron.database_name
