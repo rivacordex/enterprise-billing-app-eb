@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { FieldError as RhfFieldError } from "react-hook-form";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,8 +16,10 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import type { PasswordPolicy } from "@/types/password";
+import { DEFAULT_PASSWORD_POLICY } from "@/validation/password";
 import {
-  setPasswordSchema,
+  buildSetPasswordSchema,
   type SetPasswordInput,
 } from "@/validation/set-password.schema";
 
@@ -37,18 +39,27 @@ function fieldErrorMessages(error: RhfFieldError | undefined): string[] {
 }
 
 export interface SetPasswordFormProps {
+  // Optional with a default so the contract stays ergonomic; the page always
+  // passes the real env-derived policy. DEFAULT_PASSWORD_POLICY is client-safe
+  // (no lib/config import) and matches the server's schema defaults.
+  policy?: PasswordPolicy;
   passwordPolicyHints?: string[];
 }
 
 export function SetPasswordForm({
+  policy = DEFAULT_PASSWORD_POLICY,
   passwordPolicyHints,
-}: SetPasswordFormProps = {}): React.JSX.Element {
+}: SetPasswordFormProps): React.JSX.Element {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
+  // Built from the server-provided policy (passed as a prop) so this client
+  // component never imports lib/config (server-only) transitively.
+  const schema = useMemo(() => buildSetPasswordSchema(policy), [policy]);
+
   const form = useForm<SetPasswordInput>({
-    resolver: zodResolver(setPasswordSchema),
+    resolver: zodResolver(schema),
     criteriaMode: "all",
     defaultValues: { newPassword: "", confirmPassword: "" },
   });

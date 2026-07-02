@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import { resolveForcePasswordChangeSession } from "@/auth/guard";
 import { setPassword } from "@/services/users/users-auth.service";
-import { setPasswordSchema } from "@/validation/set-password.schema";
+import { passwordPolicy } from "@/lib/config";
+import { buildSetPasswordSchema } from "@/validation/set-password.schema";
 
 export type SetPasswordActionResult =
   | { ok: true }
@@ -24,7 +25,7 @@ export async function setPasswordAction(
 ): Promise<SetPasswordActionResult> {
   const session = await resolveForcePasswordChangeSession();
 
-  const parsed = setPasswordSchema.safeParse(rawInput);
+  const parsed = buildSetPasswordSchema(passwordPolicy).safeParse(rawInput);
   if (!parsed.success) {
     return {
       ok: false,

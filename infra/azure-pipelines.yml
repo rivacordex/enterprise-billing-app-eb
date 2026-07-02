@@ -12,7 +12,11 @@
 #   - Variable group "um30-infra" (non-secret, per environment): ACR_NAME,
 #     RESOURCE_GROUP, CONTAINERAPP_NAME, CONTAINERAPP_JOB_NAME,
 #     CONTAINER_APPS_ENV, KEYVAULT_NAME, APP_MI_RESOURCE_ID,
-#     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN.
+#     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN, MICROSOFT_CLIENT_ID,
+#     ENTRA_TENANT_ID. The last two are non-secret Microsoft SSO identifiers
+#     (the client SECRET is a Key Vault reference, never a variable) — defined
+#     here, not in source control, so the concrete tenant/client IDs stay out
+#     of git; leave them empty in the group for an environment without SSO.
 trigger:
   branches:
     include:
@@ -183,18 +187,33 @@ stages:
 
                 # lib/config.ts validates the FULL env schema at import, and
                 # db/migrate.ts imports it. The Job never serves auth, so
-                # BETTER_AUTH_* are inert placeholders here (mirroring the
-                # Dockerfile builder stage) — without them the import throws
-                # "Invalid environment configuration". DATABASE_URL is re-set so
-                # the secretref survives regardless of --set-env-vars semantics.
+                # BETTER_AUTH_* are inert placeholders that only satisfy the
+                # schema (.min(32)/.url()); the real secret is used by the app
+                # revision (deploy stage), never here. Passed via a bash array
+                # like the deploy stage — the old multi-line "--set-env-vars \"
+                # continuation form silently dropped the plain VALUE entries,
+                # leaving BETTER_AUTH_* empty and crashing the import (the
+                # secretref entry survived, the plain values did not).
+                #
+                # NODE_OPTIONS=--conditions=react-server: lib/config.ts imports
+                # "server-only", which THROWS under a plain `node ... tsx` run
+                # (the Job's command, baked in Bicep — the pipeline can't
+                # override it). The Job never touches a client bundle, so we set
+                # the react-server export condition (resolving "server-only" to
+                # its no-op) via NODE_OPTIONS — the only knob reachable from
+                # --set-env-vars. Mirrors the `validate:env` script's flag.
+                JOB_ENV_VARS=(
+                  "DATABASE_URL=secretref:pg-connection-string-migrate"
+                  "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars"
+                  "BETTER_AUTH_URL=http://localhost:3000"
+                  "NODE_OPTIONS=--conditions=react-server"
+                )
+
                 az containerapp job update \
                   --name $(CONTAINERAPP_JOB_NAME) \
                   --resource-group $(RESOURCE_GROUP) \
                   --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
-                  --set-env-vars \
-                    "DATABASE_URL=secretref:pg-connection-string-migrate" \
-                    "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars" \
-                    "BETTER_AUTH_URL=http://localhost:3000"
+                  --set-env-vars "${JOB_ENV_VARS[@]}"
 
                 EXECUTION_NAME=$(az containerapp job start \
                   --name $(CONTAINERAPP_JOB_NAME) \
@@ -255,16 +274,51 @@ stages:
                     inlineScript: |
                       set -euo pipefail
 
+                      # Non-secret Microsoft SSO identifiers from the variable
+                      # group. Appended only when present so an environment
+                      # without SSO doesn't get an empty MICROSOFT_CLIENT_ID
+                      # (which lib/config would read as present-but-empty and
+                      # mis-enable the SSO path; absent → null → SSO off). The
+                      # client SECRET stays a Key Vault secretref, below.
+                      # SSO vars are set when present and explicitly REMOVED when
+                      # absent. --set-env-vars only adds/updates the keys it lists;
+                      # it never drops keys already on the app, so without an
+                      # explicit --remove-env-vars a stale MICROSOFT_CLIENT_ID /
+                      # ENTRA_TENANT_ID from a prior revision would carry forward
+                      # and lib/config would mis-enable the SSO path after SSO is
+                      # disabled. REMOVE_VARS collects the keys to strip.
+                      ENV_VARS=(
+                        "DATABASE_URL=secretref:pg-connection-string-app"
+                        "BETTER_AUTH_SECRET=secretref:better-auth-secret"
+                        "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
+                      )
+                      REMOVE_VARS=()
+                      if [ -n "$(MICROSOFT_CLIENT_ID)" ]; then
+                        ENV_VARS+=("MICROSOFT_CLIENT_ID=$(MICROSOFT_CLIENT_ID)")
+                      else
+                        REMOVE_VARS+=("MICROSOFT_CLIENT_ID")
+                      fi
+                      if [ -n "$(ENTRA_TENANT_ID)" ]; then
+                        ENV_VARS+=("ENTRA_TENANT_ID=$(ENTRA_TENANT_ID)")
+                      else
+                        REMOVE_VARS+=("ENTRA_TENANT_ID")
+                      fi
+
                       # 1. New revision at 0% traffic.
-                      az containerapp update \
-                        --name $(CONTAINERAPP_NAME) \
-                        --resource-group $(RESOURCE_GROUP) \
-                        --image $(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag) \
-                        --revision-suffix $(imageTag) \
-                        --set-env-vars \
-                          "DATABASE_URL=secretref:pg-connection-string-app" \
-                          "BETTER_AUTH_SECRET=secretref:better-auth-secret" \
-                          "MICROSOFT_CLIENT_SECRET=secretref:microsoft-client-secret"
+                      UPDATE_ARGS=(
+                        --name "$(CONTAINERAPP_NAME)"
+                        --resource-group "$(RESOURCE_GROUP)"
+                        --image "$(ACR_NAME).azurecr.io/$(imageRepository):$(imageTag)"
+                        --revision-suffix "$(imageTag)"
+                        --set-env-vars "${ENV_VARS[@]}"
+                      )
+                      # Guard the expansion: under `set -u` an empty array must not
+                      # be dereferenced, and a bare --remove-env-vars with no keys
+                      # would error.
+                      if [ ${#REMOVE_VARS[@]} -gt 0 ]; then
+                        UPDATE_ARGS+=(--remove-env-vars "${REMOVE_VARS[@]}")
+                      fi
+                      az containerapp update "${UPDATE_ARGS[@]}"
 
                       # No explicit "new revision to 0%" step: in multiple-revision
                       # mode `az containerapp update` already creates the new
