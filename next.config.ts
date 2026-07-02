@@ -1,33 +1,5 @@
 import type { NextConfig } from "next";
 
-// ZAP PR13 fix (rules 10038/10020/10035/10021/10063/10037/90004,
-// context/zap-reports/ZAP-PR13-fix-plan.md): no nonce/`proxy.ts` involvement
-// needed since the app has no inline `<script>` — `script-src 'self'` is
-// enough.
-// ZAP PR13v2 fix (rule 10055, context/zap-reports/ZAP-PR13v2-fix-plan.md):
-// `'unsafe-inline'` removed from `style-src`. The two first-party inline
-// style usages that previously required it are now gone: `audit-log-table.tsx`
-// uses a Tailwind class map and `sonner.tsx`'s CSS vars moved to globals.css.
-const isProd = process.env.NODE_ENV === "production";
-// `next dev`'s React error-overlay needs `unsafe-eval` (Next's own CSP guide,
-// node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md)
-// — production/staging (what the ZAP scan targets) stays free of it.
-const cspHeader = `
-  default-src 'self';
-  script-src 'self'${isProd ? "" : " 'unsafe-eval'"};
-  style-src 'self';
-  img-src 'self' data:;
-  font-src 'self';
-  connect-src 'self';
-  object-src 'none';
-  base-uri 'self';
-  form-action 'self';
-  frame-ancestors 'none';
-  ${isProd ? "upgrade-insecure-requests;" : ""}
-`
-  .replace(/\s{2,}/g, " ")
-  .trim();
-
 const nextConfig: NextConfig = {
   // Allows dev-mode access (HMR + JS chunks) from the machine's Tailscale
   // address, not just localhost — without this, Next blocks those requests
@@ -44,7 +16,11 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: [
-          { key: "Content-Security-Policy", value: cspHeader },
+          // Content-Security-Policy is set per-request in proxy.ts — it
+          // needs a fresh nonce every render, which a static header here
+          // can't provide. Setting it in both places would send two CSP
+          // headers, and browsers enforce the intersection of all of
+          // them, silently re-blocking the nonce'd scripts.
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           {
