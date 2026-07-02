@@ -16,7 +16,14 @@ export function readCookieValue(
     const separatorIndex = part.indexOf("=");
     if (separatorIndex === -1) continue;
     if (part.slice(0, separatorIndex).trim() !== name) continue;
-    return decodeURIComponent(part.slice(separatorIndex + 1).trim());
+    try {
+      return decodeURIComponent(part.slice(separatorIndex + 1).trim());
+    } catch {
+      // Malformed percent-encoding (e.g. a bare "%"). Treat like a missing
+      // cookie so callers on the sign-in path fail closed on CSRF mismatch
+      // instead of throwing an uncaught URIError.
+      return null;
+    }
   }
   return null;
 }
