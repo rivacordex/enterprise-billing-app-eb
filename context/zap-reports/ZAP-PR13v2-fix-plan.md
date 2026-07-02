@@ -8,36 +8,26 @@
 
 ---
 
-## Fix 1 (Medium) — CSP: `style-src` includes `'unsafe-inline'`
+## Fix 1 (Medium) — CSP: `style-src` includes `'unsafe-inline'` — DONE
 
 - **ZAP rule:** 10055 | **Instances:** Systemic (all routes)
-- **Root cause:** `next.config.ts` deliberately keeps `style-src 'self' 'unsafe-inline'` (see comment, lines 3–7) because of exactly two first-party inline `style` usages:
-  1. `components/audit-log/audit-log-table.tsx:117` — `style={{ backgroundColor: CATEGORY_BORDER_COLORS[row.category] }}` on the category swatch `<td>`. The map is a **bounded** 5-entry constant (Additive/Change/Removal/Session/Security → CSS vars).
-  2. `components/ui/sonner.tsx:27` — Toaster sets 4 CSS custom properties via the `style` prop.
+- **Status:** Landed. `next.config.ts` now sets `style-src 'self'` (no `'unsafe-inline'`); see the ZAP PR13v2 comment there. The two first-party inline `style` usages that previously required it are gone:
+  1. `components/audit-log/audit-log-table.tsx` — category swatch now resolves a Tailwind class from a `Record<AuditEventCategory, string>` map instead of setting `style={{ backgroundColor: ... }}`.
+  2. `components/ui/sonner.tsx` — Toaster's CSS custom properties moved out of the `style` prop into a `.toaster { … }` rule in `app/globals.css`.
+- `grep -rn "style={" app components lib` returns no matches.
 
-### Deliverables
+### Remaining validation
 
-| #   | Deliverable                   | Change                                                                                                                                                                                                                                                            |
-| --- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.1 | Class-based category swatch   | Replace the `style` prop in `audit-log-table.tsx` with a `CATEGORY_SWATCH_CLASS: Record<AuditEventCategory, string>` map of Tailwind arbitrary-value classes (e.g. `bg-[var(--color-success-500)]`), mirroring the existing `CATEGORY_BORDER_COLORS` entries 1:1. |
-| 1.2 | Stylesheet-based Toaster vars | Move the 4 custom properties from the `style` prop in `sonner.tsx` into a `.toaster { … }` rule in `app/globals.css` (component already carries `className="toaster group"`).                                                                                     |
-| 1.3 | CSP tightened                 | Remove `'unsafe-inline'` from `style-src` in `next.config.ts`; update the stale comment block.                                                                                                                                                                    |
-| 1.4 | Regression guard              | Add ESLint `react/forbid-dom-props` (or equivalent rule) banning the `style` prop, so a new inline style can't silently re-require `'unsafe-inline'` (per `usrmgmt-code-standards.md` §5, which already forbids inline `style` except commented dynamic values).  |
-
-### Risk / rollout note
-
-Removing `'unsafe-inline'` blocks **server-rendered** `style` attributes and `setAttribute('style', …)` app-wide — including any SSR'd inline styles from third-party components (Radix positions floating elements with inline styles; client-side CSSOM writes are unaffected, but SSR'd attributes are dropped at parse time). Mitigation:
-
-1. Land 1.1–1.3 on a branch, deploy to staging.
-2. Run browser QA (`/qa`) across the flows that use floating/portal UI: toasts, dropdown menus, dialogs, selects, tooltips, audit-log table.
-3. Check the browser console for `Refused to apply inline style` CSP violations on every QA'd page — zero violations required.
-
-**Fallback** if third-party SSR breakage is found and can't be refactored: keep `'unsafe-inline'`, document the constraint in `next.config.ts`, and add `10055 IGNORE` with justification to `infra/zap/rules.tsv` (Medium doesn't block the pipeline gate, but the suppression keeps reports clean and reviewed).
+| #   | Item                 | Check                                                                                                                                                                                                           |
+| --- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.1 | Re-scan confirmation | Confirm ZAP rule 10055 produces 0 alerts on the next re-scan against staging.                                                                                                                                   |
+| 1.2 | Browser QA pass      | Run `/qa` across floating/portal UI (toasts, dropdown menus, dialogs, selects, tooltips, audit-log table); confirm no `Refused to apply inline style` console errors.                                           |
+| 1.3 | Regression guard     | No ESLint rule bans the `style` prop yet (`react/forbid-dom-props` or equivalent, per `usrmgmt-code-standards.md` §5). Optional follow-up so a future inline style can't silently re-require `'unsafe-inline'`. |
 
 ### Measurable outcome
 
 - ZAP rule 10055 produces 0 alerts on re-scan.
-- `grep -rn "style={" app components lib` returns no matches (excluding commented, justified dynamic values per code standards).
+- `grep -rn "style={" app components lib` returns no matches (excluding commented, justified dynamic values per code standards) — **currently true**.
 - No CSP violation reports in console during QA pass.
 
 ---
@@ -59,7 +49,7 @@ Removing `'unsafe-inline'` blocks **server-rendered** `style` attributes and `se
 | 2.1 | Source identification   | Fetch `/_next/static/chunks/281kxly9ymb4i.js` from staging; locate the `eval(` occurrence and attribute it to the owning module (surrounding identifiers / sourcemap). Record findings in `context/zap-reports/`.          |
 | 2.2 | Deployed-revision check | Compare the staging container's `BUILD_ID` / image tag against `main`. If stale, redeploy the current build — expected to clear the alert given 2× negative grep of the current build output.                              |
 | 2.3 | Fix or suppress         | If the `eval` survives a fresh deploy: remove/replace the offending dependency, or — if it's an unreachable guarded path — add `10110 IGNORE <justification>` to `infra/zap/rules.tsv` citing the `script-src` mitigation. |
-| 2.4 | Build-time guard        | Add a guard after `npm run build` in the `Dockerfile` builder stage (line 35, where `next build` actually runs): `RUN ! grep -rl "eval(" .next/static` — fails the image build if `eval(` ever enters a shipped chunk.     |
+| 2.4 | Build-time guard — DONE | Guard added after `npm run build` in the `Dockerfile` builder stage: greps `.next/static` for `eval(` and fails the build on a match _or_ on a grep error (e.g. missing/unreadable directory), not just a match.           |
 
 ### Measurable outcome
 
@@ -85,7 +75,7 @@ _Optional tidy-up:_ since all 10049 findings are verified-correct behaviour, add
 
 ## Sequencing
 
-1. **PR A — Fix 1** (deliverables 1.1–1.4): refactor two inline styles → tighten CSP → staging deploy → QA pass.
+1. **PR A — Fix 1**: landed (inline styles refactored, CSP tightened) — remaining work is re-scan confirmation and the `/qa` pass (items 1.1–1.3 above).
 2. **PR B — Fix 2** (deliverables 2.1–2.4): investigate chunk → redeploy/fix/suppress → add CI grep guard. Independent of PR A; can run in parallel.
 3. **Re-scan gate:** re-run the ZAP baseline stage (`infra/zap-scan-stage.yml`) against the staging revision containing both PRs.
 

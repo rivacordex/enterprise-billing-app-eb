@@ -10,7 +10,9 @@
 #
 # Alpine is intentionally NOT used: pg_partman/pg_cron aren't packaged there and
 # would have to be compiled by hand. Debian bookworm gets them straight from apt.
-FROM postgres:17-bookworm
+# Digest pinned to postgres:17-bookworm for reproducible builds (re-resolve
+# periodically via `docker pull postgres:17-bookworm` to pick up patches).
+FROM postgres:17-bookworm@sha256:17b6c778de50f4bb9a878c36e736110fbcd9b7020377d6fdfdf20f7c0347e40a
 
 # postgresql-$PG_MAJOR-{cron,partman} resolve against PG_MAJOR, set by the base image.
 RUN apt-get update \
