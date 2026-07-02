@@ -33,6 +33,10 @@ ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
 ENV BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars
 ENV BETTER_AUTH_URL=http://localhost:3000
 RUN npm run build
+# Fail the build if eval( appears in any shipped JS chunk (ZAP PR13v2 fix 2.4,
+# rule 10110). eval() at runtime would also throw due to script-src 'self'
+# (no 'unsafe-eval'), but catching it here prevents a CSP violation on users.
+RUN ! grep -rl "eval(" .next/static
 
 FROM node:22-alpine AS runner
 WORKDIR /app

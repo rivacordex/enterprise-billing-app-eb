@@ -68,6 +68,17 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/consistent-type-imports": "error",
       "no-console": "error",
+      // ZAP PR13v2 fix 1.4: ban the `style` JSX prop so a new inline style
+      // can't silently re-require `'unsafe-inline'` in style-src. Use Tailwind
+      // classes or globals.css for styling (code-standards §5).
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXAttribute[name.name='style']",
+          message:
+            "Inline style props are banned — use Tailwind classes or globals.css. Adding a style prop would require restoring 'unsafe-inline' in style-src (ZAP rule 10055).",
+        },
+      ],
       // Deny-by-default inward-only import graph (um01-spec §3.3).
       "boundaries/dependencies": [
         "error",

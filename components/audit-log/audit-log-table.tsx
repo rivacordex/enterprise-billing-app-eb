@@ -14,12 +14,12 @@ interface AuditLogTableProps {
   timezone: string;
 }
 
-const CATEGORY_BORDER_COLORS: Record<AuditEventCategory, string> = {
-  Additive: "var(--color-success-500)",
-  Change: "var(--color-info-500)",
-  Removal: "var(--color-danger-500)",
-  Session: "var(--color-cyan-500)",
-  Security: "var(--color-warning-500)",
+const CATEGORY_SWATCH_CLASS: Record<AuditEventCategory, string> = {
+  Additive: "bg-[color:var(--color-success-500)]",
+  Change: "bg-[color:var(--color-info-500)]",
+  Removal: "bg-[color:var(--color-danger-500)]",
+  Session: "bg-[color:var(--color-cyan-500)]",
+  Security: "bg-[color:var(--color-warning-500)]",
 };
 
 function formatJsonPanel(value: unknown): string {
@@ -112,9 +112,8 @@ function AuditLogTableRow({
     <>
       <tr className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]">
         <td
-          className="w-2 p-0"
+          className={`w-2 p-0 ${CATEGORY_SWATCH_CLASS[row.category]}`}
           aria-hidden="true"
-          style={{ backgroundColor: CATEGORY_BORDER_COLORS[row.category] }}
         />
         <td className="px-4 py-3">
           <AuditEventCategoryBadge category={row.category} />
