@@ -22,6 +22,7 @@ import { account, appuser } from "@/db/schema/identity";
 import { auditLog } from "@/db/schema/audit";
 import type { setPasswordAction as SetPasswordAction } from "@/actions/auth/set-password.action";
 import type * as AuthModule from "@/auth";
+import { csrfSignInOptions } from "../helpers/csrf-request";
 
 // Exercises the real `setPasswordAction` (guard + validation + service)
 // against a live Postgres database. `@/auth`'s `api.getSession` is
@@ -226,11 +227,13 @@ describe.skipIf(!databaseUrl)(
       await expect(
         auth.api.signInEmail({
           body: { email, password: OLD_TEMP_PASSWORD },
+          ...csrfSignInOptions(),
         }),
       ).rejects.toThrow();
 
       const result = await auth.api.signInEmail({
         body: { email, password: NEW_PASSWORD },
+        ...csrfSignInOptions(),
       });
       expect(result.token).toBeTruthy();
     });

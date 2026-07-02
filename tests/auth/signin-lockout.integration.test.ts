@@ -11,6 +11,7 @@ import { hashPassword } from "better-auth/crypto";
 import { appuser, account } from "@/db/schema/identity";
 import { auditLog } from "@/db/schema/audit";
 import type { auth as Auth } from "@/auth";
+import { csrfSignInOptions } from "../helpers/csrf-request";
 
 // Exercises the real `auth/index.ts` config (lock check + failure/success
 // hooks) against a live Postgres database — `@/auth` is imported dynamically
@@ -37,6 +38,7 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
     await expect(
       auth.api.signInEmail({
         body: { email: targetEmail, password: "wrong-password" },
+        ...csrfSignInOptions(),
       }),
     ).rejects.toThrow();
   }
@@ -121,7 +123,10 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
     const before = await getRow(userId);
 
     await expect(
-      auth.api.signInEmail({ body: { email, password: PASSWORD } }),
+      auth.api.signInEmail({
+        body: { email, password: PASSWORD },
+        ...csrfSignInOptions(),
+      }),
     ).rejects.toThrow();
 
     const after = await getRow(userId);
@@ -158,6 +163,7 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
 
     const result = await auth.api.signInEmail({
       body: { email, password: PASSWORD },
+      ...csrfSignInOptions(),
     });
     expect(result.token).toBeTruthy();
 
@@ -176,6 +182,7 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
 
     const result = await auth.api.signInEmail({
       body: { email, password: PASSWORD },
+      ...csrfSignInOptions(),
     });
     expect(result.token).toBeTruthy();
 
@@ -207,6 +214,7 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
     await expect(
       auth.api.signInEmail({
         body: { email: ssoEmail, password: "whatever123" },
+        ...csrfSignInOptions(),
       }),
     ).rejects.toThrow();
 
