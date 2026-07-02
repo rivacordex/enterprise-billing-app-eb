@@ -3,8 +3,11 @@ import type { NextConfig } from "next";
 // ZAP PR13 fix (rules 10038/10020/10035/10021/10063/10037/90004,
 // context/zap-reports/ZAP-PR13-fix-plan.md): no nonce/`proxy.ts` involvement
 // needed since the app has no inline `<script>` — `script-src 'self'` is
-// enough. `style-src` keeps `unsafe-inline` because `audit-log-table.tsx`
-// sets a per-row inline `style` attribute for its category color swatch.
+// enough.
+// ZAP PR13v2 fix (rule 10055, context/zap-reports/ZAP-PR13v2-fix-plan.md):
+// `'unsafe-inline'` removed from `style-src`. The two first-party inline
+// style usages that previously required it are now gone: `audit-log-table.tsx`
+// uses a Tailwind class map and `sonner.tsx`'s CSS vars moved to globals.css.
 const isProd = process.env.NODE_ENV === "production";
 // `next dev`'s React error-overlay needs `unsafe-eval` (Next's own CSP guide,
 // node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md)
@@ -12,7 +15,7 @@ const isProd = process.env.NODE_ENV === "production";
 const cspHeader = `
   default-src 'self';
   script-src 'self'${isProd ? "" : " 'unsafe-eval'"};
-  style-src 'self' 'unsafe-inline';
+  style-src 'self';
   img-src 'self' data:;
   font-src 'self';
   connect-src 'self';
