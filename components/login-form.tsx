@@ -15,7 +15,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { authClient } from "@/auth/client";
-import { CSRF_HEADER_NAME } from "@/lib/csrf";
+import { CSRF_HEADER_NAME } from "@/lib/csrf-shared";
 import { AUTH_ERROR_CODES } from "@/types/auth";
 import { loginSchema, type LoginInput } from "@/validation/login.schema";
 

@@ -1,3 +1,4 @@
+import "server-only";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
 // ZAP PR13 fix (rule 10202, context/zap-reports/ZAP-PR13-fix-plan.md):
@@ -7,25 +8,19 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 // it into a hidden field (satisfies ZAP's form-token check) and
 // `components/login-form.tsx` can resend it as a header on submit.
 // `auth/index.ts`'s sign-in hook compares the two.
-export const CSRF_COOKIE_NAME = "csrf_token";
-export const CSRF_HEADER_NAME = "x-csrf-token";
+//
+// The cookie/header names and `readCookieValue` live in lib/csrf-shared.ts
+// (client-importable, no node:crypto) — re-exported here so existing
+// server-side callers don't need two import lines. Client components must
+// import those names from lib/csrf-shared directly, never from this file.
+export {
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+  readCookieValue,
+} from "./csrf-shared";
 
 export function generateCsrfToken(): string {
   return randomBytes(32).toString("hex");
-}
-
-export function readCookieValue(
-  cookieHeader: string | null | undefined,
-  name: string,
-): string | null {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(";")) {
-    const separatorIndex = part.indexOf("=");
-    if (separatorIndex === -1) continue;
-    if (part.slice(0, separatorIndex).trim() !== name) continue;
-    return decodeURIComponent(part.slice(separatorIndex + 1).trim());
-  }
-  return null;
 }
 
 export function csrfTokensMatch(
