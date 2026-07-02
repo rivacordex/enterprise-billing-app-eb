@@ -20,6 +20,12 @@ import {
   isMicrosoftCallback,
   rejectNonSsoAccountLink,
 } from "@/auth/sso-linking";
+import {
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+  csrfTokensMatch,
+  readCookieValue,
+} from "@/lib/csrf";
 import { config, entraConfig, isSsoConfigured } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { AUTH_ERROR_CODES } from "@/types/auth";
@@ -151,6 +157,22 @@ export const auth = betterAuth({
     // SSO user, not locked) falls through to Better-Auth's own flow.
     before: createAuthMiddleware(async (ctx) => {
       if (ctx.path !== "/sign-in/email") return;
+
+      // ZAP PR13 fix (rule 10202): double-submit CSRF check, ahead of the
+      // lockout check below — `proxy.ts` mints the cookie/header pair on
+      // every `/login` view (context/zap-reports/ZAP-PR13-fix-plan.md).
+      const submittedToken = ctx.request?.headers.get(CSRF_HEADER_NAME);
+      const cookieToken = readCookieValue(
+        ctx.request?.headers.get("cookie"),
+        CSRF_COOKIE_NAME,
+      );
+      if (!csrfTokensMatch(submittedToken, cookieToken)) {
+        throw APIError.from("FORBIDDEN", {
+          code: AUTH_ERROR_CODES.INVALID_CSRF_TOKEN,
+          message: "Your session has expired. Please refresh and try again.",
+        });
+      }
+
       const { email } = ctx.body as { email: string };
 
       try {

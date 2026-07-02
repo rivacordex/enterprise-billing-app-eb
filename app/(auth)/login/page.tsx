@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { BrandLogo } from "@/components/brand-logo";
 import { LoginForm } from "@/components/login-form";
 import { MicrosoftLogo } from "@/components/icons/microsoft-logo";
+import { CSRF_HEADER_NAME } from "@/lib/csrf";
 import { isSsoConfigured } from "@/lib/config";
 import { getBrandingLogo } from "@/services/system-config/app-config-read.service";
 
@@ -37,13 +38,16 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }): Promise<React.JSX.Element> {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const requestHeaders = await headers();
+  const session = await auth.api.getSession({ headers: requestHeaders });
   if (session) {
     redirect("/");
   }
 
   const { error } = await searchParams;
   const logo = await getBrandingLogo();
+  // ZAP PR13 fix (rule 10202) — see proxy.ts for how this header is minted.
+  const csrfToken = requestHeaders.get(CSRF_HEADER_NAME);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[color:var(--surface-nav)] px-4 py-12">
@@ -72,7 +76,7 @@ export default async function LoginPage({
         )}
 
         <div className="mt-6">
-          <LoginForm />
+          <LoginForm csrfToken={csrfToken} />
         </div>
 
         {isSsoConfigured && (
