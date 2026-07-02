@@ -31,6 +31,11 @@ describe("readCookieValue", () => {
   it("decodes a percent-encoded cookie value", () => {
     expect(readCookieValue("csrf_token=a%2Fb", "csrf_token")).toBe("a/b");
   });
+
+  it("returns null instead of throwing on malformed percent-encoding", () => {
+    expect(readCookieValue("csrf_token=%", "csrf_token")).toBeNull();
+    expect(readCookieValue("csrf_token=%E0%A4%A", "csrf_token")).toBeNull();
+  });
 });
 
 describe("csrfTokensMatch", () => {
