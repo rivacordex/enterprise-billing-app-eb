@@ -1,0 +1,88 @@
+# Local DEV stack: Next.js `next dev` with hot reload + PostgreSQL.
+#
+# Unlike docker-compose.yml (prod-like standalone image), this bind-mounts your
+# source into a plain node container and runs the dev server, so edits on the
+# host reload live. node_modules and .next live in named volumes (NOT on the
+# host bind mount) so Linux-native binaries aren't clobbered by Windows ones.
+#
+#   docker compose -f docker-compose.dev.yml up          # db -> setup -> dev server
+#   docker compose -f docker-compose.dev.yml down        # stop (keeps data)
+#   docker compose -f docker-compose.dev.yml down -v      # stop and wipe DB + deps volumes
+#
+# Requires a local .env (cp .env.example .env, then set BETTER_AUTH_SECRET).
+# The DATABASE_URL below overrides the localhost value in .env for in-container use.
+
+x-node: &node-common
+  image: node:22-alpine
+  working_dir: /app
+  environment:
+    DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+  env_file:
+    - .env
+  volumes:
+    - .:/app
+    - node_modules:/app/node_modules # named volume shadows host node_modules
+    - next_cache:/app/.next
+
+services:
+  db:
+    build:
+      context: ./infra/docker/postgres # Postgres 17 + pg_partman + pg_cron
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: enterprise_billing
+    ports:
+      - "${DB_PORT:-5432}:5432" # override DB_PORT if 5432 is taken locally
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d enterprise_billing"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: install deps, migrate + seed admin + seed RBAC, then provision
+  # pg_partman/pg_cron for core.audit_log. Source is mounted here, so unlike the
+  # prod image this has the seed + bootstrap scripts. db:setup-partman must run
+  # AFTER db:migrate creates the partitioned core.audit_log parent.
+  setup:
+    <<: *node-common
+    command: sh -c "npm install && npm run db:setup && npm run db:setup-partman"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+      # db:setup-partman needs a superuser/owner conn (CREATE EXTENSION, cron.*);
+      # locally that's the same postgres role.
+      BOOTSTRAP_DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+      # lib/config.ts imports `server-only`, which throws under a plain node run.
+      # The react-server export condition makes it a no-op — same fix the CI/CD
+      # migrate job uses (bare `npm run db:migrate` doesn't carry the flag).
+      NODE_OPTIONS: --conditions=react-server
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    <<: *node-common
+    # -H 0.0.0.0 so the dev server is reachable through the published port.
+    # WATCHPACK_POLLING makes file-change detection work across the Windows->
+    # Linux bind mount (native inotify events don't cross it reliably).
+    command: sh -c "npm run dev -- -H 0.0.0.0"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+      WATCHPACK_POLLING: "true"
+    ports:
+      # Override with APP_PORT if 3000 is taken (e.g. a host `next dev`):
+      #   APP_PORT=3001 docker compose -f docker-compose.dev.yml up
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  node_modules:
+  next_cache:
