@@ -15,6 +15,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { authClient } from "@/auth/client";
+import { CSRF_HEADER_NAME } from "@/lib/csrf-shared";
 import { AUTH_ERROR_CODES } from "@/types/auth";
 import { loginSchema, type LoginInput } from "@/validation/login.schema";
 
@@ -24,10 +25,15 @@ const ERROR_MESSAGES = {
     "Your account is not currently active. Contact your administrator.",
   locked:
     "Your account has been temporarily locked. Contact your administrator.",
+  sessionExpired: "Your session has expired. Please refresh and try again.",
   unexpected: "Something went wrong. Please try again.",
 } as const;
 
-export function LoginForm(): React.JSX.Element {
+export function LoginForm({
+  csrfToken,
+}: {
+  csrfToken: string | null;
+}): React.JSX.Element {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -40,10 +46,13 @@ export function LoginForm(): React.JSX.Element {
   async function onSubmit(values: LoginInput): Promise<void> {
     setFormError(null);
 
-    const { error } = await authClient.signIn.email({
-      email: values.email,
-      password: values.password,
-    });
+    const { error } = await authClient.signIn.email(
+      {
+        email: values.email,
+        password: values.password,
+      },
+      { headers: { [CSRF_HEADER_NAME]: csrfToken ?? "" } },
+    );
 
     if (!error) {
       router.push("/");
@@ -54,6 +63,8 @@ export function LoginForm(): React.JSX.Element {
       setFormError(ERROR_MESSAGES.notActive);
     } else if (error.code === AUTH_ERROR_CODES.USER_LOCKED) {
       setFormError(ERROR_MESSAGES.locked);
+    } else if (error.code === AUTH_ERROR_CODES.INVALID_CSRF_TOKEN) {
+      setFormError(ERROR_MESSAGES.sessionExpired);
     } else if (typeof error.status === "number" && error.status >= 500) {
       setFormError(ERROR_MESSAGES.unexpected);
     } else {
@@ -67,6 +78,9 @@ export function LoginForm(): React.JSX.Element {
       method="post"
       onSubmit={(e) => void handleSubmit(onSubmit)(e)}
     >
+      {/* ZAP PR13 fix (rule 10202) — a visible token field, matched against
+          the httpOnly cookie proxy.ts set alongside it. */}
+      <input type="hidden" name="_csrf" value={csrfToken ?? ""} />
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="email">Email</FieldLabel>

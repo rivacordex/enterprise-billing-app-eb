@@ -1,0 +1,82 @@
+# Local two-container stack: Next.js app (standalone image) + PostgreSQL.
+# Mirrors prod topology (Azure Container Apps app + managed Postgres): the app
+# reaches the DB by service name `db`, and migrations run as a one-shot job
+# reusing the app image — the same pattern as the prod migrate Container Apps Job.
+#
+#   docker compose up --build        # start db -> migrate -> app
+#   docker compose down              # stop (keeps data)
+#   docker compose down -v           # stop and wipe the DB volume
+#
+# Seed the break-glass admin + RBAC once the stack is up (see notes at bottom).
+#
+# The `db` service uses the custom Postgres image (infra/docker/postgres) with
+# pg_partman + pg_cron available and pg_cron preloaded. This prod-like app image
+# deliberately omits the bootstrap scripts, so provision the partman/cron objects
+# for core.audit_log against this stack from the host, after migrate has run:
+#   BOOTSTRAP_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/enterprise_billing \
+#     npm run db:setup-partman
+# (Or just use docker-compose.dev.yml, which does this automatically.)
+
+services:
+  db:
+    build:
+      context: ./infra/docker/postgres # Postgres 17 + pg_partman + pg_cron
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: enterprise_billing
+    ports:
+      # exposed so you can seed / inspect from the host; override DB_PORT if 5432 is taken
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d enterprise_billing"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: applies drizzle migrations, then exits. Reuses the app image and
+  # overrides the entrypoint — matches the prod migrate Job (db/migrate.ts).
+  migrate:
+    build: .
+    entrypoint: ["node", "--import", "tsx", "db/migrate.ts"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+      # lib/config.ts imports `server-only`, which throws under a plain node run.
+      # The react-server export condition makes it a no-op — same fix the CI/CD
+      # migrate job uses.
+      NODE_OPTIONS: --conditions=react-server
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    ports:
+      # Override with APP_PORT if 3000 is taken (e.g. a host `next dev`):
+      #   APP_PORT=3001 docker compose up
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      # Networked overrides — point at the `db` service, not localhost.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # Everything else (BETTER_AUTH_SECRET, password policy, APP_TIMEZONE,
+      # optional Entra SSO vars, ...) comes from your local .env.
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

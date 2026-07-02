@@ -11,6 +11,7 @@ import { hashPassword } from "better-auth/crypto";
 import { appuser, account, session } from "@/db/schema/identity";
 import { auditLog } from "@/db/schema/audit";
 import type { auth as Auth } from "@/auth";
+import { csrfSignInOptions } from "../helpers/csrf-request";
 
 // Exercises the real `auth/index.ts` config (field mapping, status-check
 // hook, audit hook) against a live Postgres database — `@/auth` is imported
@@ -118,6 +119,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
     await expect(
       auth.api.signInEmail({
         body: { email: ADMIN_EMAIL, password: "wrong-password" },
+        ...csrfSignInOptions(),
       }),
     ).rejects.toThrow();
 
@@ -135,6 +137,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
     await expect(
       auth.api.signInEmail({
         body: { email: "nobody@example.com", password: "whatever123" },
+        ...csrfSignInOptions(),
       }),
     ).rejects.toThrow();
 
@@ -146,6 +149,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
     await expect(
       auth.api.signInEmail({
         body: { email: DISABLED_EMAIL, password: ADMIN_PASSWORD },
+        ...csrfSignInOptions(),
       }),
     ).rejects.toThrow();
 
@@ -159,6 +163,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
   it("allows sign-in for a PENDING user (um09: forced first-login flow)", async () => {
     const result = await auth.api.signInEmail({
       body: { email: PENDING_EMAIL, password: ADMIN_PASSWORD },
+      ...csrfSignInOptions(),
     });
     expect(result.token).toBeTruthy();
 
@@ -172,6 +177,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
   it("creates a session and a LOCAL_LOGIN audit row, and updates last_login_datetime, on success", async () => {
     const result = await auth.api.signInEmail({
       body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+      ...csrfSignInOptions(),
     });
 
     expect(result.token).toBeTruthy();
@@ -233,6 +239,7 @@ describe.skipIf(!databaseUrl)("sign-in flow (requires DATABASE_URL)", () => {
     try {
       const result = await auth.api.signInEmail({
         body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+        ...csrfSignInOptions(),
       });
 
       // The session itself is unaffected by the audit-write failure.

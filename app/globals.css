@@ -249,3 +249,12 @@
     @apply font-sans;
   }
 }
+
+/* Toaster (sonner) theming vars — moved here from components/ui/sonner.tsx's
+   style prop so style-src can drop 'unsafe-inline' (ZAP PR13v2 fix 1.2). */
+.toaster {
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+  --border-radius: var(--radius);
+}
