@@ -27,7 +27,7 @@ vi.mock("@/components/system-config/config-table", () => ({
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import SystemConfigPage from "@/app/(admin)/administration/system-config/page";
+import SystemConfigPage from "@/app/(app)/administration/system-config/page";
 import { ConfigTable } from "@/components/system-config/config-table";
 import { getSystemConfigParams } from "@/services/system-config/system-config-read.service";
 

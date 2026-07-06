@@ -27,7 +27,7 @@ vi.mock("@/components/audit-log/audit-log-pagination", () => ({
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import AuditLogPage from "@/app/(admin)/administration/audit-log/page";
+import AuditLogPage from "@/app/(app)/administration/audit-log/page";
 import {
   getAuditLog,
   getAuditLogActors,

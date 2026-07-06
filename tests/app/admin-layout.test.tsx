@@ -22,7 +22,7 @@ vi.mock("@/components/ui/sonner", () => ({
   Toaster: () => null,
 }));
 
-import AdminLayout from "@/app/(admin)/layout";
+import AdminLayout from "@/app/(app)/layout";
 import { getCurrentUserIdentity } from "@/auth/guard";
 
 const mockGetCurrentUserIdentity = vi.mocked(getCurrentUserIdentity);

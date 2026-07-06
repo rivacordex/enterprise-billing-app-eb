@@ -38,7 +38,7 @@ vi.mock("@/lib/config", () => ({
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import UsersPage from "@/app/(admin)/administration/users/page";
+import UsersPage from "@/app/(app)/administration/users/page";
 import { listRoles } from "@/services/roles/roles-read.service";
 import { getUserById, listUsers } from "@/services/users/users-read.service";
 

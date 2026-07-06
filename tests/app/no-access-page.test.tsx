@@ -13,7 +13,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-import NoAccessPage from "@/app/(admin)/no-access/page";
+import NoAccessPage from "@/app/(app)/no-access/page";
 import { requireAuthenticated } from "@/auth/guard";
 
 describe("NoAccessPage", () => {
