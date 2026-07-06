@@ -8,6 +8,7 @@ export const PERMISSIONS = {
   ROLES: "roles",
   SYSTEM_CONFIG: "system_config",
   AUDIT_LOG: "audit_log",
+  PRODUCTS: "products",
 } as const satisfies Record<string, PermissionName>;
 
 export const LEVELS = {

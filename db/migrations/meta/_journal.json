@@ -43,6 +43,13 @@
       "when": 1782692164008,
       "tag": "0005_admin_chrome_config",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783328053926,
+      "tag": "0006_product",
+      "breakpoints": true
     }
   ]
 }

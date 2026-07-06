@@ -58,6 +58,7 @@ describe("SystemConfigPage", () => {
         roles: "DELETE",
         system_config: "DELETE",
         audit_log: "READ",
+        products: "DELETE",
       },
     });
 
@@ -93,6 +94,7 @@ describe("SystemConfigPage", () => {
         roles: "DELETE",
         system_config: "EDIT",
         audit_log: "READ",
+        products: null,
       },
     });
 
@@ -113,6 +115,7 @@ describe("SystemConfigPage", () => {
         roles: null,
         system_config: "READ",
         audit_log: null,
+        products: null,
       },
     });
 
@@ -133,6 +136,7 @@ describe("SystemConfigPage", () => {
         roles: null,
         system_config: "DELETE",
         audit_log: null,
+        products: null,
       },
     });
 

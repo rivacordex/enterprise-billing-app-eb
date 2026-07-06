@@ -19,7 +19,13 @@ import type { EffectivePermissionMap } from "@/types/permissions";
 import type { RoleWithMappings } from "@/types/roles";
 
 function emptyMap(): EffectivePermissionMap {
-  return { users: null, roles: null, system_config: null, audit_log: null };
+  return {
+    users: null,
+    roles: null,
+    system_config: null,
+    audit_log: null,
+    products: null,
+  };
 }
 
 const ADMIN_ROLE: RoleWithMappings = {

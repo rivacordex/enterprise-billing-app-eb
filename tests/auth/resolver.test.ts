@@ -39,6 +39,7 @@ describe("resolveEffectivePermissions", () => {
       roles: null,
       system_config: null,
       audit_log: null,
+      products: null,
     });
     expect(findGrantsByRoleIds).not.toHaveBeenCalled();
   });
@@ -56,6 +57,7 @@ describe("resolveEffectivePermissions", () => {
       roles: null,
       system_config: null,
       audit_log: null,
+      products: null,
     });
   });
 
@@ -75,6 +77,7 @@ describe("resolveEffectivePermissions", () => {
       roles: "DELETE",
       system_config: "DELETE",
       audit_log: "READ",
+      products: null,
     });
   });
 
@@ -113,6 +116,7 @@ describe("resolveEffectivePermissions", () => {
       roles: null,
       system_config: null,
       audit_log: null,
+      products: null,
     });
   });
 

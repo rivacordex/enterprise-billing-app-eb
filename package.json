@@ -23,7 +23,8 @@
     "db:setup-partman": "node --env-file=.env --import tsx db/bootstrap/audit-partman-setup.ts",
     "db:seed": "node --env-file=.env --import tsx db/seeds/seed-admin.ts",
     "db:seed-rbac": "node --env-file=.env --import tsx db/seeds/seed-rbac.ts",
-    "db:setup": "npm run db:migrate && npm run db:seed && npm run db:seed-rbac",
+    "db:seed-product": "node --env-file=.env --import tsx db/seeds/product.ts",
+    "db:setup": "npm run db:migrate && npm run db:seed && npm run db:seed-rbac && npm run db:seed-product",
     "db:introspect": "drizzle-kit introspect"
   },
   "dependencies": {

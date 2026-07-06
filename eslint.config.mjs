@@ -190,8 +190,14 @@ const eslintConfig = defineConfig([
               allow: { to: { type: ["types"] } },
             },
             {
+              // "validation" added for pm02's `db/schema/product.ts` (a
+              // type-only `.$type<T>()` import of the owning Zod schema's
+              // inferred JSONB shape, general code-standards §6.17) and
+              // `db/seeds/product.ts` (parses every JSONB/price payload
+              // through that same schema before insert, module
+              // code-standards §1.7 — no unvalidated JSONB reaches the DB).
               from: { type: "db" },
-              allow: { to: { type: ["db", "types", "lib"] } },
+              allow: { to: { type: ["db", "validation", "types", "lib"] } },
             },
             {
               // "validation" self-import added for um25's `validation/set-

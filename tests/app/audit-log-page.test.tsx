@@ -66,6 +66,7 @@ describe("AuditLogPage", () => {
         roles: "DELETE",
         system_config: "DELETE",
         audit_log: "READ",
+        products: "DELETE",
       },
     });
 
@@ -106,6 +107,7 @@ describe("AuditLogPage", () => {
         roles: null,
         system_config: null,
         audit_log: "READ",
+        products: null,
       },
     });
 
@@ -125,6 +127,7 @@ describe("AuditLogPage", () => {
         roles: null,
         system_config: null,
         audit_log: "READ",
+        products: null,
       },
     });
 

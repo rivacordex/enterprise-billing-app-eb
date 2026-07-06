@@ -17,6 +17,9 @@ describe.skipIf(!databaseUrl)(
 
     beforeAll(async () => {
       sql = postgres(databaseUrl as string, { max: 1 });
+      // "product" holds FKs into "core" (last_edited_by -> core.appuser), so
+      // it must drop first (pm02-spec §3.8).
+      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await migrate(drizzle(sql), {
@@ -26,6 +29,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.end();
