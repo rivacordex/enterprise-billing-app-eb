@@ -33,6 +33,7 @@ describe.skipIf(!databaseUrl)(
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
+      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       db = drizzle(sql, { schema });
@@ -97,6 +98,7 @@ describe.skipIf(!databaseUrl)(
     }, 30_000);
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.end();
@@ -108,7 +110,7 @@ describe.skipIf(!databaseUrl)(
         expect(result).toHaveLength(3);
       });
 
-      it("ADMIN's mappings are users:DELETE, roles:DELETE, system_config:DELETE, audit_log:READ", async () => {
+      it("ADMIN's mappings are users:DELETE, roles:DELETE, system_config:DELETE, audit_log:READ, products:null", async () => {
         const result = await getAllRolesWithMappings();
         const admin = result.find((r) => r.roleName === "ADMIN")!;
         expect(admin.mappings).toEqual([
@@ -116,6 +118,7 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "roles", assignedLevel: "DELETE" },
           { permissionName: "system_config", assignedLevel: "DELETE" },
           { permissionName: "audit_log", assignedLevel: "READ" },
+          { permissionName: "products", assignedLevel: null },
         ]);
       });
 
@@ -129,7 +132,7 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      it("mappings order is always users, roles, system_config, audit_log regardless of DB row order", async () => {
+      it("mappings order is always users, roles, system_config, audit_log, products regardless of DB row order", async () => {
         const result = await getAllRolesWithMappings();
         for (const role of result) {
           expect(role.mappings.map((m) => m.permissionName)).toEqual([
@@ -137,6 +140,7 @@ describe.skipIf(!databaseUrl)(
             "roles",
             "system_config",
             "audit_log",
+            "products",
           ]);
         }
       });
@@ -151,6 +155,7 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "roles", assignedLevel: "DELETE" },
           { permissionName: "system_config", assignedLevel: "DELETE" },
           { permissionName: "audit_log", assignedLevel: "READ" },
+          { permissionName: "products", assignedLevel: null },
         ]);
       });
 

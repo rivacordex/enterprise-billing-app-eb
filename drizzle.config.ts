@@ -8,7 +8,7 @@ export default defineConfig({
   schema: "./db/schema",
   out: "./db/migrations",
   dbCredentials: { url: process.env.DATABASE_URL! },
-  schemaFilter: ["core"],
+  schemaFilter: ["core", "product"],
   verbose: true,
   strict: true,
 });

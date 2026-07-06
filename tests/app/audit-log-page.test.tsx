@@ -27,7 +27,7 @@ vi.mock("@/components/audit-log/audit-log-pagination", () => ({
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import AuditLogPage from "@/app/(admin)/administration/audit-log/page";
+import AuditLogPage from "@/app/(app)/administration/audit-log/page";
 import {
   getAuditLog,
   getAuditLogActors,
@@ -66,6 +66,7 @@ describe("AuditLogPage", () => {
         roles: "DELETE",
         system_config: "DELETE",
         audit_log: "READ",
+        products: "DELETE",
       },
     });
 
@@ -106,6 +107,7 @@ describe("AuditLogPage", () => {
         roles: null,
         system_config: null,
         audit_log: "READ",
+        products: null,
       },
     });
 
@@ -125,6 +127,7 @@ describe("AuditLogPage", () => {
         roles: null,
         system_config: null,
         audit_log: "READ",
+        products: null,
       },
     });
 

@@ -5,8 +5,6 @@
 export const AUTH_ERROR_CODES = {
   USER_NOT_ACTIVE: "USER_NOT_ACTIVE",
   USER_LOCKED: "USER_LOCKED",
-  // ZAP PR13 fix (rule 10202) — thrown by `auth/index.ts`'s sign-in hook
-  // when the double-submit CSRF token (proxy.ts) doesn't match the cookie.
   INVALID_CSRF_TOKEN: "INVALID_CSRF_TOKEN",
 } as const;
 

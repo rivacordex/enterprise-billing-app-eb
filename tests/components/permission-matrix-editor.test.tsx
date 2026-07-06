@@ -30,6 +30,7 @@ const ADMIN_ROLE: RoleWithMappings = {
     { permissionName: "roles", assignedLevel: "DELETE" },
     { permissionName: "system_config", assignedLevel: "DELETE" },
     { permissionName: "audit_log", assignedLevel: "READ" },
+    { permissionName: "products", assignedLevel: "DELETE" },
   ],
 };
 
@@ -44,6 +45,7 @@ const MANAGER_ROLE: RoleWithMappings = {
     { permissionName: "roles", assignedLevel: null },
     { permissionName: "system_config", assignedLevel: null },
     { permissionName: "audit_log", assignedLevel: null },
+    { permissionName: "products", assignedLevel: null },
   ],
 };
 
@@ -57,13 +59,19 @@ beforeEach(() => {
 });
 
 describe("PermissionMatrixEditor", () => {
-  it("renders 4 rows in PERMISSION_NAMES order", () => {
+  it("renders 5 rows in PERMISSION_NAMES order", () => {
     render(<PermissionMatrixEditor role={ADMIN_ROLE} />);
     const rowLabels = screen
       .getAllByRole("row")
       .slice(1)
       .map((row) => row.querySelector("td")?.textContent);
-    expect(rowLabels).toEqual(["Users", "Roles", "System Config", "Audit Log"]);
+    expect(rowLabels).toEqual([
+      "Users",
+      "Roles",
+      "System Config",
+      "Audit Log",
+      "Products",
+    ]);
   });
 
   it("ADMIN users row: DELETE is pressed, others are not", () => {
@@ -102,7 +110,13 @@ describe("PermissionMatrixEditor", () => {
 
   it("MANAGER role: all rows show '—' pressed", () => {
     render(<PermissionMatrixEditor role={MANAGER_ROLE} />);
-    for (const label of ["Users", "Roles", "System Config", "Audit Log"]) {
+    for (const label of [
+      "Users",
+      "Roles",
+      "System Config",
+      "Audit Log",
+      "Products",
+    ]) {
       const group = rowGroup(label);
       expect(within(group).getByRole("button", { name: "—" })).toHaveAttribute(
         "aria-pressed",
@@ -247,6 +261,7 @@ describe("PermissionMatrixEditor", () => {
       "Permission level for Roles",
       "Permission level for System Config",
       "Permission level for Audit Log",
+      "Permission level for Products",
     ]);
   });
 });
