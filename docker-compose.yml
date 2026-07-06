@@ -47,6 +47,14 @@ services:
       # The react-server export condition makes it a no-op — same fix the CI/CD
       # migrate job uses.
       NODE_OPTIONS: --conditions=react-server
+    # db/migrate.ts never reads BETTER_AUTH_SECRET/BETTER_AUTH_URL, but
+    # lib/config.ts's env schema requires both at load time regardless — load
+    # .env so they (and everything else the schema needs) are present, same
+    # as the `app` service below. (Prod's migrate Container Apps Job instead
+    # injects build_time_placeholder values for the same reason — see
+    # infra/bicep/modules/container-app-job.bicep.)
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy

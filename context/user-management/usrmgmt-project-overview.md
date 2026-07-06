@@ -60,7 +60,7 @@ All four require the **ADMIN** role in v1.
 
 ## Data Model (10 tables)
 
-The **shared core** every later module reuses (see architecture, _Multi-Module Database Design_); modules add domain tables but never duplicate identity, RBAC, config, or audit. Better-Auth's managed fields map to the snake_case columns below via field mapping (declared once in `auth/`); the whole database is snake_case.
+The **shared core** every later module reuses (see architecture, *Multi-Module Database Design*); modules add domain tables but never duplicate identity, RBAC, config, or audit. Better-Auth's managed fields map to the snake_case columns below via field mapping (declared once in `auth/`); the whole database is snake_case.
 
 ### Identity (Better-Auth-managed, remapped to snake_case)
 
@@ -71,26 +71,26 @@ The **shared core** every later module reuses (see architecture, _Multi-Module D
 
 ### RBAC (ours; snake_case)
 
-- **`ROLES`** — `role_id` (PK), `role_name` (unique), `role_descr`, timestamps. _Seeded: ADMIN, MANAGER, USER._
+- **`ROLES`** — `role_id` (PK), `role_name` (unique), `role_descr`, timestamps. *Seeded: ADMIN, MANAGER, USER.*
 - **`ROLE_ASSIGN`** — `role_assign_id` (PK), `ref_user_id`→APPUSER, `ref_role_id`→ROLES, `assigned_by`→APPUSER, `created_datetime`; unique(`ref_user_id`, `ref_role_id`).
 - **`PERMISSIONS`** — `permission_id` (PK), `permission_name` (unique; `users`, `roles`, `system_config`, `audit_log`), `permission_info`. **Migration-inserted only**, one row per page/module.
 - **`ROLE_PERMISSION_ASSIGN`** — `role_permission_id` (PK), `ref_role_id`→ROLES, `ref_permission_id`→PERMISSIONS, `permission_type` (`READ`|`EDIT`|`DELETE`, CHECK), timestamps; unique(`ref_role_id`, `ref_permission_id`).
 
 ### Config + audit (ours; snake_case)
 
-- **`SYSTEM_CONFIG`** — `config_id` (PK), `config_group`, `config_version`, `config_key`, `config_value`, `is_secret`, `status` (`DRAFT`|`ACTIVE`|`RETIRED`), `modified_by`, timestamps; unique(`config_group`, `config_version`, `config_key`). _`is_secret` reserved, always FALSE in v1 — no secret in the DB._
+- **`SYSTEM_CONFIG`** — `config_id` (PK), `config_group`, `config_version`, `config_key`, `config_value`, `is_secret`, `status` (`DRAFT`|`ACTIVE`|`RETIRED`), `modified_by`, timestamps; unique(`config_group`, `config_version`, `config_key`). *`is_secret` reserved, always FALSE in v1 — no secret in the DB.*
 - **`AUDIT_LOG`** — `audit_id` (PK), `event_type`, `actor_user_id`→APPUSER, `target_entity`, `target_id`, `before_data` (JSON), `after_data` (JSON), `created_datetime`. **Append-only**: app DB role has no UPDATE/DELETE.
 
 ## Roles & Default Permission Seed
 
 Administration is **ADMIN-only** in v1. ADMIN holds all grants; MANAGER and USER are seeded and permanent but carry no v1 grants — they exist for later modules, which map their own permission rows to these roles without code changes.
 
-| Permission (page) | ADMIN  | MANAGER | USER |
-| ----------------- | ------ | ------- | ---- |
-| `users`           | DELETE | —       | —    |
-| `roles`           | DELETE | —       | —    |
-| `system_config`   | DELETE | —       | —    |
-| `audit_log`       | READ   | —       | —    |
+| Permission (page) | ADMIN | MANAGER | USER |
+|---|---|---|---|
+| `users` | DELETE | — | — |
+| `roles` | DELETE | — | — |
+| `system_config` | DELETE | — | — |
+| `audit_log` | READ | — | — |
 
 - **ADMIN** — full user lifecycle (incl. tombstone), role/permission definition, system config, audit read. The only role with v1 access.
 - **MANAGER / USER** — reserved; no v1 grants; land on `/no-access` until a later module grants a permission.
@@ -112,10 +112,9 @@ Administration is **ADMIN-only** in v1. ADMIN holds all grants; MANAGER and USER
 
 ## Features
 
-By area; each is gated by the permission in _Roles & Default Permission Seed_ and is ADMIN-only in v1.
+By area; each is gated by the permission in *Roles & Default Permission Seed* and is ADMIN-only in v1.
 
 ### Authentication & sessions
-
 - Two mutually exclusive methods per user: **SSO** (Entra via Better-Auth's Microsoft/OIDC provider) and **LOCAL** (email + password).
 - **Entra SSO** with email-match linking on first login (captures Entra object id; PENDING → ACTIVE; writes `SSO_LOGIN`). No matching SSO account → rejected, nothing created.
 - **Local sign-in** with scrypt hashing, one-time temp passwords, forced first-login change.
@@ -124,11 +123,9 @@ By area; each is gated by the permission in _Roles & Default Permission Seed_ an
 - **Seeded local admin** — bootstrap + break-glass when Entra is unconfigured/unavailable.
 
 ### User administration
-
 - List users; create (PENDING; LOCAL returns a one-time temp password); edit name/phone; assign/revoke roles (`assigned_by` recorded); switch `auth_method`; reset LOCAL password; unlock; disable/re-enable (next-request effect); tombstone-delete (`status = DELETED`, assignments removed; target DISABLED + actor holds `users:DELETE`; row preserved, email/Entra identity reusable).
 
 ### Roles & permissions
-
 - Create/edit/describe/delete roles (deletion blocked while assigned; seeded roles permanent).
 - Map each role to registry entries at **READ/EDIT/DELETE** (DELETE ⊃ EDIT ⊃ READ).
 - Code-seeded registry (one row per page/module); UI can't create permission rows.
@@ -136,19 +133,16 @@ By area; each is gated by the permission in _Roles & Default Permission Seed_ an
 - Three seeded roles; only ADMIN has v1 grants.
 
 ### System configuration
-
 - Manage non-secret parameters via `SYSTEM_CONFIG`.
 - Show non-secret Entra values (tenant id, derived redirect URI) read-only from env.
 - Schema reserved (`config_version`/`status`) for a future in-UI lifecycle.
 
 ### Authorization enforcement
-
 - Server-side check on every protected request (403 on insufficient level), loading status + effective permissions per request.
 - Real-time: mapping/assignment changes apply on the next request.
 - Effective-permission map for UI show/hide only — never the enforcement point.
 
 ### Audit
-
 - Append-only, immutable log of every mutation and successful sign-in (actor, timestamp, target, before/after).
 - Audit Log viewer filterable by event type, actor, date range; gated by `audit_log:READ`.
 
@@ -161,7 +155,7 @@ By area; each is gated by the permission in _Roles & Default Permission Seed_ an
 - Append-only audit of every mutation and both sign-in methods (`SSO_LOGIN`, `LOCAL_LOGIN`).
 - Migrations: schema, registry seed, three-role seed with the ADMIN-only matrix, seeded local admin.
 
-Anything not listed here or in _Features_ is deferred.
+Anything not listed here or in *Features* is deferred.
 
 ## Out of Scope (v1)
 
