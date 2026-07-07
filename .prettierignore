@@ -2,3 +2,8 @@
 node_modules
 coverage
 package-lock.json
+
+# Prettier hardcodes *-emphasis -> _emphasis_ in markdown with no config
+# escape hatch; the project docs use *italic* throughout, so exclude
+# markdown from formatting rather than fight it on every `format` run.
+*.md
