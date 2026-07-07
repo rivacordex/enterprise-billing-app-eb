@@ -57,7 +57,7 @@ export const productOffering = product.table("product_offering", {
     .notNull()
     .default(sql`now()`),
   lastEditedBy: text("last_edited_by").references(() => appuser.id, {
-    onDelete: "restrict",
+    onDelete: "set null",
   }),
 });
 
@@ -147,6 +147,7 @@ export const productOfferingPrice = product.table(
       "product_offering_price_amount_xor_tiers_check",
       sql`(pricing_model = 'flat' AND amount IS NOT NULL AND pricing_characteristics IS NULL) OR (pricing_model = 'tiered' AND amount IS NULL AND pricing_characteristics IS NOT NULL)`,
     ),
+    check("product_offering_price_amount_check", sql`amount >= 0`),
   ],
 );
 

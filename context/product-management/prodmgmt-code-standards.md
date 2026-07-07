@@ -36,7 +36,7 @@
 
 ## 3. Next.js Rules (module-specific)
 
-1. **One page, RSC, thin orchestrator.** `app/(app)/products/product-offering/page.tsx` does exactly: `await requirePermission('products', 'READ')` → parse `searchParams` with the `validation/product` list schema → call `services/product` → compose the four section components. No DB access, no business rules, no heavy markup (general §3.3).
+1. **One page, RSC, thin orchestrator.** `app/(app)/products/product-offering/page.tsx` does exactly: `await requirePermission('products', 'READ')` → `await` the `searchParams` prop (a `Promise` in this Next.js version — this version's breaking change, not a synchronous page-prop shape, per AGENTS.md) → parse the resolved object with the `validation/product` list schema → call `services/product` → compose the four section components. No DB access, no business rules, no heavy markup (general §3.3).
 2. **All list and selection state lives in URL searchParams** — `q` (name search), `status` (lifecycle filter), `sort`, `page`, `offering` (selected row). No client-side state store, no `useState` mirror of the URL, no cookies/localStorage for view state.
 3. **searchParams are parsed, never trusted.** Invalid or unknown values fall back to schema defaults (page 1, default sort, RETIRED hidden) rather than erroring. A well-formed `?offering=` that matches no row renders the empty-detail state — not 404, not an error boundary.
 4. **RETIRED is hidden server-side by default.** The default filter is applied in the service when `status` is absent; it is not a client-side row filter.

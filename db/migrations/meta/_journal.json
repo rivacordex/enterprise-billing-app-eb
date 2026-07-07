@@ -50,6 +50,13 @@
       "when": 1783328053926,
       "tag": "0006_product",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783353601138,
+      "tag": "0007_product_constraints_fix",
+      "breakpoints": true
     }
   ]
 }
