@@ -24,7 +24,7 @@ vi.mock("@/db/client", () => ({ db: {} }));
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import RolesPage from "@/app/(admin)/administration/roles/page";
+import RolesPage from "@/app/(app)/administration/roles/page";
 import {
   getAllRolesWithMappings,
   getRoleWithMappings,
@@ -56,6 +56,7 @@ describe("RolesPage", () => {
         roles: "DELETE",
         system_config: "DELETE",
         audit_log: "READ",
+        products: "DELETE",
       },
     });
     mockGetAllRolesWithMappings.mockResolvedValue([]);
@@ -78,6 +79,7 @@ describe("RolesPage", () => {
         roles: "DELETE",
         system_config: "DELETE",
         audit_log: "READ",
+        products: "DELETE",
       },
     });
     mockGetAllRolesWithMappings.mockResolvedValue([]);

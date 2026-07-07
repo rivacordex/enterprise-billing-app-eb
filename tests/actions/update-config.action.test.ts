@@ -41,6 +41,7 @@ beforeEach(() => {
       roles: null,
       system_config: "EDIT",
       audit_log: null,
+      products: null,
     },
   });
 });

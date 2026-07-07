@@ -15,6 +15,7 @@ const NO_GRANTS: EffectivePermissionMap = {
   roles: null,
   system_config: null,
   audit_log: null,
+  products: null,
 };
 
 const ADMIN_GRANTS: EffectivePermissionMap = {
@@ -22,6 +23,7 @@ const ADMIN_GRANTS: EffectivePermissionMap = {
   roles: "DELETE",
   system_config: "DELETE",
   audit_log: "READ",
+  products: "DELETE",
 };
 
 describe("resolveRootRedirect", () => {

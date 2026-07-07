@@ -18,8 +18,7 @@ describe("GET /api/health", () => {
   });
 
   it("falls back to 'local' when BUILD_VERSION is unset", async () => {
-    vi.stubEnv("BUILD_VERSION", "");
-    vi.unstubAllEnvs();
+    vi.stubEnv("BUILD_VERSION", undefined);
 
     const response = await GET();
     const body = await response.json();

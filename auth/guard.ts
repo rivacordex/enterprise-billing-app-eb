@@ -43,7 +43,7 @@ export async function requireAuthenticated(): Promise<{
 
 // um26-spec §26.1: the admin layout's sidebar footer shows the signed-in
 // user's name + email. Unlike the spec's assumption, this codebase's
-// `(admin)/layout.tsx` runs no guard (each child page guards itself), so it
+// `(app)/layout.tsx` runs no guard (each child page guards itself), so it
 // has no resolved user. This read-only helper resolves the session-bound
 // APPUSER identity for display — it returns `null` rather than redirecting so
 // it can't alter the layout's redirect behavior, and living in `auth/` means

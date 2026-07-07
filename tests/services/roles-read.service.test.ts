@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 
 describe("getAllRolesWithMappings", () => {
-  it("returns 3 RoleWithMappings objects; ADMIN has 4 mapped entries, MANAGER/USER are all null", async () => {
+  it("returns 3 RoleWithMappings objects; ADMIN has 5 mapped entries, MANAGER/USER are all null", async () => {
     mockFindAll.mockResolvedValue([ADMIN_ROLE, MANAGER_ROLE, USER_ROLE]);
     mockFindMappingsForRoles.mockResolvedValue(
       ADMIN_ASSIGNMENTS.map((a) => ({ ...a, roleId: "role-admin" })),
@@ -84,6 +84,7 @@ describe("getAllRolesWithMappings", () => {
       { permissionName: "roles", assignedLevel: "DELETE" },
       { permissionName: "system_config", assignedLevel: "DELETE" },
       { permissionName: "audit_log", assignedLevel: "READ" },
+      { permissionName: "products", assignedLevel: null },
     ]);
     const manager = result.find((r) => r.roleId === "role-manager")!;
     expect(manager.mappings.every((m) => m.assignedLevel === null)).toBe(true);
@@ -96,10 +97,10 @@ describe("getAllRolesWithMappings", () => {
     );
 
     const [role] = await getAllRolesWithMappings();
-    expect(role!.mappings).toHaveLength(4);
+    expect(role!.mappings).toHaveLength(5);
   });
 
-  it("mappings are always ordered users, roles, system_config, audit_log", async () => {
+  it("mappings are always ordered users, roles, system_config, audit_log, products", async () => {
     mockFindAll.mockResolvedValue([ADMIN_ROLE]);
     // Returned out of order on purpose.
     mockFindMappingsForRoles.mockResolvedValue(
@@ -114,6 +115,7 @@ describe("getAllRolesWithMappings", () => {
       "roles",
       "system_config",
       "audit_log",
+      "products",
     ]);
   });
 });
@@ -128,7 +130,7 @@ describe("getRoleWithMappings", () => {
     expect(mockFindMappingsForRole).not.toHaveBeenCalled();
   });
 
-  it("returns all 4 mappings as null when found with no assignments", async () => {
+  it("returns all 5 mappings as null when found with no assignments", async () => {
     mockFindRoleById.mockResolvedValue(MANAGER_ROLE);
     mockFindMappingsForRole.mockResolvedValue([]);
 
@@ -150,6 +152,7 @@ describe("getRoleWithMappings", () => {
       { permissionName: "roles", assignedLevel: null },
       { permissionName: "system_config", assignedLevel: null },
       { permissionName: "audit_log", assignedLevel: null },
+      { permissionName: "products", assignedLevel: null },
     ]);
   });
 });

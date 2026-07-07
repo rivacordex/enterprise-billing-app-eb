@@ -41,7 +41,13 @@ const mockSetPermissionMappingAction = vi.mocked(setPermissionMappingAction);
 const mockToastError = vi.mocked(toast.error);
 
 function emptyMap(): EffectivePermissionMap {
-  return { users: null, roles: null, system_config: null, audit_log: null };
+  return {
+    users: null,
+    roles: null,
+    system_config: null,
+    audit_log: null,
+    products: null,
+  };
 }
 
 function editMap(): EffectivePermissionMap {
@@ -63,6 +69,7 @@ const ADMIN_ROLE: RoleWithMappings = {
     { permissionName: "roles", assignedLevel: "DELETE" },
     { permissionName: "system_config", assignedLevel: "DELETE" },
     { permissionName: "audit_log", assignedLevel: "READ" },
+    { permissionName: "products", assignedLevel: "DELETE" },
   ],
 };
 
@@ -77,6 +84,7 @@ const CUSTOM_ROLE: RoleWithMappings = {
     { permissionName: "roles", assignedLevel: null },
     { permissionName: "system_config", assignedLevel: null },
     { permissionName: "audit_log", assignedLevel: null },
+    { permissionName: "products", assignedLevel: null },
   ],
 };
 
@@ -91,6 +99,7 @@ const MANAGER_ROLE: RoleWithMappings = {
     { permissionName: "roles", assignedLevel: null },
     { permissionName: "system_config", assignedLevel: null },
     { permissionName: "audit_log", assignedLevel: null },
+    { permissionName: "products", assignedLevel: null },
   ],
 };
 
@@ -161,7 +170,7 @@ describe("RoleDetail", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders all 4 permission rows in PERMISSION_NAMES order", () => {
+  it("renders all 5 permission rows in PERMISSION_NAMES order", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -175,10 +184,16 @@ describe("RoleDetail", () => {
       .getAllByRole("row")
       .slice(1) // drop the matrix's own header row
       .map((row) => row.querySelector("td")?.textContent);
-    expect(rowLabels).toEqual(["Users", "Roles", "System Config", "Audit Log"]);
+    expect(rowLabels).toEqual([
+      "Users",
+      "Roles",
+      "System Config",
+      "Audit Log",
+      "Products",
+    ]);
   });
 
-  it("ADMIN: shows DELETE for users/roles/system_config and READ for audit_log", () => {
+  it("ADMIN: shows DELETE for users/roles/system_config/products and READ for audit_log", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -188,11 +203,11 @@ describe("RoleDetail", () => {
         permissionMap={emptyMap()}
       />,
     );
-    expect(screen.getAllByText("DELETE")).toHaveLength(3);
+    expect(screen.getAllByText("DELETE")).toHaveLength(4);
     expect(screen.getByText("READ")).toBeInTheDocument();
   });
 
-  it("MANAGER: all 4 matrix rows show '—'", () => {
+  it("MANAGER: all 5 matrix rows show '—'", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -202,7 +217,7 @@ describe("RoleDetail", () => {
         permissionMap={emptyMap()}
       />,
     );
-    expect(screen.getAllByText("—")).toHaveLength(4);
+    expect(screen.getAllByText("—")).toHaveLength(5);
   });
 
   it("renders '—' for description when roleDescr is null", () => {
