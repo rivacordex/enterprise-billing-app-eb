@@ -76,7 +76,13 @@ Color-code the audit feed by event **family** (not per-event) so scanning is fas
 | Session | `SSO_LOGIN`, `LOCAL_LOGIN`, `USER_FIRST_LOGIN` | cyan (connectivity) |
 | Security | `USER_LOCKED`, `USER_UNLOCKED`, `USER_PASSWORD_RESET`, `USER_PASSWORD_CHANGED` | warning (amber) |
 
-**Datetime display (all admin tables/details, um29).** Datetimes are stored UTC and displayed in the configured business timezone (`APP_TIMEZONE`). Audit rows show the local wall-clock with an `Intl` offset suffix — `2026-06-17 17:14:22 (GMT+8)` — and keep the raw UTC ISO instant in the hover `title` for forensics; when the zone is `UTC` the suffix is the literal `… UTC` (no parentheses), unchanged from today. The `<time dateTime>` attribute stays ISO-8601 UTC (machine-readable) while the visible `title` shows the configured zone. Use `IBM Plex Mono` for the timestamp column to keep figures tabular (ui-context §5). DST is not handled in v1 (um29 §2.2).
+**Datetime display (all admin tables/details, um29).** Datetimes are stored UTC and displayed in the configured business timezone (`APP_TIMEZONE`). Three parts, three jobs, and the hover `title`'s job differs by table depending on what the cell text already shows:
+
+- **Cell text** — the visible, human-facing value. Where it's the absolute wall-clock (audit rows: `2026-06-17 17:14:22 (GMT+8)`, `Intl` offset suffix; literal `… UTC` — no parentheses — when the zone is `UTC`), it's already the local-zone rendering. Where it's a relative string instead (e.g. `config-table.tsx`'s "2 days ago"), the absolute value isn't on-screen at all.
+- **Hover `title`** — fills whatever the cell text left out. Audit rows show the absolute local time already, so their `title` carries the raw UTC ISO instant instead, for forensics (`audit-log-table.tsx`). Tables whose cell text is relative (`config-table.tsx`) instead put the local-zone absolute string in `title`, since that's the piece missing from the cell.
+- **`<time dateTime>` attribute** — always ISO-8601 UTC (machine-readable), regardless of what cell text or `title` show.
+
+Use `IBM Plex Mono` for the timestamp column to keep figures tabular (ui-context §5). DST is not handled in v1 (um29 §2.2).
 
 ---
 
