@@ -1,14 +1,22 @@
 import { Archive, SearchX } from "lucide-react";
 
+import { OfferingDetail } from "@/components/products/offering-detail";
+import type { OfferingDetail as OfferingDetailModel } from "@/types/product";
+
 export interface OfferingDetailRegionProps {
   hasSelection: boolean;
   notFound: boolean;
-  // pm06 will add `offering: OfferingDetail | null` here.
+  offering: OfferingDetailModel | null;
+  locale: string;
+  timezone: string;
 }
 
 export function OfferingDetailRegion({
   hasSelection,
   notFound,
+  offering,
+  locale,
+  timezone,
 }: OfferingDetailRegionProps): React.JSX.Element {
   if (notFound) {
     return (
@@ -39,7 +47,15 @@ export function OfferingDetailRegion({
     <div className="space-y-4">
       <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-4">
         <h2 className="text-h3 font-semibold text-foreground">Details</h2>
-        {/* pm06: populated detail */}
+        {offering ? (
+          <div className="mt-3">
+            <OfferingDetail
+              offering={offering}
+              locale={locale}
+              timezone={timezone}
+            />
+          </div>
+        ) : null}
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">

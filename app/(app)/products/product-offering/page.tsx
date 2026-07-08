@@ -83,7 +83,9 @@ export default async function ProductOfferingPage({
         key={parsed.offering ?? "none"}
         hasSelection={parsed.offering !== null}
         notFound={parsed.offering !== null && selectedOffering === null}
-        // pm06–08 will consume `offering={selectedOffering}` here.
+        offering={selectedOffering}
+        locale={locale}
+        timezone={timezone}
       />
     </main>
   );

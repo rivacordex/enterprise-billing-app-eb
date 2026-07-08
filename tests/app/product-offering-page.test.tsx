@@ -170,4 +170,32 @@ describe("ProductOfferingPage", () => {
       notFound: true,
     });
   });
+
+  it("threads the resolved offering, locale, and timezone into OfferingDetailRegion on a resolved deep link", async () => {
+    const fixtureOffering = {
+      productOfferingId: "PRDOFR000001",
+      name: "5G Nationwide Service Plan",
+      isBundle: false,
+      isSellable: true,
+      billingOnly: false,
+      lifecycleStatus: "ACTIVE" as const,
+      version: 3,
+      lastModified: new Date("2026-07-03T14:22:00.000Z"),
+      lastEditedByName: "Jordan Rivera",
+      specifications: [],
+      prices: [],
+    };
+    mockGetOfferingDetail.mockResolvedValue(fixtureOffering);
+
+    const result = await ProductOfferingPage({
+      searchParams: Promise.resolve({ offering: "PRDOFR000001" }),
+    });
+
+    const detailRegion = findElementByType(result, OfferingDetailRegion);
+    expect(detailRegion?.props).toMatchObject({
+      offering: fixtureOffering,
+      locale: "en-US",
+      timezone: "UTC",
+    });
+  });
 });
