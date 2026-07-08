@@ -1,0 +1,1 @@
+INSERT INTO "core"."system_config" ("config_group", "config_version", "config_key", "config_value", "description", "is_secret", "status", "modified_by") VALUES ('products', 1, 'offering_list_page_size', '5', 'Rows per page for the Product Offering catalog table (1-100).', false, 'ACTIVE', NULL);
