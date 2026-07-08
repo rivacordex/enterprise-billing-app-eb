@@ -3,7 +3,7 @@
 - **Unit:** 3 of 9 (`pm00-build-plan.md`)
 - **Dependencies:** pm02 (data layer: migration `0006_product`, `validation/product/` schemas, `types/product.ts` unions, `TOREMOVE-Template-*` seeds) verified and merged. pm03 must not start before that (pm02 §3.9).
 - **Authorizing sections:** overview *Features — Catalog listing / Offering detail / Prices panel (effectivity display)* and *Success Criteria*; `prodmgmt-architecture.md` §2 (`services/product/**`, `db/**` product scope), §3 (Storage Model — derived `end_date_time`), Module Inv. #1, #3, #6, #7, #11; `prodmgmt-code-standards.md` §1.1–§1.5, §2.5–§2.7, §6.3, §6.9, §7 (file tree), §9.2/§9.4; platform `architecture.md` §2 (boundary rule), §3 (SYSTEM_CONFIG), Inv. #9; general `code-standards.md` §2 (typed service results, explicit return types), §6.13 (pure functions), §7.5–§7.6.
-- **Codebase state assumed at start (re-verify before implementing):** pm01 + pm02 merged — `app/(app)/` exists; `db/schema/product.ts` has the 3 tables/sequences/enum; `validation/product/` has the 3 schemas; `types/product.ts` has the domain unions; migrations `0000`–`0006` applied (this unit adds `0007`); seeds provide 2 offerings / 3 specs / 6 prices incl. the **future-dated 2027 recurring successor** (fixed UTC datetimes — the derived-effectivity fixture). Established patterns this unit follows: object-literal repositories whose methods take `db: Database` first (`db/repositories/roles.repository.ts`); services import the `db` singleton and expose named use-case functions with a module-level `PAGE_SIZE`-style constant (`services/audit-log/audit-log-read.service.ts`); `systemConfigRepository.findActiveValue(db, group, key)` for config reads; ilike-escape `name.replace(/[%_\\]/g, "\\$&")` (`rolesRepository.findRoleByName`); integration tests via `describe.skipIf(!databaseUrl)` (`tests/db/*.integration.test.ts`).
+- **Codebase state assumed at start (re-verify before implementing):** pm01 + pm02 merged — `app/(app)/` exists; `db/schema/product.ts` has the 3 tables/sequences/enum; `validation/product/` has the 3 schemas; `types/product.ts` has the domain unions; migrations `0000`–`0006` applied (this unit adds `0008`); seeds provide 2 offerings / 3 specs / 6 prices incl. the **future-dated 2027 recurring successor** (fixed UTC datetimes — the derived-effectivity fixture). Established patterns this unit follows: object-literal repositories whose methods take `db: Database` first (`db/repositories/roles.repository.ts`); services import the `db` singleton and expose named use-case functions with a module-level `PAGE_SIZE`-style constant (`services/audit-log/audit-log-read.service.ts`); `systemConfigRepository.findActiveValue(db, group, key)` for config reads; ilike-escape `name.replace(/[%_\\]/g, "\\$&")` (`rolesRepository.findRoleByName`); integration tests via `describe.skipIf(!databaseUrl)` (`tests/db/*.integration.test.ts`).
 
 ---
 
@@ -27,7 +27,7 @@ No UI — boundary is `services/product/**`, `db/repositories/product-*`, read-m
 
 **Decisions resolved 2026-07-04 (user):**
 
-8. **Page size = 5, runtime-configurable** (revised from 10, user decision closing this spec — smaller pages keep integration fixtures minimal). New `core.SYSTEM_CONFIG` row `('products', 1, 'offering_list_page_size', '5')`, seeded by data-only migration `0007_product_config` (INSERT-in-migration precedent: `0004`/`0005`). `listOfferings` reads it per call via `systemConfigRepository.findActiveValue(db, "products", "offering_list_page_size")`; the value must match `/^\d+$/` and fall in **1–100**, else silently fall back to `DEFAULT_OFFERING_LIST_PAGE_SIZE = 5` (exported constant). No caching (config change takes effect next request); no per-request warn logging (log-spam). Admins can later tune it from the System Configuration page with no deploy.
+8. **Page size = 5, runtime-configurable** (revised from 10, user decision closing this spec — smaller pages keep integration fixtures minimal). New `core.SYSTEM_CONFIG` row `('products', 1, 'offering_list_page_size', '5')`, seeded by data-only migration `0008_product_config` (INSERT-in-migration precedent: `0004`/`0005`). `listOfferings` reads it per call via `systemConfigRepository.findActiveValue(db, "products", "offering_list_page_size")`; the value must match `/^\d+$/` and fall in **1–100**, else silently fall back to `DEFAULT_OFFERING_LIST_PAGE_SIZE = 5` (exported constant). No caching (config change takes effect next request); no per-request warn logging (log-spam). Admins can later tune it from the System Configuration page with no deploy.
 9. **`getOfferingDetail` returns ALL price rows** of the selected offering — superseded, current, and future-dated — each with `startDateTime` + derived `endDateTime`. History stays visible (overview: "cards per `product_offering_price` row"); nothing is re-shaped at CRUD time.
 10. **`PriceCard.effectivityStatus: 'current' | 'future' | 'superseded'`**, computed in the service from an **injectable clock**: `getOfferingDetail(offeringId, now: Date = new Date())`. Rules: `startDateTime > now` ⇒ `future`; `endDateTime !== null && endDateTime <= now` ⇒ `superseded`; else `current`. Window boundaries are `[start, successorStart)` — a price is `current` at its exact start instant and `superseded` at its successor's start instant. Union lives in `types/product.ts` (`EFFECTIVITY_STATUSES` as const, code-standards §2.1 pattern).
 11. **Deterministic ordering.** List sort maps `OFFERING_SORT_VALUES` (pm02 §3.6, `-` prefix = desc) to columns with tie-breaker `product_offering_id ASC` so pagination is stable. Specs order: `name ASC, product_spec_id ASC`. Prices order: `price_type ASC, start_date_time ASC, product_offering_price_id ASC`.
@@ -161,7 +161,7 @@ export async function getOfferingDetail(
 
 Steps: (1) `productOfferingRepository.findDetailById` — `null` ⇒ return `null` (no further queries); (2) `Promise.all` of `productSpecificationRepository.findByOfferingId` and `productOfferingPriceRepository.findByOfferingIdWithDerivedEnd`; (3) map each price row to a `PriceCard` by attaching `effectivityStatus` from the Design #10 rules (pure un-exported helper `resolveEffectivityStatus(startDateTime, endDateTime, now)` — boundary semantics `[start, successorStart)`); (4) assemble `OfferingDetail`. No filtering — all price rows returned (Design #9). Nothing here reads `AUDIT_LOG` (Inv. #7) or filters by ACTIVE — v1 is a viewer; ACTIVE-only selection is a *later-module* billing rule (Inv. #6) that these repositories make trivial by exposing `lifecycleStatus`.
 
-### 3.7 Migration — `db/migrations/0007_product_config.sql` (new, data-only)
+### 3.7 Migration — `db/migrations/0008_product_config.sql` (new, data-only)
 
 Generate an empty custom migration (`npx drizzle-kit generate --custom --name=product_config`) so the meta journal stays consistent, then add:
 
@@ -189,14 +189,14 @@ New `config_group` `'products'` (platform §3: SYSTEM_CONFIG partitioned by `con
 
 **Integration suite (`vitest.integration.config.ts`, `describe.skipIf(!databaseUrl)` — pattern: `product-schema.integration.test.ts`):**
 
-- `tests/db/product-repositories.integration.test.ts` — fresh-migrate (incl. `0007`), then insert **self-contained fixtures** directly with the Drizzle client (test code, not a production write path — Inv. #11 untouched; payloads still `.parse()`d through the pm02 Zod schemas, code-standards §1.7). Fixtures mirror the pm02 template shape: ≥ 7 offerings for pagination (page size 5 ⇒ a genuine second page; mixed DRAFT/ACTIVE/RETIRED, distinct names incl. a searchable substring), one offering carrying the three-price recurring chain (past `2025-01-01` → current `2026-01-01` → future `2027-01-01`) plus a tiered usage price. Assert:
+- `tests/db/product-repositories.integration.test.ts` — fresh-migrate (incl. `0008`), then insert **self-contained fixtures** directly with the Drizzle client (test code, not a production write path — Inv. #11 untouched; payloads still `.parse()`d through the pm02 Zod schemas, code-standards §1.7). Fixtures mirror the pm02 template shape: ≥ 7 offerings for pagination (page size 5 ⇒ a genuine second page; mixed DRAFT/ACTIVE/RETIRED, distinct names incl. a searchable substring), one offering carrying the three-price recurring chain (past `2025-01-01` → current `2026-01-01` → future `2027-01-01`) plus a tiered usage price. Assert:
   - `findList` default (`status: null`) excludes RETIRED rows; `status: 'RETIRED'` returns only them.
   - Search: case-insensitive substring match; `%`/`_` in `q` are treated literally (escaping works); no-match ⇒ `rows: [], total: 0`.
   - Sort: `name` vs `-name` reverse each other; ties break by `product_offering_id ASC`; `-last_modified` orders correctly.
   - Pagination: `pageSize` slices; page 2 continues where page 1 ended with no overlap/gap; `total` counts all matches; past-the-end page ⇒ empty rows, true `total`.
   - **Derived effectivity from real SQL** (guardrail §9.4): the recurring chain yields ends `2026-01-01` / `2027-01-01` / `null`; partition correctness — a same-offering price of a *different* `price_type` does not truncate the chain; `getOfferingDetail` with injected `now = 2026-07-04` marks the chain `superseded`/`current`/`future` and never filters rows (all superseded + future rows present, Design #9).
   - `findDetailById`: `lastEditedByName` resolves via the APPUSER join (fixture with a real user FK) and is `null` for a NULL `last_edited_by`; unknown ID ⇒ `null`.
-  - `0007` seeded row: `findActiveValue(db, 'products', 'offering_list_page_size')` returns `'10'`.
+  - `0008` seeded row: `findActiveValue(db, 'products', 'offering_list_page_size')` returns `'5'`.
   - Cleanup mirrors the pm02 harness (`DROP SCHEMA "product" CASCADE` before `core`).
 
 ### 3.9 Commit
@@ -205,12 +205,12 @@ One commit, e.g. `product repositories + services/product: list, detail, derived
 
 ## 4. Dependencies
 
-**No new npm packages** (pm00: Drizzle, Zod, vitest already installed; the window function is raw SQL through Drizzle's `sql` tag). **No DB extensions.** Config deltas: none to `drizzle.config.ts` or `package.json` — migration `0007` rides the existing `db:migrate`. Requires pm02's migration `0006`, seeds, `validation/product/` schemas, and `types/product.ts` unions in place.
+**No new npm packages** (pm00: Drizzle, Zod, vitest already installed; the window function is raw SQL through Drizzle's `sql` tag). **No DB extensions.** Config deltas: none to `drizzle.config.ts` or `package.json` — migration `0008` rides the existing `db:migrate`. Requires pm02's migration `0006`, seeds, `validation/product/` schemas, and `types/product.ts` unions in place.
 
 ## 5. Verification checklist
 
 **Diff hygiene**
-- [ ] `git status` shows only: `types/product.ts` (extended), `db/repositories/product-offering.ts` + `product-specification.ts` + `product-offering-price.ts` (new), `services/product/list-offerings.ts` + `get-offering-detail.ts` (new), `db/migrations/0007_product_config.sql` + meta journal (new), and the new test files. Nothing else.
+- [ ] `git status` shows only: `types/product.ts` (extended), `db/repositories/product-offering.ts` + `product-specification.ts` + `product-offering-price.ts` (new), `services/product/list-offerings.ts` + `get-offering-detail.ts` (new), `db/migrations/0008_product_config.sql` + meta journal (new), and the new test files. Nothing else.
 - [ ] No `actions/product/`, `app/api/product*`, `app/**`, or `components/**` change; no edit to migrations `0000`–`0006` or pm02 files.
 - [ ] `services/product/**` imports no `next/*` and no `react` (framework-agnostic — pm00 boundary).
 - [ ] `grep -rn "update\|delete" db/repositories/product-*` shows no mutation function; no `AUDIT_LOG` reference anywhere in the diff (reads not audited; audit never a pricing source, Inv. #7).
@@ -226,7 +226,7 @@ One commit, e.g. `product repositories + services/product: list, detail, derived
 - [ ] Derived-effectivity tests pass at unit level (injected `now`, boundary instants) **and** against real SQL (LEAD window, partition per `price_type`) — incl. the future-dated successor not displacing the current price and open-ended ⇒ `endDateTime: null` (guardrail §9.4, Inv. #3).
 - [ ] `getOfferingDetail` returns **all** price rows with statuses `superseded`/`current`/`future` (Design #9/#10); unknown ID ⇒ `null` without spec/price queries.
 - [ ] List behavior proven against seeded-style fixtures: RETIRED hidden by default, explicit RETIRED filter works, case-insensitive search with literal `%`/`_`, stable sort + tie-breaker, pagination slices with true `total`.
-- [ ] Fresh DB: `npm run db:setup` applies `0007`; psql `SELECT config_value FROM core.system_config WHERE config_group='products' AND config_key='offering_list_page_size'` → `'5'`; changing the row to `'25'` changes `listOfferings` page size on the next call with no deploy; junk values fall back to 5.
+- [ ] Fresh DB: `npm run db:setup` applies `0008`; psql `SELECT config_value FROM core.system_config WHERE config_group='products' AND config_key='offering_list_page_size'` → `'5'`; changing the row to `'25'` changes `listOfferings` page size on the next call with no deploy; junk values fall back to 5.
 - [ ] With the pm02 seed data and today's clock: offering 1's 2026 recurring price is `current` (end `2027-01-01`), the 2027 successor is `future` (end `null`) — spot-checked via a scratch invocation or the integration suite.
 
 **Docs in sync**
