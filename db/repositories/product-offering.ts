@@ -67,6 +67,7 @@ export const productOfferingRepository = {
       ? [desc(sortColumn), asc(productOffering.productOfferingId)]
       : [asc(sortColumn), asc(productOffering.productOfferingId)];
 
+    const page = Math.max(1, filters.page);
     const rows = await db
       .select({
         productOfferingId: productOffering.productOfferingId,
@@ -80,7 +81,7 @@ export const productOfferingRepository = {
       .where(whereClause)
       .orderBy(...orderBy)
       .limit(filters.pageSize)
-      .offset((filters.page - 1) * filters.pageSize);
+      .offset((page - 1) * filters.pageSize);
 
     return {
       total,
