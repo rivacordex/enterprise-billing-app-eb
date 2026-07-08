@@ -239,9 +239,14 @@ const eslintConfig = defineConfig([
             {
               // "db" is allowed here for type-only re-exports of
               // Drizzle-derived row types (um02-spec §3.7, code-standards
-              // §2.7) — `types/` never imports db at runtime.
+              // §2.7) — `types/` never imports db at runtime. "validation"
+              // added for pm03's `types/product.ts` (`SpecificationCard`/
+              // `PriceCard` embed `ProductSpecCharacteristics`/
+              // `TieredPricingCharacteristics`, whose owning shape lives in
+              // the Zod schema, code-standards §2.7) — type-only, `types/`
+              // still never imports validation at runtime.
               from: { type: "types" },
-              allow: { to: { type: ["types", "db"] } },
+              allow: { to: { type: ["types", "db", "validation"] } },
             },
             {
               // "types" added for `lib/root-redirect.ts` (um06-spec §6.10's
