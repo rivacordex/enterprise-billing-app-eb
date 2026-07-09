@@ -140,6 +140,10 @@
 
 **Not yet committed** — changes are in the working tree; commit per user confirmation (pm09-spec §3.6 names one commit: `tests/auth/guard.integration.test.ts` edit + `tests/guardrails/product-module-boundaries.test.ts` new). With pm09 verified and merged, the read-only Product Management v1 catalog viewer is complete and gated per workflow §8; the CRUD fast-follow (which will finally exercise the "insertPrice bumps version" guardrail wording literally) is the next, separately-authorized phase.
 
+---
+
+**Post-ship deployment bug found (2026-07-09):** the deployed `ebill-dev-app` ACA instance 500s on `/products/product-offering` with Postgres `42501: permission denied for schema product`. Root cause is a provisioning gap, not app code: `db/bootstrap/bootstrap-db-roles.sql` (um30) only ever granted `app_runtime`/`app_migrate` privileges on the `core` schema — its own header comment flagged `product`/`customer`/`billing`/`accounting` as follow-ups "as those schemas ship," but the follow-up was never done when pm02 shipped the `product` schema. Fixed by appending a `product` schema GRANT/REVOKE block to `bootstrap-db-roles.sql` (mirrors `core`'s block, plus `GRANT ... ON ALL SEQUENCES IN SCHEMA product` since `product`'s 3 ID columns default to `nextval(...)`, unlike anything in `core`). The code fix alone does not repair the already-provisioned dev environment — that requires re-running `npm run db:bootstrap-roles` against `BOOTSTRAP_DATABASE_URL` (superuser/owner connection) per `infra/docs/db-role-verification.md`; user opted to run that step themselves rather than have it done in-session. **Any future schema that ships (`customer`/`billing`/`accounting`) must add its own grant block to this file in the same PR that adds its migration** — this bug will otherwise recur per schema.
+
 ## Per-unit specs
 
 | Unit | Spec file            | Summary                                                                                                                                                                                                                                                                  |

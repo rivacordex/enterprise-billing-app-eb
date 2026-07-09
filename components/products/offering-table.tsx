@@ -75,6 +75,16 @@ export function OfferingTable({
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [searchInput, setSearchInput] = useState(query);
+  // Mirrors `query` into state during render (React's documented pattern for
+  // adjusting state when a prop changes, cheaper than an effect) so the box
+  // doesn't show stale text when `query` changes from outside this
+  // component's own navigate() calls — e.g. browser back/forward, or a deep
+  // link with a different `q`.
+  const [prevQuery, setPrevQuery] = useState(query);
+  if (query !== prevQuery) {
+    setPrevQuery(query);
+    setSearchInput(query);
+  }
 
   const { column: activeColumn, dir: activeDir } = parseSort(sort);
   const totalPages = Math.ceil(total / pageSize);
