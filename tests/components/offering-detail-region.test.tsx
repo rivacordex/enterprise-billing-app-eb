@@ -14,7 +14,16 @@ const FIXTURE_OFFERING: OfferingDetail = {
   version: 3,
   lastModified: new Date("2026-07-03T14:22:00.000Z"),
   lastEditedByName: "Jordan Rivera",
-  specifications: [],
+  specifications: [
+    {
+      productSpecId: "PRDSMD000001",
+      name: "Network Slice eMBB",
+      isMandatory: true,
+      isDefault: true,
+      defaultValue: null,
+      characteristics: { SST_ID: "01", SD_ID: "A0C4E2" },
+    },
+  ],
   prices: [],
 };
 
@@ -55,7 +64,7 @@ describe("OfferingDetailRegion", () => {
     expect(screen.queryByText("Details")).not.toBeInTheDocument();
   });
 
-  it("renders the populated Details section and the Specifications/Prices placeholder frames when hasSelection is true and notFound is false", () => {
+  it("renders the populated Details section, the populated Specifications section, and the Prices placeholder frame when hasSelection is true and notFound is false", () => {
     render(
       <OfferingDetailRegion
         hasSelection={true}
@@ -70,6 +79,8 @@ describe("OfferingDetailRegion", () => {
     expect(screen.getByText("5G Nationwide Service Plan")).toBeInTheDocument();
     expect(screen.getByText("PRDOFR000001")).toBeInTheDocument();
     expect(screen.getByText("Specifications")).toBeInTheDocument();
+    expect(screen.getByText("Network Slice eMBB")).toBeInTheDocument();
+    expect(screen.getByText("PRDSMD000001")).toBeInTheDocument();
     expect(screen.getByText("Prices")).toBeInTheDocument();
   });
 });

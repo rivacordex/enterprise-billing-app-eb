@@ -1,6 +1,7 @@
 import { Archive, SearchX } from "lucide-react";
 
 import { OfferingDetail } from "@/components/products/offering-detail";
+import { SpecificationsPanel } from "@/components/products/specifications-panel";
 import type { OfferingDetail as OfferingDetailModel } from "@/types/product";
 
 export interface OfferingDetailRegionProps {
@@ -63,7 +64,9 @@ export function OfferingDetailRegion({
           <h2 className="text-h3 font-semibold text-foreground">
             Specifications
           </h2>
-          {/* pm07: specs cards */}
+          {offering ? (
+            <SpecificationsPanel specifications={offering.specifications} />
+          ) : null}
         </section>
 
         <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-4">
