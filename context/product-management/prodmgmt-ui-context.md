@@ -7,7 +7,7 @@
 
 ## 0. Module Scope & Exclusions
 
-Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | ACTIVE | RETIRED` → `LifecycleBadge`), **price type** (`recurring | usage | once` → `PriceTypeBadge`), **offering flags** (bundle / sellable / billing-only chips), **spec characteristic chips** (JSONB key–value), **price effectivity states**, and the four-section page surfaces.
+Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | ACTIVE | RETIRED` → `LifecycleBadge`), **price type** (`recurring | usage | once` → `PriceTypeBadge`), **offering flags** (bundle / sellable / billing-only chips), **spec/tier JSONB entries** (rendered as plain text), **price effectivity states**, and the four-section page surfaces.
 
 Two deliberate exclusions (same rules as User Management):
 
@@ -44,7 +44,7 @@ Deliberately calmer than lifecycle status (the auth-method pattern) so price car
 
 **Flag chips** (`is_bundle`, `is_sellable`, billing-only) render only when true — quiet neutral chips (`--radius-xs`, neutral-100 bg, neutral-700 text) with icons `boxes` / `shopping-cart` / `receipt`. Exception: a false `is_sellable` on an `ACTIVE` offering shows a warning-tinted "Not sellable" chip (warning-50 bg / warning-700 text), since that combination is what Billing Ops needs to notice.
 
-**Spec characteristic chips** (`product_spec_characteristics` JSONB, e.g. `SST_ID: 01`, `SD_ID: A0C4E2`): key in `--text-overline` neutral-500, value in `--text-mono` neutral-800, on `--surface-sunken` with `--radius-xs`. Mandatory/default indicators on spec cards reuse info-50/info-700 (`Mandatory`) and neutral-100/neutral-700 (`Default: …`) tints.
+**Spec characteristics** (`product_spec_characteristics` JSONB, e.g. `SST_ID: 01`, `SD_ID: A0C4E2`) render as plain inline text — no chip/pill treatment (revised 2026-07-09 — density pass): key in muted text, value in `--text-mono` inline. Mandatory/default indicators on spec cards reuse info-50/info-700 (`Mandatory`) and neutral-100/neutral-700 (`Default: …`) tints.
 
 ---
 
@@ -58,7 +58,7 @@ A price's end is derived from its successor's `start_date_time`; cards signal te
 | Future-dated | `start_date_time` in future | info-50 bg tag "Starts <date>" in info-700; default card otherwise |
 | Superseded | successor already started | Card muted (`--text-muted`), tag "Superseded" neutral-100/neutral-700 |
 
-Tiered prices render the tier mini-table (`from / to / rate`) flat with `--radius-none`, `--text-body-sm`, header row in `--text-overline`.
+Tiered prices render each tier's `from`/`to`/`rate` as plain inline text (e.g. `0–1000: 0.05`), semicolon-separated — no table (revised 2026-07-09 — density pass).
 
 ---
 

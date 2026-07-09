@@ -53,7 +53,7 @@ describe("PricesPanel", () => {
     expect(screen.getByText("Once")).toBeInTheDocument();
   });
 
-  it("shows the formatCurrency amount and currency code for a flat price, and no TierTable", () => {
+  it("shows the formatCurrency amount and currency code for a flat price, and no tier text", () => {
     render(
       <PricesPanel
         prices={[makePrice({ amount: "5000.00", currency: "MYR" })]}
@@ -67,7 +67,7 @@ describe("PricesPanel", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("shows a TierTable and no flat-amount line for a tiered price, never the literal (tiered)", () => {
+  it("shows tiers as plain text and no flat-amount line for a tiered price, never the literal (tiered)", () => {
     render(
       <PricesPanel
         prices={[
@@ -90,9 +90,9 @@ describe("PricesPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByText("0.05")).toBeInTheDocument();
-    expect(screen.getByText("and above")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.getByText(/0–1000: 0\.05/)).toBeInTheDocument();
+    expect(screen.getByText(/1000–and above: 0\.03/)).toBeInTheDocument();
     expect(screen.queryByText("(tiered)")).not.toBeInTheDocument();
   });
 
