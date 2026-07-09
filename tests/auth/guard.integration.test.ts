@@ -149,8 +149,29 @@ describe.skipIf(!databaseUrl)(
           permissionName: permissions.permissionName,
         });
 
+      // Unlike the four rows above, "products" is not seeded here — migration
+      // 0006_product.sql inserts it directly as part of the schema migration
+      // (code-standards §8), so it already exists once `beforeAll`'s
+      // `migrate()` call has run; inserting it again would violate the
+      // unique constraint. Its id is looked up instead.
+      const [productsPermission] = await db
+        .select({
+          permissionId: permissions.permissionId,
+          permissionName: permissions.permissionName,
+        })
+        .from(permissions)
+        .where(eq(permissions.permissionName, "products"));
+      if (!productsPermission) {
+        throw new Error(
+          "Expected migration 0006_product.sql to have seeded the 'products' permission row.",
+        );
+      }
+
       const permissionIdByName = new Map(
-        insertedPermissions.map((p) => [p.permissionName, p.permissionId]),
+        [...insertedPermissions, productsPermission].map((p) => [
+          p.permissionName,
+          p.permissionId,
+        ]),
       );
 
       const grants: { name: PermissionName; type: PermissionType }[] = [
@@ -158,6 +179,7 @@ describe.skipIf(!databaseUrl)(
         { name: "roles", type: "DELETE" },
         { name: "system_config", type: "DELETE" },
         { name: "audit_log", type: "READ" },
+        { name: "products", type: "DELETE" }, // DELETE ⊃ EDIT ⊃ READ
       ];
 
       await db.insert(rolePermissionAssign).values(
@@ -204,6 +226,9 @@ describe.skipIf(!databaseUrl)(
         [PERMISSIONS.SYSTEM_CONFIG, LEVELS.EDIT],
         [PERMISSIONS.SYSTEM_CONFIG, LEVELS.DELETE],
         [PERMISSIONS.AUDIT_LOG, LEVELS.READ],
+        [PERMISSIONS.PRODUCTS, LEVELS.READ],
+        [PERMISSIONS.PRODUCTS, LEVELS.EDIT],
+        [PERMISSIONS.PRODUCTS, LEVELS.DELETE],
       ] as const)("admin_user satisfies %s:%s", async (name, level) => {
         mockSession(adminUserId);
         const result = await requirePermission(name, level);
@@ -225,6 +250,7 @@ describe.skipIf(!databaseUrl)(
         PERMISSIONS.ROLES,
         PERMISSIONS.SYSTEM_CONFIG,
         PERMISSIONS.AUDIT_LOG,
+        PERMISSIONS.PRODUCTS,
       ])("no_grants_user is denied %s:READ", async (name) => {
         mockSession(noGrantsUserId);
         await expect(requirePermission(name, LEVELS.READ)).rejects.toSatisfy(
