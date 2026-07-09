@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatCurrency,
   formatDatetime,
   formatMoney,
   formatRelativeTime,
@@ -82,6 +83,23 @@ describe("formatMoney", () => {
 
   it("formats USD for en-US with no separator", () => {
     expect(formatMoney(1234.56, "en-US", "USD")).toBe("$1,234.56");
+  });
+});
+
+describe("formatCurrency", () => {
+  // pm08-spec §3.1/§3.7: same NBSP-separated symbol behavior as formatMoney,
+  // but with the (amount, currency, locale) argument order code-standards
+  // §4.4 mandates for the Product Management price display.
+  it("formats a numeric-string amount for en-MY MYR with the NBSP-separated RM symbol", () => {
+    expect(formatCurrency("5000.00", "MYR", "en-MY")).toBe("RM 5,000.00");
+  });
+
+  it("formats a small numeric-string amount in the currency's minor units", () => {
+    expect(formatCurrency("0.05", "MYR", "en-MY")).toBe("RM 0.05");
+  });
+
+  it("formats a whole-number string correctly", () => {
+    expect(formatCurrency("1200", "MYR", "en-MY")).toBe("RM 1,200.00");
   });
 });
 

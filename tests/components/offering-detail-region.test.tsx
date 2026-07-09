@@ -24,7 +24,26 @@ const FIXTURE_OFFERING: OfferingDetail = {
       characteristics: { SST_ID: "01", SD_ID: "A0C4E2" },
     },
   ],
-  prices: [],
+  prices: [
+    {
+      productOfferingPriceId: "PRDOFP000001",
+      name: "Monthly Recurring Charge",
+      priceType: "recurring",
+      pricingModel: "flat",
+      amount: "5000.00",
+      currency: "MYR",
+      recurringChargePeriodLength: 1,
+      recurringChargePeriodType: "months",
+      unitOfMeasure: null,
+      glCode: "GL-4100",
+      policy: null,
+      pricingCharacteristics: null,
+      startDateTime: new Date("2026-01-01T00:00:00.000Z"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      endDateTime: new Date("2027-01-01T00:00:00.000Z"),
+      effectivityStatus: "current",
+    },
+  ],
 };
 
 describe("OfferingDetailRegion", () => {
@@ -64,7 +83,7 @@ describe("OfferingDetailRegion", () => {
     expect(screen.queryByText("Details")).not.toBeInTheDocument();
   });
 
-  it("renders the populated Details section, the populated Specifications section, and the Prices placeholder frame when hasSelection is true and notFound is false", () => {
+  it("renders the populated Details, Specifications, and Prices sections when hasSelection is true and notFound is false", () => {
     render(
       <OfferingDetailRegion
         hasSelection={true}
@@ -82,5 +101,7 @@ describe("OfferingDetailRegion", () => {
     expect(screen.getByText("Network Slice eMBB")).toBeInTheDocument();
     expect(screen.getByText("PRDSMD000001")).toBeInTheDocument();
     expect(screen.getByText("Prices")).toBeInTheDocument();
+    expect(screen.getByText("Monthly Recurring Charge")).toBeInTheDocument();
+    expect(screen.getByText("PRDOFP000001")).toBeInTheDocument();
   });
 });

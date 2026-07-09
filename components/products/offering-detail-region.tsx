@@ -1,6 +1,7 @@
 import { Archive, SearchX } from "lucide-react";
 
 import { OfferingDetail } from "@/components/products/offering-detail";
+import { PricesPanel } from "@/components/products/prices-panel";
 import { SpecificationsPanel } from "@/components/products/specifications-panel";
 import type { OfferingDetail as OfferingDetailModel } from "@/types/product";
 
@@ -71,7 +72,13 @@ export function OfferingDetailRegion({
 
         <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-4">
           <h2 className="text-h3 font-semibold text-foreground">Prices</h2>
-          {/* pm08: prices cards */}
+          {offering ? (
+            <PricesPanel
+              prices={offering.prices}
+              locale={locale}
+              timezone={timezone}
+            />
+          ) : null}
         </section>
       </div>
     </div>
