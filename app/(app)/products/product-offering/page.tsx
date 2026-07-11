@@ -53,15 +53,11 @@ export default async function ProductOfferingPage({
   ]);
 
   return (
-    <main className="space-y-6 p-6">
+    <main className="space-y-5 p-5">
       <header>
         <h1 className="text-h1 font-semibold text-foreground">
           Product Offering
         </h1>
-        <p className="mt-1 text-body text-muted-foreground">
-          Browse the read-only catalog of product offerings, their
-          specifications, and prices.
-        </p>
       </header>
 
       <Suspense>

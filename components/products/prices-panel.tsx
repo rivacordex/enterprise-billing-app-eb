@@ -1,10 +1,15 @@
 import { Receipt } from "lucide-react";
 
 import { PriceTypeBadge } from "@/components/products/price-type-badge";
-import { TierTable } from "@/components/products/tier-table";
 import { formatCurrency, formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { EffectivityStatus, PriceCard } from "@/types/product";
+import type { Tier } from "@/validation/product/pricing-characteristics.schema";
+
+function tierText(tier: Tier): string {
+  const to = tier.to === null ? "and above" : String(tier.to);
+  return `${tier.from}–${to}: ${tier.rate}`;
+}
 
 type PricesPanelProps = {
   prices: PriceCard[];
@@ -61,7 +66,7 @@ export function PricesPanel({
 }: PricesPanelProps): React.JSX.Element {
   if (prices.length === 0) {
     return (
-      <div className="mt-3 rounded-md bg-[color:var(--surface-sunken)] p-8 text-center">
+      <div className="mt-2 rounded-md bg-[color:var(--surface-sunken)] p-6 text-center">
         <Receipt
           className="mx-auto mb-2 size-8 text-[color:var(--text-muted)]"
           aria-hidden="true"
@@ -74,7 +79,7 @@ export function PricesPanel({
   }
 
   return (
-    <div className="mt-3 flex flex-col gap-3">
+    <div className="mt-2 flex flex-col gap-2">
       {prices.map((price) => (
         <div
           key={price.productOfferingPriceId}
@@ -91,9 +96,16 @@ export function PricesPanel({
             {stateTag(price, locale, timezone)}
           </div>
 
-          <div className="mt-2">
+          <div className="mt-1.5">
             {price.pricingModel === "tiered" && price.pricingCharacteristics ? (
-              <TierTable tiers={price.pricingCharacteristics.tiers} />
+              <p className="font-mono text-body-sm text-foreground tabular-nums">
+                {price.pricingCharacteristics.tiers.map((tier, index) => (
+                  <span key={index}>
+                    {index > 0 ? "; " : null}
+                    {tierText(tier)}
+                  </span>
+                ))}
+              </p>
             ) : (
               price.amount !== null && (
                 <p>
@@ -108,7 +120,7 @@ export function PricesPanel({
             )}
           </div>
 
-          <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
+          <dl className="mt-1.5 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
             {price.recurringChargePeriodLength !== null ? (
               <>
                 <dt className="text-overline font-semibold tracking-wider text-muted-foreground uppercase">

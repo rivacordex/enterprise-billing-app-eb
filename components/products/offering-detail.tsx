@@ -88,7 +88,7 @@ export function OfferingDetail({
   timezone,
 }: OfferingDetailProps): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div>
         <p className="font-mono text-mono text-muted-foreground tabular-nums">
           {offering.productOfferingId}
@@ -102,7 +102,7 @@ export function OfferingDetail({
         </div>
       </div>
 
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-3 border-t border-[color:var(--border-subtle)] pt-4">
+      <dl className="flex flex-wrap gap-x-6 gap-y-2 border-t border-[color:var(--border-subtle)] pt-3">
         <Field label="Version">
           <span className="font-mono tabular-nums">{offering.version}</span>
         </Field>

@@ -108,7 +108,7 @@ describe("SpecificationsPanel", () => {
     expect(screen.getByText("standard")).toBeInTheDocument();
   });
 
-  it("renders characteristics as chips in insertion order and none for an empty object", () => {
+  it("renders characteristics as plain text in insertion order and none for an empty object", () => {
     const { rerender } = render(
       <SpecificationsPanel
         specifications={[

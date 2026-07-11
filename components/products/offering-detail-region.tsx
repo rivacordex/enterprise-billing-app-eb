@@ -46,11 +46,11 @@ export function OfferingDetailRegion({
   }
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-4">
+    <div className="space-y-3">
+      <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-3">
         <h2 className="text-h3 font-semibold text-foreground">Details</h2>
         {offering ? (
-          <div className="mt-3">
+          <div className="mt-2">
             <OfferingDetail
               offering={offering}
               locale={locale}
@@ -60,8 +60,8 @@ export function OfferingDetailRegion({
         ) : null}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-4">
+      <div className="grid gap-3 lg:grid-cols-2">
+        <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-3">
           <h2 className="text-h3 font-semibold text-foreground">
             Specifications
           </h2>
@@ -70,7 +70,7 @@ export function OfferingDetailRegion({
           ) : null}
         </section>
 
-        <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-4">
+        <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-3">
           <h2 className="text-h3 font-semibold text-foreground">Prices</h2>
           {offering ? (
             <PricesPanel
