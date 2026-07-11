@@ -11,6 +11,17 @@ describe("loginSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("trims surrounding whitespace from the email before validating", () => {
+    const result = loginSchema.safeParse({
+      email: "  admin@example.com  ",
+      password: "correct-password",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.email).toBe("admin@example.com");
+    }
+  });
+
   it("rejects an invalid email", () => {
     const result = loginSchema.safeParse({
       email: "not-an-email",

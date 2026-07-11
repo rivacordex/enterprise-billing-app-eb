@@ -49,6 +49,24 @@ export function formatMoney(
   }).format(amount);
 }
 
+// Product Management money display (code-standards §4.4). `amount` arrives as a
+// numeric-string from the read model (`PriceCard.amount`, a numeric column);
+// `currency` (ISO-4217) and `locale` are resolved server-side and threaded in,
+// so the formatter stays pure. Used for the flat price amount — no inline
+// `toFixed`, no hand-built currency strings, no hardcoded symbols. Tier `rate`
+// is JSONB and prints as stored text (pm08-spec §2.5), so it does NOT pass
+// through here.
+export function formatCurrency(
+  amount: string,
+  currency: string,
+  locale: string,
+): string {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+  }).format(Number(amount));
+}
+
 // Used by `ConfigTable`'s "Last Modified" column (um22-spec §22.5).
 export function formatRelativeTime(date: Date): string {
   const diffMs = Date.now() - date.getTime();
