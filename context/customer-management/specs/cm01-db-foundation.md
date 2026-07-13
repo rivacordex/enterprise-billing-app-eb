@@ -1,0 +1,262 @@
+# CM01 — Database Foundation: `customer` Schema, Tables, Constraints, Permission + Config Seed
+
+- **Unit:** 1 of 16 (`cm00-build-plan.md`)
+- **Dependencies:** none. Reuses `core.appuser`, `core.permissions`, `core.role_permission_assign`, `core.system_config` (incl. `systemConfigRepository.findActiveValue`, shipped by `um28`) from the platform — all assumed already migrated and seeded by prior modules (User Management `um02`/`um05`/`um28`, Product `pm02`/`pm03`).
+- **Authorizing sections:** `custmgmt-project-overview.md` *Core user flow* steps 4–8, *Features* ("Customer lifecycle", "Contacts and preferred logic", "Data integrity and audit"), *In scope*; `custmgmt-architecture.md` §1 (Database delta), §3 (Storage Model table), §4 (permission matrix), Module Invariants #1, #2, #3, #4, #5, #6, #8, #9, #10; `custmgmt-code-standards.md` §1.2, §1.6, §1.8–§1.10, §2.1–§2.4, §2.6, §6 (all 12 items), §7 (file tree, `db/` rows), §8; platform `architecture.md` §3 (IDs, JSONB exemption clause), §4 (schema-per-module, one migration history); general `code-standards.md` §6 (all items), §2.6–§2.7, §2.17.
+- **Note on codebase verification:** this session has no mount for the live `enterprise-billing-app` repo (only the planning folder is attached — confirmed by directory listing), so — unlike `um02`/`pm02` — no first-hand "codebase state verified" line can be given here. However, the `core.system_config` shape is **no longer a blind guess**: `um22-spec.md`, `um28-side-panel-system-config.md`, and `pm03-spec.md` (all already in this planning folder, written against live-verified code at their time) consistently show the same repository (`db/repositories/system-config.repository.ts`, exporting `systemConfigRepository`) and the same column set in use — see §3.6. The one still-unconfirmed detail is the **next free migration index**, which this session cannot read off the live `db/migrations/` journal.
+
+---
+
+## 1. Goal
+
+Create the entire `customer` schema in one Drizzle migration: the three tables `organization`, `party_role`, `contact_medium` with their ID sequences (`ORG`/`PTRL`/`CTMD`), status/type CHECK constraints, the partial unique index enforcing at most one non-closed `party_role` per organization, the nullable-unique `registration_number`, the composite deferrable FK that makes a preferred-contact pointer to another customer's contact a DB-level impossibility, `last_modified_by` FKs to `core.appuser`, and `status_reason` columns — plus the code-seeded `customers` PERMISSIONS row and the `CUSTOMER_SEARCH_RESULT_LIMIT` `SYSTEM_CONFIG` seed with the MANAGER→EDIT / USER→READ role grants. Done when the migration applies cleanly to a fresh Postgres 16 database and every table, constraint, and seed row is provably present under introspection — no repository, service, or UI code exists yet.
+
+## 2. Design
+
+No UI in this unit — "design" is the schema shape. Boundary: `db/**` only (schema, migration, seed script), plus the permission-registry wiring (`types/`, `auth/permission-constants.ts`) that always ships with a new permission name (code-standards §8.5, general code-standards §8.4).
+
+### 2.1 Schema-shape decisions
+
+1. **Namespacing.** `CREATE SCHEMA IF NOT EXISTS customer`; all three tables live in `customer`, declared via Drizzle's `pgSchema('customer')` (architecture §4, Module Inv. #10). Nothing lands in `public` or `core`.
+2. **Status/type columns are `text` + CHECK, not Postgres enums.** This mirrors the identity schema (`appuser.status`, `appuser.auth_method`, `account.provider_id`) rather than Product's one enum (`lifecycle_status`) — text+CHECK is the more common pattern in this codebase (2 of 3 precedents) and keeps the Drizzle column a plain `text` target that lines up 1:1 with the module's `as const` TS unions (code-standards §2.1) without a second pg-type migration path if a status is ever added. Applies to `organization.organization_type`, `organization.status`, `party_role.status`, `contact_medium.preferred_contact_method`.
+3. **ID prefixes and widths are verbatim from code-standards §6.2 / §2.4** — `ORG` (7-digit pad), `PTRL` (8-digit pad), `CTMD` (8-digit pad), one dedicated sequence per table in the `customer` schema, assembled as a SQL default expression (platform architecture §3, general code-standards §6.18) — never assembled in a repository or service.
+4. **The preferred-contact pointer keeps the architecture's literal column name.** Architecture §3 names the pointer column `party_role.contact_medium` (not `preferred_contact_id`) — kept verbatim here even though it reads like the table name, matching the precedent of keeping a module-doc's exact column names (Product module precedent, `pm02` Design #1). It is `text`, nullable, and is the target of the composite deferrable FK in §2.2.
+5. **`party_role_specification` is `jsonb`, typed loosely.** Drizzle `.$type<Record<string, unknown>>()` (code-standards §2.3) — no `z.object` shape, no discriminated union; this is the documented exemption under general code-standards §6.17, restated by Module Invariant #7 and code-standards §1.8. `NOT NULL DEFAULT '{}'::jsonb` (an empty spec is valid well-formed JSON; the create flow always supplies one per the overview flow, but the column itself doesn't require a value at the DB level beyond well-formedness).
+6. **`account` stays a bare nullable `text` column with no FK** (Module Inv. #9) — display-only until an Account module exists. This unit must not add a foreign key, a check, or any linkage logic to it.
+7. **Every table gets `created_datetime` + `last_modified_datetime`, matching the identity-table pair convention** (`um02` precedent: same two names used consistently across tables), **all at explicit millisecond precision (`timestamptz(3)`, not the Postgres default microsecond precision)** — added specifically so `party_role.last_modified_datetime`'s equality-based compare-and-bump check (Module Inv. #6, `cm08`) can never false-negative on precision the client-side `Date`/ISO round trip can't carry; applied to every timestamp column in this schema for consistency, even though only that one is ever compared for equality. Only **`party_role.last_modified_datetime`** is the optimistic-lock column for the whole customer scope (Module Inv. #6, code-standards §6.9) — `organization.last_modified_datetime` and `contact_medium.last_modified_datetime` are informational bookkeeping only; no mutation compares/bumps them directly. (A later mutation unit still updates them for freshness, but the *lock check* always reads/writes `party_role.last_modified_datetime`, even for an organization-field or contact-only edit — Module Inv. #6.)
+8. **`status_reason` lives on both `organization` and `party_role`** (nullable at the column level; the "non-null on every transition" rule is enforced by the Server Action + Zod schema in later units, not a DB CHECK — a `NOT NULL` column would break row creation, since a brand-new row has no transition yet). Every transition write persists the reason on the row itself in addition to the atomic `AUDIT_LOG` entry (Module Inv. #2/§11).
+9. **`last_modified_by` is `NOT NULL` on all three tables**, FK → `core.appuser(user_id)` `ON DELETE RESTRICT` (matches the Product module's `last_edited_by` FK rationale: `appuser` rows are tombstoned, never hard-deleted, so `RESTRICT` is safe). Unlike Product's nullable version (which allows a seed/infrastructure write), this module has **no seed data for domain rows** — every `organization`/`party_role`/`contact_medium` row is created by an authenticated MANAGER through the UI, so the column is never null from the first insert.
+10. **Contact fields are flattened, one phone/email/address per row** (code-standards §6.6): `phone_number`, `email_address`, and six `ga_*` address columns (`ga_address_line1`, `ga_address_line2`, `ga_city`, `ga_state_province`, `ga_postal_code`, `ga_country`) — all nullable `text`. "The address method is populated" is defined as **`ga_address_line1 IS NOT NULL`** (the one required leading line if an address is present at all); the other five `ga_*` columns are supplementary and don't gate the preferred-method invariant. This definition is recorded here so every later unit (`cm11`–`cm15`) uses the same test, not a re-invented one.
+
+### 2.2 The composite deferrable FK (Module Invariant #4)
+
+This is the unit's one genuinely non-obvious piece of DDL, so it's spelled out in full:
+
+- `contact_medium` gets, in addition to its `PRIMARY KEY (contact_medium_id)`, an explicit **`UNIQUE (contact_medium_id, ref_party_role)`** constraint. Postgres requires a unique constraint on *exactly* the column tuple a composite FK targets — the PK alone (unique on `contact_medium_id` by itself) does not license a composite reference to `(contact_medium_id, ref_party_role)`, even though the pair is trivially unique once the first column is. This second, seemingly redundant unique constraint is what makes the ownership check possible at all.
+- `party_role` gets **`FOREIGN KEY (contact_medium, party_role_id) REFERENCES customer.contact_medium (contact_medium_id, ref_party_role) DEFERRABLE INITIALLY DEFERRED`**. Because the FK's second column is `party_role`'s own primary key, the database can only accept a `contact_medium` value whose `ref_party_role` equals *this exact* `party_role` row's id — a pointer into another customer's contact is structurally impossible, not just app-checked.
+- **Why deferred:** later mutation units (`cm11` add-contact, `cm14` set-preferred-contact) insert the `contact_medium` row and then point `party_role.contact_medium` at it in the same transaction; `DEFERRABLE INITIALLY DEFERRED` lets the two statements land in either order within one transaction and only checks the constraint at `COMMIT`, instead of forcing a specific statement sequence to satisfy an immediately-checked FK.
+- **What this unit does NOT build:** the "pointer is NULL iff zero contacts" and "clearing/deleting is blocked while contacts exist" behaviors (Module Inv. #4) are **service-layer** invariants (code-standards §1.7: "maintained by the mutating service ... never left to operator discipline") — they need multi-row awareness (counting sibling contacts) that a single-row CHECK constraint cannot express. This unit ships only the ownership-correctness guarantee; the auto-preferred-on-first-add and blocked-delete behaviors are `cm11`/`cm13`.
+
+### 2.3 Structural decisions
+
+- **All DDL lives in `db/schema/customer.ts` + the generated migration — nothing else.** No `db/repositories/`, `services/customer/`, or `validation/customer/` file is created in this unit (those are `cm02`); a DB-foundation unit that also builds repositories would blur two units' visible results (build plan `cm00` §"How units were cut", rule 5).
+- **One migration file for the whole schema + registry row**, following the `um05`/`pm02` precedent of landing DDL and its permission-registry INSERT together (workflow §7.2: registry row + constant + map land as one traceable set).
+- **The role→permission grants are a seed script, not a migration INSERT** — following `pm02` Design #7 exactly: `MANAGER`/`USER` role rows already exist (seeded by `um05`'s `seed-rbac`), so granting them a *new* permission is a lookup-then-insert operation, not a static migration literal. `db/seeds/customer.ts` looks up the `MANAGER` and `USER` `core.roles` rows and the `customers` permission, then inserts `role_permission_assign` rows — `MANAGER → customers : EDIT`, `USER → customers : READ` — only if not already present (idempotent), inside one transaction, using `lib/logger` (never `console.*`). **No `DELETE` row is ever inserted here or by any later unit** (architecture §4, code-standards §8: no DELETE level is seeded for this module).
+- **Drizzle schema file split by area, consistent with `pm02`:** `db/schema/customer.ts` is a new file; `drizzle.config.ts`'s `schemaFilter` gains `'customer'` alongside the existing entries (one-line change, nothing else in that file).
+
+---
+
+## 3. Implementation
+
+### 3.1 `drizzle.config.ts` — scope change
+
+Add `'customer'` to `schemaFilter` (e.g. `schemaFilter: ['core', 'product', 'customer']` — keep whatever modules already precede it; append, don't reorder). Nothing else in this file changes.
+
+### 3.2 `db/schema/customer.ts` (new)
+
+```ts
+import { pgSchema, text, boolean, jsonb, timestamptz, uniqueIndex, index, check, foreignKey } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { appuser } from '@/db/schema/identity' // core.appuser — type-only where possible
+
+export const customer = pgSchema('customer')
+
+export const organizationSeq = customer.sequence('organization_seq', { startWith: 1 })
+export const partyRoleSeq = customer.sequence('party_role_seq', { startWith: 1 })
+export const contactMediumSeq = customer.sequence('contact_medium_seq', { startWith: 1 })
+```
+
+ID defaults assemble prefix + zero-padded sequence per general code-standards §6.18, widths per module code-standards §6.2:
+
+```ts
+organizationId: text('organization_id')
+  .primaryKey()
+  .default(sql`'ORG' || lpad(nextval('customer.organization_seq')::text, 7, '0')`),
+```
+(same pattern for `party_role_id` → `'PTRL' || lpad(…, 8, '0')`, `contact_medium_id` → `'CTMD' || lpad(…, 8, '0')`).
+
+**`customer.organization`**
+
+| Column | Type / constraint |
+|---|---|
+| `organization_id` | text PK, default `'ORG' + lpad(seq, 7)` |
+| `name` | text NOT NULL |
+| `trading_name` | text NULL |
+| `organization_type` | text NOT NULL, CHECK `organization_type IN ('COMPANY','GOVERNMENT')` |
+| `registration_number` | text NULL, **UNIQUE** (plain unique — Postgres already treats multiple NULLs as distinct, giving nullable-unique with no partial index needed, Module Inv. #8) |
+| `tax_id` | text NULL |
+| `industry` | text NULL |
+| `status` | text NOT NULL DEFAULT `'REGISTERED'`, CHECK `status IN ('REGISTERED','ACTIVE','INACTIVE','SUSPENDED','DISSOLVED','MERGED')` |
+| `status_reason` | text NULL (§2.1.8) |
+| `last_modified_by` | text NOT NULL, FK → `core.appuser(user_id)` ON DELETE RESTRICT |
+| `created_datetime` | timestamptz(3) NOT NULL DEFAULT `now()` |
+| `last_modified_datetime` | timestamptz(3) NOT NULL DEFAULT `now()` (informational only, §2.1.7 — not a lock column) |
+
+**`customer.party_role`**
+
+| Column | Type / constraint |
+|---|---|
+| `party_role_id` | text PK, default `'PTRL' + lpad(seq, 8)` |
+| `engaged_party` | text NOT NULL, FK → `customer.organization(organization_id)` ON DELETE RESTRICT |
+| `status` | text NOT NULL DEFAULT `'INITIALIZED'`, CHECK `status IN ('INITIALIZED','VALIDATED','ACTIVE','SUSPENDED','CLOSED')` |
+| `status_reason` | text NULL |
+| `party_role_specification` | jsonb NOT NULL DEFAULT `'{}'::jsonb`, `.$type<Record<string, unknown>>()` (Module Inv. #7) |
+| `account` | text NULL — no FK, no CHECK (Module Inv. #9) |
+| `contact_medium` | text NULL — the preferred-contact pointer (§2.2); **UNIQUE (contact_medium_id, ref_party_role)** lives on the *target* table, not here |
+| `last_modified_by` | text NOT NULL, FK → `core.appuser(user_id)` ON DELETE RESTRICT |
+| `created_datetime` | timestamptz(3) NOT NULL DEFAULT `now()` |
+| `last_modified_datetime` | timestamptz(3) NOT NULL DEFAULT `now()` — **the module's one optimistic-lock column** (Module Inv. #6). **Explicit millisecond precision (`(3)`, not the default microsecond precision)** — this is what keeps the compare-and-bump equality check (`cm08` §2.x) exact: the value round-trips to the client as a JS `Date`/ISO string (millisecond precision) and back on save, and `WHERE last_modified_datetime = $submitted` would silently never match if the column stored sub-millisecond precision the client value can't carry. Applied here and, for consistency, to every other `timestamptz` column in this schema even though only this one is ever compared for equality. |
+
+Constraints/indexes on `party_role`:
+- `party_role_engaged_party_unique_open` — **`UNIQUE (engaged_party) WHERE status != 'CLOSED'`** (Module Inv. #3) — at most one non-closed role per organization.
+- `party_role_contact_medium_fk` — **`FOREIGN KEY (contact_medium, party_role_id) REFERENCES customer.contact_medium (contact_medium_id, ref_party_role) DEFERRABLE INITIALLY DEFERRED`** (§2.2, Module Inv. #4).
+- Index on `engaged_party` (every detail/search join goes org → role).
+
+**`customer.contact_medium`**
+
+| Column | Type / constraint |
+|---|---|
+| `contact_medium_id` | text PK, default `'CTMD' + lpad(seq, 8)` |
+| `ref_party_role` | text NOT NULL, FK → `customer.party_role(party_role_id)` ON DELETE RESTRICT |
+| `contact_name` | text NOT NULL |
+| `contact_role` | text NULL |
+| `phone_number` | text NULL |
+| `email_address` | text NULL |
+| `ga_address_line1` | text NULL |
+| `ga_address_line2` | text NULL |
+| `ga_city` | text NULL |
+| `ga_state_province` | text NULL |
+| `ga_postal_code` | text NULL |
+| `ga_country` | text NULL |
+| `preferred_contact_method` | text NULL, CHECK `preferred_contact_method IN ('PHONE','EMAIL','ADDRESS')` |
+| `last_modified_by` | text NOT NULL, FK → `core.appuser(user_id)` ON DELETE RESTRICT |
+| `created_datetime` | timestamptz(3) NOT NULL DEFAULT `now()` |
+| `last_modified_datetime` | timestamptz(3) NOT NULL DEFAULT `now()` (informational only) |
+
+Constraints/indexes:
+- **`contact_medium_id_ref_party_role_unique`** — `UNIQUE (contact_medium_id, ref_party_role)` — the FK target for `party_role.contact_medium` (§2.2). This is the load-bearing constraint of the unit; without it the composite FK on `party_role` cannot be created.
+- Index on `ref_party_role` (every contact list read is "contacts of the selected customer").
+
+Export `$inferSelect`/`$inferInsert` for all three tables (general code-standards §2.7); add `export * from '@/db/schema/customer'` to `db/schema/index.ts`.
+
+### 3.3 Migration — `db/migrations/00XX_customer.sql`
+
+Run `npm run db:generate` after §3.1 + §3.2. **Verify by hand** (this file is the artifact CI/CD applies, per general code-standards §6.2) that the generated SQL, in order:
+1. `CREATE SCHEMA IF NOT EXISTS "customer"`.
+2. The three sequences, before any table default references them.
+3. `CREATE TABLE customer.organization`, then `customer.party_role`, then `customer.contact_medium` — in this order so `party_role`'s FK to `organization` and `contact_medium`'s FK to `party_role` resolve against tables that already exist.
+4. All CHECK constraints (§3.2 tables), the plain `UNIQUE` on `registration_number`, the partial unique index on `party_role.engaged_party`, the `UNIQUE (contact_medium_id, ref_party_role)` on `contact_medium`.
+5. **The composite FK on `party_role` is added last**, after `contact_medium` exists (drizzle-kit may need manual reordering in the **unapplied** file if it emits this FK before the target table — never edit an applied migration, only the one not yet run, per Module Invariant #10 / general code-standards §6.2).
+
+Then append the permission-registry row in the same file (precedent: `pm02` §3.3, `um05`):
+
+```sql
+--> statement-breakpoint
+INSERT INTO "core"."permissions" ("permission_name", "permission_info")
+VALUES ('customers', 'Controls access to the View Customer and Manage Customer pages.');
+```
+
+One migration = the whole unit's DDL + the registry row. No `CREATE EXTENSION` anywhere — every constraint above is standard SQL (partial index, composite deferrable FK, plain nullable-unique), no `btree_gist` or similar needed.
+
+### 3.4 Permission registry wiring (typed constant)
+
+1. `types/rbac.ts` (or the module's equivalent registry list) — add `'customers'` to `PERMISSION_NAMES`.
+2. `auth/permission-constants.ts` — add `CUSTOMERS: 'customers'` to `PERMISSIONS`.
+3. Wherever the Roles UI's permission-display map lives (`types/roles.ts` per the Product precedent) — add a `customers: 'Customers'` (or "View/Manage Customer" — match the existing display-name convention) entry; this is a compile-error-until-done record per `PermissionName`, so it forces itself to be added.
+4. **Expect existing permission-count assertions to move by one** (the `pm02` precedent: adding a 5th permission moved two test counts from 4→5) — find any test asserting a fixed `PERMISSION_NAMES.length` or a fixed row count in the Roles permission-matrix/detail tests and update the count by exactly one. This is the registry growing as designed, not scope creep.
+
+### 3.5 Domain unions — `types/customer.ts` (new)
+
+Per code-standards §2.1, `as const` unions + inferred types, verbatim from `custmgmt-code-standards.md` §2.1:
+
+```ts
+export const ORGANIZATION_STATUSES = ['REGISTERED', 'ACTIVE', 'INACTIVE', 'SUSPENDED', 'DISSOLVED', 'MERGED'] as const
+export type OrganizationStatus = (typeof ORGANIZATION_STATUSES)[number]
+
+export const CUSTOMER_STATUSES = ['INITIALIZED', 'VALIDATED', 'ACTIVE', 'SUSPENDED', 'CLOSED'] as const
+export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number]
+
+export const ORGANIZATION_TYPES = ['COMPANY', 'GOVERNMENT'] as const
+export type OrganizationType = (typeof ORGANIZATION_TYPES)[number]
+
+export const PREFERRED_CONTACT_METHODS = ['PHONE', 'EMAIL', 'ADDRESS'] as const
+export type PreferredContactMethod = (typeof PREFERRED_CONTACT_METHODS)[number]
+```
+
+Re-export the Drizzle row types from `@/db/schema/customer`. **`ORGANIZATION_TRANSITIONS`/`CUSTOMER_TRANSITIONS` and read models (`OrganizationDetail`, etc.) are `cm02`, not this unit** — this file carries only the fixed-set unions the CHECK constraints above encode.
+
+### 3.6 Seed — `SYSTEM_CONFIG` row + role grants, `db/seeds/customer.ts` (new)
+
+> **Column set confirmed against this planning folder's own verified-code specs** (not a blind guess — see the "Note on codebase verification" above): `core.system_config` carries `config_group`, `config_version`, `config_key`, `config_value`, `description`, `is_secret`, `status`, `modified_by` (`um28-side-panel-system-config.md` §"Repository", `pm03-spec.md` §3.7). The unique index is `(config_group, config_version, config_key)` — **two `ACTIVE` rows for the same `(group, key)` at different versions can legally coexist**, so the existing `systemConfigRepository.findActiveValue(db, group, key)` reads with `ORDER BY config_version DESC LIMIT 1` (`um28` §101). This unit's insert uses `config_version = 1`, `status = 'ACTIVE'` — the only version that will ever exist for this key unless a later change bumps it.
+
+Standalone idempotent script, following the `seed-rbac.ts` / `pm02`'s `db/seeds/product.ts` pattern exactly: `postgres` + `drizzle` with `max: 1`, skip-if-already-present pre-check, everything in **one transaction**, `lib/logger` (never `console.*`), `process.exit(1)` on failure. Runs **after** `db:seed-rbac` (needs `MANAGER`/`USER` role rows to exist).
+
+1. **`CUSTOMER_SEARCH_RESULT_LIMIT` config row** — insert into `core.system_config` if no row matching `(config_group, config_key) = ('customer', 'CUSTOMER_SEARCH_RESULT_LIMIT')` exists: `config_group = 'customer'`, `config_version = 1`, `config_key = 'CUSTOMER_SEARCH_RESULT_LIMIT'`, `config_value = '5'`, `description = 'Max rows returned by a Customer search before the refine-search hint shows.'`, `is_secret = false`, `status = 'ACTIVE'`, `modified_by = NULL` (seed-time write, no acting user — mirrors Product's `last_edited_by: null` seed convention). The key is kept **`SCREAMING_SNAKE_CASE`** exactly as named in `custmgmt-architecture.md`/`custmgmt-code-standards.md` (Product's own example key, `offering_list_page_size`, happens to be lowercase — each module's config key casing is its own call; this module's docs are unambiguous and are followed verbatim).
+2. **Role grants** — look up the `MANAGER` and `USER` rows in `core.roles` and the `customers` permission in `core.permissions`; if the corresponding `role_permission_assign` row is absent, insert it:
+   - `MANAGER → customers : EDIT`
+   - `USER → customers : READ`
+   - Missing `MANAGER`/`USER` role → throw `"MANAGER/USER role not found. Run db:seed-rbac first."` (mirrors `seed-rbac`'s precondition style).
+   - **Never** insert a `customers : DELETE` grant for any role — no DELETE level exists for this permission (architecture §4).
+3. No `AUDIT_LOG` row for either insert — deployment-time infrastructure operation, same rationale as `seed-rbac`/Product's ADMIN grant.
+4. **Reuse, don't reimplement, `findActiveValue`.** `cm02`'s `search-customers` service reads this row via the existing `systemConfigRepository.findActiveValue(db, 'customer', 'CUSTOMER_SEARCH_RESULT_LIMIT')` (`db/repositories/system-config.repository.ts`, already shipped by `um28`) — this unit does not add a new config-repository method, only the row.
+
+**`package.json` scripts:** add `"db:seed-customer": "node --env-file=.env --import tsx db/seeds/customer.ts"`; extend the `db:setup` composite script to run it after `db:seed-rbac` (and after `db:seed-product` if that script already runs there — order between sibling modules' seeds doesn't matter to each other, only that RBAC precedes all of them).
+
+### 3.7 Guardrail tests owned by this unit
+
+**Unit suite (no DB):**
+- `tests/db/customer-schema.test.ts` — column-name assertions on the three Drizzle table objects (pattern: `product-schema.test.ts`): every column in §3.2 is present with the right nullability; `account` has no FK/CHECK; `party_role_specification` types as `Record<string, unknown>` (structural — no shape schema exists to assert against, confirming Module Inv. #7 isn't accidentally narrowed).
+
+**Integration suite (`describe.skipIf(!databaseUrl)`, pattern: `migration.integration.test.ts` / `product-schema.integration.test.ts`):**
+- `tests/db/customer-schema.integration.test.ts` — fresh-migrate then assert:
+  - `customer` schema + 3 tables + 3 sequences exist; inserted rows get `ORG0000001`/`PTRL00000001`/`CTMD00000001`-format IDs from the defaults (module code-standards §6.2 widths).
+  - **A second non-closed `party_role` for one organization fails** (`23505`) — insert one `party_role` at any non-`CLOSED` status for an org, then attempt a second non-`CLOSED` row for the *same* org; a second row at `CLOSED` for that same org succeeds (partial index scope proven both ways).
+  - **A duplicate non-null `registration_number` fails** (`23505`); two organizations with `registration_number: NULL` both succeed (nullable-unique proven both ways, Module Inv. #8).
+  - **A `party_role.contact_medium` pointer to another customer's contact fails** (`23503`) — create customer A with contact A1, customer B with contact B1, then attempt `UPDATE party_role SET contact_medium = <B1's id> WHERE party_role_id = <A's id>`; the composite FK rejects it. A pointer to a contact genuinely owned by the same `party_role` succeeds.
+  - Invalid `organization_type`/`organization.status`/`party_role.status`/`preferred_contact_method` values are rejected by their CHECKs (`23514`).
+  - `last_modified_by` referencing a nonexistent `core.appuser` row is rejected by its FK.
+  - `core.permissions` contains `customers` after migration.
+- **Update `tests/db/migration.integration.test.ts`'s teardown** to also `DROP SCHEMA IF EXISTS "customer" CASCADE` (drop before `core`, and before/independent of `product` — no cross-schema FK between `customer` and `product`), or re-migration fails against the pre-existing schema.
+- `tests/db/customer-seed.integration.test.ts` — after `db:seed-customer`: `core.system_config` has one `CUSTOMER_SEARCH_RESULT_LIMIT` row with value `5` in `config_group = 'customer'`; `core.role_permission_assign` has exactly `MANAGER → customers:EDIT` and `USER → customers:READ`, and **no** `customers:DELETE` row for any role; re-running the seed script is a no-op (idempotency).
+
+### 3.8 Explicitly NOT in this unit
+
+No `db/repositories/`, no `services/customer/`, no `validation/customer/` (all `cm02`). No `ORGANIZATION_TRANSITIONS`/`CUSTOMER_TRANSITIONS` maps or the JSON-well-formedness validator (`cm02`). No nav, pages, Server Actions, or components (`cm03`+). No trigger or CHECK enforcing "preferred pointer is NULL iff zero contacts" or "preferred method is NULL iff no method populated" — those are service-layer invariants built in `cm11`/`cm13`/`cm15` (§2.2). No `AUDIT_LOG` writes (seeds are infrastructure operations, not audited mutations). No `SYSTEM_CONFIG` schema changes — this unit only inserts a row into the existing table.
+
+---
+
+## 4. Dependencies (packages to install)
+
+**None.** `drizzle-orm`, `postgres`, `drizzle-kit`, `tsx`, and `zod` are already installed from prior modules (`um02`, `pm02`). This unit adds zero new npm packages and zero DB extensions — every constraint (partial unique index, composite deferrable FK, plain nullable-unique) is standard PostgreSQL ≥ 16 DDL.
+
+## 5. Verification checklist
+
+**Diff hygiene**
+- [ ] Changed/added: `drizzle.config.ts` (one line), `db/schema/customer.ts` (new), `db/schema/index.ts`, `db/migrations/00XX_customer.sql` + meta journal (new), `types/rbac.ts`, `auth/permission-constants.ts`, the Roles permission-display map file, `types/customer.ts` (new), `db/seeds/customer.ts` (new), `package.json` (2 script lines), the one migration-harness teardown update (§3.7), the new test files. Nothing else.
+- [ ] No `db/repositories/customer*`, `services/customer/`, `validation/customer/`, `actions/customer/`, `app/(app)/customers/`, or `components/customers/` path exists yet.
+- [ ] No `CREATE EXTENSION` anywhere in the new migration; prior migrations are byte-identical to `main`.
+- [ ] No `TODO`, commented-out code, or `console.*`; the seed script uses `lib/logger`.
+
+**Build gates**
+- [ ] `npm run typecheck` green.
+- [ ] `npm run lint` and `npm run format:check` green; `db/schema/customer.ts` has no import from `services/`, `actions/`, or `validation/` (only `drizzle-orm`, `@/db/schema/identity` type-only where possible).
+- [ ] `npm run test` green — both Vitest projects; only the deliberate permission-count assertions changed (§3.4.4).
+
+**Data-layer guardrails (the point of the unit)**
+- [ ] Fresh database: `npm run db:setup` (migrate → seed-rbac → seed-customer, in that order) completes; rerunning `db:seed-customer` is idempotent.
+- [ ] psql: a second non-`CLOSED` `party_role` for the same organization fails; a `CLOSED` second row for the same org succeeds.
+- [ ] psql: a duplicate non-null `registration_number` fails; two `NULL` values both succeed.
+- [ ] psql: a `party_role.contact_medium` pointer to a contact owned by a *different* `party_role` fails; a pointer to a contact owned by the *same* `party_role` succeeds.
+- [ ] psql: invalid `organization_type`, `organization.status`, `party_role.status`, and `preferred_contact_method` values are each rejected by their CHECK.
+- [ ] `core.permissions` contains `customers`; `core.role_permission_assign` maps exactly `MANAGER → customers:EDIT` and `USER → customers:READ`; no `customers:DELETE` row exists for any role.
+- [ ] `core.system_config` has one `CUSTOMER_SEARCH_RESULT_LIMIT = '5'` row: `config_group = 'customer'`, `config_version = 1`, `status = 'ACTIVE'`, `is_secret = false`; `systemConfigRepository.findActiveValue(db, 'customer', 'CUSTOMER_SEARCH_RESULT_LIMIT')` returns `'5'`.
+- [ ] Generated IDs match the documented formats: `ORG0000001`, `PTRL00000001`, `CTMD00000001`.
+
+**Docs in sync**
+- [ ] `custmgmt-progress-tracker.md` marks `cm01` complete with the commit reference and moves "Next Up" to `cm02`.
+- [ ] The `core.system_config` shape used (§3.6) is a cross-spec-evidenced best effort, not a first-hand read of this session's — confirm it against the actual `db/schema/config.ts` at implementation time; correct this spec in the same change if it differs.
+
+**Pipeline**
+- [ ] CI green end-to-end including SAST + ZAP DAST baseline (no new routes, so DAST surface is unchanged from before this unit).
+
+Any failing item means the unit isn't done. `cm02` (validation + read repositories/services) must not start until this commit is verified and merged.

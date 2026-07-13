@@ -1,0 +1,200 @@
+# CM03 — Nav: "Customer" Section (with the module's first greyed/locked nav item)
+
+- **Unit:** 3 of 16 (`cm00-build-plan.md`)
+- **Dependencies:** `cm01` (the `customers` permission row must exist — `hasLevel` needs a real registry entry to check against). Independent of `cm02` (nav renders regardless of the read-service backend being ready) — may proceed in parallel with `cm02`, per `cm00`'s dependency graph.
+- **Authorizing sections:** `custmgmt-project-overview.md` *Core user flow* step 1 ("a USER sees 'Manage Customer' greyed out with a lock icon"); `custmgmt-architecture.md` §2 (`components/admin-nav.tsx` row), §4 ("USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav"); `custmgmt-code-standards.md` §1.11, §3.8, §8 (permission map); platform `architecture.md` §2 ("nav items render regardless of permission; the page guard enforces access. Any future hide-without-permission behavior applies platform-wide, never per module"); general `code-standards.md` §3.6, §4.8, §7.1.
+- **Note on codebase verification:** no live-repo mount this session (confirmed again — see `cm01`/`cm02`). This spec instead reconstructs the current `components/admin-nav.tsx` state from `pm04-spec.md` (Product's own nav unit, written against live-verified code on 2026-07-04), which is the most recent nav change on record in this planning folder. One thing `pm04` does **not** establish and this unit must verify at implementation time: whether `app/(app)/layout.tsx` already computes the full `EffectivePermissionMap` (via `um06`'s `resolveEffectivePermissions`) for some other purpose, or only resolves `{ userId, userEmail }` (the shape `um26-spec.md` describes using for the footer identity strip). See §2.3.
+
+---
+
+## 1. Goal
+
+Add a "Customer" section to `NAV_SECTIONS` in `components/admin-nav.tsx` with two items — "View Customer" (`/customers/view`) and "Manage Customer" (`/customers/manage`) — and, because this module is the first to need it, extend `AdminNav` with a **greyed/locked visual state** for a nav item the current user lacks the declared permission level for for: a USER (holding `customers:READ` only) sees "Manage Customer" rendered inert, dimmed, with a lock icon, while a MANAGER sees it as a normal active link. Existing sections (Administration, Products) and their behavior are untouched. Visible result: the sidebar shows "Customer" (View Customer, Manage Customer) between "Products" and "Administration"; signed in as a seeded MANAGER both Customer links behave normally; signed in as a USER, "Manage Customer" is visibly locked and does not navigate on click, while "View Customer" behaves normally.
+
+## 2. Design
+
+Boundary: `components/admin-nav.tsx` (shared shell component, touched by every module that adds a section — Product's `pm04` precedent) and, only if §2.3's verification turns up a gap, `app/(app)/layout.tsx` (already resolves the current user per `um26`). No `db/**`, `services/**`, or `actions/**` involvement — this is pure presentation wired to a permission map that already exists upstream.
+
+### 2.1 A route-path discrepancy in `custmgmt-code-standards.md` §8 — resolved here
+
+The module's own permission-map table lists the View/Manage Customer routes as `/customer/view` and `/customer/manage` (**singular** "customer"), but the same row's **Folder** column is `app/(app)/customers/view/` and `app/(app)/customers/manage/` (**plural** "customers") — and every other reference in the module docs (`custmgmt-architecture.md` §2's folder-ownership table, the `cm00` build plan) also uses the plural `customers/` folder. Since Next.js derives a route directly from its folder path, a page at `app/(app)/customers/view/page.tsx` serves `/customers/view`, never `/customer/view` — the singular form in the code-standards §8 **Route** column is a typo, not an intentional divergence (nothing in the overview or architecture ever says the URL and the folder disagree). **This unit uses the folder-derived, plural paths (`/customers/view`, `/customers/manage`) for the actual nav `href`s**, and flags the code-standards §8 table for a one-line correction (`/customer/view` → `/customers/view`, `/customer/manage` → `/customers/manage`) as a docs-in-sync follow-up — not deferred silently, recorded here per workflow §7.3 so `cm04`/`cm06` (the pages that must live at these exact paths) don't inherit the typo.
+
+### 2.2 Nav-item and section decisions
+
+1. **One nav component, one file — same discipline as `pm04`.** No second nav component, no customer-specific nav file (code-standards §7.1). `AdminNav`'s name, file, and `collapsed` prop stay; only its item shape and (per §2.3) a new optional prop are extended.
+2. **Section order: `Products` → `Customer` → `Administration`.** `pm04`'s Design #1 explicitly reserved this: "future modules (`Customers`, `Bill Runs`) insert above Administration in the same pattern" — domain modules append in build order, platform administration always last. This unit inserts the new section between the existing two, not at the front or back arbitrarily.
+3. **Item order matches the overview's own listing** — "View Customer" (read-only) before "Manage Customer" (mutate), same as every other module's read-before-write item ordering.
+4. **Icons, checked against every icon already in use** (Users, ShieldHalf, Settings, ScrollText, Package — code-standards §4.11, one library, no collisions): **`Building2`** for View Customer (the organization/legal-entity glyph, matching what the page is actually about — `organization` + `party_role`, not a literal "person" icon) and **`UserCog`** for Manage Customer (the "administer/configure a person-like record" glyph, distinct from `Settings`'s gear-only meaning and from `Users` already used by User Management).
+5. **Collapsed-rail dividers go from 1 to 2** — `pm04`'s divider renders once between each pair of adjacent sections; three sections (`Products`, `Customer`, `Administration`) means two hairlines, not one. Existing collapsed-mode test assertions asserting exactly one divider must be updated as part of this unit (§3.4), the same kind of conscious, called-out count change `pm02`/`cm01` used for permission-row counts.
+6. **Expanded-mode markup for the two new items is byte-identical to every existing item** — same left-border accent, `--surface-selected` active pill, hover, focus ring, label-fade transition (`pm04` Design #2) — **except** "Manage Customer," which takes the new locked treatment in §2.3 whenever the current user lacks `customers:EDIT`.
+
+### 2.3 The greyed/locked mechanism — new `AdminNav` capability
+
+This is the one genuinely new piece of this unit: **no prior module needed a nav item to look different depending on the viewer's permission level** — Product's `pm04` explicitly added *no* permission check to the nav ("an ungranted user sees the item and is stopped by the pm05 page guard"). The Customer module's own overview and architecture require more: a USER must **see** "Manage Customer" is off-limits before ever clicking it, not just get redirected after. This does not contradict the platform convention "nav items render regardless of permission ... any future hide-without-permission behavior applies platform-wide" (architecture §2) — that sentence is about **hiding** an item outright; a still-visible, still-present, merely **visually inert** item is a different, permitted thing, and the overview spells out exactly this treatment ("greyed out with a lock icon").
+
+1. **`NavItem` gains one optional field:** `requiredPermission?: { name: PermissionName; level: PermissionType }`. Only "Manage Customer" sets it (`{ name: 'customers', level: 'EDIT' }`); every existing item (Users, Roles, System Configuration, Audit Log, Product Offering) and the new "View Customer" item leave it `undefined` and render exactly as before — untouched by this mechanism.
+2. **`AdminNav` gains one optional prop:** `permissionMap?: EffectivePermissionMap` (the same type `um06` already defines and hands to Server Component pages, code-standards §8/architecture §5). **Fail-closed if omitted:** an item with a `requiredPermission` and no `permissionMap` prop renders **locked**, never silently falls back to "normal" — consistent with deny-by-default (platform Inv. #4). Items with no `requiredPermission` are entirely unaffected by whether the prop is passed.
+3. **The check itself reuses `hasLevel`** (`types/permissions.ts`, already exported by `um06` for exactly this "show/hide a control" purpose) — `hasLevel(permissionMap, item.requiredPermission.name, item.requiredPermission.level)`. No second permission-comparison helper is written; this is client-side **display** logic only, never a security boundary (general code-standards §1.2/§3.6) — the page guard and every `actions/customer/*` re-check remain the actual enforcement (code-standards §1.11).
+4. **Locked rendering is a non-interactive element, not a dead `<Link>`.** A locked item renders as a `<span role="link" aria-disabled="true">` (not an `<a>`/`next/link`) wrapping the icon, label, and a trailing `Lock` icon (14px, `text-[color:var(--text-on-brand)]/40`), at `opacity-50`, `cursor-not-allowed`, with `title="Requires MANAGER access"` (mirrors the collapsed-mode tooltip convention `pm04` already uses for labels). It does not navigate on click and is not a keyboard tab-stop for activation beyond being announced as disabled — this is a deliberate choice over "a working link that immediately bounces to `/no-access`": showing the restriction up front is strictly better UX than a round-trip through the guard, and the guard still exists underneath as the actual security boundary regardless of what the nav renders (defense in depth is unchanged — this is presentation-only).
+5. **Where the `permissionMap` comes from — verify, don't assume, at implementation time.** `um26-spec.md` records that `app/(app)/layout.tsx` "already resolves the current user to perform the permission guard" for the footer's `user_name`/`user_email`, but doesn't confirm the layout also computes the *full* `EffectivePermissionMap` (only individual `page.tsx` files are documented as calling `requirePermission(name, level)` for their own guard, per architecture §5's "every `(app)` route declares its permission + level"). Two possible states, both handled the same way by this unit:
+   - **If the layout already has the map in scope** (e.g. it already calls `resolveEffectivePermissions(userId)` for some other reason) — thread it straight into `<AdminNav permissionMap={permissionMap} collapsed={collapsed} />`. No new query.
+   - **If the layout only has `{ userId, userEmail }`** — add exactly one call to the already-existing `resolveEffectivePermissions(userId)` (from `um06`, not a new resolver) in the layout, and pass its result down. This is a one-line addition to an existing server-side resolution, not a new DB round trip pattern (the resolver already reads `core.role_assign`/`core.role_permission_assign` once per request, per platform Inv. #15/§5).
+   - Either way, **the layout never passes `db`, a repository, or raw role/permission rows to a client component** — only the already-serializable `EffectivePermissionMap` (`um06` §"Pages that need to conditionally render controls ... receive the `EffectivePermissionMap` as a Server Component prop," the exact precedent this unit reuses for the nav rather than a page body).
+
+## 3. Implementation
+
+### 3.1 `NAV_SECTIONS` — insert the Customer section
+
+```ts
+type NavItem = {
+  label: string
+  href: string
+  icon: LucideIcon
+  requiredPermission?: { name: PermissionName; level: PermissionType } // new, optional (§2.3.1)
+}
+type NavSection = { caption: string; items: ReadonlyArray<NavItem> }
+
+const NAV_SECTIONS: ReadonlyArray<NavSection> = [
+  {
+    caption: 'Products',
+    items: [
+      { label: 'Product Offering', href: '/products/product-offering', icon: Package },
+    ],
+  },
+  {
+    caption: 'Customer',
+    items: [
+      { label: 'View Customer', href: '/customers/view', icon: Building2 },
+      {
+        label: 'Manage Customer',
+        href: '/customers/manage',
+        icon: UserCog,
+        requiredPermission: { name: 'customers', level: 'EDIT' },
+      },
+    ],
+  },
+  {
+    caption: 'Administration',
+    items: [
+      { label: 'Users', href: '/administration/users', icon: Users },
+      { label: 'Roles', href: '/administration/roles', icon: ShieldHalf },
+      { label: 'System Configuration', href: '/administration/system-config', icon: Settings },
+      { label: 'Audit Log', href: '/administration/audit-log', icon: ScrollText },
+    ],
+  },
+]
+```
+
+- Add `Building2`, `UserCog`, and `Lock` to the existing `lucide-react` import; every other icon import unchanged.
+- The `Products` and `Administration` section objects are copied verbatim — same items, same order, same icons (no drive-by edit).
+- Import `PermissionType`, `PermissionName`, `EffectivePermissionMap`, and `hasLevel` from `types/permissions.ts` (`um06`).
+
+### 3.2 `AdminNav` props and render loop
+
+```ts
+interface AdminNavProps {
+  collapsed: boolean
+  permissionMap?: EffectivePermissionMap // new, optional (§2.3.2)
+}
+
+export function AdminNav({ collapsed, permissionMap }: AdminNavProps) { … }
+```
+
+Inside the existing `NAV_SECTIONS.map(...)` (`pm04` §3.2, untouched structurally), the item-level map gains one branch:
+
+```tsx
+{section.items.map((item) => {
+  const locked =
+    item.requiredPermission !== undefined &&
+    !hasLevel(permissionMap, item.requiredPermission.name, item.requiredPermission.level)
+
+  if (locked) {
+    return (
+      <span
+        key={item.href}
+        role="link"
+        aria-disabled="true"
+        title={collapsed ? item.label : 'Requires MANAGER access'}
+        className={cn(
+          /* existing item layout classes, unchanged */
+          'opacity-50 cursor-not-allowed pointer-events-none',
+        )}
+      >
+        <item.icon size={collapsed ? 18 : 16} />
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && <Lock size={14} className="ml-auto text-[color:var(--text-on-brand)]/40" />}
+      </span>
+    )
+  }
+
+  return (
+    /* existing <Link> item JSX, moved verbatim — no class/attribute/logic edit */
+  )
+})}
+```
+
+- `hasLevel(undefined, …)` must return `false` (fail-closed, §2.3.2) — verify `types/permissions.ts`'s existing implementation already treats a missing map this way; if it currently throws on `undefined`, wrap the call (`permissionMap ? hasLevel(permissionMap, …) : false`) rather than changing `um06`'s helper (out of scope for this unit).
+- `pointer-events-none` on top of `aria-disabled` and the non-`<a>` element is redundant-but-safe belt-and-suspenders against any inherited hover/focus styling meant for real links.
+- No change to the active-state (`aria-current`) logic for non-locked items — untouched, still `pathname === href || pathname.startsWith(href + '/')`.
+
+### 3.3 `app/(app)/layout.tsx` — thread the permission map (conditional on §2.3.5's verification)
+
+At implementation time, inspect the current layout:
+
+- **If it already resolves a full `EffectivePermissionMap`** (grep for `resolveEffectivePermissions` or a variable typed `EffectivePermissionMap` in `app/(app)/layout.tsx`): change `<AdminNav collapsed={collapsed} />` to `<AdminNav collapsed={collapsed} permissionMap={permissionMap} />` and stop — no new query.
+- **If it only resolves `{ userId, userEmail }`** (per `um26`'s description): add `const permissionMap = await resolveEffectivePermissions(userId)` (the exact `um06` export, no new resolver) alongside the existing resolution, then pass it the same way. This runs once per request server-side, same as every other authz read (platform Inv. #15, §5) — no caching added (Inv. #20 still applies).
+- Either branch: **no `db/**` import added to `layout.tsx`** — `resolveEffectivePermissions` already encapsulates its own repository calls; the layout only calls the `auth/` helper, same boundary discipline `um26` already established for `user_name`/`user_email`.
+
+### 3.4 Tests — `tests/components/admin-nav.test.tsx` (extend, don't rewrite — `pm04`'s file)
+
+Existing Product-era assertions (Products caption/link, Administration's four links, active-state, collapsed tooltips, `Products` above `Administration`) keep passing unchanged; add:
+
+1. **Expanded, granted (MANAGER-shaped `permissionMap`)** — `Customer` caption present, between `Products` and `Administration` in DOM order; `View Customer` (`href="/customers/view"`) and `Manage Customer` (`href="/customers/manage"`) both render as real links (`getByRole('link', { name: /Manage Customer/ })` succeeds); neither has `aria-disabled`.
+2. **Expanded, not granted (USER-shaped `permissionMap`, i.e. `customers: 'READ'`)** — `View Customer` still a normal link; `Manage Customer` renders with `role="link"` + `aria-disabled="true"`, is **not** `getByRole('link', { name: /Manage Customer/ })`-findable as a real link (use `getByText`/`aria-disabled` query instead), and a click (`fireEvent.click`) does not call the mocked router's `push`.
+3. **No `permissionMap` prop passed at all** — `Manage Customer` still renders locked (fail-closed, §2.3.2) — this is the regression guard for the "must never silently show as unlocked" rule.
+4. **Collapsed, granted** — `Building2`/`UserCog` icons present with `title="View Customer"`/`title="Manage Customer"`; `container.querySelectorAll('hr')` has length **2** (three sections, §2.2.5 — update from `pm04`'s asserted `1`).
+5. **Collapsed, not granted** — locked item's collapsed `title` is still just the label (`"Manage Customer"`, not the "Requires MANAGER access" copy — that longer copy is an expanded-mode-only affordance since collapsed titles are already used for the plain label tooltip, per `pm04`'s existing convention); icon still renders at reduced opacity.
+6. **Active state unaffected** — visiting `/customers/view` marks only `View Customer` `aria-current="page"`; a locked `Manage Customer` is never marked active even if `pathname` happens to equal its `href` (can't happen in practice since the guard would already have redirected, but the render logic shouldn't crash on it).
+
+### 3.5 Guardrail / docs-sync note owned by this unit
+
+- Flag `custmgmt-code-standards.md` §8's **Route** column typo (§2.1) for a one-line correction in the same change: `/customer/view` → `/customers/view`, `/customer/manage` → `/customers/manage`. This is a doc fix riding along with the unit that first depends on the correct paths, not a silent divergence.
+
+### 3.6 Explicitly NOT in this unit
+
+No `app/(app)/customers/**` pages (dead links until `cm04`/`cm06`, exactly like Product's `pm04`→`pm05` gap — accepted interim state, same precedent). No change to `Products` or `Administration` items beyond being copied verbatim. No new permission-comparison helper (reuses `um06`'s `hasLevel` as-is). No `db/**`, `services/**`, or `actions/**` file touched. No change to `admin-sidebar.tsx`'s collapse-cookie behavior (only `AdminNav`'s internal render output and one new prop). No retrofitting the greyed/locked mechanism onto Product's or User Management's existing items — only "Manage Customer" declares `requiredPermission` in this unit; extending it elsewhere is a separate, explicitly requested change.
+
+---
+
+## 4. Dependencies (packages to install)
+
+**None.** `Building2`, `UserCog`, and `Lock` all ship with the already-installed `lucide-react`; `EffectivePermissionMap`/`hasLevel`/`PermissionName`/`PermissionType` already exist from `um06`. Zero new npm packages, zero DB/schema changes.
+
+## 5. Verification checklist
+
+**Diff hygiene**
+- [ ] Changed: `components/admin-nav.tsx`, `tests/components/admin-nav.test.tsx`, `app/(app)/layout.tsx` (only if §3.3's verification finds the map isn't already threaded), and the one-line `custmgmt-code-standards.md` §8 route correction (§3.5). Nothing else.
+- [ ] The `Products` and `Administration` section objects, and every pre-existing item's JSX, are byte-identical/verbatim (indentation-only diff at most) — no drive-by restyle.
+- [ ] No new nav component/file; `AdminNav` name and `collapsed` prop behavior unchanged for every caller that doesn't pass `permissionMap`.
+- [ ] No `TODO`, commented-out code, or `console.*` introduced.
+
+**Build gates**
+- [ ] `npm run typecheck` green — `NavItem.requiredPermission` and `AdminNavProps.permissionMap` are both optional and don't force every existing item/caller to change.
+- [ ] `npm run lint` and `npm run format:check` green.
+- [ ] `npm run test` green — all pre-existing `pm04` assertions pass with only the conscious divider-count update (§3.4.4); new assertions from §3.4 pass.
+
+**Behavior — the point of the unit**
+- [ ] Dev-server, signed in as the seeded MANAGER: sidebar shows `Products`, `Customer` (View Customer, Manage Customer), `Administration` in that order; both Customer links are normal, clickable, and highlight correctly on their own routes.
+- [ ] Dev-server, signed in as a USER-only account: `View Customer` behaves normally; `Manage Customer` is visibly dimmed with a trailing lock icon, is not keyboard/mouse-activatable, and shows the "Requires MANAGER access" tooltip in expanded mode.
+- [ ] Collapsed rail: 2 dividers now separate the 3 sections; the locked item's collapsed tooltip is still just its label.
+- [ ] Directly navigating to `/customers/manage` as a USER (bypassing the nav entirely, e.g. typing the URL) still hits the page guard and lands on `/no-access` — proves the nav's locked look is cosmetic and the guard remains the actual boundary (this assertion depends on `cm06`'s guard existing; if `cm06` hasn't shipped yet, confirm instead that the route currently 404s and note the guard-dependent assertion as deferred to `cm06`'s own checklist).
+- [ ] `Products` and `Administration` pages/links work exactly as they did before this unit (Product's `pm04` claim re-verified, not just assumed).
+
+**Docs in sync**
+- [ ] `custmgmt-code-standards.md` §8's Route column corrected to the plural, folder-derived paths (§2.1/§3.5).
+- [ ] `custmgmt-progress-tracker.md` marks `cm03` complete, records whether `app/(app)/layout.tsx` needed the new `resolveEffectivePermissions` call or already had the map (§2.3.5's resolution — so `cm04`'s spec doesn't have to re-investigate it).
+
+**Pipeline**
+- [ ] CI green end-to-end including SAST/ZAP DAST baseline (one shared shell component + possibly the shared layout changed — no new routes yet, so DAST surface is otherwise unchanged).
+
+Any failing item means the unit isn't done. `cm04` (View Customer search page) and `cm06` (Manage Customer search page) both depend on the exact `/customers/view` and `/customers/manage` paths fixed here and must not diverge from them.

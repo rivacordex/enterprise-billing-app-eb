@@ -1,0 +1,336 @@
+# CM02 — Validation Schemas + Read Repositories + Read Services
+
+- **Unit:** 2 of 16 (`cm00-build-plan.md`)
+- **Dependencies:** `cm01` (the `customer` schema — 3 tables, sequences, constraints, the `customers` permission row, the `CUSTOMER_SEARCH_RESULT_LIMIT` seed) verified and merged. No `services/customer`, `db/repositories/*customer*`, or `validation/customer/` code exists before this unit.
+- **Authorizing sections:** `custmgmt-project-overview.md` *Core user flow* steps 3, 10, *Features* ("Search and viewing", "Customer lifecycle" edges), *Success criteria* #8; `custmgmt-architecture.md` §3 (Storage Model), Module Invariants #2, #3, #6, #7; `custmgmt-code-standards.md` §1.3–§1.4, §1.8, §2.2–§2.6, §6.9–§6.10, §7 (file tree, `validation/`/`db/repositories`/`services` rows), §9.3/§9.8; platform `architecture.md` §2 (boundary rule — no `next/*` below the boundary), §3 (`SYSTEM_CONFIG` partitioning); general `code-standards.md` §1.4, §2.4, §2.7, §2.9, §3.14, §6.1, §6.9.
+- **Note on codebase verification:** same constraint as `cm01` — this session has no mount for the live `enterprise-billing-app` repo. Every established pattern cited below (`systemConfigRepository.findActiveValue`, the `ilike`-escape helper, object-literal repositories, `describe.skipIf(!databaseUrl)` integration tests) is drawn from `pm03-spec.md`, `um05-rbac-schema-seed.md`, and `um28-side-panel-system-config.md` — specs already in this planning folder that were themselves written against live-verified code. One correction against `pm03-spec.md`: its `lastEditedByName` design cites `appuser.display_name`, but `um02-db-foundation-identity-schema.md` (the canonical identity-schema spec) and every later User Management spec (`um07`, `um11`, `um22`, `um24`, `um26`) name the column **`user_name`** — `display_name` does not appear anywhere else and looks like an uncorrected error in `pm03`. This spec uses `user_name`, and implementers should flag the `pm03` discrepancy if revisiting Product.
+
+---
+
+## 1. Goal
+
+Build the module's entire read path: `validation/customer/` (field schemas for organization/party-role/contact-medium, the two transition-map `Record`s, the JSON-well-formedness-only specification schema), three read-only repositories (`organization`, `party-role`, `contact-medium`), and `services/customer` (`searchCustomers`, `getCustomerDetail`) returning composed read models — never raw Drizzle rows. Visible result: unit + integration tests demonstrate correct, capped, case-insensitive search and full three-section detail assembly (organization + customer role + contacts, with `last_modified_by` resolved to a display name) against `cm01`'s schema, and a structural test proves the three repositories export no mutation function yet.
+
+## 2. Design
+
+No UI — boundary is `services/customer/**`, `db/repositories/organization.ts` / `party-role.ts` / `contact-medium.ts`, `validation/customer/**`, and read-model additions to `types/customer.ts` (the file `cm01` started with the domain unions). **No `next/*` or `react` import anywhere in this unit** — `services/customer` stays framework-agnostic (general code-standards §3.14, code-standards §7.1), so a future external API could reuse it unchanged.
+
+### 2.1 Decision: "the customer" is keyed by `party_role_id`, not `organization_id`
+
+This is the one structural call this unit has to make that isn't spelled out verbatim anywhere in the docs, so it's recorded here for every downstream unit (`cm04`–`cm15`) to build on without re-deriving it:
+
+- Module Invariant #3 explicitly allows an organization to accumulate **more than one `party_role` row over its lifetime** — "a returning closed customer gets a new `party_role` row under the same organization," and `CLOSED` is terminal and never reopened. So `organization ↔ party_role` is 1-to-many across history, even though at most one is non-`CLOSED` at any instant.
+- The whole edit/lock/audit model scopes to **`party_role.last_modified_datetime`** as "the module's one optimistic-lock column ... for the whole customer (org + role + contacts)" (Module Inv. #6) — the lock, and therefore the unit of concurrent editing, is the *party role*, not the organization.
+- Therefore: **every search result row is one `party_role`** (joined out to its organization for the name/trading-name match and display), and **every `[id]` route param in this module (`/customers/view/[id]`, `/customers/manage/[id]` — plural, folder-derived paths; `cm03` §2.1 corrects a singular/plural typo in `custmgmt-code-standards.md` §8) is a `party_role_id`** (`PTRL…`), not an `organization_id`. `getCustomerDetail` takes a `partyRoleId` and resolves the organization via `engaged_party`. An organization with one historical `CLOSED` role and one current `ACTIVE` role therefore surfaces as **two distinct search rows** — this is correct, not a duplicate-detection bug: they are two distinct customer engagements a RevOps user may legitimately want to tell apart (e.g. re-onboarding history).
+- This also resolves what `CustomerSearchResult` needs to carry: an organization's name/trading name (for display and re-affirming the match) plus **that specific `party_role`'s own status** — never a status "for the organization" ambiguously.
+
+### 2.2 Other design decisions
+
+1. **Repository shape follows the established pattern** (`pm03`/`um05` precedent): exported object literals (`organizationRepository`, `partyRoleRepository`, `contactMediumRepository`), every method takes `db: Database` as its first argument, explicit return types (general code-standards §2.4).
+2. **v1 repositories export finders only.** No `insert*`/`update*`/`delete*` anywhere in this unit's three repository files — write functions arrive JIT in the mutation unit that first needs them (`cm07` organization+party_role inserts, `cm11` contact insert, etc.), per `cm00`'s "dependencies just in time" rule. Asserted structurally (§3.7).
+3. **Search matches `organization.name`/`organization.trading_name`, `ILIKE`, with the established escape helper** — `name.replace(/[%_\\]/g, '\\$&')` (`pm03`'s `rolesRepository.findRoleByName` pattern) so a literal `%`/`_`/`\` in a search term is treated literally, not as a wildcard.
+4. **Result capping reads `CUSTOMER_SEARCH_RESULT_LIMIT` per call, never hard-coded** (code-standards §6.10): `systemConfigRepository.findActiveValue(db, 'customer', 'CUSTOMER_SEARCH_RESULT_LIMIT')` (shipped by `um28`, seeded by `cm01`). Value must match `/^\d+$/` and be `>= 1`, else fall back to an exported `DEFAULT_CUSTOMER_SEARCH_RESULT_LIMIT = 5` constant (mirrors `pm03`'s page-size fallback pattern) — a missing/corrupt config row degrades gracefully, it never 500s.
+5. **`hasMore` without a second `COUNT` query.** The repository fetches `limit + 1` rows ordered by `organization.name ASC, party_role_id ASC` (deterministic tie-break); if it gets `limit + 1` back, the service trims to `limit` and sets `hasMore: true` (drives the "refine your search" hint, overview *Search and viewing*) — else `hasMore: false`. Cheaper than a parallel count, and the UI only ever needs a boolean, not an exact overage count.
+6. **Empty query never hits the database.** A blank/whitespace-only `q` returns `{ results: [], hasMore: false, limit, query: '' }` immediately — consistent with "neither page pre-loads a result list" (code-standards §3.1) and avoiding an accidental "browse all customers" behavior on an empty submit.
+7. **`getCustomerDetail(partyRoleId)` returns `CustomerDetail | null`, never throws for "not found."** Unknown/invalid ID ⇒ `null` with no further queries — the caller (`cm05`'s page) renders the empty-detail state (general code-standards §2.9, `pm03`'s `getOfferingDetail` precedent). ID-format validation (`PTRL\d{8}`) is the **caller's** job (parsed against `partyRoleIdSchema` before the service is called, code-standards §2.4) — the service treats any non-matching string as simply not found.
+8. **`last_modified_by` resolves to `user_name` via a `LEFT JOIN core.appuser`** (§ note above) — done once per detail assembly for both the organization's and the party role's editor; a tombstoned/removed editor is not a real scenario here (`appuser` FKs are `ON DELETE RESTRICT`, `cm01` §2.1.9), so no "(deleted)" fallback is needed the way `um24`'s audit log actor column needs one.
+9. **`ContactRow.address` is `null` exactly when `ga_address_line1 IS NULL`** — the "address populated" definition fixed in `cm01` §2.1.10, reused verbatim here rather than re-derived. `isPreferredContact` and the contact's own `preferredMethod` are computed by simple equality/passthrough in the service, never stored redundantly.
+10. **The organization/customer status-inconsistency check is explicitly NOT decided here.** `getCustomerDetail`'s read model exposes the raw `organizationStatus` and `customerStatus` only; which combinations count as "conflicting" (overview: e.g. "ACTIVE customer on a SUSPENDED organization") is `cm05`'s call, since `InconsistencyBanner` is a warn-only display concern with no cascade — inventing the matrix here would be deciding UI behavior a unit early. Recorded so `cm05` doesn't need to re-discover this is still open.
+11. **`specification.schema.ts` validates well-formed JSON *objects* only** (Module Inv. #7, code-standards §1.8): `JSON.parse` must succeed **and** the parsed value must be a plain object (`CUST_TYPE`/`PARTY_TYPE`/`CUST_KEY` are described as keys of a specification, per the overview's create-flow step 5) — never an array or primitive at the top level. No key/shape enforcement beyond that. `parseSpecificationInput` (a small validation-layer helper, not a service) is built now even though nothing consumes it until `cm07`/`cm08`, per `cm00`'s bundling of all field schemas into this unit.
+12. **Transition maps are fixed now, cited exactly.** `ORGANIZATION_TRANSITIONS` is copied verbatim from `custmgmt-code-standards.md` §2.2. `CUSTOMER_TRANSITIONS` is not given verbatim anywhere, so it's derived directly from the overview's lifecycle sentence — *"Customer (INITIALIZED → VALIDATED → ACTIVE ↔ SUSPENDED; any → CLOSED terminal)"* — and written out in full in §3.3 below. Per code-standards §1.4, this file becomes the **one** place either map is declared; no later unit re-declares a status's next-states.
+
+## 3. Implementation
+
+### 3.1 Read models — `types/customer.ts` (extend, `cm01`'s file)
+
+Append to the unions `cm01` already created:
+
+```ts
+export interface OrganizationDetail {
+  organizationId: string
+  name: string
+  tradingName: string | null
+  organizationType: OrganizationType
+  registrationNumber: string | null
+  taxId: string | null
+  industry: string | null
+  status: OrganizationStatus
+  statusReason: string | null
+  lastModifiedByName: string
+  lastModifiedDatetime: Date
+}
+
+export interface CustomerRoleDetail {
+  partyRoleId: string
+  status: CustomerStatus
+  statusReason: string | null
+  specification: Record<string, unknown>
+  account: string | null
+  preferredContactId: string | null
+  lastModifiedByName: string
+  lastModifiedDatetime: Date // the value cm08's edit page round-trips for the optimistic-lock check
+}
+
+export interface ContactAddress {
+  line1: string
+  line2: string | null
+  city: string | null
+  stateProvince: string | null
+  postalCode: string | null
+  country: string | null
+}
+
+export interface ContactRow {
+  contactMediumId: string
+  contactName: string
+  contactRole: string | null
+  phoneNumber: string | null
+  emailAddress: string | null
+  address: ContactAddress | null // null iff ga_address_line1 IS NULL (§2.2.9)
+  preferredMethod: PreferredContactMethod | null
+  isPreferredContact: boolean
+}
+
+export interface CustomerDetail {
+  organization: OrganizationDetail
+  customerRole: CustomerRoleDetail
+  contacts: ContactRow[]
+}
+
+export interface CustomerSearchResult {
+  partyRoleId: string
+  organizationId: string
+  organizationName: string
+  tradingName: string | null
+  organizationStatus: OrganizationStatus
+  customerStatus: CustomerStatus
+}
+
+export interface CustomerSearchResults {
+  results: CustomerSearchResult[]
+  hasMore: boolean
+  limit: number
+  query: string
+}
+```
+
+Re-export nothing new from `@/db/schema/customer` here — the Drizzle row types already re-exported by `cm01` are for repositories only; pages and services consume these composed shapes exclusively (code-standards §2.5).
+
+### 3.2 `validation/customer/transitions.ts` (new)
+
+```ts
+import type { OrganizationStatus, CustomerStatus } from '@/types/customer'
+
+export const ORGANIZATION_TRANSITIONS: Record<OrganizationStatus, readonly OrganizationStatus[]> = {
+  REGISTERED: ['ACTIVE', 'DISSOLVED'],
+  ACTIVE: ['INACTIVE', 'SUSPENDED', 'DISSOLVED', 'MERGED'],
+  INACTIVE: ['ACTIVE', 'SUSPENDED', 'DISSOLVED', 'MERGED'],
+  SUSPENDED: ['ACTIVE', 'INACTIVE', 'DISSOLVED', 'MERGED'],
+  DISSOLVED: [],
+  MERGED: [],
+} as const
+
+export const CUSTOMER_TRANSITIONS: Record<CustomerStatus, readonly CustomerStatus[]> = {
+  INITIALIZED: ['VALIDATED', 'CLOSED'],
+  VALIDATED: ['ACTIVE', 'CLOSED'],
+  ACTIVE: ['SUSPENDED', 'CLOSED'],
+  SUSPENDED: ['ACTIVE', 'CLOSED'],
+  CLOSED: [],
+} as const
+```
+
+Both Server Actions (later units) and any status dropdown read these two objects only — no page, component, or action re-declares a next-state list (code-standards §1.4, §2.2). `CUSTOMER_TRANSITIONS` encodes "no skipping VALIDATED" (INITIALIZED can only reach VALIDATED or CLOSED, never ACTIVE directly) and "any non-terminal state can reach CLOSED."
+
+### 3.3 `validation/customer/specification.schema.ts` (new)
+
+```ts
+import { z } from 'zod'
+
+export const specificationSchema = z.record(z.string(), z.unknown())
+export type PartyRoleSpecification = z.infer<typeof specificationSchema>
+
+export type SpecificationParseResult =
+  | { ok: true; value: PartyRoleSpecification }
+  | { ok: false }
+
+export function parseSpecificationInput(raw: string): SpecificationParseResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { ok: false }
+  }
+  const result = specificationSchema.safeParse(parsed)
+  return result.success ? { ok: true, value: result.data } : { ok: false }
+}
+```
+
+`z.record(z.string(), z.unknown())` accepts any plain object with string keys and arbitrary values, rejecting arrays/primitives at the top level — well-formedness only, no key/shape enforcement (Module Inv. #7). `db/schema/customer.ts`'s `.$type<Record<string, unknown>>()` (`cm01` §2.1.5) is the same shape, imported type-only if ever cross-referenced (general code-standards §6.17).
+
+### 3.4 `validation/customer/organization.schema.ts` (new)
+
+```ts
+export const organizationIdSchema = z.string().regex(/^ORG\d{7}$/)
+
+export const organizationFieldsSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  tradingName: z.string().trim().min(1).max(200).nullable().default(null),
+  organizationType: z.enum(ORGANIZATION_TYPES),
+  registrationNumber: z.string().trim().min(1).max(50).nullable().default(null),
+  taxId: z.string().trim().min(1).max(50).nullable().default(null),
+  industry: z.string().trim().min(1).max(100).nullable().default(null),
+})
+export type OrganizationFields = z.infer<typeof organizationFieldsSchema>
+```
+
+`organizationFieldsSchema` is reused verbatim by both `create-customer` (`cm07`) and `update-organization` (`cm08`) — one shape, not two hand-kept copies (code-standards §1.4's spirit extended to field shapes, not just transition maps).
+
+### 3.5 `validation/customer/party-role.schema.ts` (new)
+
+```ts
+export const partyRoleIdSchema = z.string().regex(/^PTRL\d{8}$/)
+
+export const statusReasonSchema = z.string().trim().min(1).max(500)
+
+// Every mutation in a customer's scope extends this — Module Inv. #6.
+export const optimisticLockSchema = z.object({
+  lastModifiedDatetime: z.coerce.date(),
+})
+
+export const statusTransitionInputSchema = z.object({
+  statusReason: statusReasonSchema,
+}).merge(optimisticLockSchema)
+```
+
+`optimisticLockSchema` is the one place the "every mutation input carries `lastModifiedDatetime`" rule (code-standards §2.6) is expressed as a reusable Zod fragment — `cm08`–`cm15`'s action input schemas all `.merge()` it rather than re-declaring the field.
+
+### 3.6 `validation/customer/contact-medium.schema.ts` (new)
+
+```ts
+export const contactMediumIdSchema = z.string().regex(/^CTMD\d{8}$/)
+
+export const contactFieldsSchema = z.object({
+  contactName: z.string().trim().min(1).max(200),
+  contactRole: z.string().trim().min(1).max(100).nullable().default(null),
+  phoneNumber: z.string().trim().min(3).max(30).nullable().default(null),
+  emailAddress: z.string().trim().email().nullable().default(null),
+  addressLine1: z.string().trim().min(1).max(200).nullable().default(null),
+  addressLine2: z.string().trim().min(1).max(200).nullable().default(null),
+  city: z.string().trim().min(1).max(100).nullable().default(null),
+  stateProvince: z.string().trim().min(1).max(100).nullable().default(null),
+  postalCode: z.string().trim().min(1).max(20).nullable().default(null),
+  country: z.string().trim().min(1).max(100).nullable().default(null),
+})
+export type ContactFields = z.infer<typeof contactFieldsSchema>
+```
+
+No cross-field refinement here (e.g. "at least one method populated") — that invariant is service-layer (`cm11`), not a shape check; this schema only constrains each field's own value.
+
+### 3.7 Repository — `db/repositories/organization.ts` (new)
+
+`organizationRepository`, one finder:
+
+- **`findById(db, organizationId): Promise<Organization | null>`** — plain PK lookup, `.$inferSelect` row. No projection composition here; `getCustomerDetail` (§3.11) assembles the `OrganizationDetail` read model itself so the `user_name` join lives in one place (§3.9), not duplicated across repositories.
+
+### 3.8 Repository — `db/repositories/party-role.ts` (new)
+
+`partyRoleRepository`, two finders:
+
+- **`findById(db, partyRoleId): Promise<PartyRole | null>`** — plain PK lookup.
+- **`searchByOrganizationNameOrTradingName(db, pattern, limit): Promise<Array<{ partyRole: PartyRole; organization: Organization }>>`** — joins `party_role` to its `organization` via `engaged_party`, `WHERE organization.name ILIKE $escaped OR organization.trading_name ILIKE $escaped`, `ORDER BY organization.name ASC, party_role.party_role_id ASC`, `LIMIT limit + 1` (the caller passes `limit + 1`; the repository doesn't know about the "hint" concept, it just fetches what it's asked — Design #2.2.5's trim/`hasMore` logic lives in the service, §3.10).
+
+No `insert*`/`update*`/`delete*` export (Design #2.2.2).
+
+### 3.9 Repository — `db/repositories/contact-medium.ts` (new)
+
+`contactMediumRepository`, one finder:
+
+- **`findByPartyRoleId(db, partyRoleId): Promise<ContactMedium[]>`** — `WHERE ref_party_role = $1` (uses `cm01`'s index on `ref_party_role`), `ORDER BY contact_medium_id ASC` (deterministic; overview doesn't specify a display order, so insertion order via ID sequence is the simplest defensible default — flag for `cm11` if product wants "most-recently-added first" instead).
+
+No `insert*`/`update*`/`delete*` export.
+
+### 3.10 Service — `services/customer/search-customers.ts` (new)
+
+```ts
+export const DEFAULT_CUSTOMER_SEARCH_RESULT_LIMIT = 5
+
+export async function searchCustomers(
+  db: Database,
+  query: string,
+): Promise<CustomerSearchResults> { … }
+```
+
+Steps: (1) trim `query`; empty ⇒ return `{ results: [], hasMore: false, limit: <resolved>, query: '' }` without touching the DB (Design #2.2.6) — resolve the limit anyway so the shape is consistent for the caller; (2) resolve the limit — `systemConfigRepository.findActiveValue(db, 'customer', 'CUSTOMER_SEARCH_RESULT_LIMIT')`, accept only `/^\d+$/` and `>= 1`, else `DEFAULT_CUSTOMER_SEARCH_RESULT_LIMIT` (internal un-exported helper, mirrors `pm03`'s page-size resolution); (3) escape the query (`replace(/[%_\\]/g, '\\$&')`), wrap `%…%`; (4) `partyRoleRepository.searchByOrganizationNameOrTradingName(db, pattern, limit + 1)`; (5) if the array has `limit + 1` rows, `hasMore = true` and slice to `limit`, else `hasMore = false`; (6) map each `{ partyRole, organization }` pair to a `CustomerSearchResult`; (7) return `{ results, hasMore, limit, query: query.trim() }`.
+
+### 3.11 Service — `services/customer/get-customer-detail.ts` (new)
+
+```ts
+export async function getCustomerDetail(
+  db: Database,
+  partyRoleId: string,
+): Promise<CustomerDetail | null> { … }
+```
+
+Steps: (1) `partyRoleRepository.findById` — `null` ⇒ return `null` immediately, no further queries (Design #2.2.7); (2) `organizationRepository.findById(db, partyRole.engagedParty)` — should never be `null` given the FK, but if it somehow is, return `null` (fail closed, don't assemble a partial detail); (3) `Promise.all` of `contactMediumRepository.findByPartyRoleId` and the two `user_name` lookups for `organization.lastModifiedBy` and `partyRole.lastModifiedBy` (reuse `identityRepository.findUserById` from `um02`'s scaffold — no new identity-layer query); (4) map `contactMedium` rows to `ContactRow[]`, each `isPreferredContact = contactMediumId === partyRole.contactMedium`, `address = ga_address_line1 === null ? null : { line1: ga_address_line1, line2: …, … }`; (5) assemble and return `CustomerDetail`.
+
+No filtering, no pagination — a customer has at most a handful of contacts (overview: one phone/email/address per contact row, no stated cap on contact count, but realistically small); all contacts are always returned.
+
+### 3.12 Guardrail tests owned by this unit
+
+**Unit suite (`vitest.config.ts`, no DB — repositories mocked via `vi.mock`, pattern: `pm03`'s `tests/services/*.service.test.ts`):**
+
+- `tests/validation/specification.schema.test.ts` — accepts a well-formed JSON object (incl. `{}`, incl. one with `CUST_TYPE`/`PARTY_TYPE`/`CUST_KEY` keys and arbitrary values); rejects invalid JSON text, a top-level array, a top-level string/number/boolean/`null`.
+- `tests/validation/transitions.test.ts` — `ORGANIZATION_TRANSITIONS` and `CUSTOMER_TRANSITIONS` contain exactly the edges in §3.2 (no more, no fewer) — a structural test that fails loudly if a future edit silently narrows or widens either map without updating this spec and the architecture doc together (workflow §7.3).
+- `tests/validation/organization.schema.test.ts` / `contact-medium.schema.test.ts` — required vs. optional fields, trimming, nullable defaults, `emailAddress` format rejection.
+- `tests/services/search-customers.service.test.ts` — empty/whitespace query short-circuits with no repository call; limit resolution: config `'5'` ⇒ 5, config `'20'` ⇒ 20, missing/`''`/`'abc'`/`'0'`/`'-3'` ⇒ `DEFAULT_CUSTOMER_SEARCH_RESULT_LIMIT`; `limit + 1` rows returned from the repository ⇒ `hasMore: true` and exactly `limit` results; exactly `limit` rows returned ⇒ `hasMore: false`.
+- `tests/services/get-customer-detail.service.test.ts` — unknown `partyRoleId` ⇒ `null`, and the organization/contact/user-name finders are **not called**; assembly wires `isPreferredContact` correctly against `partyRole.contactMedium`; a contact with `ga_address_line1: null` ⇒ `address: null`; a contact with it populated ⇒ a full `ContactAddress`.
+- `tests/db/customer-repository-exports.test.ts` — structural no-mutation assert (pattern: `pm03`'s `product-repository-exports.test.ts`): import all three repository objects; `Object.keys()` of each contains no name matching `/^(insert|create|update|delete|remove|set)/`.
+
+**Integration suite (`vitest.integration.config.ts`, `describe.skipIf(!databaseUrl)`, pattern: `pm03`'s `product-repositories.integration.test.ts`):**
+
+- `tests/db/customer-repositories.integration.test.ts` — fresh-migrate `cm01`'s schema, insert self-contained fixtures directly via the Drizzle client (test code, not a production write path — repositories still export no writes), payloads passed through the `cm02` Zod schemas first (code-standards §1.7 spirit). Fixtures: ≥ 6 organizations with distinct names/trading names (incl. one pair sharing a substring for a genuine multi-match search), one organization with **two `party_role`s** (one `CLOSED`, one `ACTIVE`) to exercise Design #2.1's two-rows-per-org case, contacts on at least two customers (one with a full address, one with `ga_address_line1: null`). Assert:
+  - Search: case-insensitive substring match on both `name` and `trading_name`; literal `%`/`_`/`\` in `q` don't act as wildcards (escaping proven against real `ILIKE`); the two-`party_role` organization surfaces as two distinct rows with their own statuses; deterministic ordering (`name ASC, party_role_id ASC`) is stable across repeated calls.
+  - `findActiveValue(db, 'customer', 'CUSTOMER_SEARCH_RESULT_LIMIT')` returns `'5'` against `cm01`'s seed; changing the row's `config_value` changes `searchCustomers`'s effective cap on the next call, no deploy.
+  - `getCustomerDetail`: full assembly against a real customer with contacts — `lastModifiedByName` resolves via the real `core.appuser` join (fixture with a real user FK) for both organization and role; unknown ID ⇒ `null`.
+  - Cleanup mirrors the `cm01` harness (`DROP SCHEMA "customer" CASCADE` before `core`, already added by `cm01` §3.7 — no further teardown change needed here).
+
+### 3.13 Explicitly NOT in this unit
+
+No `actions/customer/`, `app/(app)/customers/`, `components/customers/`, or nav change (all `cm03`+). No write function in any of the three repositories (JIT — arrives with the first mutation unit that needs it). No `InconsistencyBanner` matrix/logic (Design #2.2.10, deferred to `cm05`). No cross-field refinement on `contactFieldsSchema` (e.g. "at least one method populated" — service-layer, `cm11`). No `AUDIT_LOG` reads or writes (this unit is pure reads, nothing to audit). No change to `cm01`'s migration, schema, or seed files.
+
+---
+
+## 4. Dependencies (packages to install)
+
+**None.** `drizzle-orm`, `zod`, `vitest` are already installed. This unit adds zero new npm packages.
+
+## 5. Verification checklist
+
+**Diff hygiene**
+- [ ] Changed/added: `types/customer.ts` (extended), `validation/customer/transitions.ts`, `specification.schema.ts`, `organization.schema.ts`, `party-role.schema.ts`, `contact-medium.schema.ts` (all new), `db/repositories/organization.ts`, `party-role.ts`, `contact-medium.ts` (all new), `services/customer/search-customers.ts`, `get-customer-detail.ts` (both new), and the new test files. Nothing else.
+- [ ] No `actions/customer/`, `app/(app)/customers/`, `components/customers/`, or `app/api/customer*` path exists.
+- [ ] No edit to `cm01`'s migration, `db/schema/customer.ts`, or `db/seeds/customer.ts`.
+- [ ] `services/customer/**` and `validation/customer/**` import no `next/*` and no `react`.
+- [ ] `grep -rn "insert\|update\|delete" db/repositories/{organization,party-role,contact-medium}.ts` shows no mutation function; no `AUDIT_LOG` reference anywhere in the diff.
+- [ ] No `TODO`, commented-out code, or `console.*` introduced.
+
+**Build gates**
+- [ ] `npm run typecheck` green — read models are the declared return types end-to-end; `lastModifiedDatetime` is `Date`, never a string leak.
+- [ ] `npm run lint` and `npm run format:check` green.
+- [ ] `npm run test` green — both Vitest projects; zero pre-existing test assertions change (this unit adds only new files).
+
+**Backend guardrails (the point of the unit)**
+- [ ] Structural test proves all three repositories export no mutation functions.
+- [ ] `ORGANIZATION_TRANSITIONS`/`CUSTOMER_TRANSITIONS` match §3.2 exactly, no more/fewer edges.
+- [ ] Search is case-insensitive, matches both `name` and `trading_name`, escapes `%`/`_`/`\` literally, caps at the configured limit with a correct `hasMore` flag, and returns `{ results: [], hasMore: false }` on an empty query with no DB call.
+- [ ] An organization with one `CLOSED` and one `ACTIVE` `party_role` surfaces as two distinct search rows (Design #2.1 proven, not just asserted).
+- [ ] `getCustomerDetail` assembles all three sections correctly, resolves `user_name` for both editors, computes `isPreferredContact` and `address`-nullability correctly, and returns `null` for an unknown ID without extra queries.
+- [ ] Fresh DB: `npm run db:setup` (through `cm01`'s seed) then a scratch call to `searchCustomers`/`getCustomerDetail` against seeded/fixture data behaves as the integration suite asserts.
+
+**Docs in sync**
+- [ ] `custmgmt-progress-tracker.md` marks `cm02` complete with the commit reference and records the two decisions this spec resolved (party-role-keyed search/detail, Design #2.1; the `pm03` `display_name`→`user_name` correction) so they aren't re-litigated.
+
+**Pipeline**
+- [ ] CI green end-to-end including SAST + ZAP DAST baseline (no new routes; runtime behavior unchanged until `cm04`/`cm05` consume these services).
+
+Any failing item means the unit isn't done. `cm03` (nav) is independent and may proceed in parallel; `cm04` (View search page) must not consume these services until this commit is verified and merged.
