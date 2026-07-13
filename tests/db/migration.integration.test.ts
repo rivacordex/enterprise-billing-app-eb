@@ -17,8 +17,11 @@ describe.skipIf(!databaseUrl)(
 
     beforeAll(async () => {
       sql = postgres(databaseUrl as string, { max: 1 });
-      // "product" holds FKs into "core" (last_edited_by -> core.appuser), so
-      // it must drop first (pm02-spec §3.8).
+      // "customer" and "product" both hold FKs into "core", so both must
+      // drop first (pm02-spec §3.8, cm01-spec §3.7); no cross-schema FK
+      // exists between "customer" and "product", so their relative order
+      // doesn't matter to each other.
+      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
@@ -29,6 +32,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');

@@ -33,6 +33,7 @@ describe.skipIf(!databaseUrl)(
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
+      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
@@ -98,6 +99,7 @@ describe.skipIf(!databaseUrl)(
     }, 30_000);
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
@@ -119,6 +121,7 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "system_config", assignedLevel: "DELETE" },
           { permissionName: "audit_log", assignedLevel: "READ" },
           { permissionName: "products", assignedLevel: null },
+          { permissionName: "customers", assignedLevel: null },
         ]);
       });
 
@@ -132,7 +135,7 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      it("mappings order is always users, roles, system_config, audit_log, products regardless of DB row order", async () => {
+      it("mappings order is always users, roles, system_config, audit_log, products, customers regardless of DB row order", async () => {
         const result = await getAllRolesWithMappings();
         for (const role of result) {
           expect(role.mappings.map((m) => m.permissionName)).toEqual([
@@ -141,6 +144,7 @@ describe.skipIf(!databaseUrl)(
             "system_config",
             "audit_log",
             "products",
+            "customers",
           ]);
         }
       });
@@ -156,6 +160,7 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "system_config", assignedLevel: "DELETE" },
           { permissionName: "audit_log", assignedLevel: "READ" },
           { permissionName: "products", assignedLevel: null },
+          { permissionName: "customers", assignedLevel: null },
         ]);
       });
 

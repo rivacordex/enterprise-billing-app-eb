@@ -59,6 +59,7 @@ describe("SystemConfigPage", () => {
         system_config: "DELETE",
         audit_log: "READ",
         products: "DELETE",
+        customers: null,
       },
     });
 
@@ -95,6 +96,7 @@ describe("SystemConfigPage", () => {
         system_config: "EDIT",
         audit_log: "READ",
         products: null,
+        customers: null,
       },
     });
 
@@ -116,6 +118,7 @@ describe("SystemConfigPage", () => {
         system_config: "READ",
         audit_log: null,
         products: null,
+        customers: null,
       },
     });
 
@@ -137,6 +140,7 @@ describe("SystemConfigPage", () => {
         system_config: "DELETE",
         audit_log: null,
         products: null,
+        customers: null,
       },
     });
 

@@ -90,6 +90,7 @@ const EDIT_MAP: EffectivePermissionMap = {
   system_config: null,
   audit_log: null,
   products: null,
+  customers: null,
 };
 
 const READ_MAP: EffectivePermissionMap = {
@@ -98,6 +99,7 @@ const READ_MAP: EffectivePermissionMap = {
   system_config: null,
   audit_log: null,
   products: null,
+  customers: null,
 };
 
 beforeEach(() => {
@@ -1914,6 +1916,7 @@ const DELETE_MAP: EffectivePermissionMap = {
   system_config: null,
   audit_log: null,
   products: null,
+  customers: null,
 };
 
 const DISABLED_USER: UserDetailView = { ...BASE_USER, status: "DISABLED" };

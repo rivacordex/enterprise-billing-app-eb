@@ -31,6 +31,7 @@ describe("hasLevel", () => {
       system_config: "READ",
       audit_log: null,
       products: null,
+      customers: null,
     };
 
     expect(hasLevel(map, "users", "EDIT")).toBe(true);

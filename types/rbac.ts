@@ -4,6 +4,7 @@ export const PERMISSION_NAMES = [
   "system_config",
   "audit_log",
   "products",
+  "customers",
 ] as const;
 export type PermissionName = (typeof PERMISSION_NAMES)[number];
 

@@ -47,6 +47,7 @@ function emptyMap(): EffectivePermissionMap {
     system_config: null,
     audit_log: null,
     products: null,
+    customers: null,
   };
 }
 
@@ -70,6 +71,7 @@ const ADMIN_ROLE: RoleWithMappings = {
     { permissionName: "system_config", assignedLevel: "DELETE" },
     { permissionName: "audit_log", assignedLevel: "READ" },
     { permissionName: "products", assignedLevel: "DELETE" },
+    { permissionName: "customers", assignedLevel: null },
   ],
 };
 
@@ -85,6 +87,7 @@ const CUSTOM_ROLE: RoleWithMappings = {
     { permissionName: "system_config", assignedLevel: null },
     { permissionName: "audit_log", assignedLevel: null },
     { permissionName: "products", assignedLevel: null },
+    { permissionName: "customers", assignedLevel: null },
   ],
 };
 
@@ -100,6 +103,7 @@ const MANAGER_ROLE: RoleWithMappings = {
     { permissionName: "system_config", assignedLevel: null },
     { permissionName: "audit_log", assignedLevel: null },
     { permissionName: "products", assignedLevel: null },
+    { permissionName: "customers", assignedLevel: null },
   ],
 };
 
@@ -170,7 +174,7 @@ describe("RoleDetail", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders all 5 permission rows in PERMISSION_NAMES order", () => {
+  it("renders all 6 permission rows in PERMISSION_NAMES order", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -190,6 +194,7 @@ describe("RoleDetail", () => {
       "System Config",
       "Audit Log",
       "Products",
+      "Customers",
     ]);
   });
 
@@ -207,7 +212,7 @@ describe("RoleDetail", () => {
     expect(screen.getByText("READ")).toBeInTheDocument();
   });
 
-  it("MANAGER: all 5 matrix rows show '—'", () => {
+  it("MANAGER: all 6 matrix rows show '—'", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -217,7 +222,7 @@ describe("RoleDetail", () => {
         permissionMap={emptyMap()}
       />,
     );
-    expect(screen.getAllByText("—")).toHaveLength(5);
+    expect(screen.getAllByText("—")).toHaveLength(6);
   });
 
   it("renders '—' for description when roleDescr is null", () => {
