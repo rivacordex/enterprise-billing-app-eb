@@ -2,10 +2,12 @@ import { asc, eq, ilike, or } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { organization, partyRole } from "@/db/schema/customer";
-import type { Organization, PartyRole } from "@/db/schema/customer";
+import type {
+  Organization,
+  PartyRole,
+  PartyRoleInsert,
+} from "@/db/schema/customer";
 
-// v1 exports finders only (cm02-spec Design #2.2.2) — no insert/update/
-// delete anywhere in this file.
 export const partyRoleRepository = {
   // Plain PK lookup.
   async findById(db: Database, partyRoleId: string): Promise<PartyRole | null> {
@@ -44,5 +46,18 @@ export const partyRoleRepository = {
       )
       .orderBy(asc(organization.name), asc(partyRole.partyRoleId))
       .limit(limit);
+  },
+
+  // `status` is hard-coded to `INITIALIZED`, overwriting whatever `data`
+  // carries — belt-and-suspenders against a future caller mistake, since
+  // there is no code path that should create a customer at any other
+  // initial status (cm07-spec §2.3.3, §3.2). First write function on this
+  // repository.
+  async insert(tx: Database, data: PartyRoleInsert): Promise<PartyRole> {
+    const [row] = await tx
+      .insert(partyRole)
+      .values({ ...data, status: "INITIALIZED" })
+      .returning();
+    return row!;
   },
 };
