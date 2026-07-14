@@ -10,7 +10,7 @@ Update this file after every meaningful implementation change.
 | cm02 | Validation schemas + read repositories + read services                 | Done (committed `3347d04`) |
 | cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (committed `47c0f68`) |
 | cm04 | View search page                                                        | Done (committed `d37c875`) |
-| cm05 | View detail page                                                        | Done (uncommitted)         |
+| cm05 | View detail page                                                        | Done (committed `b1d0d8a`) |
 | cm06 | Manage search page                                                      | Done (committed `53f9a62`) |
 | cm07 | Create customer                                                         | Done (uncommitted)         |
 | cm08 | Edit page + update organization                                         | Spec written, not started  |
@@ -81,7 +81,7 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 **Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 139 files / 1210 tests green (was 132/1182 before this unit's +7 new test files / +28 new tests). Integration suite not re-run — no `db/**`/`services/**`/`actions/**` touched, so it's unaffected by this unit's diff (all new/edited files are `app/(app)/customers/view/[id]/**`, `components/customers/**`, `app/globals.css`, and the corresponding test files).
 
-**Not yet committed** — changes are in the working tree alongside `cm02`/`cm03`/`cm04`'s uncommitted work; commit per user confirmation. `cm06` (Manage Customer search page) is independent and may proceed in parallel; `cm08` will reuse `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner` built here.
+**Committed** as `b1d0d8a` ("customer view detail page (cm05)"). `cm08` will reuse `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner` built here.
 
 ---
 
