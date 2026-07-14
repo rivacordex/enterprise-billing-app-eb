@@ -4,6 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/auth/guard", () => ({
   getCurrentUserIdentity: vi.fn(),
 }));
+// cm03: the layout now resolves the full permission map whenever an
+// identity resolves, to thread `AdminNav`'s locked/greyed-item state.
+vi.mock("@/auth/resolver", () => ({
+  resolveEffectivePermissions: vi.fn(async () => ({
+    users: null,
+    roles: null,
+    system_config: null,
+    audit_log: null,
+    products: null,
+    customers: null,
+  })),
+}));
 // um28: the layout now reads the collapse cookie + branding logo server-side.
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: () => undefined })),
@@ -34,6 +46,7 @@ beforeEach(() => {
 describe("AdminLayout sidebar footer", () => {
   it("renders the signed-in user's name and email in the footer", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
+      userId: "user-1",
       userName: "Ada Lovelace",
       userEmail: "ada@example.com",
     });
@@ -46,6 +59,7 @@ describe("AdminLayout sidebar footer", () => {
 
   it("truncates a long user name (truncate class present)", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
+      userId: "user-1",
       userName:
         "A Very Long User Name That Would Otherwise Overflow The Sidebar",
       userEmail: "averylongemailaddress.that.overflows@example.com",
@@ -59,6 +73,7 @@ describe("AdminLayout sidebar footer", () => {
 
   it("renders the sidebar sign-out button in the footer", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
+      userId: "user-1",
       userName: "Ada Lovelace",
       userEmail: "ada@example.com",
     });
@@ -72,6 +87,7 @@ describe("AdminLayout sidebar footer", () => {
 
   it("still renders all four admin nav links", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
+      userId: "user-1",
       userName: "Ada Lovelace",
       userEmail: "ada@example.com",
     });

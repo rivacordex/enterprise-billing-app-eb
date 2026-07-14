@@ -49,6 +49,7 @@ export async function requireAuthenticated(): Promise<{
 // it can't alter the layout's redirect behavior, and living in `auth/` means
 // `layout.tsx` needn't import `db/**` directly.
 export async function getCurrentUserIdentity(): Promise<{
+  userId: string;
   userName: string;
   userEmail: string;
 } | null> {
@@ -62,7 +63,11 @@ export async function getCurrentUserIdentity(): Promise<{
     return null;
   }
 
-  return { userName: user.userName, userEmail: user.userEmail };
+  return {
+    userId: user.id,
+    userName: user.userName,
+    userEmail: user.userEmail,
+  };
 }
 
 // The page/layout guard (Invariant #3, #4): called at the top of `page.tsx`

@@ -8,11 +8,15 @@ import { BrandLogo } from "@/components/brand-logo";
 import { NavSignOutButton } from "@/components/nav-sign-out-button";
 import { SIDEBAR_COOKIE } from "@/lib/sidebar";
 import { cn } from "@/lib/utils";
+import type { EffectivePermissionMap } from "@/types/permissions";
 import type { BrandingLogo } from "@/types/system-config";
 
 interface AdminSidebarProps {
   defaultCollapsed: boolean;
   identity: { userName: string; userEmail: string } | null;
+  // cm03-spec §2.3.2: passed straight through to `AdminNav` — only that
+  // component reads it (show/hide only, never an enforcement boundary).
+  permissionMap?: EffectivePermissionMap | undefined;
   logo: BrandingLogo | null;
 }
 
@@ -25,6 +29,7 @@ interface AdminSidebarProps {
 export function AdminSidebar({
   defaultCollapsed,
   identity,
+  permissionMap,
   logo,
 }: AdminSidebarProps): React.JSX.Element {
   // Seeded at init from the prop (never synced via useEffect) so SSR and the
@@ -78,7 +83,7 @@ export function AdminSidebar({
 
       {/* Nav links take the available space so the footer pins to the bottom. */}
       <div className="flex-1 overflow-x-hidden overflow-y-auto">
-        <AdminNav collapsed={collapsed} />
+        <AdminNav collapsed={collapsed} permissionMap={permissionMap} />
       </div>
 
       {/* Footer — identity strip + sign-out (um26). The sign-out action always
