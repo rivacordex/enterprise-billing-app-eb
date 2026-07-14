@@ -11,7 +11,7 @@ Update this file after every meaningful implementation change.
 | cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (committed `47c0f68`) |
 | cm04 | View search page                                                        | Done (committed `d37c875`) |
 | cm05 | View detail page                                                        | Done (uncommitted)         |
-| cm06 | Manage search page                                                      | Done (uncommitted)         |
+| cm06 | Manage search page                                                      | Done (committed `53f9a62`) |
 | cm07 | Create customer                                                         | Spec written, not started  |
 | cm08 | Edit page + update organization                                         | Spec written, not started  |
 | cm09 | Transition organization status                                         | Spec written, not started  |
@@ -89,7 +89,9 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 **Deviation from the spec's stated diff scope:** `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST` needed `/customers/manage` added — not mentioned in cm06's own diff-hygiene checklist, but the same guardrail `cm04`'s tracker entry already flagged trips by design for any new `app/**/page.tsx` until registered. No other file outside the stated scope touched; no edit to any `cm04`/`cm05` file.
 
-**Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 140 files / 1220 tests green (was 139/1210 before this unit's +1 new test file / +10 new tests). Integration suite not re-run — no `db/**`/`services/**`/`actions/**` touched, so it's unaffected by this unit's diff. Live dev-server manual verification (§5 "Behavior" checklist — MANAGER nav flow, USER direct-navigation redirect, CTA click landing on the interim 404) not run this session; not yet committed.
+**Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 140 files / 1220 tests green (was 139/1210 before this unit's +1 new test file / +10 new tests). Integration suite not re-run — no `db/**`/`services/**`/`actions/**` touched, so it's unaffected by this unit's diff. Live dev-server manual verification (§5 "Behavior" checklist — MANAGER nav flow, USER direct-navigation redirect, CTA click landing on the interim 404) not run this session.
+
+**Committed** as `53f9a62` ("customer manage search page (cm06)").
 
 ---
 
