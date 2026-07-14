@@ -14,7 +14,7 @@ const CONFIG_KEY = "CUSTOMER_SEARCH_RESULT_LIMIT";
 
 // Standalone script (`npm run db:seed-customer`) — never imported by
 // application code. Depends on `seed-rbac.ts` having already run (the
-// MANAGER/USER roles must exist for the customers:EDIT/READ grants,
+// MANAGER/USER/ADMIN roles must exist for the customers:EDIT/READ grants,
 // cm01-spec Design #7). Idempotent: checks for existing rows before each
 // insert; everything happens inside one transaction.
 async function main(): Promise<void> {
@@ -60,9 +60,16 @@ async function main(): Promise<void> {
         .from(roles)
         .where(eq(roles.roleName, "USER"))
         .limit(1);
+      const [adminRole] = await tx
+        .select({ roleId: roles.roleId })
+        .from(roles)
+        .where(eq(roles.roleName, "ADMIN"))
+        .limit(1);
 
-      if (!managerRole || !userRole) {
-        throw new Error("MANAGER/USER role not found. Run db:seed-rbac first.");
+      if (!managerRole || !userRole || !adminRole) {
+        throw new Error(
+          "MANAGER/USER/ADMIN role not found. Run db:seed-rbac first.",
+        );
       }
 
       const [customersPermission] = await tx
@@ -77,9 +84,16 @@ async function main(): Promise<void> {
         );
       }
 
+      // ADMIN gets EDIT, not DELETE — no DELETE level exists for `customers`
+      // (architecture §4); EDIT is the highest level any role holds for it.
+      // Mirrors Product Management's ADMIN grant (`pm02`) so an admin has
+      // working access to every business module out of the box, not just
+      // the platform-admin modules. Retroactive addition, post-`cm08` — the
+      // original design granted only MANAGER/USER.
       const grants: { roleId: string; permissionType: "EDIT" | "READ" }[] = [
         { roleId: managerRole.roleId, permissionType: "EDIT" },
         { roleId: userRole.roleId, permissionType: "READ" },
+        { roleId: adminRole.roleId, permissionType: "EDIT" },
       ];
 
       for (const grant of grants) {

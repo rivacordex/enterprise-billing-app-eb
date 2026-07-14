@@ -1,4 +1,4 @@
-import { asc, eq, ilike, or } from "drizzle-orm";
+import { and, asc, eq, ilike, or } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { organization, partyRole } from "@/db/schema/customer";
@@ -59,5 +59,30 @@ export const partyRoleRepository = {
       .values({ ...data, status: "INITIALIZED" })
       .returning();
     return row!;
+  },
+
+  // The one place Module Invariant #6 is implemented (cm08-spec §2.2) — a
+  // single atomic `UPDATE ... WHERE last_modified_datetime = $expected`, no
+  // separate read-then-write, so there's no TOCTOU window for a second
+  // transaction to interleave. Zero rows matched (stale lock or unknown ID)
+  // returns `null`; the caller maps that to `CONFLICT` without needing to
+  // distinguish the two cases. Every mutation service from this unit through
+  // cm15 calls this exact function, even a contact-only edit.
+  async compareAndBumpLock(
+    tx: Database,
+    partyRoleId: string,
+    expectedLastModifiedDatetime: Date,
+  ): Promise<Date | null> {
+    const [row] = await tx
+      .update(partyRole)
+      .set({ lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(partyRole.partyRoleId, partyRoleId),
+          eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+        ),
+      )
+      .returning({ lastModifiedDatetime: partyRole.lastModifiedDatetime });
+    return row?.lastModifiedDatetime ?? null;
   },
 };

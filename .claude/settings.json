@@ -19,7 +19,14 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(mkdir -p \"app/\\(app\\)/no-access\" \"app/\\(app\\)/administration/users\" \"app/\\(app\\)/administration/roles\" \"app/\\(app\\)/administration/system-config\" \"app/\\(app\\)/administration/audit-log\")",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "Bash(mkdir -p \"c:/Users/DNBIT/Projects/enterprise-billing-app/app/\\(app\\)/customers/view/[id]\")",
+      "Bash(git commit *)",
+      "Bash(mkdir -p \"app/\\(app\\)/customers/manage/[id]\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\DNBIT\\Projects\\enterprise-billing-app\\app\\(app)\\customers\\view",
+      "C:\\Users\\DNBIT\\Projects\\enterprise-billing-app\\app\\(app)\\customers\\manage"
     ]
   }
 }

@@ -65,6 +65,7 @@ Auth mechanics unchanged (platform §5: Better-Auth sessions, live per-request p
 - Page guards: `requirePermission('customers', 'READ')` at `/customer/view/**`; `requirePermission('customers', 'EDIT')` at `/customer/manage/**`. No grant → `/no-access` (deny by default).
 - USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav; direct Server Action calls to manage endpoints are rejected server-side independent of the nav state (platform §5, defense in depth).
 - MANAGER holds `customers:READ` + `customers:EDIT`.
+- ADMIN holds `customers:EDIT` (implying READ) — mirrors Product Management's ADMIN grant (`pm02`) so an administrator has working access to every business module out of the box, not just the platform-admin modules (Users/Roles/System Config/Audit Log). Retroactive correction to this unit's original design, which specified grants for MANAGER/USER only and never considered ADMIN — see `custmgmt-progress-tracker.md`'s `cm01` entry.
 
 ### Permission matrix additions
 
