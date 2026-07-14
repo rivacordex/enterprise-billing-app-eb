@@ -7,10 +7,10 @@ Update this file after every meaningful implementation change.
 | Unit | Name                                                                  | Status                     |
 | ---- | ---------------------------------------------------------------------- | --------------------------- |
 | cm01 | DB foundation (`customer` schema, migration, seed, permission registry) | Done (committed `4426342`) |
-| cm02 | Validation schemas + read repositories + read services                 | Done (uncommitted)         |
-| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (uncommitted)          |
-| cm04 | View search page                                                        | Done (uncommitted)          |
-| cm05 | View detail page                                                        | Spec written, not started  |
+| cm02 | Validation schemas + read repositories + read services                 | Done (committed `3347d04`) |
+| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (committed `47c0f68`) |
+| cm04 | View search page                                                        | Done (committed `d37c875`) |
+| cm05 | View detail page                                                        | Done (uncommitted)         |
 | cm06 | Manage search page                                                      | Spec written, not started  |
 | cm07 | Create customer                                                         | Spec written, not started  |
 | cm08 | Edit page + update organization                                         | Spec written, not started  |
@@ -43,7 +43,7 @@ Update this file after every meaningful implementation change.
 
 **Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` (unit config) — 127 files / 1144 tests green; `vitest run --config vitest.integration.config.ts` against the local Docker Postgres dev container — 32 files / 293 tests, all green, including the new `tests/db/customer-repositories.integration.test.ts`.
 
-**Not yet committed** — changes are in the working tree; commit per user confirmation (cm02-spec §5 names the file set: `types/customer.ts` edit, `validation/customer/**` new, `db/repositories/{organization,party-role,contact-medium}.ts` new, `services/customer/**` new, plus the new test files). `cm03` (nav) is independent and may proceed in parallel; `cm04` (view search page) must not consume these services until this commit is verified and merged.
+**Committed** as `3347d04` ("customer validation schemas + read repositories + read services (cm02)").
 
 ---
 
@@ -55,7 +55,7 @@ Update this file after every meaningful implementation change.
 
 **Verified this session:** `npm run typecheck`, `npx eslint` (touched files), `npx prettier --check` all clean; `vitest run tests/components/admin-nav.test.tsx tests/app/admin-layout.test.tsx` (20/20 new+existing assertions green); full `vitest run` — 127 files / 1151 tests green (was 127/1144 before this unit's +7 new tests). Integration suite and dev-server manual verification (§ "Behavior" checklist items) not re-run this session — no `db/**`/`services/**`/`actions/**` touched, so the integration suite is unaffected by this unit's diff.
 
-**Not yet committed** — changes are in the working tree alongside `cm02`'s uncommitted work; commit per user confirmation.
+**Committed** as `47c0f68` ("customer nav entry + locked AdminNav state (cm03)").
 
 ---
 
@@ -71,11 +71,17 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 **Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 132 files / 1182 tests green (was 132/1182 total after adding this unit's new test files and fixing the route-manifest guardrail); `vitest run --config vitest.integration.config.ts` against the local Docker Postgres dev container — 32 files / 293 tests green, including `tests/db/customer-repositories.integration.test.ts` exercising the corrected service signatures against the real database.
 
-**Not yet committed** — changes are in the working tree alongside `cm02`/`cm03`'s uncommitted work; commit per user confirmation. `cm05` (View Customer detail page) may start once this commit is verified and merged — it consumes the same guard pattern, both new badge components, and the now-corrected `getCustomerDetail(partyRoleId)` signature; `cm06` (Manage Customer search page) reuses `search-params.schema.ts` and `CustomerResultsTable` unchanged.
+**Committed** as `d37c875` ("customer view search page (cm04)"). `cm06` (Manage Customer search page) reuses `search-params.schema.ts` and `CustomerResultsTable` unchanged.
 
 ---
 
-**cm05 — spec written, not yet implemented.** `specs/cm05.md`: `app/(app)/customers/view/[id]/page.tsx`: three read-only sections (organization/role/contacts), `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner`, authoritative `isStatusInconsistent` rule.
+**cm05 implemented per `specs/cm05.md`** — `app/(app)/customers/view/[id]/page.tsx` (new): READ guard first, `[id]` parsed against `partyRoleIdSchema` before any DB call (malformed IDs never reach `getCustomerDetail`), one `"Customer not found"` state for both the malformed-ID and unknown-ID paths, the three fixed-order sections composed underneath an `InconsistencyBanner` shown only when `isStatusInconsistent` fires. New `components/customers/{organization-section,customer-role-section,contact-details-section,organization-type-badge,preferred-indicator,inconsistency-banner}.tsx` — the last exports the authoritative `isStatusInconsistent` rule verbatim per spec §2.2 (Rule 1: `ACTIVE` customer + non-`ACTIVE` organization; Rule 2: `DISSOLVED`/`MERGED` organization + non-`CLOSED` customer), now recorded here as authoritative per workflow §4.4 — `custmgmt-project-overview.md`'s existing "e.g." example already covers Rule 1's worked case, so the overview itself was not edited. `CustomerRoleSection`'s specification renders read-only `JSON.stringify(spec, null, 2)` in a `<pre>`, not the edit-only `SpecificationEditor`. `--preferred-fg` and the three `--banner-warning-*` tokens added to `globals.css` — all four are semantic aliases onto already-existing `--color-accent-500`/`--color-warning-{500,700,50}` values (confirmed no literal-hex duplication, per spec §3.5/§3.7's "confirm before adding a duplicate"); `--color-cyan-*` also already existed, no addition needed. `/customers/view/[id]` added to `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST`.
+
+**Deviation from the spec's literal code block:** `InconsistencyBanner`'s JSX used an inline `style` prop for the three `--banner-warning-*` tokens (spec §3.7) — this repo has a project-wide ESLint rule banning inline `style` props (`no-restricted-syntax`, ZAP rule 10055 / CSP `style-src` without `unsafe-inline`), which the spec's own preamble already flagged as a blind spot ("no live-repo mount this session"). Fixed by using Tailwind arbitrary-value classes (`border-[color:var(--banner-warning-border)]` etc.) instead — same tokens, same visual result, matching how every other badge/status component in this module already reads its CSS custom properties.
+
+**Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 139 files / 1210 tests green (was 132/1182 before this unit's +7 new test files / +28 new tests). Integration suite not re-run — no `db/**`/`services/**`/`actions/**` touched, so it's unaffected by this unit's diff (all new/edited files are `app/(app)/customers/view/[id]/**`, `components/customers/**`, `app/globals.css`, and the corresponding test files).
+
+**Not yet committed** — changes are in the working tree alongside `cm02`/`cm03`/`cm04`'s uncommitted work; commit per user confirmation. `cm06` (Manage Customer search page) is independent and may proceed in parallel; `cm08` will reuse `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner` built here.
 
 ---
 
