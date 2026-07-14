@@ -11,7 +11,7 @@ Update this file after every meaningful implementation change.
 | cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (committed `47c0f68`) |
 | cm04 | View search page                                                        | Done (committed `d37c875`) |
 | cm05 | View detail page                                                        | Done (uncommitted)         |
-| cm06 | Manage search page                                                      | Spec written, not started  |
+| cm06 | Manage search page                                                      | Done (uncommitted)         |
 | cm07 | Create customer                                                         | Spec written, not started  |
 | cm08 | Edit page + update organization                                         | Spec written, not started  |
 | cm09 | Transition organization status                                         | Spec written, not started  |
@@ -85,7 +85,11 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 ---
 
-**cm06 — spec written, not yet implemented.** `specs/cm06.md`: full spec for `app/(app)/customers/manage/page.tsx` — EDIT guard (the guardrail `cm03`'s nav lock icon was anticipating; this is the unit that makes it real server-side), reuses `cm04`'s `CustomerSearchPanel`/`CustomerResultsTable` unchanged, adds the "Add new customer" CTA (`--action-cta-bg`, first consumer) pointing to `cm07`. Deliberately thin/short spec — almost everything is reuse.
+**cm06 implemented per `specs/cm06.md`** — `app/(app)/customers/manage/page.tsx` + `loading.tsx` + `error.tsx` (new): `requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.EDIT)` as the first statement of the page body, otherwise line-for-line the same shape as `cm04`'s View page (`firstValue`, the guard-first ordering, the `results !== null` empty-query short-circuit). `CustomerSearchPanel`/`CustomerResultsTable` imported and used unchanged, only `basePath`/`baseHref` swapped to `/customers/manage`. The "Add new customer" CTA (`--action-cta-bg`, first consumer of that token, per ui-context §7) links to `/customers/manage/new` (`cm07`, accepted interim 404) and is always rendered regardless of search state, paired with the non-blocking nudge caption per spec §2.2 decision 3. `loading.tsx`/`error.tsx` are copies of `cm04`'s View equivalents (spec §3.2 — "no new pattern"). New test: `tests/app/customers-manage-page.test.tsx`, mirroring `customers-view-page.test.tsx`'s guard/empty-query/deep-link/tampered-q/array-q cases plus this unit's own guardrail entry (EDIT passes, `/no-access` propagates for a non-EDIT session) and three CTA-presence assertions (empty query, populated results, zero results) per spec §3.3.
+
+**Deviation from the spec's stated diff scope:** `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST` needed `/customers/manage` added — not mentioned in cm06's own diff-hygiene checklist, but the same guardrail `cm04`'s tracker entry already flagged trips by design for any new `app/**/page.tsx` until registered. No other file outside the stated scope touched; no edit to any `cm04`/`cm05` file.
+
+**Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 140 files / 1220 tests green (was 139/1210 before this unit's +1 new test file / +10 new tests). Integration suite not re-run — no `db/**`/`services/**`/`actions/**` touched, so it's unaffected by this unit's diff. Live dev-server manual verification (§5 "Behavior" checklist — MANAGER nav flow, USER direct-navigation redirect, CTA click landing on the interim 404) not run this session; not yet committed.
 
 ---
 
