@@ -53,13 +53,12 @@
 1. **Shared indicator components** (general §4.8) — one visual treatment per domain value, created exactly with these names:
    - `LifecycleBadge` — `DRAFT | ACTIVE | RETIRED` (semantic tokens; no raw palette classes)
    - `PriceTypeBadge` — `recurring | usage | once`
-   - `CharacteristicChip` — one JSONB key–value pair (e.g. `SST_ID: 01`); used by the specifications panel
-   - `TierTable` — the tiered-price mini table (`from` / `to` / `rate` columns; open-ended top tier renders `to` as "∞" or "and above", chosen once here, not per usage)
-2. **Reuse the Administration table primitives** (pagination, sortable headers, empty state) for the offerings table — extend them if needed; never fork a parallel table implementation for this module.
-3. **Four-section layout is a responsive grid:** table full-width on top, detail below it, specs and prices side-by-side (`lg:` and up) collapsing to a single stacked column on narrow viewports in the order table → detail → specs → prices (general §4.10).
-4. **Money formatting goes through one `lib/` formatter** — `formatCurrency(amount, currency, locale)` — used by flat-price cards and `TierTable` rates alike. No inline `toFixed`, no hand-built currency strings, no currency symbol hardcoding.
-5. **Datetime display** (`last_modified`, `start_date_time`, derived end) uses the platform `formatDatetime(date, locale, timezone, …)` with the timezone threaded as a prop (general §2.13); `<time dateTime>` stays ISO-8601 UTC.
-6. **Boolean flags** (`is_bundle`, `is_sellable`, billing-only) render through one shared yes/no indicator, not per-card ad-hoc icons or text.
+2. **JSONB entries render as plain text, not dedicated widgets** (revised 2026-07-09 — density pass): spec characteristics (`SST_ID: 01`) and tiered-price bounds/rate render inline as `key: value` / `from–to: rate` text in the specifications and prices panels respectively; there is no `CharacteristicChip` or `TierTable` component. Open-ended top tier still reads "and above".
+3. **Reuse the Administration table primitives** (pagination, sortable headers, empty state) for the offerings table — extend them if needed; never fork a parallel table implementation for this module.
+4. **Four-section layout is a responsive grid:** table full-width on top, detail below it, specs and prices side-by-side (`lg:` and up) collapsing to a single stacked column on narrow viewports in the order table → detail → specs → prices (general §4.10).
+5. **Money formatting goes through one `lib/` formatter** — `formatCurrency(amount, currency, locale)` — used by flat-price cards. No inline `toFixed`, no hand-built currency strings, no currency symbol hardcoding.
+6. **Datetime display** (`last_modified`, `start_date_time`, derived end) uses the platform `formatDatetime(date, locale, timezone, …)` with the timezone threaded as a prop (general §2.13); `<time dateTime>` stays ISO-8601 UTC.
+7. **Boolean flags** (`is_bundle`, `is_sellable`, billing-only) render through one shared yes/no indicator, not per-card ad-hoc icons or text.
 
 ---
 
@@ -102,8 +101,6 @@ components/products/
   prices-panel.tsx          # PricesPanel
   lifecycle-badge.tsx       # LifecycleBadge
   price-type-badge.tsx      # PriceTypeBadge
-  characteristic-chip.tsx   # CharacteristicChip
-  tier-table.tsx            # TierTable
 services/product/
   list-offerings.ts         # listOfferings(params): search/filter/sort/pagination
   get-offering-detail.ts    # getOfferingDetail(id): offering + specs + prices (+ derived end)

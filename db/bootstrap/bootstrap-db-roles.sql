@@ -18,9 +18,9 @@
 -- Idempotent via `DO` blocks (Postgres has no `CREATE ROLE IF NOT EXISTS`,
 -- unlike `CREATE TABLE`/`CREATE INDEX`). Deliberately contains no password:
 -- see infra/docs/db-role-verification.md for the manual `ALTER ROLE ...
--- PASSWORD` follow-up (never committed to source control). Only schema
--- `core` exists today; repeat the GRANT/REVOKE block for
--- `product`/`customer`/`billing`/`accounting` as those schemas ship.
+-- PASSWORD` follow-up (never committed to source control). `core` and
+-- `product` are covered below; repeat the GRANT/REVOKE block for
+-- `customer`/`billing`/`accounting` as those schemas ship.
 --
 -- The statement-breakpoint marker lines below let `db/bootstrap/
 -- bootstrap-db-roles.ts` split the file into individual statements; they are
@@ -85,3 +85,28 @@ GRANT USAGE, CREATE ON SCHEMA "drizzle" TO app_migrate;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "drizzle" TO app_migrate;
 --> statement-breakpoint
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "drizzle" TO app_migrate;
+--> statement-breakpoint
+-- `product` schema (pm01+): same app_runtime/app_migrate split as `core`,
+-- plus sequence grants — product_offering/product_specifications/
+-- product_offering_price ID columns default to nextval(...), so app_runtime
+-- needs USAGE on those sequences to satisfy plain INSERTs. No audit_log-style
+-- table exists here, so no extra REVOKE.
+GRANT USAGE ON SCHEMA "product" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "product" TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "product" TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+--> statement-breakpoint
+GRANT ALL ON SCHEMA "product" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL TABLES IN SCHEMA "product" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL SEQUENCES IN SCHEMA "product" TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT ALL ON TABLES TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT ALL ON SEQUENCES TO app_migrate;
