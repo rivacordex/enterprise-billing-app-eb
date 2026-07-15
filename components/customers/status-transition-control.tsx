@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type React from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -136,7 +137,10 @@ export function StatusTransitionControl({
         <CurrentStatusBadge entityKind={entityKind} status={currentStatus} />
         <Select
           value={selectedTarget ?? ""}
-          onValueChange={setSelectedTarget}
+          onValueChange={(value) => {
+            setSelectedTarget(value);
+            setReason("");
+          }}
           disabled={submitting}
         >
           <SelectTrigger aria-label="Transition to" className="w-48">

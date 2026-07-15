@@ -287,13 +287,15 @@ export function OrganizationForm({
         Save changes
       </Button>
 
-      <StatusTransitionControl
-        currentStatus={organization.status}
-        entityKind="organization"
-        nextStates={ORGANIZATION_TRANSITIONS[organization.status]}
-        onTransition={handleStatusTransition}
-        onConflict={() => router.refresh()}
-      />
+      {!conflict && (
+        <StatusTransitionControl
+          currentStatus={organization.status}
+          entityKind="organization"
+          nextStates={ORGANIZATION_TRANSITIONS[organization.status]}
+          onTransition={handleStatusTransition}
+          onConflict={() => router.refresh()}
+        />
+      )}
     </form>
   );
 }
