@@ -15,7 +15,7 @@ Update this file after every meaningful implementation change.
 | cm07 | Create customer                                                         | Done (committed `9665074`) |
 | cm08 | Edit page + update organization                                         | Done (committed `ff2dbc4`) |
 | cm09 | Transition organization status                                         | Done (committed `9aae48c`) |
-| cm10 | Transition customer status                                             | Done (uncommitted)         |
+| cm10 | Transition customer status                                             | Done (committed `00a865a`) |
 | cm11 | Add contact                                                             | Spec written, not started  |
 | cm12 | Update contact                                                          | Spec written, not started  |
 | cm13 | Delete contact                                                         | Spec written, not started  |
@@ -143,7 +143,7 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 **Verified this session:** `npm run typecheck`, `npm run lint` (0 errors; the same pre-existing `new-customer-form.tsx` React Compiler `watch()` warning from `cm07`–`cm09`, unrelated to this unit's diff), `npm run format:check` all clean; `vitest run` (unit config) — 153 files / 1332 tests green (was 149/1293 before this unit's +4 new test files). Live dev-server manual click-through of the new status/specification UI (concurrent-edit walkthrough beyond the login-page smoke check) not exercised this session — DB-level and component-test verification only.
 
-**Committed** as `<pending>` — see the follow-up "record cm10 commit reference" note once the commit lands. `cm11` (add contact) is next; it reuses `contact-mutations.ts`/`ContactManagerPanel` and is the first mutation to prove Module Inv. #6's "even a contact-only edit" clause using the original cross-table `compareAndBumpLock` (not this unit's same-row shortcut, since a contact mutation touches `contact_medium`, not `party_role`, directly).
+**Committed** as `00a865a` ("transition customer status + update party role specification (cm10)"). `cm11` (add contact) is next; it reuses `contact-mutations.ts`/`ContactManagerPanel` and is the first mutation to prove Module Inv. #6's "even a contact-only edit" clause using the original cross-table `compareAndBumpLock` (not this unit's same-row shortcut, since a contact mutation touches `contact_medium`, not `party_role`, directly).
 
 ---
 
