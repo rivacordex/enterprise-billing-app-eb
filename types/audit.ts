@@ -22,6 +22,7 @@ export const AUDIT_EVENT_TYPES = [
   "ORGANIZATION_CREATED",
   "CUSTOMER_CREATED",
   "ORGANIZATION_UPDATED",
+  "ORGANIZATION_STATUS_CHANGED",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
