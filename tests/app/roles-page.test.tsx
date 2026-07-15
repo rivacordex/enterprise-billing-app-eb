@@ -57,6 +57,7 @@ describe("RolesPage", () => {
         system_config: "DELETE",
         audit_log: "READ",
         products: "DELETE",
+        customers: null,
       },
     });
     mockGetAllRolesWithMappings.mockResolvedValue([]);
@@ -80,6 +81,7 @@ describe("RolesPage", () => {
         system_config: "DELETE",
         audit_log: "READ",
         products: "DELETE",
+        customers: null,
       },
     });
     mockGetAllRolesWithMappings.mockResolvedValue([]);

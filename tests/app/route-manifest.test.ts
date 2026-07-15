@@ -25,6 +25,11 @@ const ROUTE_MANIFEST = [
   "/administration/system-config",
   "/administration/audit-log",
   "/products/product-offering",
+  "/customers/view",
+  "/customers/view/[id]",
+  "/customers/manage",
+  "/customers/manage/new",
+  "/customers/manage/[id]",
 ] as const;
 
 function collectPageFiles(dir: string): string[] {

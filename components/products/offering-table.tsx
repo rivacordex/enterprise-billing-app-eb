@@ -75,11 +75,11 @@ export function OfferingTable({
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [searchInput, setSearchInput] = useState(query);
-  // Mirrors `query` into state during render (React's documented pattern for
-  // adjusting state when a prop changes, cheaper than an effect) so the box
-  // doesn't show stale text when `query` changes from outside this
-  // component's own navigate() calls — e.g. browser back/forward, or a deep
-  // link with a different `q`.
+  // Keeps the search input in sync with the `query` prop across external
+  // navigation (back/forward, deep links) via React's render-time
+  // prop-sync pattern rather than an effect — `setState` during an effect
+  // body causes a cascading extra render and trips the
+  // `react-hooks/set-state-in-effect` lint rule.
   const [prevQuery, setPrevQuery] = useState(query);
   if (query !== prevQuery) {
     setPrevQuery(query);

@@ -1,0 +1,270 @@
+# CM08 — Edit Page Container + Update Organization (EDIT)
+
+- **Unit:** 8 of 16 (`cm00-build-plan.md`)
+- **Dependencies:** `cm07` (a created customer to edit, `isUniqueViolation` helper, the established mutation shape), `cm02` (`getCustomerDetail`, validation schemas), `cm01` (`party_role.last_modified_datetime` as the lock column — now explicit millisecond precision, retroactively fixed by this spec, §2.1).
+- **Authorizing sections:** `custmgmt-project-overview.md` *Core user flow* steps 8–9 (optimistic-lock reject + reload prompt); `custmgmt-architecture.md` §2 (`app/(app)/customers/manage/[id]/`), §3 (`last_modified_datetime` "drives optimistic locking"), Module Invariant #6; `custmgmt-code-standards.md` §1.5, §2.6, §3.4–§3.5, §7; general `code-standards.md` §2.16, §6.19.
+- **Note on codebase verification:** no live-repo mount this session. The compare-and-bump mechanics below have no verified precedent anywhere in this planning folder (User Management's `um11` bumps `last_modified_datetime` unconditionally on every update — it has no concurrent-edit conflict story at all, since nothing in that module names an optimistic-lock requirement). This unit is therefore the module's **first real optimistic-lock implementation**, designed from general code-standards §6.19's contract rather than copied from a working example.
+
+---
+
+## 1. Goal
+
+Build `app/(app)/customers/manage/[id]/page.tsx` (`CustomerEditPage`) — guarded `customers:EDIT`, ID-parsed, fetching the full `CustomerDetail` and rendering `OrganizationForm` as the edit container's first section — and the `update-organization` Server Action + service + repository write function, sharing one new, reusable **compare-and-bump optimistic-lock primitive** on `party_role` that every mutation unit from here through `cm15` will call. A stale save (the loaded `lastModifiedDatetime` no longer matches the current row) is rejected with a typed `CONFLICT` result and a reload-prompt UI, never silently overwritten. Visible result: a MANAGER opens the edit page for an existing customer, edits organization fields, and saves; a second, stale save against the same customer is rejected with the reload prompt; both the successful update and the lock bump are audited.
+
+## 2. Design
+
+### 2.1 A retroactive fix to `cm01`: explicit millisecond timestamp precision
+
+Comparing a `timestamptz` value for equality across a client round trip (`getCustomerDetail` → JSON → `Date` on the client → back to the action as an ISO string → `z.coerce.date()`) is only safe if the column's stored precision doesn't exceed what a JS `Date` can carry (milliseconds). Postgres's default `timestamptz` precision is microseconds — a `WHERE last_modified_datetime = $submitted` could silently never match a value that round-tripped through a millisecond-precision `Date`, turning every save into a false `CONFLICT`. `cm01` has been corrected in place to declare every `timestamptz` column in the `customer` schema as `timestamptz(3)` (explicit millisecond precision), with the rationale recorded there. This unit is the reason that fix exists — flagged here rather than silently relied upon, per the docs-in-sync discipline established since `cm03`.
+
+### 2.2 The compare-and-bump primitive — `partyRoleRepository.compareAndBumpLock`
+
+The single place Module Invariant #6 ("any mutation in the customer's scope reads-compares-bumps `party_role.last_modified_datetime` in its transaction, even a contact-only edit") is implemented, reused by every mutation service from this unit onward:
+
+```ts
+async function compareAndBumpLock(
+  tx: DrizzleTransaction,
+  partyRoleId: string,
+  expectedLastModifiedDatetime: Date,
+): Promise<Date | null> {
+  const [row] = await tx
+    .update(partyRole)
+    .set({ lastModifiedDatetime: new Date() })
+    .where(
+      and(
+        eq(partyRole.partyRoleId, partyRoleId),
+        eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+      ),
+    )
+    .returning({ lastModifiedDatetime: partyRole.lastModifiedDatetime })
+  return row?.lastModifiedDatetime ?? null
+}
+```
+
+- **One atomic statement, no separate read-then-write.** The `WHERE` clause's equality check and the bump happen in the same `UPDATE`, so there's no window between "read the current value" and "write a new one" for a second transaction to interleave (the classic TOCTOU race a separate `SELECT` + `UPDATE` would have). Zero rows matched ⇒ either the ID doesn't exist or the loaded timestamp is stale — both collapse to the same `CONFLICT` result; the caller doesn't need to distinguish them (a nonexistent ID is vanishingly unlikely here, since the page already loaded a real row moments before submitting).
+- **Called first, inside the service's transaction, before the entity-specific write.** If it returns `null`, the service returns `{ ok: false, code: 'CONFLICT' }` **without** performing the organization update — the transaction still commits (nothing changed, a harmless no-op commit; there's no need to explicitly abort since a zero-row `UPDATE` has no effect to roll back).
+- **Every mutation service (`cm08`–`cm15`) calls this exact function** — an organization edit, a status transition, a contact add/update/delete/set-preferred all lock-check against `party_role`, never a different column or a per-entity lock (Module Inv. #6's "even a contact-only edit" is what makes this a shared primitive rather than one per table).
+- **The returned new timestamp is threaded back to the caller** so the action's success result can hand the client a fresh `lastModifiedDatetime` — letting the same page save again without a full reload in between (a UX nicety; `revalidatePath` will refresh the server-rendered data regardless, but the client's in-flight form state benefits from not going stale between the save and the revalidation completing).
+
+### 2.3 Edit-page container decisions
+
+1. **`OrganizationForm` is the only functional section this unit ships.** The container is built to be *extended*, not fully scaffolded with placeholders the way Product's `pm05` scaffolded all four sections up front (a decision specific to that module, not general convention) — `cm10` adds `CustomerRoleForm` to this same page file, `cm11` adds `ContactManagerPanel`. Each of those units' diffs touches this page file to add its own `<section>`, not a separate file. This keeps to the module's stated "dependencies just in time" rule rather than pre-building empty seams for sections that don't exist as concepts yet.
+2. **The page still fetches the *whole* `CustomerDetail`**, even though only `organization` renders this unit — the optimistic-lock value it needs to hand `OrganizationForm` lives on `customerRole.lastModifiedDatetime` (`cm02`'s read model), not on `organization` itself. One `getCustomerDetail` call serves this unit and every section unit that follows; no unit re-fetches.
+3. **Unknown/invalid `[id]` reuses `cm05`'s pattern exactly**: `partyRoleIdSchema.safeParse` first, a failure short-circuits to a "Customer not found" state without calling `getCustomerDetail` at all; a well-formed-but-unknown ID calls it and gets `null`, same rendered outcome. No new not-found component — this page's not-found card is the same shape as `cm05`'s (arguably worth a shared component now that it exists in two places; **not extracted in this unit** — two call sites of a four-line JSX block isn't yet worth the indirection, revisit if a third appears).
+4. **`OrganizationForm` round-trips `lastModifiedDatetime` as a hidden field, per code-standards §3.4** — the value the page loaded, submitted back unchanged by the user, read by the service's `compareAndBumpLock` call. The client value is a courtesy that lets the UI *pre-empt* an obviously stale save with a friendly message before even submitting (if the page has been open a long time — not implemented as a live check in this unit, just structurally possible later); the **server-side compare-and-bump is what actually rejects a stale save** (code-standards §3.4/§3.5 — "the client value is a courtesy, not the security boundary").
+5. **A `CONFLICT` result renders a reload prompt, never a silent merge** (general code-standards §2.16, code-standards §3.5): "This customer was changed by someone else. Reload to see the latest version." with a "Reload" button (`router.refresh()`, re-fetching the RSC data) — the form's in-progress edits are **not** auto-merged or auto-resubmitted; the user must explicitly reload and redo their change against the fresh data.
+6. **The similar-name warning does NOT repeat on update.** `cm07`'s two-step confirm is a create-time-only concern (overview places it at the creation flow specifically); `updateOrganization` only enforces the hard `registration_number` uniqueness constraint (via `cm07`'s `isUniqueViolation` helper, reused unchanged), never a soft name-similarity nudge.
+
+### 2.4 What this unit explicitly does NOT do
+
+No status transitions (`cm09`/`cm10` — no `StatusTransitionControl` anywhere yet; `OrganizationForm` in this unit has no status field at all, org status stays a read-only badge until `cm09` adds the control to this same form). No `CustomerRoleForm` or `ContactManagerPanel` (later units extend this container). No authz-matrix file (`cm16`).
+
+## 3. Implementation
+
+### 3.1 Repository — `db/repositories/party-role.ts` (extend)
+
+Add `compareAndBumpLock` (§2.2) — the first write function on `party_role`. `findById`/`searchByOrganizationNameOrTradingName` (`cm02`) are untouched.
+
+### 3.2 Repository — `db/repositories/organization.ts` (extend, `cm07`'s file)
+
+```ts
+async function update(tx: DrizzleTransaction, organizationId: string, data: OrganizationFields & { lastModifiedBy: string }): Promise<Organization> {
+  const [row] = await tx
+    .update(organization)
+    .set({ ...data, lastModifiedDatetime: new Date() })
+    .where(eq(organization.organizationId, organizationId))
+    .returning()
+  return row
+}
+```
+
+No status field in `data` — `OrganizationForm` (this unit) never submits one, so there's nothing to accidentally overwrite (§2.4).
+
+### 3.3 Validation — `validation/customer/update-organization.schema.ts` (new)
+
+```ts
+export const updateOrganizationSchema = organizationFieldsSchema.extend({
+  organizationId: organizationIdSchema,
+  partyRoleId: partyRoleIdSchema,
+}).merge(optimisticLockSchema) // { lastModifiedDatetime } from cm02
+export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>
+```
+
+### 3.4 Service — `services/customer/update-organization.ts` (new)
+
+```ts
+type UpdateOrganizationResult =
+  | { ok: true; value: { lastModifiedDatetime: Date } }
+  | { ok: false; code: 'CONFLICT' }
+  | { ok: false; code: 'ORGANIZATION_NOT_FOUND' }
+  | { ok: false; code: 'DUPLICATE_REGISTRATION_NUMBER' }
+
+export async function updateOrganization(
+  input: UpdateOrganizationInput,
+  actorId: string,
+): Promise<UpdateOrganizationResult> {
+  const before = await organizationRepository.findById(db, input.organizationId)
+  if (before === null) return { ok: false, code: 'ORGANIZATION_NOT_FOUND' }
+
+  try {
+    return await db.transaction(async (tx) => {
+      const bumped = await partyRoleRepository.compareAndBumpLock(tx, input.partyRoleId, input.lastModifiedDatetime)
+      if (bumped === null) return { ok: false, code: 'CONFLICT' }
+
+      const after = await organizationRepository.update(tx, input.organizationId, {
+        name: input.name,
+        tradingName: input.tradingName,
+        organizationType: input.organizationType,
+        registrationNumber: input.registrationNumber,
+        taxId: input.taxId,
+        industry: input.industry,
+        lastModifiedBy: actorId,
+      })
+
+      await writeAuditEvent(tx, {
+        eventType: 'ORGANIZATION_UPDATED',
+        actorUserId: actorId,
+        targetEntity: 'ORGANIZATION',
+        targetId: input.organizationId,
+        beforeData: before,
+        afterData: after,
+      })
+
+      return { ok: true, value: { lastModifiedDatetime: bumped } }
+    })
+  } catch (err) {
+    if (isUniqueViolation(err, 'organization_registration_number')) {
+      return { ok: false, code: 'DUPLICATE_REGISTRATION_NUMBER' }
+    }
+    throw err
+  }
+}
+```
+
+`before` is loaded **outside** the transaction (a plain read, same pattern `um11` uses) — the transaction itself only ever contains writes plus the one audit insert, kept as short as possible.
+
+### 3.5 Server Action — `actions/customer/update-organization.ts` (new)
+
+Same shape as `cm07`'s `create-customer.ts` action (guard → parse → call service → map result → `revalidatePath`), targeting `revalidatePath('/customers/manage/[id]', 'page')` (or the concrete path with the actual ID — confirm Next.js's dynamic revalidation call shape at implementation time; either way, only this one route revalidates, not the search page, since the org's name change could affect search results too — **also** revalidate `/customers/manage` for that reason).
+
+### 3.6 Page — `app/(app)/customers/manage/[id]/page.tsx` (new)
+
+```tsx
+export const dynamic = 'force-dynamic'
+export const metadata: Metadata = { title: 'Manage Customer' }
+
+export default async function CustomerEditPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}): Promise<React.JSX.Element> {
+  await requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.EDIT)
+
+  const { id } = await params
+  const idResult = partyRoleIdSchema.safeParse(id)
+  const detail = idResult.success ? await getCustomerDetail(idResult.data) : null
+
+  if (detail === null) return <CustomerNotFound />
+
+  return (
+    <main className="space-y-6 p-6">
+      <header>
+        <h1 className="text-h1 font-semibold text-foreground">Edit {detail.organization.name}</h1>
+        <p className="mt-1 text-body text-muted-foreground">Customer {detail.customerRole.partyRoleId}</p>
+      </header>
+
+      <OrganizationForm
+        organization={detail.organization}
+        partyRoleId={detail.customerRole.partyRoleId}
+        lastModifiedDatetime={detail.customerRole.lastModifiedDatetime}
+      />
+
+      {/* cm10 adds <CustomerRoleForm /> here */}
+      {/* cm11 adds <ContactManagerPanel /> here */}
+    </main>
+  )
+}
+```
+
+- The two trailing comments are the seams `cm10`/`cm11` fill — plain JSX comments naming the unit, same convention Product used for its own pm06–08 seams.
+- `lastModifiedDatetime` passed to `OrganizationForm` comes from `customerRole`, **not** `organization` (§2.3.2) — a detail easy to get wrong since the field name suggests "the organization's own timestamp."
+
+### 3.7 `components/customers/organization-form.tsx` (new, `'use client'`)
+
+Fields identical to `NewCustomerForm`'s organization fields (`cm07`) minus the specification/locked-status parts (those belong to `CustomerRoleForm`, `cm10`) — reuses `organizationFieldsSchema` for client-side validation via `zodResolver`. Hidden fields: `organizationId`, `partyRoleId`, `lastModifiedDatetime` (all submitted verbatim, never edited by the user). Submit → `updateOrganizationAction`.
+
+**Conflict handling:**
+
+```ts
+if (result.code === 'CONFLICT') {
+  setConflict(true) // renders <OptimisticLockConflictBanner /> in place of the form's save button area
+  return
+}
+```
+
+**`components/customers/optimistic-lock-conflict-banner.tsx` (new) — a shared component, not inlined here.** Every mutation unit from `cm09` onward (status transitions, contact CRUD, set-preferred) hits the exact same `CONFLICT` outcome and needs the exact same reload prompt, so this unit extracts it immediately rather than inlining it once and copy-pasting later:
+
+```tsx
+export function OptimisticLockConflictBanner({ onReload }: { onReload: () => void }) {
+  return (
+    <div className="flex items-start gap-2 rounded-md border-l-4 p-3 text-body-sm"
+      style={{ borderColor: 'var(--banner-warning-border)', backgroundColor: 'var(--banner-warning-bg)', color: 'var(--banner-warning-fg)' }}>
+      <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
+      <div>
+        <p>This customer was changed by someone else. Reload to see the latest version.</p>
+        <Button size="sm" variant="outline" onClick={onReload} className="mt-2">Reload</Button>
+      </div>
+    </div>
+  )
+}
+```
+
+Reuses the exact same warning tokens as `InconsistencyBanner` (`cm05`) — not a new palette, just a different message and an action button. `onReload` is typically `() => router.refresh()`, supplied by the caller (`OrganizationForm` here; `StatusTransitionControl`, `cm09`, and the contact-mutation components, `cm11`–`cm15`, all pass their own). The form underneath stays visible but its submit control is disabled while the banner shows (`conflict === true`) — a deliberate choice to stop a second blind retry from potentially re-triggering the same conflict against yet another intervening change.
+
+On success, update the locally-held `lastModifiedDatetime` from the action's returned value (§2.2) so a same-session second save doesn't need a manual reload to pick up the bumped lock — `router.refresh()`'s eventual RSC re-render will supply the authoritative value regardless; this is purely to avoid a save button flashing "conflict" against its own just-completed write if the user is fast.
+
+### 3.8 Guardrail tests owned by this unit
+
+- `tests/services/update-organization.service.test.ts` — mock repositories, `writeAuditEvent`, `db.transaction`:
+  - Happy path: `compareAndBumpLock` called with the exact submitted `partyRoleId`/`lastModifiedDatetime`; on success, `organizationRepository.update` and the audit write both happen, `ORGANIZATION_UPDATED` with correct before/after; result carries the new timestamp.
+  - **`compareAndBumpLock` returns `null`** ⇒ `{ ok: false, code: 'CONFLICT' }`; `organizationRepository.update` and `writeAuditEvent` are **not called** — the guardrail this whole unit exists for.
+  - Nonexistent `organizationId` ⇒ `ORGANIZATION_NOT_FOUND`, no transaction opened.
+  - Duplicate `registration_number` thrown mid-transaction ⇒ `DUPLICATE_REGISTRATION_NUMBER`.
+- `tests/components/organization-form.test.tsx` — submitting valid changes calls the action with all fields + the three hidden values unchanged; a `CONFLICT` result shows the reload-prompt banner and disables further submission; a `DUPLICATE_REGISTRATION_NUMBER` result surfaces as a field error, same as `cm07`'s create form.
+- **Integration** (`describe.skipIf(!databaseUrl)`) — `tests/db/optimistic-lock-conflict.integration.test.ts`, the guardrail `cm00`'s build plan names for this unit specifically: create a customer (`cm07`'s service, directly), load its `lastModifiedDatetime` twice (simulating two editors opening the same customer), apply editor A's update successfully (lock bumps), then attempt editor B's update using the **original, now-stale** `lastModifiedDatetime` — assert `CONFLICT`, assert the organization row reflects only editor A's change, assert exactly one `ORGANIZATION_UPDATED` audit row exists (editor B's rejected attempt writes nothing).
+
+### 3.9 Explicitly NOT in this unit
+
+No status transitions, no `StatusTransitionControl`. No `CustomerRoleForm`/`ContactManagerPanel`. No authz-matrix file (`cm16`). No change to `cm07`'s create flow.
+
+---
+
+## 4. Dependencies (packages to install)
+
+**None.** All tooling already installed from prior units.
+
+## 5. Verification checklist
+
+**Diff hygiene**
+- [ ] Changed/added: `cm01-db-foundation.md` (the precision fix, plan-folder doc, not app code), `db/repositories/party-role.ts` + `organization.ts` (extended), `validation/customer/update-organization.schema.ts` (new), `services/customer/update-organization.ts` (new), `actions/customer/update-organization.ts` (new), `app/(app)/customers/manage/[id]/page.tsx` + `loading.tsx` + `error.tsx` (new), `components/customers/organization-form.tsx` + `optimistic-lock-conflict-banner.tsx` (new), the new test files. Nothing else.
+- [ ] `db/schema/customer.ts`'s actual migration for the `timestamptz(3)` precision change lands as part of this unit's implementation (the plan-doc fix alone doesn't move code) — if `cm01` was already implemented before this unit, the precision correction is a **new, additive migration** here (never edit an applied migration), not a rewrite of `cm01`'s original file.
+- [ ] No `TODO`, commented-out code, or `console.*`.
+
+**Build gates**
+- [ ] `npm run typecheck` green.
+- [ ] `npm run lint` and `npm run format:check` green.
+- [ ] `npm run test` green — zero pre-existing assertions change.
+
+**Behavior — the point of the unit**
+- [ ] A MANAGER edits and saves an existing customer's organization fields; the change persists and is audited.
+- [ ] Two concurrent editors: the second save (stale `lastModifiedDatetime`) is rejected with the reload prompt, not silently overwritten; the first editor's change is the one that survives.
+- [ ] A duplicate `registration_number` on update is blocked the same way it is on create.
+- [ ] Unknown/malformed `[id]` renders "Customer not found," never a crash.
+
+**Docs in sync**
+- [ ] `custmgmt-progress-tracker.md` marks `cm08` complete, records the `compareAndBumpLock` primitive as the one place Module Inv. #6 is implemented, and confirms the `cm01` precision fix landed.
+
+**Pipeline**
+- [ ] CI green end-to-end including SAST/ZAP DAST baseline.
+
+Any failing item means the unit isn't done. `cm09` (transition organization status) and `cm10` (transition customer status) both reuse `compareAndBumpLock` unchanged; `cm11` (add contact) is the first to reuse it for a contact-only edit, proving Module Inv. #6's "even a contact-only edit" clause.

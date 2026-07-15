@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 
 import { getCurrentUserIdentity } from "@/auth/guard";
+import { resolveEffectivePermissions } from "@/auth/resolver";
 import { AdminSidebar } from "@/components/admin-sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { SIDEBAR_COOKIE } from "@/lib/sidebar";
@@ -26,6 +27,13 @@ export default async function AdminLayout({
 }>): Promise<React.JSX.Element> {
   const collapsed = (await cookies()).get(SIDEBAR_COOKIE)?.value === "1";
   const identity = await getCurrentUserIdentity();
+  // cm03-spec §2.3.5: the layout only had `{ userId, userEmail }` (in
+  // practice `{ userId, userName, userEmail }` per `getCurrentUserIdentity`)
+  // in scope, not the full map — one added call to `um06`'s existing
+  // resolver, not a new resolver.
+  const permissionMap = identity
+    ? await resolveEffectivePermissions(identity.userId)
+    : undefined;
   const logo = await getBrandingLogo();
 
   return (
@@ -33,6 +41,7 @@ export default async function AdminLayout({
       <AdminSidebar
         defaultCollapsed={collapsed}
         identity={identity}
+        permissionMap={permissionMap}
         logo={logo}
       />
       <main className="flex-1 overflow-y-auto bg-background">{children}</main>

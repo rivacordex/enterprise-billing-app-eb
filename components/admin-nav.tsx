@@ -4,15 +4,20 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Building2,
+  Lock,
   Package,
   ScrollText,
   Settings,
   ShieldHalf,
+  UserCog,
   Users,
   type LucideIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { hasLevel, type EffectivePermissionMap } from "@/types/permissions";
+import type { PermissionName, PermissionType } from "@/types/rbac";
 
 // Roles → `ShieldHalf` (not `ShieldCheck`): the filled shield-check glyph is
 // already the SSO `AuthMethodBadge` (ui-context §3.5), so reusing it for Roles
@@ -20,8 +25,19 @@ import { cn } from "@/lib/utils";
 // authority family (right for RBAC) while staying distinct. `Settings` for
 // System Configuration matches `ConfigTable`'s empty-state icon (um28-spec §2.5).
 // `Package` for Product Offering: catalog/goods family, no glyph collision
-// with existing nav or badge icons.
-type NavItem = { label: string; href: string; icon: LucideIcon };
+// with existing nav or badge icons. `Building2` for View Customer: the
+// organization/legal-entity glyph (the page is about `organization` +
+// `party_role`, not a person). `UserCog` for Manage Customer: the
+// administer-a-person-like-record glyph, distinct from `Settings`'s
+// gear-only meaning and from `Users` (already User Management's).
+type NavItem = {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  // cm03: only "Manage Customer" sets this — the first nav item whose
+  // render depends on the viewer's permission level (cm03-spec §2.3.1).
+  requiredPermission?: { name: PermissionName; level: PermissionType };
+};
 type NavSection = { caption: string; items: ReadonlyArray<NavItem> };
 
 const NAV_SECTIONS: ReadonlyArray<NavSection> = [
@@ -32,6 +48,18 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         label: "Product Offering",
         href: "/products/product-offering",
         icon: Package,
+      },
+    ],
+  },
+  {
+    caption: "Customer",
+    items: [
+      { label: "View Customer", href: "/customers/view", icon: Building2 },
+      {
+        label: "Manage Customer",
+        href: "/customers/manage",
+        icon: UserCog,
+        requiredPermission: { name: "customers", level: "EDIT" },
       },
     ],
   },
@@ -59,10 +87,14 @@ interface AdminNavProps {
   // (max-width + opacity) in step with the 200ms width transition rather than
   // being conditionally unmounted, so the text doesn't pop mid-animation.
   collapsed?: boolean;
+  // cm03-spec §2.3.2: fail-closed if omitted — an item with a
+  // `requiredPermission` renders locked, never falls back to unlocked.
+  permissionMap?: EffectivePermissionMap | undefined;
 }
 
 export function AdminNav({
   collapsed = false,
+  permissionMap,
 }: AdminNavProps = {}): React.JSX.Element {
   const pathname = usePathname();
 
@@ -91,6 +123,75 @@ export function AdminNav({
             const isActive =
               pathname === item.href || pathname.startsWith(`${item.href}/`);
             const Icon = item.icon;
+            // Fail-closed (cm03-spec §2.3.2): no `permissionMap` prop means
+            // any item declaring `requiredPermission` renders locked, never
+            // silently unlocked. `hasLevel` itself requires a real map, so
+            // the `undefined` case is handled here rather than in `um06`'s helper.
+            const locked =
+              item.requiredPermission !== undefined &&
+              !(permissionMap
+                ? hasLevel(
+                    permissionMap,
+                    item.requiredPermission.name,
+                    item.requiredPermission.level,
+                  )
+                : false);
+            const itemActive = !locked && isActive;
+
+            const boxClassName = cn(
+              "flex items-center overflow-hidden border-l-[3px] outline-none focus-visible:[box-shadow:var(--focus-ring)]",
+              collapsed ? "justify-center px-2 py-1" : "gap-2.5 px-4 py-2.5",
+              // The left-border accent belongs to the expanded pill only;
+              // collapsed active is a centered light square (border dropped).
+              !collapsed && itemActive
+                ? "border-[color:var(--color-primary-200)] bg-[color:var(--surface-selected)] text-[color:var(--text-primary)]"
+                : !collapsed
+                  ? "border-transparent text-[color:var(--text-on-brand)] hover:bg-[color:var(--action-ghost-hover)]"
+                  : "border-transparent",
+              // Belt-and-suspenders alongside `aria-disabled` and the
+              // non-`<a>` element (cm03-spec §3.2) against inherited
+              // hover/focus styling meant for real links.
+              locked && "cursor-not-allowed pointer-events-none opacity-50",
+            );
+
+            const iconWrapClassName = cn(
+              "flex shrink-0 items-center justify-center",
+              collapsed &&
+                (itemActive
+                  ? "size-9 rounded-sm bg-[color:var(--surface-selected)] text-[color:var(--text-primary)]"
+                  : "size-9 rounded-sm text-[color:var(--text-on-brand)] hover:bg-[color:var(--action-ghost-hover)]"),
+            );
+
+            const labelClassName = cn(
+              "overflow-hidden text-[13px] whitespace-nowrap transition-[max-width,opacity] duration-200",
+              collapsed ? "max-w-0 opacity-0" : "max-w-[12rem] opacity-100",
+            );
+
+            if (locked) {
+              return (
+                <span
+                  key={item.href}
+                  role="link"
+                  aria-disabled="true"
+                  // Collapsed: same plain-label tooltip convention as every
+                  // other item; expanded: the reason it's inert (cm03-spec §2.3.4).
+                  title={collapsed ? item.label : "Requires MANAGER access"}
+                  className={boxClassName}
+                >
+                  <span className={iconWrapClassName}>
+                    <Icon size={collapsed ? 18 : 16} aria-hidden />
+                  </span>
+                  <span className={labelClassName}>{item.label}</span>
+                  {!collapsed && (
+                    <Lock
+                      size={14}
+                      aria-hidden
+                      className="ml-auto text-[color:var(--text-on-brand)]/40"
+                    />
+                  )}
+                </span>
+              );
+            }
 
             return (
               <Link
@@ -100,41 +201,12 @@ export function AdminNav({
                 // Collapsed: a hover tooltip for sighted users; the (DOM-present,
                 // visually-clipped) label still provides the accessible name.
                 title={collapsed ? item.label : undefined}
-                className={cn(
-                  "flex items-center overflow-hidden border-l-[3px] outline-none focus-visible:[box-shadow:var(--focus-ring)]",
-                  collapsed
-                    ? "justify-center px-2 py-1"
-                    : "gap-2.5 px-4 py-2.5",
-                  // The left-border accent belongs to the expanded pill only;
-                  // collapsed active is a centered light square (border dropped).
-                  !collapsed && isActive
-                    ? "border-[color:var(--color-primary-200)] bg-[color:var(--surface-selected)] text-[color:var(--text-primary)]"
-                    : !collapsed
-                      ? "border-transparent text-[color:var(--text-on-brand)] hover:bg-[color:var(--action-ghost-hover)]"
-                      : "border-transparent",
-                )}
+                className={boxClassName}
               >
-                <span
-                  className={cn(
-                    "flex shrink-0 items-center justify-center",
-                    collapsed &&
-                      (isActive
-                        ? "size-9 rounded-sm bg-[color:var(--surface-selected)] text-[color:var(--text-primary)]"
-                        : "size-9 rounded-sm text-[color:var(--text-on-brand)] hover:bg-[color:var(--action-ghost-hover)]"),
-                  )}
-                >
+                <span className={iconWrapClassName}>
                   <Icon size={collapsed ? 18 : 16} aria-hidden />
                 </span>
-                <span
-                  className={cn(
-                    "overflow-hidden text-[13px] whitespace-nowrap transition-[max-width,opacity] duration-200",
-                    collapsed
-                      ? "max-w-0 opacity-0"
-                      : "max-w-[12rem] opacity-100",
-                  )}
-                >
-                  {item.label}
-                </span>
+                <span className={labelClassName}>{item.label}</span>
               </Link>
             );
           })}
