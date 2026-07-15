@@ -4,8 +4,13 @@ import { SearchX } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { CustomerRoleForm } from "@/components/customers/customer-role-form";
 import { OrganizationForm } from "@/components/customers/organization-form";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
+import {
+  getAppLocale,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 import { partyRoleIdSchema } from "@/validation/customer/party-role.schema";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +54,11 @@ export default async function CustomerEditPage({
     return <CustomerNotFound />;
   }
 
+  const [locale, timezone] = await Promise.all([
+    getAppLocale(),
+    getAppTimezone(),
+  ]);
+
   return (
     <main className="space-y-6 p-6">
       <header>
@@ -66,7 +76,12 @@ export default async function CustomerEditPage({
         lastModifiedDatetime={detail.customerRole.lastModifiedDatetime}
       />
 
-      {/* cm10 adds <CustomerRoleForm /> here */}
+      <CustomerRoleForm
+        customerRole={detail.customerRole}
+        locale={locale}
+        timezone={timezone}
+      />
+
       {/* cm11 adds <ContactManagerPanel /> here */}
     </main>
   );

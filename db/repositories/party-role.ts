@@ -7,6 +7,7 @@ import type {
   PartyRole,
   PartyRoleInsert,
 } from "@/db/schema/customer";
+import type { CustomerStatus } from "@/types/customer";
 
 export const partyRoleRepository = {
   // Plain PK lookup.
@@ -84,5 +85,60 @@ export const partyRoleRepository = {
       )
       .returning({ lastModifiedDatetime: partyRole.lastModifiedDatetime });
     return row?.lastModifiedDatetime ?? null;
+  },
+
+  // A same-row refinement of `compareAndBumpLock` (cm10-spec §2.2) — this
+  // mutation and its lock column both live on `party_role`, so the
+  // compare-check and the actual data write collapse into one atomic
+  // `UPDATE` instead of bumping the lock and then issuing a second `UPDATE`
+  // against the row just touched. Zero rows matched (stale lock or unknown
+  // ID) returns `null`, same convention as `compareAndBumpLock`.
+  async compareAndUpdateStatus(
+    tx: Database,
+    partyRoleId: string,
+    expectedLastModifiedDatetime: Date,
+    data: {
+      status: CustomerStatus;
+      statusReason: string;
+      lastModifiedBy: string;
+    },
+  ): Promise<PartyRole | null> {
+    const [row] = await tx
+      .update(partyRole)
+      .set({ ...data, lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(partyRole.partyRoleId, partyRoleId),
+          eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // Same shape as `compareAndUpdateStatus`, setting `partyRoleSpecification`
+  // instead of `status`/`statusReason` (cm10-spec §2.2) — a specification
+  // edit writes no `status_reason`-style field, since it isn't a lifecycle
+  // transition.
+  async compareAndUpdateSpecification(
+    tx: Database,
+    partyRoleId: string,
+    expectedLastModifiedDatetime: Date,
+    data: {
+      partyRoleSpecification: Record<string, unknown>;
+      lastModifiedBy: string;
+    },
+  ): Promise<PartyRole | null> {
+    const [row] = await tx
+      .update(partyRole)
+      .set({ ...data, lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(partyRole.partyRoleId, partyRoleId),
+          eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+        ),
+      )
+      .returning();
+    return row ?? null;
   },
 };
