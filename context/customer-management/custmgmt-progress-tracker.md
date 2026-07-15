@@ -14,7 +14,7 @@ Update this file after every meaningful implementation change.
 | cm06 | Manage search page                                                      | Done (committed `53f9a62`) |
 | cm07 | Create customer                                                         | Done (uncommitted)         |
 | cm08 | Edit page + update organization                                         | Done (uncommitted)         |
-| cm09 | Transition organization status                                         | Done (uncommitted)         |
+| cm09 | Transition organization status                                         | Done (committed `9aae48c`) |
 | cm10 | Transition customer status                                             | Spec written, not started  |
 | cm11 | Add contact                                                             | Spec written, not started  |
 | cm12 | Update contact                                                          | Spec written, not started  |
@@ -131,7 +131,7 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 **Verified this session:** `npm run typecheck`, `npm run lint` (0 errors; the same pre-existing `new-customer-form.tsx` React Compiler `watch()` warning from `cm07`/`cm08`, unrelated to this unit's diff), `npm run format:check` all clean; `vitest run` (unit config) — 149 files / 1293 tests green (was 146/1249 before this unit's +3 new test files / +44 new tests, accounting for the `it.each` edge/non-edge expansion). Live dev-server manual click-through of the status-transition UI (concurrent-edit walkthrough, terminal-state rendering in the browser) not exercised this session — DB-level and component-test verification only.
 
-**Not yet committed** — changes are in the working tree, alongside `cm07`/`cm08`'s uncommitted changes. `cm10` (transition customer status) is next; it reuses `StatusTransitionControl` unchanged for the customer entity, only different bound values (`entityKind="customer"`, `CUSTOMER_TRANSITIONS`, `CustomerRoleForm`).
+**Committed** as `9aae48c` ("transition organization status + StatusTransitionControl (cm09)"). `cm10` (transition customer status) is next; it reuses `StatusTransitionControl` unchanged for the customer entity, only different bound values (`entityKind="customer"`, `CUSTOMER_TRANSITIONS`, `CustomerRoleForm`).
 
 ---
 
