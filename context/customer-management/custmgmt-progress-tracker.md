@@ -9,7 +9,7 @@ Update this file after every meaningful implementation change.
 | cm01 | DB foundation (`customer` schema, migration, seed, permission registry) | Done (committed `4426342`) |
 | cm02 | Validation schemas + read repositories + read services                 | Done (uncommitted)         |
 | cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (uncommitted)          |
-| cm04 | View search page                                                        | Spec written, not started  |
+| cm04 | View search page                                                        | Done (uncommitted)          |
 | cm05 | View detail page                                                        | Spec written, not started  |
 | cm06 | Manage search page                                                      | Spec written, not started  |
 | cm07 | Create customer                                                         | Spec written, not started  |
@@ -63,7 +63,15 @@ Update this file after every meaningful implementation change.
 
 ---
 
-**cm04 — spec written, not yet implemented.** `specs/cm04.md`: `app/(app)/customers/view/page.tsx`: READ guard, `q`-only search, `CustomerSearchPanel` + `CustomerResultsTable`, `OrganizationStatusBadge`/`CustomerStatusBadge`.
+**cm04 implemented per `specs/cm04.md`** — `validation/customer/search-params.schema.ts` (new, lenient `.catch("")`-defaulted `q`); `app/(app)/customers/view/page.tsx` + `loading.tsx` + `error.tsx` (new) — READ guard as line 1 of the body, `q`-only search (no sort/pagination — capped + hinted per the overview); `components/customers/customer-search-panel.tsx` (client, Apply/Enter/Clear + `useTransition`) + `customer-results-table.tsx` (server component — no interactivity needed since row click is a real navigation, not a `?id=` selection); `organization-status-badge.tsx`/`customer-status-badge.tsx` (new, first consumers), colors/icons taken verbatim from `custmgmt-ui-context.md` §1–§2. New tests: `tests/app/customers-view-page.test.tsx`, `tests/components/{customer-search-panel,customer-results-table,organization-status-badge,customer-status-badge}.test.tsx`.
+
+**Deviation from the spec's stated diff scope — a real fix to `cm02`, not a `cm04`-local workaround:** `cm02`'s `searchCustomers`/`getCustomerDetail` took `db: Database` as an explicit first parameter (a "deliberate choice" per `cm02`'s own tracker entry above). Wiring cm04's page to call `searchCustomers(db, parsed.q)` as the spec's code block literally shows tripped the `boundaries/dependencies` ESLint rule (`app/**` has no allowed edge to `db/**` — only `root-page`, `services`, `auth`, and `db` itself do). Checked every downstream spec that calls these services (`cm05`, `cm06`, `cm08`) — all of them already assume a single-argument call (`searchCustomers(parsed.q)`, `getCustomerDetail(idResult.data)`), matching Product Management's `services/product/*` convention (import the `db` singleton internally). So the `db`-as-parameter shape was the actual bug, only surfaced once cm04 became the first real consumer. Fixed at the source: `services/customer/search-customers.ts` and `services/customer/get-customer-detail.ts` now import `db` from `@/db/client` internally and dropped the parameter; updated all existing call sites accordingly (`tests/services/search-customers.service.test.ts`, `tests/services/get-customer-detail.service.test.ts`, `tests/db/customer-repositories.integration.test.ts` — 24 call sites across three files, argument-count only, no assertion changes). `cm05`/`cm06`/`cm08` need no further adjustment — their specs already match the corrected signature.
+
+Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST` (pm01's rename-invariance guardrail enumerates every `app/**/page.tsx`-derived route; a new route trips it by design until registered).
+
+**Verified this session:** `npm run typecheck`, `npm run lint`, `npm run format:check` all clean; `vitest run` — 132 files / 1182 tests green (was 132/1182 total after adding this unit's new test files and fixing the route-manifest guardrail); `vitest run --config vitest.integration.config.ts` against the local Docker Postgres dev container — 32 files / 293 tests green, including `tests/db/customer-repositories.integration.test.ts` exercising the corrected service signatures against the real database.
+
+**Not yet committed** — changes are in the working tree alongside `cm02`/`cm03`'s uncommitted work; commit per user confirmation. `cm05` (View Customer detail page) may start once this commit is verified and merged — it consumes the same guard pattern, both new badge components, and the now-corrected `getCustomerDetail(partyRoleId)` signature; `cm06` (Manage Customer search page) reuses `search-params.schema.ts` and `CustomerResultsTable` unchanged.
 
 ---
 
