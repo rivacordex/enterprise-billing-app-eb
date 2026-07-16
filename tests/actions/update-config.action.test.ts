@@ -42,6 +42,7 @@ beforeEach(() => {
       system_config: "EDIT",
       audit_log: null,
       products: null,
+      customers: null,
     },
   });
 });

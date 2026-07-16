@@ -91,6 +91,7 @@ beforeEach(() => {
       system_config: null,
       audit_log: null,
       products: "READ",
+      customers: null,
     },
   });
 });

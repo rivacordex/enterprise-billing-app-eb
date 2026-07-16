@@ -67,6 +67,7 @@ describe("AuditLogPage", () => {
         system_config: "DELETE",
         audit_log: "READ",
         products: "DELETE",
+        customers: null,
       },
     });
 
@@ -108,6 +109,7 @@ describe("AuditLogPage", () => {
         system_config: null,
         audit_log: "READ",
         products: null,
+        customers: null,
       },
     });
 
@@ -128,6 +130,7 @@ describe("AuditLogPage", () => {
         system_config: null,
         audit_log: "READ",
         products: null,
+        customers: null,
       },
     });
 

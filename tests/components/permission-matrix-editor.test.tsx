@@ -31,6 +31,7 @@ const ADMIN_ROLE: RoleWithMappings = {
     { permissionName: "system_config", assignedLevel: "DELETE" },
     { permissionName: "audit_log", assignedLevel: "READ" },
     { permissionName: "products", assignedLevel: "DELETE" },
+    { permissionName: "customers", assignedLevel: null },
   ],
 };
 
@@ -46,6 +47,7 @@ const MANAGER_ROLE: RoleWithMappings = {
     { permissionName: "system_config", assignedLevel: null },
     { permissionName: "audit_log", assignedLevel: null },
     { permissionName: "products", assignedLevel: null },
+    { permissionName: "customers", assignedLevel: null },
   ],
 };
 
@@ -59,7 +61,7 @@ beforeEach(() => {
 });
 
 describe("PermissionMatrixEditor", () => {
-  it("renders 5 rows in PERMISSION_NAMES order", () => {
+  it("renders 6 rows in PERMISSION_NAMES order", () => {
     render(<PermissionMatrixEditor role={ADMIN_ROLE} />);
     const rowLabels = screen
       .getAllByRole("row")
@@ -71,6 +73,7 @@ describe("PermissionMatrixEditor", () => {
       "System Config",
       "Audit Log",
       "Products",
+      "Customers",
     ]);
   });
 
@@ -116,6 +119,7 @@ describe("PermissionMatrixEditor", () => {
       "System Config",
       "Audit Log",
       "Products",
+      "Customers",
     ]) {
       const group = rowGroup(label);
       expect(within(group).getByRole("button", { name: "—" })).toHaveAttribute(
@@ -262,6 +266,7 @@ describe("PermissionMatrixEditor", () => {
       "Permission level for System Config",
       "Permission level for Audit Log",
       "Permission level for Products",
+      "Permission level for Customers",
     ]);
   });
 });

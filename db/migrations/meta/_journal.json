@@ -64,6 +64,13 @@
       "when": 1783389520048,
       "tag": "0008_product_config",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783923264261,
+      "tag": "0009_customer",
+      "breakpoints": true
     }
   ]
 }
