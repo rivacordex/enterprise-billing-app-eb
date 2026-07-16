@@ -46,12 +46,13 @@ describe.skipIf(!databaseUrl)(
         migrationsSchema: "drizzle",
       });
 
-      // MANAGER/USER role rows — the customer seed's precondition (cm01-spec
-      // §3.6.2), normally provided by `db:seed-rbac`. Inserted directly here
-      // rather than running the real seed-rbac script, matching the
-      // `appuser-repository.integration.test.ts` precedent.
+      // MANAGER/USER/ADMIN role rows — the customer seed's precondition
+      // (cm01-spec §3.6.2), normally provided by `db:seed-rbac`. Inserted
+      // directly here rather than running the real seed-rbac script,
+      // matching the `appuser-repository.integration.test.ts` precedent.
       await sql`INSERT INTO core.roles (role_name, role_descr) VALUES ('MANAGER', 'Manager')`;
       await sql`INSERT INTO core.roles (role_name, role_descr) VALUES ('USER', 'User')`;
+      await sql`INSERT INTO core.roles (role_name, role_descr) VALUES ('ADMIN', 'Admin')`;
 
       runSeedCustomer();
     }, 30_000);
@@ -83,7 +84,7 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
-    test("grants exactly MANAGER -> customers:EDIT and USER -> customers:READ, no DELETE row for any role", async () => {
+    test("grants exactly MANAGER -> customers:EDIT, USER -> customers:READ, and ADMIN -> customers:EDIT, no DELETE row for any role", async () => {
       const rows = await sql<{ role_name: string; permission_type: string }[]>`
         SELECT r.role_name, rpa.permission_type
         FROM core.role_permission_assign rpa
@@ -91,10 +92,11 @@ describe.skipIf(!databaseUrl)(
         JOIN core.permissions p ON p.permission_id = rpa.ref_permission_id
         WHERE p.permission_name = 'customers'
       `;
-      expect(rows).toHaveLength(2);
+      expect(rows).toHaveLength(3);
       const byRole = new Map(rows.map((r) => [r.role_name, r.permission_type]));
       expect(byRole.get("MANAGER")).toBe("EDIT");
       expect(byRole.get("USER")).toBe("READ");
+      expect(byRole.get("ADMIN")).toBe("EDIT");
       expect(rows.some((r) => r.permission_type === "DELETE")).toBe(false);
     });
 
@@ -113,7 +115,7 @@ describe.skipIf(!databaseUrl)(
         JOIN core.permissions p ON p.permission_id = rpa.ref_permission_id
         WHERE p.permission_name = 'customers'
       `;
-      expect(grantRows).toHaveLength(2);
+      expect(grantRows).toHaveLength(3);
     }, 30_000);
   },
 );

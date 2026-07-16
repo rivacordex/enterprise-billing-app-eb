@@ -3,6 +3,7 @@ import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { organization } from "@/db/schema/customer";
 import type { Organization, OrganizationInsert } from "@/db/schema/customer";
+import type { OrganizationFields } from "@/validation/customer/organization.schema";
 
 export const organizationRepository = {
   // Plain PK lookup. No projection composition here — `getCustomerDetail`
@@ -26,6 +27,22 @@ export const organizationRepository = {
   // (cm07-spec §3.1).
   async insert(tx: Database, data: OrganizationInsert): Promise<Organization> {
     const [row] = await tx.insert(organization).values(data).returning();
+    return row!;
+  },
+
+  // No `status` field in `data` — `OrganizationForm` (cm08) never submits
+  // one, so there's nothing to accidentally overwrite (cm08-spec §2.4). Org
+  // status stays a read-only badge until cm09 adds a status control.
+  async update(
+    tx: Database,
+    organizationId: string,
+    data: OrganizationFields & { lastModifiedBy: string },
+  ): Promise<Organization> {
+    const [row] = await tx
+      .update(organization)
+      .set({ ...data, lastModifiedDatetime: new Date() })
+      .where(eq(organization.organizationId, organizationId))
+      .returning();
     return row!;
   },
 

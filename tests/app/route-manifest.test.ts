@@ -29,6 +29,7 @@ const ROUTE_MANIFEST = [
   "/customers/view/[id]",
   "/customers/manage",
   "/customers/manage/new",
+  "/customers/manage/[id]",
 ] as const;
 
 function collectPageFiles(dir: string): string[] {
