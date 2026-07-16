@@ -94,6 +94,14 @@
      user-status (§3.4), auth-method (§3.5), role + permission-level (§3.6), audit category (§3.7).
      These reuse the status/brand scales above; map them as named aliases. */
 
+  /* Customer Management — PreferredIndicator (custmgmt-ui-context.md §4):
+     the module's one accent-scale usage. InconsistencyBanner (§5) aliases
+     the existing warning scale rather than duplicating its hexes. */
+  --preferred-fg: var(--color-accent-500);
+  --banner-warning-border: var(--color-warning-500);
+  --banner-warning-bg: var(--color-warning-50);
+  --banner-warning-fg: var(--color-warning-700);
+
   /* 4. RESERVED — AI/Iris + gradients (defined, NOT used in v1, UI-context §0/§4) */
   --ai-50: #f0edff;
   --ai-100: #dad2ff;
