@@ -8,7 +8,7 @@ Update this file after every meaningful implementation change.
 | ---- | ---------------------------------------------------------------------- | --------------------------- |
 | cm01 | DB foundation (`customer` schema, migration, seed, permission registry) | Done (committed `4426342`) |
 | cm02 | Validation schemas + read repositories + read services                 | Done (uncommitted)         |
-| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Spec written, not started  |
+| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | Done (uncommitted)          |
 | cm04 | View search page                                                        | Spec written, not started  |
 | cm05 | View detail page                                                        | Spec written, not started  |
 | cm06 | Manage search page                                                      | Spec written, not started  |
@@ -47,7 +47,19 @@ Update this file after every meaningful implementation change.
 
 ---
 
-**cm03 — spec written, not yet implemented.** `specs/cm03.md`: "Customer" `NAV_SECTIONS` entry (View/Manage) + new `AdminNav` locked/greyed-item capability for a permission the viewer lacks.
+**cm03 implemented per `specs/cm03.md`** — the "Customer" `NAV_SECTIONS` entry (View Customer → `/customers/view`, `Building2`; Manage Customer → `/customers/manage`, `UserCog`) inserted between `Products` and `Administration` in `components/admin-nav.tsx`, plus the new greyed/locked `AdminNav` capability: `NavItem.requiredPermission` (only "Manage Customer" sets it, `{ name: 'customers', level: 'EDIT' }`), a new optional `AdminNavProps.permissionMap`, and a `hasLevel`-backed `locked` branch rendering `<span role="link" aria-disabled="true">` (dimmed, `Lock` icon, non-navigating, "Requires MANAGER access" tooltip in expanded mode, plain-label tooltip collapsed) — fails closed when `permissionMap` is omitted. Collapsed-rail dividers now render for 3 sections (2 hairlines).
+
+**§2.3.5 resolved:** `app/(app)/layout.tsx` only had `getCurrentUserIdentity()` → `{ userName, userEmail }` in scope, no full map and no `userId` either. Extended `getCurrentUserIdentity` (`auth/guard.ts`) to also return `userId` (it already loads the full `user` row internally), then added one `resolveEffectivePermissions(identity.userId)` call in the layout (only when identity resolves) and threaded the result through `AdminSidebar` (new optional `permissionMap` prop, `components/admin-sidebar.tsx`) into `AdminNav`. No `db/**` import added to `layout.tsx` — both calls stay behind `auth/`.
+
+**Deviations from the spec's stated diff-hygiene file list:** the checklist named only `admin-nav.tsx`, `admin-nav.test.tsx`, and conditionally `layout.tsx`. Two more files needed a touch, both required to actually wire the map end-to-end rather than optional: `components/admin-sidebar.tsx` (the actual `<AdminNav>` caller sitting between the layout and the nav — it needed the pass-through prop) and `auth/guard.ts` (`getCurrentUserIdentity` didn't expose `userId`, only `userName`/`userEmail`, so `resolveEffectivePermissions` had nothing to call with). `tests/app/admin-layout.test.tsx` also needed its `getCurrentUserIdentity` mock fixtures updated (`userId` added) and a new `@/auth/resolver` mock (`resolveEffectivePermissions` stubbed to an all-null map) so the layout test suite doesn't hit the DB. Fixed the `custmgmt-code-standards.md` §8 Route-column typo across all five rows (search/detail/edit/add-new) plus its two prose cross-references, not just the two search-page routes cm03 itself depends on — same root typo, left consistent rather than half-fixed.
+
+**Verified this session:** `npm run typecheck`, `npx eslint` (touched files), `npx prettier --check` all clean; `vitest run tests/components/admin-nav.test.tsx tests/app/admin-layout.test.tsx` (20/20 new+existing assertions green); full `vitest run` — 127 files / 1151 tests green (was 127/1144 before this unit's +7 new tests). Integration suite and dev-server manual verification (§ "Behavior" checklist items) not re-run this session — no `db/**`/`services/**`/`actions/**` touched, so the integration suite is unaffected by this unit's diff.
+
+**Not yet committed** — changes are in the working tree alongside `cm02`'s uncommitted work; commit per user confirmation.
+
+---
+
+**cm04 — spec written, not yet implemented.** `specs/cm04.md`: `app/(app)/customers/view/page.tsx`: READ guard, `q`-only search, `CustomerSearchPanel` + `CustomerResultsTable`, `OrganizationStatusBadge`/`CustomerStatusBadge`.
 
 ---
 

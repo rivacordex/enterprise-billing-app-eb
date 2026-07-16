@@ -182,17 +182,17 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 
 | Page | Route | Top-level component | Folder | Permission : level |
 |---|---|---|---|---|
-| View Customer — search | `/customer/view` | `ViewCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable` | `app/(app)/customers/view/` | `customers` : **READ** |
-| View Customer — detail | `/customer/view/[id]` | `CustomerDetailPage` → `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` | `app/(app)/customers/view/[id]/` | `customers` : **READ** |
-| Manage Customer — search | `/customer/manage` | `ManageCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable` | `app/(app)/customers/manage/` | `customers` : **EDIT** |
-| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customer/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel` | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
-| Manage Customer — add new | `/customer/manage/new` | `NewCustomerPage` → `NewCustomerForm` | `app/(app)/customers/manage/new/` | `customers` : **EDIT** |
+| View Customer — search | `/customers/view` | `ViewCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable` | `app/(app)/customers/view/` | `customers` : **READ** |
+| View Customer — detail | `/customers/view/[id]` | `CustomerDetailPage` → `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` | `app/(app)/customers/view/[id]/` | `customers` : **READ** |
+| Manage Customer — search | `/customers/manage` | `ManageCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable` | `app/(app)/customers/manage/` | `customers` : **EDIT** |
+| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel` | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
+| Manage Customer — add new | `/customers/manage/new` | `NewCustomerPage` → `NewCustomerForm` | `app/(app)/customers/manage/new/` | `customers` : **EDIT** |
 
 **Notes**
 
 - Component names are the binding convention; create them exactly so the page ↔ route ↔ component ↔ permission chain stays traceable (general §9).
 - A USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav; the page guard and every `actions/customer/*` Server Action independently reject a USER (defense in depth, architecture §4) even if the nav check is bypassed.
-- Deep links (`/customer/view/[id]`, `/customer/manage/[id]`) pass through the same guard as the search pages — the route param grants nothing.
+- Deep links (`/customers/view/[id]`, `/customers/manage/[id]`) pass through the same guard as the search pages — the route param grants nothing.
 
 ---
 
@@ -200,7 +200,7 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 
 The general test-suite gate includes this module's guardrail tests from *Success Criteria*, all of which must exist before ship:
 
-1. **Authz matrix** — every route in §8 × every role/level combination, including USER on `/customer/manage/**` → no-access, and direct Server Action calls (bypassing the nav) also rejected for USER.
+1. **Authz matrix** — every route in §8 × every role/level combination, including USER on `/customers/manage/**` → no-access, and direct Server Action calls (bypassing the nav) also rejected for USER.
 2. **Full core flow** — search → create → add contact (auto-preferred) → add phone/email/address (auto-preferred method) → INITIALIZED → VALIDATED → ACTIVE, REGISTERED → ACTIVE → visible in View Customer, end to end without errors.
 3. **Transition-map edges** — every invalid transition (e.g. `DISSOLVED → ACTIVE`, `INITIALIZED → ACTIVE`) is rejected server-side; every valid transition submitted without `status_reason` is rejected — both for every edge in both maps.
 4. **DB constraint tests** — a second non-closed `party_role` for one organization fails at the DB; a duplicate non-null `registration_number` fails at the DB; a `party_role.contact_medium` pointer to another customer's contact fails at the DB.
