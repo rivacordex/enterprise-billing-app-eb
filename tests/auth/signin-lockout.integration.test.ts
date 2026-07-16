@@ -53,6 +53,7 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
 
   beforeAll(async () => {
     sql = postgres(databaseUrl as string, { max: 1 });
+    await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
@@ -66,6 +67,7 @@ describe.skipIf(!databaseUrl)("sign-in lockout (requires DATABASE_URL)", () => {
   }, 30_000);
 
   afterAll(async () => {
+    await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
     await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
