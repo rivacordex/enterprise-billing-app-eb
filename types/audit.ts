@@ -19,6 +19,8 @@ export const AUDIT_EVENT_TYPES = [
   "ROLE_REVOKED",
   "PERMISSION_MAPPING_CHANGED",
   "SYSTEM_CONFIG_CHANGED",
+  "ORGANIZATION_CREATED",
+  "CUSTOMER_CREATED",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
