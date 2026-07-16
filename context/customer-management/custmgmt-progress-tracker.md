@@ -155,7 +155,7 @@ Also added `/customers/view` to `tests/app/route-manifest.test.ts`'s frozen `ROU
 
 **Live-verified via headless Chromium (Playwright) against the running dev stack** — logged in as `admin@example.com` (confirming `cm01`'s retroactive `ADMIN → customers:EDIT` grant works end-to-end for Manage Customer, not just at the DB/guard level), created a customer, and on its edit page: the "Customer – Contact Details" section renders with an "Add contact" button; the inline form exposes all `contactFieldsSchema` fields (Name/Role/Phone/Email/Address Line 1&2/City/State/Postal/Country) plus Save/Cancel; submitting a name-only contact succeeded, showing the pink preferred-contact star and "No contact method on file" (cm05's reused empty-method rendering); adding a second contact with a phone number left the first contact's star untouched and gave the second contact its own preferred-*phone* star, not a contact-level one — visually confirming Module Inv. #4/#5 are independently tracked, not conflated. Dev stack re-provisioned once more afterward to clear the test data created during this click-through.
 
-**Committed** — not yet; this tracker entry reflects the implementation as it stands in the working tree. `cm12` (update contact) is next; it extends this same `contact-mutations.ts` file and `ContactManagerPanel` with `resolveUpdatedPreferredMethod` (preserve-unless-cleared preferred-method rules).
+**Committed** as `0d80df8` ("add contact + auto-preferred contact/method (cm11)"). `cm12` (update contact) is next; it extends this same `contact-mutations.ts` file and `ContactManagerPanel` with `resolveUpdatedPreferredMethod` (preserve-unless-cleared preferred-method rules).
 
 ---
 
