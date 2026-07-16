@@ -4,6 +4,7 @@ import { SearchX } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import { CustomerRoleForm } from "@/components/customers/customer-role-form";
 import { OrganizationForm } from "@/components/customers/organization-form";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
@@ -82,7 +83,11 @@ export default async function CustomerEditPage({
         timezone={timezone}
       />
 
-      {/* cm11 adds <ContactManagerPanel /> here */}
+      <ContactManagerPanel
+        partyRoleId={detail.customerRole.partyRoleId}
+        contacts={detail.contacts}
+        lastModifiedDatetime={detail.customerRole.lastModifiedDatetime}
+      />
     </main>
   );
 }
