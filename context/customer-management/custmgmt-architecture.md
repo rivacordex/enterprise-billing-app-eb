@@ -4,7 +4,7 @@ This document builds on `context/architecture.md`, which owns the platform-wide 
 
 **Status:** PLANNED — decisions agreed 2026-07-06, amended 2026-07-09 (flattened contact model), pre-implementation. Changes to *Module Invariants* require a documented design review.
 
-**Scope:** v1 is full CRUD (create/update/soft-delete) for enterprise customers behind two pages — **View Customer** (search + read-only detail, USER + MANAGER) and **Manage Customer** (search + edit + add new, MANAGER only) — under a new "Customer" nav section. No accounts, invoicing, credit checks, external/TMF APIs, or merge tooling this release.
+**Scope:** v1 is full CRUD (create/update/soft-delete) for enterprise customers behind two pages — **View Customer** (search + read-only detail, USER + MANAGER + ADMIN) and **Manage Customer** (search + edit + add new, MANAGER + ADMIN) — under a new "Customer" nav section. No accounts, invoicing, credit checks, external/TMF APIs, or merge tooling this release.
 
 ---
 

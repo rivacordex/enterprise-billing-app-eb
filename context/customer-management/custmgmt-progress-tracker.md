@@ -16,12 +16,12 @@ Update this file after every meaningful implementation change.
 | cm08 | Edit page + update organization                                         | Done (committed `ff2dbc4`) |
 | cm09 | Transition organization status                                         | Done (committed `9aae48c`) |
 | cm10 | Transition customer status                                             | Done (committed `00a865a`) |
-| cm11 | Add contact                                                             | Done (uncommitted)          |
+| cm11 | Add contact                                                             | Done (committed `0d80df8`) |
 | cm12 | Update contact                                                          | Done (uncommitted)          |
 | cm13 | Delete contact                                                         | Done (uncommitted)          |
 | cm14 | Set preferred contact                                                   | Done (uncommitted)          |
 | cm15 | Set preferred contact method                                            | Done (uncommitted)          |
-| cm16 | Authz guardrail sweep (ship gate)                                       | Done (uncommitted); integration suite run pending |
+| cm16 | Authz guardrail sweep (ship gate)                                       | Done (uncommitted); integration suite run complete |
 
 **Docs completed:** `custmgmt-project-overview.md`, `custmgmt-architecture.md`, `custmgmt-code-standards.md`, `custmgmt-ai-workflow-rules.md`, `custmgmt-ui-context.md`, and `specs/cm00-build-plan.md` (16 dependency-ordered build units, DB foundation through ship-gate guardrail sweep) — all 16 unit specs (`cm01`–`cm16`) are written; implementation proceeds in dependency order.
 

@@ -394,6 +394,19 @@ describe("updateContact", () => {
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
+  it("a contact belonging to a different party role returns CONTACT_NOT_FOUND before any lock check", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ refPartyRole: "PTRL00000099" } as never),
+    );
+
+    const result = await updateContact(UPDATE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
   it("a successful update audits CONTACT_UPDATED with before/after data", async () => {
     const before = buildInsertedContact({ preferredContactMethod: null });
     mockFindContactById.mockResolvedValue(before);
@@ -430,6 +443,22 @@ describe("deleteContact", () => {
     expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
     expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
     expect(mockDeleteById).not.toHaveBeenCalled();
+  });
+
+  it("a contact belonging to a different party role returns CONTACT_NOT_FOUND, no lock bump, update, or audit", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        contactMediumId: "CTMD00000001",
+        refPartyRole: "PTRL00000099",
+      } as never),
+    );
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockDeleteById).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
   it("deleting the currently-preferred contact is blocked, no transaction opened, row still present", async () => {

@@ -157,17 +157,15 @@ describe("AdminNav — Customer section, expanded, not granted (USER-shaped map)
       container.querySelector('a[href="/customers/manage"]'),
     ).not.toBeInTheDocument();
 
-    const label = screen.getByText("Manage Customer");
-    const lockedItem = label.closest('[role="link"]');
-    expect(lockedItem).not.toBeNull();
+    const lockedItem = screen.getByRole("link", { name: "Manage Customer" });
     expect(lockedItem).toHaveAttribute("aria-disabled", "true");
-    expect(lockedItem?.tagName).toBe("SPAN");
+    expect(lockedItem.tagName).toBe("SPAN");
     expect(lockedItem).toHaveAttribute(
       "title",
       "Requires customer edit access",
     );
 
-    fireEvent.click(lockedItem!);
+    fireEvent.click(lockedItem);
     expect(
       container.querySelector('a[href="/customers/manage"]'),
     ).not.toBeInTheDocument();

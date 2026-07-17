@@ -95,7 +95,7 @@ describe("OrganizationForm", () => {
 
     expect(
       await screen.findByText(
-        "This customer was changed by someone else. Reload to see the latest version.",
+        "This organization was changed by someone else. Reload to see the latest version.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
@@ -121,7 +121,7 @@ describe("OrganizationForm", () => {
 
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await screen.findByText(
-      "This customer was changed by someone else. Reload to see the latest version.",
+      "This organization was changed by someone else. Reload to see the latest version.",
     );
 
     await user.click(screen.getByRole("button", { name: "Reload" }));
@@ -138,7 +138,7 @@ describe("OrganizationForm", () => {
 
     expect(
       screen.queryByText(
-        "This customer was changed by someone else. Reload to see the latest version.",
+        "This organization was changed by someone else. Reload to see the latest version.",
       ),
     ).not.toBeInTheDocument();
     expect(

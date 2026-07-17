@@ -77,6 +77,7 @@ export function CustomerRoleForm({
   ) {
     setPrevLastModifiedDatetime(customerRole.lastModifiedDatetime);
     setStatusLock(customerRole.lastModifiedDatetime);
+    setSpecText(JSON.stringify(customerRole.specification, null, 2));
     setSpecLock(customerRole.lastModifiedDatetime);
     setSpecConflict(false);
   }
