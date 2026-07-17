@@ -20,7 +20,7 @@ describe("InconsistencyBanner", () => {
     expect(icon).toHaveAttribute("aria-hidden");
   });
 
-  it("never renders a destructive/blocking visual treatment", () => {
+  it("renders the warning treatment, never a destructive/blocking one", () => {
     render(
       <InconsistencyBanner
         organizationStatus="DISSOLVED"
@@ -29,6 +29,7 @@ describe("InconsistencyBanner", () => {
     );
 
     const banner = screen.getByRole("status");
+    expect(banner.className).toContain("--banner-warning-bg");
     expect(banner.className).not.toMatch(/danger|destructive|red/i);
   });
 });

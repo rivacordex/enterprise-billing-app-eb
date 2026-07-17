@@ -32,8 +32,8 @@ describe("ContactDetailsSection", () => {
   it("a contact with all three methods populated shows exactly one PreferredIndicator on the preferred method plus one next to the name (isPreferredContact)", () => {
     render(<ContactDetailsSection contacts={[BASE_CONTACT]} />);
 
-    const indicators = screen.getAllByLabelText("Preferred");
-    expect(indicators).toHaveLength(2);
+    expect(screen.getByLabelText("Preferred contact")).toBeInTheDocument();
+    expect(screen.getByLabelText("Preferred method")).toBeInTheDocument();
     expect(screen.getByText("555-0100")).toBeInTheDocument();
     expect(screen.getByText("taylor@example.com")).toBeInTheDocument();
     expect(screen.getByText("1 Main St")).toBeInTheDocument();

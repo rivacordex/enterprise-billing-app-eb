@@ -93,11 +93,25 @@ describe("CustomerResultsTable", () => {
     expect(row?.className).toContain("text-muted-foreground");
   });
 
-  it("mutes a row with organizationStatus DISSOLVED or MERGED", () => {
+  it("mutes a row with organizationStatus DISSOLVED", () => {
     render(
       <CustomerResultsTable
         results={makeResults({
           results: [makeResult({ organizationStatus: "DISSOLVED" })],
+        })}
+        basePath="/customers/view"
+      />,
+    );
+
+    const row = screen.getByText("Acme Corp").closest("tr");
+    expect(row?.className).toContain("text-muted-foreground");
+  });
+
+  it("mutes a row with organizationStatus MERGED", () => {
+    render(
+      <CustomerResultsTable
+        results={makeResults({
+          results: [makeResult({ organizationStatus: "MERGED" })],
         })}
         basePath="/customers/view"
       />,

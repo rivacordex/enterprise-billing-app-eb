@@ -104,6 +104,48 @@ describe("OrganizationForm", () => {
     expect(refreshMock).toHaveBeenCalled();
   });
 
+  it("clears the reload-prompt banner and re-enables Save once router.refresh() supplies a fresh lastModifiedDatetime", async () => {
+    mockUpdateOrganizationAction.mockResolvedValueOnce({
+      ok: false,
+      code: "CONFLICT",
+    });
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <OrganizationForm
+        organization={ORGANIZATION}
+        partyRoleId="PTRL00000001"
+        lastModifiedDatetime={ORGANIZATION.lastModifiedDatetime}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText(
+      "This customer was changed by someone else. Reload to see the latest version.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+
+    // Simulates the RSC re-render `router.refresh()` triggers: the page
+    // reloads `detail` from the server and passes down a fresh timestamp.
+    rerender(
+      <OrganizationForm
+        organization={ORGANIZATION}
+        partyRoleId="PTRL00000001"
+        lastModifiedDatetime={new Date("2026-01-01T00:00:05.000Z")}
+      />,
+    );
+
+    expect(
+      screen.queryByText(
+        "This customer was changed by someone else. Reload to see the latest version.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save changes" }),
+    ).not.toBeDisabled();
+  });
+
   it("surfaces DUPLICATE_REGISTRATION_NUMBER as a field-level error on Registration Number, not a toast", async () => {
     mockUpdateOrganizationAction.mockResolvedValueOnce({
       ok: false,

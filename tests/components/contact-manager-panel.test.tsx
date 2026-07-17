@@ -15,17 +15,23 @@ vi.mock("@/actions/customer/update-contact", () => ({
   updateContactAction: vi.fn(),
 }));
 
+vi.mock("@/actions/customer/delete-contact", () => ({
+  deleteContactAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
 import { addContactAction } from "@/actions/customer/add-contact";
+import { deleteContactAction } from "@/actions/customer/delete-contact";
 import { updateContactAction } from "@/actions/customer/update-contact";
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import type { ContactRow } from "@/types/customer";
 
 const mockAddContactAction = vi.mocked(addContactAction);
 const mockUpdateContactAction = vi.mocked(updateContactAction);
+const mockDeleteContactAction = vi.mocked(deleteContactAction);
 
 const LOCK = new Date("2026-01-01T00:00:00.000Z");
 
@@ -55,6 +61,7 @@ beforeEach(() => {
   refreshMock.mockReset();
   mockAddContactAction.mockReset();
   mockUpdateContactAction.mockReset();
+  mockDeleteContactAction.mockReset();
 });
 
 describe("ContactManagerPanel", () => {
@@ -231,6 +238,96 @@ describe("ContactManagerPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(
+        "This customer was changed by someone else. Reload to see the latest version.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("the preferred contact renders no Delete affordance and shows the explanatory caption", () => {
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[NAME_ONLY_CONTACT]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /^Delete /i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Make another contact preferred to delete this one"),
+    ).toBeInTheDocument();
+  });
+
+  it("a non-preferred contact's Delete button opens a confirm dialog, and confirming calls deleteContactAction", async () => {
+    mockDeleteContactAction.mockResolvedValueOnce({
+      ok: true,
+      value: { lastModifiedDatetime: new Date("2026-01-01T00:00:01.000Z") },
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete John Roe" }));
+
+    expect(screen.getByText("Delete John Roe?")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(mockDeleteContactAction).toHaveBeenCalledWith({
+        contactMediumId: "CTMD00000002",
+        partyRoleId: "PTRL00000001",
+        lastModifiedDatetime: LOCK,
+      }),
+    );
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("Cancel in the confirm dialog does not call deleteContactAction", async () => {
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete John Roe" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByText("Delete John Roe?")).not.toBeInTheDocument();
+    expect(mockDeleteContactAction).not.toHaveBeenCalled();
+  });
+
+  it("a CONFLICT result from a delete shows the reload-prompt banner", async () => {
+    mockDeleteContactAction.mockResolvedValueOnce({
+      ok: false,
+      code: "CONFLICT",
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete John Roe" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
 
     expect(
       await screen.findByText(

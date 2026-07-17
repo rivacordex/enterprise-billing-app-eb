@@ -78,10 +78,20 @@ export function OrganizationForm({
   const [currentLastModifiedDatetime, setCurrentLastModifiedDatetime] =
     useState(lastModifiedDatetime);
 
+  // Adjust state during render (react.dev "you might not need an effect")
+  // rather than in a `useEffect`: `router.refresh()` (the CONFLICT banner's
+  // "Reload") re-renders this component with a fresh `lastModifiedDatetime`
+  // from the server rather than remounting it, so the stale
+  // `conflict`/`currentLastModifiedDatetime` state wouldn't otherwise clear
+  // on its own.
+  const [prevLastModifiedDatetime, setPrevLastModifiedDatetime] =
+    useState(lastModifiedDatetime);
+
   const {
     register,
     handleSubmit,
     control,
+    reset,
     setError,
     formState: { errors },
   } = useForm<OrganizationFormValues, unknown, OrganizationFormOutput>({
@@ -97,6 +107,22 @@ export function OrganizationForm({
       industry: organization.industry,
     },
   });
+
+  if (lastModifiedDatetime.getTime() !== prevLastModifiedDatetime.getTime()) {
+    setPrevLastModifiedDatetime(lastModifiedDatetime);
+    setCurrentLastModifiedDatetime(lastModifiedDatetime);
+    setConflict(false);
+    reset({
+      organizationId: organization.organizationId,
+      partyRoleId,
+      name: organization.name,
+      tradingName: organization.tradingName,
+      organizationType: organization.organizationType,
+      registrationNumber: organization.registrationNumber,
+      taxId: organization.taxId,
+      industry: organization.industry,
+    });
+  }
 
   async function onSubmit(values: OrganizationFormOutput): Promise<void> {
     setIsSubmitting(true);
@@ -289,6 +315,7 @@ export function OrganizationForm({
 
       {!conflict && (
         <StatusTransitionControl
+          key={currentLastModifiedDatetime.getTime()}
           currentStatus={organization.status}
           entityKind="organization"
           nextStates={ORGANIZATION_TRANSITIONS[organization.status]}

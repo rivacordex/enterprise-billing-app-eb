@@ -74,4 +74,16 @@ export const contactMediumRepository = {
       .returning();
     return row!;
   },
+
+  // The module's one physical delete (cm13-spec §3.1). No built-in guard of
+  // its own — per code-standards §6.7, `deleteContact`
+  // (`services/customer/contact-mutations.ts`) is the only caller allowed to
+  // invoke this, enforced by convention plus the structural test at
+  // `tests/structure/contact-medium-delete-callers.test.ts`, not by the type
+  // system.
+  async deleteById(tx: Database, contactMediumId: string): Promise<void> {
+    await tx
+      .delete(contactMedium)
+      .where(eq(contactMedium.contactMediumId, contactMediumId));
+  },
 };

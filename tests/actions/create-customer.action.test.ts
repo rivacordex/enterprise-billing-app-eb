@@ -49,12 +49,12 @@ beforeEach(() => {
 });
 
 describe("createCustomerAction", () => {
-  it("returns FORBIDDEN and never calls the service when the guard redirects", async () => {
+  it("propagates the guard's redirect and never calls the service", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
 
-    const result = await createCustomerAction(VALID_INPUT);
-
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
+    await expect(createCustomerAction(VALID_INPUT)).rejects.toThrow(
+      "NEXT_REDIRECT",
+    );
     expect(mockCreateCustomer).not.toHaveBeenCalled();
   });
 
