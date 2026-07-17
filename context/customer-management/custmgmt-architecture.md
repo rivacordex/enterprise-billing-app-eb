@@ -29,8 +29,8 @@ Dependency rule unchanged (UI → actions → services → repositories → DB; 
 
 | Path | Owns | Notes |
 |---|---|---|
-| `app/(app)/customers/view/` | Search page (`/customer/view`) + read-only detail (`/customer/view/[id]`). Declares `customers : READ`. | Three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details. |
-| `app/(app)/customers/manage/` | Search page (`/customer/manage`) + edit (`/customer/manage/[id]`) + add-new (`/customer/manage/new`). Declares `customers : EDIT`. | No DB queries, no raw SQL, thin orchestrators composing `components/` (platform §2). |
+| `app/(app)/customers/view/` | Search page (`/customers/view`) + read-only detail (`/customers/view/[id]`). Declares `customers : READ`. | Three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details. |
+| `app/(app)/customers/manage/` | Search page (`/customers/manage`) + edit (`/customers/manage/[id]`) + add-new (`/customers/manage/new`). Declares `customers : EDIT`. | No DB queries, no raw SQL, thin orchestrators composing `components/` (platform §2). |
 | `components/admin-nav.tsx` | Adds a "Customer" section to `NAV_SECTIONS`: View Customer, Manage Customer. | Nav renders regardless of permission; Manage Customer shows greyed/locked for USER (page guard enforces access, not the nav). |
 | `actions/customer/**` | Server Actions: create, update, status-transition, contact CRUD, set-preferred (contact + method). Resolve principal, check `customers` permission + level, call a service. | No business rules beyond orchestration (platform §2). |
 | `services/customer/**` | Use cases: search, detail assembly, create, update, transition validation, contact mutation, preferred-pointer maintenance, optimistic-lock check. Framework-agnostic. | No `next/*` imports. |
@@ -62,7 +62,7 @@ All in Postgres, `customer` schema; no file storage or cache (platform §3). Col
 Auth mechanics unchanged (platform §5: Better-Auth sessions, live per-request permission resolution, 3-layer defense in depth). Module specifics:
 
 - **Single `customers` permission**, page-level, code-seeded via migration. **READ** = View Customer (search + read-only detail). **EDIT** = Manage Customer (create, update, all status transitions, contact CRUD, set-preferred). No **DELETE** level is seeded for this module — "delete" is a status transition (`customers : EDIT`), and contact hard-delete is also an EDIT-gated action, not a separate delete permission.
-- Page guards: `requirePermission('customers', 'READ')` at `/customer/view/**`; `requirePermission('customers', 'EDIT')` at `/customer/manage/**`. No grant → `/no-access` (deny by default).
+- Page guards: `requirePermission('customers', 'READ')` at `/customers/view/**`; `requirePermission('customers', 'EDIT')` at `/customers/manage/**`. No grant → `/no-access` (deny by default).
 - USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav; direct Server Action calls to manage endpoints are rejected server-side independent of the nav state (platform §5, defense in depth).
 - MANAGER holds `customers:READ` + `customers:EDIT`.
 - ADMIN holds `customers:EDIT` (implying READ) — mirrors Product Management's ADMIN grant (`pm02`) so an administrator has working access to every business module out of the box, not just the platform-admin modules (Users/Roles/System Config/Audit Log). Retroactive correction to this unit's original design, which specified grants for MANAGER/USER only and never considered ADMIN — see `custmgmt-progress-tracker.md`'s `cm01` entry.
@@ -71,9 +71,9 @@ Auth mechanics unchanged (platform §5: Better-Auth sessions, live per-request p
 
 | Page (route) | Access | Required permission : level |
 |---|---|---|
-| `/customer/view`, `/customer/view/[id]` | Authenticated | `customers` : **READ** |
-| `/customer/manage`, `/customer/manage/[id]` — create, edit, status transitions, contact CRUD, set-preferred | Authenticated | `customers` : **EDIT** |
-| `/customer/manage/new` — add new customer | Authenticated | `customers` : **EDIT** |
+| `/customers/view`, `/customers/view/[id]` | Authenticated | `customers` : **READ** |
+| `/customers/manage`, `/customers/manage/[id]` — create, edit, status transitions, contact CRUD, set-preferred | Authenticated | `customers` : **EDIT** |
+| `/customers/manage/new` — add new customer | Authenticated | `customers` : **EDIT** |
 
 ---
 
