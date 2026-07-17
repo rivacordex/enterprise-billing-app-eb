@@ -24,8 +24,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { OptimisticLockConflictBanner } from "@/components/customers/optimistic-lock-conflict-banner";
+import { StatusTransitionControl } from "@/components/customers/status-transition-control";
+import { transitionOrganizationStatusAction } from "@/actions/customer/transition-organization-status";
 import { ORGANIZATION_TYPES } from "@/types/customer";
 import type { OrganizationDetail } from "@/types/customer";
+import { ORGANIZATION_TRANSITIONS } from "@/validation/customer/transitions";
 import {
   organizationFieldsSchema,
   organizationIdSchema,
@@ -130,6 +133,41 @@ export function OrganizationForm({
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  // Wraps transitionOrganizationStatusAction to the narrower result shape
+  // StatusTransitionControl expects — ORGANIZATION_NOT_FOUND/FORBIDDEN are
+  // defense-in-depth paths the rendered control can never actually trigger,
+  // so they collapse into the same generic inline error as
+  // VALIDATION_ERROR (cm09-spec §3.5).
+  async function handleStatusTransition(
+    targetStatus: string,
+    statusReason: string,
+  ): Promise<
+    | { ok: true; value: { lastModifiedDatetime: Date } }
+    | {
+        ok: false;
+        code: "CONFLICT" | "INVALID_TRANSITION" | "VALIDATION_ERROR";
+      }
+  > {
+    const result = await transitionOrganizationStatusAction({
+      organizationId: organization.organizationId,
+      partyRoleId,
+      targetStatus,
+      statusReason,
+      lastModifiedDatetime: currentLastModifiedDatetime,
+    });
+
+    if (result.ok) {
+      setCurrentLastModifiedDatetime(result.value.lastModifiedDatetime);
+      return result;
+    }
+
+    if (result.code === "CONFLICT" || result.code === "INVALID_TRANSITION") {
+      return result;
+    }
+
+    return { ok: false, code: "VALIDATION_ERROR" };
   }
 
   return (
@@ -248,6 +286,16 @@ export function OrganizationForm({
       >
         Save changes
       </Button>
+
+      {!conflict && (
+        <StatusTransitionControl
+          currentStatus={organization.status}
+          entityKind="organization"
+          nextStates={ORGANIZATION_TRANSITIONS[organization.status]}
+          onTransition={handleStatusTransition}
+          onConflict={() => router.refresh()}
+        />
+      )}
     </form>
   );
 }

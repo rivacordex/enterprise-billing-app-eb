@@ -11,6 +11,10 @@ vi.mock("@/actions/customer/update-organization", () => ({
   updateOrganizationAction: vi.fn(),
 }));
 
+vi.mock("@/actions/customer/transition-organization-status", () => ({
+  transitionOrganizationStatusAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));

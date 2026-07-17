@@ -4,6 +4,7 @@ import type { Database } from "@/db/client";
 import { organization } from "@/db/schema/customer";
 import type { Organization, OrganizationInsert } from "@/db/schema/customer";
 import type { OrganizationFields } from "@/validation/customer/organization.schema";
+import type { OrganizationStatus } from "@/types/customer";
 
 export const organizationRepository = {
   // Plain PK lookup. No projection composition here — `getCustomerDetail`
@@ -81,5 +82,26 @@ export const organizationRepository = {
       .limit(5);
 
     return rows.map((row) => row.display);
+  },
+
+  // A narrow, targeted update (status + reason + provenance only) — distinct
+  // from `update` above so neither function can accidentally touch the
+  // other's columns (cm09-spec §3.1). First write function to touch
+  // `status`/`status_reason`.
+  async updateStatus(
+    tx: Database,
+    organizationId: string,
+    data: {
+      status: OrganizationStatus;
+      statusReason: string;
+      lastModifiedBy: string;
+    },
+  ): Promise<Organization> {
+    const [row] = await tx
+      .update(organization)
+      .set({ ...data, lastModifiedDatetime: new Date() })
+      .where(eq(organization.organizationId, organizationId))
+      .returning();
+    return row!;
   },
 };
