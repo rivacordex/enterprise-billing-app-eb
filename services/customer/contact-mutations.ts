@@ -8,6 +8,8 @@ import type { AddContactInput } from "@/validation/customer/add-contact.schema";
 import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
 import type { DeleteContactInput } from "@/validation/customer/delete-contact.schema";
 import type { SetPreferredContactInput } from "@/validation/customer/set-preferred-contact.schema";
+import type { SetPreferredContactMethodInput } from "@/validation/customer/set-preferred-contact-method.schema";
+import type { ContactMedium } from "@/db/schema/customer";
 
 export type AddContactResult =
   | { ok: true; value: { contactMediumId: string; lastModifiedDatetime: Date } }
@@ -316,6 +318,76 @@ export async function setPreferredContact(
       targetId: input.partyRoleId,
       beforeData: { preferredContactId: previousContactId },
       afterData: { preferredContactId: input.contactMediumId },
+    });
+
+    return { ok: true, value: { lastModifiedDatetime: bumped } };
+  });
+}
+
+export type SetPreferredContactMethodResult =
+  | { ok: true; value: { lastModifiedDatetime: Date } }
+  | { ok: false; code: "CONFLICT" }
+  | { ok: false; code: "CONTACT_NOT_FOUND" }
+  | { ok: false; code: "METHOD_NOT_POPULATED" };
+
+// A narrower, sibling concern to `resolveUpdatedPreferredMethod` (cm15-spec
+// §2.1) — that function answers "what happens to the preferred method when a
+// field edit touches it"; this one only answers "is the MANAGER's explicitly
+// requested method currently populated on this contact at all."
+function isMethodPopulated(
+  contact: ContactMedium,
+  method: PreferredContactMethod,
+): boolean {
+  if (method === "PHONE") return contact.phoneNumber !== null;
+  if (method === "EMAIL") return contact.emailAddress !== null;
+  return contact.gaAddressLine1 !== null; // ADDRESS
+}
+
+// The last of the module's nine mutation actions (cm15-spec §2.1) — a
+// MANAGER explicitly repoints a contact's preferred method among its
+// currently-populated methods only. No clearing verb: `targetMethod` is
+// never `null`, and a preferred method only ever becomes `null` as a side
+// effect of `updateContact`'s preserve-unless-blocked logic clearing the
+// last populated field. Independent of that field-edit code path and of
+// `addContact`'s creation-time auto-assignment — a third code path
+// triggered only by this explicit user action.
+export async function setPreferredContactMethod(
+  input: SetPreferredContactMethodInput,
+  actorId: string,
+): Promise<SetPreferredContactMethodResult> {
+  const contact = await contactMediumRepository.findById(
+    db,
+    input.contactMediumId,
+  );
+  if (contact === null || contact.refPartyRole !== input.partyRoleId) {
+    return { ok: false, code: "CONTACT_NOT_FOUND" };
+  }
+  if (!isMethodPopulated(contact, input.targetMethod)) {
+    return { ok: false, code: "METHOD_NOT_POPULATED" }; // Module Inv. #5 — must name a currently-populated method
+  }
+
+  return db.transaction(async (tx) => {
+    const bumped = await partyRoleRepository.compareAndBumpLock(
+      tx,
+      input.partyRoleId,
+      input.lastModifiedDatetime,
+    );
+    if (bumped === null) return { ok: false, code: "CONFLICT" };
+
+    await contactMediumRepository.updatePreferredMethod(
+      tx,
+      input.contactMediumId,
+      input.targetMethod,
+      actorId,
+    );
+
+    await insertAuditEvent(tx, {
+      eventType: "PREFERRED_METHOD_CHANGED",
+      actorUserId: actorId,
+      targetEntity: "CONTACT_MEDIUM",
+      targetId: input.contactMediumId,
+      beforeData: { preferredContactMethod: contact.preferredContactMethod },
+      afterData: { preferredContactMethod: input.targetMethod },
     });
 
     return { ok: true, value: { lastModifiedDatetime: bumped } };

@@ -15,6 +15,7 @@ import type { z } from "zod";
 import { addContactAction } from "@/actions/customer/add-contact";
 import { deleteContactAction } from "@/actions/customer/delete-contact";
 import { setPreferredContactAction } from "@/actions/customer/set-preferred-contact";
+import { setPreferredContactMethodAction } from "@/actions/customer/set-preferred-contact-method";
 import { updateContactAction } from "@/actions/customer/update-contact";
 import {
   AlertDialog,
@@ -67,6 +68,15 @@ const PREFERRED_METHOD_FIELD: Record<
   PHONE: "phoneNumber",
   EMAIL: "emailAddress",
   ADDRESS: "addressLine1",
+};
+
+// Lowercased method labels for the method-row "Make preferred" affordance's
+// `aria-label` (cm15-spec §3.5) — kept distinct from the contact-level
+// "Make preferred" button's accessible name (cm14) so the two never collide.
+const METHOD_LABEL: Record<PreferredContactMethod, string> = {
+  PHONE: "phone",
+  EMAIL: "email",
+  ADDRESS: "address",
 };
 
 function contactRowToFormValues(contact: ContactRow): ContactFormValues {
@@ -284,12 +294,18 @@ function ContactCard({
   onDeleteRequest,
   onMakePreferred,
   isMakingPreferred,
+  onMakeMethodPreferred,
+  isMakingMethodPreferred,
 }: {
   contact: ContactRow;
   onEdit?: (() => void) | undefined;
   onDeleteRequest?: (() => void) | undefined;
   onMakePreferred?: (() => void) | undefined;
   isMakingPreferred?: boolean;
+  onMakeMethodPreferred?:
+    | ((method: PreferredContactMethod) => void)
+    | undefined;
+  isMakingMethodPreferred?: boolean;
 }): React.JSX.Element {
   const hasAnyMethod =
     contact.phoneNumber !== null ||
@@ -366,8 +382,22 @@ function ContactCard({
             <div className="flex items-center gap-1.5 text-body-sm text-[color:var(--color-neutral-600)]">
               <Phone size={14} aria-hidden="true" />
               <span>{contact.phoneNumber}</span>
-              {contact.preferredMethod === "PHONE" && (
+              {contact.preferredMethod === "PHONE" ? (
                 <PreferredIndicator label="Preferred phone" />
+              ) : (
+                onMakeMethodPreferred && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Make ${METHOD_LABEL.PHONE} preferred`}
+                    onClick={() => onMakeMethodPreferred("PHONE")}
+                    disabled={isMakingMethodPreferred}
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    Make preferred
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -375,8 +405,22 @@ function ContactCard({
             <div className="flex items-center gap-1.5 text-body-sm text-[color:var(--color-neutral-600)]">
               <Mail size={14} aria-hidden="true" />
               <span>{contact.emailAddress}</span>
-              {contact.preferredMethod === "EMAIL" && (
+              {contact.preferredMethod === "EMAIL" ? (
                 <PreferredIndicator label="Preferred email" />
+              ) : (
+                onMakeMethodPreferred && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Make ${METHOD_LABEL.EMAIL} preferred`}
+                    onClick={() => onMakeMethodPreferred("EMAIL")}
+                    disabled={isMakingMethodPreferred}
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    Make preferred
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -388,8 +432,22 @@ function ContactCard({
                 aria-hidden="true"
               />
               {formatAddress(contact.address)}
-              {contact.preferredMethod === "ADDRESS" && (
+              {contact.preferredMethod === "ADDRESS" ? (
                 <PreferredIndicator label="Preferred address" />
+              ) : (
+                onMakeMethodPreferred && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Make ${METHOD_LABEL.ADDRESS} preferred`}
+                    onClick={() => onMakeMethodPreferred("ADDRESS")}
+                    disabled={isMakingMethodPreferred}
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    Make preferred
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -613,6 +671,9 @@ export function ContactManagerPanel({
   const [makingPreferredId, setMakingPreferredId] = useState<string | null>(
     null,
   );
+  const [makingMethodPreferredKey, setMakingMethodPreferredKey] = useState<
+    string | null
+  >(null);
 
   const {
     register,
@@ -666,6 +727,44 @@ export function ContactManagerPanel({
       toast.error("Something went wrong. Please try again.");
     } finally {
       setMakingPreferredId(null);
+    }
+  }
+
+  // The last of the module's nine mutation UIs (cm15-spec §3.5) — explicit
+  // reassignment of a contact's preferred *method*, scoped to the method row
+  // it sits in. Same low-stakes/reversible reasoning as `handleMakePreferred`
+  // (no confirm dialog); pending state is keyed per contact+method so one
+  // in-flight request doesn't misrepresent which button triggered it, but
+  // still disables every such button panel-wide while it resolves, matching
+  // `handleMakePreferred`'s convention.
+  async function handleMakeMethodPreferred(
+    contactMediumId: string,
+    method: PreferredContactMethod,
+  ): Promise<void> {
+    setMakingMethodPreferredKey(`${contactMediumId}:${method}`);
+    try {
+      const result = await setPreferredContactMethodAction({
+        contactMediumId,
+        partyRoleId,
+        targetMethod: method,
+        lastModifiedDatetime: currentLastModifiedDatetime,
+      });
+
+      if (result.ok) {
+        setCurrentLastModifiedDatetime(result.value.lastModifiedDatetime);
+        toast.success("Preferred method updated.");
+        router.refresh();
+        return;
+      }
+
+      if (result.code === "CONFLICT") {
+        handleConflict();
+        return;
+      }
+
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setMakingMethodPreferredKey(null);
     }
   }
 
@@ -747,9 +846,17 @@ export function ContactManagerPanel({
                     ? undefined
                     : () => void handleMakePreferred(contact.contactMediumId)
                 }
-                isMakingPreferred={
-                  makingPreferredId === contact.contactMediumId
+                isMakingPreferred={makingPreferredId !== null}
+                onMakeMethodPreferred={
+                  conflict
+                    ? undefined
+                    : (method) =>
+                        void handleMakeMethodPreferred(
+                          contact.contactMediumId,
+                          method,
+                        )
                 }
+                isMakingMethodPreferred={makingMethodPreferredKey !== null}
               />
             ),
           )}

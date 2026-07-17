@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { contactMedium } from "@/db/schema/customer";
 import type { ContactMedium, ContactMediumInsert } from "@/db/schema/customer";
+import type { PreferredContactMethod } from "@/types/customer";
 
 export const contactMediumRepository = {
   // Uses `cm01`'s index on `ref_party_role`. Ordered by
@@ -84,6 +85,25 @@ export const contactMediumRepository = {
   async deleteById(tx: Database, contactMediumId: string): Promise<void> {
     await tx
       .delete(contactMedium)
+      .where(eq(contactMedium.contactMediumId, contactMediumId));
+  },
+
+  // A narrow update — only this one column plus provenance (cm15-spec §3.1),
+  // distinct from `update`'s broader field set so neither can accidentally
+  // touch the other's scope.
+  async updatePreferredMethod(
+    tx: Database,
+    contactMediumId: string,
+    method: PreferredContactMethod,
+    lastModifiedBy: string,
+  ): Promise<void> {
+    await tx
+      .update(contactMedium)
+      .set({
+        preferredContactMethod: method,
+        lastModifiedBy,
+        lastModifiedDatetime: new Date(),
+      })
       .where(eq(contactMedium.contactMediumId, contactMediumId));
   },
 };
