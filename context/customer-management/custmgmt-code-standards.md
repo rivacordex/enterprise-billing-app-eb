@@ -140,6 +140,7 @@ actions/customer/
   update-organization.ts
   transition-organization-status.ts
   transition-customer-status.ts
+  update-party-role-specification.ts
   add-contact.ts
   update-contact.ts
   delete-contact.ts
@@ -152,6 +153,7 @@ services/customer/
   update-organization.ts
   transition-organization-status.ts
   transition-customer-status.ts
+  update-party-role-specification.ts
   contact-mutations.ts         # add/update/delete + preferred-pointer maintenance
 db/schema/customer.ts          # 3 tables, sequences, enums, constraints, partial unique index
 db/repositories/
@@ -165,6 +167,7 @@ validation/customer/
   contact-medium.schema.ts
   transitions.ts                # ORGANIZATION_TRANSITIONS / CUSTOMER_TRANSITIONS maps
   specification.schema.ts       # JSON well-formedness only
+  update-party-role-specification.schema.ts
 tests/…                         # mirrors source; incl. authz-matrix entries for both routes
 ```
 

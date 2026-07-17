@@ -76,6 +76,14 @@ describe.skipIf(!databaseUrl)(
     let disabledUserId: string;
     let forcePasswordChangeUserId: string;
     let pendingForceChangeUserId: string;
+    // cm16-spec §3.2 — a MANAGER (customers:EDIT) and a USER (customers:READ
+    // only) principal, mirroring the real permission map (architecture §4),
+    // needed to prove the READ/EDIT split itself rather than just that
+    // "some" grant satisfies "some" level (the admin_user/no_grants_user
+    // pair above only proves the general satisfaction hierarchy).
+    let customerManagerUserId: string;
+    let customerUserRoleUserId: string;
+    let customerActions: Record<string, (input: unknown) => Promise<unknown>>;
 
     async function insertUser(params: {
       id: string;
@@ -117,6 +125,8 @@ describe.skipIf(!databaseUrl)(
       disabledUserId = randomUUID();
       forcePasswordChangeUserId = randomUUID();
       pendingForceChangeUserId = randomUUID();
+      customerManagerUserId = randomUUID();
+      customerUserRoleUserId = randomUUID();
 
       await insertUser({ id: adminUserId });
       await insertUser({ id: noGrantsUserId });
@@ -131,10 +141,23 @@ describe.skipIf(!databaseUrl)(
         status: "PENDING",
         forcePasswordChange: true,
       });
+      await insertUser({ id: customerManagerUserId });
+      await insertUser({ id: customerUserRoleUserId });
 
       const [adminRole] = await db
         .insert(roles)
         .values({ roleName: "ADMIN", roleDescr: "Admin" })
+        .returning({ roleId: roles.roleId });
+
+      // cm16-spec §3.2 — MANAGER/USER roles for the customers:EDIT/READ
+      // split (§3.2 point 2).
+      const [customerManagerRole] = await db
+        .insert(roles)
+        .values({ roleName: "MANAGER", roleDescr: "Manager" })
+        .returning({ roleId: roles.roleId });
+      const [customerUserRole] = await db
+        .insert(roles)
+        .values({ roleName: "USER", roleDescr: "User" })
         .returning({ roleId: roles.roleId });
 
       const insertedPermissions = await db
@@ -150,11 +173,12 @@ describe.skipIf(!databaseUrl)(
           permissionName: permissions.permissionName,
         });
 
-      // Unlike the four rows above, "products" is not seeded here — migration
-      // 0006_product.sql inserts it directly as part of the schema migration
-      // (code-standards §8), so it already exists once `beforeAll`'s
-      // `migrate()` call has run; inserting it again would violate the
-      // unique constraint. Its id is looked up instead.
+      // Unlike the four rows above, "products" and "customers" are not
+      // seeded here — migrations 0006_product.sql / 0009_customer.sql insert
+      // them directly as part of their schema migrations (code-standards
+      // §8), so they already exist once `beforeAll`'s `migrate()` call has
+      // run; inserting them again would violate the unique constraint.
+      // Their ids are looked up instead.
       const [productsPermission] = await db
         .select({
           permissionId: permissions.permissionId,
@@ -168,11 +192,23 @@ describe.skipIf(!databaseUrl)(
         );
       }
 
+      const [customersPermission] = await db
+        .select({
+          permissionId: permissions.permissionId,
+          permissionName: permissions.permissionName,
+        })
+        .from(permissions)
+        .where(eq(permissions.permissionName, "customers"));
+      if (!customersPermission) {
+        throw new Error(
+          "Expected migration 0009_customer.sql to have seeded the 'customers' permission row.",
+        );
+      }
+
       const permissionIdByName = new Map(
-        [...insertedPermissions, productsPermission].map((p) => [
-          p.permissionName,
-          p.permissionId,
-        ]),
+        [...insertedPermissions, productsPermission, customersPermission].map(
+          (p) => [p.permissionName, p.permissionId],
+        ),
       );
 
       const grants: { name: PermissionName; type: PermissionType }[] = [
@@ -196,6 +232,81 @@ describe.skipIf(!databaseUrl)(
         refRoleId: adminRole!.roleId,
         assignedBy: null,
       });
+
+      // cm16-spec §3.2 point 2 — customers:EDIT for MANAGER, customers:READ
+      // for USER, mirroring the real permission map (architecture §4).
+      await db.insert(rolePermissionAssign).values([
+        {
+          refRoleId: customerManagerRole!.roleId,
+          refPermissionId: customersPermission.permissionId,
+          permissionType: "EDIT",
+        },
+        {
+          refRoleId: customerUserRole!.roleId,
+          refPermissionId: customersPermission.permissionId,
+          permissionType: "READ",
+        },
+      ]);
+
+      await db.insert(roleAssign).values([
+        {
+          refUserId: customerManagerUserId,
+          refRoleId: customerManagerRole!.roleId,
+          assignedBy: null,
+        },
+        {
+          refUserId: customerUserRoleUserId,
+          refRoleId: customerUserRole!.roleId,
+          assignedBy: null,
+        },
+      ]);
+
+      // cm16-spec §3.2 point 4 / §2.3 — the direct-Server-Action USER-denial
+      // loop needs every actions/customer/* export. Imported dynamically,
+      // after DATABASE_URL is confirmed set, same convention as
+      // `@/auth/guard` above (their import graphs reach `@/db/client`).
+      const [
+        createCustomerMod,
+        updateOrganizationMod,
+        transitionOrganizationStatusMod,
+        transitionCustomerStatusMod,
+        updatePartyRoleSpecificationMod,
+        addContactMod,
+        updateContactMod,
+        deleteContactMod,
+        setPreferredContactMod,
+        setPreferredContactMethodMod,
+      ] = await Promise.all([
+        import("@/actions/customer/create-customer"),
+        import("@/actions/customer/update-organization"),
+        import("@/actions/customer/transition-organization-status"),
+        import("@/actions/customer/transition-customer-status"),
+        import("@/actions/customer/update-party-role-specification"),
+        import("@/actions/customer/add-contact"),
+        import("@/actions/customer/update-contact"),
+        import("@/actions/customer/delete-contact"),
+        import("@/actions/customer/set-preferred-contact"),
+        import("@/actions/customer/set-preferred-contact-method"),
+      ]);
+
+      customerActions = {
+        createCustomerAction: createCustomerMod.createCustomerAction,
+        updateOrganizationAction:
+          updateOrganizationMod.updateOrganizationAction,
+        transitionOrganizationStatusAction:
+          transitionOrganizationStatusMod.transitionOrganizationStatusAction,
+        transitionCustomerStatusAction:
+          transitionCustomerStatusMod.transitionCustomerStatusAction,
+        updatePartyRoleSpecificationAction:
+          updatePartyRoleSpecificationMod.updatePartyRoleSpecificationAction,
+        addContactAction: addContactMod.addContactAction,
+        updateContactAction: updateContactMod.updateContactAction,
+        deleteContactAction: deleteContactMod.deleteContactAction,
+        setPreferredContactAction:
+          setPreferredContactMod.setPreferredContactAction,
+        setPreferredContactMethodAction:
+          setPreferredContactMethodMod.setPreferredContactMethodAction,
+      };
     }, 30_000);
 
     afterAll(async () => {
@@ -253,9 +364,59 @@ describe.skipIf(!databaseUrl)(
         PERMISSIONS.SYSTEM_CONFIG,
         PERMISSIONS.AUDIT_LOG,
         PERMISSIONS.PRODUCTS,
+        PERMISSIONS.CUSTOMERS,
       ])("no_grants_user is denied %s:READ", async (name) => {
         mockSession(noGrantsUserId);
         await expect(requirePermission(name, LEVELS.READ)).rejects.toSatisfy(
+          (err: unknown) => redirectTarget(err) === "/no-access",
+        );
+      });
+
+      // cm16-spec §3.2 point 5 — no-grants denial for both routes: READ
+      // (`/customers/view`) is covered by the loop above; EDIT
+      // (`/customers/manage`) needs its own case since no other permission
+      // in the loop above has a level above READ to exercise.
+      it("no_grants_user is denied customers:EDIT (/customers/manage)", async () => {
+        mockSession(noGrantsUserId);
+        await expect(
+          requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.EDIT),
+        ).rejects.toSatisfy(
+          (err: unknown) => redirectTarget(err) === "/no-access",
+        );
+      });
+
+      // cm16-spec §3.2 points 2/3 — the customers:READ/EDIT split itself,
+      // using dedicated MANAGER/USER principals rather than admin_user
+      // (whose grants sit at the ceiling of every permission and so can't
+      // distinguish "satisfies READ" from "satisfies EDIT").
+      it.each([
+        [PERMISSIONS.CUSTOMERS, LEVELS.READ],
+        [PERMISSIONS.CUSTOMERS, LEVELS.EDIT],
+      ] as const)(
+        "customer_manager_user satisfies %s:%s",
+        async (name, level) => {
+          mockSession(customerManagerUserId);
+          const result = await requirePermission(name, level);
+          expect(result.userId).toBe(customerManagerUserId);
+          expect(result.permissionMap[name]).not.toBeNull();
+        },
+      );
+
+      it("customer_user_role_user satisfies customers:READ", async () => {
+        mockSession(customerUserRoleUserId);
+        const result = await requirePermission(
+          PERMISSIONS.CUSTOMERS,
+          LEVELS.READ,
+        );
+        expect(result.userId).toBe(customerUserRoleUserId);
+        expect(result.permissionMap.customers).not.toBeNull();
+      });
+
+      it("customer_user_role_user is denied customers:EDIT (only READ granted)", async () => {
+        mockSession(customerUserRoleUserId);
+        await expect(
+          requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.EDIT),
+        ).rejects.toSatisfy(
           (err: unknown) => redirectTarget(err) === "/no-access",
         );
       });
@@ -380,6 +541,66 @@ describe.skipIf(!databaseUrl)(
           status: "ACTIVE",
         });
       });
+    });
+
+    // cm16-spec §3.2 point 4 / §2.3 — the cross-cutting integration proof
+    // that every actions/customer/*.ts mutation, called directly (bypassing
+    // any page/nav render), rejects a USER-level caller. Each action already
+    // has its own per-action unit-level USER-denial test (cm07–cm15); this
+    // exercises the real `requirePermission` against a live DB instead of a
+    // mock. Two behaviours coexist in the shipped code and are both
+    // acceptable "rejected" outcomes: `createCustomerAction` doesn't catch
+    // the guard's redirect (it propagates, same as a page guard —
+    // tests/actions/create-customer.action.test.ts's "propagates the
+    // guard's redirect" case), while the other nine catch it and return
+    // `{ ok: false, code: "FORBIDDEN" }`.
+    describe("direct Server Action calls reject a USER (bypassing the nav)", () => {
+      const CUSTOMER_ACTION_NAMES = [
+        "createCustomerAction",
+        "updateOrganizationAction",
+        "transitionOrganizationStatusAction",
+        "transitionCustomerStatusAction",
+        "updatePartyRoleSpecificationAction",
+        "addContactAction",
+        "updateContactAction",
+        "deleteContactAction",
+        "setPreferredContactAction",
+        "setPreferredContactMethodAction",
+      ] as const;
+
+      it.each(CUSTOMER_ACTION_NAMES)(
+        "%s rejects a customer_user_role_user (customers:READ only) caller",
+        async (name) => {
+          mockSession(customerUserRoleUserId);
+          const action = customerActions[name]!;
+
+          let result: unknown;
+          try {
+            result = await action({});
+          } catch (err) {
+            expect(redirectTarget(err)).toBe("/no-access");
+            return;
+          }
+          expect(result).toMatchObject({ ok: false, code: "FORBIDDEN" });
+        },
+      );
+
+      it.each(CUSTOMER_ACTION_NAMES)(
+        "%s rejects a no_grants_user caller",
+        async (name) => {
+          mockSession(noGrantsUserId);
+          const action = customerActions[name]!;
+
+          let result: unknown;
+          try {
+            result = await action({});
+          } catch (err) {
+            expect(redirectTarget(err)).toBe("/no-access");
+            return;
+          }
+          expect(result).toMatchObject({ ok: false, code: "FORBIDDEN" });
+        },
+      );
     });
   },
 );
