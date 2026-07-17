@@ -11,7 +11,9 @@ vi.mock("@/db/client", () => ({
 vi.mock("@/db/repositories/contact-medium", () => ({
   contactMediumRepository: {
     findByPartyRoleId: vi.fn(),
+    findById: vi.fn(),
     insert: vi.fn(),
+    update: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/party-role", () => ({
@@ -28,13 +30,20 @@ vi.mock("@/db/repositories/audit.repository", () => ({
 import { contactMediumRepository } from "@/db/repositories/contact-medium";
 import { partyRoleRepository } from "@/db/repositories/party-role";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
-import { addContact } from "@/services/customer/contact-mutations";
+import {
+  addContact,
+  resolveUpdatedPreferredMethod,
+  updateContact,
+} from "@/services/customer/contact-mutations";
 import type { AddContactInput } from "@/validation/customer/add-contact.schema";
+import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
 
 const mockFindByPartyRoleId = vi.mocked(
   contactMediumRepository.findByPartyRoleId,
 );
 const mockInsert = vi.mocked(contactMediumRepository.insert);
+const mockFindContactById = vi.mocked(contactMediumRepository.findById);
+const mockUpdate = vi.mocked(contactMediumRepository.update);
 const mockFindById = vi.mocked(partyRoleRepository.findById);
 const mockCompareAndBumpLock = vi.mocked(
   partyRoleRepository.compareAndBumpLock,
@@ -64,9 +73,28 @@ const BASE_INPUT: AddContactInput = {
 
 const SOME_PARTY_ROLE = { partyRoleId: "PTRL00000001" } as never;
 
+const UPDATE_BASE_INPUT: UpdateContactInput = {
+  contactMediumId: "CTMD00000001",
+  partyRoleId: "PTRL00000001",
+  lastModifiedDatetime: SUBMITTED_LOCK,
+  contactName: "Jane Doe",
+  contactRole: null,
+  phoneNumber: null,
+  emailAddress: null,
+  addressLine1: null,
+  addressLine2: null,
+  city: null,
+  stateProvince: null,
+  postalCode: null,
+  country: null,
+};
+
 function buildInsertedContact(
   overrides: Partial<{
     contactMediumId: string;
+    contactName: string;
+    phoneNumber: string | null;
+    emailAddress: string | null;
     preferredContactMethod: string | null;
   }>,
 ) {
@@ -94,6 +122,8 @@ function buildInsertedContact(
 beforeEach(() => {
   mockFindByPartyRoleId.mockReset();
   mockInsert.mockReset();
+  mockFindContactById.mockReset();
+  mockUpdate.mockReset();
   mockFindById.mockReset();
   mockCompareAndBumpLock.mockReset();
   mockSetPreferredContact.mockReset();
@@ -201,4 +231,159 @@ describe("addContact", () => {
       );
     },
   );
+});
+
+describe("resolveUpdatedPreferredMethod", () => {
+  it.each([
+    [null, {}, { ok: true, value: null }],
+    [null, { phoneNumber: "555-1000" }, { ok: true, value: "PHONE" }],
+    [null, { emailAddress: "j@example.com" }, { ok: true, value: "EMAIL" }],
+    [null, { addressLine1: "1 Main St" }, { ok: true, value: "ADDRESS" }],
+    ["PHONE", { phoneNumber: "555-1000" }, { ok: true, value: "PHONE" }], // still populated after the edit — untouched
+    [
+      "PHONE",
+      { phoneNumber: null, emailAddress: "j@example.com" },
+      { ok: false },
+    ], // cleared while another remains populated — blocked (Module Inv. #5)
+    ["PHONE", { phoneNumber: null }, { ok: true, value: null }], // cleared to zero populated — allowed
+    ["EMAIL", { emailAddress: null, addressLine1: "1 Main St" }, { ok: false }],
+    ["ADDRESS", { addressLine1: null }, { ok: true, value: null }],
+  ] as const)(
+    "current=%s, updated overrides=%j -> %j",
+    (current, overrides, expected) => {
+      const updated = { ...UPDATE_BASE_INPUT, ...overrides };
+      expect(resolveUpdatedPreferredMethod(current, updated)).toEqual(expected);
+    },
+  );
+});
+
+describe("updateContact", () => {
+  it("unknown contactMediumId returns CONTACT_NOT_FOUND before any lock check", async () => {
+    mockFindContactById.mockResolvedValue(null);
+
+    const result = await updateContact(UPDATE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+  });
+
+  it("clearing the preferred method's field while another remains populated is blocked before any transaction opens", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ preferredContactMethod: "PHONE" }),
+    );
+
+    const result = await updateContact(
+      {
+        ...UPDATE_BASE_INPUT,
+        phoneNumber: null,
+        emailAddress: "j@example.com",
+      },
+      "actor-1",
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      code: "PREFERRED_METHOD_STILL_POPULATED",
+    });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("clearing the preferred method's field down to zero populated methods succeeds, preferredContactMethod becomes null", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        preferredContactMethod: "PHONE",
+        phoneNumber: "555-1000",
+      }),
+    );
+    mockUpdate.mockResolvedValue(
+      buildInsertedContact({ preferredContactMethod: null, phoneNumber: null }),
+    );
+
+    const result = await updateContact(
+      { ...UPDATE_BASE_INPUT, phoneNumber: null },
+      "actor-1",
+    );
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      txStub,
+      "CTMD00000001",
+      expect.objectContaining({ preferredContactMethod: null }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { lastModifiedDatetime: BUMPED_LOCK },
+    });
+  });
+
+  it("an edit that never touches the preferred field leaves it unchanged, no reassignment logic triggered", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        preferredContactMethod: "EMAIL",
+        emailAddress: "j@example.com",
+      }),
+    );
+    mockUpdate.mockResolvedValue(
+      buildInsertedContact({
+        preferredContactMethod: "EMAIL",
+        emailAddress: "j@example.com",
+      }),
+    );
+
+    await updateContact(
+      {
+        ...UPDATE_BASE_INPUT,
+        emailAddress: "j@example.com",
+        contactName: "Jane Updated",
+      },
+      "actor-1",
+    );
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      txStub,
+      "CTMD00000001",
+      expect.objectContaining({
+        preferredContactMethod: "EMAIL",
+        contactName: "Jane Updated",
+      }),
+    );
+  });
+
+  it("stale lock returns CONFLICT with no update or audit", async () => {
+    mockFindContactById.mockResolvedValue(buildInsertedContact({}));
+    mockCompareAndBumpLock.mockResolvedValue(null);
+
+    const result = await updateContact(UPDATE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONFLICT" });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("a successful update audits CONTACT_UPDATED with before/after data", async () => {
+    const before = buildInsertedContact({ preferredContactMethod: null });
+    mockFindContactById.mockResolvedValue(before);
+    const after = buildInsertedContact({
+      contactName: "Jane Updated",
+      preferredContactMethod: null,
+    });
+    mockUpdate.mockResolvedValue(after);
+
+    await updateContact(
+      { ...UPDATE_BASE_INPUT, contactName: "Jane Updated" },
+      "actor-1",
+    );
+
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "CONTACT_UPDATED",
+        targetEntity: "CONTACT_MEDIUM",
+        targetId: "CTMD00000001",
+        beforeData: before,
+        afterData: after,
+      }),
+    );
+  });
 });

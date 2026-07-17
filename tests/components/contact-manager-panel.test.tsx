@@ -11,15 +11,21 @@ vi.mock("@/actions/customer/add-contact", () => ({
   addContactAction: vi.fn(),
 }));
 
+vi.mock("@/actions/customer/update-contact", () => ({
+  updateContactAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
 import { addContactAction } from "@/actions/customer/add-contact";
+import { updateContactAction } from "@/actions/customer/update-contact";
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import type { ContactRow } from "@/types/customer";
 
 const mockAddContactAction = vi.mocked(addContactAction);
+const mockUpdateContactAction = vi.mocked(updateContactAction);
 
 const LOCK = new Date("2026-01-01T00:00:00.000Z");
 
@@ -34,9 +40,21 @@ const NAME_ONLY_CONTACT: ContactRow = {
   isPreferredContact: true,
 };
 
+const CONTACT_WITH_PREFERRED_PHONE: ContactRow = {
+  contactMediumId: "CTMD00000002",
+  contactName: "John Roe",
+  contactRole: null,
+  phoneNumber: "555-1000",
+  emailAddress: "john@example.com",
+  address: null,
+  preferredMethod: "PHONE",
+  isPreferredContact: false,
+};
+
 beforeEach(() => {
   refreshMock.mockReset();
   mockAddContactAction.mockReset();
+  mockUpdateContactAction.mockReset();
 });
 
 describe("ContactManagerPanel", () => {
@@ -127,5 +145,97 @@ describe("ContactManagerPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Reload" }));
     expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("editing a contact and clearing its preferred method while another is populated shows the inline block message", async () => {
+    mockUpdateContactAction.mockResolvedValueOnce({
+      ok: false,
+      code: "PREFERRED_METHOD_STILL_POPULATED",
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.clear(screen.getByLabelText("Phone"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(
+        "Set a different preferred method before clearing this one.",
+      ),
+    ).toBeInTheDocument();
+
+    expect(mockUpdateContactAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contactMediumId: "CTMD00000002",
+        partyRoleId: "PTRL00000001",
+        phoneNumber: null,
+        emailAddress: "john@example.com",
+      }),
+    );
+  });
+
+  it("a successful contact edit updates the card and does not disturb the preferred-contact pointer", async () => {
+    mockUpdateContactAction.mockResolvedValueOnce({
+      ok: true,
+      value: { lastModifiedDatetime: new Date("2026-01-01T00:00:01.000Z") },
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "John Updated");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockUpdateContactAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contactMediumId: "CTMD00000002",
+          contactName: "John Updated",
+          lastModifiedDatetime: LOCK,
+        }),
+      ),
+    );
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("a CONFLICT result from an edit shows the reload-prompt banner", async () => {
+    mockUpdateContactAction.mockResolvedValueOnce({
+      ok: false,
+      code: "CONFLICT",
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(
+        "This customer was changed by someone else. Reload to see the latest version.",
+      ),
+    ).toBeInTheDocument();
   });
 });

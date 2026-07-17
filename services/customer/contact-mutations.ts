@@ -5,6 +5,7 @@ import { partyRoleRepository } from "@/db/repositories/party-role";
 import type { PreferredContactMethod } from "@/types/customer";
 import type { ContactFields } from "@/validation/customer/contact-medium.schema";
 import type { AddContactInput } from "@/validation/customer/add-contact.schema";
+import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
 
 export type AddContactResult =
   | { ok: true; value: { contactMediumId: string; lastModifiedDatetime: Date } }
@@ -104,5 +105,105 @@ export async function addContact(
         lastModifiedDatetime: bumped,
       },
     };
+  });
+}
+
+export type UpdateContactResult =
+  | { ok: true; value: { lastModifiedDatetime: Date } }
+  | { ok: false; code: "CONFLICT" }
+  | { ok: false; code: "CONTACT_NOT_FOUND" }
+  | { ok: false; code: "PREFERRED_METHOD_STILL_POPULATED" };
+
+// Update's three-way preferred-method resolution (cm12-spec §2.1) — a
+// genuinely different case set from `resolvePreferredMethod` above, which
+// only ever runs against a brand-new contact with nothing to preserve.
+export function resolveUpdatedPreferredMethod(
+  current: PreferredContactMethod | null,
+  updated: ContactFields,
+): { ok: true; value: PreferredContactMethod | null } | { ok: false } {
+  const populated = {
+    PHONE: updated.phoneNumber !== null,
+    EMAIL: updated.emailAddress !== null,
+    ADDRESS: updated.addressLine1 !== null,
+  } as const;
+
+  if (current === null) {
+    if (populated.PHONE) return { ok: true, value: "PHONE" };
+    if (populated.EMAIL) return { ok: true, value: "EMAIL" };
+    if (populated.ADDRESS) return { ok: true, value: "ADDRESS" };
+    return { ok: true, value: null };
+  }
+
+  if (populated[current]) return { ok: true, value: current };
+
+  const anyOtherPopulated = (
+    Object.keys(populated) as PreferredContactMethod[]
+  ).some((method) => method !== current && populated[method]);
+  if (anyOtherPopulated) return { ok: false }; // Module Inv. #5 — blocked, not auto-reassigned
+
+  return { ok: true, value: null }; // clearing down to zero populated methods
+}
+
+// A MANAGER edits an existing contact's fields (cm12-spec §3.3). The
+// preferred-method pointer is preserved unless the edit clears that method's
+// field while another remains populated, in which case the whole edit is
+// rejected before the transaction opens — reassignment happens only through
+// the explicit `set-preferred-contact-method` action (cm15), never as a side
+// effect of a field edit.
+export async function updateContact(
+  input: UpdateContactInput,
+  actorId: string,
+): Promise<UpdateContactResult> {
+  const before = await contactMediumRepository.findById(
+    db,
+    input.contactMediumId,
+  );
+  if (before === null) return { ok: false, code: "CONTACT_NOT_FOUND" };
+
+  const resolved = resolveUpdatedPreferredMethod(
+    before.preferredContactMethod as PreferredContactMethod | null,
+    input,
+  );
+  if (!resolved.ok) {
+    return { ok: false, code: "PREFERRED_METHOD_STILL_POPULATED" };
+  }
+
+  return db.transaction(async (tx) => {
+    const bumped = await partyRoleRepository.compareAndBumpLock(
+      tx,
+      input.partyRoleId,
+      input.lastModifiedDatetime,
+    );
+    if (bumped === null) return { ok: false, code: "CONFLICT" };
+
+    const after = await contactMediumRepository.update(
+      tx,
+      input.contactMediumId,
+      {
+        contactName: input.contactName,
+        contactRole: input.contactRole,
+        phoneNumber: input.phoneNumber,
+        emailAddress: input.emailAddress,
+        gaAddressLine1: input.addressLine1,
+        gaAddressLine2: input.addressLine2,
+        gaCity: input.city,
+        gaStateProvince: input.stateProvince,
+        gaPostalCode: input.postalCode,
+        gaCountry: input.country,
+        preferredContactMethod: resolved.value,
+        lastModifiedBy: actorId,
+      },
+    );
+
+    await insertAuditEvent(tx, {
+      eventType: "CONTACT_UPDATED",
+      actorUserId: actorId,
+      targetEntity: "CONTACT_MEDIUM",
+      targetId: input.contactMediumId,
+      beforeData: before,
+      afterData: after,
+    });
+
+    return { ok: true, value: { lastModifiedDatetime: bumped } };
   });
 }
