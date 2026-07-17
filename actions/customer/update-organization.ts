@@ -12,7 +12,6 @@ export type UpdateOrganizationActionResult =
   | { ok: false; code: "CONFLICT" }
   | { ok: false; code: "ORGANIZATION_NOT_FOUND" }
   | { ok: false; code: "DUPLICATE_REGISTRATION_NUMBER" }
-  | { ok: false; code: "FORBIDDEN" }
   | {
       ok: false;
       code: "VALIDATION_ERROR";
@@ -27,15 +26,10 @@ export type UpdateOrganizationActionResult =
 export async function updateOrganizationAction(
   rawInput: unknown,
 ): Promise<UpdateOrganizationActionResult> {
-  let actorId: string;
-  try {
-    ({ userId: actorId } = await requirePermission(
-      PERMISSIONS.CUSTOMERS,
-      LEVELS.EDIT,
-    ));
-  } catch {
-    return { ok: false, code: "FORBIDDEN" };
-  }
+  const { userId: actorId } = await requirePermission(
+    PERMISSIONS.CUSTOMERS,
+    LEVELS.EDIT,
+  );
 
   const parsed = updateOrganizationSchema.safeParse(rawInput);
   if (!parsed.success) {

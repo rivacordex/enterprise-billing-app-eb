@@ -1,12 +1,23 @@
 "use client";
 
-import { useState } from "react";
-
 import { cn } from "@/lib/utils";
 
 export interface SpecificationEditorProps {
   value: string;
   onChange: (next: string) => void;
+}
+
+function validate(value: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+      ? null
+      : "Must be a JSON object.";
+  } catch {
+    return "Invalid JSON.";
+  }
 }
 
 // The one component for editing `party_role_specification` (code-standards
@@ -17,27 +28,13 @@ export function SpecificationEditor({
   value,
   onChange,
 }: SpecificationEditorProps): React.JSX.Element {
-  const [error, setError] = useState<string | null>(null);
-
-  function handleChange(next: string): void {
-    onChange(next);
-    try {
-      const parsed: unknown = JSON.parse(next);
-      setError(
-        parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-          ? null
-          : "Must be a JSON object.",
-      );
-    } catch {
-      setError("Invalid JSON.");
-    }
-  }
+  const error = validate(value);
 
   return (
     <div>
       <textarea
         value={value}
-        onChange={(e) => handleChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
         rows={6}
         className={cn(
           "w-full rounded-md border bg-[color:var(--surface-sunken)] p-2 font-mono text-body-sm",

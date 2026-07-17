@@ -54,7 +54,12 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   {
     caption: "Customer",
     items: [
-      { label: "View Customer", href: "/customers/view", icon: Building2 },
+      {
+        label: "View Customer",
+        href: "/customers/view",
+        icon: Building2,
+        requiredPermission: { name: "customers", level: "READ" },
+      },
       {
         label: "Manage Customer",
         href: "/customers/manage",
@@ -151,7 +156,7 @@ export function AdminNav({
               // Belt-and-suspenders alongside `aria-disabled` and the
               // non-`<a>` element (cm03-spec §3.2) against inherited
               // hover/focus styling meant for real links.
-              locked && "cursor-not-allowed pointer-events-none opacity-50",
+              locked && "cursor-not-allowed opacity-50",
             );
 
             const iconWrapClassName = cn(
@@ -168,6 +173,11 @@ export function AdminNav({
             );
 
             if (locked) {
+              const permissionResource =
+                item.requiredPermission?.name === "customers"
+                  ? "customer"
+                  : item.requiredPermission?.name.replace(/_/g, " ");
+
               return (
                 <span
                   key={item.href}
@@ -175,7 +185,11 @@ export function AdminNav({
                   aria-disabled="true"
                   // Collapsed: same plain-label tooltip convention as every
                   // other item; expanded: the reason it's inert (cm03-spec §2.3.4).
-                  title={collapsed ? item.label : "Requires MANAGER access"}
+                  title={
+                    collapsed
+                      ? item.label
+                      : `Requires ${permissionResource} ${item.requiredPermission?.level.toLowerCase()} access`
+                  }
                   className={boxClassName}
                 >
                   <span className={iconWrapClassName}>

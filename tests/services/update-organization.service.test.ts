@@ -87,13 +87,14 @@ beforeEach(() => {
 });
 
 describe("updateOrganization", () => {
-  it("happy path: compareAndBumpLock called with the exact submitted partyRoleId/lastModifiedDatetime; organization update + audit write both happen; result carries the new timestamp", async () => {
+  it("happy path: compareAndBumpLock called with the exact submitted partyRoleId/lastModifiedDatetime/organizationId; organization update + audit write both happen; result carries the new timestamp", async () => {
     const result = await updateOrganization(BASE_INPUT, "actor-1");
 
     expect(mockCompareAndBumpLock).toHaveBeenCalledWith(
       txStub,
       "PTRL00000001",
       SUBMITTED_LOCK,
+      "ORG0000001",
     );
     expect(mockUpdate).toHaveBeenCalledWith(
       txStub,
@@ -129,6 +130,28 @@ describe("updateOrganization", () => {
     expect(result).toEqual({ ok: false, code: "CONFLICT" });
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("a partyRoleId/organizationId pair that doesn't actually engage each other -> CONFLICT, same as a stale lock; organization update never proceeds against the mismatched org", async () => {
+    // `compareAndBumpLock`'s atomic predicate includes `engagedParty =
+    // organizationId`; a submitted pair where partyRoleId doesn't actually
+    // engage that organization fails the predicate exactly like a stale
+    // lock token would, returning null.
+    mockCompareAndBumpLock.mockResolvedValue(null);
+
+    const result = await updateOrganization(
+      { ...BASE_INPUT, organizationId: "ORG9999999" },
+      "actor-1",
+    );
+
+    expect(mockCompareAndBumpLock).toHaveBeenCalledWith(
+      txStub,
+      "PTRL00000001",
+      SUBMITTED_LOCK,
+      "ORG9999999",
+    );
+    expect(result).toEqual({ ok: false, code: "CONFLICT" });
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   it("nonexistent organizationId -> ORGANIZATION_NOT_FOUND, no transaction opened", async () => {
