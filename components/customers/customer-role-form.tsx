@@ -63,6 +63,24 @@ export function CustomerRoleForm({
   const [specSubmitting, setSpecSubmitting] = useState(false);
   const [specConflict, setSpecConflict] = useState(false);
 
+  // Adjust state during render (react.dev "you might not need an effect"),
+  // mirroring OrganizationForm: a CONFLICT's "Reload" calls `router.refresh()`
+  // (below), which re-renders this component with a fresh `customerRole`
+  // rather than remounting it, so a latched `specConflict` and the stale
+  // locks wouldn't otherwise clear on their own.
+  const [prevLastModifiedDatetime, setPrevLastModifiedDatetime] = useState(
+    customerRole.lastModifiedDatetime,
+  );
+  if (
+    customerRole.lastModifiedDatetime.getTime() !==
+    prevLastModifiedDatetime.getTime()
+  ) {
+    setPrevLastModifiedDatetime(customerRole.lastModifiedDatetime);
+    setStatusLock(customerRole.lastModifiedDatetime);
+    setSpecLock(customerRole.lastModifiedDatetime);
+    setSpecConflict(false);
+  }
+
   // Wraps transitionCustomerStatusAction to the narrower result shape
   // StatusTransitionControl expects — PARTY_ROLE_NOT_FOUND/FORBIDDEN are
   // defense-in-depth paths the rendered control can never actually trigger,
@@ -123,6 +141,11 @@ export function CustomerRoleForm({
       }
 
       toast.error("Something went wrong. Please try again.");
+    } catch {
+      // A rejected `updatePartyRoleSpecificationAction` (e.g. a network
+      // failure) is otherwise an unhandled rejection with no user-facing
+      // feedback.
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setSpecSubmitting(false);
     }
@@ -152,6 +175,7 @@ export function CustomerRoleForm({
           Status
         </h3>
         <StatusTransitionControl
+          key={statusLock.getTime()}
           currentStatus={customerRole.status}
           entityKind="customer"
           nextStates={CUSTOMER_TRANSITIONS[customerRole.status]}

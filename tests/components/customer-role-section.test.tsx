@@ -34,14 +34,14 @@ describe("CustomerRoleSection", () => {
   it("account: null renders —", () => {
     render(
       <CustomerRoleSection
-        customerRole={BASE_ROLE}
+        customerRole={{ ...BASE_ROLE, statusReason: "Manual review" }}
         locale="en-US"
         timezone="UTC"
       />,
     );
 
-    // `statusReason` is also null in this fixture, so both fields render
-    // "—" — assert at least one, not a single unique match.
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.getByText("Account").nextElementSibling).toHaveTextContent(
+      "—",
+    );
   });
 });

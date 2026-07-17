@@ -73,14 +73,33 @@ export const partyRoleRepository = {
     tx: Database,
     partyRoleId: string,
     expectedLastModifiedDatetime: Date,
+    // Optional: callers that also carry an organization identity (currently
+    // only `updateOrganization`) pass it here so the lock-bump predicate
+    // itself proves `partyRoleId` actually engages that organization —
+    // atomically, with no separate read-then-write TOCTOU window. Omitted by
+    // every other caller (contact/status/spec mutations), which have no such
+    // second identity to cross-check.
+    expectedEngagedParty?: string,
   ): Promise<Date | null> {
+    // `new Date()` alone isn't guaranteed to land strictly after the token
+    // it's replacing — backward clock adjustments (NTP steps) or, in
+    // principle, sub-millisecond-scale successive calls could otherwise
+    // produce a "bumped" value equal to `expectedLastModifiedDatetime`,
+    // silently breaking Inv. #6's "every successful update produces a
+    // distinct newer token."
+    const bumpedLastModifiedDatetime = new Date(
+      Math.max(Date.now(), expectedLastModifiedDatetime.getTime() + 1),
+    );
     const [row] = await tx
       .update(partyRole)
-      .set({ lastModifiedDatetime: new Date() })
+      .set({ lastModifiedDatetime: bumpedLastModifiedDatetime })
       .where(
         and(
           eq(partyRole.partyRoleId, partyRoleId),
           eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+          expectedEngagedParty !== undefined
+            ? eq(partyRole.engagedParty, expectedEngagedParty)
+            : undefined,
         ),
       )
       .returning({ lastModifiedDatetime: partyRole.lastModifiedDatetime });
@@ -103,9 +122,13 @@ export const partyRoleRepository = {
       lastModifiedBy: string;
     },
   ): Promise<PartyRole | null> {
+    // See `compareAndBumpLock` for why this can't just be `new Date()`.
+    const bumpedLastModifiedDatetime = new Date(
+      Math.max(Date.now(), expectedLastModifiedDatetime.getTime() + 1),
+    );
     const [row] = await tx
       .update(partyRole)
-      .set({ ...data, lastModifiedDatetime: new Date() })
+      .set({ ...data, lastModifiedDatetime: bumpedLastModifiedDatetime })
       .where(
         and(
           eq(partyRole.partyRoleId, partyRoleId),
@@ -129,9 +152,13 @@ export const partyRoleRepository = {
       lastModifiedBy: string;
     },
   ): Promise<PartyRole | null> {
+    // See `compareAndBumpLock` for why this can't just be `new Date()`.
+    const bumpedLastModifiedDatetime = new Date(
+      Math.max(Date.now(), expectedLastModifiedDatetime.getTime() + 1),
+    );
     const [row] = await tx
       .update(partyRole)
-      .set({ ...data, lastModifiedDatetime: new Date() })
+      .set({ ...data, lastModifiedDatetime: bumpedLastModifiedDatetime })
       .where(
         and(
           eq(partyRole.partyRoleId, partyRoleId),

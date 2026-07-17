@@ -2,7 +2,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { StatusTransitionControl } from "@/components/customers/status-transition-control";
+import {
+  StatusTransitionControl,
+  STATUS_SWATCH_COLOR,
+} from "@/components/customers/status-transition-control";
 
 const mockOnConflict = vi.fn();
 
@@ -70,18 +73,14 @@ describe("StatusTransitionControl", () => {
     await user.click(screen.getByRole("combobox"));
 
     const activeOption = await screen.findByRole("option", { name: "Active" });
-    expect(
-      activeOption.querySelector(
-        ".bg-\\[color\\:var\\(--color-success-500\\)\\]",
-      ),
-    ).not.toBeNull();
+    expect(activeOption.querySelector("[aria-hidden]")).toHaveClass(
+      STATUS_SWATCH_COLOR.ACTIVE,
+    );
 
     const dissolvedOption = screen.getByRole("option", { name: "Dissolved" });
-    expect(
-      dissolvedOption.querySelector(
-        ".bg-\\[color\\:var\\(--color-neutral-500\\)\\]",
-      ),
-    ).not.toBeNull();
+    expect(dissolvedOption.querySelector("[aria-hidden]")).toHaveClass(
+      STATUS_SWATCH_COLOR.DISSOLVED,
+    );
   });
 
   it("a CONFLICT response swaps in the optimistic-lock conflict banner", async () => {
@@ -107,7 +106,7 @@ describe("StatusTransitionControl", () => {
 
     expect(
       await screen.findByText(
-        "This customer was changed by someone else. Reload to see the latest version.",
+        "This organization was changed by someone else. Reload to see the latest version.",
       ),
     ).toBeInTheDocument();
 

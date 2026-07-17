@@ -14,6 +14,7 @@ vi.mock("@/db/repositories/contact-medium", () => ({
     findById: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
+    deleteById: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/party-role", () => ({
@@ -32,11 +33,13 @@ import { partyRoleRepository } from "@/db/repositories/party-role";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import {
   addContact,
+  deleteContact,
   resolveUpdatedPreferredMethod,
   updateContact,
 } from "@/services/customer/contact-mutations";
 import type { AddContactInput } from "@/validation/customer/add-contact.schema";
 import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
+import type { DeleteContactInput } from "@/validation/customer/delete-contact.schema";
 
 const mockFindByPartyRoleId = vi.mocked(
   contactMediumRepository.findByPartyRoleId,
@@ -44,6 +47,7 @@ const mockFindByPartyRoleId = vi.mocked(
 const mockInsert = vi.mocked(contactMediumRepository.insert);
 const mockFindContactById = vi.mocked(contactMediumRepository.findById);
 const mockUpdate = vi.mocked(contactMediumRepository.update);
+const mockDeleteById = vi.mocked(contactMediumRepository.deleteById);
 const mockFindById = vi.mocked(partyRoleRepository.findById);
 const mockCompareAndBumpLock = vi.mocked(
   partyRoleRepository.compareAndBumpLock,
@@ -89,6 +93,12 @@ const UPDATE_BASE_INPUT: UpdateContactInput = {
   country: null,
 };
 
+const DELETE_BASE_INPUT: DeleteContactInput = {
+  contactMediumId: "CTMD00000001",
+  partyRoleId: "PTRL00000001",
+  lastModifiedDatetime: SUBMITTED_LOCK,
+};
+
 function buildInsertedContact(
   overrides: Partial<{
     contactMediumId: string;
@@ -124,6 +134,7 @@ beforeEach(() => {
   mockInsert.mockReset();
   mockFindContactById.mockReset();
   mockUpdate.mockReset();
+  mockDeleteById.mockReset();
   mockFindById.mockReset();
   mockCompareAndBumpLock.mockReset();
   mockSetPreferredContact.mockReset();
@@ -385,5 +396,93 @@ describe("updateContact", () => {
         afterData: after,
       }),
     );
+  });
+});
+
+describe("deleteContact", () => {
+  it("unknown contactMediumId returns CONTACT_NOT_FOUND before any lock check", async () => {
+    mockFindContactById.mockResolvedValue(null);
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockDeleteById).not.toHaveBeenCalled();
+  });
+
+  it("deleting the currently-preferred contact is blocked, no transaction opened, row still present", async () => {
+    const contact = buildInsertedContact({ contactMediumId: "CTMD00000001" });
+    mockFindContactById.mockResolvedValue(contact);
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000001",
+    } as never);
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({
+      ok: false,
+      code: "CANNOT_DELETE_PREFERRED_CONTACT",
+    });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockDeleteById).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("stale lock returns CONFLICT with the row still present", async () => {
+    const contact = buildInsertedContact({ contactMediumId: "CTMD00000001" });
+    mockFindContactById.mockResolvedValue(contact);
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000002", // preferred is a different contact
+    } as never);
+    mockCompareAndBumpLock.mockResolvedValue(null);
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONFLICT" });
+    expect(mockDeleteById).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("deleting a non-preferred contact succeeds, deletes the row, and audits CONTACT_DELETED with the full pre-delete row as beforeData and afterData: null", async () => {
+    const contact = buildInsertedContact({ contactMediumId: "CTMD00000001" });
+    mockFindContactById.mockResolvedValue(contact);
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000002", // preferred is a different contact
+    } as never);
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(mockDeleteById).toHaveBeenCalledWith(txStub, "CTMD00000001");
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "CONTACT_DELETED",
+        targetEntity: "CONTACT_MEDIUM",
+        targetId: "CTMD00000001",
+        beforeData: contact,
+        afterData: null,
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { lastModifiedDatetime: BUMPED_LOCK },
+    });
+  });
+
+  it("a party role with no preferred contact set (contactMedium null) allows deleting any of its contacts", async () => {
+    const contact = buildInsertedContact({ contactMediumId: "CTMD00000001" });
+    mockFindContactById.mockResolvedValue(contact);
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: null,
+    } as never);
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(result.ok).toBe(true);
+    expect(mockDeleteById).toHaveBeenCalledWith(txStub, "CTMD00000001");
   });
 });

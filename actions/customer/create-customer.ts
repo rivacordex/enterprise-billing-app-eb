@@ -12,7 +12,6 @@ export type CreateCustomerActionResult =
   | { ok: false; code: "INVALID_SPECIFICATION" }
   | { ok: false; code: "DUPLICATE_REGISTRATION_NUMBER" }
   | { ok: false; code: "SIMILAR_NAMES_FOUND"; similarNames: string[] }
-  | { ok: false; code: "FORBIDDEN" }
   | {
       ok: false;
       code: "VALIDATION_ERROR";
@@ -24,15 +23,10 @@ export type CreateCustomerActionResult =
 export async function createCustomerAction(
   rawInput: unknown,
 ): Promise<CreateCustomerActionResult> {
-  let actorId: string;
-  try {
-    ({ userId: actorId } = await requirePermission(
-      PERMISSIONS.CUSTOMERS,
-      LEVELS.EDIT,
-    ));
-  } catch {
-    return { ok: false, code: "FORBIDDEN" };
-  }
+  const { userId: actorId } = await requirePermission(
+    PERMISSIONS.CUSTOMERS,
+    LEVELS.EDIT,
+  );
 
   const parsed = createCustomerSchema.safeParse(rawInput);
   if (!parsed.success) {

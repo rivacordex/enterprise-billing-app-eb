@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import type React from "react";
 
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ type AnyStatus = OrganizationStatus | CustomerStatus;
 // Swatch color per target status, matching that status's badge family
 // (custmgmt-ui-context.md §1-§2) — a leading dot next to the option's own
 // label, not the full badge.
-const STATUS_SWATCH_COLOR: Record<AnyStatus, string> = {
+export const STATUS_SWATCH_COLOR: Record<AnyStatus, string> = {
   REGISTERED: "bg-[color:var(--color-warning-500)]",
   ACTIVE: "bg-[color:var(--color-success-500)]",
   INACTIVE: "bg-[color:var(--color-neutral-500)]",
@@ -84,6 +84,7 @@ export function StatusTransitionControl({
   onTransition,
   onConflict,
 }: StatusTransitionControlProps): React.JSX.Element {
+  const reasonFieldId = useId();
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -91,7 +92,12 @@ export function StatusTransitionControl({
   const [error, setError] = useState<string | null>(null);
 
   if (conflict) {
-    return <OptimisticLockConflictBanner onReload={onConflict} />;
+    return (
+      <OptimisticLockConflictBanner
+        onReload={onConflict}
+        entityLabel={entityKind}
+      />
+    );
   }
 
   // `nextStates.length === 0` is the terminal-state signal — no separate
@@ -125,6 +131,11 @@ export function StatusTransitionControl({
       // rendered control can never trigger itself (options are always
       // valid edges, Apply is gated on a non-empty reason) — a generic
       // inline error, not a special banner (cm09-spec §2.1.6).
+      setError("Unable to apply this status change. Please try again.");
+    } catch {
+      // A rejected `onTransition` (e.g. a network failure calling the
+      // server action) is otherwise an unhandled rejection with no
+      // user-facing feedback.
       setError("Unable to apply this status change. Please try again.");
     } finally {
       setSubmitting(false);
@@ -166,9 +177,9 @@ export function StatusTransitionControl({
       {selectedTarget !== null && (
         <>
           <Field>
-            <FieldLabel htmlFor="statusReason">Reason</FieldLabel>
+            <FieldLabel htmlFor={reasonFieldId}>Reason</FieldLabel>
             <Textarea
-              id="statusReason"
+              id={reasonFieldId}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               disabled={submitting}

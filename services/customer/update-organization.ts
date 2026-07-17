@@ -32,6 +32,7 @@ export async function updateOrganization(
         tx,
         input.partyRoleId,
         input.lastModifiedDatetime,
+        input.organizationId,
       );
       if (bumped === null) return { ok: false, code: "CONFLICT" };
 

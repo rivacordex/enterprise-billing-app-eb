@@ -36,6 +36,7 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   USER_DELETED: "Removal",
   ROLE_DELETED: "Removal",
   ROLE_REVOKED: "Removal",
+  CONTACT_DELETED: "Removal",
   SSO_LOGIN: "Session",
   LOCAL_LOGIN: "Session",
   USER_FIRST_LOGIN: "Session",

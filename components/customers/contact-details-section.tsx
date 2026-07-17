@@ -40,7 +40,9 @@ function ContactCard({ contact }: { contact: ContactRow }): React.JSX.Element {
             </span>
           )}
         </span>
-        {hasAnyMethod && contact.isPreferredContact && <PreferredIndicator />}
+        {hasAnyMethod && contact.isPreferredContact && (
+          <PreferredIndicator label="Preferred contact" />
+        )}
       </div>
 
       {!hasAnyMethod ? (
@@ -53,14 +55,18 @@ function ContactCard({ contact }: { contact: ContactRow }): React.JSX.Element {
             <div className="flex items-center gap-1.5 text-body-sm text-[color:var(--color-neutral-600)]">
               <Phone size={14} aria-hidden="true" />
               <span>{contact.phoneNumber}</span>
-              {contact.preferredMethod === "PHONE" && <PreferredIndicator />}
+              {contact.preferredMethod === "PHONE" && (
+                <PreferredIndicator label="Preferred method" />
+              )}
             </div>
           )}
           {contact.emailAddress && (
             <div className="flex items-center gap-1.5 text-body-sm text-[color:var(--color-neutral-600)]">
               <Mail size={14} aria-hidden="true" />
               <span>{contact.emailAddress}</span>
-              {contact.preferredMethod === "EMAIL" && <PreferredIndicator />}
+              {contact.preferredMethod === "EMAIL" && (
+                <PreferredIndicator label="Preferred method" />
+              )}
             </div>
           )}
           {contact.address && (
@@ -71,7 +77,9 @@ function ContactCard({ contact }: { contact: ContactRow }): React.JSX.Element {
                 aria-hidden="true"
               />
               {formatAddress(contact.address)}
-              {contact.preferredMethod === "ADDRESS" && <PreferredIndicator />}
+              {contact.preferredMethod === "ADDRESS" && (
+                <PreferredIndicator label="Preferred method" />
+              )}
             </div>
           )}
         </div>

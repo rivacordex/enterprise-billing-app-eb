@@ -19,6 +19,15 @@ export function CustomerSearchPanel({
   const [value, setValue] = useState(query);
   const [isPending, startTransition] = useTransition();
 
+  // Adjust state during render (react.dev "you might not need an effect")
+  // rather than in a `useEffect`, so an external `query` change (e.g. a
+  // browser back/forward navigation) is reflected in the same render pass.
+  const [prevQuery, setPrevQuery] = useState(query);
+  if (query !== prevQuery) {
+    setPrevQuery(query);
+    setValue(query);
+  }
+
   function apply(): void {
     const params = new URLSearchParams();
     if (value.trim()) params.set("q", value.trim());

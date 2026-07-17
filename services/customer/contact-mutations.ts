@@ -6,6 +6,7 @@ import type { PreferredContactMethod } from "@/types/customer";
 import type { ContactFields } from "@/validation/customer/contact-medium.schema";
 import type { AddContactInput } from "@/validation/customer/add-contact.schema";
 import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
+import type { DeleteContactInput } from "@/validation/customer/delete-contact.schema";
 
 export type AddContactResult =
   | { ok: true; value: { contactMediumId: string; lastModifiedDatetime: Date } }
@@ -202,6 +203,59 @@ export async function updateContact(
       targetId: input.contactMediumId,
       beforeData: before,
       afterData: after,
+    });
+
+    return { ok: true, value: { lastModifiedDatetime: bumped } };
+  });
+}
+
+export type DeleteContactResult =
+  | { ok: true; value: { lastModifiedDatetime: Date } }
+  | { ok: false; code: "CONFLICT" }
+  | { ok: false; code: "CONTACT_NOT_FOUND" }
+  | { ok: false; code: "CANNOT_DELETE_PREFERRED_CONTACT" };
+
+// The module's one sanctioned physical delete (cm13-spec §2.1). Module
+// Invariant #4 exists precisely to prevent a customer with contacts from
+// ever dropping to "has contacts but no preferred one" — this is the only
+// enforcement point, checking before any write whether the target contact is
+// the one `party_role.contact_medium` currently points to. `deleteById`
+// (`contactMediumRepository`) has no built-in guard of its own; this
+// function is the only place in the codebase allowed to call it
+// (code-standards §6.7, enforced by convention plus the structural test at
+// `tests/structure/contact-medium-delete-callers.test.ts`).
+export async function deleteContact(
+  input: DeleteContactInput,
+  actorId: string,
+): Promise<DeleteContactResult> {
+  const contact = await contactMediumRepository.findById(
+    db,
+    input.contactMediumId,
+  );
+  if (contact === null) return { ok: false, code: "CONTACT_NOT_FOUND" };
+
+  const partyRole = await partyRoleRepository.findById(db, input.partyRoleId);
+  if (partyRole?.contactMedium === input.contactMediumId) {
+    return { ok: false, code: "CANNOT_DELETE_PREFERRED_CONTACT" };
+  }
+
+  return db.transaction(async (tx) => {
+    const bumped = await partyRoleRepository.compareAndBumpLock(
+      tx,
+      input.partyRoleId,
+      input.lastModifiedDatetime,
+    );
+    if (bumped === null) return { ok: false, code: "CONFLICT" };
+
+    await contactMediumRepository.deleteById(tx, input.contactMediumId);
+
+    await insertAuditEvent(tx, {
+      eventType: "CONTACT_DELETED",
+      actorUserId: actorId,
+      targetEntity: "CONTACT_MEDIUM",
+      targetId: input.contactMediumId,
+      beforeData: contact,
+      afterData: null,
     });
 
     return { ok: true, value: { lastModifiedDatetime: bumped } };

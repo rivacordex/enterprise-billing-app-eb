@@ -162,7 +162,10 @@ describe("AdminNav — Customer section, expanded, not granted (USER-shaped map)
     expect(lockedItem).not.toBeNull();
     expect(lockedItem).toHaveAttribute("aria-disabled", "true");
     expect(lockedItem?.tagName).toBe("SPAN");
-    expect(lockedItem).toHaveAttribute("title", "Requires MANAGER access");
+    expect(lockedItem).toHaveAttribute(
+      "title",
+      "Requires customer edit access",
+    );
 
     fireEvent.click(lockedItem!);
     expect(
@@ -175,6 +178,13 @@ describe("AdminNav — Customer section, no permissionMap prop at all", () => {
   it("still renders Manage Customer locked (fail-closed)", () => {
     render(<AdminNav />);
     const label = screen.getByText("Manage Customer");
+    const lockedItem = label.closest('[role="link"]');
+    expect(lockedItem).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("still renders View Customer locked (fail-closed)", () => {
+    render(<AdminNav />);
+    const label = screen.getByText("View Customer");
     const lockedItem = label.closest('[role="link"]');
     expect(lockedItem).toHaveAttribute("aria-disabled", "true");
   });

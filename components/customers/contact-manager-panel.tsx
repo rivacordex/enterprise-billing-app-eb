@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mail, MapPin, Phone } from "lucide-react";
+import { Loader2, Mail, MapPin, Phone, Trash2 } from "lucide-react";
 import {
   useForm,
   type FieldErrors,
@@ -13,7 +13,17 @@ import { toast } from "sonner";
 import type { z } from "zod";
 
 import { addContactAction } from "@/actions/customer/add-contact";
+import { deleteContactAction } from "@/actions/customer/delete-contact";
 import { updateContactAction } from "@/actions/customer/update-contact";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -270,9 +280,11 @@ function ContactFieldsFieldset({
 function ContactCard({
   contact,
   onEdit,
+  onDeleteRequest,
 }: {
   contact: ContactRow;
   onEdit?: (() => void) | undefined;
+  onDeleteRequest?: (() => void) | undefined;
 }): React.JSX.Element {
   const hasAnyMethod =
     contact.phoneNumber !== null ||
@@ -296,12 +308,36 @@ function ContactCard({
             <PreferredIndicator label="Preferred contact" />
           )}
         </div>
-        {onEdit && (
-          <Button type="button" variant="outline" size="sm" onClick={onEdit}>
-            Edit
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {onEdit && (
+            <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+              Edit
+            </Button>
+          )}
+          {onDeleteRequest && (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={onDeleteRequest}
+              aria-label={`Delete ${contact.contactName}`}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              Delete
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* The preferred contact can never pass `deleteContact`'s precondition
+          check (cm13-spec §2.1/§3.5) — rather than offer a control that
+          always errors, it's omitted, with a caption explaining why so the
+          constraint is visible, not just discoverable by failure. */}
+      {contact.isPreferredContact && (
+        <p className="mt-1 text-body-sm text-muted-foreground">
+          Make another contact preferred to delete this one
+        </p>
+      )}
 
       {!hasAnyMethod ? (
         <p className="mt-2 text-body-sm text-muted-foreground">
@@ -455,6 +491,89 @@ function ContactEditForm({
   );
 }
 
+// The one confirmation dialog in the whole module (cm13-spec §3.4) — the
+// module's one genuinely irreversible action deserves it. Built on
+// `AlertDialog` (not `Dialog`), same reasoning as `DeleteUserDialog`: the
+// action cannot be dismissed by a backdrop click, only an explicit button
+// choice. `CANNOT_DELETE_PREFERRED_CONTACT` is not handled here — the
+// button that opens this dialog is never rendered for the preferred contact
+// (§3.5), so a real UI session can't hit it; a direct action call still
+// gets it from the server regardless (§2.1).
+function DeleteContactDialog({
+  partyRoleId,
+  contact,
+  currentLastModifiedDatetime,
+  isOpen,
+  onOpenChange,
+  onSuccess,
+  onConflict,
+}: {
+  partyRoleId: string;
+  contact: ContactRow;
+  currentLastModifiedDatetime: Date;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: (lastModifiedDatetime: Date) => void;
+  onConflict: () => void;
+}): React.JSX.Element {
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  async function handleConfirm(): Promise<void> {
+    setIsDeleting(true);
+    try {
+      const result = await deleteContactAction({
+        contactMediumId: contact.contactMediumId,
+        partyRoleId,
+        lastModifiedDatetime: currentLastModifiedDatetime,
+      });
+
+      if (result.ok) {
+        toast.success("Contact deleted.");
+        onSuccess(result.value.lastModifiedDatetime);
+        return;
+      }
+
+      if (result.code === "CONFLICT") {
+        onConflict();
+        return;
+      }
+
+      toast.error("Something went wrong. Please try again.");
+      onOpenChange(false);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  return (
+    <AlertDialog
+      open={isOpen}
+      onOpenChange={isDeleting ? () => {} : onOpenChange}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {contact.contactName}?</AlertDialogTitle>
+        </AlertDialogHeader>
+
+        <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void handleConfirm()}
+            disabled={isDeleting}
+          >
+            {isDeleting && <Loader2 size={14} className="mr-1 animate-spin" />}
+            Delete
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export interface ContactManagerPanelProps {
   partyRoleId: string;
   contacts: ContactRow[];
@@ -469,6 +588,7 @@ export function ContactManagerPanel({
   const router = useRouter();
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingContactId, setEditingContactId] = useState<string | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [currentLastModifiedDatetime, setCurrentLastModifiedDatetime] =
@@ -491,8 +611,12 @@ export function ContactManagerPanel({
 
   function handleConflict(): void {
     setEditingContactId(null);
+    setDeleteTargetId(null);
     setConflict(true);
   }
+
+  const deleteTargetContact =
+    contacts.find((c) => c.contactMediumId === deleteTargetId) ?? null;
 
   async function onSubmit(values: ContactFormOutput): Promise<void> {
     setIsSubmitting(true);
@@ -562,10 +686,33 @@ export function ContactManagerPanel({
                         setEditingContactId(contact.contactMediumId);
                       }
                 }
+                onDeleteRequest={
+                  conflict || contact.isPreferredContact
+                    ? undefined
+                    : () => setDeleteTargetId(contact.contactMediumId)
+                }
               />
             ),
           )}
         </div>
+      )}
+
+      {deleteTargetContact && (
+        <DeleteContactDialog
+          partyRoleId={partyRoleId}
+          contact={deleteTargetContact}
+          currentLastModifiedDatetime={currentLastModifiedDatetime}
+          isOpen={deleteTargetContact !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTargetId(null);
+          }}
+          onSuccess={(lock) => {
+            setCurrentLastModifiedDatetime(lock);
+            setDeleteTargetId(null);
+            router.refresh();
+          }}
+          onConflict={handleConflict}
+        />
       )}
 
       {conflict ? (

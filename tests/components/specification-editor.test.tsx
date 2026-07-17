@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -14,43 +14,25 @@ describe("SpecificationEditor", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows 'Must be a JSON object.' for a top-level array", async () => {
-    render(<SpecificationEditor value="" onChange={vi.fn()} />);
+  // The error is derived from the controlled `value` prop during render, not
+  // from typed keystrokes — a caller that doesn't feed a new `value` back in
+  // (e.g. a no-op `onChange`) must not see a stale, internally-tracked error.
+  it("shows 'Must be a JSON object.' for a top-level array value", () => {
+    render(<SpecificationEditor value="[1,2]" onChange={vi.fn()} />);
 
-    // `[`/`]`/`{`/`}` are special key-code delimiters to user-event's
-    // `.type()`; setting the full value via a native change event avoids
-    // that keyboard-parsing entirely.
-    fireEvent.change(screen.getByLabelText("Party role specification (JSON)"), {
-      target: { value: "[1,2]" },
-    });
-
-    expect(
-      await screen.findByText("Must be a JSON object."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Must be a JSON object.")).toBeInTheDocument();
   });
 
-  it("shows 'Must be a JSON object.' for a top-level primitive", async () => {
-    const user = userEvent.setup();
-    render(<SpecificationEditor value="" onChange={vi.fn()} />);
+  it("shows 'Must be a JSON object.' for a top-level primitive value", () => {
+    render(<SpecificationEditor value="42" onChange={vi.fn()} />);
 
-    await user.type(
-      screen.getByLabelText("Party role specification (JSON)"),
-      "42",
-    );
-
-    expect(
-      await screen.findByText("Must be a JSON object."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Must be a JSON object.")).toBeInTheDocument();
   });
 
-  it("shows 'Invalid JSON.' for malformed JSON text", async () => {
-    render(<SpecificationEditor value="" onChange={vi.fn()} />);
+  it("shows 'Invalid JSON.' for malformed JSON value", () => {
+    render(<SpecificationEditor value="{not json" onChange={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText("Party role specification (JSON)"), {
-      target: { value: "{not json" },
-    });
-
-    expect(await screen.findByText("Invalid JSON.")).toBeInTheDocument();
+    expect(screen.getByText("Invalid JSON.")).toBeInTheDocument();
   });
 
   it("fires onChange on every keystroke regardless of validity", async () => {

@@ -256,7 +256,10 @@ export function NewCustomerForm(): React.JSX.Element {
             render={({ field }) => (
               <SpecificationEditor
                 value={field.value ?? "{}"}
-                onChange={field.onChange}
+                onChange={(next) => {
+                  field.onChange(next);
+                  setSpecServerError(null);
+                }}
               />
             )}
           />

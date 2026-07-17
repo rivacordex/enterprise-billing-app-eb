@@ -45,14 +45,16 @@ export function CustomerRoleSection({
         <Field label="Account">{customerRole.account ?? "—"}</Field>
       </dl>
 
-      <div className="mt-4">
+      <dl className="mt-4">
         <dt className="text-overline font-semibold tracking-wider text-muted-foreground uppercase">
           Specification
         </dt>
-        <pre className="mt-0.5 overflow-x-auto rounded-md border border-border bg-[color:var(--surface-sunken)] p-3 font-mono text-body-sm">
-          {JSON.stringify(customerRole.specification, null, 2)}
-        </pre>
-      </div>
+        <dd>
+          <pre className="mt-0.5 overflow-x-auto rounded-md border border-border bg-[color:var(--surface-sunken)] p-3 font-mono text-body-sm">
+            {JSON.stringify(customerRole.specification, null, 2)}
+          </pre>
+        </dd>
+      </dl>
 
       <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
         <Field label="Last Modified By">

@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button";
 
 export interface OptimisticLockConflictBannerProps {
   onReload: () => void;
+  // Defaults to "customer", matching every pre-existing call site (cm08-spec
+  // §3.7). Only StatusTransitionControl overrides it, since it's the one
+  // caller that mutates either a customer or an organization.
+  entityLabel?: string;
 }
 
 // Shared across every mutation unit from this one through cm15 (cm08-spec
@@ -12,6 +16,7 @@ export interface OptimisticLockConflictBannerProps {
 // just a different message and an action button.
 export function OptimisticLockConflictBanner({
   onReload,
+  entityLabel = "customer",
 }: OptimisticLockConflictBannerProps): React.JSX.Element {
   return (
     <div
@@ -21,8 +26,8 @@ export function OptimisticLockConflictBanner({
       <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
       <div>
         <p>
-          This customer was changed by someone else. Reload to see the latest
-          version.
+          This {entityLabel} was changed by someone else. Reload to see the
+          latest version.
         </p>
         <Button
           type="button"
