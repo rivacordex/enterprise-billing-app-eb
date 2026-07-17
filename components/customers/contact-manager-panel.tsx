@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Mail, MapPin, Phone, Trash2 } from "lucide-react";
+import { Loader2, Mail, MapPin, Phone, Star, Trash2 } from "lucide-react";
 import {
   useForm,
   type FieldErrors,
@@ -14,6 +14,7 @@ import type { z } from "zod";
 
 import { addContactAction } from "@/actions/customer/add-contact";
 import { deleteContactAction } from "@/actions/customer/delete-contact";
+import { setPreferredContactAction } from "@/actions/customer/set-preferred-contact";
 import { updateContactAction } from "@/actions/customer/update-contact";
 import {
   AlertDialog,
@@ -281,10 +282,14 @@ function ContactCard({
   contact,
   onEdit,
   onDeleteRequest,
+  onMakePreferred,
+  isMakingPreferred,
 }: {
   contact: ContactRow;
   onEdit?: (() => void) | undefined;
   onDeleteRequest?: (() => void) | undefined;
+  onMakePreferred?: (() => void) | undefined;
+  isMakingPreferred?: boolean;
 }): React.JSX.Element {
   const hasAnyMethod =
     contact.phoneNumber !== null ||
@@ -309,6 +314,18 @@ function ContactCard({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {onMakePreferred && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onMakePreferred}
+              disabled={isMakingPreferred}
+            >
+              <Star size={14} aria-hidden="true" />
+              Make preferred
+            </Button>
+          )}
           {onEdit && (
             <Button type="button" variant="outline" size="sm" onClick={onEdit}>
               Edit
@@ -593,6 +610,9 @@ export function ContactManagerPanel({
   const [conflict, setConflict] = useState(false);
   const [currentLastModifiedDatetime, setCurrentLastModifiedDatetime] =
     useState(lastModifiedDatetime);
+  const [makingPreferredId, setMakingPreferredId] = useState<string | null>(
+    null,
+  );
 
   const {
     register,
@@ -617,6 +637,37 @@ export function ContactManagerPanel({
 
   const deleteTargetContact =
     contacts.find((c) => c.contactMediumId === deleteTargetId) ?? null;
+
+  // The explicit reassignment path (cm14-spec §3.4) — reversible and
+  // low-stakes, unlike delete, so no confirm dialog. Setting is disabled per
+  // panel (not per-card) since only one reassignment can be in flight at a
+  // time regardless of which card's button was clicked.
+  async function handleMakePreferred(contactMediumId: string): Promise<void> {
+    setMakingPreferredId(contactMediumId);
+    try {
+      const result = await setPreferredContactAction({
+        contactMediumId,
+        partyRoleId,
+        lastModifiedDatetime: currentLastModifiedDatetime,
+      });
+
+      if (result.ok) {
+        setCurrentLastModifiedDatetime(result.value.lastModifiedDatetime);
+        toast.success("Preferred contact updated.");
+        router.refresh();
+        return;
+      }
+
+      if (result.code === "CONFLICT") {
+        handleConflict();
+        return;
+      }
+
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setMakingPreferredId(null);
+    }
+  }
 
   async function onSubmit(values: ContactFormOutput): Promise<void> {
     setIsSubmitting(true);
@@ -690,6 +741,14 @@ export function ContactManagerPanel({
                   conflict || contact.isPreferredContact
                     ? undefined
                     : () => setDeleteTargetId(contact.contactMediumId)
+                }
+                onMakePreferred={
+                  conflict || contact.isPreferredContact
+                    ? undefined
+                    : () => void handleMakePreferred(contact.contactMediumId)
+                }
+                isMakingPreferred={
+                  makingPreferredId === contact.contactMediumId
                 }
               />
             ),

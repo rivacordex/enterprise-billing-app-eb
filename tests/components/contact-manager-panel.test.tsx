@@ -19,12 +19,17 @@ vi.mock("@/actions/customer/delete-contact", () => ({
   deleteContactAction: vi.fn(),
 }));
 
+vi.mock("@/actions/customer/set-preferred-contact", () => ({
+  setPreferredContactAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
 import { addContactAction } from "@/actions/customer/add-contact";
 import { deleteContactAction } from "@/actions/customer/delete-contact";
+import { setPreferredContactAction } from "@/actions/customer/set-preferred-contact";
 import { updateContactAction } from "@/actions/customer/update-contact";
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import type { ContactRow } from "@/types/customer";
@@ -32,6 +37,7 @@ import type { ContactRow } from "@/types/customer";
 const mockAddContactAction = vi.mocked(addContactAction);
 const mockUpdateContactAction = vi.mocked(updateContactAction);
 const mockDeleteContactAction = vi.mocked(deleteContactAction);
+const mockSetPreferredContactAction = vi.mocked(setPreferredContactAction);
 
 const LOCK = new Date("2026-01-01T00:00:00.000Z");
 
@@ -62,6 +68,7 @@ beforeEach(() => {
   mockAddContactAction.mockReset();
   mockUpdateContactAction.mockReset();
   mockDeleteContactAction.mockReset();
+  mockSetPreferredContactAction.mockReset();
 });
 
 describe("ContactManagerPanel", () => {
@@ -328,6 +335,71 @@ describe("ContactManagerPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete John Roe" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(
+      await screen.findByText(
+        "This customer was changed by someone else. Reload to see the latest version.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("'Make preferred' renders only on non-preferred contacts", () => {
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[NAME_ONLY_CONTACT, CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    expect(
+      screen.getAllByRole("button", { name: "Make preferred" }),
+    ).toHaveLength(1);
+  });
+
+  it("clicking 'Make preferred' calls setPreferredContactAction and refreshes on success", async () => {
+    mockSetPreferredContactAction.mockResolvedValueOnce({
+      ok: true,
+      value: { lastModifiedDatetime: new Date("2026-01-01T00:00:01.000Z") },
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[NAME_ONLY_CONTACT, CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Make preferred" }));
+
+    await waitFor(() =>
+      expect(mockSetPreferredContactAction).toHaveBeenCalledWith({
+        contactMediumId: "CTMD00000002",
+        partyRoleId: "PTRL00000001",
+        lastModifiedDatetime: LOCK,
+      }),
+    );
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("a CONFLICT result from 'Make preferred' shows the reload-prompt banner", async () => {
+    mockSetPreferredContactAction.mockResolvedValueOnce({
+      ok: false,
+      code: "CONFLICT",
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[NAME_ONLY_CONTACT, CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Make preferred" }));
 
     expect(
       await screen.findByText(

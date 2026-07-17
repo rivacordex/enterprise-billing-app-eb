@@ -7,6 +7,7 @@ import type { ContactFields } from "@/validation/customer/contact-medium.schema"
 import type { AddContactInput } from "@/validation/customer/add-contact.schema";
 import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
 import type { DeleteContactInput } from "@/validation/customer/delete-contact.schema";
+import type { SetPreferredContactInput } from "@/validation/customer/set-preferred-contact.schema";
 
 export type AddContactResult =
   | { ok: true; value: { contactMediumId: string; lastModifiedDatetime: Date } }
@@ -256,6 +257,65 @@ export async function deleteContact(
       targetId: input.contactMediumId,
       beforeData: contact,
       afterData: null,
+    });
+
+    return { ok: true, value: { lastModifiedDatetime: bumped } };
+  });
+}
+
+export type SetPreferredContactResult =
+  | { ok: true; value: { lastModifiedDatetime: Date } }
+  | { ok: false; code: "CONFLICT" }
+  | { ok: false; code: "PARTY_ROLE_NOT_FOUND" }
+  | { ok: false; code: "CONTACT_NOT_FOUND" };
+
+// The explicit, user-initiated reassignment path (cm14-spec §2.1) — distinct
+// from `addContact`'s auto-assign-on-first-contact side effect, this is the
+// escape hatch that unblocks `deleteContact`'s "cannot delete the preferred
+// contact" case: reassign preference away from a contact, then delete it.
+// Reuses `partyRoleRepository.setPreferredContact` (cm11) unchanged; only the
+// caller and audit framing differ.
+export async function setPreferredContact(
+  input: SetPreferredContactInput,
+  actorId: string,
+): Promise<SetPreferredContactResult> {
+  const partyRole = await partyRoleRepository.findById(db, input.partyRoleId);
+  if (partyRole === null) return { ok: false, code: "PARTY_ROLE_NOT_FOUND" };
+
+  const target = await contactMediumRepository.findById(
+    db,
+    input.contactMediumId,
+  );
+  if (target === null || target.refPartyRole !== input.partyRoleId) {
+    // Belongs to a different customer, or doesn't exist — checked here so a
+    // cross-customer pointer gets a clean result instead of relying on the
+    // composite deferrable FK (cm01) to reject it at commit time.
+    return { ok: false, code: "CONTACT_NOT_FOUND" };
+  }
+
+  const previousContactId = partyRole.contactMedium;
+
+  return db.transaction(async (tx) => {
+    const bumped = await partyRoleRepository.compareAndBumpLock(
+      tx,
+      input.partyRoleId,
+      input.lastModifiedDatetime,
+    );
+    if (bumped === null) return { ok: false, code: "CONFLICT" };
+
+    await partyRoleRepository.setPreferredContact(
+      tx,
+      input.partyRoleId,
+      input.contactMediumId,
+    );
+
+    await insertAuditEvent(tx, {
+      eventType: "PREFERRED_CONTACT_CHANGED",
+      actorUserId: actorId,
+      targetEntity: "PARTY_ROLE",
+      targetId: input.partyRoleId,
+      beforeData: { preferredContactId: previousContactId },
+      afterData: { preferredContactId: input.contactMediumId },
     });
 
     return { ok: true, value: { lastModifiedDatetime: bumped } };
