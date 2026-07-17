@@ -34,17 +34,35 @@ describe("AuditLogFilters", () => {
     expect(screen.queryByText("Clear")).not.toBeInTheDocument();
   });
 
-  it("renders all 20 event types under the correct optgroup", () => {
+  it("renders all 26 event types under the correct optgroup", () => {
     render(<AuditLogFilters actors={ACTORS} />);
     const select = screen.getByLabelText("Event type");
     const additive = within(select).getByRole("group", { name: "Additive" });
     expect(within(additive).getByText("USER_CREATED")).toBeInTheDocument();
     expect(within(additive).getByText("ROLE_ASSIGNED")).toBeInTheDocument();
+    expect(
+      within(additive).getByText("ORGANIZATION_CREATED"),
+    ).toBeInTheDocument();
+    expect(within(additive).getByText("CUSTOMER_CREATED")).toBeInTheDocument();
+
+    const change = within(select).getByRole("group", { name: "Change" });
+    expect(
+      within(change).getByText("ORGANIZATION_UPDATED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("ORGANIZATION_STATUS_CHANGED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("CUSTOMER_STATUS_CHANGED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PARTY_ROLE_SPECIFICATION_UPDATED"),
+    ).toBeInTheDocument();
 
     const security = within(select).getByRole("group", { name: "Security" });
     expect(within(security).getByText("USER_LOCKED")).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(21); // "All events" + 20
+    expect(within(select).getAllByRole("option")).toHaveLength(27); // "All events" + 26
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

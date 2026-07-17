@@ -1,11 +1,14 @@
-import { asc, eq, ilike, or } from "drizzle-orm";
+import { and, asc, eq, ilike, or } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { organization, partyRole } from "@/db/schema/customer";
-import type { Organization, PartyRole } from "@/db/schema/customer";
+import type {
+  Organization,
+  PartyRole,
+  PartyRoleInsert,
+} from "@/db/schema/customer";
+import type { CustomerStatus } from "@/types/customer";
 
-// v1 exports finders only (cm02-spec Design #2.2.2) — no insert/update/
-// delete anywhere in this file.
 export const partyRoleRepository = {
   // Plain PK lookup.
   async findById(db: Database, partyRoleId: string): Promise<PartyRole | null> {
@@ -44,5 +47,98 @@ export const partyRoleRepository = {
       )
       .orderBy(asc(organization.name), asc(partyRole.partyRoleId))
       .limit(limit);
+  },
+
+  // `status` is hard-coded to `INITIALIZED`, overwriting whatever `data`
+  // carries — belt-and-suspenders against a future caller mistake, since
+  // there is no code path that should create a customer at any other
+  // initial status (cm07-spec §2.3.3, §3.2). First write function on this
+  // repository.
+  async insert(tx: Database, data: PartyRoleInsert): Promise<PartyRole> {
+    const [row] = await tx
+      .insert(partyRole)
+      .values({ ...data, status: "INITIALIZED" })
+      .returning();
+    return row!;
+  },
+
+  // The one place Module Invariant #6 is implemented (cm08-spec §2.2) — a
+  // single atomic `UPDATE ... WHERE last_modified_datetime = $expected`, no
+  // separate read-then-write, so there's no TOCTOU window for a second
+  // transaction to interleave. Zero rows matched (stale lock or unknown ID)
+  // returns `null`; the caller maps that to `CONFLICT` without needing to
+  // distinguish the two cases. Every mutation service from this unit through
+  // cm15 calls this exact function, even a contact-only edit.
+  async compareAndBumpLock(
+    tx: Database,
+    partyRoleId: string,
+    expectedLastModifiedDatetime: Date,
+  ): Promise<Date | null> {
+    const [row] = await tx
+      .update(partyRole)
+      .set({ lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(partyRole.partyRoleId, partyRoleId),
+          eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+        ),
+      )
+      .returning({ lastModifiedDatetime: partyRole.lastModifiedDatetime });
+    return row?.lastModifiedDatetime ?? null;
+  },
+
+  // A same-row refinement of `compareAndBumpLock` (cm10-spec §2.2) — this
+  // mutation and its lock column both live on `party_role`, so the
+  // compare-check and the actual data write collapse into one atomic
+  // `UPDATE` instead of bumping the lock and then issuing a second `UPDATE`
+  // against the row just touched. Zero rows matched (stale lock or unknown
+  // ID) returns `null`, same convention as `compareAndBumpLock`.
+  async compareAndUpdateStatus(
+    tx: Database,
+    partyRoleId: string,
+    expectedLastModifiedDatetime: Date,
+    data: {
+      status: CustomerStatus;
+      statusReason: string;
+      lastModifiedBy: string;
+    },
+  ): Promise<PartyRole | null> {
+    const [row] = await tx
+      .update(partyRole)
+      .set({ ...data, lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(partyRole.partyRoleId, partyRoleId),
+          eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // Same shape as `compareAndUpdateStatus`, setting `partyRoleSpecification`
+  // instead of `status`/`statusReason` (cm10-spec §2.2) — a specification
+  // edit writes no `status_reason`-style field, since it isn't a lifecycle
+  // transition.
+  async compareAndUpdateSpecification(
+    tx: Database,
+    partyRoleId: string,
+    expectedLastModifiedDatetime: Date,
+    data: {
+      partyRoleSpecification: Record<string, unknown>;
+      lastModifiedBy: string;
+    },
+  ): Promise<PartyRole | null> {
+    const [row] = await tx
+      .update(partyRole)
+      .set({ ...data, lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(partyRole.partyRoleId, partyRoleId),
+          eq(partyRole.lastModifiedDatetime, expectedLastModifiedDatetime),
+        ),
+      )
+      .returning();
+    return row ?? null;
   },
 };

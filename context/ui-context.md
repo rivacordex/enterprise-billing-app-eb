@@ -118,10 +118,10 @@ Each status has a base (icon/border/button), a `-fg` for text-on-tint, and a `-b
 
 | Status | Base | Text-on-tint (`-fg`) | Tint bg (`-bg`) |
 |---|---|---|---|
-| Success (active, paid, verified) | `#1F9D57` `success-500` | `#0F5C32` `success-700` | `#E6F6EC` `success-50` |
-| Warning (pending, trial ending)  | `#E08600` `warning-500` | `#8A5200` `warning-700` | `#FEF4E6` `warning-50` |
-| Danger (suspended, failed, overdue) | `#D92D2D` `danger-500` | `#8A1717` `danger-700` | `#FDEAEA` `danger-50` |
-| Info (notes, neutral system msgs) | `#1A73D9` `info-500` | `#0C4084` `info-700` | `#E7F1FD` `info-50` |
+| Success (active, paid, verified) | `#1F9D57` `--color-success-500` | `#0F5C32` `--color-success-700` | `#E6F6EC` `--color-success-50` |
+| Warning (pending, trial ending)  | `#E08600` `--color-warning-500` | `#8A5200` `--color-warning-700` | `#FEF4E6` `--color-warning-50` |
+| Danger (suspended, failed, overdue) | `#D92D2D` `--color-danger-500` | `#8A1717` `--color-danger-700` | `#FDEAEA` `--color-danger-50` |
+| Info (notes, neutral system msgs) | `#1A73D9` `--color-info-500` | `#0C4084` `--color-info-700` | `#E7F1FD` `--color-info-50` |
 
 Modules map their domain statuses (user status, invoice status, bill-run state, etc.) onto these families in their own ui-context file — never invent new status hues per module.
 
@@ -158,8 +158,10 @@ A distinct **Iris/violet** family separates AI-assisted features (smart grouping
 Recommended families: **IBM Plex Sans** for UI (engineered, telecom-native feel) with **Inter** as a metrically-friendly fallback; **IBM Plex Mono** for IDs, invoice/account numbers, API keys, and tabular figures.
 
 ```
---font-sans: "IBM Plex Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
---font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+:root {
+  --font-sans: "IBM Plex Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+}
 ```
 
 | Token | Size / Line height | Weight | Use |
@@ -213,6 +215,6 @@ Cool, low-spread shadows to keep the formal flatness.
 ## 8. Usage Notes
 
 - Pair each status **base** color with its `-fg` token (not white) when used as text on the `-bg` tint.
-- For tints like `cyan-600` and `warning-600`, use **dark text** (`neutral-900`) for small or body-size labels, or step the base to `cyan-700` / `warning-700`. For long body text on `accent-500` magenta, prefer `accent-600` or darker.
+- For tints like `cyan-600` and `warning-50`, use **dark text** (`neutral-900`) for small or body-size labels, or step the base to `cyan-700` / `warning-700`. For long body text on `accent-500` magenta, prefer `accent-600` or darker.
 - Default focus indicator: 2px `--border-focus` ring with a white inset (`--focus-ring`) for visibility on both light surfaces and dark chrome.
 - Badges/pills render dark `-fg` text on the light `-bg` tint — never white-on-tint — and always pair color with an icon and label so meaning never depends on color alone.
