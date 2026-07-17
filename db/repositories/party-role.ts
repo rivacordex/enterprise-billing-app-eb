@@ -141,4 +141,20 @@ export const partyRoleRepository = {
       .returning();
     return row ?? null;
   },
+
+  // Sets the preferred-contact pointer (Module Inv. #4, cm11-spec §2.5). No
+  // lock predicate — called only after `compareAndBumpLock` already
+  // succeeded earlier in the same transaction, so the row is already locked
+  // for the remainder of that transaction and a second compare-check here
+  // would be redundant, not a stronger guarantee.
+  async setPreferredContact(
+    tx: Database,
+    partyRoleId: string,
+    contactMediumId: string,
+  ): Promise<void> {
+    await tx
+      .update(partyRole)
+      .set({ contactMedium: contactMediumId })
+      .where(eq(partyRole.partyRoleId, partyRoleId));
+  },
 };
