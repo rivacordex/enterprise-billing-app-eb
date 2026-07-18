@@ -23,7 +23,8 @@
       "Bash(mkdir -p \"c:/Users/DNBIT/Projects/enterprise-billing-app/app/\\(app\\)/customers/view/[id]\")",
       "Bash(git commit *)",
       "Bash(mkdir -p \"app/\\(app\\)/customers/manage/[id]\")",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/login)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/login)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\DNBIT\\Projects\\enterprise-billing-app\\app\\(app)\\customers\\view",
