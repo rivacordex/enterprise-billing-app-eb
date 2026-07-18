@@ -51,7 +51,7 @@ function row(overrides: {
 }
 
 describe("searchCustomers", () => {
-  it("empty query short-circuits with no repository call", async () => {
+  it("empty query short-circuits with no repository call and no config lookup", async () => {
     mockFindActiveValue.mockResolvedValue("5");
 
     const result = await searchCustomers("");
@@ -59,13 +59,14 @@ describe("searchCustomers", () => {
     expect(result).toEqual({
       results: [],
       hasMore: false,
-      limit: 5,
+      limit: DEFAULT_CUSTOMER_SEARCH_RESULT_LIMIT,
       query: "",
     });
     expect(mockSearch).not.toHaveBeenCalled();
+    expect(mockFindActiveValue).not.toHaveBeenCalled();
   });
 
-  it("whitespace-only query short-circuits with no repository call", async () => {
+  it("whitespace-only query short-circuits with no repository call and no config lookup", async () => {
     mockFindActiveValue.mockResolvedValue("5");
 
     const result = await searchCustomers("   ");
@@ -73,6 +74,7 @@ describe("searchCustomers", () => {
     expect(result.results).toEqual([]);
     expect(result.hasMore).toBe(false);
     expect(mockSearch).not.toHaveBeenCalled();
+    expect(mockFindActiveValue).not.toHaveBeenCalled();
   });
 
   describe("limit resolution", () => {

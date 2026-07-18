@@ -302,7 +302,10 @@ export function OrganizationForm({
       </FieldGroup>
 
       {conflict && (
-        <OptimisticLockConflictBanner onReload={() => router.refresh()} />
+        <OptimisticLockConflictBanner
+          entityLabel="organization"
+          onReload={() => router.refresh()}
+        />
       )}
 
       <Button

@@ -190,7 +190,12 @@ describe("customer module boundaries (cm16 ship-gate sweep)", () => {
     const seedSource = read("db/seeds/customer.ts");
     expect(seedSource).not.toMatch(/"DELETE"/);
 
-    const migrationSource = read("db/migrations/0009_customer.sql");
+    const migrationsDir = path.join(REPO_ROOT, "db", "migrations");
+    const migrationSource = fs
+      .readdirSync(migrationsDir)
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => read(`db/migrations/${name}`))
+      .join("\n");
     expect(migrationSource).not.toMatch(/'customers'[\s\S]{0,80}DELETE/i);
   });
 });

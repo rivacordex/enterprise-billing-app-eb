@@ -43,11 +43,17 @@ export async function searchCustomers(
   query: string,
 ): Promise<CustomerSearchResults> {
   const trimmed = query.trim();
-  const limit = await resolveLimit();
 
   if (trimmed.length === 0) {
-    return { results: [], hasMore: false, limit, query: "" };
+    return {
+      results: [],
+      hasMore: false,
+      limit: DEFAULT_CUSTOMER_SEARCH_RESULT_LIMIT,
+      query: "",
+    };
   }
+
+  const limit = await resolveLimit();
 
   const escaped = trimmed.replace(/[%_\\]/g, "\\$&");
   const pattern = `%${escaped}%`;

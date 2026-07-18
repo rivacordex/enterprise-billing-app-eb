@@ -136,4 +136,34 @@ describe("customer module audit-trail completeness (cm16 ship-gate sweep)", () =
       expect(AUDIT_EVENT_TYPES).toContain(eventType);
     }
   });
+
+  // Guards MUTATION_CASES itself — without this, a newly exported mutation
+  // wired to a new actions/customer/*.ts Server Action could silently ship
+  // with no audit-completeness coverage above. Each action imports exactly
+  // one service function as its mutation target (module boundaries
+  // guardrail's own convention), so that import is the authoritative,
+  // discoverable set to reconcile against the hand-maintained allowlist.
+  it("MUTATION_CASES covers exactly the mutation functions wired to actions/customer/*.ts", () => {
+    const actionsDir = path.join(REPO_ROOT, "actions", "customer");
+    const actionFiles = fs
+      .readdirSync(actionsDir)
+      .filter((name) => name.endsWith(".ts"));
+
+    const discovered = new Set(
+      actionFiles.flatMap((name) => {
+        const source = read(`actions/customer/${name}`);
+        return [
+          ...source.matchAll(
+            /import \{ (\w+) \} from "@\/services\/customer\/([\w-]+)"/g,
+          ),
+        ].map(([, fn, file]) => `services/customer/${file}.ts:${fn}`);
+      }),
+    );
+
+    const expected = new Set(
+      MUTATION_CASES.map(([file, fn]) => `${file}:${fn}`),
+    );
+
+    expect(discovered).toEqual(expected);
+  });
 });

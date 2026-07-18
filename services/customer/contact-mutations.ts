@@ -162,7 +162,9 @@ export async function updateContact(
     db,
     input.contactMediumId,
   );
-  if (before === null) return { ok: false, code: "CONTACT_NOT_FOUND" };
+  if (before === null || before.refPartyRole !== input.partyRoleId) {
+    return { ok: false, code: "CONTACT_NOT_FOUND" };
+  }
 
   const resolved = resolveUpdatedPreferredMethod(
     before.preferredContactMethod as PreferredContactMethod | null,
@@ -235,7 +237,9 @@ export async function deleteContact(
     db,
     input.contactMediumId,
   );
-  if (contact === null) return { ok: false, code: "CONTACT_NOT_FOUND" };
+  if (contact === null || contact.refPartyRole !== input.partyRoleId) {
+    return { ok: false, code: "CONTACT_NOT_FOUND" };
+  }
 
   const partyRole = await partyRoleRepository.findById(db, input.partyRoleId);
   if (partyRole?.contactMedium === input.contactMediumId) {

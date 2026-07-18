@@ -170,6 +170,51 @@ describe("ContactManagerPanel", () => {
     expect(refreshMock).toHaveBeenCalled();
   });
 
+  it("clears the reload-prompt banner and restores mutation controls once router.refresh() supplies a fresh lastModifiedDatetime", async () => {
+    mockAddContactAction.mockResolvedValueOnce({
+      ok: false,
+      code: "CONFLICT",
+    });
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={LOCK}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add contact" }));
+    await user.type(screen.getByLabelText("Name"), "Jane Doe");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText(
+      "This customer was changed by someone else. Reload to see the latest version.",
+    );
+
+    // Simulates the RSC re-render `router.refresh()` triggers: the page
+    // reloads `contacts` from the server and passes down a fresh timestamp.
+    rerender(
+      <ContactManagerPanel
+        partyRoleId="PTRL00000001"
+        contacts={[CONTACT_WITH_PREFERRED_PHONE]}
+        lastModifiedDatetime={new Date("2026-01-01T00:00:05.000Z")}
+      />,
+    );
+
+    expect(
+      screen.queryByText(
+        "This customer was changed by someone else. Reload to see the latest version.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: `Delete ${CONTACT_WITH_PREFERRED_PHONE.contactName}`,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("editing a contact and clearing its preferred method while another is populated shows the inline block message", async () => {
     mockUpdateContactAction.mockResolvedValueOnce({
       ok: false,

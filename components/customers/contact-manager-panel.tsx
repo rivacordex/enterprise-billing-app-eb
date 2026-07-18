@@ -166,12 +166,21 @@ function ContactFieldsFieldset({
           type="text"
           autoComplete="off"
           aria-invalid={!!errors.phoneNumber}
+          aria-describedby={
+            blocked?.field === "phoneNumber"
+              ? "phoneNumber-blocked-warning"
+              : undefined
+          }
           disabled={isSubmitting}
           {...register("phoneNumber", { setValueAs: emptyToNull })}
         />
         <FieldError errors={[errors.phoneNumber]} />
         {blocked?.field === "phoneNumber" && (
-          <p className="text-body-sm text-[color:var(--color-warning-700)]">
+          <p
+            id="phoneNumber-blocked-warning"
+            role="alert"
+            className="text-body-sm text-[color:var(--color-warning-700)]"
+          >
             {blocked.message}
           </p>
         )}
@@ -184,12 +193,21 @@ function ContactFieldsFieldset({
           type="text"
           autoComplete="off"
           aria-invalid={!!errors.emailAddress}
+          aria-describedby={
+            blocked?.field === "emailAddress"
+              ? "emailAddress-blocked-warning"
+              : undefined
+          }
           disabled={isSubmitting}
           {...register("emailAddress", { setValueAs: emptyToNull })}
         />
         <FieldError errors={[errors.emailAddress]} />
         {blocked?.field === "emailAddress" && (
-          <p className="text-body-sm text-[color:var(--color-warning-700)]">
+          <p
+            id="emailAddress-blocked-warning"
+            role="alert"
+            className="text-body-sm text-[color:var(--color-warning-700)]"
+          >
             {blocked.message}
           </p>
         )}
@@ -202,12 +220,21 @@ function ContactFieldsFieldset({
           type="text"
           autoComplete="off"
           aria-invalid={!!errors.addressLine1}
+          aria-describedby={
+            blocked?.field === "addressLine1"
+              ? "addressLine1-blocked-warning"
+              : undefined
+          }
           disabled={isSubmitting}
           {...register("addressLine1", { setValueAs: emptyToNull })}
         />
         <FieldError errors={[errors.addressLine1]} />
         {blocked?.field === "addressLine1" && (
-          <p className="text-body-sm text-[color:var(--color-warning-700)]">
+          <p
+            id="addressLine1-blocked-warning"
+            role="alert"
+            className="text-body-sm text-[color:var(--color-warning-700)]"
+          >
             {blocked.message}
           </p>
         )}
@@ -615,6 +642,11 @@ function DeleteContactDialog({
 
       toast.error("Something went wrong. Please try again.");
       onOpenChange(false);
+    } catch {
+      // A rejected `deleteContactAction` (e.g. a network failure) is
+      // otherwise an unhandled rejection with no user-facing feedback.
+      toast.error("Something went wrong. Please try again.");
+      onOpenChange(false);
     } finally {
       setIsDeleting(false);
     }
@@ -668,12 +700,26 @@ export function ContactManagerPanel({
   const [conflict, setConflict] = useState(false);
   const [currentLastModifiedDatetime, setCurrentLastModifiedDatetime] =
     useState(lastModifiedDatetime);
-  const [makingPreferredId, setMakingPreferredId] = useState<string | null>(
-    null,
-  );
-  const [makingMethodPreferredKey, setMakingMethodPreferredKey] = useState<
-    string | null
-  >(null);
+  // Shared by both reassignment handlers below (not one flag per mutation
+  // type) — they mutate the same party_role optimistic-lock resource, so
+  // letting a contact-level and a method-level reassignment run concurrently
+  // would race the same lock instead of just being two independent pending
+  // states.
+  const [isPreferenceMutationPending, setIsPreferenceMutationPending] =
+    useState(false);
+
+  // Adjust state during render (react.dev "you might not need an effect"),
+  // mirroring OrganizationForm/CustomerRoleForm: a CONFLICT's "Reload" calls
+  // `router.refresh()`, which re-renders this component with a fresh
+  // `lastModifiedDatetime` rather than remounting it, so the latched
+  // `conflict` and stale lock wouldn't otherwise clear on their own.
+  const [prevLastModifiedDatetime, setPrevLastModifiedDatetime] =
+    useState(lastModifiedDatetime);
+  if (lastModifiedDatetime.getTime() !== prevLastModifiedDatetime.getTime()) {
+    setPrevLastModifiedDatetime(lastModifiedDatetime);
+    setCurrentLastModifiedDatetime(lastModifiedDatetime);
+    setConflict(false);
+  }
 
   const {
     register,
@@ -704,7 +750,7 @@ export function ContactManagerPanel({
   // panel (not per-card) since only one reassignment can be in flight at a
   // time regardless of which card's button was clicked.
   async function handleMakePreferred(contactMediumId: string): Promise<void> {
-    setMakingPreferredId(contactMediumId);
+    setIsPreferenceMutationPending(true);
     try {
       const result = await setPreferredContactAction({
         contactMediumId,
@@ -725,23 +771,26 @@ export function ContactManagerPanel({
       }
 
       toast.error("Something went wrong. Please try again.");
+    } catch {
+      // A rejected `setPreferredContactAction` (e.g. a network failure) is
+      // otherwise an unhandled rejection with no user-facing feedback.
+      toast.error("Something went wrong. Please try again.");
     } finally {
-      setMakingPreferredId(null);
+      setIsPreferenceMutationPending(false);
     }
   }
 
   // The last of the module's nine mutation UIs (cm15-spec §3.5) — explicit
   // reassignment of a contact's preferred *method*, scoped to the method row
   // it sits in. Same low-stakes/reversible reasoning as `handleMakePreferred`
-  // (no confirm dialog); pending state is keyed per contact+method so one
-  // in-flight request doesn't misrepresent which button triggered it, but
-  // still disables every such button panel-wide while it resolves, matching
-  // `handleMakePreferred`'s convention.
+  // (no confirm dialog); shares `isPreferenceMutationPending` with
+  // `handleMakePreferred` so a contact-level and a method-level reassignment
+  // (both compare-and-bump the same party_role lock) can't run concurrently.
   async function handleMakeMethodPreferred(
     contactMediumId: string,
     method: PreferredContactMethod,
   ): Promise<void> {
-    setMakingMethodPreferredKey(`${contactMediumId}:${method}`);
+    setIsPreferenceMutationPending(true);
     try {
       const result = await setPreferredContactMethodAction({
         contactMediumId,
@@ -763,8 +812,13 @@ export function ContactManagerPanel({
       }
 
       toast.error("Something went wrong. Please try again.");
+    } catch {
+      // A rejected `setPreferredContactMethodAction` (e.g. a network
+      // failure) is otherwise an unhandled rejection with no user-facing
+      // feedback.
+      toast.error("Something went wrong. Please try again.");
     } finally {
-      setMakingMethodPreferredKey(null);
+      setIsPreferenceMutationPending(false);
     }
   }
 
@@ -846,7 +900,7 @@ export function ContactManagerPanel({
                     ? undefined
                     : () => void handleMakePreferred(contact.contactMediumId)
                 }
-                isMakingPreferred={makingPreferredId !== null}
+                isMakingPreferred={isPreferenceMutationPending}
                 onMakeMethodPreferred={
                   conflict
                     ? undefined
@@ -856,7 +910,7 @@ export function ContactManagerPanel({
                           method,
                         )
                 }
-                isMakingMethodPreferred={makingMethodPreferredKey !== null}
+                isMakingMethodPreferred={isPreferenceMutationPending}
               />
             ),
           )}
