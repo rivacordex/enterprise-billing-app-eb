@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import { setPreferredContact } from "@/services/customer/contact-mutations";
 import { setPreferredContactSchema } from "@/validation/customer/set-preferred-contact.schema";
 
@@ -30,8 +31,11 @@ export async function setPreferredContactAction(
       PERMISSIONS.CUSTOMERS,
       LEVELS.EDIT,
     ));
-  } catch {
-    return { ok: false, code: "FORBIDDEN" };
+  } catch (error) {
+    if (isRedirectError(error)) {
+      return { ok: false, code: "FORBIDDEN" };
+    }
+    throw error;
   }
 
   const parsed = setPreferredContactSchema.safeParse(rawInput);
