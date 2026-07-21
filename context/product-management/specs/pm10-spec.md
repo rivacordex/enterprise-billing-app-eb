@@ -32,7 +32,7 @@ Add to the `productOffering` table definition, alongside the existing columns (a
 
 ```ts
 familyOfferingId: text("family_offering_id").references(
-  () => productOffering.productOfferingId,
+  (): AnyPgColumn => productOffering.productOfferingId,
   { onDelete: "restrict" },
 ),
 ```
@@ -47,7 +47,7 @@ export const productOffering = product.table(
   {
     // ...existing columns...
     familyOfferingId: text("family_offering_id").references(
-      () => productOffering.productOfferingId,
+      (): AnyPgColumn => productOffering.productOfferingId,
       { onDelete: "restrict" },
     ),
   },
@@ -109,7 +109,7 @@ Read the actual generated file and confirm: (a) it's a plain `ALTER TABLE ADD CO
 **Build gates**
 - [ ] `npm run typecheck` green — `ProductOfferingInsert`/`ProductOffering` include `familyOfferingId: string | null` with no manual type edit.
 - [ ] `npm run lint` and `npm run format:check` green.
-- [ ] Existing Phase 1 tests (`tests/db/product-schema*.test.ts`, repository/service tests) still pass unmodified — this unit changes no behavior any existing test exercises, only adds a column nothing yet reads or writes.
+- [ ] `tests/db/product-schema*.test.ts` passes after intentionally updating `tests/db/product-schema.test.ts`'s exact-column assertion to include `family_offering_id`; existing repository/service tests still pass unmodified — this unit changes no behavior any of them exercises, only adds a column nothing yet reads or writes.
 
 **Docs in sync**
 - [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm10 entry with the commit reference, once this actually ships.

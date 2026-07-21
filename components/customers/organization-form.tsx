@@ -123,7 +123,7 @@ export function OrganizationForm({
       industry: organization.industry,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastModifiedDatetime]);
+  }, [lastModifiedDatetime.getTime()]);
 
   async function onSubmit(values: OrganizationFormOutput): Promise<void> {
     setIsSubmitting(true);
