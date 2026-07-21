@@ -18,7 +18,7 @@ Phase 2 (CRUD fast-follow) started: pm10 and pm11 implemented and verified.
 | pm08 | Prices panel (populated `PricesPanel`, `formatCurrency`)              | `9561d27` |
 | pm09 | Authz-matrix entry + guardrail sweep (ship gate)                      | `e94e565` |
 | pm10 | Schema: `family_offering_id` version-lineage column (Phase 2, unit 1) | `5884e76` |
-| pm11 | Backend: Create offering (`insertOffering`, `createOffering`) (Phase 2, unit 2) | not yet committed |
+| pm11 | Backend: Create offering (`insertOffering`, `createOffering`) (Phase 2, unit 2) | `a349a97` |
 
 **Renumbering note:** `pm02-spec.md` bundles DB foundation + `validation/product/` + seeds into one unit, superseding an earlier 3-way split. Numbers above match `pm00-build-plan.md`'s 9-unit count.
 
