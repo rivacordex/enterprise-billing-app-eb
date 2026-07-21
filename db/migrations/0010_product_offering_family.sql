@@ -1,0 +1,4 @@
+ALTER TABLE "product"."product_offering" ADD COLUMN "family_offering_id" text;--> statement-breakpoint
+ALTER TABLE "product"."product_offering" ADD CONSTRAINT "product_offering_family_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("family_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "product_offering_family_idx" ON "product"."product_offering" USING btree ("family_offering_id");--> statement-breakpoint
+ALTER TABLE "product"."product_offering" ADD CONSTRAINT "product_offering_family_not_self_check" CHECK (family_offering_id IS NULL OR family_offering_id <> product_offering_id);

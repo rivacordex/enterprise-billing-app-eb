@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   boolean,
   check,
   index,
@@ -36,30 +37,44 @@ export const productOfferingPriceSeq = product.sequence(
   { startWith: 1 },
 );
 
-export const productOffering = product.table("product_offering", {
-  productOfferingId: text("product_offering_id")
-    .primaryKey()
-    .default(
-      sql`'PRDOFR' || lpad(nextval('product.product_offering_seq')::text, 6, '0')`,
+export const productOffering = product.table(
+  "product_offering",
+  {
+    productOfferingId: text("product_offering_id")
+      .primaryKey()
+      .default(
+        sql`'PRDOFR' || lpad(nextval('product.product_offering_seq')::text, 6, '0')`,
+      ),
+    name: text("name").notNull(),
+    isBundle: boolean("is_bundle").notNull(),
+    isSellable: boolean("is_sellable").notNull(),
+    billingOnly: boolean("billing_only").notNull(),
+    lifecycleStatus: lifecycleStatus("lifecycle_status")
+      .notNull()
+      .default("DRAFT"),
+    version: integer("version").notNull().default(1),
+    lastModified: timestamp("last_modified", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .default(sql`now()`),
+    lastEditedBy: text("last_edited_by").references(() => appuser.id, {
+      onDelete: "set null",
+    }),
+    familyOfferingId: text("family_offering_id").references(
+      (): AnyPgColumn => productOffering.productOfferingId,
+      { onDelete: "restrict" },
     ),
-  name: text("name").notNull(),
-  isBundle: boolean("is_bundle").notNull(),
-  isSellable: boolean("is_sellable").notNull(),
-  billingOnly: boolean("billing_only").notNull(),
-  lifecycleStatus: lifecycleStatus("lifecycle_status")
-    .notNull()
-    .default("DRAFT"),
-  version: integer("version").notNull().default(1),
-  lastModified: timestamp("last_modified", {
-    withTimezone: true,
-    mode: "date",
-  })
-    .notNull()
-    .default(sql`now()`),
-  lastEditedBy: text("last_edited_by").references(() => appuser.id, {
-    onDelete: "set null",
-  }),
-});
+  },
+  (t) => [
+    index("product_offering_family_idx").on(t.familyOfferingId),
+    check(
+      "product_offering_family_not_self_check",
+      sql`family_offering_id IS NULL OR family_offering_id <> product_offering_id`,
+    ),
+  ],
+);
 
 export const productSpecifications = product.table(
   "product_specifications",

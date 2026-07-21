@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -78,15 +78,6 @@ export function OrganizationForm({
   const [currentLastModifiedDatetime, setCurrentLastModifiedDatetime] =
     useState(lastModifiedDatetime);
 
-  // Adjust state during render (react.dev "you might not need an effect")
-  // rather than in a `useEffect`: `router.refresh()` (the CONFLICT banner's
-  // "Reload") re-renders this component with a fresh `lastModifiedDatetime`
-  // from the server rather than remounting it, so the stale
-  // `conflict`/`currentLastModifiedDatetime` state wouldn't otherwise clear
-  // on its own.
-  const [prevLastModifiedDatetime, setPrevLastModifiedDatetime] =
-    useState(lastModifiedDatetime);
-
   const {
     register,
     handleSubmit,
@@ -108,8 +99,17 @@ export function OrganizationForm({
     },
   });
 
-  if (lastModifiedDatetime.getTime() !== prevLastModifiedDatetime.getTime()) {
-    setPrevLastModifiedDatetime(lastModifiedDatetime);
+  // Keeps the form in sync if `lastModifiedDatetime` changes while the page
+  // is open: `router.refresh()` (the CONFLICT banner's "Reload") re-renders
+  // this component with a fresh value from the server rather than
+  // remounting it, so the stale `conflict`/`currentLastModifiedDatetime`
+  // state and form values wouldn't otherwise clear on their own. Must run in
+  // an effect, not during render (mirrors `UserForm`/`RoleForm`'s edit-mode
+  // effect) — `reset()` updates `Controller`'s internal subscription state,
+  // and doing that synchronously while `OrganizationForm` itself is still
+  // rendering is exactly the "Cannot update a component while rendering a
+  // different component" violation React warns about.
+  useEffect(() => {
     setCurrentLastModifiedDatetime(lastModifiedDatetime);
     setConflict(false);
     reset({
@@ -122,7 +122,8 @@ export function OrganizationForm({
       taxId: organization.taxId,
       industry: organization.industry,
     });
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastModifiedDatetime]);
 
   async function onSubmit(values: OrganizationFormOutput): Promise<void> {
     setIsSubmitting(true);
@@ -302,7 +303,10 @@ export function OrganizationForm({
       </FieldGroup>
 
       {conflict && (
-        <OptimisticLockConflictBanner onReload={() => router.refresh()} />
+        <OptimisticLockConflictBanner
+          entityLabel="organization"
+          onReload={() => router.refresh()}
+        />
       )}
 
       <Button

@@ -15,6 +15,7 @@ vi.mock("@/db/repositories/contact-medium", () => ({
     insert: vi.fn(),
     update: vi.fn(),
     deleteById: vi.fn(),
+    updatePreferredMethod: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/party-role", () => ({
@@ -35,11 +36,15 @@ import {
   addContact,
   deleteContact,
   resolveUpdatedPreferredMethod,
+  setPreferredContact,
+  setPreferredContactMethod,
   updateContact,
 } from "@/services/customer/contact-mutations";
 import type { AddContactInput } from "@/validation/customer/add-contact.schema";
 import type { UpdateContactInput } from "@/validation/customer/update-contact.schema";
 import type { DeleteContactInput } from "@/validation/customer/delete-contact.schema";
+import type { SetPreferredContactInput } from "@/validation/customer/set-preferred-contact.schema";
+import type { SetPreferredContactMethodInput } from "@/validation/customer/set-preferred-contact-method.schema";
 
 const mockFindByPartyRoleId = vi.mocked(
   contactMediumRepository.findByPartyRoleId,
@@ -48,6 +53,9 @@ const mockInsert = vi.mocked(contactMediumRepository.insert);
 const mockFindContactById = vi.mocked(contactMediumRepository.findById);
 const mockUpdate = vi.mocked(contactMediumRepository.update);
 const mockDeleteById = vi.mocked(contactMediumRepository.deleteById);
+const mockUpdatePreferredMethod = vi.mocked(
+  contactMediumRepository.updatePreferredMethod,
+);
 const mockFindById = vi.mocked(partyRoleRepository.findById);
 const mockCompareAndBumpLock = vi.mocked(
   partyRoleRepository.compareAndBumpLock,
@@ -99,6 +107,19 @@ const DELETE_BASE_INPUT: DeleteContactInput = {
   lastModifiedDatetime: SUBMITTED_LOCK,
 };
 
+const SET_PREFERRED_BASE_INPUT: SetPreferredContactInput = {
+  contactMediumId: "CTMD00000002",
+  partyRoleId: "PTRL00000001",
+  lastModifiedDatetime: SUBMITTED_LOCK,
+};
+
+const SET_PREFERRED_METHOD_BASE_INPUT: SetPreferredContactMethodInput = {
+  contactMediumId: "CTMD00000001",
+  partyRoleId: "PTRL00000001",
+  targetMethod: "EMAIL",
+  lastModifiedDatetime: SUBMITTED_LOCK,
+};
+
 function buildInsertedContact(
   overrides: Partial<{
     contactMediumId: string;
@@ -135,6 +156,7 @@ beforeEach(() => {
   mockFindContactById.mockReset();
   mockUpdate.mockReset();
   mockDeleteById.mockReset();
+  mockUpdatePreferredMethod.mockReset();
   mockFindById.mockReset();
   mockCompareAndBumpLock.mockReset();
   mockSetPreferredContact.mockReset();
@@ -372,6 +394,19 @@ describe("updateContact", () => {
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
+  it("a contact belonging to a different party role returns CONTACT_NOT_FOUND before any lock check", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ refPartyRole: "PTRL00000099" } as never),
+    );
+
+    const result = await updateContact(UPDATE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
   it("a successful update audits CONTACT_UPDATED with before/after data", async () => {
     const before = buildInsertedContact({ preferredContactMethod: null });
     mockFindContactById.mockResolvedValue(before);
@@ -408,6 +443,22 @@ describe("deleteContact", () => {
     expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
     expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
     expect(mockDeleteById).not.toHaveBeenCalled();
+  });
+
+  it("a contact belonging to a different party role returns CONTACT_NOT_FOUND, no lock bump, update, or audit", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        contactMediumId: "CTMD00000001",
+        refPartyRole: "PTRL00000099",
+      } as never),
+    );
+
+    const result = await deleteContact(DELETE_BASE_INPUT, "actor-1");
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockDeleteById).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
   it("deleting the currently-preferred contact is blocked, no transaction opened, row still present", async () => {
@@ -484,5 +535,251 @@ describe("deleteContact", () => {
 
     expect(result.ok).toBe(true);
     expect(mockDeleteById).toHaveBeenCalledWith(txStub, "CTMD00000001");
+  });
+});
+
+describe("setPreferredContact", () => {
+  it("reassigning among two existing contacts moves the pointer and audits before/after data", async () => {
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000001",
+    } as never);
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ contactMediumId: "CTMD00000002" }),
+    );
+
+    const result = await setPreferredContact(
+      SET_PREFERRED_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(mockSetPreferredContact).toHaveBeenCalledWith(
+      txStub,
+      "PTRL00000001",
+      "CTMD00000002",
+    );
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "PREFERRED_CONTACT_CHANGED",
+        targetEntity: "PARTY_ROLE",
+        targetId: "PTRL00000001",
+        beforeData: { preferredContactId: "CTMD00000001" },
+        afterData: { preferredContactId: "CTMD00000002" },
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { lastModifiedDatetime: BUMPED_LOCK },
+    });
+  });
+
+  it("unknown partyRoleId returns PARTY_ROLE_NOT_FOUND before any lock check", async () => {
+    mockFindById.mockResolvedValue(null);
+
+    const result = await setPreferredContact(
+      SET_PREFERRED_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "PARTY_ROLE_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+  });
+
+  it("reassigning to a contact belonging to a different party role returns CONTACT_NOT_FOUND, no write", async () => {
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000001",
+    } as never);
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        contactMediumId: "CTMD00000002",
+        refPartyRole: "PTRL00000099",
+      } as never),
+    );
+
+    const result = await setPreferredContact(
+      SET_PREFERRED_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockSetPreferredContact).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("unknown contactMediumId returns CONTACT_NOT_FOUND before any lock check", async () => {
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000001",
+    } as never);
+    mockFindContactById.mockResolvedValue(null);
+
+    const result = await setPreferredContact(
+      SET_PREFERRED_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+  });
+
+  it("reassigning to the already-preferred contact still succeeds as a no-op-value write, bump and audit still happen", async () => {
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000002",
+    } as never);
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ contactMediumId: "CTMD00000002" }),
+    );
+
+    const result = await setPreferredContact(
+      SET_PREFERRED_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(mockSetPreferredContact).toHaveBeenCalledWith(
+      txStub,
+      "PTRL00000001",
+      "CTMD00000002",
+    );
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "PREFERRED_CONTACT_CHANGED",
+        beforeData: { preferredContactId: "CTMD00000002" },
+        afterData: { preferredContactId: "CTMD00000002" },
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { lastModifiedDatetime: BUMPED_LOCK },
+    });
+  });
+
+  it("stale lock returns CONFLICT with no pointer change or audit", async () => {
+    mockFindById.mockResolvedValue({
+      partyRoleId: "PTRL00000001",
+      contactMedium: "CTMD00000001",
+    } as never);
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ contactMediumId: "CTMD00000002" }),
+    );
+    mockCompareAndBumpLock.mockResolvedValue(null);
+
+    const result = await setPreferredContact(
+      SET_PREFERRED_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "CONFLICT" });
+    expect(mockSetPreferredContact).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("setPreferredContactMethod", () => {
+  it("switching between two populated methods succeeds and audits PREFERRED_METHOD_CHANGED", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        phoneNumber: "555-1000",
+        emailAddress: "j@example.com",
+        preferredContactMethod: "PHONE",
+      }),
+    );
+
+    const result = await setPreferredContactMethod(
+      SET_PREFERRED_METHOD_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(mockUpdatePreferredMethod).toHaveBeenCalledWith(
+      txStub,
+      "CTMD00000001",
+      "EMAIL",
+      "actor-1",
+    );
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "PREFERRED_METHOD_CHANGED",
+        targetEntity: "CONTACT_MEDIUM",
+        targetId: "CTMD00000001",
+        beforeData: { preferredContactMethod: "PHONE" },
+        afterData: { preferredContactMethod: "EMAIL" },
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { lastModifiedDatetime: BUMPED_LOCK },
+    });
+  });
+
+  it("targeting an unpopulated method returns METHOD_NOT_POPULATED before any transaction opens", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        phoneNumber: "555-1000",
+        emailAddress: null,
+        preferredContactMethod: "PHONE",
+      }),
+    );
+
+    const result = await setPreferredContactMethod(
+      SET_PREFERRED_METHOD_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "METHOD_NOT_POPULATED" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockUpdatePreferredMethod).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("unknown contactMediumId returns CONTACT_NOT_FOUND before any lock check", async () => {
+    mockFindContactById.mockResolvedValue(null);
+
+    const result = await setPreferredContactMethod(
+      SET_PREFERRED_METHOD_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+  });
+
+  it("targeting a contact belonging to a different party role returns CONTACT_NOT_FOUND, no write", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({
+        emailAddress: "j@example.com",
+        refPartyRole: "PTRL00000099",
+      } as never),
+    );
+
+    const result = await setPreferredContactMethod(
+      SET_PREFERRED_METHOD_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "CONTACT_NOT_FOUND" });
+    expect(mockCompareAndBumpLock).not.toHaveBeenCalled();
+    expect(mockUpdatePreferredMethod).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("stale lock returns CONFLICT with no update or audit", async () => {
+    mockFindContactById.mockResolvedValue(
+      buildInsertedContact({ emailAddress: "j@example.com" }),
+    );
+    mockCompareAndBumpLock.mockResolvedValue(null);
+
+    const result = await setPreferredContactMethod(
+      SET_PREFERRED_METHOD_BASE_INPUT,
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "CONFLICT" });
+    expect(mockUpdatePreferredMethod).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Mail, MapPin, Phone, Trash2 } from "lucide-react";
+import { Loader2, Mail, MapPin, Phone, Star, Trash2 } from "lucide-react";
 import {
   useForm,
   type FieldErrors,
@@ -14,6 +14,8 @@ import type { z } from "zod";
 
 import { addContactAction } from "@/actions/customer/add-contact";
 import { deleteContactAction } from "@/actions/customer/delete-contact";
+import { setPreferredContactAction } from "@/actions/customer/set-preferred-contact";
+import { setPreferredContactMethodAction } from "@/actions/customer/set-preferred-contact-method";
 import { updateContactAction } from "@/actions/customer/update-contact";
 import {
   AlertDialog,
@@ -66,6 +68,15 @@ const PREFERRED_METHOD_FIELD: Record<
   PHONE: "phoneNumber",
   EMAIL: "emailAddress",
   ADDRESS: "addressLine1",
+};
+
+// Lowercased method labels for the method-row "Make preferred" affordance's
+// `aria-label` (cm15-spec §3.5) — kept distinct from the contact-level
+// "Make preferred" button's accessible name (cm14) so the two never collide.
+const METHOD_LABEL: Record<PreferredContactMethod, string> = {
+  PHONE: "phone",
+  EMAIL: "email",
+  ADDRESS: "address",
 };
 
 function contactRowToFormValues(contact: ContactRow): ContactFormValues {
@@ -155,12 +166,21 @@ function ContactFieldsFieldset({
           type="text"
           autoComplete="off"
           aria-invalid={!!errors.phoneNumber}
+          aria-describedby={
+            blocked?.field === "phoneNumber"
+              ? "phoneNumber-blocked-warning"
+              : undefined
+          }
           disabled={isSubmitting}
           {...register("phoneNumber", { setValueAs: emptyToNull })}
         />
         <FieldError errors={[errors.phoneNumber]} />
         {blocked?.field === "phoneNumber" && (
-          <p className="text-body-sm text-[color:var(--color-warning-700)]">
+          <p
+            id="phoneNumber-blocked-warning"
+            role="alert"
+            className="text-body-sm text-[color:var(--color-warning-700)]"
+          >
             {blocked.message}
           </p>
         )}
@@ -173,12 +193,21 @@ function ContactFieldsFieldset({
           type="text"
           autoComplete="off"
           aria-invalid={!!errors.emailAddress}
+          aria-describedby={
+            blocked?.field === "emailAddress"
+              ? "emailAddress-blocked-warning"
+              : undefined
+          }
           disabled={isSubmitting}
           {...register("emailAddress", { setValueAs: emptyToNull })}
         />
         <FieldError errors={[errors.emailAddress]} />
         {blocked?.field === "emailAddress" && (
-          <p className="text-body-sm text-[color:var(--color-warning-700)]">
+          <p
+            id="emailAddress-blocked-warning"
+            role="alert"
+            className="text-body-sm text-[color:var(--color-warning-700)]"
+          >
             {blocked.message}
           </p>
         )}
@@ -191,12 +220,21 @@ function ContactFieldsFieldset({
           type="text"
           autoComplete="off"
           aria-invalid={!!errors.addressLine1}
+          aria-describedby={
+            blocked?.field === "addressLine1"
+              ? "addressLine1-blocked-warning"
+              : undefined
+          }
           disabled={isSubmitting}
           {...register("addressLine1", { setValueAs: emptyToNull })}
         />
         <FieldError errors={[errors.addressLine1]} />
         {blocked?.field === "addressLine1" && (
-          <p className="text-body-sm text-[color:var(--color-warning-700)]">
+          <p
+            id="addressLine1-blocked-warning"
+            role="alert"
+            className="text-body-sm text-[color:var(--color-warning-700)]"
+          >
             {blocked.message}
           </p>
         )}
@@ -281,10 +319,20 @@ function ContactCard({
   contact,
   onEdit,
   onDeleteRequest,
+  onMakePreferred,
+  isMakingPreferred,
+  onMakeMethodPreferred,
+  isMakingMethodPreferred,
 }: {
   contact: ContactRow;
   onEdit?: (() => void) | undefined;
   onDeleteRequest?: (() => void) | undefined;
+  onMakePreferred?: (() => void) | undefined;
+  isMakingPreferred?: boolean;
+  onMakeMethodPreferred?:
+    | ((method: PreferredContactMethod) => void)
+    | undefined;
+  isMakingMethodPreferred?: boolean;
 }): React.JSX.Element {
   const hasAnyMethod =
     contact.phoneNumber !== null ||
@@ -309,6 +357,18 @@ function ContactCard({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {onMakePreferred && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onMakePreferred}
+              disabled={isMakingPreferred}
+            >
+              <Star size={14} aria-hidden="true" />
+              Make preferred
+            </Button>
+          )}
           {onEdit && (
             <Button type="button" variant="outline" size="sm" onClick={onEdit}>
               Edit
@@ -349,8 +409,22 @@ function ContactCard({
             <div className="flex items-center gap-1.5 text-body-sm text-[color:var(--color-neutral-600)]">
               <Phone size={14} aria-hidden="true" />
               <span>{contact.phoneNumber}</span>
-              {contact.preferredMethod === "PHONE" && (
+              {contact.preferredMethod === "PHONE" ? (
                 <PreferredIndicator label="Preferred phone" />
+              ) : (
+                onMakeMethodPreferred && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Make ${METHOD_LABEL.PHONE} preferred`}
+                    onClick={() => onMakeMethodPreferred("PHONE")}
+                    disabled={isMakingMethodPreferred}
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    Make preferred
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -358,8 +432,22 @@ function ContactCard({
             <div className="flex items-center gap-1.5 text-body-sm text-[color:var(--color-neutral-600)]">
               <Mail size={14} aria-hidden="true" />
               <span>{contact.emailAddress}</span>
-              {contact.preferredMethod === "EMAIL" && (
+              {contact.preferredMethod === "EMAIL" ? (
                 <PreferredIndicator label="Preferred email" />
+              ) : (
+                onMakeMethodPreferred && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Make ${METHOD_LABEL.EMAIL} preferred`}
+                    onClick={() => onMakeMethodPreferred("EMAIL")}
+                    disabled={isMakingMethodPreferred}
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    Make preferred
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -371,8 +459,22 @@ function ContactCard({
                 aria-hidden="true"
               />
               {formatAddress(contact.address)}
-              {contact.preferredMethod === "ADDRESS" && (
+              {contact.preferredMethod === "ADDRESS" ? (
                 <PreferredIndicator label="Preferred address" />
+              ) : (
+                onMakeMethodPreferred && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Make ${METHOD_LABEL.ADDRESS} preferred`}
+                    onClick={() => onMakeMethodPreferred("ADDRESS")}
+                    disabled={isMakingMethodPreferred}
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    Make preferred
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -540,6 +642,11 @@ function DeleteContactDialog({
 
       toast.error("Something went wrong. Please try again.");
       onOpenChange(false);
+    } catch {
+      // A rejected `deleteContactAction` (e.g. a network failure) is
+      // otherwise an unhandled rejection with no user-facing feedback.
+      toast.error("Something went wrong. Please try again.");
+      onOpenChange(false);
     } finally {
       setIsDeleting(false);
     }
@@ -593,6 +700,26 @@ export function ContactManagerPanel({
   const [conflict, setConflict] = useState(false);
   const [currentLastModifiedDatetime, setCurrentLastModifiedDatetime] =
     useState(lastModifiedDatetime);
+  // Shared by both reassignment handlers below (not one flag per mutation
+  // type) — they mutate the same party_role optimistic-lock resource, so
+  // letting a contact-level and a method-level reassignment run concurrently
+  // would race the same lock instead of just being two independent pending
+  // states.
+  const [isPreferenceMutationPending, setIsPreferenceMutationPending] =
+    useState(false);
+
+  // Adjust state during render (react.dev "you might not need an effect"),
+  // mirroring OrganizationForm/CustomerRoleForm: a CONFLICT's "Reload" calls
+  // `router.refresh()`, which re-renders this component with a fresh
+  // `lastModifiedDatetime` rather than remounting it, so the latched
+  // `conflict` and stale lock wouldn't otherwise clear on their own.
+  const [prevLastModifiedDatetime, setPrevLastModifiedDatetime] =
+    useState(lastModifiedDatetime);
+  if (lastModifiedDatetime.getTime() !== prevLastModifiedDatetime.getTime()) {
+    setPrevLastModifiedDatetime(lastModifiedDatetime);
+    setCurrentLastModifiedDatetime(lastModifiedDatetime);
+    setConflict(false);
+  }
 
   const {
     register,
@@ -617,6 +744,83 @@ export function ContactManagerPanel({
 
   const deleteTargetContact =
     contacts.find((c) => c.contactMediumId === deleteTargetId) ?? null;
+
+  // The explicit reassignment path (cm14-spec §3.4) — reversible and
+  // low-stakes, unlike delete, so no confirm dialog. Setting is disabled per
+  // panel (not per-card) since only one reassignment can be in flight at a
+  // time regardless of which card's button was clicked.
+  async function handleMakePreferred(contactMediumId: string): Promise<void> {
+    setIsPreferenceMutationPending(true);
+    try {
+      const result = await setPreferredContactAction({
+        contactMediumId,
+        partyRoleId,
+        lastModifiedDatetime: currentLastModifiedDatetime,
+      });
+
+      if (result.ok) {
+        setCurrentLastModifiedDatetime(result.value.lastModifiedDatetime);
+        toast.success("Preferred contact updated.");
+        router.refresh();
+        return;
+      }
+
+      if (result.code === "CONFLICT") {
+        handleConflict();
+        return;
+      }
+
+      toast.error("Something went wrong. Please try again.");
+    } catch {
+      // A rejected `setPreferredContactAction` (e.g. a network failure) is
+      // otherwise an unhandled rejection with no user-facing feedback.
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsPreferenceMutationPending(false);
+    }
+  }
+
+  // The last of the module's nine mutation UIs (cm15-spec §3.5) — explicit
+  // reassignment of a contact's preferred *method*, scoped to the method row
+  // it sits in. Same low-stakes/reversible reasoning as `handleMakePreferred`
+  // (no confirm dialog); shares `isPreferenceMutationPending` with
+  // `handleMakePreferred` so a contact-level and a method-level reassignment
+  // (both compare-and-bump the same party_role lock) can't run concurrently.
+  async function handleMakeMethodPreferred(
+    contactMediumId: string,
+    method: PreferredContactMethod,
+  ): Promise<void> {
+    setIsPreferenceMutationPending(true);
+    try {
+      const result = await setPreferredContactMethodAction({
+        contactMediumId,
+        partyRoleId,
+        targetMethod: method,
+        lastModifiedDatetime: currentLastModifiedDatetime,
+      });
+
+      if (result.ok) {
+        setCurrentLastModifiedDatetime(result.value.lastModifiedDatetime);
+        toast.success("Preferred method updated.");
+        router.refresh();
+        return;
+      }
+
+      if (result.code === "CONFLICT") {
+        handleConflict();
+        return;
+      }
+
+      toast.error("Something went wrong. Please try again.");
+    } catch {
+      // A rejected `setPreferredContactMethodAction` (e.g. a network
+      // failure) is otherwise an unhandled rejection with no user-facing
+      // feedback.
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsPreferenceMutationPending(false);
+    }
+  }
 
   async function onSubmit(values: ContactFormOutput): Promise<void> {
     setIsSubmitting(true);
@@ -691,6 +895,22 @@ export function ContactManagerPanel({
                     ? undefined
                     : () => setDeleteTargetId(contact.contactMediumId)
                 }
+                onMakePreferred={
+                  conflict || contact.isPreferredContact
+                    ? undefined
+                    : () => void handleMakePreferred(contact.contactMediumId)
+                }
+                isMakingPreferred={isPreferenceMutationPending}
+                onMakeMethodPreferred={
+                  conflict
+                    ? undefined
+                    : (method) =>
+                        void handleMakeMethodPreferred(
+                          contact.contactMediumId,
+                          method,
+                        )
+                }
+                isMakingMethodPreferred={isPreferenceMutationPending}
               />
             ),
           )}

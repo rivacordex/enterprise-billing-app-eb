@@ -18,9 +18,9 @@
 -- Idempotent via `DO` blocks (Postgres has no `CREATE ROLE IF NOT EXISTS`,
 -- unlike `CREATE TABLE`/`CREATE INDEX`). Deliberately contains no password:
 -- see infra/docs/db-role-verification.md for the manual `ALTER ROLE ...
--- PASSWORD` follow-up (never committed to source control). `core` and
--- `product` are covered below; repeat the GRANT/REVOKE block for
--- `customer`/`billing`/`accounting` as those schemas ship.
+-- PASSWORD` follow-up (never committed to source control). `core`,
+-- `product`, and `customer` are covered below; repeat the GRANT/REVOKE
+-- block for `billing`/`accounting` as those schemas ship.
 --
 -- The statement-breakpoint marker lines below let `db/bootstrap/
 -- bootstrap-db-roles.ts` split the file into individual statements; they are
@@ -110,3 +110,27 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA "product" TO app_migrate;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT ALL ON TABLES TO app_migrate;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT ALL ON SEQUENCES TO app_migrate;
+--> statement-breakpoint
+-- `customer` schema (cm01+): same app_runtime/app_migrate split as
+-- `product` — organization/party_role/contact_medium ID columns default to
+-- nextval(...), so app_runtime needs USAGE on those sequences to satisfy
+-- plain INSERTs. No audit_log-style table exists here, so no extra REVOKE.
+GRANT USAGE ON SCHEMA "customer" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "customer" TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "customer" TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+--> statement-breakpoint
+GRANT ALL ON SCHEMA "customer" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL TABLES IN SCHEMA "customer" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL SEQUENCES IN SCHEMA "customer" TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON TABLES TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON SEQUENCES TO app_migrate;
