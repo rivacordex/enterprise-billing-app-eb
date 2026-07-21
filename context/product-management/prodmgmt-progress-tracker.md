@@ -2,7 +2,9 @@
 
 ## Status
 
-All 9 units implemented and committed. Module is ship-gate-verified (pm09) at the DB/test level; CI SAST/DAST baseline is a pipeline step outside this tooling.
+Phase 1 (all 9 units) implemented and committed. Module is ship-gate-verified (pm09) at the DB/test level; CI SAST/DAST baseline is a pipeline step outside this tooling.
+
+Phase 2 (CRUD fast-follow) started: pm10 implemented and verified, not yet committed.
 
 | Unit | Name                                                                 | Commit    |
 | ---- | --------------------------------------------------------------------- | --------- |
@@ -15,6 +17,7 @@ All 9 units implemented and committed. Module is ship-gate-verified (pm09) at th
 | pm07 | Specifications panel (populated `SpecificationsPanel`)                | `998ed1b` |
 | pm08 | Prices panel (populated `PricesPanel`, `formatCurrency`)              | `9561d27` |
 | pm09 | Authz-matrix entry + guardrail sweep (ship gate)                      | `e94e565` |
+| pm10 | Schema: `family_offering_id` version-lineage column (Phase 2, unit 1) | not yet committed |
 
 **Renumbering note:** `pm02-spec.md` bundles DB foundation + `validation/product/` + seeds into one unit, superseding an earlier 3-way split. Numbers above match `pm00-build-plan.md`'s 9-unit count.
 
@@ -50,6 +53,24 @@ All 9 units implemented and committed. Module is ship-gate-verified (pm09) at th
 
 **Post-ship deployment bug (2026-07-09, `d5f7148`)** — deployed ACA instance 500'd on `/products/product-offering` with `42501: permission denied for schema product`. Root cause: `db/bootstrap/bootstrap-db-roles.sql` (from User Management) only ever granted `app_runtime`/`app_migrate` privileges on `core`; its own header comment flagged `product`/`customer`/`billing`/`accounting` as follow-ups that never happened when `product` shipped. Fixed by appending a `product` schema GRANT/REVOKE block (plus sequence grants, since `product` has ID columns using `nextval()` unlike `core`). **Any future schema (`customer`, `billing`, `accounting`, ...) must add its own grant block to this file in the same change that adds its migration, or this recurs.**
 
+---
+
+## Phase 2 (CRUD Fast-Follow)
+
+**pm10 — Schema: `family_offering_id` version-lineage column.** `db/schema/product.ts`: added nullable, self-referencing `familyOfferingId` (`ON DELETE RESTRICT`) to `productOffering`, plus `product_offering_family_idx` and the `product_offering_family_not_self_check` CHECK guard, exactly as specced. Migration `0010_product_offering_family.sql` (schema-diff generated, not `--custom`), journal/snapshot regenerated. Diff hygiene confirmed: only `product.ts`, the new migration, and its meta files changed — `product_specifications`/`product_offering_price` byte-identical.
+
+Two implementation notes beyond the literal spec text:
+- **Self-referencing FK needed a type annotation Drizzle's inference can't derive on its own**: `text("family_offering_id").references(() => productOffering.productOfferingId, ...)` fails `tsc` with "implicitly has type 'any'" (circular initializer) — fixed per Drizzle's documented pattern by annotating the callback's return type: `(): AnyPgColumn => productOffering.productOfferingId`. Confirmed this is compile-time only (regenerating the migration afterward produced "No schema changes, nothing to migrate").
+- **FK constraint name is truncated by Postgres's 63-char identifier limit**, as the spec flagged as a possibility: `product_offering_family_offering_id_product_offering_product_offering_id_fk` (75 chars) → truncated to `product_offering_family_offering_id_product_offering_product_of`. Functionally fine; noting the actual name here per the spec's instruction, for any future code that needs to reference it explicitly (e.g. a targeted `DROP CONSTRAINT`).
+
+Verified against the running dev DB (`docker exec` + `psql`, not a throwaway DB — migration is additive `ALTER TABLE`, not the destructive integration-test reset path): `\d product.product_offering` shows the column/FK/CHECK/index exactly as specced; self-reference guard and FK-integrity both reject as expected; a hand-inserted root+branch pair round-trips through the `WHERE product_offering_id = :rootId OR family_offering_id = :rootId` lookup; both seeded Phase 1 offerings remain `family_offering_id IS NULL` post-migrate.
+
+**One in-scope test fix**: `tests/db/product-schema.test.ts`'s "exact snake_case column set" assertion for `product_offering` needed `family_offering_id` added to its expected list — the spec's "existing tests pass unmodified" claim didn't hold for this one test, since it enumerates the exact column set by design. `product_specifications`/`product_offering_price` sections untouched. All other Phase 1 tests (1411 total) pass unmodified.
+
+**Known unrelated pre-existing gap, not caused by or fixed in this unit**: `tests/guardrails/product-module-boundaries.test.ts`'s "has no actions/product/ folder" check currently fails — an empty, untracked `actions/product/` directory exists in the working tree that this unit did not create and does not touch (pm10 is schema-only; nothing in its diff goes near `actions/`). Flagged for the user rather than silently deleted, since its origin is unknown and pm10's scope doesn't cover it.
+
+**pm11 — Backend: Create offering — IN PROGRESS.**
+
 ## Per-unit specs
 
 | Unit | Spec file            | Summary                                                                                                                                                                                                                                                                  |
@@ -63,3 +84,4 @@ All 9 units implemented and committed. Module is ship-gate-verified (pm09) at th
 | pm07 | `specs/pm07-spec.md` | `CharacteristicChip` + `SpecificationsPanel` (new) — populated Specifications section. `offering-detail-region.tsx` edit (Specifications seam only). No backend or prior-unit UI change; no prices rendering; no authz-matrix entry. |
 | pm08 | `specs/pm08-spec.md` | `formatCurrency` (edit) + `PriceTypeBadge` + `TierTable` + `PricesPanel` (new) — populated Prices section. `offering-detail-region.tsx` edit (Prices seam only). No backend or prior-unit UI change; no authz-matrix entry. |
 | pm09 | `specs/pm09-spec.md` | `guard.integration.test.ts` edit (authz matrix) + `product-module-boundaries.test.ts` (new) — the module's ship gate: authz-matrix entry + 5-assertion negative-space sweep. Tests + CI only, no product code change; no doc edit needed. |
+| pm10 | `specs/pm10-spec.md` | `db/schema/product.ts` edit — nullable, self-referencing `family_offering_id` on `product_offering` + index + self-reference CHECK. Migration `0010_product_offering_family.sql` (schema-diff generated). Schema-only, first Phase 2 unit. No repository/service/type/UI code. |

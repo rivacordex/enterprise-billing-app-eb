@@ -24,6 +24,7 @@ describe("product.product_offering", () => {
         "version",
         "last_modified",
         "last_edited_by",
+        "family_offering_id",
       ].sort(),
     );
   });
