@@ -30,6 +30,7 @@ export const AUDIT_EVENT_TYPES = [
   "CONTACT_DELETED",
   "PREFERRED_CONTACT_CHANGED",
   "PREFERRED_METHOD_CHANGED",
+  "PRODUCT_OFFERING_CREATED",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

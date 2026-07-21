@@ -135,4 +135,26 @@ export const productOfferingRepository = {
       lastEditedByName: row.lastEditedByName ?? null,
     };
   },
+
+  async insertOffering(
+    tx: Database,
+    data: { name: string; isSellable: boolean; billingOnly: boolean },
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .insert(productOffering)
+      .values({
+        name: data.name,
+        isSellable: data.isSellable,
+        billingOnly: data.billingOnly,
+        isBundle: false, // hardcoded — never sourced from caller input, no exceptions (Design)
+        familyOfferingId: null, // this row is a family root
+        lifecycleStatus: "DRAFT",
+        version: 1,
+      })
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error("insertOffering: insert returned no row");
+    }
+    return { offeringId: row.offeringId };
+  },
 };

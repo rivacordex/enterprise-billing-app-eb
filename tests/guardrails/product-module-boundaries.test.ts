@@ -85,9 +85,20 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   // Inv. #7 / code-standards §1.3: reads are not audited. No product read
   // path (service, repository, page, or component) may import the audit
   // write path — the AUDIT_LOG table gains no row from viewing the catalog.
+  // Phase 2 (pm11+) adds write services under services/product/ that
+  // legitimately import the audit-write path (create/update/branch/activate/
+  // retire offerings, per prodmgmt-architecture-phase2 §5) — those are
+  // excluded by name so this guardrail keeps checking only the read services
+  // (list-offerings.ts, get-offering-detail.ts), not the whole directory.
+  const PRODUCT_WRITE_SERVICE_FILES = new Set(["create-offering.ts"]);
+
   it("no product read path imports the audit-log write path", () => {
-    const scanRoots = [
+    const productServiceFiles = collectFiles(
       path.join(REPO_ROOT, "services", "product"),
+    ).filter(
+      (filePath) => !PRODUCT_WRITE_SERVICE_FILES.has(path.basename(filePath)),
+    );
+    const scanRoots = [
       path.join(REPO_ROOT, "app", "(app)", "products"),
       path.join(REPO_ROOT, "components", "products"),
     ];
@@ -97,7 +108,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
 
     const filesToScan = scanRoots
       .flatMap(collectFiles)
-      .concat(productRepoFiles);
+      .concat(productServiceFiles, productRepoFiles);
     expect(filesToScan.length).toBeGreaterThan(0);
 
     const offending = filesToScan.filter((filePath) => {
