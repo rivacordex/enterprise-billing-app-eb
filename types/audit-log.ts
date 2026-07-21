@@ -21,6 +21,7 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   ORGANIZATION_CREATED: "Additive",
   CUSTOMER_CREATED: "Additive",
   CONTACT_CREATED: "Additive",
+  PRODUCT_OFFERING_CREATED: "Additive",
   USER_UPDATED: "Change",
   ROLE_UPDATED: "Change",
   ORGANIZATION_UPDATED: "Change",

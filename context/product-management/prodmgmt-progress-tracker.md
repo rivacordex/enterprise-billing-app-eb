@@ -4,7 +4,7 @@
 
 Phase 1 (all 9 units) implemented and committed. Module is ship-gate-verified (pm09) at the DB/test level; CI SAST/DAST baseline is a pipeline step outside this tooling.
 
-Phase 2 (CRUD fast-follow) started: pm10 implemented and verified, not yet committed.
+Phase 2 (CRUD fast-follow) started: pm10 and pm11 implemented and verified.
 
 | Unit | Name                                                                 | Commit    |
 | ---- | --------------------------------------------------------------------- | --------- |
@@ -17,7 +17,8 @@ Phase 2 (CRUD fast-follow) started: pm10 implemented and verified, not yet commi
 | pm07 | Specifications panel (populated `SpecificationsPanel`)                | `998ed1b` |
 | pm08 | Prices panel (populated `PricesPanel`, `formatCurrency`)              | `9561d27` |
 | pm09 | Authz-matrix entry + guardrail sweep (ship gate)                      | `e94e565` |
-| pm10 | Schema: `family_offering_id` version-lineage column (Phase 2, unit 1) | not yet committed |
+| pm10 | Schema: `family_offering_id` version-lineage column (Phase 2, unit 1) | `5884e76` |
+| pm11 | Backend: Create offering (`insertOffering`, `createOffering`) (Phase 2, unit 2) | `a349a97` |
 
 **Renumbering note:** `pm02-spec.md` bundles DB foundation + `validation/product/` + seeds into one unit, superseding an earlier 3-way split. Numbers above match `pm00-build-plan.md`'s 9-unit count.
 
@@ -69,7 +70,16 @@ Verified against the running dev DB (`docker exec` + `psql`, not a throwaway DB 
 
 **Known unrelated pre-existing gap, not caused by or fixed in this unit**: `tests/guardrails/product-module-boundaries.test.ts`'s "has no actions/product/ folder" check currently fails — an empty, untracked `actions/product/` directory exists in the working tree that this unit did not create and does not touch (pm10 is schema-only; nothing in its diff goes near `actions/`). Flagged for the user rather than silently deleted, since its origin is unknown and pm10's scope doesn't cover it.
 
-**pm11 — Backend: Create offering — IN PROGRESS.**
+**pm11 — Backend: Create offering.** Implemented exactly per `pm11-spec.md`: `validation/product/create-offering.schema.ts` (new — `name`/`isSellable`/`billingOnly` only, no `isBundle` key at all), `db/repositories/product-offering.ts` (edit — added `insertOffering`, `findList`/`findDetailById` untouched, `isBundle: false` and `familyOfferingId: null` hardcoded literals at the insert call site), `types/audit.ts` (edit — appended `"PRODUCT_OFFERING_CREATED"` as the last entry), `services/product/create-offering.ts` (new — `createOffering`, no pre-transaction uniqueness check, insert + audit row atomic in one `db.transaction`, mirrors `createRole`). No `actions/`, `components/`, or `app/` changes; no `next/*` import or `"use server"` directive in either new file.
+
+Three companion fixes were required for existing tests/types to stay green — none were in the spec's stated diff list, but each is a build-gate necessity, following the same "forced companion change, not scope creep" precedent as pm02's ESLint-boundary edit and pm10's `product-schema.test.ts` fix:
+- **`types/audit-log.ts`** — `AUDIT_EVENT_CATEGORY_MAP` is a `Record<AuditEventType, AuditEventCategory>`; adding an `AUDIT_EVENT_TYPES` entry without a matching map entry fails `tsc`. Added `PRODUCT_OFFERING_CREATED: "Additive"` (same category as `ROLE_CREATED`/`USER_CREATED`/`CONTACT_CREATED`). Matches `[[audit-event-type-addition-ripple]]`.
+- **`tests/components/audit-log-filters.test.tsx`** — the hardcoded "31 event types" / `toHaveLength(32)` assertions don't move with a new `AUDIT_EVENT_TYPES` entry (`tsc` doesn't catch this one, per the same memory). Bumped to 32/33, and added an explicit assertion that `PRODUCT_OFFERING_CREATED` renders under the "Additive" optgroup.
+- **`tests/db/product-repository-exports.test.ts`** and **`tests/guardrails/product-module-boundaries.test.ts`** — two pm09 ship-gate guardrails were written when `services/product/`and the product repositories were 100% read-only (Phase 1), and both blanket-forbade any mutation-shaped export/import under those paths. Phase 2's architecture doc explicitly relaxes this for the *offering* repository only (write methods are expected going forward; the price repository's zero-mutation rule stays permanent, Inv. #1) and expects write services under `services/product/` to legitimately import the audit-write path (Inv. #7 only ever covered *read* paths). Fixed both to whitelist by name rather than deleting the guardrail outright: the repository-exports test now forbids every mutation-shaped export except `insertOffering`; the boundary test now excludes `create-offering.ts` from the "no audit import" scan of `services/product/`, so it still fully protects the two read services (`list-offerings.ts`, `get-offering-detail.ts`). Both will need one more name added to their allow-lists per future write unit (pm12 branch, pm16 activate, pm17 retire, etc.) — flagged here so that's expected, not a surprise.
+
+**Resolved before commit:** the empty, untracked `actions/product/` directory both pm10 and pm11's first-pass note flagged (neither unit created it, origin never identified) was removed — it was fully empty, so deletion was lossless — and `tests/guardrails/product-module-boundaries.test.ts` now passes clean, including its "has no actions/product/ folder" assertion (pm11's own §5 boundary checklist requires exactly this).
+
+**Verification:** `tsc --noEmit`, `eslint .` (one pre-existing, unrelated error in `components/customers/organization-form.tsx` — not touched by this diff), and `prettier --check .` all clean. Full `npx vitest run`: 1412/1412 passing after the `actions/product/` removal above. **Live-DB backend-correctness checks (spec §5) completed** against the running dev DB (`db.transaction`-wrapped script via `tsx`, mirroring pm10's `docker exec`/`psql` approach, cleaned up after): confirmed a fake/non-existent `actorId` causes the audit insert to fail on its FK constraint *and* rolls back the offering insert (proving the transaction is atomic, not just structurally wrapped); confirmed a real actor id produces `{ ok: true, offeringId: 'PRDOFR######' }` with the row showing `familyOfferingId: null`, `version: 1`, `lifecycleStatus: 'DRAFT'`, `isBundle: false`, and exactly one matching `PRODUCT_OFFERING_CREATED` audit row with the three input fields in `afterData`. Concurrent-same-name and crafted-`isBundle`-input checks were not separately exercised (the type system already makes the latter unrepresentable per the spec's Design section) but the core insert/audit/atomicity path is now confirmed against a live database, not just reviewed by inspection.
 
 ## Per-unit specs
 
@@ -85,3 +95,4 @@ Verified against the running dev DB (`docker exec` + `psql`, not a throwaway DB 
 | pm08 | `specs/pm08-spec.md` | `formatCurrency` (edit) + `PriceTypeBadge` + `TierTable` + `PricesPanel` (new) — populated Prices section. `offering-detail-region.tsx` edit (Prices seam only). No backend or prior-unit UI change; no authz-matrix entry. |
 | pm09 | `specs/pm09-spec.md` | `guard.integration.test.ts` edit (authz matrix) + `product-module-boundaries.test.ts` (new) — the module's ship gate: authz-matrix entry + 5-assertion negative-space sweep. Tests + CI only, no product code change; no doc edit needed. |
 | pm10 | `specs/pm10-spec.md` | `db/schema/product.ts` edit — nullable, self-referencing `family_offering_id` on `product_offering` + index + self-reference CHECK. Migration `0010_product_offering_family.sql` (schema-diff generated). Schema-only, first Phase 2 unit. No repository/service/type/UI code. |
+| pm11 | `specs/pm11-spec.md` | Backend create path: `create-offering.schema.ts` (no `isBundle` field, ever), `insertOffering` repository method (hardcodes `isBundle: false`/`familyOfferingId: null`/`version: 1`/`DRAFT`), `createOffering` service (insert + `PRODUCT_OFFERING_CREATED` audit row, one transaction, no uniqueness pre-check). No Server Action, UI, or page — those are pm19. |
