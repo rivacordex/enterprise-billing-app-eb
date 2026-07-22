@@ -49,8 +49,11 @@ describe("product repository exports (structural)", () => {
     expect(forbidden).toEqual([]);
   });
 
-  it("productOfferingPriceRepository exports no mutation function (permanent for update/delete)", () => {
+  it("productOfferingPriceRepository exports no update*/delete* mutation function (insertPrice excepted, Phase 2 pm15)", () => {
     const names = Object.keys(productOfferingPriceRepository);
-    expect(names.some((n) => MUTATION_NAME_PATTERN.test(n))).toBe(false);
+    const forbidden = names.filter(
+      (n) => MUTATION_NAME_PATTERN.test(n) && n !== "insertPrice",
+    );
+    expect(forbidden).toEqual([]);
   });
 });
