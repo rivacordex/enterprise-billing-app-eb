@@ -56,42 +56,42 @@ export async function updateSpecification(
   input: UpdateSpecificationInput,
   actorId: string,
 ): Promise<UpdateSpecificationResult> {
-  const offering = await productOfferingRepository.findDetailById(
-    db,
-    offeringId,
-  );
-  if (!offering) {
-    return { ok: false, code: "OFFERING_NOT_FOUND" };
-  }
-  if (offering.lifecycleStatus === "RETIRED") {
-    return { ok: false, code: "OFFERING_RETIRED" };
-  }
-
-  const specs = await productSpecificationRepository.findByOfferingId(
-    db,
-    offeringId,
-  );
-  const current = specs.find((spec) => spec.productSpecId === specId);
-  if (!current) {
-    return { ok: false, code: "SPECIFICATION_NOT_FOUND" };
-  }
-
-  const before = {
-    name: current.name,
-    isMandatory: current.isMandatory,
-    isDefault: current.isDefault,
-    defaultValue: current.defaultValue,
-    productSpecCharacteristics: current.characteristics,
-  };
-  const after = {
-    name: input.name,
-    isMandatory: input.isMandatory,
-    isDefault: input.isDefault,
-    defaultValue: input.defaultValue,
-    productSpecCharacteristics: input.productSpecCharacteristics,
-  };
-
   return db.transaction(async (tx) => {
+    const offering = await productOfferingRepository.findDetailById(
+      tx,
+      offeringId,
+    );
+    if (!offering) {
+      return { ok: false, code: "OFFERING_NOT_FOUND" };
+    }
+    if (offering.lifecycleStatus === "RETIRED") {
+      return { ok: false, code: "OFFERING_RETIRED" };
+    }
+
+    const specs = await productSpecificationRepository.findByOfferingId(
+      tx,
+      offeringId,
+    );
+    const current = specs.find((spec) => spec.productSpecId === specId);
+    if (!current) {
+      return { ok: false, code: "SPECIFICATION_NOT_FOUND" };
+    }
+
+    const before = {
+      name: current.name,
+      isMandatory: current.isMandatory,
+      isDefault: current.isDefault,
+      defaultValue: current.defaultValue,
+      productSpecCharacteristics: current.characteristics,
+    };
+    const after = {
+      name: input.name,
+      isMandatory: input.isMandatory,
+      isDefault: input.isDefault,
+      defaultValue: input.defaultValue,
+      productSpecCharacteristics: input.productSpecCharacteristics,
+    };
+
     let targetOfferingId = offeringId;
     let targetSpecId = specId;
     let branched = false;
@@ -109,13 +109,18 @@ export async function updateSpecification(
       targetSpecId = findClonedCounterpart(current, clonedSpecs).productSpecId;
     }
 
-    await productSpecificationRepository.updateSpecification(tx, targetSpecId, {
-      name: input.name,
-      isMandatory: input.isMandatory,
-      isDefault: input.isDefault,
-      defaultValue: input.defaultValue,
-      productSpecCharacteristics: input.productSpecCharacteristics,
-    });
+    await productSpecificationRepository.updateSpecification(
+      tx,
+      targetSpecId,
+      targetOfferingId,
+      {
+        name: input.name,
+        isMandatory: input.isMandatory,
+        isDefault: input.isDefault,
+        defaultValue: input.defaultValue,
+        productSpecCharacteristics: input.productSpecCharacteristics,
+      },
+    );
 
     await insertAuditEvent(tx, {
       eventType: "PRODUCT_SPECIFICATION_UPDATED",

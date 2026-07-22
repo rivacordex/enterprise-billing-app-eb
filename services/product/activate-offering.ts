@@ -13,10 +13,13 @@ export type ActivateOfferingResult =
   | { ok: false; code: "SPECIFICATIONS_NOT_RESOLVED" };
 
 // pm16-spec §3.5. Preconditions are read ahead of the transaction (Design)
-// — a specification or price row disappearing between this check and the
-// commit is a disclosed, unlocked gap, unlike Inv. 13's single-active-per-
-// family invariant, which the transaction itself (via
-// productOfferingRepository.activateOffering) re-checks with a row lock.
+// for fast-path rejection (no transaction opened for an obviously-invalid
+// request). Price rows are insert-only in this codebase (Inv. #1 — the
+// price repository never gains update*/delete*), so NO_PRICE_ROWS can't
+// regress once true and needs no re-check. Specifications can be updated
+// or deleted (pm14), so the specification-resolved precondition IS
+// re-checked, locked, inside the transaction below — mirroring Inv. 13's
+// single-active-per-family re-check.
 export async function activateOffering(
   offeringId: string,
   input: ActivateOfferingInput,
@@ -58,6 +61,20 @@ export async function activateOffering(
   const transitionReason = input.reason || null;
 
   return db.transaction(async (tx) => {
+    const lockedSpecs =
+      await productSpecificationRepository.findByOfferingIdForUpdate(
+        tx,
+        offeringId,
+      );
+    const specificationsStillResolved =
+      lockedSpecs.length > 0 &&
+      lockedSpecs.every(
+        (spec) => !spec.isMandatory || spec.defaultValue !== null,
+      );
+    if (!specificationsStillResolved) {
+      return { ok: false, code: "SPECIFICATIONS_NOT_RESOLVED" };
+    }
+
     const { offeringId: activatedId, supersededOfferingId } =
       await productOfferingRepository.activateOffering(tx, offeringId);
 

@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { productSpecifications } from "@/db/schema/product";
@@ -29,6 +29,35 @@ export const productSpecificationRepository = {
         asc(productSpecifications.name),
         asc(productSpecifications.productSpecId),
       );
+
+    return rows;
+  },
+
+  // pm16-spec §3.5 (post-ship fix). Same shape as findByOfferingId, but
+  // FOR UPDATE — used only by activateOffering's transaction-time
+  // precondition re-check, to close the race where a mandatory
+  // specification's defaultValue is cleared (or the spec deleted) between
+  // the service's initial pre-transaction read and the activation write.
+  async findByOfferingIdForUpdate(
+    tx: Database,
+    productOfferingId: string,
+  ): Promise<SpecificationCard[]> {
+    const rows = await tx
+      .select({
+        productSpecId: productSpecifications.productSpecId,
+        name: productSpecifications.name,
+        isMandatory: productSpecifications.isMandatory,
+        isDefault: productSpecifications.isDefault,
+        defaultValue: productSpecifications.defaultValue,
+        characteristics: productSpecifications.productSpecCharacteristics,
+      })
+      .from(productSpecifications)
+      .where(eq(productSpecifications.refProductOfferingId, productOfferingId))
+      .orderBy(
+        asc(productSpecifications.name),
+        asc(productSpecifications.productSpecId),
+      )
+      .for("update");
 
     return rows;
   },
@@ -69,9 +98,13 @@ export const productSpecificationRepository = {
 
   // pm14-spec §3.3. `productSpecId` is guaranteed by the caller to belong
   // to a DRAFT offering (Design) — this method does not re-check status.
+  // `refProductOfferingId` is an extra defense-in-depth backstop (same
+  // shape as `updateOfferingDraftInPlace`'s status WHERE clause) — the
+  // caller already resolves productSpecId against this exact offering.
   async updateSpecification(
     tx: Database,
     productSpecId: string,
+    refProductOfferingId: string,
     data: {
       name: string;
       isMandatory: boolean;
@@ -89,11 +122,16 @@ export const productSpecificationRepository = {
         defaultValue: data.defaultValue,
         productSpecCharacteristics: data.productSpecCharacteristics,
       })
-      .where(eq(productSpecifications.productSpecId, productSpecId))
+      .where(
+        and(
+          eq(productSpecifications.productSpecId, productSpecId),
+          eq(productSpecifications.refProductOfferingId, refProductOfferingId),
+        ),
+      )
       .returning({ productSpecId: productSpecifications.productSpecId });
     if (!row) {
       throw new Error(
-        `updateSpecification: specification ${productSpecId} not found`,
+        `updateSpecification: specification ${productSpecId} not found on offering ${refProductOfferingId}`,
       );
     }
     return { productSpecId: row.productSpecId };
@@ -102,18 +140,25 @@ export const productSpecificationRepository = {
   // pm14-spec §3.3. Hard delete — this table's only delete method, ever
   // (project-overview-phase2: "Hard delete is available for a
   // specification, but only on a DRAFT row"). Caller-guaranteed DRAFT
-  // target, same as above.
+  // target, same as above. `refProductOfferingId` backstop, same rationale
+  // as updateSpecification above.
   async deleteSpecification(
     tx: Database,
     productSpecId: string,
+    refProductOfferingId: string,
   ): Promise<void> {
     const deleted = await tx
       .delete(productSpecifications)
-      .where(eq(productSpecifications.productSpecId, productSpecId))
+      .where(
+        and(
+          eq(productSpecifications.productSpecId, productSpecId),
+          eq(productSpecifications.refProductOfferingId, refProductOfferingId),
+        ),
+      )
       .returning({ productSpecId: productSpecifications.productSpecId });
     if (deleted.length === 0) {
       throw new Error(
-        `deleteSpecification: specification ${productSpecId} not found`,
+        `deleteSpecification: specification ${productSpecId} not found on offering ${refProductOfferingId}`,
       );
     }
   },

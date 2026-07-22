@@ -55,35 +55,35 @@ export async function deleteSpecification(
   offeringId: string,
   actorId: string,
 ): Promise<DeleteSpecificationResult> {
-  const offering = await productOfferingRepository.findDetailById(
-    db,
-    offeringId,
-  );
-  if (!offering) {
-    return { ok: false, code: "OFFERING_NOT_FOUND" };
-  }
-  if (offering.lifecycleStatus === "RETIRED") {
-    return { ok: false, code: "OFFERING_RETIRED" };
-  }
-
-  const specs = await productSpecificationRepository.findByOfferingId(
-    db,
-    offeringId,
-  );
-  const current = specs.find((spec) => spec.productSpecId === specId);
-  if (!current) {
-    return { ok: false, code: "SPECIFICATION_NOT_FOUND" };
-  }
-
-  const before = {
-    name: current.name,
-    isMandatory: current.isMandatory,
-    isDefault: current.isDefault,
-    defaultValue: current.defaultValue,
-    productSpecCharacteristics: current.characteristics,
-  };
-
   return db.transaction(async (tx) => {
+    const offering = await productOfferingRepository.findDetailById(
+      tx,
+      offeringId,
+    );
+    if (!offering) {
+      return { ok: false, code: "OFFERING_NOT_FOUND" };
+    }
+    if (offering.lifecycleStatus === "RETIRED") {
+      return { ok: false, code: "OFFERING_RETIRED" };
+    }
+
+    const specs = await productSpecificationRepository.findByOfferingId(
+      tx,
+      offeringId,
+    );
+    const current = specs.find((spec) => spec.productSpecId === specId);
+    if (!current) {
+      return { ok: false, code: "SPECIFICATION_NOT_FOUND" };
+    }
+
+    const before = {
+      name: current.name,
+      isMandatory: current.isMandatory,
+      isDefault: current.isDefault,
+      defaultValue: current.defaultValue,
+      productSpecCharacteristics: current.characteristics,
+    };
+
     let targetOfferingId = offeringId;
     let targetSpecId = specId;
     let branched = false;
@@ -101,7 +101,11 @@ export async function deleteSpecification(
       targetSpecId = findClonedCounterpart(current, clonedSpecs).productSpecId;
     }
 
-    await productSpecificationRepository.deleteSpecification(tx, targetSpecId);
+    await productSpecificationRepository.deleteSpecification(
+      tx,
+      targetSpecId,
+      targetOfferingId,
+    );
 
     await insertAuditEvent(tx, {
       eventType: "PRODUCT_SPECIFICATION_DELETED",

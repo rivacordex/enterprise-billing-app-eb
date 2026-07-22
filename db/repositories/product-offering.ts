@@ -71,10 +71,19 @@ function buildWhereClause(
 // `prodmgmt-architecture-phase2.md` §3: version = MAX(version) across the
 // resolved family + 1. `rootId` must already be resolved (one hop) by the
 // caller — this helper does not itself chase `family_offering_id`.
+//
+// `pg_advisory_xact_lock` serializes concurrent branches of the same
+// family: row-level locking can't help here (the contended row doesn't
+// exist yet — it's the *next* branch's insert), so a session/xact-scoped
+// advisory lock keyed on the family root is the mechanism that actually
+// prevents two concurrent callers from both computing the same MAX and
+// allocating the same version number. Auto-released at transaction end.
 async function resolveNextVersion(
   tx: Database,
   rootId: string,
 ): Promise<number> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${rootId}))`);
+
   const [row] = await tx
     .select({
       maxVersion: sql<number | null>`max(${productOffering.version})`,
@@ -333,6 +342,28 @@ export const productOfferingRepository = {
     }
 
     return { offeringId };
+  },
+
+  // pm16-spec §3.6 (post-ship fix). Single-row, no join (unlike
+  // findDetailById, so FOR UPDATE is legal here) — used only by
+  // retireOffering's transaction-time re-check, to close the race where
+  // the offering's status changes between the service's initial
+  // pre-transaction read and the retire write, which would otherwise
+  // produce a RETIRED/DISCARDED audit event that doesn't match what
+  // actually happened.
+  async findLifecycleStatusForUpdate(
+    tx: Database,
+    productOfferingId: string,
+  ): Promise<{ lifecycleStatus: LifecycleStatus } | null> {
+    const [row] = await tx
+      .select({ lifecycleStatus: productOffering.lifecycleStatus })
+      .from(productOffering)
+      .where(eq(productOffering.productOfferingId, productOfferingId))
+      .for("update")
+      .limit(1);
+    return row
+      ? { lifecycleStatus: row.lifecycleStatus as LifecycleStatus }
+      : null;
   },
 
   // pm16-spec §3.3. Locks every row belonging to the family — not just
