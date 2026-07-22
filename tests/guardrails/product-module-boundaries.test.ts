@@ -93,6 +93,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   const PRODUCT_WRITE_SERVICE_FILES = new Set([
     "create-offering.ts",
     "update-offering.ts",
+    "add-specification.ts",
+    "update-specification.ts",
+    "delete-specification.ts",
   ]);
 
   it("no product read path imports the audit-log write path", () => {
