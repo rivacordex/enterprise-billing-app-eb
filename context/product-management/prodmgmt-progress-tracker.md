@@ -4,7 +4,7 @@
 
 Phase 1 (all 9 units) implemented and committed. Module is ship-gate-verified (pm09) at the DB/test level; CI SAST/DAST baseline is a pipeline step outside this tooling.
 
-Phase 2 (CRUD fast-follow) started: pm10, pm11, and pm12 implemented and verified. pm13 implemented and verified (uncommitted).
+Phase 2 (CRUD fast-follow) started: pm10, pm11, pm12, and pm13 implemented, verified, and committed.
 
 | Unit | Name                                                                 | Commit    |
 | ---- | --------------------------------------------------------------------- | --------- |
@@ -20,7 +20,7 @@ Phase 2 (CRUD fast-follow) started: pm10, pm11, and pm12 implemented and verifie
 | pm10 | Schema: `family_offering_id` version-lineage column (Phase 2, unit 1) | `5884e76` |
 | pm11 | Backend: Create offering (`insertOffering`, `createOffering`) (Phase 2, unit 2) | `a349a97` |
 | pm12 | Backend: Branch-as-draft primitive (`branchOfferingAsDraft`) (Phase 2, unit 3) | `273a764` |
-| pm13 | Backend: Update offering (`updateOfferingDraftInPlace`, `updateOffering`) (Phase 2, unit 4) | in progress |
+| pm13 | Backend: Update offering (`updateOfferingDraftInPlace`, `updateOffering`) (Phase 2, unit 4) | `2b44f21` |
 
 **Renumbering note:** `pm02-spec.md` bundles DB foundation + `validation/product/` + seeds into one unit, superseding an earlier 3-way split. Numbers above match `pm00-build-plan.md`'s 9-unit count.
 
