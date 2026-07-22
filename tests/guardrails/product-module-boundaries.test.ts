@@ -90,7 +90,13 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   // retire offerings, per prodmgmt-architecture-phase2 §5) — those are
   // excluded by name so this guardrail keeps checking only the read services
   // (list-offerings.ts, get-offering-detail.ts), not the whole directory.
-  const PRODUCT_WRITE_SERVICE_FILES = new Set(["create-offering.ts"]);
+  const PRODUCT_WRITE_SERVICE_FILES = new Set([
+    "create-offering.ts",
+    "update-offering.ts",
+    "add-specification.ts",
+    "update-specification.ts",
+    "delete-specification.ts",
+  ]);
 
   it("no product read path imports the audit-log write path", () => {
     const productServiceFiles = collectFiles(
