@@ -27,12 +27,13 @@ const managerMap = permissionMap({ customers: "EDIT" });
 const userMap = permissionMap({ customers: "READ" });
 
 describe("AdminNav — expanded", () => {
-  it("shows the Products and Administration captions and all five labelled links", () => {
+  it("shows the Products and Administration captions and all six labelled links", () => {
     render(<AdminNav permissionMap={managerMap} />);
     expect(screen.getByText("Products")).toBeInTheDocument();
     expect(screen.getByText("Administration")).toBeInTheDocument();
     for (const label of [
-      "Product Offering",
+      "View Product",
+      "Manage Products",
       "Users",
       "Roles",
       "System Configuration",
@@ -40,9 +41,20 @@ describe("AdminNav — expanded", () => {
     ]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
+    expect(screen.getByRole("link", { name: "View Product" })).toHaveAttribute(
+      "href",
+      "/products/product-offering",
+    );
     expect(
-      screen.getByRole("link", { name: "Product Offering" }),
-    ).toHaveAttribute("href", "/products/product-offering");
+      screen.getByRole("link", { name: "Manage Products" }),
+    ).toHaveAttribute("href", "/products/manage-products");
+  });
+
+  it("renders Manage Products as a real, unlocked link even with no permissionMap prop at all", () => {
+    render(<AdminNav />);
+    const link = screen.getByRole("link", { name: "Manage Products" });
+    expect(link).toBeInTheDocument();
+    expect(link).not.toHaveAttribute("aria-disabled");
   });
 
   it("marks the active route with aria-current=page", () => {
@@ -81,14 +93,35 @@ describe("AdminNav — expanded, active state on product route", () => {
     mockPathname = "/administration/users";
   });
 
-  it("marks Product Offering active and Users inactive", () => {
+  it("marks View Product active and Users inactive", () => {
     render(<AdminNav permissionMap={managerMap} />);
-    expect(
-      screen.getByRole("link", { name: "Product Offering" }),
-    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "View Product" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(screen.getByRole("link", { name: "Users" })).not.toHaveAttribute(
       "aria-current",
     );
+  });
+});
+
+describe("AdminNav — active state on manage-products route", () => {
+  beforeEach(() => {
+    mockPathname = "/products/manage-products";
+  });
+
+  afterEach(() => {
+    mockPathname = "/administration/users";
+  });
+
+  it("marks Manage Products active and View Product inactive", () => {
+    render(<AdminNav permissionMap={managerMap} />);
+    expect(
+      screen.getByRole("link", { name: "Manage Products" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("link", { name: "View Product" }),
+    ).not.toHaveAttribute("aria-current");
   });
 });
 
@@ -99,10 +132,11 @@ describe("AdminNav — collapsed rail", () => {
     expect(screen.queryByText("Administration")).not.toBeInTheDocument();
   });
 
-  it("keeps all five links reachable with a title tooltip", () => {
+  it("keeps all six links reachable with a title tooltip", () => {
     render(<AdminNav collapsed permissionMap={managerMap} />);
     for (const label of [
-      "Product Offering",
+      "View Product",
+      "Manage Products",
       "Users",
       "Roles",
       "System Configuration",
