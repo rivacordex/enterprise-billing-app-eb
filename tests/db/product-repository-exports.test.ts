@@ -10,16 +10,22 @@ const MUTATION_NAME_PATTERN = /^(insert|create|update|delete|remove|set)/;
 // export finders only (Inv. #11). Phase 2 (pm11, prodmgmt-architecture-phase2
 // §2) explicitly relaxes this for the offering repository — it gains write
 // methods (`insertOffering`, and later branch/activate/retire) — so the
-// offering assertion below now whitelists `insertOffering` by name rather
-// than forbidding the whole mutation-name pattern outright. The price
+// offering assertion below now whitelists those names rather than
+// forbidding the whole mutation-name pattern outright. The price
 // repository's `update*`/`delete*` prohibition stays PERMANENT (Inv. #1) —
 // at CRUD time its pattern relaxes for `insert*` only (a new `insertPrice`),
 // never for update/delete on prices.
+const ALLOWED_OFFERING_MUTATIONS = new Set([
+  "insertOffering",
+  "updateOfferingDraftInPlace",
+]);
+
 describe("product repository exports (structural)", () => {
-  it("productOfferingRepository exports no update*/delete* mutation function (insertOffering excepted, Phase 2 pm11)", () => {
+  it("productOfferingRepository exports no update*/delete* mutation function (insertOffering, updateOfferingDraftInPlace excepted, Phase 2 pm11/pm13)", () => {
     const names = Object.keys(productOfferingRepository);
     const forbidden = names.filter(
-      (n) => MUTATION_NAME_PATTERN.test(n) && n !== "insertOffering",
+      (n) =>
+        MUTATION_NAME_PATTERN.test(n) && !ALLOWED_OFFERING_MUTATIONS.has(n),
     );
     expect(forbidden).toEqual([]);
   });

@@ -204,6 +204,45 @@ export const productOfferingRepository = {
     return { offeringId: row.offeringId };
   },
 
+  // pm13-spec §3.2. Valid only when the target row is currently DRAFT — the
+  // WHERE clause below is a defense-in-depth backstop (Design), not the
+  // primary check; the calling service already branches on status before
+  // ever reaching this method. Does not touch `version` (architecture-phase2
+  // §3: version is assigned once at insert and never changed afterward).
+  async updateOfferingDraftInPlace(
+    tx: Database,
+    draftId: string,
+    data: {
+      name: string;
+      isSellable: boolean;
+      billingOnly: boolean;
+      lastEditedBy: string;
+    },
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        name: data.name,
+        isSellable: data.isSellable,
+        billingOnly: data.billingOnly,
+        lastEditedBy: data.lastEditedBy,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, draftId),
+          eq(productOffering.lifecycleStatus, "DRAFT"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `updateOfferingDraftInPlace: offering ${draftId} not found or not DRAFT`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
   // pm12-spec §3.1. Clones `sourceOfferingId` plus every one of its
   // specification and price rows into a new DRAFT row in the same version
   // family. No audit write (Design) — the caller composes this inside its
