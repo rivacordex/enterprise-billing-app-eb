@@ -34,7 +34,7 @@ describe("AuditLogFilters", () => {
     expect(screen.queryByText("Clear")).not.toBeInTheDocument();
   });
 
-  it("renders all 32 event types under the correct optgroup", () => {
+  it("renders all 42 event types under the correct optgroup", () => {
     render(<AuditLogFilters actors={ACTORS} />);
     const select = screen.getByLabelText("Event type");
     const additive = within(select).getByRole("group", { name: "Additive" });
@@ -47,6 +47,18 @@ describe("AuditLogFilters", () => {
     expect(within(additive).getByText("CONTACT_CREATED")).toBeInTheDocument();
     expect(
       within(additive).getByText("PRODUCT_OFFERING_CREATED"),
+    ).toBeInTheDocument();
+    expect(
+      within(additive).getByText("PRODUCT_OFFERING_BRANCHED"),
+    ).toBeInTheDocument();
+    expect(
+      within(additive).getByText("PRODUCT_SPECIFICATION_CREATED"),
+    ).toBeInTheDocument();
+    expect(
+      within(additive).getByText("PRODUCT_PRICE_ADDED"),
+    ).toBeInTheDocument();
+    expect(
+      within(additive).getByText("PRODUCT_OFFERING_ACTIVATED"),
     ).toBeInTheDocument();
 
     const change = within(select).getByRole("group", { name: "Change" });
@@ -69,14 +81,32 @@ describe("AuditLogFilters", () => {
     expect(
       within(change).getByText("PREFERRED_METHOD_CHANGED"),
     ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_OFFERING_UPDATED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_SPECIFICATION_UPDATED"),
+    ).toBeInTheDocument();
 
     const removal = within(select).getByRole("group", { name: "Removal" });
     expect(within(removal).getByText("CONTACT_DELETED")).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_SPECIFICATION_DELETED"),
+    ).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_OFFERING_SUPERSEDED"),
+    ).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_OFFERING_RETIRED"),
+    ).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_OFFERING_DISCARDED"),
+    ).toBeInTheDocument();
 
     const security = within(select).getByRole("group", { name: "Security" });
     expect(within(security).getByText("USER_LOCKED")).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(33); // "All events" + 32
+    expect(within(select).getAllByRole("option")).toHaveLength(43); // "All events" + 42
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

@@ -16,7 +16,7 @@ import { offeringListSearchParamsSchema } from "@/validation/product/offering-li
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Product Offering — Enterprise Billing",
+  title: "View Product — Enterprise Billing",
 };
 
 function firstValue(value: string | string[] | undefined): string | undefined {
@@ -55,9 +55,7 @@ export default async function ProductOfferingPage({
   return (
     <main className="space-y-5 p-5">
       <header>
-        <h1 className="text-h1 font-semibold text-foreground">
-          Product Offering
-        </h1>
+        <h1 className="text-h1 font-semibold text-foreground">View Product</h1>
       </header>
 
       <Suspense>

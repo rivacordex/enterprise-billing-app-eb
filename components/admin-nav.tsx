@@ -7,6 +7,7 @@ import {
   Building2,
   Lock,
   Package,
+  PackagePlus,
   ScrollText,
   Settings,
   ShieldHalf,
@@ -30,6 +31,10 @@ import type { PermissionName, PermissionType } from "@/types/rbac";
 // `party_role`, not a person). `UserCog` for Manage Customer: the
 // administer-a-person-like-record glyph, distinct from `Settings`'s
 // gear-only meaning and from `Users` (already User Management's).
+// `PackagePlus` for Manage Products: same catalog/goods family as `Package`
+// (View Product), signaling the create/mutate capability the same way
+// `Building2`/`UserCog` stay in one semantic domain while remaining visually
+// distinct; no glyph collision with any existing nav or badge icon.
 type NavItem = {
   label: string;
   href: string;
@@ -45,9 +50,14 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     caption: "Products",
     items: [
       {
-        label: "Product Offering",
+        label: "View Product",
         href: "/products/product-offering",
         icon: Package,
+      },
+      {
+        label: "Manage Products",
+        href: "/products/manage-products",
+        icon: PackagePlus,
       },
     ],
   },

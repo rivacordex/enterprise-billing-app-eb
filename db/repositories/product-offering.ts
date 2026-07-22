@@ -1,8 +1,23 @@
-import { and, asc, count, desc, eq, ilike, ne, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  ilike,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
-import { productOffering } from "@/db/schema/product";
+import {
+  productOffering,
+  productOfferingPrice,
+  productSpecifications,
+} from "@/db/schema/product";
 import type { LifecycleStatus, OfferingListRow } from "@/types/product";
 import type { OFFERING_SORT_VALUES } from "@/validation/product/offering-list.schema";
 
@@ -26,6 +41,16 @@ const SORT_COLUMNS = {
   last_modified: productOffering.lastModified,
 } as const;
 
+// The only three offering fields a branch may override — deliberately has
+// no `isBundle` key (Design). pm13's `updateOfferingDraftInPlace` input
+// shares this same field set minus `saveAsNew`, which is a service-level
+// routing flag, not an offering column.
+export interface BranchOfferingOverrides {
+  name?: string;
+  isSellable?: boolean;
+  billingOnly?: boolean;
+}
+
 function buildWhereClause(
   q: string,
   status: LifecycleStatus | null,
@@ -41,6 +66,36 @@ function buildWhereClause(
       : eq(productOffering.lifecycleStatus, status),
   );
   return and(...conditions);
+}
+
+// `prodmgmt-architecture-phase2.md` §3: version = MAX(version) across the
+// resolved family + 1. `rootId` must already be resolved (one hop) by the
+// caller — this helper does not itself chase `family_offering_id`.
+//
+// `pg_advisory_xact_lock` serializes concurrent branches of the same
+// family: row-level locking can't help here (the contended row doesn't
+// exist yet — it's the *next* branch's insert), so a session/xact-scoped
+// advisory lock keyed on the family root is the mechanism that actually
+// prevents two concurrent callers from both computing the same MAX and
+// allocating the same version number. Auto-released at transaction end.
+async function resolveNextVersion(
+  tx: Database,
+  rootId: string,
+): Promise<number> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${rootId}))`);
+
+  const [row] = await tx
+    .select({
+      maxVersion: sql<number | null>`max(${productOffering.version})`,
+    })
+    .from(productOffering)
+    .where(
+      or(
+        eq(productOffering.productOfferingId, rootId),
+        eq(productOffering.familyOfferingId, rootId),
+      ),
+    );
+  return (row?.maxVersion ?? 0) + 1;
 }
 
 export const productOfferingRepository = {
@@ -154,6 +209,275 @@ export const productOfferingRepository = {
       .returning({ offeringId: productOffering.productOfferingId });
     if (!row) {
       throw new Error("insertOffering: insert returned no row");
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm13-spec §3.2. Valid only when the target row is currently DRAFT — the
+  // WHERE clause below is a defense-in-depth backstop (Design), not the
+  // primary check; the calling service already branches on status before
+  // ever reaching this method. Does not touch `version` (architecture-phase2
+  // §3: version is assigned once at insert and never changed afterward).
+  async updateOfferingDraftInPlace(
+    tx: Database,
+    draftId: string,
+    data: {
+      name: string;
+      isSellable: boolean;
+      billingOnly: boolean;
+      lastEditedBy: string;
+    },
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        name: data.name,
+        isSellable: data.isSellable,
+        billingOnly: data.billingOnly,
+        lastEditedBy: data.lastEditedBy,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, draftId),
+          eq(productOffering.lifecycleStatus, "DRAFT"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `updateOfferingDraftInPlace: offering ${draftId} not found or not DRAFT`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm12-spec §3.1. Clones `sourceOfferingId` plus every one of its
+  // specification and price rows into a new DRAFT row in the same version
+  // family. No audit write (Design) — the caller composes this inside its
+  // own `db.transaction` alongside its own audit entry.
+  async branchOfferingAsDraft(
+    tx: Database,
+    sourceOfferingId: string,
+    overrides?: BranchOfferingOverrides,
+  ): Promise<{ offeringId: string }> {
+    const [source] = await tx
+      .select()
+      .from(productOffering)
+      .where(eq(productOffering.productOfferingId, sourceOfferingId))
+      .limit(1);
+    if (!source) {
+      throw new Error(
+        `branchOfferingAsDraft: source offering ${sourceOfferingId} not found`,
+      );
+    }
+
+    // One-hop family resolution (architecture-phase2 §3): NULL means the
+    // source itself is the root.
+    const rootId = source.familyOfferingId ?? source.productOfferingId;
+    const nextVersion = await resolveNextVersion(tx, rootId);
+
+    const [branched] = await tx
+      .insert(productOffering)
+      .values({
+        name: overrides?.name ?? source.name,
+        // Copied unconditionally — never sourced from `overrides`, which has
+        // no `isBundle` key to read in the first place (Design).
+        isBundle: source.isBundle,
+        isSellable: overrides?.isSellable ?? source.isSellable,
+        billingOnly: overrides?.billingOnly ?? source.billingOnly,
+        lifecycleStatus: "DRAFT",
+        version: nextVersion,
+        familyOfferingId: rootId,
+        // lastModified / lastEditedBy intentionally omitted — fall through to
+        // column defaults, matching insertOffering's precedent (Design).
+      })
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!branched) {
+      throw new Error("branchOfferingAsDraft: insert returned no row");
+    }
+    const offeringId = branched.offeringId;
+
+    const sourceSpecs = await tx
+      .select()
+      .from(productSpecifications)
+      .where(eq(productSpecifications.refProductOfferingId, sourceOfferingId));
+    if (sourceSpecs.length > 0) {
+      await tx.insert(productSpecifications).values(
+        sourceSpecs.map((spec) => ({
+          refProductOfferingId: offeringId,
+          name: spec.name,
+          isMandatory: spec.isMandatory,
+          isDefault: spec.isDefault,
+          defaultValue: spec.defaultValue,
+          productSpecCharacteristics: spec.productSpecCharacteristics,
+        })),
+      );
+    }
+
+    const sourcePrices = await tx
+      .select()
+      .from(productOfferingPrice)
+      .where(eq(productOfferingPrice.productOfferingId, sourceOfferingId));
+    if (sourcePrices.length > 0) {
+      await tx.insert(productOfferingPrice).values(
+        sourcePrices.map((price) => ({
+          productOfferingId: offeringId,
+          name: price.name,
+          priceType: price.priceType,
+          recurringChargePeriodLength: price.recurringChargePeriodLength,
+          recurringChargePeriodType: price.recurringChargePeriodType,
+          unitOfMeasure: price.unitOfMeasure,
+          amount: price.amount,
+          currency: price.currency,
+          glCode: price.glCode,
+          pricingModel: price.pricingModel,
+          policy: price.policy,
+          pricingCharacteristics: price.pricingCharacteristics,
+          startDateTime: price.startDateTime,
+          // Copied, not defaulted — "byte-identical in content" (Design).
+          createdAt: price.createdAt,
+        })),
+      );
+    }
+
+    return { offeringId };
+  },
+
+  // pm16-spec §3.6 (post-ship fix). Single-row, no join (unlike
+  // findDetailById, so FOR UPDATE is legal here) — used only by
+  // retireOffering's transaction-time re-check, to close the race where
+  // the offering's status changes between the service's initial
+  // pre-transaction read and the retire write, which would otherwise
+  // produce a RETIRED/DISCARDED audit event that doesn't match what
+  // actually happened.
+  async findLifecycleStatusForUpdate(
+    tx: Database,
+    productOfferingId: string,
+  ): Promise<{ lifecycleStatus: LifecycleStatus } | null> {
+    const [row] = await tx
+      .select({ lifecycleStatus: productOffering.lifecycleStatus })
+      .from(productOffering)
+      .where(eq(productOffering.productOfferingId, productOfferingId))
+      .for("update")
+      .limit(1);
+    return row
+      ? { lifecycleStatus: row.lifecycleStatus as LifecycleStatus }
+      : null;
+  },
+
+  // pm16-spec §3.3. Locks every row belonging to the family — not just
+  // whichever one currently reads ACTIVE — because the row set this method
+  // locks must be fixed by immutable identity (id / family_offering_id), not
+  // by the mutable lifecycle_status column, for the FOR UPDATE re-check to
+  // actually serialize two concurrent activations on sibling drafts (Design;
+  // architecture-phase2 §6 Inv. 13). Returns the family's current ACTIVE
+  // member, if any, already locked for the caller's own transaction.
+  async findActiveInFamily(
+    tx: Database,
+    rootId: string,
+  ): Promise<{ offeringId: string } | null> {
+    const familyRows = await tx
+      .select({
+        offeringId: productOffering.productOfferingId,
+        lifecycleStatus: productOffering.lifecycleStatus,
+      })
+      .from(productOffering)
+      .where(
+        or(
+          eq(productOffering.productOfferingId, rootId),
+          eq(productOffering.familyOfferingId, rootId),
+        ),
+      )
+      .for("update");
+
+    const active = familyRows.find((row) => row.lifecycleStatus === "ACTIVE");
+    return active ? { offeringId: active.offeringId } : null;
+  },
+
+  // pm16-spec §3.3. Caller (services/product/activate-offering.ts) has
+  // already verified draftId is DRAFT and meets both activation
+  // preconditions before this is ever called (Design) — this method's own
+  // job is exactly the transactional single-active-per-family re-check
+  // (Inv. 13), not precondition enforcement. No actorId parameter —
+  // attribution is the caller's job (Design, mirroring branchOfferingAsDraft).
+  async activateOffering(
+    tx: Database,
+    draftId: string,
+  ): Promise<{ offeringId: string; supersededOfferingId: string | null }> {
+    const [draft] = await tx
+      .select({
+        productOfferingId: productOffering.productOfferingId,
+        familyOfferingId: productOffering.familyOfferingId,
+      })
+      .from(productOffering)
+      .where(eq(productOffering.productOfferingId, draftId))
+      .limit(1);
+    if (!draft) {
+      throw new Error(`activateOffering: offering ${draftId} not found`);
+    }
+
+    // One-hop family resolution (architecture-phase2 §3), duplicated from
+    // branchOfferingAsDraft's own inline resolution — pm12-spec's own
+    // prediction (Design).
+    const rootId = draft.familyOfferingId ?? draft.productOfferingId;
+
+    const activeSibling = await productOfferingRepository.findActiveInFamily(
+      tx,
+      rootId,
+    );
+
+    if (activeSibling) {
+      const retired = await tx
+        .update(productOffering)
+        .set({ lifecycleStatus: "RETIRED" })
+        .where(eq(productOffering.productOfferingId, activeSibling.offeringId))
+        .returning({ offeringId: productOffering.productOfferingId });
+      if (retired.length === 0) {
+        throw new Error(
+          `activateOffering: failed to retire sibling ${activeSibling.offeringId}`,
+        );
+      }
+    }
+
+    const [activated] = await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "ACTIVE" })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, draftId),
+          eq(productOffering.lifecycleStatus, "DRAFT"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!activated) {
+      throw new Error(
+        `activateOffering: offering ${draftId} not found or not DRAFT`,
+      );
+    }
+
+    return {
+      offeringId: activated.offeringId,
+      supersededOfferingId: activeSibling?.offeringId ?? null,
+    };
+  },
+
+  // pm16-spec §3.3. Unconditional — sets RETIRED regardless of the row's
+  // prior status (build plan's literal wording; code-standards-phase2 §1
+  // rule 11: "Do not fork this into two repository methods"). The
+  // already-RETIRED guard lives entirely in the calling service, ahead of
+  // the transaction (Design) — this method has no WHERE-status backstop.
+  async retireOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "RETIRED" })
+      .where(eq(productOffering.productOfferingId, offeringId))
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(`retireOffering: offering ${offeringId} not found`);
     }
     return { offeringId: row.offeringId };
   },
