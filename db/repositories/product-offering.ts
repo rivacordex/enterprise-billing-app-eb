@@ -334,4 +334,120 @@ export const productOfferingRepository = {
 
     return { offeringId };
   },
+
+  // pm16-spec §3.3. Locks every row belonging to the family — not just
+  // whichever one currently reads ACTIVE — because the row set this method
+  // locks must be fixed by immutable identity (id / family_offering_id), not
+  // by the mutable lifecycle_status column, for the FOR UPDATE re-check to
+  // actually serialize two concurrent activations on sibling drafts (Design;
+  // architecture-phase2 §6 Inv. 13). Returns the family's current ACTIVE
+  // member, if any, already locked for the caller's own transaction.
+  async findActiveInFamily(
+    tx: Database,
+    rootId: string,
+  ): Promise<{ offeringId: string } | null> {
+    const familyRows = await tx
+      .select({
+        offeringId: productOffering.productOfferingId,
+        lifecycleStatus: productOffering.lifecycleStatus,
+      })
+      .from(productOffering)
+      .where(
+        or(
+          eq(productOffering.productOfferingId, rootId),
+          eq(productOffering.familyOfferingId, rootId),
+        ),
+      )
+      .for("update");
+
+    const active = familyRows.find((row) => row.lifecycleStatus === "ACTIVE");
+    return active ? { offeringId: active.offeringId } : null;
+  },
+
+  // pm16-spec §3.3. Caller (services/product/activate-offering.ts) has
+  // already verified draftId is DRAFT and meets both activation
+  // preconditions before this is ever called (Design) — this method's own
+  // job is exactly the transactional single-active-per-family re-check
+  // (Inv. 13), not precondition enforcement. No actorId parameter —
+  // attribution is the caller's job (Design, mirroring branchOfferingAsDraft).
+  async activateOffering(
+    tx: Database,
+    draftId: string,
+  ): Promise<{ offeringId: string; supersededOfferingId: string | null }> {
+    const [draft] = await tx
+      .select({
+        productOfferingId: productOffering.productOfferingId,
+        familyOfferingId: productOffering.familyOfferingId,
+      })
+      .from(productOffering)
+      .where(eq(productOffering.productOfferingId, draftId))
+      .limit(1);
+    if (!draft) {
+      throw new Error(`activateOffering: offering ${draftId} not found`);
+    }
+
+    // One-hop family resolution (architecture-phase2 §3), duplicated from
+    // branchOfferingAsDraft's own inline resolution — pm12-spec's own
+    // prediction (Design).
+    const rootId = draft.familyOfferingId ?? draft.productOfferingId;
+
+    const activeSibling = await productOfferingRepository.findActiveInFamily(
+      tx,
+      rootId,
+    );
+
+    if (activeSibling) {
+      const retired = await tx
+        .update(productOffering)
+        .set({ lifecycleStatus: "RETIRED" })
+        .where(eq(productOffering.productOfferingId, activeSibling.offeringId))
+        .returning({ offeringId: productOffering.productOfferingId });
+      if (retired.length === 0) {
+        throw new Error(
+          `activateOffering: failed to retire sibling ${activeSibling.offeringId}`,
+        );
+      }
+    }
+
+    const [activated] = await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "ACTIVE" })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, draftId),
+          eq(productOffering.lifecycleStatus, "DRAFT"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!activated) {
+      throw new Error(
+        `activateOffering: offering ${draftId} not found or not DRAFT`,
+      );
+    }
+
+    return {
+      offeringId: activated.offeringId,
+      supersededOfferingId: activeSibling?.offeringId ?? null,
+    };
+  },
+
+  // pm16-spec §3.3. Unconditional — sets RETIRED regardless of the row's
+  // prior status (build plan's literal wording; code-standards-phase2 §1
+  // rule 11: "Do not fork this into two repository methods"). The
+  // already-RETIRED guard lives entirely in the calling service, ahead of
+  // the transaction (Design) — this method has no WHERE-status backstop.
+  async retireOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "RETIRED" })
+      .where(eq(productOffering.productOfferingId, offeringId))
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(`retireOffering: offering ${offeringId} not found`);
+    }
+    return { offeringId: row.offeringId };
+  },
 };
