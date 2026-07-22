@@ -3,6 +3,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { productOfferingPrice } from "@/db/schema/product";
 import type { PriceCard, PriceType, PricingModel } from "@/types/product";
+import type { TieredPricingCharacteristics } from "@/validation/product/pricing-characteristics.schema";
 
 // The `LEAD` window column comes back as a JS `Date` in practice (the
 // underlying PG type is still `timestamptz`), but this normalizes any
@@ -66,5 +67,58 @@ export const productOfferingPriceRepository = {
       pricingModel: row.pricingModel as PricingModel,
       endDateTime: toDateOrNull(row.endDateTime),
     }));
+  },
+
+  // pm15-spec §3.2. The only write this repository will ever gain (Inv. #1,
+  // permanent) — no update*/delete*, ever. `productOfferingId` is supplied by
+  // the caller — the service already knows whether that's the original DRAFT
+  // offering or a freshly branched clone (Design, mirroring pm14's
+  // insertSpecification). No status backstop here: this table has no
+  // lifecycle_status column of its own, and "target is always DRAFT" is a
+  // caller guarantee (build plan's own wording, §pm15 header).
+  async insertPrice(
+    tx: Database,
+    data: {
+      productOfferingId: string;
+      name: string;
+      priceType: PriceType;
+      currency: string;
+      glCode: string | null;
+      pricingModel: PricingModel;
+      amount: string | null;
+      pricingCharacteristics: TieredPricingCharacteristics | null;
+      startDateTime: Date;
+    },
+  ): Promise<{ productOfferingPriceId: string }> {
+    const [row] = await tx
+      .insert(productOfferingPrice)
+      .values({
+        productOfferingId: data.productOfferingId,
+        name: data.name,
+        priceType: data.priceType,
+        // Not yet user-settable in this phase (Design, field-scope note) —
+        // columns stay nullable and untouched, matching Phase 1's own shape.
+        recurringChargePeriodLength: null,
+        recurringChargePeriodType: null,
+        unitOfMeasure: null,
+        amount: data.amount,
+        currency: data.currency,
+        glCode: data.glCode,
+        pricingModel: data.pricingModel,
+        policy: null,
+        pricingCharacteristics: data.pricingCharacteristics,
+        startDateTime: data.startDateTime,
+        // `productOfferingPriceId` and `createdAt` both absent — fall through
+        // to their column defaults (fresh PRDOFP… id, `now()`), the same
+        // "omitted, not merely coincidentally unset" discipline insertOffering
+        // used for its own auto-generated id.
+      })
+      .returning({
+        productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
+      });
+    if (!row) {
+      throw new Error("insertPrice: insert returned no row");
+    }
+    return { productOfferingPriceId: row.productOfferingPriceId };
   },
 };

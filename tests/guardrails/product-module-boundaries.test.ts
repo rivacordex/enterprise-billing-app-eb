@@ -96,6 +96,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "add-specification.ts",
     "update-specification.ts",
     "delete-specification.ts",
+    "insert-price.ts",
   ]);
 
   it("no product read path imports the audit-log write path", () => {
