@@ -32,20 +32,10 @@ export async function insertPrice(
   actorId: string,
   now: Date = new Date(),
 ): Promise<InsertPriceResult> {
-  const offering = await productOfferingRepository.findDetailById(
-    db,
-    offeringId,
-  );
-  if (!offering) {
-    return { ok: false, code: "OFFERING_NOT_FOUND" };
-  }
-  if (offering.lifecycleStatus === "RETIRED") {
-    return { ok: false, code: "OFFERING_RETIRED" };
-  }
-
   // Authoritative backdating check (Design) — against this call's own
   // `now`, not whatever `Date.now()` returned when the schema's superRefine
-  // ran at parse time.
+  // ran at parse time. Checked ahead of the transaction (no offering read
+  // needed) so an out-of-tolerance request never opens one.
   const msSinceStart = now.getTime() - input.startDateTime.getTime();
   const backdated = msSinceStart > 0;
   if (msSinceStart > THREE_DAYS_MS) {
@@ -64,6 +54,20 @@ export async function insertPrice(
   };
 
   return db.transaction(async (tx) => {
+    // Re-fetched through tx, immediately before the branch decision (post-
+    // ship fix) — a pre-transaction read via `db` would let the offering's
+    // lifecycleStatus go stale between this read and the write below.
+    const offering = await productOfferingRepository.findDetailById(
+      tx,
+      offeringId,
+    );
+    if (!offering) {
+      return { ok: false, code: "OFFERING_NOT_FOUND" };
+    }
+    if (offering.lifecycleStatus === "RETIRED") {
+      return { ok: false, code: "OFFERING_RETIRED" };
+    }
+
     let targetOfferingId = offeringId;
     let branched = false;
 

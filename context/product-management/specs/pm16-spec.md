@@ -345,6 +345,8 @@ export async function activateOffering(
 
 `transitionReason` uses `input.reason || null` (not `??`) specifically so a submitted-but-empty string (`""` — a valid, non-`.min(1)`-constrained value per §3.1) collapses to the same `null` as an omitted key, rather than persisting an empty string into the audit payload as if it were a meaningfully distinct value from "no reason given." `PRODUCT_OFFERING_SUPERSEDED`'s payload carries no `transitionReason` key at all (Design) — only `PRODUCT_OFFERING_ACTIVATED`'s does. `targetEntity: "PRODUCT_OFFERING"` matches every prior offering-scoped event's convention (pm11/pm13).
 
+**Post-ship review fix (2026-07-22):** `NO_PRICE_ROWS`'s precondition read (line 284 above) stays a one-time, pre-transaction check — prices are insert-only in this codebase (Inv. #1), so that result can't regress. `SPECIFICATIONS_NOT_RESOLVED`'s precondition, however, is re-checked, locked, inside the transaction (via `productSpecificationRepository.findByOfferingIdForUpdate`, a `FOR UPDATE` variant of `findByOfferingId`), immediately before `productOfferingRepository.activateOffering` is called — specifications can be updated or deleted (pm14) between the pre-transaction read above and this write, unlike prices.
+
 ### 3.6 Service — `services/product/retire-offering.ts` (new)
 
 ```ts
@@ -362,10 +364,15 @@ export type RetireOfferingResult =
   | { ok: false; code: "OFFERING_NOT_FOUND" }
   | { ok: false; code: "OFFERING_RETIRED" };
 
-// pm16-spec §3.6. One repository call, two possible audit event types,
-// chosen from the offering's status as read before the transaction opens
-// (Design; code-standards-phase2 §1 rule 11) — "Retire" for a source that
-// was ACTIVE, "Discard" for a source that was DRAFT.
+// pm16-spec §3.6. One repository call, two possible audit event types —
+// "Retire" for a source that was ACTIVE, "Discard" for a source that was
+// DRAFT. The initial read below is for fast-path NOT_FOUND rejection only
+// (offerings are never hard-deleted, so that result can't go stale); the
+// status itself is locked and re-read inside the transaction, immediately
+// before eventType is derived and the write happens, since
+// `productOfferingRepository.retireOffering` has no status WHERE-backstop
+// of its own (code-standards-phase2 §1 rule 11) and status can change
+// (e.g. a concurrent activation) between the initial read and this write.
 export async function retireOffering(
   offeringId: string,
   input: RetireOfferingInput,
@@ -382,13 +389,25 @@ export async function retireOffering(
     return { ok: false, code: "OFFERING_RETIRED" };
   }
 
-  const eventType =
-    offering.lifecycleStatus === "ACTIVE"
-      ? "PRODUCT_OFFERING_RETIRED"
-      : "PRODUCT_OFFERING_DISCARDED";
   const transitionReason = input.reason || null;
 
   return db.transaction(async (tx) => {
+    const locked = await productOfferingRepository.findLifecycleStatusForUpdate(
+      tx,
+      offeringId,
+    );
+    if (!locked) {
+      return { ok: false, code: "OFFERING_NOT_FOUND" };
+    }
+    if (locked.lifecycleStatus === "RETIRED") {
+      return { ok: false, code: "OFFERING_RETIRED" };
+    }
+
+    const eventType =
+      locked.lifecycleStatus === "ACTIVE"
+        ? "PRODUCT_OFFERING_RETIRED"
+        : "PRODUCT_OFFERING_DISCARDED";
+
     const { offeringId: retiredId } =
       await productOfferingRepository.retireOffering(tx, offeringId);
 
@@ -397,7 +416,7 @@ export async function retireOffering(
       actorUserId: actorId,
       targetEntity: "PRODUCT_OFFERING",
       targetId: retiredId,
-      beforeData: { lifecycleStatus: offering.lifecycleStatus },
+      beforeData: { lifecycleStatus: locked.lifecycleStatus },
       afterData: {
         lifecycleStatus: "RETIRED",
         transitionReason,
@@ -409,7 +428,9 @@ export async function retireOffering(
 }
 ```
 
-Same `input.reason || null` collapsing as `activate-offering.ts` (§3.5). `eventType` is computed once, ahead of the transaction, from the same `findDetailById` read that already produced the not-found/already-retired checks — no second read needed, mirroring pm13/14/15's "no new repository read method, reuse what's already been fetched" precedent.
+Same `input.reason || null` collapsing as `activate-offering.ts` (§3.5).
+
+**Post-ship review fix (2026-07-22):** the original shipped version computed `eventType` once, ahead of the transaction, from the same `findDetailById` read that produced the not-found/already-retired checks — a TOCTOU window, since status can change (e.g. a concurrent `activateOffering` call) between that read and this write, and `retireOffering`'s repository method has no status backstop of its own. Fixed by adding `productOfferingRepository.findLifecycleStatusForUpdate` (single-row, `FOR UPDATE`, no join — unlike `findDetailById`, so locking is legal here) and calling it inside the transaction, immediately before `eventType` is derived and the write happens. An already-RETIRED result from the locked re-read now aborts the transaction with `OFFERING_RETIRED` instead of proceeding on stale data.
 
 ### 3.7 Guardrail test — `tests/guardrails/product-module-boundaries.test.ts` (edit — extend `PRODUCT_WRITE_SERVICE_FILES` only)
 

@@ -17,18 +17,18 @@ export async function addSpecification(
   input: CreateSpecificationInput,
   actorId: string,
 ): Promise<AddSpecificationResult> {
-  const offering = await productOfferingRepository.findDetailById(
-    db,
-    offeringId,
-  );
-  if (!offering) {
-    return { ok: false, code: "OFFERING_NOT_FOUND" };
-  }
-  if (offering.lifecycleStatus === "RETIRED") {
-    return { ok: false, code: "OFFERING_RETIRED" };
-  }
-
   return db.transaction(async (tx) => {
+    const offering = await productOfferingRepository.findDetailById(
+      tx,
+      offeringId,
+    );
+    if (!offering) {
+      return { ok: false, code: "OFFERING_NOT_FOUND" };
+    }
+    if (offering.lifecycleStatus === "RETIRED") {
+      return { ok: false, code: "OFFERING_RETIRED" };
+    }
+
     let targetOfferingId = offeringId;
     let branched = false;
 

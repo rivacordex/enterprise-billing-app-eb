@@ -4,7 +4,8 @@ import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { productSpecificationRepository } from "@/db/repositories/product-specification";
 
-const MUTATION_NAME_PATTERN = /^(insert|create|update|delete|remove|set)/;
+const MUTATION_NAME_PATTERN =
+  /^(insert|create|update|delete|remove|set|branch)/;
 
 // Structural no-mutation assert (pm00 / pm03-spec §3.8). v1 repositories
 // export finders only (Inv. #11). Phase 2 (pm11, prodmgmt-architecture-phase2
@@ -18,6 +19,7 @@ const MUTATION_NAME_PATTERN = /^(insert|create|update|delete|remove|set)/;
 const ALLOWED_OFFERING_MUTATIONS = new Set([
   "insertOffering",
   "updateOfferingDraftInPlace",
+  "branchOfferingAsDraft",
 ]);
 
 // pm14: the specification repository gains its own write methods
@@ -30,7 +32,7 @@ const ALLOWED_SPECIFICATION_MUTATIONS = new Set([
 ]);
 
 describe("product repository exports (structural)", () => {
-  it("productOfferingRepository exports no update*/delete* mutation function (insertOffering, updateOfferingDraftInPlace excepted, Phase 2 pm11/pm13)", () => {
+  it("productOfferingRepository exports no update*/delete* mutation function (insertOffering, updateOfferingDraftInPlace, branchOfferingAsDraft excepted, Phase 2 pm11/pm12/pm13)", () => {
     const names = Object.keys(productOfferingRepository);
     const forbidden = names.filter(
       (n) =>

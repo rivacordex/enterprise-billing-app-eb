@@ -12,10 +12,15 @@ export type RetireOfferingResult =
   | { ok: false; code: "OFFERING_NOT_FOUND" }
   | { ok: false; code: "OFFERING_RETIRED" };
 
-// pm16-spec §3.6. One repository call, two possible audit event types,
-// chosen from the offering's status as read before the transaction opens
-// (Design; code-standards-phase2 §1 rule 11) — "Retire" for a source that
-// was ACTIVE, "Discard" for a source that was DRAFT.
+// pm16-spec §3.6. One repository call, two possible audit event types —
+// "Retire" for a source that was ACTIVE, "Discard" for a source that was
+// DRAFT. The initial read below is for fast-path NOT_FOUND rejection only
+// (offerings are never hard-deleted, so that result can't go stale); the
+// status itself is locked and re-read inside the transaction, immediately
+// before eventType is derived and the write happens, since
+// `productOfferingRepository.retireOffering` has no status WHERE-backstop
+// of its own (code-standards-phase2 §1 rule 11) and status can change
+// (e.g. a concurrent activation) between the initial read and this write.
 export async function retireOffering(
   offeringId: string,
   input: RetireOfferingInput,
@@ -32,13 +37,25 @@ export async function retireOffering(
     return { ok: false, code: "OFFERING_RETIRED" };
   }
 
-  const eventType =
-    offering.lifecycleStatus === "ACTIVE"
-      ? "PRODUCT_OFFERING_RETIRED"
-      : "PRODUCT_OFFERING_DISCARDED";
   const transitionReason = input.reason || null;
 
   return db.transaction(async (tx) => {
+    const locked = await productOfferingRepository.findLifecycleStatusForUpdate(
+      tx,
+      offeringId,
+    );
+    if (!locked) {
+      return { ok: false, code: "OFFERING_NOT_FOUND" };
+    }
+    if (locked.lifecycleStatus === "RETIRED") {
+      return { ok: false, code: "OFFERING_RETIRED" };
+    }
+
+    const eventType =
+      locked.lifecycleStatus === "ACTIVE"
+        ? "PRODUCT_OFFERING_RETIRED"
+        : "PRODUCT_OFFERING_DISCARDED";
+
     const { offeringId: retiredId } =
       await productOfferingRepository.retireOffering(tx, offeringId);
 
@@ -47,7 +64,7 @@ export async function retireOffering(
       actorUserId: actorId,
       targetEntity: "PRODUCT_OFFERING",
       targetId: retiredId,
-      beforeData: { lifecycleStatus: offering.lifecycleStatus },
+      beforeData: { lifecycleStatus: locked.lifecycleStatus },
       afterData: {
         lifecycleStatus: "RETIRED",
         transitionReason,
