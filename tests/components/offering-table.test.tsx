@@ -23,6 +23,7 @@ const ROWS: OfferingListRow[] = [
     version: 2,
     isSellable: true,
     lastModified: new Date("2026-01-15T10:00:00.000Z"),
+    familyOfferingId: null,
   },
   {
     productOfferingId: "PRDOFR000002",
@@ -31,6 +32,7 @@ const ROWS: OfferingListRow[] = [
     version: 1,
     isSellable: false,
     lastModified: new Date("2026-02-01T10:00:00.000Z"),
+    familyOfferingId: null,
   },
   {
     productOfferingId: "PRDOFR000003",
@@ -39,6 +41,7 @@ const ROWS: OfferingListRow[] = [
     version: 3,
     isSellable: false,
     lastModified: new Date("2026-03-01T10:00:00.000Z"),
+    familyOfferingId: null,
   },
 ];
 

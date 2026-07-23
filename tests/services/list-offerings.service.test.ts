@@ -100,6 +100,7 @@ describe("listOfferings", () => {
         version: 1,
         isSellable: true,
         lastModified: new Date("2026-01-01T00:00:00Z"),
+        familyOfferingId: null,
       },
     ];
     mockFindList.mockResolvedValue({ rows, total: 42 });
