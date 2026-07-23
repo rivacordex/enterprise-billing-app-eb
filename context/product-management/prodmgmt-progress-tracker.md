@@ -4,7 +4,7 @@
 
 Phase 1 (all 9 units) implemented and committed. Module is ship-gate-verified (pm09) at the DB/test level; CI SAST/DAST baseline is a pipeline step outside this tooling.
 
-Phase 2 (CRUD fast-follow) in progress: pm10–pm17 implemented, locally verified via local tests and live-DB checks, and committed. pm18 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm18 note). pm19 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm19 note). pm20 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm20 note). pm21 implemented, verified via local tests and build only (no live-DB fixture walkthrough — see pm21 note), not yet committed.
+Phase 2 (CRUD fast-follow) in progress: pm10–pm17 implemented, locally verified via local tests and live-DB checks, and committed. pm18 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm18 note). pm19 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm19 note). pm20 and pm21 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm20/pm21 notes).
 
 | Unit | Name                                                                 | Commit    |
 | ---- | --------------------------------------------------------------------- | --------- |
@@ -28,7 +28,7 @@ Phase 2 (CRUD fast-follow) in progress: pm10–pm17 implemented, locally verifie
 | pm18 | Manage Products page shell (Phase 2, unit 9)                           | `403c8c1` |
 | pm19 | UI: Create Offering (Phase 2, unit 10)                                 | `4586a02` |
 | pm20 | UI: Edit Offering (Phase 2, unit 11)                                    | `8855f0e` |
-| pm21 | UI: Specification Management (Phase 2, unit 12)                        | _implemented, not yet committed_ |
+| pm21 | UI: Specification Management (Phase 2, unit 12)                        | `e93ae24` |
 
 **Renumbering note:** `pm02-spec.md` bundles DB foundation + `validation/product/` + seeds into one unit, superseding an earlier 3-way split. Numbers above match `pm00-build-plan.md`'s 9-unit count.
 
