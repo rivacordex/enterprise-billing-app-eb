@@ -10,6 +10,9 @@ vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/product/list-offerings", () => ({
   listOfferings: vi.fn(),
 }));
+vi.mock("@/services/product/get-offering-detail", () => ({
+  getOfferingDetail: vi.fn(),
+}));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
   getAppLocale: vi.fn().mockResolvedValue("en-US"),
@@ -22,10 +25,12 @@ import ManageProductsPage from "@/app/(app)/products/manage-products/page";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
+import { getOfferingDetail } from "@/services/product/get-offering-detail";
 import { listOfferings } from "@/services/product/list-offerings";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockListOfferings = vi.mocked(listOfferings);
+const mockGetOfferingDetail = vi.mocked(getOfferingDetail);
 
 // The page is a Server Component: calling it directly returns a React
 // element tree without ever invoking child component functions, so we find
@@ -86,8 +91,10 @@ function emptyPage(): OfferingListPage {
 beforeEach(() => {
   mockRequirePermission.mockReset();
   mockListOfferings.mockReset();
+  mockGetOfferingDetail.mockReset();
   vi.mocked(ManageOfferingTable).mockClear();
   mockListOfferings.mockResolvedValue(emptyPage());
+  mockGetOfferingDetail.mockResolvedValue(null);
   mockRequirePermission.mockResolvedValue({
     userId: "admin-1",
     userEmail: "admin@example.com",

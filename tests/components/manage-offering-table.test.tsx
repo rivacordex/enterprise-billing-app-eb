@@ -15,6 +15,18 @@ vi.mock("@/actions/product/update-offering.action", () => ({
   updateOfferingAction: vi.fn(),
 }));
 
+vi.mock("@/actions/product/create-specification.action", () => ({
+  createSpecificationAction: vi.fn(),
+}));
+
+vi.mock("@/actions/product/update-specification.action", () => ({
+  updateSpecificationAction: vi.fn(),
+}));
+
+vi.mock("@/actions/product/delete-specification.action", () => ({
+  deleteSpecificationAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -23,7 +35,11 @@ import { toast } from "sonner";
 
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
 import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
-import type { OfferingFamilyRow, OfferingListRow } from "@/types/product";
+import type {
+  OfferingFamilyRow,
+  OfferingListRow,
+  SpecificationCard,
+} from "@/types/product";
 
 const mockUpdateOfferingAction = vi.mocked(updateOfferingAction);
 const mockToastSuccess = vi.mocked(toast.success);
@@ -46,7 +62,11 @@ function singleFamily(row: OfferingListRow): OfferingFamilyRow {
   return { familyId: row.productOfferingId, primary: row, versions: [row] };
 }
 
-const DEFAULT_PROPS = { locale: "en-US", timezone: "UTC" };
+const DEFAULT_PROPS = {
+  locale: "en-US",
+  timezone: "UTC",
+  specificationsByOfferingId: {},
+};
 
 beforeEach(() => {
   mockRefresh.mockReset();
@@ -224,22 +244,30 @@ describe("ManageOfferingTable", () => {
     const cta = screen.getByRole("button", { name: "New offering" });
     expect(cta).toBeInTheDocument();
 
-    // Row-action seams (Add price/Activate/Discard/Retire) remain real seams
-    // for pm21–pm23 — clicking them still produces no dialog and no
-    // observable DOM change. Edit is excluded from this loop as of pm20: it
-    // now opens a real dialog (covered by the "Edit offering" suite below).
+    // Row-action seams (Add price/Activate/Discard) remain real seams for
+    // pm22–pm23 — clicking them still produces no dialog and no observable
+    // DOM change. Edit is excluded from this loop as of pm20, and
+    // Specifications as of pm21: both now open real dialogs (covered by the
+    // "Edit offering" and "Specifications" suites below).
     const editButton = screen.getByRole("button", {
       name: "Edit Seam Offering",
     });
+    const specsButton = screen.getByRole("button", {
+      name: "Manage specifications for Seam Offering",
+    });
     const rowActionButtons = screen
       .getAllByRole("button")
-      .filter((button) => button !== cta && button !== editButton);
+      .filter(
+        (button) =>
+          button !== cta && button !== editButton && button !== specsButton,
+      );
     for (const button of rowActionButtons) {
       await user.click(button);
     }
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(editButton).toBeInTheDocument();
+    expect(specsButton).toBeInTheDocument();
   });
 
   it("clicking the 'New offering' CTA opens CreateOfferingDialog (pm19-spec §3.5)", async () => {
@@ -499,6 +527,141 @@ describe("ManageOfferingTable", () => {
 
       expect(mockUpdateOfferingAction).not.toHaveBeenCalled();
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Specifications (pm21-spec §3.11)", () => {
+    function makeSpec(
+      overrides: Partial<SpecificationCard>,
+    ): SpecificationCard {
+      return {
+        productSpecId: "PRDSPC000001",
+        name: "Color",
+        isMandatory: false,
+        isDefault: false,
+        defaultValue: null,
+        characteristics: {},
+        ...overrides,
+      };
+    }
+
+    it("no Specifications button renders on a RETIRED row", () => {
+      const retired = makeRow({
+        productOfferingId: "PRDOFR000017",
+        name: "Retired Specs Row",
+        lifecycleStatus: "RETIRED",
+      });
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(retired)]}
+        />,
+      );
+
+      expect(
+        screen.queryByRole("button", {
+          name: "Manage specifications for Retired Specs Row",
+        }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("clicking Specifications on a DRAFT row opens SpecificationsDialog titled 'Specifications — <name>'", async () => {
+      const draft = makeRow({
+        productOfferingId: "PRDOFR000018",
+        name: "Specs Draft Row",
+        lifecycleStatus: "DRAFT",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(draft)]}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", {
+          name: "Manage specifications for Specs Draft Row",
+        }),
+      );
+
+      expect(
+        screen.getByRole("heading", {
+          name: "Specifications — Specs Draft Row",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking Specifications on an ACTIVE row opens the same dialog", async () => {
+      const active = makeRow({
+        productOfferingId: "PRDOFR000019",
+        name: "Specs Active Row",
+        lifecycleStatus: "ACTIVE",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(active)]}
+          specificationsByOfferingId={{
+            PRDOFR000019: [makeSpec({ name: "Color" })],
+          }}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", {
+          name: "Manage specifications for Specs Active Row",
+        }),
+      );
+
+      expect(
+        screen.getByRole("heading", {
+          name: "Specifications — Specs Active Row",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Color")).toBeInTheDocument();
+    });
+
+    it("opens Specifications from an expanded sibling row too", async () => {
+      const primary = makeRow({
+        productOfferingId: "PRDOFR000020",
+        name: "Specs Family",
+        familyOfferingId: null,
+        version: 2,
+        lifecycleStatus: "ACTIVE",
+      });
+      const sibling = makeRow({
+        productOfferingId: "PRDOFR000021",
+        name: "Specs Family",
+        familyOfferingId: "PRDOFR000020",
+        version: 1,
+        lifecycleStatus: "DRAFT",
+      });
+      const family: OfferingFamilyRow = {
+        familyId: "PRDOFR000020",
+        primary,
+        versions: [primary, sibling],
+      };
+      const user = userEvent.setup();
+      render(<ManageOfferingTable {...DEFAULT_PROPS} families={[family]} />);
+
+      await user.click(
+        screen.getByRole("button", {
+          name: "Show other versions of Specs Family",
+        }),
+      );
+      const specsButtons = screen.getAllByRole("button", {
+        name: "Manage specifications for Specs Family",
+      });
+      // Primary summary row + its own expanded sub-row (same shape as the
+      // Retire-button assertion above), so the sibling's own button is the
+      // third match.
+      await user.click(specsButtons[2]!);
+
+      expect(
+        screen.getByRole("heading", { name: "Specifications — Specs Family" }),
+      ).toBeInTheDocument();
     });
   });
 });

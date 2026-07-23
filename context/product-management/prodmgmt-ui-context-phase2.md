@@ -42,6 +42,7 @@ This section has no corresponding content in the base document — these are UI 
 | Activate | `check` | `--text-secondary` (quiet — not accent; the CTA stays reserved for "New offering") | `DRAFT` only |
 | Discard | `trash` | `--text-danger` | `DRAFT` only |
 | Retire | `archive` | `--text-danger` | `ACTIVE` only |
+| Specifications | `list-checks` | `--text-secondary` (quiet) | `DRAFT`, `ACTIVE` |
 | — | — | — | `RETIRED` rows show no action buttons — muted row (same treatment v1's `LifecycleBadge` spec already calls for on `RETIRED`), replaced with plain `--text-muted` text, "No actions — retired." |
 
 **"This creates a new draft" warning.** Shown inside the Edit dialog and the Add Price dialog whenever the target offering's current status is `ACTIVE` (never on a `DRAFT` target). Treatment: `--bg-warning` background, `--text-warning` text, `--radius` corners, no icon needed (the copy itself is the signal) — same tint pairing as the existing `DRAFT` lifecycle badge (§1), reused for consistency rather than inventing a new warning color. Copy pattern: *"`<Name>` is active. Saving will not change it — a new draft version is created instead."*
