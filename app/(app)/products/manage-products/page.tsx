@@ -24,6 +24,7 @@ export const metadata: Metadata = {
 };
 
 const MAX_COMBINED_ROWS = 1000; // defensive ceiling — see pm18-spec §2.2
+const SPECIFICATION_FETCH_CONCURRENCY = 10; // caps concurrent getOfferingDetail calls below
 
 // Loops the existing, unmodified `listOfferings` export across every page
 // for one status bucket. Two calls (null, "RETIRED") together cover every
@@ -32,30 +33,36 @@ const MAX_COMBINED_ROWS = 1000; // defensive ceiling — see pm18-spec §2.2
 async function fetchAllForStatus(
   status: LifecycleStatus | null,
 ): Promise<OfferingListRow[]> {
-  const collected: OfferingListRow[] = [];
-  let page = 1;
-  for (;;) {
-    const result = await listOfferings({
-      q: "",
-      status,
-      sort: "name",
-      page,
-      offering: null,
-    });
-    collected.push(...result.rows);
-    if (
-      collected.length >= result.total ||
-      result.rows.length === 0 ||
-      collected.length > MAX_COMBINED_ROWS
-    ) {
-      break;
-    }
-    page += 1;
-  }
-  if (collected.length > MAX_COMBINED_ROWS) {
+  const firstPage = await listOfferings({
+    q: "",
+    status,
+    sort: "name",
+    page: 1,
+    offering: null,
+  });
+  if (firstPage.total > MAX_COMBINED_ROWS) {
     throw new Error(
       "fetchAllForStatus: exceeded the combined-row safety ceiling",
     );
+  }
+
+  const collected: OfferingListRow[] = [...firstPage.rows];
+  if (firstPage.rows.length === 0 || collected.length >= firstPage.total) {
+    return collected;
+  }
+
+  const totalPages = Math.ceil(firstPage.total / firstPage.pageSize);
+  const remainingPages = Array.from(
+    { length: totalPages - 1 },
+    (_, i) => i + 2,
+  );
+  const remainingResults = await Promise.all(
+    remainingPages.map((page) =>
+      listOfferings({ q: "", status, sort: "name", page, offering: null }),
+    ),
+  );
+  for (const result of remainingResults) {
+    collected.push(...result.rows);
   }
   return collected;
 }
@@ -80,6 +87,30 @@ function selectPrimary(versions: OfferingListRow[]): OfferingListRow {
   );
 }
 
+// Runs `fn` across `items` with at most `limit` calls in flight at once —
+// keeps fetchSpecificationsByOfferingId's per-row getOfferingDetail fan-out
+// from opening one connection per row on a family list that can be as large
+// as MAX_COMBINED_ROWS.
+async function mapWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  const queue = items.map((item, index) => ({ item, index }));
+  async function worker(): Promise<void> {
+    for (;;) {
+      const next = queue.shift();
+      if (!next) return;
+      results[next.index] = await fn(next.item);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+  return results;
+}
+
 // pm21-spec §2.3/§3.1. Reuses the existing, unmodified getOfferingDetail
 // export — no new repository method, no new service, no widened
 // OfferingListRow. Discards `prices`/other detail fields; only
@@ -87,11 +118,13 @@ function selectPrimary(versions: OfferingListRow[]): OfferingListRow {
 async function fetchSpecificationsByOfferingId(
   rows: OfferingListRow[],
 ): Promise<Record<string, SpecificationCard[]>> {
-  const entries = await Promise.all(
-    rows.map(async (row) => {
+  const entries = await mapWithConcurrencyLimit(
+    rows,
+    SPECIFICATION_FETCH_CONCURRENCY,
+    async (row) => {
       const detail = await getOfferingDetail(row.productOfferingId);
       return [row.productOfferingId, detail?.specifications ?? []] as const;
-    }),
+    },
   );
   return Object.fromEntries(entries);
 }

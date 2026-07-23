@@ -1036,7 +1036,7 @@ Per Design §2.7, append to §4's binding-name list: `SpecificationsDialog`. App
 
 Per Design §2.2, append one row to `prodmgmt-ui-context-phase2.md`'s row-action table:
 
-```
+```text
 | Specifications | `list-checks` | `--text-secondary` (quiet) | `DRAFT`, `ACTIVE` |
 ```
 

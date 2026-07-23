@@ -480,6 +480,65 @@ describe("ManageOfferingTable", () => {
       ).toBeInTheDocument();
     });
 
+    it("clicking an expanded sibling's own Edit button populates the dialog with the sibling's values and submits the sibling's id", async () => {
+      mockUpdateOfferingAction.mockResolvedValue({
+        ok: true,
+        offeringId: "PRDOFR000017",
+        branched: false,
+      });
+      const primary = makeRow({
+        productOfferingId: "PRDOFR000016",
+        name: "Primary Row",
+        familyOfferingId: null,
+        version: 2,
+        lifecycleStatus: "DRAFT",
+        isSellable: true,
+        billingOnly: false,
+      });
+      const sibling = makeRow({
+        productOfferingId: "PRDOFR000017",
+        name: "Sibling Row",
+        familyOfferingId: "PRDOFR000016",
+        version: 1,
+        lifecycleStatus: "DRAFT",
+        isSellable: false,
+        billingOnly: true,
+      });
+      const family: OfferingFamilyRow = {
+        familyId: "PRDOFR000016",
+        primary,
+        versions: [primary, sibling],
+      };
+      const user = userEvent.setup();
+      render(<ManageOfferingTable {...DEFAULT_PROPS} families={[family]} />);
+
+      await user.click(
+        screen.getByRole("button", {
+          name: "Show other versions of Primary Row",
+        }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Edit Sibling Row" }),
+      );
+
+      expect(screen.getByLabelText("Name")).toHaveValue("Sibling Row");
+      expect(
+        screen.getByRole("checkbox", { name: "Sellable" }),
+      ).not.toBeChecked();
+      expect(
+        screen.getByRole("checkbox", { name: "Billing only" }),
+      ).toBeChecked();
+
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateOfferingAction).toHaveBeenCalledWith(
+          "PRDOFR000017",
+          expect.objectContaining({ saveAsNew: false }),
+        );
+      });
+    });
+
     it("clicking 'Create new draft' on an ACTIVE row submits saveAsNew: true and toasts 'New draft version created'", async () => {
       mockUpdateOfferingAction.mockResolvedValue({
         ok: true,
