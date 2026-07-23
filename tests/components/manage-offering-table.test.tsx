@@ -1,6 +1,18 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
+vi.mock("@/actions/product/create-offering.action", () => ({
+  createOfferingAction: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
 import type { OfferingFamilyRow, OfferingListRow } from "@/types/product";
@@ -177,7 +189,7 @@ describe("ManageOfferingTable", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a focusable 'New offering' CTA and every row action, none wired to any behavior yet", async () => {
+  it("renders a focusable 'New offering' CTA and every row action, row actions still wired to nothing (pm19-spec §3.7)", async () => {
     const draft = makeRow({
       productOfferingId: "PRDOFR000007",
       name: "Seam Offering",
@@ -194,20 +206,41 @@ describe("ManageOfferingTable", () => {
     const cta = screen.getByRole("button", { name: "New offering" });
     expect(cta).toBeInTheDocument();
 
-    const allButtons = screen.getAllByRole("button");
-    for (const button of allButtons) {
+    // Row-action seams (Edit/Add price/Activate/Discard/Retire) remain real
+    // seams for pm20–pm23 — clicking them still produces no dialog and no
+    // observable DOM change. The CTA itself is excluded from this loop since
+    // it is no longer a no-op as of this unit (see the next test).
+    const rowActionButtons = screen
+      .getAllByRole("button")
+      .filter((button) => button !== cta);
+    for (const button of rowActionButtons) {
       await user.click(button);
     }
 
-    // Clicking every button (CTA + all row actions) produced no navigation,
-    // no dialog, and no observable DOM change beyond what was already
-    // rendered — the seam contract (pm18-spec §2.6/§3.9).
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Edit Seam Offering" }),
     ).toBeInTheDocument();
+  });
+
+  it("clicking the 'New offering' CTA opens CreateOfferingDialog (pm19-spec §3.5)", async () => {
+    const draft = makeRow({
+      productOfferingId: "PRDOFR000008",
+      name: "Another Offering",
+      lifecycleStatus: "DRAFT",
+    });
+    const user = userEvent.setup();
+    render(
+      <ManageOfferingTable
+        {...DEFAULT_PROPS}
+        families={[singleFamily(draft)]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "New offering" }));
+
     expect(
-      screen.getByRole("button", { name: "New offering" }),
+      screen.getByRole("heading", { name: "New offering" }),
     ).toBeInTheDocument();
   });
 });

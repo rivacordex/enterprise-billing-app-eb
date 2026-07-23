@@ -14,6 +14,7 @@ import {
 import { useState } from "react";
 
 import { LifecycleBadge } from "@/components/products/lifecycle-badge";
+import { CreateOfferingDialog } from "@/components/products/manage/create-offering-dialog";
 import { cn } from "@/lib/utils";
 import type { OfferingFamilyRow, OfferingListRow } from "@/types/product";
 
@@ -203,15 +204,18 @@ export function ManageOfferingTable({
   return (
     <div className="rounded-md bg-card shadow-sm">
       <div className="flex items-center justify-end border-b border-border p-4">
-        <button
-          type="button"
-          aria-label="New offering"
-          className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-cta-bg)] px-3 py-2 text-body-sm font-semibold text-white"
-          // pm19 seam: onClick opens CreateOfferingDialog
-        >
-          <Plus size={16} aria-hidden />
-          New offering
-        </button>
+        <CreateOfferingDialog
+          trigger={
+            <button
+              type="button"
+              aria-label="New offering"
+              className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-cta-bg)] px-3 py-2 text-body-sm font-semibold text-white"
+            >
+              <Plus size={16} aria-hidden />
+              New offering
+            </button>
+          }
+        />
       </div>
 
       {families.length === 0 ? (

@@ -4,7 +4,7 @@
 
 Phase 1 (all 9 units) implemented and committed. Module is ship-gate-verified (pm09) at the DB/test level; CI SAST/DAST baseline is a pipeline step outside this tooling.
 
-Phase 2 (CRUD fast-follow) in progress: pm10–pm18 implemented, locally verified via local tests and live-DB checks, and committed.
+Phase 2 (CRUD fast-follow) in progress: pm10–pm17 implemented, locally verified via local tests and live-DB checks, and committed. pm18 implemented and committed, verified via local tests and build only (no live-DB fixture walkthrough — see pm18 note). pm19 in progress.
 
 | Unit | Name                                                                 | Commit    |
 | ---- | --------------------------------------------------------------------- | --------- |
@@ -26,6 +26,7 @@ Phase 2 (CRUD fast-follow) in progress: pm10–pm18 implemented, locally verifie
 | pm16 | Backend: Activation & Retirement/Discard (Phase 2, unit 7)            | `3557bfa` |
 | pm17 | Nav: Relabel + "Manage Products" entry (Phase 2, unit 8)               | `fe38281` |
 | pm18 | Manage Products page shell (Phase 2, unit 9)                           | `403c8c1` |
+| pm19 | UI: Create Offering (Phase 2, unit 10)                                 | in progress |
 
 **Renumbering note:** `pm02-spec.md` bundles DB foundation + `validation/product/` + seeds into one unit, superseding an earlier 3-way split. Numbers above match `pm00-build-plan.md`'s 9-unit count.
 
