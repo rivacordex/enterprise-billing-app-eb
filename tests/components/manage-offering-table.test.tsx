@@ -27,12 +27,17 @@ vi.mock("@/actions/product/delete-specification.action", () => ({
   deleteSpecificationAction: vi.fn(),
 }));
 
+vi.mock("@/actions/product/insert-price.action", () => ({
+  insertPriceAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { toast } from "sonner";
 
+import { insertPriceAction } from "@/actions/product/insert-price.action";
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
 import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
 import type {
@@ -42,6 +47,7 @@ import type {
 } from "@/types/product";
 
 const mockUpdateOfferingAction = vi.mocked(updateOfferingAction);
+const mockInsertPriceAction = vi.mocked(insertPriceAction);
 const mockToastSuccess = vi.mocked(toast.success);
 
 function makeRow(overrides: Partial<OfferingListRow>): OfferingListRow {
@@ -71,6 +77,7 @@ const DEFAULT_PROPS = {
 beforeEach(() => {
   mockRefresh.mockReset();
   mockUpdateOfferingAction.mockReset();
+  mockInsertPriceAction.mockReset();
   mockToastSuccess.mockReset();
 });
 
@@ -244,22 +251,29 @@ describe("ManageOfferingTable", () => {
     const cta = screen.getByRole("button", { name: "New offering" });
     expect(cta).toBeInTheDocument();
 
-    // Row-action seams (Add price/Activate/Discard) remain real seams for
-    // pm22–pm23 — clicking them still produces no dialog and no observable
-    // DOM change. Edit is excluded from this loop as of pm20, and
-    // Specifications as of pm21: both now open real dialogs (covered by the
-    // "Edit offering" and "Specifications" suites below).
+    // Row-action seams (Activate/Discard) remain real seams for pm23 —
+    // clicking them still produces no dialog and no observable DOM change.
+    // Edit is excluded from this loop as of pm20, Specifications as of
+    // pm21, and Add price as of pm22: all three now open real dialogs
+    // (covered by the "Edit offering", "Specifications", and "Add price"
+    // suites below).
     const editButton = screen.getByRole("button", {
       name: "Edit Seam Offering",
     });
     const specsButton = screen.getByRole("button", {
       name: "Manage specifications for Seam Offering",
     });
+    const addPriceButton = screen.getByRole("button", {
+      name: "Add price to Seam Offering",
+    });
     const rowActionButtons = screen
       .getAllByRole("button")
       .filter(
         (button) =>
-          button !== cta && button !== editButton && button !== specsButton,
+          button !== cta &&
+          button !== editButton &&
+          button !== specsButton &&
+          button !== addPriceButton,
       );
     for (const button of rowActionButtons) {
       await user.click(button);
@@ -662,6 +676,156 @@ describe("ManageOfferingTable", () => {
       expect(
         screen.getByRole("heading", { name: "Specifications — Specs Family" }),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("Add price (pm22-spec §3.7)", () => {
+    it("clicking Add price on a DRAFT row (primary or an expanded sibling) opens AddPriceDialog", async () => {
+      const draft = makeRow({
+        productOfferingId: "PRDOFR000022",
+        name: "Price Draft Row",
+        lifecycleStatus: "DRAFT",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(draft)]}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Add price to Price Draft Row" }),
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Add price — Price Draft Row" }),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking Add price on an ACTIVE row opens the dialog titled 'Add price — creates new draft — <Name>'", async () => {
+      const active = makeRow({
+        productOfferingId: "PRDOFR000023",
+        name: "Price Active Row",
+        lifecycleStatus: "ACTIVE",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(active)]}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Add price to Price Active Row" }),
+      );
+
+      expect(
+        screen.getByRole("heading", {
+          name: "Add price — creates new draft — Price Active Row",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it("opens Add price from an expanded sibling row too", async () => {
+      const primary = makeRow({
+        productOfferingId: "PRDOFR000024",
+        name: "Price Family",
+        familyOfferingId: null,
+        version: 2,
+        lifecycleStatus: "ACTIVE",
+      });
+      const sibling = makeRow({
+        productOfferingId: "PRDOFR000025",
+        name: "Price Family",
+        familyOfferingId: "PRDOFR000024",
+        version: 1,
+        lifecycleStatus: "DRAFT",
+      });
+      const family: OfferingFamilyRow = {
+        familyId: "PRDOFR000024",
+        primary,
+        versions: [primary, sibling],
+      };
+      const user = userEvent.setup();
+      render(<ManageOfferingTable {...DEFAULT_PROPS} families={[family]} />);
+
+      await user.click(
+        screen.getByRole("button", {
+          name: "Show other versions of Price Family",
+        }),
+      );
+      const addPriceButtons = screen.getAllByRole("button", {
+        name: "Add price to Price Family",
+      });
+      // Primary summary row + its own expanded sub-row, so the sibling's
+      // own button is the third match (same shape as the Retire/Specs
+      // assertions above).
+      await user.click(addPriceButtons[2]!);
+
+      expect(
+        screen.getByRole("heading", { name: "Add price — Price Family" }),
+      ).toBeInTheDocument();
+    });
+
+    it("a successful branched Add price result adds the family id to expandedFamilies, making the sibling visible", async () => {
+      mockInsertPriceAction.mockResolvedValue({
+        ok: true,
+        offeringId: "PRDOFR000027",
+        productOfferingPriceId: "PRDPRC000001",
+        branched: true,
+        backdated: false,
+      });
+      const primary = makeRow({
+        productOfferingId: "PRDOFR000026",
+        name: "Price Branch Row",
+        familyOfferingId: null,
+        version: 2,
+        lifecycleStatus: "ACTIVE",
+      });
+      const sibling = makeRow({
+        productOfferingId: "PRDOFR000027",
+        name: "Price Branch Row",
+        familyOfferingId: "PRDOFR000026",
+        version: 1,
+        lifecycleStatus: "DRAFT",
+      });
+      const family: OfferingFamilyRow = {
+        familyId: "PRDOFR000026",
+        primary,
+        versions: [primary, sibling],
+      };
+      const user = userEvent.setup();
+      render(<ManageOfferingTable {...DEFAULT_PROPS} families={[family]} />);
+
+      expect(
+        screen.queryByRole("button", {
+          name: "Hide other versions of Price Branch Row",
+        }),
+      ).not.toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: "Add price to Price Branch Row" }),
+      );
+      await user.type(screen.getByLabelText("Price name"), "Monthly");
+      await user.type(screen.getByLabelText("Currency"), "USD");
+      await user.type(screen.getByLabelText("Amount"), "10.00");
+      const buttons = screen.getAllByRole("button", { name: "Add price" });
+      await user.click(buttons[buttons.length - 1]!);
+
+      await waitFor(() => {
+        expect(mockToastSuccess).toHaveBeenCalledWith(
+          "Price added to new draft version",
+        );
+      });
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", {
+            name: "Hide other versions of Price Branch Row",
+          }),
+        ).toBeInTheDocument();
+      });
     });
   });
 });

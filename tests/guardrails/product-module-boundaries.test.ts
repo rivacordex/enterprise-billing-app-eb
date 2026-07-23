@@ -48,6 +48,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "create-specification.action.ts",
     "update-specification.action.ts",
     "delete-specification.action.ts",
+    "insert-price.action.ts",
   ];
 
   it("actions/product/ exists and exports exactly this build's action file set", () => {
