@@ -31,12 +31,32 @@ function collectFiles(dir: string): string[] {
 }
 
 describe("product module boundaries (pm09 ship-gate sweep)", () => {
-  // Inv. #11 / code-standards §7.2: v1 adds no mutation surface, and the
-  // module owns no server actions.
-  it("has no actions/product/ folder", () => {
-    expect(fs.existsSync(path.join(REPO_ROOT, "actions", "product"))).toBe(
-      false,
-    );
+  // pm19-spec §2.5/§3.6. Supersedes the "folder must not exist" assertion —
+  // pm19 is the unit that creates it. Rewritten to check the exact action
+  // file set expected to exist at each point in the build, so CI never sits
+  // red between the unit that adds a file and the unit that's nominally
+  // "responsible" for the guardrail rewrite (pm99 assigns that to pm24; this
+  // spec instead updates it incrementally, matching how
+  // _change-product-crud-plan.md / _change-product-crud-implementation-guide.md
+  // resolved the identical gap under their own unit numbering). pm20–pm23
+  // each append their own action file to this array as it lands; pm24 does
+  // the final pass once all seven exist (matching code-standards-phase2 §7's
+  // full file tree) and takes over ownership of this assertion for good.
+  const EXPECTED_PRODUCT_ACTION_FILES = [
+    "create-offering.action.ts",
+    "update-offering.action.ts",
+  ];
+
+  it("actions/product/ exists and exports exactly this build's action file set", () => {
+    const actionsDir = path.join(REPO_ROOT, "actions", "product");
+    expect(fs.existsSync(actionsDir)).toBe(true);
+
+    const actual = fs
+      .readdirSync(actionsDir)
+      .filter((name) => name.endsWith(".action.ts"))
+      .sort();
+
+    expect(actual).toEqual([...EXPECTED_PRODUCT_ACTION_FILES].sort());
   });
 
   // code-standards §5.1/§5.3: v1 exposes no product route handler — every

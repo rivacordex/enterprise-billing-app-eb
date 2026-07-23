@@ -131,6 +131,8 @@ export const productOfferingRepository = {
         version: productOffering.version,
         isSellable: productOffering.isSellable,
         lastModified: productOffering.lastModified,
+        familyOfferingId: productOffering.familyOfferingId, // pm18
+        billingOnly: productOffering.billingOnly, // pm20 — needed to prefill the Edit dialog
       })
       .from(productOffering)
       .where(whereClause)
@@ -164,22 +166,59 @@ export const productOfferingRepository = {
     lastModified: Date;
     lastEditedByName: string | null;
   } | null> {
-    const rows = await db
-      .select({
-        productOfferingId: productOffering.productOfferingId,
-        name: productOffering.name,
-        isBundle: productOffering.isBundle,
-        isSellable: productOffering.isSellable,
-        billingOnly: productOffering.billingOnly,
-        lifecycleStatus: productOffering.lifecycleStatus,
-        version: productOffering.version,
-        lastModified: productOffering.lastModified,
-        lastEditedByName: appuser.userName,
-      })
-      .from(productOffering)
-      .leftJoin(appuser, eq(productOffering.lastEditedBy, appuser.id))
-      .where(eq(productOffering.productOfferingId, productOfferingId))
-      .limit(1);
+    return this.findDetailByIdForUpdate(db, productOfferingId, false);
+  },
+
+  async findDetailByIdForUpdate(
+    db: Database,
+    productOfferingId: string,
+    forUpdate = true,
+  ): Promise<{
+    productOfferingId: string;
+    name: string;
+    isBundle: boolean;
+    isSellable: boolean;
+    billingOnly: boolean;
+    lifecycleStatus: LifecycleStatus;
+    version: number;
+    lastModified: Date;
+    lastEditedByName: string | null;
+  } | null> {
+    const rows = forUpdate
+      ? await db
+          .select({
+            productOfferingId: productOffering.productOfferingId,
+            name: productOffering.name,
+            isBundle: productOffering.isBundle,
+            isSellable: productOffering.isSellable,
+            billingOnly: productOffering.billingOnly,
+            lifecycleStatus: productOffering.lifecycleStatus,
+            version: productOffering.version,
+            lastModified: productOffering.lastModified,
+            lastEditedByName: sql<string | null>`null`.as(
+              "last_edited_by_name",
+            ),
+          })
+          .from(productOffering)
+          .where(eq(productOffering.productOfferingId, productOfferingId))
+          .limit(1)
+          .for("update")
+      : await db
+          .select({
+            productOfferingId: productOffering.productOfferingId,
+            name: productOffering.name,
+            isBundle: productOffering.isBundle,
+            isSellable: productOffering.isSellable,
+            billingOnly: productOffering.billingOnly,
+            lifecycleStatus: productOffering.lifecycleStatus,
+            version: productOffering.version,
+            lastModified: productOffering.lastModified,
+            lastEditedByName: appuser.userName,
+          })
+          .from(productOffering)
+          .leftJoin(appuser, eq(productOffering.lastEditedBy, appuser.id))
+          .where(eq(productOffering.productOfferingId, productOfferingId))
+          .limit(1);
 
     const row = rows[0];
     if (!row) return null;

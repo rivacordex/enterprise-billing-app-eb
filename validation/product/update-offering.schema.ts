@@ -12,3 +12,14 @@ export const updateOfferingSchema = z.object({
 });
 
 export type UpdateOfferingInput = z.infer<typeof updateOfferingSchema>;
+
+// pm20-spec §2.4/§3.1. UI-facing companion: the exact fields
+// `OfferingForm`'s edit mode renders and validates client-side. `saveAsNew`
+// is deliberately omitted — it's never a form field, only ever implied by
+// which footer button was clicked (Design §2.5/§2.6). Mirrors
+// `editUserDetailsFieldsSchema` / `editRoleFieldsSchema`'s own
+// same-file, `.omit`-derived shape.
+export const editOfferingFieldsSchema = updateOfferingSchema.omit({
+  saveAsNew: true,
+});
+export type EditOfferingFields = z.infer<typeof editOfferingFieldsSchema>;

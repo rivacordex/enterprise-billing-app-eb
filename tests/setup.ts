@@ -16,3 +16,17 @@ if (typeof Element !== "undefined") {
     Element.prototype.scrollIntoView = () => {};
   }
 }
+
+// jsdom doesn't implement `ResizeObserver` — needed for Radix UI's
+// `Checkbox` (its size-measuring indicator, `@radix-ui/react-use-size`) to
+// mount at all. pm19 (`OfferingForm`'s Sellable/Billing only checkboxes) is
+// the first test suite to actually render a `Checkbox` with a non-empty
+// parent (every prior usage, e.g. `UserForm`'s role list, was only exercised
+// in tests with an empty list, so this gap went undetected until now).
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
