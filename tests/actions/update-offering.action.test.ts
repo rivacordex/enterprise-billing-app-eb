@@ -166,4 +166,13 @@ describe("updateOfferingAction", () => {
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
   });
+
+  it("returns SERVER_ERROR when requirePermission throws a non-redirect error", async () => {
+    mockRequirePermission.mockRejectedValue(new Error("db exploded"));
+
+    const result = await updateOfferingAction(OFFERING_ID, VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
+    expect(mockUpdateOffering).not.toHaveBeenCalled();
+  });
 });
