@@ -11,12 +11,23 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
+import { updateOfferingAction } from "@/actions/product/update-offering.action";
 import { LifecycleBadge } from "@/components/products/lifecycle-badge";
 import { CreateOfferingDialog } from "@/components/products/manage/create-offering-dialog";
+import { OfferingForm } from "@/components/products/manage/offering-form";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { OfferingFamilyRow, OfferingListRow } from "@/types/product";
+import type { UpdateOfferingInput } from "@/validation/product/update-offering.schema";
 
 interface ManageOfferingTableProps {
   families: OfferingFamilyRow[];
@@ -30,7 +41,13 @@ const ACTION_BUTTON_CLASS =
 // Every button in this matrix renders now, real icon + real aria-label, and
 // does nothing when clicked — the seam pm19–pm23 fill in one at a time
 // (pm18-spec §2.6). None are `disabled`.
-function RowActions({ row }: { row: OfferingListRow }): React.JSX.Element {
+function RowActions({
+  row,
+  onEdit,
+}: {
+  row: OfferingListRow;
+  onEdit: () => void;
+}): React.JSX.Element {
   if (row.lifecycleStatus === "RETIRED") {
     return (
       <span className="text-caption text-[color:var(--text-muted)]">
@@ -45,7 +62,7 @@ function RowActions({ row }: { row: OfferingListRow }): React.JSX.Element {
         type="button"
         aria-label={`Edit ${row.name}`}
         className={cn(ACTION_BUTTON_CLASS, "text-muted-foreground")}
-        // pm20 seam: onClick opens OfferingForm in edit mode
+        onClick={onEdit}
       >
         <Pencil size={14} aria-hidden />
       </button>
@@ -94,10 +111,12 @@ function FamilyRows({
   family,
   expanded,
   onToggle,
+  onEditRow,
 }: {
   family: OfferingFamilyRow;
   expanded: boolean;
   onToggle: () => void;
+  onEditRow: (row: OfferingListRow, familyId: string) => void;
 }): React.JSX.Element {
   const { primary } = family;
   const hasVersions = family.versions.length > 1;
@@ -143,7 +162,10 @@ function FamilyRows({
           {primary.version}
         </td>
         <td className="px-4 py-2">
-          <RowActions row={primary} />
+          <RowActions
+            row={primary}
+            onEdit={() => onEditRow(primary, family.familyId)}
+          />
         </td>
       </tr>
       {expanded &&
@@ -169,7 +191,10 @@ function FamilyRows({
                 {version.version}
               </td>
               <td className="px-4 py-2">
-                <RowActions row={version} />
+                <RowActions
+                  row={version}
+                  onEdit={() => onEditRow(version, family.familyId)}
+                />
               </td>
             </tr>
           );
@@ -185,9 +210,15 @@ function FamilyRows({
 export function ManageOfferingTable({
   families,
 }: ManageOfferingTableProps): React.JSX.Element {
+  const router = useRouter();
   const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(
     new Set(),
   );
+  const [editingRow, setEditingRow] = useState<{
+    row: OfferingListRow;
+    familyId: string;
+  } | null>(null);
+  const [isEditSubmitting, setIsEditSubmitting] = useState(false);
 
   function toggleFamily(familyId: string): void {
     setExpandedFamilies((prev) => {
@@ -199,6 +230,51 @@ export function ManageOfferingTable({
       }
       return next;
     });
+  }
+
+  function handleEditOpenChange(open: boolean): void {
+    if (isEditSubmitting) return;
+    if (!open) setEditingRow(null);
+  }
+
+  async function handleEditSubmit(values: UpdateOfferingInput): Promise<void> {
+    if (!editingRow) return;
+    setIsEditSubmitting(true);
+    try {
+      const result = await updateOfferingAction(
+        editingRow.row.productOfferingId,
+        values,
+      );
+      if (result.ok) {
+        const branched = result.branched;
+        const familyId = editingRow.familyId;
+        setEditingRow(null);
+        if (branched) {
+          toast.success("New draft version created");
+          // Design §2.9 — make the new sibling visible without an extra click.
+          setExpandedFamilies((prev) => new Set(prev).add(familyId));
+        } else {
+          toast.success("Offering updated");
+        }
+        router.refresh();
+      } else if (result.code === "FORBIDDEN") {
+        toast.error("You don't have permission to do that.");
+      } else if (result.code === "OFFERING_RETIRED") {
+        toast.error(
+          "This offering has been retired and can no longer be edited.",
+        );
+      } else if (result.code === "OFFERING_NOT_FOUND") {
+        toast.error("This offering no longer exists. Refreshing...");
+        setEditingRow(null);
+        router.refresh();
+      } else {
+        toast.error("Something went wrong. Please try again.");
+      }
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsEditSubmitting(false);
+    }
   }
 
   return (
@@ -255,11 +331,44 @@ export function ManageOfferingTable({
                   family={family}
                   expanded={expandedFamilies.has(family.familyId)}
                   onToggle={() => toggleFamily(family.familyId)}
+                  onEditRow={(row, familyId) =>
+                    setEditingRow({ row, familyId })
+                  }
                 />
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {editingRow && (
+        <Dialog open onOpenChange={handleEditOpenChange}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {editingRow.row.lifecycleStatus === "ACTIVE"
+                  ? "Edit — creates new draft"
+                  : "Edit draft"}
+              </DialogTitle>
+            </DialogHeader>
+
+            <OfferingForm
+              mode="edit"
+              offeringName={editingRow.row.name}
+              currentStatus={
+                editingRow.row.lifecycleStatus as "DRAFT" | "ACTIVE"
+              }
+              defaultValues={{
+                name: editingRow.row.name,
+                isSellable: editingRow.row.isSellable,
+                billingOnly: editingRow.row.billingOnly,
+              }}
+              onSubmit={handleEditSubmit}
+              onCancel={() => handleEditOpenChange(false)}
+              isSubmitting={isEditSubmitting}
+            />
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

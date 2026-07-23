@@ -42,7 +42,10 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   // each append their own action file to this array as it lands; pm24 does
   // the final pass once all seven exist (matching code-standards-phase2 §7's
   // full file tree) and takes over ownership of this assertion for good.
-  const EXPECTED_PRODUCT_ACTION_FILES = ["create-offering.action.ts"];
+  const EXPECTED_PRODUCT_ACTION_FILES = [
+    "create-offering.action.ts",
+    "update-offering.action.ts",
+  ];
 
   it("actions/product/ exists and exports exactly this build's action file set", () => {
     const actionsDir = path.join(REPO_ROOT, "actions", "product");

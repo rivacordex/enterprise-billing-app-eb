@@ -131,7 +131,8 @@ export const productOfferingRepository = {
         version: productOffering.version,
         isSellable: productOffering.isSellable,
         lastModified: productOffering.lastModified,
-        familyOfferingId: productOffering.familyOfferingId, // new
+        familyOfferingId: productOffering.familyOfferingId, // pm18
+        billingOnly: productOffering.billingOnly, // pm20 — needed to prefill the Edit dialog
       })
       .from(productOffering)
       .where(whereClause)

@@ -34,6 +34,7 @@ export type OfferingListRow = {
   isSellable: boolean;
   lastModified: Date;
   familyOfferingId: string | null; // lineage column, surfaced for family grouping (pm18 §2.2)
+  billingOnly: boolean; // needed to prefill the Edit dialog (pm20 §2.3)
 };
 
 // Backs the Manage Products page only (pm18 §2.2). Not consumed by View

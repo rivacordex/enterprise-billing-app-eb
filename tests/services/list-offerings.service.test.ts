@@ -99,6 +99,7 @@ describe("listOfferings", () => {
         lifecycleStatus: "ACTIVE" as const,
         version: 1,
         isSellable: true,
+        billingOnly: false,
         lastModified: new Date("2026-01-01T00:00:00Z"),
         familyOfferingId: null,
       },
