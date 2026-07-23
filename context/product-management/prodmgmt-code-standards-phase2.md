@@ -42,7 +42,7 @@ Everything else in §3 (URL-state pattern for View Product, searchParams parsing
 
 ## Relative to §4 (Styling)
 
-- **New binding component names** this phase introduces (same "create exactly these names" convention as v1 §4.1): `ManageOfferingTable`, `OfferingForm`, `SpecificationForm`, `PriceForm`, `RetireOfferingDialog` (its copy/title switches between "Retire" and "Discard draft" based on the target's status — one component, not two), `CreateOfferingDialog`, `AddPriceDialog`.
+- **New binding component names** this phase introduces (same "create exactly these names" convention as v1 §4.1): `ManageOfferingTable`, `OfferingForm`, `SpecificationForm`, `SpecificationsDialog` (pm21 — plural, one per offering, list-first; renders both the specifications list and the add/edit form as two content swaps inside one Radix `Dialog`, plus a nested `AlertDialog` for delete), `PriceForm`, `RetireOfferingDialog` (its copy/title switches between "Retire" and "Discard draft" based on the target's status — one component, not two), `CreateOfferingDialog`, `AddPriceDialog`.
 - The reserved `--action-cta-bg` token (v1 §5 of `prodmgmt-ui-context.md`) is now used — see `prodmgmt-ui-context-phase2.md`.
 - New visual patterns (warning banners for branch-on-edit and backdating, version-history expansion) are specified in `prodmgmt-ui-context-phase2.md`, not here — this file owns component *names* and *conventions*, ui-context owns tokens/colors.
 - Everything else in §4 (shared badge components, Administration table-primitive reuse, four-section responsive grid, `formatCurrency`, `formatDatetime`, boolean-flag indicator) is unchanged for View Product.
@@ -92,6 +92,7 @@ components/products/manage/
   add-price-dialog.tsx             # AddPriceDialog
   price-form.tsx                   # PriceForm
   specification-form.tsx           # SpecificationForm
+  specifications-dialog.tsx        # SpecificationsDialog
   retire-offering-dialog.tsx       # RetireOfferingDialog
 services/product/
   create-offering.ts

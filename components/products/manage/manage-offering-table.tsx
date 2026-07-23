@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDollarSign,
+  ListChecks,
   PackageSearch,
   Pencil,
   Plus,
@@ -16,9 +17,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
+import { AddPriceDialog } from "@/components/products/manage/add-price-dialog";
 import { LifecycleBadge } from "@/components/products/lifecycle-badge";
 import { CreateOfferingDialog } from "@/components/products/manage/create-offering-dialog";
 import { OfferingForm } from "@/components/products/manage/offering-form";
+import { SpecificationsDialog } from "@/components/products/manage/specifications-dialog";
 import {
   Dialog,
   DialogContent,
@@ -26,13 +29,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { OfferingFamilyRow, OfferingListRow } from "@/types/product";
+import type {
+  OfferingFamilyRow,
+  OfferingListRow,
+  SpecificationCard,
+} from "@/types/product";
 import type { UpdateOfferingInput } from "@/validation/product/update-offering.schema";
 
 interface ManageOfferingTableProps {
   families: OfferingFamilyRow[];
   locale: string;
   timezone: string;
+  specificationsByOfferingId: Record<string, SpecificationCard[]>;
 }
 
 const ACTION_BUTTON_CLASS =
@@ -44,9 +52,13 @@ const ACTION_BUTTON_CLASS =
 function RowActions({
   row,
   onEdit,
+  onManageSpecs,
+  onBranchPrice,
 }: {
   row: OfferingListRow;
   onEdit: () => void;
+  onManageSpecs: () => void;
+  onBranchPrice: () => void;
 }): React.JSX.Element {
   if (row.lifecycleStatus === "RETIRED") {
     return (
@@ -66,14 +78,21 @@ function RowActions({
       >
         <Pencil size={14} aria-hidden />
       </button>
-      <button
-        type="button"
-        aria-label={`Add price to ${row.name}`}
-        className={cn(ACTION_BUTTON_CLASS, "text-muted-foreground")}
-        // pm22 seam: onClick opens the add-price dialog
-      >
-        <CircleDollarSign size={14} aria-hidden />
-      </button>
+      <AddPriceDialog
+        offeringId={row.productOfferingId}
+        offeringName={row.name}
+        currentStatus={row.lifecycleStatus as "DRAFT" | "ACTIVE"}
+        onBranched={onBranchPrice}
+        trigger={
+          <button
+            type="button"
+            aria-label={`Add price to ${row.name}`}
+            className={cn(ACTION_BUTTON_CLASS, "text-muted-foreground")}
+          >
+            <CircleDollarSign size={14} aria-hidden />
+          </button>
+        }
+      />
       {row.lifecycleStatus === "DRAFT" ? (
         <>
           <button
@@ -103,6 +122,14 @@ function RowActions({
           <Archive size={14} aria-hidden />
         </button>
       )}
+      <button
+        type="button"
+        aria-label={`Manage specifications for ${row.name}`}
+        className={cn(ACTION_BUTTON_CLASS, "text-muted-foreground")}
+        onClick={onManageSpecs}
+      >
+        <ListChecks size={14} aria-hidden />
+      </button>
     </div>
   );
 }
@@ -112,11 +139,15 @@ function FamilyRows({
   expanded,
   onToggle,
   onEditRow,
+  onManageSpecsRow,
+  onBranchPrice,
 }: {
   family: OfferingFamilyRow;
   expanded: boolean;
   onToggle: () => void;
   onEditRow: (row: OfferingListRow, familyId: string) => void;
+  onManageSpecsRow: (row: OfferingListRow, familyId: string) => void;
+  onBranchPrice: (familyId: string) => void;
 }): React.JSX.Element {
   const { primary } = family;
   const hasVersions = family.versions.length > 1;
@@ -165,6 +196,8 @@ function FamilyRows({
           <RowActions
             row={primary}
             onEdit={() => onEditRow(primary, family.familyId)}
+            onManageSpecs={() => onManageSpecsRow(primary, family.familyId)}
+            onBranchPrice={() => onBranchPrice(family.familyId)}
           />
         </td>
       </tr>
@@ -194,6 +227,10 @@ function FamilyRows({
                 <RowActions
                   row={version}
                   onEdit={() => onEditRow(version, family.familyId)}
+                  onManageSpecs={() =>
+                    onManageSpecsRow(version, family.familyId)
+                  }
+                  onBranchPrice={() => onBranchPrice(family.familyId)}
                 />
               </td>
             </tr>
@@ -209,6 +246,7 @@ function FamilyRows({
 // but not consumed by this component's markup.
 export function ManageOfferingTable({
   families,
+  specificationsByOfferingId,
 }: ManageOfferingTableProps): React.JSX.Element {
   const router = useRouter();
   const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(
@@ -219,6 +257,10 @@ export function ManageOfferingTable({
     familyId: string;
   } | null>(null);
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+  const [specsRow, setSpecsRow] = useState<{
+    row: OfferingListRow;
+    familyId: string;
+  } | null>(null);
 
   function toggleFamily(familyId: string): void {
     setExpandedFamilies((prev) => {
@@ -334,6 +376,12 @@ export function ManageOfferingTable({
                   onEditRow={(row, familyId) =>
                     setEditingRow({ row, familyId })
                   }
+                  onManageSpecsRow={(row, familyId) =>
+                    setSpecsRow({ row, familyId })
+                  }
+                  onBranchPrice={(familyId) =>
+                    setExpandedFamilies((prev) => new Set(prev).add(familyId))
+                  }
                 />
               ))}
             </tbody>
@@ -369,6 +417,25 @@ export function ManageOfferingTable({
             />
           </DialogContent>
         </Dialog>
+      )}
+
+      {specsRow && (
+        <SpecificationsDialog
+          offeringId={specsRow.row.productOfferingId}
+          offeringName={specsRow.row.name}
+          offeringStatus={specsRow.row.lifecycleStatus as "DRAFT" | "ACTIVE"}
+          familyId={specsRow.familyId}
+          specifications={
+            specificationsByOfferingId[specsRow.row.productOfferingId] ?? []
+          }
+          isOpen
+          onOpenChange={(open) => {
+            if (!open) setSpecsRow(null);
+          }}
+          onBranch={(familyId) =>
+            setExpandedFamilies((prev) => new Set(prev).add(familyId))
+          }
+        />
       )}
     </div>
   );

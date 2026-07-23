@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
+import { getOfferingDetail } from "@/services/product/get-offering-detail";
 import { listOfferings } from "@/services/product/list-offerings";
 import {
   getAppLocale,
@@ -13,6 +14,7 @@ import type {
   LifecycleStatus,
   OfferingFamilyRow,
   OfferingListRow,
+  SpecificationCard,
 } from "@/types/product";
 
 export const dynamic = "force-dynamic";
@@ -78,6 +80,22 @@ function selectPrimary(versions: OfferingListRow[]): OfferingListRow {
   );
 }
 
+// pm21-spec §2.3/§3.1. Reuses the existing, unmodified getOfferingDetail
+// export — no new repository method, no new service, no widened
+// OfferingListRow. Discards `prices`/other detail fields; only
+// `specifications` is kept.
+async function fetchSpecificationsByOfferingId(
+  rows: OfferingListRow[],
+): Promise<Record<string, SpecificationCard[]>> {
+  const entries = await Promise.all(
+    rows.map(async (row) => {
+      const detail = await getOfferingDetail(row.productOfferingId);
+      return [row.productOfferingId, detail?.specifications ?? []] as const;
+    }),
+  );
+  return Object.fromEntries(entries);
+}
+
 function groupIntoFamilies(rows: OfferingListRow[]): OfferingFamilyRow[] {
   const byFamily = new Map<string, OfferingListRow[]>();
   for (const row of rows) {
@@ -115,6 +133,8 @@ export default async function ManageProductsPage(): Promise<React.JSX.Element> {
     getAppTimezone(),
   ]);
   const families = groupIntoFamilies(rows);
+  const specificationsByOfferingId =
+    await fetchSpecificationsByOfferingId(rows);
 
   return (
     <main className="space-y-5 p-5">
@@ -133,6 +153,7 @@ export default async function ManageProductsPage(): Promise<React.JSX.Element> {
           families={families}
           locale={locale}
           timezone={timezone}
+          specificationsByOfferingId={specificationsByOfferingId}
         />
       </Suspense>
     </main>
