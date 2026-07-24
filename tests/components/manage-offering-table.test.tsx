@@ -31,13 +31,23 @@ vi.mock("@/actions/product/insert-price.action", () => ({
   insertPriceAction: vi.fn(),
 }));
 
+vi.mock("@/actions/product/activate-offering.action", () => ({
+  activateOfferingAction: vi.fn(),
+}));
+
+vi.mock("@/actions/product/retire-offering.action", () => ({
+  retireOfferingAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { toast } from "sonner";
 
+import { activateOfferingAction } from "@/actions/product/activate-offering.action";
 import { insertPriceAction } from "@/actions/product/insert-price.action";
+import { retireOfferingAction } from "@/actions/product/retire-offering.action";
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
 import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
 import type {
@@ -48,6 +58,8 @@ import type {
 
 const mockUpdateOfferingAction = vi.mocked(updateOfferingAction);
 const mockInsertPriceAction = vi.mocked(insertPriceAction);
+const mockActivateOfferingAction = vi.mocked(activateOfferingAction);
+const mockRetireOfferingAction = vi.mocked(retireOfferingAction);
 const mockToastSuccess = vi.mocked(toast.success);
 
 function makeRow(overrides: Partial<OfferingListRow>): OfferingListRow {
@@ -78,6 +90,8 @@ beforeEach(() => {
   mockRefresh.mockReset();
   mockUpdateOfferingAction.mockReset();
   mockInsertPriceAction.mockReset();
+  mockActivateOfferingAction.mockReset();
+  mockRetireOfferingAction.mockReset();
   mockToastSuccess.mockReset();
 });
 
@@ -234,13 +248,12 @@ describe("ManageOfferingTable", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a focusable 'New offering' CTA and every remaining row-action seam, still wired to nothing (pm19-spec §3.7)", async () => {
+  it("renders a focusable 'New offering' CTA with real behavior — every row-action seam is now filled as of pm23 (pm23-spec §3.8)", async () => {
     const draft = makeRow({
       productOfferingId: "PRDOFR000007",
       name: "Seam Offering",
       lifecycleStatus: "DRAFT",
     });
-    const user = userEvent.setup();
     render(
       <ManageOfferingTable
         {...DEFAULT_PROPS}
@@ -248,40 +261,30 @@ describe("ManageOfferingTable", () => {
       />,
     );
 
-    const cta = screen.getByRole("button", { name: "New offering" });
-    expect(cta).toBeInTheDocument();
-
-    // Row-action seams (Activate/Discard) remain real seams for pm23 —
-    // clicking them still produces no dialog and no observable DOM change.
-    // Edit is excluded from this loop as of pm20, Specifications as of
-    // pm21, and Add price as of pm22: all three now open real dialogs
-    // (covered by the "Edit offering", "Specifications", and "Add price"
-    // suites below).
-    const editButton = screen.getByRole("button", {
-      name: "Edit Seam Offering",
-    });
-    const specsButton = screen.getByRole("button", {
-      name: "Manage specifications for Seam Offering",
-    });
-    const addPriceButton = screen.getByRole("button", {
-      name: "Add price to Seam Offering",
-    });
-    const rowActionButtons = screen
-      .getAllByRole("button")
-      .filter(
-        (button) =>
-          button !== cta &&
-          button !== editButton &&
-          button !== specsButton &&
-          button !== addPriceButton,
-      );
-    for (const button of rowActionButtons) {
-      await user.click(button);
-    }
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(editButton).toBeInTheDocument();
-    expect(specsButton).toBeInTheDocument();
+    // No remaining "no attached behavior" assertion for any row action or
+    // the "New offering" CTA — Edit (pm20), Specifications (pm21), Add
+    // price (pm22), and Activate/Discard/Retire (pm23) all open real
+    // dialogs, covered by their own describe blocks below.
+    expect(
+      screen.getByRole("button", { name: "New offering" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit Seam Offering" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Manage specifications for Seam Offering",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add price to Seam Offering" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Activate Seam Offering" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Discard Seam Offering" }),
+    ).toBeInTheDocument();
   });
 
   it("clicking the 'New offering' CTA opens CreateOfferingDialog (pm19-spec §3.5)", async () => {
@@ -882,6 +885,137 @@ describe("ManageOfferingTable", () => {
         expect(
           screen.getByRole("button", {
             name: "Hide other versions of Price Branch Row",
+          }),
+        ).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Lifecycle actions — Activate/Discard/Retire (pm23-spec §3.8)", () => {
+    it("clicking Activate on a DRAFT row opens ActivateOfferingDialog", async () => {
+      const draft = makeRow({
+        productOfferingId: "PRDOFR000028",
+        name: "Activate Row",
+        lifecycleStatus: "DRAFT",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(draft)]}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Activate Activate Row" }),
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Activate offering" }),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking Discard on a DRAFT row opens RetireOfferingDialog titled 'Discard draft'", async () => {
+      const draft = makeRow({
+        productOfferingId: "PRDOFR000029",
+        name: "Discard Row",
+        lifecycleStatus: "DRAFT",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(draft)]}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Discard Discard Row" }),
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Discard draft" }),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking Retire on an ACTIVE row opens RetireOfferingDialog titled 'Retire offering'", async () => {
+      const active = makeRow({
+        productOfferingId: "PRDOFR000030",
+        name: "Retire Row",
+        lifecycleStatus: "ACTIVE",
+      });
+      const user = userEvent.setup();
+      render(
+        <ManageOfferingTable
+          {...DEFAULT_PROPS}
+          families={[singleFamily(active)]}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Retire Retire Row" }),
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Retire offering" }),
+      ).toBeInTheDocument();
+    });
+
+    it("a successful superseding Activate result adds the family id to expandedFamilies, making the retired sibling visible", async () => {
+      mockActivateOfferingAction.mockResolvedValue({
+        ok: true,
+        offeringId: "PRDOFR000032",
+        supersededOfferingId: "PRDOFR000031",
+      });
+      const primary = makeRow({
+        productOfferingId: "PRDOFR000031",
+        name: "Supersede Row",
+        familyOfferingId: null,
+        version: 1,
+        lifecycleStatus: "ACTIVE",
+      });
+      const sibling = makeRow({
+        productOfferingId: "PRDOFR000032",
+        name: "Supersede Row",
+        familyOfferingId: "PRDOFR000031",
+        version: 2,
+        lifecycleStatus: "DRAFT",
+      });
+      const family: OfferingFamilyRow = {
+        familyId: "PRDOFR000031",
+        primary,
+        versions: [primary, sibling],
+      };
+      const user = userEvent.setup();
+      render(<ManageOfferingTable {...DEFAULT_PROPS} families={[family]} />);
+
+      expect(
+        screen.queryByRole("button", {
+          name: "Hide other versions of Supersede Row",
+        }),
+      ).not.toBeInTheDocument();
+
+      // Only the DRAFT sibling has an Activate button (the primary is
+      // ACTIVE, so it only renders Retire) — expand the family to reach it.
+      await user.click(
+        screen.getByRole("button", {
+          name: "Show other versions of Supersede Row",
+        }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Activate Supersede Row" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Activate" }));
+
+      await waitFor(() => {
+        expect(mockToastSuccess).toHaveBeenCalledWith(
+          "Offering activated — previous version retired",
+        );
+      });
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", {
+            name: "Hide other versions of Supersede Row",
           }),
         ).toBeInTheDocument();
       });

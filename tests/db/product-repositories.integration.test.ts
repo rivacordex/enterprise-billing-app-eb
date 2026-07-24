@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { eq, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -13,10 +14,17 @@ import {
 } from "@/db/schema/product";
 import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
+import { productSpecificationRepository } from "@/db/repositories/product-specification";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
 import { priceCharacteristicsSchema } from "@/validation/product/pricing-characteristics.schema";
 import { productSpecCharacteristicsSchema } from "@/validation/product/product-spec-characteristics.schema";
 import type { getOfferingDetail as GetOfferingDetail } from "@/services/product/get-offering-detail";
+import type { addSpecification as AddSpecification } from "@/services/product/add-specification";
+import type { updateSpecification as UpdateSpecification } from "@/services/product/update-specification";
+import type { deleteSpecification as DeleteSpecification } from "@/services/product/delete-specification";
+import type { insertPrice as InsertPrice } from "@/services/product/insert-price";
+import type { updateOffering as UpdateOffering } from "@/services/product/update-offering";
+import type { activateOffering as ActivateOffering } from "@/services/product/activate-offering";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { LifecycleStatus } from "@/types/product";
 
@@ -28,6 +36,12 @@ describe.skipIf(!databaseUrl)(
     let sql: postgresjs.Sql;
     let db: ReturnType<typeof drizzle<typeof schema>>;
     let getOfferingDetail: typeof GetOfferingDetail;
+    let addSpecification: typeof AddSpecification;
+    let updateSpecification: typeof UpdateSpecification;
+    let deleteSpecification: typeof DeleteSpecification;
+    let insertPrice: typeof InsertPrice;
+    let updateOffering: typeof UpdateOffering;
+    let activateOffering: typeof ActivateOffering;
     let editorUserId: string;
 
     beforeAll(async () => {
@@ -44,12 +58,35 @@ describe.skipIf(!databaseUrl)(
         migrationsSchema: "drizzle",
       });
 
-      // Exercises the real `getOfferingDetail` service's own internal
-      // `@/db/client` pool (not the local `db` connection above) — dynamic
-      // import after confirming DATABASE_URL, mirroring
-      // tests/services/roles-read.service.integration.test.ts.
-      ({ getOfferingDetail } =
-        await import("@/services/product/get-offering-detail"));
+      // Exercises the real services' own internal `@/db/client` pool (not
+      // the local `db` connection above) — dynamic import after confirming
+      // DATABASE_URL, mirroring tests/services/roles-read.service.
+      // integration.test.ts. Bundled into one Promise.all, same convention
+      // as tests/auth/guard.integration.test.ts's action-module imports.
+      const [
+        getOfferingDetailMod,
+        addSpecificationMod,
+        updateSpecificationMod,
+        deleteSpecificationMod,
+        insertPriceMod,
+        updateOfferingMod,
+        activateOfferingMod,
+      ] = await Promise.all([
+        import("@/services/product/get-offering-detail"),
+        import("@/services/product/add-specification"),
+        import("@/services/product/update-specification"),
+        import("@/services/product/delete-specification"),
+        import("@/services/product/insert-price"),
+        import("@/services/product/update-offering"),
+        import("@/services/product/activate-offering"),
+      ]);
+      getOfferingDetail = getOfferingDetailMod.getOfferingDetail;
+      addSpecification = addSpecificationMod.addSpecification;
+      updateSpecification = updateSpecificationMod.updateSpecification;
+      deleteSpecification = deleteSpecificationMod.deleteSpecification;
+      insertPrice = insertPriceMod.insertPrice;
+      updateOffering = updateOfferingMod.updateOffering;
+      activateOffering = activateOfferingMod.activateOffering;
 
       const [user] = await db
         .insert(appuser)
@@ -117,6 +154,53 @@ describe.skipIf(!databaseUrl)(
         pricingCharacteristics: characteristics.pricing_characteristics,
         startDateTime: data.startDateTime,
       });
+    }
+
+    async function insertSpecRow(data: {
+      productOfferingId: string;
+      name: string;
+      isMandatory?: boolean;
+      isDefault?: boolean;
+      defaultValue?: string | null;
+    }): Promise<string> {
+      const characteristics = productSpecCharacteristicsSchema.parse({
+        SST_ID: "01",
+      });
+      const [row] = await db
+        .insert(productSpecifications)
+        .values({
+          refProductOfferingId: data.productOfferingId,
+          name: data.name,
+          isMandatory: data.isMandatory ?? false,
+          isDefault: data.isDefault ?? false,
+          defaultValue: data.defaultValue ?? null,
+          productSpecCharacteristics: characteristics,
+        })
+        .returning({ productSpecId: productSpecifications.productSpecId });
+      return row!.productSpecId;
+    }
+
+    async function findFamilyRows(
+      rootId: string,
+    ): Promise<
+      { productOfferingId: string; lifecycleStatus: LifecycleStatus }[]
+    > {
+      const rows = await db
+        .select({
+          productOfferingId: productOffering.productOfferingId,
+          lifecycleStatus: productOffering.lifecycleStatus,
+        })
+        .from(productOffering)
+        .where(
+          or(
+            eq(productOffering.productOfferingId, rootId),
+            eq(productOffering.familyOfferingId, rootId),
+          ),
+        );
+      return rows.map((r) => ({
+        ...r,
+        lifecycleStatus: r.lifecycleStatus as LifecycleStatus,
+      }));
     }
 
     async function insertTieredPrice(data: {
@@ -527,6 +611,384 @@ describe.skipIf(!databaseUrl)(
           "offering_list_page_size",
         );
         expect(value).toBe("5");
+      });
+    });
+
+    // pm24-spec §3.1 pre-flight audit: guardrails 8/9/14 (code-standards-
+    // phase2 §9) were verified against a live DB during pm12/13/14/15/16's
+    // own development, but only via disposable, uncommitted scripts (per
+    // each unit's progress-tracker note) — never captured as a permanent,
+    // committed CI proof. pm24's ledger marks these rows "INHERIT — audit
+    // present & green"; that audit found no such test existed. Added here,
+    // under the owning behavior's own file, rather than invented as a
+    // pm24-local workaround (pm24-spec §2.1's explicit boundary).
+    describe("activateOffering (guardrail 8: single-active-per-family)", () => {
+      it("activating a sibling draft retires the prior ACTIVE version in the same transaction", async () => {
+        const rootId = await insertOffering({
+          name: "GATE8 Root",
+          lifecycleStatus: "DRAFT",
+        });
+        await insertFlatPrice({
+          productOfferingId: rootId,
+          priceType: "recurring",
+          startDateTime: new Date(),
+          amount: "10.00",
+        });
+        await insertSpecRow({ productOfferingId: rootId, name: "Slice" });
+
+        const first = await activateOffering(rootId, {}, editorUserId);
+        expect(first).toMatchObject({ ok: true, supersededOfferingId: null });
+
+        const { offeringId: draftId } = await db.transaction((tx) =>
+          productOfferingRepository.branchOfferingAsDraft(tx, rootId),
+        );
+
+        const second = await activateOffering(draftId, {}, editorUserId);
+        expect(second).toMatchObject({
+          ok: true,
+          supersededOfferingId: rootId,
+        });
+
+        const rootRow = await productOfferingRepository.findDetailById(
+          db,
+          rootId,
+        );
+        const draftRow = await productOfferingRepository.findDetailById(
+          db,
+          draftId,
+        );
+        expect(rootRow?.lifecycleStatus).toBe("RETIRED");
+        expect(draftRow?.lifecycleStatus).toBe("ACTIVE");
+      });
+
+      it("two near-simultaneous activations on sibling drafts leave exactly one ACTIVE member in the family", async () => {
+        const rootId = await insertOffering({
+          name: "GATE8 Race Root",
+          lifecycleStatus: "DRAFT",
+        });
+        await insertFlatPrice({
+          productOfferingId: rootId,
+          priceType: "recurring",
+          startDateTime: new Date(),
+          amount: "10.00",
+        });
+        await insertSpecRow({ productOfferingId: rootId, name: "Slice" });
+
+        const { offeringId: draftA } = await db.transaction((tx) =>
+          productOfferingRepository.branchOfferingAsDraft(tx, rootId),
+        );
+        const { offeringId: draftB } = await db.transaction((tx) =>
+          productOfferingRepository.branchOfferingAsDraft(tx, rootId),
+        );
+
+        const [resultA, resultB] = await Promise.all([
+          activateOffering(draftA, {}, editorUserId),
+          activateOffering(draftB, {}, editorUserId),
+        ]);
+        expect(resultA.ok).toBe(true);
+        expect(resultB.ok).toBe(true);
+
+        const familyRows = await findFamilyRows(rootId);
+        const activeRows = familyRows.filter(
+          (r) => r.lifecycleStatus === "ACTIVE",
+        );
+        expect(activeRows).toHaveLength(1);
+      });
+    });
+
+    describe("branch-not-mutate (guardrail 9)", () => {
+      it("editing an ACTIVE offering's fields leaves the original row byte-identical and produces exactly one new sibling DRAFT", async () => {
+        const originalId = await insertOffering({
+          name: "GATE9 Fields Original",
+          lifecycleStatus: "ACTIVE",
+        });
+        const before = await productOfferingRepository.findDetailById(
+          db,
+          originalId,
+        );
+
+        const result = await updateOffering(
+          originalId,
+          {
+            name: "GATE9 Fields Changed",
+            isSellable: false,
+            billingOnly: true,
+            saveAsNew: false,
+          },
+          editorUserId,
+        );
+        expect(result).toMatchObject({ ok: true, branched: true });
+
+        const after = await productOfferingRepository.findDetailById(
+          db,
+          originalId,
+        );
+        expect(after).toEqual(before);
+
+        const familyRows = await findFamilyRows(originalId);
+        const siblings = familyRows.filter(
+          (r) => r.productOfferingId !== originalId,
+        );
+        expect(siblings).toHaveLength(1);
+        expect(siblings[0]?.lifecycleStatus).toBe("DRAFT");
+
+        if (result.ok) {
+          const branched = await productOfferingRepository.findDetailById(
+            db,
+            result.offeringId,
+          );
+          expect(branched?.name).toBe("GATE9 Fields Changed");
+          expect(branched?.isSellable).toBe(false);
+          expect(branched?.billingOnly).toBe(true);
+        }
+      });
+
+      it("adding a specification to an ACTIVE offering leaves existing specs untouched and clones them into one new sibling DRAFT", async () => {
+        const originalId = await insertOffering({
+          name: "GATE9 AddSpec Original",
+          lifecycleStatus: "ACTIVE",
+        });
+        await insertSpecRow({
+          productOfferingId: originalId,
+          name: "Existing Spec",
+        });
+        const beforeSpecs =
+          await productSpecificationRepository.findByOfferingId(db, originalId);
+
+        const result = await addSpecification(
+          originalId,
+          {
+            name: "New Spec",
+            isMandatory: false,
+            isDefault: false,
+            defaultValue: null,
+            productSpecCharacteristics: productSpecCharacteristicsSchema.parse({
+              SST_ID: "02",
+            }),
+          },
+          editorUserId,
+        );
+        expect(result).toMatchObject({ ok: true, branched: true });
+
+        const afterSpecs =
+          await productSpecificationRepository.findByOfferingId(db, originalId);
+        expect(afterSpecs).toEqual(beforeSpecs);
+
+        if (result.ok) {
+          const branchedSpecs =
+            await productSpecificationRepository.findByOfferingId(
+              db,
+              result.offeringId,
+            );
+          expect(branchedSpecs.map((s) => s.name).sort()).toEqual([
+            "Existing Spec",
+            "New Spec",
+          ]);
+        }
+      });
+
+      it("updating a specification on an ACTIVE offering leaves the original spec row byte-identical and updates only the cloned counterpart", async () => {
+        const originalId = await insertOffering({
+          name: "GATE9 UpdateSpec Original",
+          lifecycleStatus: "ACTIVE",
+        });
+        const specId = await insertSpecRow({
+          productOfferingId: originalId,
+          name: "Mutable Spec",
+          defaultValue: "old-value",
+        });
+        const beforeSpecs =
+          await productSpecificationRepository.findByOfferingId(db, originalId);
+
+        const result = await updateSpecification(
+          specId,
+          originalId,
+          {
+            name: "Mutable Spec",
+            isMandatory: false,
+            isDefault: false,
+            defaultValue: "new-value",
+            productSpecCharacteristics: productSpecCharacteristicsSchema.parse({
+              SST_ID: "01",
+            }),
+          },
+          editorUserId,
+        );
+        expect(result).toMatchObject({ ok: true, branched: true });
+
+        const afterSpecs =
+          await productSpecificationRepository.findByOfferingId(db, originalId);
+        expect(afterSpecs).toEqual(beforeSpecs);
+
+        if (result.ok) {
+          const branchedSpecs =
+            await productSpecificationRepository.findByOfferingId(
+              db,
+              result.offeringId,
+            );
+          expect(branchedSpecs).toHaveLength(1);
+          expect(branchedSpecs[0]?.defaultValue).toBe("new-value");
+        }
+      });
+
+      it("deleting a specification on an ACTIVE offering leaves the original spec row untouched and removes only the cloned counterpart", async () => {
+        const originalId = await insertOffering({
+          name: "GATE9 DeleteSpec Original",
+          lifecycleStatus: "ACTIVE",
+        });
+        const keepId = await insertSpecRow({
+          productOfferingId: originalId,
+          name: "Keep Spec",
+        });
+        const removeId = await insertSpecRow({
+          productOfferingId: originalId,
+          name: "Remove Spec",
+        });
+        const beforeSpecs =
+          await productSpecificationRepository.findByOfferingId(db, originalId);
+
+        const result = await deleteSpecification(
+          removeId,
+          originalId,
+          editorUserId,
+        );
+        expect(result).toMatchObject({ ok: true, branched: true });
+
+        const afterSpecs =
+          await productSpecificationRepository.findByOfferingId(db, originalId);
+        expect(afterSpecs).toEqual(beforeSpecs);
+        expect(afterSpecs.map((s) => s.productSpecId).sort()).toEqual(
+          [keepId, removeId].sort(),
+        );
+
+        if (result.ok) {
+          const branchedSpecs =
+            await productSpecificationRepository.findByOfferingId(
+              db,
+              result.offeringId,
+            );
+          expect(branchedSpecs).toHaveLength(1);
+          expect(branchedSpecs[0]?.name).toBe("Keep Spec");
+        }
+      });
+
+      it("inserting a price on an ACTIVE offering leaves the original price row untouched and produces exactly one new sibling DRAFT", async () => {
+        const originalId = await insertOffering({
+          name: "GATE9 InsertPrice Original",
+          lifecycleStatus: "ACTIVE",
+        });
+        await insertFlatPrice({
+          productOfferingId: originalId,
+          priceType: "recurring",
+          startDateTime: new Date("2025-01-01T00:00:00Z"),
+          amount: "50.00",
+          name: "Existing Price",
+        });
+        const beforePrices = await db
+          .select()
+          .from(productOfferingPrice)
+          .where(eq(productOfferingPrice.productOfferingId, originalId));
+
+        const result = await insertPrice(
+          originalId,
+          {
+            name: "New Price",
+            priceType: "usage",
+            currency: "MYR",
+            glCode: null,
+            startDateTime: new Date(),
+            priceCharacteristics: priceCharacteristicsSchema.parse({
+              pricing_model: "flat",
+              amount: "5.00",
+              pricing_characteristics: null,
+            }),
+          },
+          editorUserId,
+        );
+        expect(result).toMatchObject({ ok: true, branched: true });
+
+        const afterPrices = await db
+          .select()
+          .from(productOfferingPrice)
+          .where(eq(productOfferingPrice.productOfferingId, originalId));
+        expect(afterPrices).toEqual(beforePrices);
+
+        if (result.ok) {
+          const branchedPrices = await db
+            .select()
+            .from(productOfferingPrice)
+            .where(
+              eq(productOfferingPrice.productOfferingId, result.offeringId),
+            );
+          expect(branchedPrices.map((p) => p.name).sort()).toEqual([
+            "Existing Price",
+            "New Price",
+          ]);
+        }
+      });
+    });
+
+    describe("price immutability, behavioral (guardrail 14)", () => {
+      it("inserting a successor price on a DRAFT offering leaves the prior price row byte-identical and does not bump the offering version", async () => {
+        const offeringId = await insertOffering({
+          name: "GATE14 Price Original",
+          lifecycleStatus: "DRAFT",
+        });
+        await insertFlatPrice({
+          productOfferingId: offeringId,
+          priceType: "recurring",
+          startDateTime: new Date("2025-01-01T00:00:00Z"),
+          amount: "50.00",
+          name: "Original Price",
+        });
+        const beforeRows = await db
+          .select()
+          .from(productOfferingPrice)
+          .where(eq(productOfferingPrice.productOfferingId, offeringId));
+        expect(beforeRows).toHaveLength(1);
+        const beforeOffering = await productOfferingRepository.findDetailById(
+          db,
+          offeringId,
+        );
+
+        const result = await insertPrice(
+          offeringId,
+          {
+            name: "Successor Price",
+            priceType: "recurring",
+            currency: "MYR",
+            glCode: null,
+            startDateTime: new Date(),
+            priceCharacteristics: priceCharacteristicsSchema.parse({
+              pricing_model: "flat",
+              amount: "60.00",
+              pricing_characteristics: null,
+            }),
+          },
+          editorUserId,
+        );
+        expect(result).toMatchObject({
+          ok: true,
+          branched: false,
+          offeringId,
+        });
+
+        const afterRows = await db
+          .select()
+          .from(productOfferingPrice)
+          .where(eq(productOfferingPrice.productOfferingId, offeringId));
+        expect(afterRows).toHaveLength(2);
+        const originalAfter = afterRows.find(
+          (r) =>
+            r.productOfferingPriceId === beforeRows[0]!.productOfferingPriceId,
+        );
+        expect(originalAfter).toEqual(beforeRows[0]);
+
+        const afterOffering = await productOfferingRepository.findDetailById(
+          db,
+          offeringId,
+        );
+        expect(afterOffering?.version).toBe(beforeOffering?.version);
       });
     });
   },

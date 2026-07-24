@@ -31,36 +31,41 @@ function collectFiles(dir: string): string[] {
 }
 
 describe("product module boundaries (pm09 ship-gate sweep)", () => {
-  // pm19-spec §2.5/§3.6. Supersedes the "folder must not exist" assertion —
-  // pm19 is the unit that creates it. Rewritten to check the exact action
-  // file set expected to exist at each point in the build, so CI never sits
-  // red between the unit that adds a file and the unit that's nominally
-  // "responsible" for the guardrail rewrite (pm99 assigns that to pm24; this
-  // spec instead updates it incrementally, matching how
-  // _change-product-crud-plan.md / _change-product-crud-implementation-guide.md
-  // resolved the identical gap under their own unit numbering). pm20–pm23
-  // each append their own action file to this array as it lands; pm24 does
-  // the final pass once all seven exist (matching code-standards-phase2 §7's
-  // full file tree) and takes over ownership of this assertion for good.
-  const EXPECTED_PRODUCT_ACTION_FILES = [
-    "create-offering.action.ts",
-    "update-offering.action.ts",
-    "create-specification.action.ts",
-    "update-specification.action.ts",
-    "delete-specification.action.ts",
-    "insert-price.action.ts",
-  ];
+  // pm19-spec §2.5/§3.6, closed out by pm24-spec §2.3/§3.2. Supersedes the
+  // v1 "folder must not exist" assertion — pm19 is the unit that creates it.
+  // pm20–pm23 each appended their own action file to this array as they
+  // landed; pm24 takes over ownership of this assertion for good now that
+  // all eight files exist (matching code-standards-phase2 §7's full file
+  // tree), extending the check from "the right file set exists" to "each
+  // file exports exactly the one function its own spec promised."
+  const PRODUCT_ACTION_FILES: Record<string, string> = {
+    "create-offering.action.ts": "createOfferingAction",
+    "update-offering.action.ts": "updateOfferingAction",
+    "create-specification.action.ts": "createSpecificationAction",
+    "update-specification.action.ts": "updateSpecificationAction",
+    "delete-specification.action.ts": "deleteSpecificationAction",
+    "insert-price.action.ts": "insertPriceAction",
+    "activate-offering.action.ts": "activateOfferingAction",
+    "retire-offering.action.ts": "retireOfferingAction",
+  };
 
-  it("actions/product/ exists and exports exactly this build's action file set", () => {
+  it("actions/product/ exists and exports exactly this phase's action set", () => {
     const actionsDir = path.join(REPO_ROOT, "actions", "product");
     expect(fs.existsSync(actionsDir)).toBe(true);
 
-    const actual = fs
+    const actualFiles = fs
       .readdirSync(actionsDir)
       .filter((name) => name.endsWith(".action.ts"))
       .sort();
+    expect(actualFiles).toEqual(Object.keys(PRODUCT_ACTION_FILES).sort());
 
-    expect(actual).toEqual([...EXPECTED_PRODUCT_ACTION_FILES].sort());
+    for (const [fileName, exportName] of Object.entries(PRODUCT_ACTION_FILES)) {
+      const source = fs.readFileSync(path.join(actionsDir, fileName), "utf8");
+      const matches = source.match(
+        new RegExp(`export async function ${exportName}\\(`, "g"),
+      );
+      expect(matches?.length ?? 0).toBe(1);
+    }
   });
 
   // code-standards §5.1/§5.3: v1 exposes no product route handler — every
@@ -173,5 +178,174 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       manifestMatch?.[1]?.match(/"\/products\/product-offering"/g) ?? []
     ).length;
     expect(occurrences).toBe(1);
+  });
+
+  // Guardrail 12 (code-standards-phase2 §9). pm18 already added the route
+  // itself to ROUTE_MANIFEST (confirmed via pm24-spec §3.1's pre-flight
+  // audit — grep found it present); this assertion is the sweep file's own
+  // re-check of the manifest's content, module-wide, mirroring the
+  // "/products/product-offering" assertion above.
+  it('the frozen route manifest includes "/products/manage-products" exactly once', () => {
+    const routeManifestSource = fs.readFileSync(
+      path.join(REPO_ROOT, "tests", "app", "route-manifest.test.ts"),
+      "utf8",
+    );
+    const manifestMatch = routeManifestSource.match(
+      /const ROUTE_MANIFEST = \[([\s\S]*?)\] as const;/,
+    );
+    expect(manifestMatch).not.toBeNull();
+
+    const occurrences = (
+      manifestMatch?.[1]?.match(/"\/products\/manage-products"/g) ?? []
+    ).length;
+    expect(occurrences).toBe(1);
+  });
+
+  // Guardrail 11 (code-standards-phase2 §9). View Product's own components
+  // (components/products/*.tsx, excluding the manage/ subfolder — that's
+  // write-capable UI by design, prodmgmt-architecture-phase2 §2) and the
+  // View Product page tree must import nothing that could mutate product
+  // data. Structural, string-level — same style as guardrail 4 above.
+  const FORBIDDEN_IMPORT_SUBSTRINGS = [
+    "@/actions/product",
+    "@/components/products/manage",
+    ...[...PRODUCT_WRITE_SERVICE_FILES].map(
+      (f) => `@/services/product/${f.replace(/\.ts$/, "")}`,
+    ),
+  ];
+
+  it("View Product imports nothing from the write surface", () => {
+    const viewProductPageFiles = collectFiles(
+      path.join(REPO_ROOT, "app", "(app)", "products", "product-offering"),
+    );
+    const readOnlyComponentFiles = fs
+      .readdirSync(path.join(REPO_ROOT, "components", "products"), {
+        withFileTypes: true,
+      })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".tsx"))
+      .map((entry) =>
+        path.join(REPO_ROOT, "components", "products", entry.name),
+      );
+
+    const filesToScan = [...viewProductPageFiles, ...readOnlyComponentFiles];
+    expect(filesToScan.length).toBeGreaterThan(0);
+
+    const offending = filesToScan.filter((filePath) => {
+      const content = fs.readFileSync(filePath, "utf8");
+      return FORBIDDEN_IMPORT_SUBSTRINGS.some((needle) =>
+        content.includes(needle),
+      );
+    });
+
+    expect(offending.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
+  });
+
+  // Guardrail 13. Frozen Phase-1 baselines (prodmgmt-architecture-phase2 §3:
+  // family_offering_id is the *only* schema addition this phase makes).
+  const PHASE1_OFFERING_COLUMNS = [
+    "productOfferingId",
+    "name",
+    "isBundle",
+    "isSellable",
+    "billingOnly",
+    "lifecycleStatus",
+    "version",
+    "lastModified",
+    "lastEditedBy",
+  ].sort();
+  const SPECIFICATIONS_COLUMNS = [
+    "productSpecId",
+    "refProductOfferingId",
+    "name",
+    "isMandatory",
+    "isDefault",
+    "defaultValue",
+    "productSpecCharacteristics",
+  ].sort();
+  const PRICE_COLUMNS = [
+    "productOfferingPriceId",
+    "productOfferingId",
+    "name",
+    "priceType",
+    "recurringChargePeriodLength",
+    "recurringChargePeriodType",
+    "unitOfMeasure",
+    "amount",
+    "currency",
+    "glCode",
+    "pricingModel",
+    "policy",
+    "pricingCharacteristics",
+    "startDateTime",
+    "createdAt",
+  ].sort();
+
+  function extractTableColumnNames(
+    source: string,
+    tableVarName: string,
+  ): string[] {
+    const tableMatch = source.match(
+      new RegExp(
+        `export const ${tableVarName} = product\\.table\\(\\s*"[a-z_]+",\\s*\\{([\\s\\S]*?)\\n  \\},`,
+      ),
+    );
+    expect(tableMatch).not.toBeNull();
+    return [...(tableMatch?.[1] ?? "").matchAll(/^\s{4}(\w+):/gm)]
+      .map((m) => m[1] ?? "")
+      .sort();
+  }
+
+  it("db/schema/product.ts diffs from Phase 1 by exactly family_offering_id + its index", () => {
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "schema", "product.ts"),
+      "utf8",
+    );
+
+    const offeringColumns = extractTableColumnNames(source, "productOffering");
+    expect(offeringColumns).toEqual(
+      [...PHASE1_OFFERING_COLUMNS, "familyOfferingId"].sort(),
+    );
+
+    expect(extractTableColumnNames(source, "productSpecifications")).toEqual(
+      SPECIFICATIONS_COLUMNS,
+    );
+    expect(extractTableColumnNames(source, "productOfferingPrice")).toEqual(
+      PRICE_COLUMNS,
+    );
+
+    expect(source).toContain("product_offering_family_idx");
+  });
+
+  // Guardrail 10 (code-standards-phase2 §9), closing pm14's own open item
+  // (pm14-spec's closing line explicitly left open whether this becomes
+  // "asserted structurally" or stays "by construction"). Does not re-verify
+  // the *behavior* — tests/db/product-repositories.integration.test.ts's own
+  // branch-first-when-ACTIVE tests do that — this verifies the *shape*:
+  // exactly one call site exists for the repository's delete method, and it
+  // is delete-specification.ts's own branch-first-routed service.
+  //
+  // Deliberately dot-qualified only (`productSpecificationRepository.
+  // deleteSpecification(`), not a bare-name match: the repository is only
+  // ever accessed through its `productSpecificationRepository` object
+  // (never destructured elsewhere in this codebase), so a bare-name check
+  // would also match `actions/product/delete-specification.action.ts`
+  // calling the *service* function of the same name — a legitimate,
+  // expected call site, not a repository-layer violation.
+  it("productSpecificationRepository.deleteSpecification has exactly one call site (delete-specification.ts)", () => {
+    const scanRoots = [
+      path.join(REPO_ROOT, "services", "product"),
+      path.join(REPO_ROOT, "components", "products"),
+      path.join(REPO_ROOT, "actions", "product"),
+    ];
+    const callSites = scanRoots
+      .flatMap(collectFiles)
+      .filter((f) => path.basename(f) !== "delete-specification.ts")
+      .filter((f) =>
+        /productSpecificationRepository\.deleteSpecification\(/.test(
+          fs.readFileSync(f, "utf8"),
+        ),
+      );
+
+    expect(callSites.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
   });
 });

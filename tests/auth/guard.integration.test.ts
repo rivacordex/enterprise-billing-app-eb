@@ -84,6 +84,14 @@ describe.skipIf(!databaseUrl)(
     let customerManagerUserId: string;
     let customerUserRoleUserId: string;
     let customerActions: Record<string, (input: unknown) => Promise<unknown>>;
+    // pm24-spec §2.7/§3.8 — mirrors cm16-spec §3.2's customerManagerUserId/
+    // customerUserRoleUserId split, but for the products:EDIT-vs-DELETE gate
+    // specifically (customers only ever tested EDIT-vs-READ; there is no
+    // customers:DELETE-gated action to compare against). adminUserId already
+    // holds products:DELETE (⊃ EDIT ⊃ READ per level-rank), so it can't prove
+    // the split exists on its own — an EDIT-only principal is required.
+    let productsManagerUserId: string;
+    let productActions: Record<string, () => Promise<unknown>>;
 
     async function insertUser(params: {
       id: string;
@@ -127,6 +135,7 @@ describe.skipIf(!databaseUrl)(
       pendingForceChangeUserId = randomUUID();
       customerManagerUserId = randomUUID();
       customerUserRoleUserId = randomUUID();
+      productsManagerUserId = randomUUID();
 
       await insertUser({ id: adminUserId });
       await insertUser({ id: noGrantsUserId });
@@ -143,6 +152,7 @@ describe.skipIf(!databaseUrl)(
       });
       await insertUser({ id: customerManagerUserId });
       await insertUser({ id: customerUserRoleUserId });
+      await insertUser({ id: productsManagerUserId });
 
       const [adminRole] = await db
         .insert(roles)
@@ -158,6 +168,12 @@ describe.skipIf(!databaseUrl)(
       const [customerUserRole] = await db
         .insert(roles)
         .values({ roleName: "USER", roleDescr: "User" })
+        .returning({ roleId: roles.roleId });
+      // pm24-spec §2.7/§3.8 — products:EDIT-only role, the products analogue
+      // of customerManagerRole above.
+      const [productsManagerRole] = await db
+        .insert(roles)
+        .values({ roleName: "PRODUCTS_MANAGER", roleDescr: "Products Manager" })
         .returning({ roleId: roles.roleId });
 
       const insertedPermissions = await db
@@ -261,6 +277,20 @@ describe.skipIf(!databaseUrl)(
         },
       ]);
 
+      // pm24-spec §2.7 point 1 — productsManagerUserId gets products:EDIT
+      // only, never DELETE, so retireOfferingAction (DELETE-gated) has
+      // something real to reject.
+      await db.insert(rolePermissionAssign).values({
+        refRoleId: productsManagerRole!.roleId,
+        refPermissionId: productsPermission.permissionId,
+        permissionType: "EDIT",
+      });
+      await db.insert(roleAssign).values({
+        refUserId: productsManagerUserId,
+        refRoleId: productsManagerRole!.roleId,
+        assignedBy: null,
+      });
+
       // cm16-spec §3.2 point 4 / §2.3 — the direct-Server-Action USER-denial
       // loop needs every actions/customer/* export. Imported dynamically,
       // after DATABASE_URL is confirmed set, same convention as
@@ -306,6 +336,58 @@ describe.skipIf(!databaseUrl)(
           setPreferredContactMod.setPreferredContactAction,
         setPreferredContactMethodAction:
           setPreferredContactMethodMod.setPreferredContactMethodAction,
+      };
+
+      // pm24-spec §2.7/§3.8 point 2 — same convention as the customer block
+      // above, but each entry is a zero-arg closure (not a shared `(input:
+      // unknown) => Promise<unknown>` shape) since the eight product actions
+      // have varying arity (offeringId/specId positional params ahead of the
+      // input object, or no input object at all for deleteSpecificationAction).
+      // Placeholder ids are safe — the permission guard runs before any
+      // argument is used (pm24-spec §2.7).
+      const [
+        createOfferingMod,
+        updateOfferingMod,
+        createSpecificationMod,
+        updateSpecificationMod,
+        deleteSpecificationMod,
+        insertPriceMod,
+        activateOfferingMod,
+        retireOfferingMod,
+      ] = await Promise.all([
+        import("@/actions/product/create-offering.action"),
+        import("@/actions/product/update-offering.action"),
+        import("@/actions/product/create-specification.action"),
+        import("@/actions/product/update-specification.action"),
+        import("@/actions/product/delete-specification.action"),
+        import("@/actions/product/insert-price.action"),
+        import("@/actions/product/activate-offering.action"),
+        import("@/actions/product/retire-offering.action"),
+      ]);
+
+      productActions = {
+        createOfferingAction: () => createOfferingMod.createOfferingAction({}),
+        updateOfferingAction: () =>
+          updateOfferingMod.updateOfferingAction("PRDOFR000001", {}),
+        createSpecificationAction: () =>
+          createSpecificationMod.createSpecificationAction("PRDOFR000001", {}),
+        updateSpecificationAction: () =>
+          updateSpecificationMod.updateSpecificationAction(
+            "PRDSMD000001",
+            "PRDOFR000001",
+            {},
+          ),
+        deleteSpecificationAction: () =>
+          deleteSpecificationMod.deleteSpecificationAction(
+            "PRDSMD000001",
+            "PRDOFR000001",
+          ),
+        insertPriceAction: () =>
+          insertPriceMod.insertPriceAction("PRDOFR000001", {}),
+        activateOfferingAction: () =>
+          activateOfferingMod.activateOfferingAction("PRDOFR000001", {}),
+        retireOfferingAction: () =>
+          retireOfferingMod.retireOfferingAction("PRDOFR000001", {}),
       };
     }, 30_000);
 
@@ -601,6 +683,76 @@ describe.skipIf(!databaseUrl)(
           expect(result).toMatchObject({ ok: false, code: "FORBIDDEN" });
         },
       );
+    });
+
+    // pm24-spec §2.7/§3.8 — the products analogue of the customer block
+    // above, but proving the products:EDIT-vs-DELETE split specifically
+    // (customers only ever tested EDIT-vs-READ). Every product action
+    // catches the guard's redirect and returns { ok: false, code:
+    // "FORBIDDEN" } (unlike createCustomerAction's propagating exception),
+    // so `isPermissionRejection` only needs to check one shape per branch —
+    // both are still handled for robustness against either behavior.
+    describe("direct Server Action calls reject an under-permissioned caller (products)", () => {
+      const PRODUCTS_EDIT_ACTION_NAMES = [
+        "createOfferingAction",
+        "updateOfferingAction",
+        "createSpecificationAction",
+        "updateSpecificationAction",
+        "deleteSpecificationAction",
+        "insertPriceAction",
+        "activateOfferingAction",
+      ] as const;
+
+      const ALL_PRODUCT_ACTION_NAMES = [
+        ...PRODUCTS_EDIT_ACTION_NAMES,
+        "retireOfferingAction",
+      ] as const;
+
+      async function isPermissionRejection(
+        action: () => Promise<unknown>,
+      ): Promise<boolean> {
+        let result: unknown;
+        try {
+          result = await action();
+        } catch (err) {
+          return redirectTarget(err) === "/no-access";
+        }
+        return (
+          typeof result === "object" &&
+          result !== null &&
+          (result as { ok?: unknown }).ok === false &&
+          (result as { code?: unknown }).code === "FORBIDDEN"
+        );
+      }
+
+      it.each(PRODUCTS_EDIT_ACTION_NAMES)(
+        "%s does not reject products_manager_user (products:EDIT) on permission grounds",
+        async (name) => {
+          mockSession(productsManagerUserId);
+          const rejected = await isPermissionRejection(productActions[name]!);
+          expect(rejected).toBe(false);
+        },
+      );
+
+      it.each(ALL_PRODUCT_ACTION_NAMES)(
+        "%s rejects a no_grants_user caller",
+        async (name) => {
+          mockSession(noGrantsUserId);
+          const rejected = await isPermissionRejection(productActions[name]!);
+          expect(rejected).toBe(true);
+        },
+      );
+
+      // The concrete, executable proof that products:EDIT and
+      // products:DELETE are two different gates, not one (pm23-spec §2.3;
+      // pm99's own words for this unit).
+      it("retireOfferingAction rejects a products_manager_user (products:EDIT-only, DELETE required)", async () => {
+        mockSession(productsManagerUserId);
+        const rejected = await isPermissionRejection(
+          productActions.retireOfferingAction!,
+        );
+        expect(rejected).toBe(true);
+      });
     });
   },
 );
