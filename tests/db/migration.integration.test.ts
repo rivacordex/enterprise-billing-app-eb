@@ -21,6 +21,7 @@ describe.skipIf(!databaseUrl)(
       // drop first (pm02-spec §3.8, cm01-spec §3.7); no cross-schema FK
       // exists between "customer" and "product", so their relative order
       // doesn't matter to each other.
+      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
@@ -32,6 +33,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
