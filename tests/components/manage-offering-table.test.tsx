@@ -961,20 +961,20 @@ describe("ManageOfferingTable", () => {
       ).toBeInTheDocument();
     });
 
-    it("a successful superseding Activate result adds the family id to expandedFamilies, making the retired sibling visible", async () => {
+    it("a successful superseding Activate result on the primary row adds the family id to expandedFamilies, making the retired sibling visible", async () => {
       mockActivateOfferingAction.mockResolvedValue({
         ok: true,
         offeringId: "PRDOFR000032",
         supersededOfferingId: "PRDOFR000031",
       });
-      const primary = makeRow({
+      const activeSibling = makeRow({
         productOfferingId: "PRDOFR000031",
         name: "Supersede Row",
         familyOfferingId: null,
         version: 1,
         lifecycleStatus: "ACTIVE",
       });
-      const sibling = makeRow({
+      const draftPrimary = makeRow({
         productOfferingId: "PRDOFR000032",
         name: "Supersede Row",
         familyOfferingId: "PRDOFR000031",
@@ -983,8 +983,8 @@ describe("ManageOfferingTable", () => {
       });
       const family: OfferingFamilyRow = {
         familyId: "PRDOFR000031",
-        primary,
-        versions: [primary, sibling],
+        primary: draftPrimary,
+        versions: [activeSibling, draftPrimary],
       };
       const user = userEvent.setup();
       render(<ManageOfferingTable {...DEFAULT_PROPS} families={[family]} />);
@@ -995,13 +995,9 @@ describe("ManageOfferingTable", () => {
         }),
       ).not.toBeInTheDocument();
 
-      // Only the DRAFT sibling has an Activate button (the primary is
-      // ACTIVE, so it only renders Retire) — expand the family to reach it.
-      await user.click(
-        screen.getByRole("button", {
-          name: "Show other versions of Supersede Row",
-        }),
-      );
+      // The DRAFT primary row's own Activate button — no manual expansion,
+      // this exercises the primary row's own onSuperseded wiring directly
+      // rather than the (separately-tested) expanded-sibling-row path.
       await user.click(
         screen.getByRole("button", { name: "Activate Supersede Row" }),
       );
