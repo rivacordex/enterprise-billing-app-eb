@@ -1,10 +1,10 @@
 # Product Management — Architecture (Module)
 
-This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Product Management module adds or changes**. Anything not stated here is inherited unchanged. Key decisions are canonical in `_newmodule-product-module-plan.md`; the product spec (user flows, data model, features) is in `prodmgmt-project-overview.md`.
+This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Product Management module adds or changes**. Anything not stated here is inherited unchanged. The product spec (user flows, data model, features) is in `prodmgmt-project-overview.md`.
 
-**Status:** PLANNED — decisions agreed 2026-07-03, pre-implementation. Changes to *Module Invariants* require a documented design review.
+**Status:** SHIPPED — read-only catalog (units pm01–pm09, decisions agreed 2026-07-03) and the CRUD fast-follow (units pm10–pm24, decisions agreed 2026-07-20) are both implemented and ship-gate-verified. Changes to *Module Invariants* require a documented design review.
 
-**Scope:** v1 is a **read-only catalog viewer** at `/products/product-offering` for Billing Operations. Data enters via Drizzle seeds / engineer-run SQL. Schema, services, and permission seeds are CRUD-ready so the editing fast-follow is additive only.
+**Scope:** The module has two pages: **View Product** (`/products/product-offering`), a read-only catalog viewer, and **Manage Products** (`/products/manage-products`), the full create/edit/branch/activate/retire surface. Both share the same three `product` schema tables and the same `products` permission (READ for View Product; EDIT/DELETE for Manage Products).
 
 ---
 
@@ -14,30 +14,32 @@ The stack is inherited wholesale from `architecture.md` §1 (Next.js ≥ 15 App 
 
 | Layer | Technology (inherited) | This module's usage / delta |
 |---|---|---|
-| Frontend | Next.js App Router, RSC | All list state (search, filter, sort, page, row selection) lives in **URL searchParams** rendered by RSC — same pattern as Administration pages. Deep-link: `?offering=PRDOFR000001`. No client-side state store. |
-| APIs & Backend | Server Actions + `services/` | **No new API surface in v1.** Reads flow RSC page → `services/product` → repositories. Server Actions arrive with the CRUD fast-follow. |
-| Database | PostgreSQL ≥ 16, Drizzle | New **`product` schema** (platform §4 namespacing) with 3 tables. First module to use **JSONB** columns (`product_spec_characteristics`, `pricing_characteristics`) — guarded by per-`pricing_model` Zod schemas, not free-form. |
-| Auth & Permissions | Better-Auth + core RBAC | One new code-seeded permission: `products`. No auth mechanics change. |
-| Validation | Zod in `validation/` | Adds per-`pricing_model` discriminated schemas — tiered requires contiguous, non-overlapping `[{from,to,rate}]` bounds. |
+| Frontend | Next.js App Router, RSC | All list state (search, filter, sort, page, row selection) on View Product lives in **URL searchParams** rendered by RSC — same pattern as Administration pages. Deep-link: `?offering=PRDOFR000001`. Manage Products is a thin RSC orchestrator with dialogs/forms as `'use client'` interaction leaves. No client-side state store for list state. |
+| APIs & Backend | Server Actions + `services/` | `actions/product/**` exists — one file per mutation, following the platform's standard Server-Action shape (`requirePermission` → `safeParse` → delegate to `services/product` → `revalidatePath`). Reads flow RSC page → `services/product` → repositories. **No `app/api/product*` route, ever** — permanently forbidden regardless of phase. |
+| Database | PostgreSQL ≥ 16, Drizzle | **`product` schema** (platform §4 namespacing) with 3 tables. Uses **JSONB** columns (`product_spec_characteristics`, `pricing_characteristics`) — guarded by per-`pricing_model` Zod schemas, not free-form. `product_offering.family_offering_id` (nullable, self-referencing FK + index) links version history. |
+| Auth & Permissions | Better-Auth + core RBAC | One code-seeded permission: `products` (READ/EDIT/DELETE). No auth mechanics change. |
+| Validation | Zod in `validation/` | Per-`pricing_model` discriminated schemas (tiered requires contiguous, non-overlapping `[{from,to,rate}]` bounds) plus create/update-offering, create/update-specification, insert-price (with backdating check), and activate/retire schemas. |
 | Everything else | — | Unchanged: hosting, CI/CD, monitoring, backup/recovery, no cache, no RLS. |
 
 ---
 
 ## 2. System Boundaries — Folder Ownership Deltas
 
-Dependency rule unchanged (UI → actions/routes → services → repositories → DB; inner layers never import outward). Two **platform-level changes** this module delivers, plus its own subfolders:
+Dependency rule unchanged (UI → actions/routes → services → repositories → DB; inner layers never import outward). Platform-level changes this module delivered, plus its own subfolders:
 
 | Path | Owns | Notes |
 |---|---|---|
-| `app/(app)/**` | **Route group renamed from `(admin)` → `(app)`** (Decision #10). One group hosts all authenticated modules as plain subfolders (`administration/`, `products/`, later `customers/`, `bill-runs/`). | URL-invisible; touches folder path + `@/app/(admin)/…` imports. Do **first** among UI steps. New route groups only when chrome genuinely differs (cf. `(auth)`). |
-| `app/(app)/products/product-offering/` | The four-section read-only page (offerings table, detail, specs, prices). Declares `products : READ` guard. Thin orchestrator composing `components/`. | No DB queries, no raw SQL, no heavy markup (platform §2). |
-| `components/admin-nav.tsx` | **Refactor `NAV_ITEMS` → `NAV_SECTIONS`** (caption + items per section). Adds "Products" section, peer of "Administration", one item "Product Offering" (lucide `Package`). | Collapsed-rail and active-state behavior unchanged. Nav renders regardless of permission; the page guard enforces access (platform convention). |
-| `services/product/**` | List (search / filter / sort / pagination) and detail (offering + specs + prices) use cases. Framework-agnostic; designed CRUD-ready. | No `next/*` imports. |
-| `db/**` (product scope) | Drizzle schema for the `product` schema, migration, seeds (incl. `products` PERMISSIONS row), sequences, constraints, repositories. | Only place SQL lives. Specs + prices load with the selected offering through repositories — no new API surface. |
-| `validation/product/**` | Zod schemas for list params and `pricing_characteristics` per `pricing_model`. | Parsed before any service call. |
-| `tests/**` | Repo/service unit tests + **authz-matrix entry** for `/products/product-offering`. | New page must appear in the matrix before ship (platform §5). |
-
-No `actions/` or `app/api/` additions in v1 (read-only).
+| `app/(app)/**` | Route group hosting all authenticated modules as plain subfolders (`administration/`, `products/`, later `customers/`, `bill-runs/`). Originally a rename from `(admin)` (Decision #10, pm01). | URL-invisible; new route groups only when chrome genuinely differs (cf. `(auth)`). |
+| `app/(app)/products/product-offering/` | View Product: the four-section read-only page (offerings table, detail, specs, prices). Declares `products : READ` guard. Thin orchestrator composing `components/products/`. | No DB queries, no raw SQL, no heavy markup (platform §2). Nav label and page `H1` read "View Product"; route, components, and data logic otherwise untouched since v1. |
+| `app/(app)/products/manage-products/` | Manage Products: the CRUD page — family-grouped offering list, row actions, create/edit/activate/retire/discard dialogs. Declares `products : EDIT` guard (retire/discard actions additionally re-check `DELETE`). | Structurally independent of `product-offering/` — imports no components from it, and vice versa (guardrail-enforced). |
+| `components/admin-nav.tsx` | `NAV_SECTIONS` (caption + items per section). "Products" section, peer of "Administration", with two items: "View Product" (lucide `Package`) and "Manage Products" (lucide `PackagePlus`). | Collapsed-rail and active-state behavior unchanged. Nav renders regardless of permission; the page guard enforces access (platform convention). |
+| `components/products/**` | Read-only, view-side components (`OfferingTable`, `OfferingDetail`, `SpecificationsPanel`, `PricesPanel`, `LifecycleBadge`, `PriceTypeBadge`) used by View Product. | A guardrail test asserts these import nothing from `components/products/manage/` or any write-path module. |
+| `components/products/manage/**` | Write-capable UI: offering/spec/price forms, activate/retire/discard dialogs (`ManageOfferingTable`, `OfferingForm`, `SpecificationForm`, `SpecificationsDialog`, `PriceForm`, `RetireOfferingDialog`, `CreateOfferingDialog`, `AddPriceDialog`, `ActivateOfferingDialog`). | Deliberately separate from `components/products/*`. |
+| `actions/product/**` | One Server Action file per mutation (`create-offering`, `update-offering`, `create-specification`, `update-specification`, `delete-specification`, `insert-price`, `activate-offering`, `retire-offering`). | No DB access in this layer — same convention as `actions/roles/**`. |
+| `services/product/**` | Read use cases (`list-offerings.ts`, `get-offering-detail.ts`) and write use cases (`create-offering.ts`, `update-offering.ts`, `add-specification.ts`, `update-specification.ts`, `delete-specification.ts`, `insert-price.ts`, `activate-offering.ts`, `retire-offering.ts`) plus the shared `branchOfferingAsDraft` primitive. Framework-agnostic; no `next/*` imports. | |
+| `db/**` (product scope) | Drizzle schema for the `product` schema (3 tables + `family_offering_id` lineage column + index), migrations, seeds (incl. `products` PERMISSIONS row), sequences, constraints, repositories. Repositories carry both finder and write methods; the price repository gains exactly one write, `insertPrice` — never `update*`/`delete*` (Inv. #1). | Only place SQL lives. |
+| `validation/product/**` | Zod schemas for list params, `pricing_characteristics` per `pricing_model`, create/update-offering, create/update-specification, insert-price (backdating), activate/retire (optional `reason`). | Parsed before any service call. |
+| `tests/**` | Repo/service unit tests, integration tests for every write path and versioning invariant, authz-matrix entries for both `/products/product-offering` and `/products/manage-products`, and the module guardrail suite (`product-module-boundaries.test.ts`). | Both pages must appear in the authz matrix (platform §5). |
 
 ---
 
@@ -47,12 +49,14 @@ All in Postgres, `product` schema; no file storage or cache (platform §3). Colu
 
 | Data | Where | Notes |
 |---|---|---|
-| Offerings (`product.product_offering`) | Postgres | One row per offering; `version` is an **in-place metadata counter** bumped on any change — no versioned offering rows. `last_edited_by` FK → `core.APPUSER`. `lifecycle_status`: `DRAFT / ACTIVE / RETIRED`; only ACTIVE selectable for billing by later modules. `is_bundle` display-only (no `bundle_link` table). |
-| Specifications (`product.product_specifications`) | Postgres | FK → offering. Characteristics (e.g. SST/SD identifiers) in `product_spec_characteristics` **JSONB**. |
-| Prices (`product.product_offering_price`) | Postgres | **Immutable rows** — a change inserts a new row and bumps the offering `version`. `start_date_time` = billing effectivity; `created_at` = insert time (differs when future-dated); `end_date_time` **derived** from successor's start, never stored. `amount` nullable when `pricing_model = tiered`; tiers in `pricing_characteristics` JSONB. Constraint: UNIQUE (`product_offering_id`, `price_type`, `start_date_time`) — with derived ends, windows never overlap by construction (supersession: a new price truncates its predecessor); unique starts keep the derivation well-defined (revised 2026-07-04; backdating caveat in Inv. #2). |
+| Offerings (`product.product_offering`) | Postgres | Multiple rows per product are the norm — one per version. `product_offering.family_offering_id` (nullable, self-referencing FK, indexed) links versions of the same product: `NULL` means the row **is** the family's root; a non-null value points directly at the root's id, always one hop, so "all versions of this product" is `WHERE product_offering_id = :rootId OR family_offering_id = :rootId`. `version` is **the row's sequence number within its family** — root is `1`, first branch is `2`, and so on — computed as `MAX(version)` across the resolved family + 1, assigned once at insert, never changed afterward (including for an in-place edit to an already-`DRAFT` row, which updates content and `last_modified` but not `version`). `last_edited_by` FK → `core.APPUSER`. `lifecycle_status`: `DRAFT / ACTIVE / RETIRED`; only ACTIVE selectable for billing by later modules; **at most one row per family may be `ACTIVE` at a time**. `is_bundle` is display-only (no `bundle_link` table), never user-settable, and is copied through unchanged when a row is cloned (branched). |
+| Specifications (`product.product_specifications`) | Postgres | FK → offering. Characteristics (e.g. SST/SD identifiers) in `product_spec_characteristics` **JSONB**. Unchanged in shape by the versioning model — a write against an `ACTIVE` offering is redirected by the *service layer* (branch-first) onto a freshly cloned `DRAFT` row's children, never by a change to this table. |
+| Prices (`product.product_offering_price`) | Postgres | **Immutable, insert-only rows** — a change on a `DRAFT` inserts a new row against that same row (no `version` bump; `version` is not a per-change counter, see above). A change targeting an `ACTIVE` offering instead inserts against a brand-new, branched `DRAFT` row with its own freshly assigned `version`; the original `ACTIVE` row and its prices are untouched. `start_date_time` = billing effectivity; `created_at` = insert time (differs when future-dated); `end_date_time` **derived** from successor's start, never stored. `amount` nullable when `pricing_model = tiered`; tiers in `pricing_characteristics` JSONB. Constraint: UNIQUE (`product_offering_id`, `price_type`, `start_date_time`) — with derived ends, windows never overlap by construction (supersession: a new price truncates its predecessor); unique starts keep the derivation well-defined. Backdating: a price's `start_date_time` may be up to 3 days in the past (non-blocking warning shown), rejected beyond that — enforced in the service layer (`insert-price.ts`), not the DB. |
 | IDs | Postgres sequences | Prefix + zero-padded sequence: `PRDOFR` (offering), `PRDSMD` (spec), `PRDOFP` (price); one sequence per table. |
 | Price history | Price rows themselves | Historical bill-run basis reproducible from immutable rows. **Audit log is forensics, never a rating source.** |
-| Tier storage | JSONB (v1) | May migrate to a child table if the rating engine later needs SQL-queryable tiers — deferred, not decided. |
+| Tier storage | JSONB | May migrate to a child table if the rating engine later needs SQL-queryable tiers — deferred, not decided. |
+
+**Why a self-referencing column rather than matching on `name` for version linkage:** names change, and two unrelated offerings can legitimately share one. A flat, one-hop self-reference costs one column and one index and stays correct regardless of renames. `family_offering_id` is the only schema addition beyond v1's original 3 tables; `product_specifications` and `product_offering_price` are otherwise unchanged in shape.
 
 ---
 
@@ -60,23 +64,25 @@ All in Postgres, `product` schema; no file storage or cache (platform §3). Colu
 
 Auth mechanics unchanged (platform §5: Better-Auth sessions, live per-request permission resolution, 3-layer defense in depth). Module specifics:
 
-- **Single `products` permission**, page-level, code-seeded via migration. READ gates the entire page **including prices** — no pricing-visibility split in v1. EDIT/DELETE seeded now, unused until CRUD.
-- Page guard: `requirePermission('products', 'READ')` at `/products/product-offering`. No grant → `/no-access` (deny by default).
+- **Single `products` permission**, page-level, code-seeded via migration. READ gates the View Product page **including prices** — no pricing-visibility split. EDIT gates offering/specification create-edit, branching, and price add on Manage Products; DELETE gates retirement and discard.
+- Page guards: `requirePermission('products', 'READ')` at `/products/product-offering`; `requirePermission('products', 'EDIT')` at `/products/manage-products` (retire/discard actions additionally re-check `DELETE`). No grant → `/no-access` (deny by default).
 - Nav visibility follows the platform convention: items render regardless of permission; the guard enforces.
 
-### Permission matrix additions
+### Permission matrix
 
 | Page (route) | Access | Required permission : level |
 |---|---|---|
-| `/products/product-offering` (list + detail + specs + prices) | Authenticated | `products` : **READ** |
-| — create / edit offering, prices, specs, lifecycle transitions *(CRUD fast-follow)* | Authenticated | `products` : **EDIT** (seeded, unused in v1) |
-| — delete *(CRUD fast-follow)* | Authenticated | `products` : **DELETE** (seeded, unused in v1) |
+| `/products/product-offering` (View Product — list + detail + specs + prices) | Authenticated | `products` : **READ** |
+| `/products/manage-products` (Manage Products — create / edit / branch / activate) | Authenticated | `products` : **EDIT** |
+| `/products/manage-products` — retire / discard | Authenticated | `products` : **DELETE** |
 
 ---
 
 ## 5. Background Tasks & AI
 
-**None.** No AI/ML components (platform §6 stands). No module jobs: v1 is read-only, price effectivity is resolved at query time from `start_date_time` (per-request computation, not a job). **No new audit events** — reads are not audited; CRUD-phase mutations will add create/update/lifecycle events.
+**None.** No AI/ML components (platform §6 stands). No module jobs: price effectivity is resolved at query time from `start_date_time` (per-request computation, not a job).
+
+**Audit events.** View Product reads are never audited. Manage Products mutations write one audit event per action, inside the same transaction as the data change: `PRODUCT_OFFERING_CREATED`, `PRODUCT_OFFERING_UPDATED`, `PRODUCT_OFFERING_BRANCHED`, `PRODUCT_OFFERING_ACTIVATED`, `PRODUCT_OFFERING_SUPERSEDED`, `PRODUCT_OFFERING_RETIRED`, `PRODUCT_OFFERING_DISCARDED`, `PRODUCT_SPECIFICATION_CREATED`, `PRODUCT_SPECIFICATION_UPDATED`, `PRODUCT_SPECIFICATION_DELETED`, `PRODUCT_PRICE_ADDED`. An optional free-text reason on activation/retirement/discard is carried in the audit event's `afterData` payload (`transitionReason`), not a new `product_offering` column.
 
 ---
 
@@ -84,15 +90,17 @@ Auth mechanics unchanged (platform §5: Better-Auth sessions, live per-request p
 
 Platform Invariants (`architecture.md` §7) all apply. Additional rules this module must never violate; each is testable and CI-enforceable:
 
-1. **Price rows are immutable.** No code path UPDATEs or DELETEs a `product_offering_price` row. A price change INSERTs a successor row and bumps the offering's `version` in the same transaction.
-2. **No overlapping effectivity.** Effectivity windows are derived `[start_date_time, successor start)`; two prices of the same `price_type` on one offering must never share a `start_date_time` — enforced by a DB UNIQUE constraint on (`product_offering_id`, `price_type`, `start_date_time`), not only app logic; violating seeds/inserts fail. *(Revised 2026-07-04: the btree_gist exclusion constraint was removed — with no stored end (Inv. #3), a range-exclusion constraint cannot reference the successor row. Unique starts keep the derivation well-defined; derived windows never overlap because a new price supersedes — truncates — its predecessor from its start instant. A start inside an existing window is therefore legitimate. Known caveat: a **backdated** start rewrites derived history, which touches the reproducible-billing-basis goal; the DB cannot prevent it, so the CRUD fast-follow must restrict backdated starts as a service rule. No v1 exposure — writes are seeds/SQL only.)*
+1. **Price rows are immutable and insert-only.** No code path UPDATEs or DELETEs a `product_offering_price` row, in any phase. The price repository exports no `update*`/`delete*` — ever; `insertPrice` is its only write.
+2. **No overlapping effectivity.** Effectivity windows are derived `[start_date_time, successor start)`; two prices of the same `price_type` on one offering must never share a `start_date_time` — enforced by a DB UNIQUE constraint on (`product_offering_id`, `price_type`, `start_date_time`), not only app logic; violating seeds/inserts fail. Derived windows never overlap because a new price supersedes — truncates — its predecessor from its start instant; a start inside an existing window is legitimate by construction. Backdating: a new price's `start_date_time` may be up to 3 days in the past (accepted with a non-blocking UI warning); beyond that, the write is rejected (`BACKDATED_START_TOO_FAR`) — a service-layer check (`insert-price.ts`), not a DB constraint, since the DB has no way to express "within tolerance of the current instant at write time."
 3. **`end_date_time` is never stored.** A price's end is derived from its successor's `start_date_time`. No `end_date_time` or `last_update` column exists on the price table.
-4. **JSONB is schema-guarded.** Every write of `pricing_characteristics` is validated by the Zod schema for its `pricing_model`; tiered tiers must be contiguous and non-overlapping. No unvalidated JSONB reaches the DB.
-5. **`amount` and tiers are mutually exclusive.** `pricing_model = flat` ⇒ `amount` NOT NULL; `pricing_model = tiered` ⇒ `amount` NULL and tiers present in JSONB.
-6. **Only ACTIVE offerings are billable.** Later modules (Customer, Billing Service, Bill Run) may reference only `lifecycle_status = ACTIVE` offerings for billing selection.
+4. **JSONB is schema-guarded.** Every write of `pricing_characteristics` or `product_spec_characteristics` — including seeds — is validated by the Zod schema for its `pricing_model`/spec shape first; tiered tiers must be contiguous and non-overlapping. No unvalidated JSONB reaches the DB.
+5. **`amount` and tiers are mutually exclusive.** `pricing_model = flat` ⇒ `amount` NOT NULL; `pricing_model = tiered` ⇒ `amount` NULL and tiers present in JSONB. Enforced by a DB CHECK constraint; Zod mirrors it.
+6. **Only ACTIVE offerings are billable, and at most one per family.** Later modules (Customer, Billing Service, Bill Run) may reference only `lifecycle_status = ACTIVE` offerings for billing selection. At most one row per version family may be `ACTIVE` at any time; activating a version automatically retires whichever other version in its family was previously active, in the same transaction.
 7. **The audit log is never a rating or pricing source.** Historical billing basis is reconstructed exclusively from immutable price rows + `start_date_time`.
-8. **`version` is a metadata counter only.** It bumps in place on any offering change; no versioned offering rows, no version-aware queries.
-9. **Product tables live in the `product` schema** and reference the shared core by FK (`last_edited_by` → `core.APPUSER`). The module creates no user, role, permission, session, config, or audit tables (platform Inv. #10 restated for emphasis).
-10. **READ gates everything on the page.** Prices are never visible to a principal lacking `products : READ`; no partial rendering of specs/prices under a weaker check.
-11. **v1 writes only via seeds/migrations.** No production code path mutates product tables until the CRUD fast-follow ships behind `products : EDIT`/`DELETE`.
-12. **The route-group rename changes no URL.** `(admin)` → `(app)` must leave every existing Administration URL and the authz matrix results byte-identical; CI proves existing pages pass unchanged.
+8. **`version` is a row's sequence number within its version family**, assigned once at insert and never changed afterward. Versioned offering rows are the norm, not an exception — `family_offering_id` (§3) makes every query that needs "all versions of this product" or "the current active version" explicitly version-aware (e.g. `findActiveInFamily`).
+9. **Product tables live in the `product` schema** and reference the shared core by FK (`last_edited_by` → `core.APPUSER`). The module creates no user, role, permission, session, config, or audit tables (platform Inv. #10 restated for emphasis) — the `family_offering_id` column is an addition to an existing table, not a new one.
+10. **READ gates everything on the View Product page.** Prices are never visible to a principal lacking `products : READ`; no partial rendering of specs/prices under a weaker check.
+11. **Writes flow exclusively through the mutation stack.** Every production code path that mutates a product table does so through `actions/product/**` → `services/product/*-write.service.ts` → repositories, gated by `products : EDIT`/`DELETE`. No other entry point exists.
+12. **The route-group rename changed no URL.** `(admin)` → `(app)` (pm01) left every existing Administration URL and the authz matrix results byte-identical; CI proves existing pages pass unchanged.
+13. **Single-active-per-family is enforced transactionally, not by a single DB constraint.** A plain unique index on `family_offering_id` can't cleanly cover "the root itself is `ACTIVE`, one of its branches also tries to activate," because the root's `family_offering_id` is `NULL` and NULLs don't collide in a unique index. `activateOffering` row-locks the family (`findActiveInFamily(...).for("update")`) and re-checks "is there currently another `ACTIVE` row in this family?" **inside** the transaction before flipping status — the same defense-in-depth pattern `roles-write.service.ts`'s `deleteRole` uses to close a race window. This is a deliberate, documented trade-off, not an oversight.
+14. **Editing an `ACTIVE` offering never mutates it in place.** There is no in-place write path for an `ACTIVE` offering's own fields, its specifications, or its prices. Any such edit first clones the offering plus all of its specifications and all of its prices into a new `DRAFT` row (`branchOfferingAsDraft`), then applies the edit to that clone. The original `ACTIVE` row and everything attached to it are provably untouched — the same "immutable, insert instead of update" discipline established for prices alone (Inv. #1), extended to the offering and its specifications whenever the source is live.
