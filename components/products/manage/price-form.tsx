@@ -91,7 +91,8 @@ const priceFormSchema = z
             path: ["tiers", index, "rate"],
           });
         }
-        if (tier.to.trim() !== "" && !MONEY_REGEX.test(tier.to)) {
+        const trimmedTo = tier.to.trim();
+        if (trimmedTo !== "" && !MONEY_REGEX.test(trimmedTo)) {
           ctx.addIssue({
             code: "custom",
             message: "Enter a valid number.",
@@ -337,6 +338,7 @@ export function PriceForm({
                   <Input
                     id={`tier-from-${index}`}
                     type="text"
+                    aria-invalid={!!errors.tiers?.[index]?.from}
                     disabled={isSubmitting}
                     {...register(`tiers.${index}.from`)}
                   />
@@ -348,6 +350,7 @@ export function PriceForm({
                     id={`tier-to-${index}`}
                     type="text"
                     placeholder="Open-ended"
+                    aria-invalid={!!errors.tiers?.[index]?.to}
                     disabled={isSubmitting}
                     {...register(`tiers.${index}.to`)}
                   />
@@ -358,6 +361,7 @@ export function PriceForm({
                   <Input
                     id={`tier-rate-${index}`}
                     type="text"
+                    aria-invalid={!!errors.tiers?.[index]?.rate}
                     disabled={isSubmitting}
                     {...register(`tiers.${index}.rate`)}
                   />

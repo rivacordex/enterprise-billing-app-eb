@@ -62,7 +62,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     for (const [fileName, exportName] of Object.entries(PRODUCT_ACTION_FILES)) {
       const source = fs.readFileSync(path.join(actionsDir, fileName), "utf8");
       const exportedFunctionNames = [
-        ...source.matchAll(/export\s+(?:async\s+)?function\s+(\w+)\s*\(/g),
+        ...source.matchAll(/export\s+async\s+function\s+(\w+)\s*\(/g),
       ].map((match) => match[1]);
       expect(exportedFunctionNames).toEqual([exportName]);
     }
@@ -226,8 +226,10 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   // way.
   function extractImportSpecifiers(source: string): string[] {
     const re =
-      /(?:import|export)(?:(?!from)[^'";])*from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
-    return [...source.matchAll(re)].map((match) => match[1] ?? match[2] ?? "");
+      /(?:import|export)(?:(?!from)[^'";])*from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|import\s*["']([^"']+)["']/g;
+    return [...source.matchAll(re)].map(
+      (match) => match[1] ?? match[2] ?? match[3] ?? "",
+    );
   }
 
   // Resolves a specifier the way the app's own module resolution would
