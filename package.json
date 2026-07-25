@@ -18,6 +18,7 @@
     "test": "vitest run && vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
+    "pgledger:transform": "node --import tsx db/pgledger/transform.ts",
     "db:migrate": "node --conditions=react-server --env-file=.env --import tsx db/migrate.ts",
     "db:bootstrap-roles": "node --env-file=.env --import tsx db/bootstrap/bootstrap-db-roles.ts",
     "db:setup-partman": "node --env-file=.env --import tsx db/bootstrap/audit-partman-setup.ts",
