@@ -61,10 +61,10 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
 
     for (const [fileName, exportName] of Object.entries(PRODUCT_ACTION_FILES)) {
       const source = fs.readFileSync(path.join(actionsDir, fileName), "utf8");
-      const matches = source.match(
-        new RegExp(`export async function ${exportName}\\(`, "g"),
-      );
-      expect(matches?.length ?? 0).toBe(1);
+      const exportedFunctionNames = [
+        ...source.matchAll(/export\s+(?:async\s+)?function\s+(\w+)\s*\(/g),
+      ].map((match) => match[1]);
+      expect(exportedFunctionNames).toEqual([exportName]);
     }
   });
 
@@ -206,13 +206,60 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   // write-capable UI by design, prodmgmt-architecture-phase2 §2) and the
   // View Product page tree must import nothing that could mutate product
   // data. Structural, string-level — same style as guardrail 4 above.
-  const FORBIDDEN_IMPORT_SUBSTRINGS = [
-    "@/actions/product",
-    "@/components/products/manage",
-    ...[...PRODUCT_WRITE_SERVICE_FILES].map(
-      (f) => `@/services/product/${f.replace(/\.ts$/, "")}`,
-    ),
-  ];
+  const WRITE_SURFACE_DIRS = [
+    path.join(REPO_ROOT, "actions", "product"),
+    path.join(REPO_ROOT, "components", "products", "manage"),
+  ].map((p) => p.replace(/\\/g, "/"));
+  const WRITE_SURFACE_SERVICE_FILES = [...PRODUCT_WRITE_SERVICE_FILES].map(
+    (f) =>
+      path
+        .join(REPO_ROOT, "services", "product", f)
+        .replace(/\.ts$/, "")
+        .replace(/\\/g, "/"),
+  );
+
+  // Extracts every module specifier this file references — static
+  // import/export-from declarations and dynamic import() calls alike —
+  // rather than scanning raw text, so an unrelated string that happens to
+  // contain a forbidden substring (or a barrel re-export naming its target
+  // in a shape a substring scan wouldn't catch) is handled correctly either
+  // way.
+  function extractImportSpecifiers(source: string): string[] {
+    const re =
+      /(?:import|export)(?:(?!from)[^'";])*from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+    return [...source.matchAll(re)].map((match) => match[1] ?? match[2] ?? "");
+  }
+
+  // Resolves a specifier the way the app's own module resolution would
+  // (`@/*` alias to repo root, `.`/`..` relative to the importing file) —
+  // returns null for bare package specifiers, which can never point at this
+  // codebase's own write surface.
+  function resolveSpecifier(
+    specifier: string,
+    fromFile: string,
+  ): string | null {
+    if (specifier.startsWith("@/")) {
+      return path.join(REPO_ROOT, specifier.slice(2)).replace(/\\/g, "/");
+    }
+    if (specifier.startsWith(".")) {
+      return path
+        .resolve(path.dirname(fromFile), specifier)
+        .replace(/\\/g, "/");
+    }
+    return null;
+  }
+
+  function targetsWriteSurface(resolvedPath: string): boolean {
+    const noExt = resolvedPath.replace(/\.(ts|tsx)$/, "");
+    if (
+      WRITE_SURFACE_DIRS.some(
+        (dir) => noExt === dir || noExt.startsWith(`${dir}/`),
+      )
+    ) {
+      return true;
+    }
+    return WRITE_SURFACE_SERVICE_FILES.includes(noExt);
+  }
 
   it("View Product imports nothing from the write surface", () => {
     const viewProductPageFiles = collectFiles(
@@ -232,9 +279,10 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
 
     const offending = filesToScan.filter((filePath) => {
       const content = fs.readFileSync(filePath, "utf8");
-      return FORBIDDEN_IMPORT_SUBSTRINGS.some((needle) =>
-        content.includes(needle),
-      );
+      return extractImportSpecifiers(content).some((specifier) => {
+        const resolved = resolveSpecifier(specifier, filePath);
+        return resolved !== null && targetsWriteSurface(resolved);
+      });
     });
 
     expect(offending.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
@@ -280,6 +328,21 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "createdAt",
   ].sort();
 
+  // Isolates the full `product.table("...", { ... }, (t) => [ ... ]);` call
+  // for one table — both the column-def object and the index/check callback
+  // — so index/column assertions can be scoped to that one table's block
+  // instead of a repository-wide `source.toContain`, which a comment or an
+  // unrelated table's index could also satisfy.
+  function extractTableBlock(source: string, tableVarName: string): string {
+    const tableMatch = source.match(
+      new RegExp(
+        `export const ${tableVarName} = product\\.table\\(\\s*"[a-z_]+",[\\s\\S]*?\\n\\);`,
+      ),
+    );
+    expect(tableMatch).not.toBeNull();
+    return tableMatch?.[0] ?? "";
+  }
+
   function extractTableColumnNames(
     source: string,
     tableVarName: string,
@@ -313,7 +376,8 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       PRICE_COLUMNS,
     );
 
-    expect(source).toContain("product_offering_family_idx");
+    const offeringTableBlock = extractTableBlock(source, "productOffering");
+    expect(offeringTableBlock).toContain("product_offering_family_idx");
   });
 
   // Guardrail 10 (code-standards-phase2 §9), closing pm14's own open item
@@ -332,20 +396,33 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
   // calling the *service* function of the same name — a legitimate,
   // expected call site, not a repository-layer violation.
   it("productSpecificationRepository.deleteSpecification has exactly one call site (delete-specification.ts)", () => {
+    const expectedFile = path.join(
+      REPO_ROOT,
+      "services",
+      "product",
+      "delete-specification.ts",
+    );
+    expect(fs.existsSync(expectedFile)).toBe(true);
+
+    const countCallSites = (filePath: string): number =>
+      (
+        fs
+          .readFileSync(filePath, "utf8")
+          .match(/productSpecificationRepository\.deleteSpecification\(/g) ?? []
+      ).length;
+
+    expect(countCallSites(expectedFile)).toBe(1);
+
     const scanRoots = [
       path.join(REPO_ROOT, "services", "product"),
       path.join(REPO_ROOT, "components", "products"),
       path.join(REPO_ROOT, "actions", "product"),
     ];
-    const callSites = scanRoots
+    const offending = scanRoots
       .flatMap(collectFiles)
-      .filter((f) => path.basename(f) !== "delete-specification.ts")
-      .filter((f) =>
-        /productSpecificationRepository\.deleteSpecification\(/.test(
-          fs.readFileSync(f, "utf8"),
-        ),
-      );
+      .filter((f) => f !== expectedFile)
+      .filter((f) => countCallSites(f) > 0);
 
-    expect(callSites.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
+    expect(offending.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
   });
 });

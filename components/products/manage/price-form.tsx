@@ -31,6 +31,17 @@ const PRICE_TYPE_LABELS: Record<(typeof PRICE_TYPES)[number], string> = {
 
 const MONEY_REGEX = /^\d+(\.\d+)?$/;
 
+// Local calendar date (not UTC — `toISOString()` can land on the wrong day
+// near midnight local time when local and UTC dates differ), matching the
+// local-midnight parse the backdating validation/warning below already use.
+function todayLocalDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 // pm22-spec §2.4. Validates only the checks meaningful on this flat,
 // pre-assembly shape — NOT tier contiguity or the open-ended-only-on-last
 // rule, which stay defined exactly once, in tieredPricingCharacteristicsSchema
@@ -78,6 +89,13 @@ const priceFormSchema = z
             code: "custom",
             message: "Enter a valid rate.",
             path: ["tiers", index, "rate"],
+          });
+        }
+        if (tier.to.trim() !== "" && !MONEY_REGEX.test(tier.to)) {
+          ctx.addIssue({
+            code: "custom",
+            message: "Enter a valid number.",
+            path: ["tiers", index, "to"],
           });
         }
       });
@@ -159,7 +177,7 @@ export function PriceForm({
       priceType: "recurring",
       currency: "",
       glCode: "",
-      startDateTime: new Date().toISOString().slice(0, 10),
+      startDateTime: todayLocalDate(),
       pricingModel: "flat",
       amount: "",
       tiers: [{ from: "0", to: "", rate: "" }],
@@ -322,6 +340,7 @@ export function PriceForm({
                     disabled={isSubmitting}
                     {...register(`tiers.${index}.from`)}
                   />
+                  <FieldError errors={[errors.tiers?.[index]?.from]} />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor={`tier-to-${index}`}>To</FieldLabel>
@@ -332,6 +351,7 @@ export function PriceForm({
                     disabled={isSubmitting}
                     {...register(`tiers.${index}.to`)}
                   />
+                  <FieldError errors={[errors.tiers?.[index]?.to]} />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor={`tier-rate-${index}`}>Rate</FieldLabel>
@@ -341,6 +361,7 @@ export function PriceForm({
                     disabled={isSubmitting}
                     {...register(`tiers.${index}.rate`)}
                   />
+                  <FieldError errors={[errors.tiers?.[index]?.rate]} />
                 </Field>
                 <Button
                   type="button"
