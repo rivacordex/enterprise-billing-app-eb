@@ -17,10 +17,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
+import { ActivateOfferingDialog } from "@/components/products/manage/activate-offering-dialog";
 import { AddPriceDialog } from "@/components/products/manage/add-price-dialog";
 import { LifecycleBadge } from "@/components/products/lifecycle-badge";
 import { CreateOfferingDialog } from "@/components/products/manage/create-offering-dialog";
 import { OfferingForm } from "@/components/products/manage/offering-form";
+import { RetireOfferingDialog } from "@/components/products/manage/retire-offering-dialog";
 import { SpecificationsDialog } from "@/components/products/manage/specifications-dialog";
 import {
   Dialog,
@@ -54,11 +56,13 @@ function RowActions({
   onEdit,
   onManageSpecs,
   onBranchPrice,
+  onSuperseded,
 }: {
   row: OfferingListRow;
   onEdit: () => void;
   onManageSpecs: () => void;
   onBranchPrice: () => void;
+  onSuperseded: () => void;
 }): React.JSX.Element {
   if (row.lifecycleStatus === "RETIRED") {
     return (
@@ -95,32 +99,50 @@ function RowActions({
       />
       {row.lifecycleStatus === "DRAFT" ? (
         <>
-          <button
-            type="button"
-            aria-label={`Activate ${row.name}`}
-            className={cn(ACTION_BUTTON_CLASS, "text-muted-foreground")}
-            // pm23 seam: onClick activates the offering
-          >
-            <Check size={14} aria-hidden />
-          </button>
-          <button
-            type="button"
-            aria-label={`Discard ${row.name}`}
-            className={cn(ACTION_BUTTON_CLASS, "text-destructive")}
-            // pm23 seam: onClick discards the draft
-          >
-            <Trash2 size={14} aria-hidden />
-          </button>
+          <ActivateOfferingDialog
+            offeringId={row.productOfferingId}
+            offeringName={row.name}
+            onSuperseded={onSuperseded}
+            trigger={
+              <button
+                type="button"
+                aria-label={`Activate ${row.name}`}
+                className={cn(ACTION_BUTTON_CLASS, "text-muted-foreground")}
+              >
+                <Check size={14} aria-hidden />
+              </button>
+            }
+          />
+          <RetireOfferingDialog
+            offeringId={row.productOfferingId}
+            offeringName={row.name}
+            currentStatus="DRAFT"
+            trigger={
+              <button
+                type="button"
+                aria-label={`Discard ${row.name}`}
+                className={cn(ACTION_BUTTON_CLASS, "text-destructive")}
+              >
+                <Trash2 size={14} aria-hidden />
+              </button>
+            }
+          />
         </>
       ) : (
-        <button
-          type="button"
-          aria-label={`Retire ${row.name}`}
-          className={cn(ACTION_BUTTON_CLASS, "text-destructive")}
-          // pm23 seam: onClick retires the offering
-        >
-          <Archive size={14} aria-hidden />
-        </button>
+        <RetireOfferingDialog
+          offeringId={row.productOfferingId}
+          offeringName={row.name}
+          currentStatus="ACTIVE"
+          trigger={
+            <button
+              type="button"
+              aria-label={`Retire ${row.name}`}
+              className={cn(ACTION_BUTTON_CLASS, "text-destructive")}
+            >
+              <Archive size={14} aria-hidden />
+            </button>
+          }
+        />
       )}
       <button
         type="button"
@@ -198,6 +220,7 @@ function FamilyRows({
             onEdit={() => onEditRow(primary, family.familyId)}
             onManageSpecs={() => onManageSpecsRow(primary, family.familyId)}
             onBranchPrice={() => onBranchPrice(family.familyId)}
+            onSuperseded={() => onBranchPrice(family.familyId)}
           />
         </td>
       </tr>
@@ -231,6 +254,7 @@ function FamilyRows({
                     onManageSpecsRow(version, family.familyId)
                   }
                   onBranchPrice={() => onBranchPrice(family.familyId)}
+                  onSuperseded={() => onBranchPrice(family.familyId)}
                 />
               </td>
             </tr>
