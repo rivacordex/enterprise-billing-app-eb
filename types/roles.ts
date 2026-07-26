@@ -25,7 +25,4 @@ export const PERMISSION_DISPLAY_NAMES: Record<PermissionName, string> = {
   audit_log: "Audit Log",
   products: "Products",
   customers: "Customers",
-  accounts_view: "Accounts – View",
-  accounts_transactions: "Accounts – Transactions",
-  accounts_config: "Accounts – Config",
 } as const;

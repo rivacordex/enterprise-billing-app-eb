@@ -1,14 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { transitionCustomerStatusAction } from "@/actions/customer/transition-customer-status";
-import {
-  OnboardAccountsWizard,
-  type OnboardAccountsWizardSuccessValue,
-} from "@/components/customers/onboard-accounts-wizard";
 import { updatePartyRoleSpecificationAction } from "@/actions/customer/update-party-role-specification";
 import { Button } from "@/components/ui/button";
 import { OptimisticLockConflictBanner } from "@/components/customers/optimistic-lock-conflict-banner";
@@ -60,21 +56,6 @@ export function CustomerRoleForm({
     customerRole.lastModifiedDatetime,
   );
 
-  // ac04 — VALIDATED transition wizard state.
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardStatusReason, setWizardStatusReason] = useState("");
-  const pendingTransitionRef = useRef<{
-    statusReason: string;
-    resolve: (
-      result:
-        | { ok: true; value: { lastModifiedDatetime: Date } }
-        | {
-            ok: false;
-            code: "CONFLICT" | "INVALID_TRANSITION" | "VALIDATION_ERROR";
-          },
-    ) => void;
-  } | null>(null);
-
   const [specText, setSpecText] = useState(
     JSON.stringify(customerRole.specification, null, 2),
   );
@@ -116,17 +97,6 @@ export function CustomerRoleForm({
         code: "CONFLICT" | "INVALID_TRANSITION" | "VALIDATION_ERROR";
       }
   > {
-    // ac04-spec §2.1 — intercept VALIDATED to open the account-setup wizard
-    // instead of calling transitionCustomerStatusAction directly. The promise
-    // resolves when the wizard confirms or cancels.
-    if (targetStatus === "VALIDATED") {
-      return new Promise((resolve) => {
-        pendingTransitionRef.current = { statusReason, resolve };
-        setWizardStatusReason(statusReason);
-        setWizardOpen(true);
-      });
-    }
-
     const result = await transitionCustomerStatusAction({
       partyRoleId: customerRole.partyRoleId,
       targetStatus,
@@ -144,28 +114,6 @@ export function CustomerRoleForm({
     }
 
     return { ok: false, code: "VALIDATION_ERROR" };
-  }
-
-  function handleWizardSuccess(value: OnboardAccountsWizardSuccessValue): void {
-    const pending = pendingTransitionRef.current;
-    if (!pending) return;
-    setWizardOpen(false);
-    pendingTransitionRef.current = null;
-    setStatusLock(value.lastModifiedDatetime);
-    pending.resolve({
-      ok: true,
-      value: { lastModifiedDatetime: value.lastModifiedDatetime },
-    });
-  }
-
-  function handleWizardCancel(): void {
-    const pending = pendingTransitionRef.current;
-    setWizardOpen(false);
-    pendingTransitionRef.current = null;
-    // Resolve the deferred promise so StatusTransitionControl exits its
-    // submitting state. VALIDATION_ERROR is the closest code for "user
-    // cancelled" — the control shows a generic inline error.
-    pending?.resolve({ ok: false, code: "VALIDATION_ERROR" });
   }
 
   async function handleSaveSpecification(): Promise<void> {
@@ -205,74 +153,58 @@ export function CustomerRoleForm({
   }
 
   return (
-    <>
-      <section className="max-w-xl space-y-6 rounded-md border border-border bg-[color:var(--surface-card)] p-4">
-        <h2 className="text-h3 font-semibold text-foreground">
-          Role – Customer
-        </h2>
+    <section className="max-w-xl space-y-6 rounded-md border border-border bg-[color:var(--surface-card)] p-4">
+      <h2 className="text-h3 font-semibold text-foreground">Role – Customer</h2>
 
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-          <ReadOnlyField label="Customer ID">
-            <span className="font-mono">{customerRole.partyRoleId}</span>
-          </ReadOnlyField>
-          <ReadOnlyField label="Account">
-            {customerRole.account ?? "—"}
-          </ReadOnlyField>
-          <ReadOnlyField label="Last Modified By">
-            {customerRole.lastModifiedByName}
-          </ReadOnlyField>
-          <ReadOnlyField label="Last Modified">
-            {formatDatetime(
-              customerRole.lastModifiedDatetime,
-              locale,
-              timezone,
-            )}
-          </ReadOnlyField>
-        </dl>
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+        <ReadOnlyField label="Customer ID">
+          <span className="font-mono">{customerRole.partyRoleId}</span>
+        </ReadOnlyField>
+        <ReadOnlyField label="Account">
+          {customerRole.account ?? "—"}
+        </ReadOnlyField>
+        <ReadOnlyField label="Last Modified By">
+          {customerRole.lastModifiedByName}
+        </ReadOnlyField>
+        <ReadOnlyField label="Last Modified">
+          {formatDatetime(customerRole.lastModifiedDatetime, locale, timezone)}
+        </ReadOnlyField>
+      </dl>
 
-        <div className="space-y-3">
-          <h3 className="text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-            Status
-          </h3>
-          <StatusTransitionControl
-            key={statusLock.getTime()}
-            currentStatus={customerRole.status}
-            entityKind="customer"
-            nextStates={CUSTOMER_TRANSITIONS[customerRole.status]}
-            onTransition={handleStatusTransition}
-            onConflict={() => router.refresh()}
-          />
-        </div>
+      <div className="space-y-3">
+        <h3 className="text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+          Status
+        </h3>
+        <StatusTransitionControl
+          key={statusLock.getTime()}
+          currentStatus={customerRole.status}
+          entityKind="customer"
+          nextStates={CUSTOMER_TRANSITIONS[customerRole.status]}
+          onTransition={handleStatusTransition}
+          onConflict={() => router.refresh()}
+        />
+      </div>
 
-        <div className="space-y-3">
-          <h3 className="text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-            Specification
-          </h3>
-          {specConflict ? (
-            <OptimisticLockConflictBanner onReload={() => router.refresh()} />
-          ) : (
-            <>
-              <SpecificationEditor value={specText} onChange={setSpecText} />
-              <Button
-                type="button"
-                disabled={specSubmitting}
-                onClick={() => void handleSaveSpecification()}
-                className="bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90"
-              >
-                Save specification
-              </Button>
-            </>
-          )}
-        </div>
-      </section>
-      <OnboardAccountsWizard
-        open={wizardOpen}
-        partyRoleId={customerRole.partyRoleId}
-        statusReason={wizardStatusReason}
-        lastModifiedDatetime={statusLock}
-        onSuccess={handleWizardSuccess}
-        onCancel={handleWizardCancel}
-      />
-    </>
+      <div className="space-y-3">
+        <h3 className="text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+          Specification
+        </h3>
+        {specConflict ? (
+          <OptimisticLockConflictBanner onReload={() => router.refresh()} />
+        ) : (
+          <>
+            <SpecificationEditor value={specText} onChange={setSpecText} />
+            <Button
+              type="button"
+              disabled={specSubmitting}
+              onClick={() => void handleSaveSpecification()}
+              className="bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90"
+            >
+              Save specification
+            </Button>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
