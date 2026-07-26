@@ -113,13 +113,26 @@ export async function seedGlMappings(db: Database): Promise<void> {
       continue;
     }
 
-    await db.insert(glMapping).values({
-      selectorType: entry.selectorType,
-      selector: entry.selector,
-      currency: entry.currency,
-      refGlCode: entry.refGlCode,
-      lastEditedBy: null,
-    });
+    // `onConflictDoNothing` targets the (selector_type, selector, currency)
+    // NULLS NOT DISTINCT unique constraint — belt-and-suspenders alongside
+    // the pre-check above, so a race between two concurrent seed runs can't
+    // surface as an unhandled unique-violation.
+    await db
+      .insert(glMapping)
+      .values({
+        selectorType: entry.selectorType,
+        selector: entry.selector,
+        currency: entry.currency,
+        refGlCode: entry.refGlCode,
+        lastEditedBy: null,
+      })
+      .onConflictDoNothing({
+        target: [
+          glMapping.selectorType,
+          glMapping.selector,
+          glMapping.currency,
+        ],
+      });
     logger.info(
       `created gl_mapping: ${entry.selectorType}/${entry.selector} → ${entry.refGlCode}`,
     );

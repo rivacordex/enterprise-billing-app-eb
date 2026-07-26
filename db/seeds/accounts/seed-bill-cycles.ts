@@ -10,9 +10,11 @@ interface BillCycleEntry {
   paymentDueDays: number;
 }
 
+export const DEFAULT_BILL_CYCLE_NAME = "Monthly – Day 1";
+
 // Spec §2.6 / plan §2. Two bill cycles for the MYR Q2 wizard.
 const BILL_CYCLE_ENTRIES: BillCycleEntry[] = [
-  { name: "Monthly – Day 1", cycleDay: 1, paymentDueDays: 30 },
+  { name: DEFAULT_BILL_CYCLE_NAME, cycleDay: 1, paymentDueDays: 30 },
   { name: "Monthly – Day 15", cycleDay: 15, paymentDueDays: 30 },
 ];
 

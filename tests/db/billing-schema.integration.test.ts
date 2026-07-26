@@ -318,6 +318,27 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toMatchObject({ code: "23505" });
     });
 
+    test("gl_mapping rejects a second all-currency mapping for the same selector (23505, NULLS NOT DISTINCT)", async () => {
+      const [glCode] = await sql<{ gl_code: string }[]>`
+        INSERT INTO billing.gl_account (gl_code, name, account_class, normal_balance, is_postable, last_edited_by)
+        VALUES ('9100', 'Test GL Mapping Target', 'asset', 'debit', true, ${appuserId})
+        RETURNING gl_code
+      `;
+      if (!glCode) throw new Error("gl_account insert returned no row.");
+
+      await sql`
+        INSERT INTO billing.gl_mapping (selector_type, selector, currency, ref_gl_code, last_edited_by)
+        VALUES ('ledger_role', 'test_dup_role', NULL, '9100', ${appuserId})
+      `;
+
+      await expect(
+        sql`
+          INSERT INTO billing.gl_mapping (selector_type, selector, currency, ref_gl_code, last_edited_by)
+          VALUES ('ledger_role', 'test_dup_role', NULL, '9100', ${appuserId})
+        `,
+      ).rejects.toMatchObject({ code: "23505" });
+    });
+
     test("cross-schema FK to a nonexistent party_role and a nonexistent appuser are both rejected (23503)", async () => {
       await expect(
         sql`

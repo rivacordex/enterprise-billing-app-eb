@@ -46,8 +46,11 @@ describe("billing.financial_account", () => {
   });
 
   it("has the state CHECK constraint and name/ref_party_role_id/currency/last_edited_by NOT NULL", () => {
-    expect(checkNames(financialAccount)).toContain(
-      "financial_account_state_check",
+    expect(checkNames(financialAccount)).toEqual(
+      expect.arrayContaining([
+        "financial_account_state_check",
+        "financial_account_credit_limit_amount_check",
+      ]),
     );
     const columns = getTableColumns(financialAccount);
     expect(columns.name.notNull).toBe(true);
@@ -88,12 +91,13 @@ describe("billing.billing_account", () => {
     expect(columns).not.toContain("current_balance");
   });
 
-  it("has the state/rating_type/payment_status CHECK constraints", () => {
+  it("has the state/rating_type/payment_status/credit_limit_amount CHECK constraints", () => {
     expect(checkNames(billingAccount)).toEqual(
       expect.arrayContaining([
         "billing_account_state_check",
         "billing_account_rating_type_check",
         "billing_account_payment_status_check",
+        "billing_account_credit_limit_amount_check",
       ]),
     );
   });
@@ -156,12 +160,13 @@ describe("billing.reason_code", () => {
     expect(getTableColumns(reasonCode).reasonCode.primary).toBe(true);
   });
 
-  it("has the doc_type/posting_nature/state CHECK constraints", () => {
+  it("has the doc_type/posting_nature/state/auto_post_limit CHECK constraints", () => {
     expect(checkNames(reasonCode)).toEqual(
       expect.arrayContaining([
         "reason_code_doc_type_check",
         "reason_code_posting_nature_check",
         "reason_code_state_check",
+        "reason_code_auto_post_limit_check",
       ]),
     );
   });
@@ -220,6 +225,14 @@ describe("billing.gl_mapping", () => {
     expect(triple?.columns.map((c) => c.name).sort()).toEqual(
       ["selector_type", "selector", "currency"].sort(),
     );
+  });
+
+  it("the selector triple UNIQUE is NULLS NOT DISTINCT (rejects a second all-currency mapping)", () => {
+    const { uniqueConstraints } = getTableConfig(glMapping);
+    const triple = uniqueConstraints.find(
+      (u) => u.name === "gl_mapping_selector_type_selector_currency_unique",
+    );
+    expect(triple?.nullsNotDistinct).toBe(true);
   });
 });
 
@@ -377,9 +390,12 @@ describe("billing.accounting_period", () => {
     );
   });
 
-  it("has the state CHECK constraint", () => {
-    expect(checkNames(accountingPeriod)).toContain(
-      "accounting_period_state_check",
+  it("has the state and period-format CHECK constraints", () => {
+    expect(checkNames(accountingPeriod)).toEqual(
+      expect.arrayContaining([
+        "accounting_period_state_check",
+        "accounting_period_period_format_check",
+      ]),
     );
   });
 });

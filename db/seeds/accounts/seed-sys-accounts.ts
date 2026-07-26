@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
+import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { logger } from "@/lib/logger";
 
 // One sys pgledger account per posting nature that needs a counter-account
@@ -16,17 +17,24 @@ const SYS_ACCOUNT_NAMES = [
 ] as const;
 
 export async function seedSysAccounts(db: Database): Promise<void> {
+  // pgledger_accounts.name has no UNIQUE constraint, so the check-then-create
+  // loop below is only race-free if concurrent seed runs are serialized.
+  // A transaction-scoped advisory lock does that: it's acquired once per
+  // `db:seed-accounts` invocation (this function runs inside the seed's
+  // single transaction, seed-accounts.ts) and auto-releases on commit or
+  // rollback, so a second concurrent run blocks here instead of racing the
+  // pre-check and creating a duplicate `sys.*` account.
+  await db.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext('billing.seed_sys_accounts'))`,
+  );
+
   for (const name of SYS_ACCOUNT_NAMES) {
-    const existing = await db.execute<{ id: string }>(
-      sql`SELECT id FROM billing.pgledger_accounts_view WHERE name = ${name} LIMIT 1`,
-    );
-    if (existing.length > 0) {
+    const existing = await ledgerRepository.findByName(db, name);
+    if (existing) {
       logger.info(`sys account already exists, skipping: ${name}`);
       continue;
     }
-    await db.execute(
-      sql`SELECT id FROM billing.pgledger_create_account(${name}, ${"MYR"})`,
-    );
+    await ledgerRepository.createAccount(db, name, "MYR");
     logger.info(`created sys account: ${name}`);
   }
 }

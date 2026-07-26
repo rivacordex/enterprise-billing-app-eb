@@ -11,10 +11,10 @@ export type AccountViewRelatedParty = {
 
 export type AccountViewRow = {
   accountId: string;
-  accountType: string;
+  accountType: "FinancialAccount" | "BillingAccount";
   name: string;
   description: string | null;
-  state: string;
+  state: "active" | "suspended" | "closed";
   currency: string;
   refPartyRoleId: string;
   relatedParty: AccountViewRelatedParty[];
@@ -40,10 +40,12 @@ export type GlJournalViewRow = {
 export const accountView = billing
   .view("account_view", {
     accountId: text("account_id").notNull(),
-    accountType: text("account_type").notNull(),
+    accountType: text("account_type")
+      .notNull()
+      .$type<AccountViewRow["accountType"]>(),
     name: text("name").notNull(),
     description: text("description"),
-    state: text("state").notNull(),
+    state: text("state").notNull().$type<AccountViewRow["state"]>(),
     currency: text("currency").notNull(),
     refPartyRoleId: text("ref_party_role_id").notNull(),
     relatedParty: jsonb("related_party")

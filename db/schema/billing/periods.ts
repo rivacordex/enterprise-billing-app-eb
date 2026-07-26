@@ -31,6 +31,13 @@ export const accountingPeriod = billing.table(
   (t) => [
     primaryKey({ columns: [t.period, t.currency] }),
     check("accounting_period_state_check", sql`state IN ('open','closed')`),
+    // Must match the `to_char(event_at, 'YYYY-MM')` key gl_journal_view
+    // groups by (views.sql) — a malformed period would silently split or
+    // orphan a month's journal rows.
+    check(
+      "accounting_period_period_format_check",
+      sql`period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`,
+    ),
   ],
 );
 
