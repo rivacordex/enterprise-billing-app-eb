@@ -19,6 +19,7 @@ describe.skipIf(!databaseUrl)(
       sql = postgres(databaseUrl as string, { max: 1 });
       // "customer" holds FKs into "core" and "product" holds FKs into
       // "core" too, so both must drop before "core" (cm01-spec §3.7).
+      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
@@ -38,6 +39,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');

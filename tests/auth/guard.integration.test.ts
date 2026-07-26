@@ -111,6 +111,7 @@ describe.skipIf(!databaseUrl)(
 
     beforeAll(async () => {
       sql = postgres(databaseUrl as string, { max: 1 });
+      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
@@ -392,6 +393,7 @@ describe.skipIf(!databaseUrl)(
     }, 30_000);
 
     afterAll(async () => {
+      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
