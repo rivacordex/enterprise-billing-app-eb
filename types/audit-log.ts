@@ -56,6 +56,7 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   USER_UNLOCKED: "Security",
   USER_PASSWORD_RESET: "Security",
   USER_PASSWORD_CHANGED: "Security",
+  ACCOUNTS_ONBOARDED: "Additive",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the
