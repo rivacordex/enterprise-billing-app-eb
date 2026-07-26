@@ -15,6 +15,16 @@ vi.mock("@/actions/customer/update-party-role-specification", () => ({
   updatePartyRoleSpecificationAction: vi.fn(),
 }));
 
+// OnboardAccountsWizard imports these server actions which trigger @/db/client
+// eager env validation — mock them to keep this test DB-free.
+vi.mock("@/actions/accounts/get-wizard-options", () => ({
+  getWizardOptionsAction: vi.fn(),
+}));
+
+vi.mock("@/actions/accounts/onboard-customer-accounts", () => ({
+  onboardCustomerAccountsAction: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
@@ -64,16 +74,18 @@ describe("CustomerRoleForm", () => {
       />,
     );
 
+    // "CLOSED" avoids the VALIDATED wizard path (ac04); both are valid
+    // transitions from INITIALIZED — this test is about area independence.
     await user.click(screen.getByRole("combobox"));
-    await user.click(await screen.findByRole("option", { name: "Validated" }));
-    await user.type(screen.getByLabelText("Reason"), "Validation complete.");
+    await user.click(await screen.findByRole("option", { name: "Closed" }));
+    await user.type(screen.getByLabelText("Reason"), "Closing account.");
     await user.click(screen.getByRole("button", { name: "Apply" }));
 
     expect(mockTransitionCustomerStatusAction).toHaveBeenCalledWith(
       expect.objectContaining({
         partyRoleId: "PTRL00000001",
-        targetStatus: "VALIDATED",
-        statusReason: "Validation complete.",
+        targetStatus: "CLOSED",
+        statusReason: "Closing account.",
       }),
     );
     expect(mockUpdatePartyRoleSpecificationAction).not.toHaveBeenCalled();
@@ -119,9 +131,12 @@ describe("CustomerRoleForm", () => {
       />,
     );
 
+    // "CLOSED" avoids the VALIDATED wizard path (ac04) while still exercising
+    // the status area's CONFLICT handling — the invariant being tested is that
+    // the spec section stays intact after a CONFLICT in the status section.
     await user.click(screen.getByRole("combobox"));
-    await user.click(await screen.findByRole("option", { name: "Validated" }));
-    await user.type(screen.getByLabelText("Reason"), "Validation complete.");
+    await user.click(await screen.findByRole("option", { name: "Closed" }));
+    await user.type(screen.getByLabelText("Reason"), "Closing account.");
     await user.click(screen.getByRole("button", { name: "Apply" }));
 
     expect(

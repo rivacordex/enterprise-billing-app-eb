@@ -22,11 +22,15 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None — ac04 not yet started.
+- None
+
+## Completed (recent)
+
+- **ac04 — Customer Onboarding Wizard** (`context/accounting-management/specs/ac04-customer-onboarding-wizard.md`). Started and finished 2026-07-26. One atomic `db.transaction`: (1) `compareAndUpdateStatus → VALIDATED`, (2) FA insert (`billing.financial_account`), (3) BAN insert (`billing.billing_account`), (4) `pgledger_create_account` ×3 → `fa.{FIN}.unapplied_cash`, `fa.{FIN}.deposits`, `ban.{BAN}.receivables`, (5) three `ledger_binding` rows, (6) `ACCOUNTS_ONBOARDED` audit event. Dual-permission check (`accounts_transactions:EDIT` + `customers:EDIT`). Wizard dialog injected into `customer-role-form.tsx`'s VALIDATED-intercept path via deferred Promise. Returning-customer gate shows prior FAs for same org. `services/accounts/term-resolution.ts` (pure `resolveTerm`). New type registrations: `ACCOUNTS_ONBOARDED` audit event, `accounts_view`/`accounts_transactions`/`accounts_config` permission names + display labels. `EffectivePermissionMap` made intersection with optional accounts permissions; `meetsLevel` handles `undefined`. Tests: `tests/services/onboard-customer-accounts.service.test.ts` (16 unit tests — all green), `tests/accounts/v02-binding-integrity.integration.test.ts` (V2 invariant), `tests/accounts/v07-onboarding-atomicity.integration.test.ts` (V7 invariant). Full suite: 175/175 files, 1632/1632 tests green. `typecheck` clean.
 
 ## Next Up
 
-- ac04 — `services/accounts/money.ts`: the only money-arithmetic site (code-standards §2.2). Reads `ACCOUNTS_DEFAULT_CURRENCY` config seeded in ac03.
+- ac05 — Accounts nav + Overview page (browses FA/BAN created by ac04, shows live balances from pgledger).
 
 ## Open Questions
 
