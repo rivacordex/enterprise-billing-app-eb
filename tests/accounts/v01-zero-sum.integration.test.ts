@@ -51,23 +51,32 @@ describe.skipIf(!databaseUrl)(
       `;
       expect(schemas).toHaveLength(1);
 
+      // `billing` is a shared schema (ac02+ adds its own module tables
+      // alongside this fork, acctmgmt-architecture.md §6.1) — this test only
+      // owns the 3 pgledger tables/views, so it asserts they're present
+      // rather than that the schema contains *only* them (that exact-set
+      // assertion is `tests/db/billing-schema.integration.test.ts`'s job).
       const tables = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'billing' AND table_type = 'BASE TABLE'
       `;
-      expect(tables.map((t) => t.table_name).sort()).toEqual(
-        ["pgledger_accounts", "pgledger_entries", "pgledger_transfers"].sort(),
+      expect(tables.map((t) => t.table_name)).toEqual(
+        expect.arrayContaining([
+          "pgledger_accounts",
+          "pgledger_entries",
+          "pgledger_transfers",
+        ]),
       );
 
       const views = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.views WHERE table_schema = 'billing'
       `;
-      expect(views.map((v) => v.table_name).sort()).toEqual(
-        [
+      expect(views.map((v) => v.table_name)).toEqual(
+        expect.arrayContaining([
           "pgledger_accounts_view",
           "pgledger_entries_view",
           "pgledger_transfers_view",
-        ].sort(),
+        ]),
       );
 
       const routines = await sql<{ routine_name: string }[]>`
