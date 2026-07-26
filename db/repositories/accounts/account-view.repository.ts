@@ -3,21 +3,17 @@ import { eq } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { accountView } from "@/db/schema/billing/views";
 import type { AccountViewRow } from "@/db/schema/billing/views";
-import type {
-  AccountState,
-  TmfAccountRef,
-  TmfRelatedParty,
-} from "@/types/accounts";
+import type { TmfAccountRef, TmfRelatedParty } from "@/types/accounts";
 
 // The sole producer of the TMF composition types (code-standards §2.6, Q28)
 // — no page or other repository assembles this shape ad hoc.
 function toTmfAccountRef(row: AccountViewRow): TmfAccountRef {
   return {
     accountId: row.accountId,
-    accountType: row.accountType as TmfAccountRef["accountType"],
+    accountType: row.accountType,
     name: row.name,
     description: row.description,
-    state: row.state as AccountState,
+    state: row.state,
     currency: row.currency,
     relatedParty: row.relatedParty.map(
       (party): TmfRelatedParty => ({

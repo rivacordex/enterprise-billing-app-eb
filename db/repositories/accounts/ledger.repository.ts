@@ -8,6 +8,13 @@ import type { Database } from "@/db/client";
 // elsewhere may call these functions or select from the underlying
 // `pgledger_*` tables.
 export const ledgerRepository = {
+  async findByName(tx: Database, name: string): Promise<{ id: string } | null> {
+    const [row] = await tx.execute<{ id: string }>(
+      sql`SELECT id FROM billing.pgledger_accounts_view WHERE name = ${name} LIMIT 1`,
+    );
+    return row ? { id: row.id } : null;
+  },
+
   async createAccount(
     tx: Database,
     name: string,

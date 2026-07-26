@@ -66,6 +66,10 @@ export const financialAccount = billing.table(
       "financial_account_state_check",
       sql`state IN ('active','suspended','closed')`,
     ),
+    check(
+      "financial_account_credit_limit_amount_check",
+      sql`credit_limit_amount IS NULL OR credit_limit_amount >= 0`,
+    ),
   ],
 );
 
@@ -130,6 +134,10 @@ export const billingAccount = billing.table(
     check(
       "billing_account_payment_status_check",
       sql`payment_status IN ('paid','due','in_dispute')`,
+    ),
+    check(
+      "billing_account_credit_limit_amount_check",
+      sql`credit_limit_amount IS NULL OR credit_limit_amount >= 0`,
     ),
   ],
 );

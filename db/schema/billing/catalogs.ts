@@ -103,6 +103,7 @@ export const reasonCode = billing.table(
       sql`posting_nature IN ('revenue','revenue_adj','write_off','rounding','cash','deposit_movement')`,
     ),
     check("reason_code_state_check", sql`state IN ('active','retired')`),
+    check("reason_code_auto_post_limit_check", sql`auto_post_limit >= 0`),
   ],
 );
 
@@ -174,11 +175,14 @@ export const glMapping = billing.table(
     }),
   },
   (t) => [
-    unique("gl_mapping_selector_type_selector_currency_unique").on(
-      t.selectorType,
-      t.selector,
-      t.currency,
-    ),
+    // `NULLS NOT DISTINCT` closes the gap a plain UNIQUE leaves open:
+    // Postgres treats NULL currency values as distinct from each other by
+    // default, so without this, two `(selector_type, selector)` rows both
+    // carrying a NULL (all-currencies) `currency` would NOT collide,
+    // letting in a second ambiguous role mapping (ac02-spec §2.3, Inv. #10).
+    unique("gl_mapping_selector_type_selector_currency_unique")
+      .on(t.selectorType, t.selector, t.currency)
+      .nullsNotDistinct(),
     check(
       "gl_mapping_selector_type_check",
       sql`selector_type IN ('ledger_role','system_account')`,

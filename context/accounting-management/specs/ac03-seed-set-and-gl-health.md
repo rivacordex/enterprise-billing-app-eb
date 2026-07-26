@@ -63,7 +63,7 @@ Every target is `is_postable` (checked at seed time — a mapping to a summary n
 
 ### 2.5 Reason codes (`reason_code`) — Q19/Q20, plan §2
 
-Nine rows; `auto_post_limit` per Q20, sensitive natures at **0** (always four-eyes):
+Ten rows; `auto_post_limit` per Q20, sensitive natures at **0** (always four-eyes):
 
 | reason_code | doc_type | posting_nature | auto_post_limit |
 |---|---|---|---|
@@ -107,7 +107,7 @@ One transaction, ordered: (1) sys pgledger accounts via `ledger.repository.pgled
 `tests/accounts/v05-gl-resolution.integration.test.ts` (named for the plan, code-standards §7.1): after `db:seed-accounts` on a fresh ac02 DB —
 - **0 unmapped, seeded state:** `select count(*) from billing.gl_resolution_view where gl_code is null` = 0 across the six `sys.*` accounts.
 - **0 unmapped, after onboarding:** insert a fixture FA+BAN + their three `ledger_binding` rows pointing at three freshly-created `pgledger_create_account` accounts (`ban.*.receivables`, `fa.*.unapplied_cash`, `fa.*.deposits`) → re-run the count = still 0 (**proves role rules cover new accounts with no new mapping rows** — V5's headline).
-- **Resolution is unambiguous:** every resolved account maps to exactly one `is_postable` code (the `gl_mapping` UNIQUE + the `is_postable` seed assertion).
+- **Resolution is unambiguous:** every resolved account maps to exactly one `is_postable` code (`gl_resolution_view`'s deterministic currency-precedence selection, `gl_mapping`'s `NULLS NOT DISTINCT` UNIQUE, and the `is_postable` seed assertion, incl. V5).
 - **Catalog integrity:** the ten reason codes exist with the exact `auto_post_limit`s (§2.5, incl. the four 0s — DEP_REVERSE, DEP_REFUND, BAD_DEBT_WRITEOFF, PAYMENT_REFUND); two bill cycles + the `ACCOUNTS_DEFAULT_BILL_CYCLE = BCY000001` config; CoA has the 11 codes with correct `is_postable`/`normal_balance`.
 - **Idempotency:** re-running `db:seed-accounts` is a no-op (counts unchanged).
 
