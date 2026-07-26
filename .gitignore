@@ -46,6 +46,9 @@ next-env.d.ts
 # Claude Code — local project config (never commit)
 .claude/*
 
+# personal local-dev compose override (machine-specific host paths)
+docker-compose.local.yml
+
 
 # um30: ZAP context rendered with real FQDN + test credentials at CI time
 /infra/zap/zap-context.rendered.xml

@@ -10,6 +10,9 @@ export const PERMISSIONS = {
   AUDIT_LOG: "audit_log",
   PRODUCTS: "products",
   CUSTOMERS: "customers",
+  ACCOUNTS_VIEW: "accounts_view",
+  ACCOUNTS_TRANSACTIONS: "accounts_transactions",
+  ACCOUNTS_CONFIG: "accounts_config",
 } as const satisfies Record<string, PermissionName>;
 
 export const LEVELS = {
