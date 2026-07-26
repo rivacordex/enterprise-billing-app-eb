@@ -134,3 +134,28 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA "customer" TO app_migrate;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON TABLES TO app_migrate;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON SEQUENCES TO app_migrate;
+--> statement-breakpoint
+-- `billing` schema (ac01+): same app_runtime/app_migrate split as `product`/
+-- `customer` — billing_account/financial_account/document/... ID columns
+-- default to nextval(...), so app_runtime needs USAGE on those sequences to
+-- satisfy plain INSERTs. No audit_log-style table exists here, so no extra
+-- REVOKE.
+GRANT USAGE ON SCHEMA "billing" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "billing" TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "billing" TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+--> statement-breakpoint
+GRANT ALL ON SCHEMA "billing" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL TABLES IN SCHEMA "billing" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL SEQUENCES IN SCHEMA "billing" TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON TABLES TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON SEQUENCES TO app_migrate;
