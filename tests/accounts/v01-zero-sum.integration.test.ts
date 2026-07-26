@@ -51,32 +51,23 @@ describe.skipIf(!databaseUrl)(
       `;
       expect(schemas).toHaveLength(1);
 
-      // `arrayContaining`, not exact equality: ac02 (0012) shares this same
-      // migration history and lands its own tables/views in `billing`
-      // (Platform Inv. #10, one migration history) — this test only owns
-      // asserting the three pgledger tables/views this unit vendored, not
-      // the full contents of the schema.
       const tables = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'billing' AND table_type = 'BASE TABLE'
       `;
-      expect(tables.map((t) => t.table_name)).toEqual(
-        expect.arrayContaining([
-          "pgledger_accounts",
-          "pgledger_entries",
-          "pgledger_transfers",
-        ]),
+      expect(tables.map((t) => t.table_name).sort()).toEqual(
+        ["pgledger_accounts", "pgledger_entries", "pgledger_transfers"].sort(),
       );
 
       const views = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.views WHERE table_schema = 'billing'
       `;
-      expect(views.map((v) => v.table_name)).toEqual(
-        expect.arrayContaining([
+      expect(views.map((v) => v.table_name).sort()).toEqual(
+        [
           "pgledger_accounts_view",
           "pgledger_entries_view",
           "pgledger_transfers_view",
-        ]),
+        ].sort(),
       );
 
       const routines = await sql<{ routine_name: string }[]>`
