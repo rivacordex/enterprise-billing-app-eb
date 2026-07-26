@@ -7,9 +7,6 @@ import type {
   BillingAccountInsert,
 } from "@/db/schema/billing/accounts";
 
-// Skeleton (ac02-spec §2.6/§3.5) — `findById` is the trivial reader the
-// fixture test needs; `insert` is the seam `services/accounts/
-// onboard-customer-accounts.ts` fills (ac05).
 export const billingAccountRepository = {
   async findById(
     db: Database,
@@ -24,9 +21,11 @@ export const billingAccountRepository = {
   },
 
   async insert(
-    _tx: Database,
-    _data: BillingAccountInsert,
+    tx: Database,
+    data: BillingAccountInsert,
   ): Promise<BillingAccount> {
-    throw new Error("not implemented (ac05)");
+    const [row] = await tx.insert(billingAccount).values(data).returning();
+    if (!row) throw new Error("billing_account insert returned no row");
+    return row;
   },
 };

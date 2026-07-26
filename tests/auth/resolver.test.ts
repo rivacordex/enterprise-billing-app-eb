@@ -41,6 +41,9 @@ describe("resolveEffectivePermissions", () => {
       audit_log: null,
       products: null,
       customers: null,
+      accounts_view: null,
+      accounts_transactions: null,
+      accounts_config: null,
     });
     expect(findGrantsByRoleIds).not.toHaveBeenCalled();
   });
@@ -60,6 +63,9 @@ describe("resolveEffectivePermissions", () => {
       audit_log: null,
       products: null,
       customers: null,
+      accounts_view: null,
+      accounts_transactions: null,
+      accounts_config: null,
     });
   });
 
@@ -81,6 +87,9 @@ describe("resolveEffectivePermissions", () => {
       audit_log: "READ",
       products: null,
       customers: null,
+      accounts_view: null,
+      accounts_transactions: null,
+      accounts_config: null,
     });
   });
 
@@ -121,6 +130,9 @@ describe("resolveEffectivePermissions", () => {
       audit_log: null,
       products: null,
       customers: null,
+      accounts_view: null,
+      accounts_transactions: null,
+      accounts_config: null,
     });
   });
 

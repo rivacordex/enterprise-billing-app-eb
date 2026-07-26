@@ -1,15 +1,13 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { financialAccount } from "@/db/schema/billing/accounts";
+import { partyRole } from "@/db/schema/customer";
 import type {
   FinancialAccount,
   FinancialAccountInsert,
 } from "@/db/schema/billing/accounts";
 
-// Skeleton (ac02-spec §2.6/§3.5) — `findById` is the trivial reader the
-// fixture test needs; `insert` is the seam `services/accounts/
-// onboard-customer-accounts.ts` fills (ac05).
 export const financialAccountRepository = {
   async findById(
     db: Database,
@@ -24,9 +22,44 @@ export const financialAccountRepository = {
   },
 
   async insert(
-    _tx: Database,
-    _data: FinancialAccountInsert,
+    tx: Database,
+    data: FinancialAccountInsert,
   ): Promise<FinancialAccount> {
-    throw new Error("not implemented (ac05)");
+    const [row] = await tx.insert(financialAccount).values(data).returning();
+    if (!row) throw new Error("financial_account insert returned no row");
+    return row;
+  },
+
+  // Returns all FAs whose party role belongs to the given organization.
+  // Used by the onboarding wizard to detect returning customers (ac04).
+  async findByEngagedParty(
+    db: Database,
+    engagedParty: string,
+  ): Promise<
+    Pick<FinancialAccount, "financialAccountId" | "name" | "state">[]
+  > {
+    return db
+      .select({
+        financialAccountId: financialAccount.financialAccountId,
+        name: financialAccount.name,
+        state: financialAccount.state,
+      })
+      .from(financialAccount)
+      .innerJoin(
+        partyRole,
+        eq(financialAccount.refPartyRoleId, partyRole.partyRoleId),
+      )
+      .where(eq(partyRole.engagedParty, engagedParty));
+  },
+
+  async findByPartyRoleIds(
+    db: Database,
+    partyRoleIds: string[],
+  ): Promise<FinancialAccount[]> {
+    if (partyRoleIds.length === 0) return [];
+    return db
+      .select()
+      .from(financialAccount)
+      .where(inArray(financialAccount.refPartyRoleId, partyRoleIds));
   },
 };

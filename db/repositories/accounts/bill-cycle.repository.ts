@@ -1,13 +1,20 @@
+import { eq } from "drizzle-orm";
+
 import type { Database } from "@/db/client";
+import { billCycle } from "@/db/schema/billing/catalogs";
 import type { BillCycle } from "@/db/schema/billing/catalogs";
 
-// Skeleton (ac02-spec §2.6/§3.5). Reader/CRUD seam for the bill-cycle
-// catalog — filled by ac03 (seed) and the Accounts Settings config unit.
 export const billCycleRepository = {
-  async findById(
-    _db: Database,
-    _billCycleId: string,
-  ): Promise<BillCycle | null> {
-    throw new Error("not implemented (ac03)");
+  async findById(db: Database, billCycleId: string): Promise<BillCycle | null> {
+    const [row] = await db
+      .select()
+      .from(billCycle)
+      .where(eq(billCycle.billCycleId, billCycleId))
+      .limit(1);
+    return row ?? null;
+  },
+
+  async findAllActive(db: Database): Promise<BillCycle[]> {
+    return db.select().from(billCycle).where(eq(billCycle.state, "active"));
   },
 };

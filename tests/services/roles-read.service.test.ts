@@ -86,6 +86,9 @@ describe("getAllRolesWithMappings", () => {
       { permissionName: "audit_log", assignedLevel: "READ" },
       { permissionName: "products", assignedLevel: null },
       { permissionName: "customers", assignedLevel: null },
+      { permissionName: "accounts_view", assignedLevel: null },
+      { permissionName: "accounts_transactions", assignedLevel: null },
+      { permissionName: "accounts_config", assignedLevel: null },
     ]);
     const manager = result.find((r) => r.roleId === "role-manager")!;
     expect(manager.mappings.every((m) => m.assignedLevel === null)).toBe(true);
@@ -98,10 +101,10 @@ describe("getAllRolesWithMappings", () => {
     );
 
     const [role] = await getAllRolesWithMappings();
-    expect(role!.mappings).toHaveLength(6);
+    expect(role!.mappings).toHaveLength(9);
   });
 
-  it("mappings are always ordered users, roles, system_config, audit_log, products, customers", async () => {
+  it("mappings are always ordered users, roles, system_config, audit_log, products, customers, accounts_*", async () => {
     mockFindAll.mockResolvedValue([ADMIN_ROLE]);
     // Returned out of order on purpose.
     mockFindMappingsForRoles.mockResolvedValue(
@@ -118,6 +121,9 @@ describe("getAllRolesWithMappings", () => {
       "audit_log",
       "products",
       "customers",
+      "accounts_view",
+      "accounts_transactions",
+      "accounts_config",
     ]);
   });
 });
@@ -156,6 +162,9 @@ describe("getRoleWithMappings", () => {
       { permissionName: "audit_log", assignedLevel: null },
       { permissionName: "products", assignedLevel: null },
       { permissionName: "customers", assignedLevel: null },
+      { permissionName: "accounts_view", assignedLevel: null },
+      { permissionName: "accounts_transactions", assignedLevel: null },
+      { permissionName: "accounts_config", assignedLevel: null },
     ]);
   });
 });

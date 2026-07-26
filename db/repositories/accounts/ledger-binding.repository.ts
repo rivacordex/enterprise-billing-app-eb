@@ -1,14 +1,35 @@
-import type { Database } from "@/db/client";
-import type { LedgerBinding } from "@/db/schema/billing/ledger-binding";
+import { and, eq } from "drizzle-orm";
 
-// Skeleton (ac02-spec §2.6/§3.5). Binding-completeness seam (Module Inv. #9)
-// — filled by ac05 (onboarding transaction creates the bindings).
+import type { Database } from "@/db/client";
+import { ledgerBinding } from "@/db/schema/billing/ledger-binding";
+import type {
+  LedgerBinding,
+  LedgerBindingInsert,
+} from "@/db/schema/billing/ledger-binding";
+
 export const ledgerBindingRepository = {
   async findByOwner(
-    _db: Database,
-    _ownerType: "financial_account" | "billing_account",
-    _ownerId: string,
+    db: Database,
+    ownerType: "financial_account" | "billing_account",
+    ownerId: string,
   ): Promise<LedgerBinding[]> {
-    throw new Error("not implemented (ac05)");
+    return db
+      .select()
+      .from(ledgerBinding)
+      .where(
+        and(
+          eq(ledgerBinding.ownerType, ownerType),
+          eq(ledgerBinding.ownerId, ownerId),
+        ),
+      );
+  },
+
+  async insert(
+    tx: Database,
+    data: LedgerBindingInsert,
+  ): Promise<LedgerBinding> {
+    const [row] = await tx.insert(ledgerBinding).values(data).returning();
+    if (!row) throw new Error("ledger_binding insert returned no row");
+    return row;
   },
 };
