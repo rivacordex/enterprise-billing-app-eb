@@ -3,13 +3,15 @@ import { z } from "zod";
 import { optimisticLockSchema } from "@/validation/customer/party-role.schema";
 
 // Decimal-string format check — arithmetic is deferred to ac07's money.ts
-// (ac04-spec §3.2). Accepts "1234", "1234.5", "1234.56".
+// (ac04-spec §3.2). Accepts "1234", "1234.5", "1234.56"; capped at 15 chars
+// so oversized monetary strings are rejected before persistence or display.
 const creditLimitSchema = z
   .string()
   .regex(
     /^\d+(\.\d{1,2})?$/,
     "Must be a non-negative decimal with at most 2 decimal places",
-  );
+  )
+  .max(15, "Must be at most 15 characters");
 
 export const onboardCustomerAccountsSchema = z
   .object({

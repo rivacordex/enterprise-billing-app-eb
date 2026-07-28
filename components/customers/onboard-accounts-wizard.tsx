@@ -111,11 +111,10 @@ export function OnboardAccountsWizard({
 
   useEffect(() => {
     if (!open) return;
-    setPhase("loading");
-    setSubmitError(null);
-    setSuccessValue(null);
+    let cancelled = false;
 
     void getWizardOptionsAction(partyRoleId).then((data) => {
+      if (cancelled) return;
       if (!data) {
         setSubmitError(
           "Unable to load wizard options. Please close and retry.",
@@ -136,6 +135,10 @@ export function OnboardAccountsWizard({
       });
       setPhase("editing");
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [open, partyRoleId]);
 
   async function handleSubmit(): Promise<void> {
@@ -195,6 +198,22 @@ export function OnboardAccountsWizard({
       case "FORBIDDEN":
         setSubmitError("You do not have permission to perform this action.");
         break;
+      case "PARTY_ROLE_NOT_FOUND":
+        setSubmitError(
+          "Customer record not found. Please reload the page and try again.",
+        );
+        break;
+      case "VALIDATION_ERROR": {
+        const fieldMsgs = Object.entries(result.fieldErrors ?? {}).flatMap(
+          ([field, errs]) => errs.map((e) => `${field}: ${e}`),
+        );
+        setSubmitError(
+          fieldMsgs.length > 0
+            ? `Validation failed — ${fieldMsgs.join("; ")}.`
+            : "Validation failed. Please check the form and try again.",
+        );
+        break;
+      }
       default:
         setSubmitError("Something went wrong. Please try again.");
     }

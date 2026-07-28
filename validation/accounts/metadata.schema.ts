@@ -10,7 +10,6 @@ import { z } from "zod";
 export const documentMetadataSchema = z.record(z.string(), z.unknown()).refine(
   (value) =>
     Object.entries(value).every(([key, v]) => {
-      if (v === undefined) return true;
       if (key === "doc" || key.startsWith("dim_")) return typeof v === "string";
       return true;
     }),
