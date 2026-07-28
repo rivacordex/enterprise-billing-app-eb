@@ -65,25 +65,27 @@ async function findEarliestOpenChargeDate(banId: string): Promise<Date | null> {
 export async function getBillingAccountDetail(
   banId: string,
 ): Promise<BillingAccountDetail | null> {
-  const ban = await billingAccountRepository.findById(db, banId);
+  const [ban, banBindings] = await Promise.all([
+    billingAccountRepository.findById(db, banId),
+    ledgerBindingRepository.findByOwner(db, "billing_account", banId),
+  ]);
   if (!ban) return null;
 
   const billCycle = await billCycleRepository.findById(db, ban.refBillCycleId);
   if (!billCycle) throw new Error(`bill cycle ${ban.refBillCycleId} not found`);
 
-  const banBindings = await ledgerBindingRepository.findByOwner(
-    db,
-    "billing_account",
-    banId,
-  );
   const recBinding = banBindings.find((b) => b.ledgerRole === "receivables");
+  if (!recBinding)
+    throw new Error(`receivables binding not found for BAN ${banId}`);
 
-  const receivableBalance = recBinding
-    ? await ledgerRepository.balanceByLedgerAccountId(
-        db,
-        recBinding.pgledgerAccountId,
-      )
-    : "0.00";
+  const receivableBalance = await ledgerRepository.balanceByLedgerAccountId(
+    db,
+    recBinding.pgledgerAccountId,
+  );
+  if (receivableBalance === null)
+    throw new Error(
+      `pgledger account ${recBinding.pgledgerAccountId} not found`,
+    );
 
   const openARSen = openReceivable(receivableBalance);
   const earliestChargeDate =

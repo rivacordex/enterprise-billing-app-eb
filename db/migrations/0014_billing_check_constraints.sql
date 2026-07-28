@@ -7,8 +7,4 @@
 ALTER TABLE "billing"."billing_account" ADD CONSTRAINT "billing_account_credit_limit_amount_check" CHECK (credit_limit_amount IS NULL OR credit_limit_amount >= 0) NOT VALID;--> statement-breakpoint
 ALTER TABLE "billing"."financial_account" ADD CONSTRAINT "financial_account_credit_limit_amount_check" CHECK (credit_limit_amount IS NULL OR credit_limit_amount >= 0) NOT VALID;--> statement-breakpoint
 ALTER TABLE "billing"."reason_code" ADD CONSTRAINT "reason_code_auto_post_limit_check" CHECK (auto_post_limit >= 0) NOT VALID;--> statement-breakpoint
-ALTER TABLE "billing"."accounting_period" ADD CONSTRAINT "accounting_period_period_format_check" CHECK (period ~ '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$') NOT VALID;--> statement-breakpoint
-ALTER TABLE "billing"."billing_account" VALIDATE CONSTRAINT "billing_account_credit_limit_amount_check";--> statement-breakpoint
-ALTER TABLE "billing"."financial_account" VALIDATE CONSTRAINT "financial_account_credit_limit_amount_check";--> statement-breakpoint
-ALTER TABLE "billing"."reason_code" VALIDATE CONSTRAINT "reason_code_auto_post_limit_check";--> statement-breakpoint
-ALTER TABLE "billing"."accounting_period" VALIDATE CONSTRAINT "accounting_period_period_format_check";
+ALTER TABLE "billing"."accounting_period" ADD CONSTRAINT "accounting_period_period_format_check" CHECK (period ~ '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$') NOT VALID;

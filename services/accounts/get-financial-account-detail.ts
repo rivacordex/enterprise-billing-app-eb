@@ -43,13 +43,14 @@ export async function getFinancialAccountDetail(
     .where(eq(accountView.accountId, faId))
     .limit(1);
 
-  const relatedParty: TmfRelatedParty[] =
-    viewRow?.relatedParty.map((p) => ({
+  const relatedParty: TmfRelatedParty[] = (viewRow?.relatedParty ?? []).map(
+    (p) => ({
       id: p.id,
       role: "customer" as const,
       name: p.name,
       "@referredType": "Customer" as const,
-    })) ?? [];
+    }),
+  );
 
   // FA-level bindings: unapplied_cash + deposits.
   const faBindings = await ledgerBindingRepository.findByOwner(
@@ -61,24 +62,37 @@ export async function getFinancialAccountDetail(
   const unappliedBinding = faBindings.find(
     (b) => b.ledgerRole === "unapplied_cash",
   );
-  const depositBinding = faBindings.find((b) => b.ledgerRole === "deposits");
+  if (!unappliedBinding)
+    throw new Error(`unapplied_cash binding not found for FA ${faId}`);
 
-  const [unappliedCashBalance, depositBalance, receivableBalance] =
+  const depositBinding = faBindings.find((b) => b.ledgerRole === "deposits");
+  if (!depositBinding)
+    throw new Error(`deposits binding not found for FA ${faId}`);
+
+  const [unappliedCashBalanceRaw, depositBalanceRaw, receivableBalance] =
     await Promise.all([
-      unappliedBinding
-        ? ledgerRepository.balanceByLedgerAccountId(
-            db,
-            unappliedBinding.pgledgerAccountId,
-          )
-        : Promise.resolve("0.00"),
-      depositBinding
-        ? ledgerRepository.balanceByLedgerAccountId(
-            db,
-            depositBinding.pgledgerAccountId,
-          )
-        : Promise.resolve("0.00"),
+      ledgerRepository.balanceByLedgerAccountId(
+        db,
+        unappliedBinding.pgledgerAccountId,
+      ),
+      ledgerRepository.balanceByLedgerAccountId(
+        db,
+        depositBinding.pgledgerAccountId,
+      ),
       ledgerRepository.sumReceivablesForFinancialAccount(db, faId),
     ]);
+
+  if (unappliedCashBalanceRaw === null)
+    throw new Error(
+      `pgledger account ${unappliedBinding.pgledgerAccountId} not found`,
+    );
+  if (depositBalanceRaw === null)
+    throw new Error(
+      `pgledger account ${depositBinding.pgledgerAccountId} not found`,
+    );
+
+  const unappliedCashBalance = unappliedCashBalanceRaw;
+  const depositBalance = depositBalanceRaw;
 
   // Credit utilisation (computed in service — component receives display values).
   let utilisationPct: number | null = null;
