@@ -31,6 +31,38 @@ export const ledgerRepository = {
     return { id: row.id };
   },
 
+  // Balance for a single pgledger account (Module Inv. #2 — read path).
+  // Returns "0.00" when the account exists but has no transactions yet.
+  async balanceByLedgerAccountId(
+    db: Database,
+    pgledgerAccountId: string,
+  ): Promise<string> {
+    const [row] = await db.execute<{ balance: string }>(
+      sql`SELECT balance::text AS balance FROM billing.pgledger_accounts_view WHERE id = ${pgledgerAccountId} LIMIT 1`,
+    );
+    return row?.balance ?? "0.00";
+  },
+
+  // Sum of all receivables balances across every BAN bound to a given FA.
+  // (spec §2.4 — "Receivable balance = Σ A/R across the FA's BANs'
+  // receivables accounts"). Returns "0.00" when there are no BANs.
+  async sumReceivablesForFinancialAccount(
+    db: Database,
+    financialAccountId: string,
+  ): Promise<string> {
+    const [row] = await db.execute<{ total: string }>(sql`
+      SELECT COALESCE(SUM(pav.balance), 0)::text AS total
+      FROM billing.billing_account ban
+      JOIN billing.ledger_binding lb
+        ON lb.owner_type = 'billing_account'
+       AND lb.owner_id   = ban.billing_account_id
+       AND lb.ledger_role = 'receivables'
+      JOIN billing.pgledger_accounts_view pav ON pav.id = lb.pgledger_account_id
+      WHERE ban.ref_financial_account_id = ${financialAccountId}
+    `);
+    return row?.total ?? "0.00";
+  },
+
   async createTransfer(
     _tx: Database,
     _fromAccountId: string,

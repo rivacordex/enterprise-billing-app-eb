@@ -1,4 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -54,14 +60,18 @@ async function fillRequiredFlatFields(
 }
 
 function setStartDate(dateString: string) {
-  fireEvent.change(screen.getByLabelText("Start date"), {
-    target: { value: dateString },
+  act(() => {
+    fireEvent.change(screen.getByLabelText("Start date"), {
+      target: { value: dateString },
+    });
   });
 }
 
 function submitForm() {
-  const form = document.getElementById("price-form-add") as HTMLFormElement;
-  fireEvent.submit(form);
+  act(() => {
+    const form = document.getElementById("price-form-add") as HTMLFormElement;
+    fireEvent.submit(form);
+  });
 }
 
 describe("PriceForm", () => {
@@ -140,7 +150,7 @@ describe("PriceForm", () => {
 
     submitForm();
 
-    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
   });
 
   it("a future or today's start date shows neither the warning nor an error", () => {
@@ -172,7 +182,7 @@ describe("PriceForm", () => {
 
     submitForm();
 
-    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]![0];
     expect(submitted.name).toBe("Monthly recurring");
     expect(submitted.currency).toBe("USD");
@@ -197,7 +207,7 @@ describe("PriceForm", () => {
 
     submitForm();
 
-    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]![0];
     expect(submitted.priceCharacteristics).toEqual({
       pricing_model: "tiered",

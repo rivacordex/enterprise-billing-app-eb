@@ -4,6 +4,9 @@ vi.mock("@/db/client", () => ({ db: {} }));
 vi.mock("@/db/repositories/appuser.repository", () => ({
   findUserById: vi.fn(),
 }));
+vi.mock("@/lib/logger", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 import { findUserById } from "@/db/repositories/appuser.repository";
 import {

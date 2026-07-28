@@ -11,6 +11,7 @@ import { seedGlMappings } from "./seed-gl-mappings";
 import { seedReasonCodes } from "./seed-reason-codes";
 import { seedBillCycles } from "./seed-bill-cycles";
 import { seedWizardDefaults } from "./seed-wizard-defaults";
+import { seedAccountsPermissions } from "./seed-accounts-permissions";
 
 // Standalone script (`npm run db:seed-accounts`) — never imported by
 // application code. Depends on `db:migrate` having run (needs ac02 tables).
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
       await seedReasonCodes(tx);
       const { defaultCycleId } = await seedBillCycles(tx);
       await seedWizardDefaults(tx, defaultCycleId);
+      await seedAccountsPermissions(tx);
     });
 
     logger.info("Accounts module seeded successfully.");
