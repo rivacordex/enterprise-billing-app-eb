@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Building2,
+  Landmark,
   Lock,
   Package,
   PackagePlus,
@@ -75,6 +76,17 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         href: "/customers/manage",
         icon: UserCog,
         requiredPermission: { name: "customers", level: "EDIT" },
+      },
+    ],
+  },
+  {
+    caption: "Accounts",
+    items: [
+      {
+        label: "Overview",
+        href: "/accounts/overview",
+        icon: Landmark,
+        requiredPermission: { name: "accounts_view", level: "READ" },
       },
     ],
   },

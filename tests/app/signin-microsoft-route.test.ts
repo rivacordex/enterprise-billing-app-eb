@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));
+vi.mock("@/lib/logger", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 const mockSignInSocial = vi.hoisted(() => vi.fn());
 vi.mock("@/auth", () => ({

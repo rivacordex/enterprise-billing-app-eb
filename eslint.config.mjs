@@ -64,6 +64,16 @@ const eslintConfig = defineConfig([
       "boundaries/elements": BOUNDARIES_ELEMENTS,
     },
     rules: {
+      // Respect the `_`-prefix convention for intentionally unused function
+      // parameters (stub repository skeletons, ac02/ac03 placeholders).
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/consistent-type-imports": "error",
