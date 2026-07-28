@@ -70,7 +70,11 @@ export function CustomerRoleForm({
         | { ok: true; value: { lastModifiedDatetime: Date } }
         | {
             ok: false;
-            code: "CONFLICT" | "INVALID_TRANSITION" | "VALIDATION_ERROR";
+            code:
+              | "CONFLICT"
+              | "INVALID_TRANSITION"
+              | "VALIDATION_ERROR"
+              | "CANCELLED";
           },
     ) => void;
   } | null>(null);
@@ -113,7 +117,11 @@ export function CustomerRoleForm({
     | { ok: true; value: { lastModifiedDatetime: Date } }
     | {
         ok: false;
-        code: "CONFLICT" | "INVALID_TRANSITION" | "VALIDATION_ERROR";
+        code:
+          | "CONFLICT"
+          | "INVALID_TRANSITION"
+          | "VALIDATION_ERROR"
+          | "CANCELLED";
       }
   > {
     // ac04-spec §2.1 — intercept VALIDATED to open the account-setup wizard
@@ -162,10 +170,9 @@ export function CustomerRoleForm({
     const pending = pendingTransitionRef.current;
     setWizardOpen(false);
     pendingTransitionRef.current = null;
-    // Resolve the deferred promise so StatusTransitionControl exits its
-    // submitting state. VALIDATION_ERROR is the closest code for "user
-    // cancelled" — the control shows a generic inline error.
-    pending?.resolve({ ok: false, code: "VALIDATION_ERROR" });
+    // CANCELLED signals a user-initiated close; StatusTransitionControl exits
+    // its submitting state silently without rendering an error.
+    pending?.resolve({ ok: false, code: "CANCELLED" });
   }
 
   async function handleSaveSpecification(): Promise<void> {
@@ -266,6 +273,7 @@ export function CustomerRoleForm({
         </div>
       </section>
       <OnboardAccountsWizard
+        key={`${String(wizardOpen)}-${customerRole.partyRoleId}`}
         open={wizardOpen}
         partyRoleId={customerRole.partyRoleId}
         statusReason={wizardStatusReason}

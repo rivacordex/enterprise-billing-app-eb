@@ -23,7 +23,7 @@ export type OnboardCustomerAccountsResult =
   | { ok: false; code: "CONFLICT" }
   | { ok: false; code: "CYCLE_RETIRED" };
 
-// ac04-spec §2.2 + §3.1 — one atomic transaction that:
+// ac04-spec §2.2 + §3.1 — single atomic transaction owned by this service:
 //   1. compareAndUpdateStatus → INITIALIZED → VALIDATED (cm10 seam)
 //   2a. inserts billing.financial_account (FIN…)
 //   2b. inserts billing.billing_account (BAN…)
@@ -31,13 +31,16 @@ export type OnboardCustomerAccountsResult =
 //   2d. inserts three ledger_binding rows
 //   3. writes ACCOUNTS_ONBOARDED audit event
 //
-// Any failure after the FA/BAN insert but before bindings rolls back
-// everything — no orphan rows, party_role reverts to INITIALIZED (V7).
+// Expected business-outcome failures (PARTY_ROLE_NOT_FOUND, INVALID_TRANSITION,
+// CONFLICT, CYCLE_RETIRED) are returned as Result codes. Uncaught repository,
+// ledger, and audit infrastructure failures propagate as thrown exceptions and
+// are rolled back by db.transaction automatically (V7).
 export async function onboardCustomerAccounts(
   input: OnboardCustomerAccountsInput,
   actorId: string,
 ): Promise<OnboardCustomerAccountsResult> {
-  // Pre-transaction edge check — mirrors transitionCustomerStatus pattern.
+  // Pre-transaction fast-fail: avoid opening a transaction when the customer
+  // does not exist or is already past INITIALIZED.
   const before = await partyRoleRepository.findById(db, input.partyRoleId);
   if (!before) return { ok: false, code: "PARTY_ROLE_NOT_FOUND" };
   if (before.status !== "INITIALIZED") {

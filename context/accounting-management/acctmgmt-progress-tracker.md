@@ -8,7 +8,7 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- ac04 — `services/accounts/money.ts`: the only money-arithmetic site (code-standards §2.2). Amounts stay `string` end-to-end; converts to integer sen (minor units) for add/subtract/compare, returns `string`, throws `AppError('MONEY_PRECISION')` on >2 dp.
+- ac05 — Accounts nav + Overview page (browses FA/BAN created by ac04, shows live balances from pgledger).
 
 ## Completed
 

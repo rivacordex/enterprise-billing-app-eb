@@ -13,10 +13,6 @@ import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-ac
 // one deposits binding on the FA — all in MYR — and that attempting a second
 // onboarding of the same party role is blocked (INVALID_TRANSITION), leaving
 // the binding count unchanged.
-//
-// The `onboardCustomerAccounts` service is called against the test database
-// so that V2 exercises the full atomic transaction path (status change +
-// FA/BAN inserts + pgledger_create_account + ledger_binding inserts).
 const databaseUrl = process.env.DATABASE_URL;
 
 describe.skipIf(!databaseUrl)(
@@ -229,6 +225,7 @@ describe.skipIf(!databaseUrl)(
       expect(first.ok).toBe(true);
       if (!first.ok) return;
 
+      // Second attempt: party_role is now VALIDATED — pre-check catches it.
       const second = await onboardCustomerAccounts(
         {
           partyRoleId: pr.id,

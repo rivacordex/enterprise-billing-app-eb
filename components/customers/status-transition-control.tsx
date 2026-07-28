@@ -68,7 +68,11 @@ export interface StatusTransitionControlProps {
     | { ok: true; value: { lastModifiedDatetime: Date } }
     | {
         ok: false;
-        code: "CONFLICT" | "INVALID_TRANSITION" | "VALIDATION_ERROR";
+        code:
+          | "CONFLICT"
+          | "INVALID_TRANSITION"
+          | "VALIDATION_ERROR"
+          | "CANCELLED";
       }
   >;
   onConflict: () => void;
@@ -126,6 +130,10 @@ export function StatusTransitionControl({
         setConflict(true);
         return;
       }
+
+      // CANCELLED: the user closed the intercept wizard — exit submitting
+      // state silently without surfacing an error.
+      if (result.code === "CANCELLED") return;
 
       // INVALID_TRANSITION / VALIDATION_ERROR: defense-in-depth paths the
       // rendered control can never trigger itself (options are always
