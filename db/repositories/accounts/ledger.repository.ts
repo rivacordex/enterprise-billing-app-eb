@@ -32,15 +32,16 @@ export const ledgerRepository = {
   },
 
   // Balance for a single pgledger account (Module Inv. #2 — read path).
-  // Returns "0.00" when the account exists but has no transactions yet.
+  // Returns the balance string (may be "0.00") when the account exists, or
+  // null when no row is found (mirrors findByName not-found behaviour).
   async balanceByLedgerAccountId(
     db: Database,
     pgledgerAccountId: string,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const [row] = await db.execute<{ balance: string }>(
       sql`SELECT balance::text AS balance FROM billing.pgledger_accounts_view WHERE id = ${pgledgerAccountId} LIMIT 1`,
     );
-    return row?.balance ?? "0.00";
+    return row ? (row.balance ?? "0.00") : null;
   },
 
   // Sum of all receivables balances across every BAN bound to a given FA.

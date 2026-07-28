@@ -91,7 +91,7 @@ export const financialAccountRepository = {
         JOIN customer.organization org ON org.organization_id = pr.engaged_party
         WHERE fa.ref_party_role_id = ${value}
         ORDER BY fa.financial_account_id
-        LIMIT ${limit}
+        LIMIT ${limit + 1}
       `);
     }
 
@@ -116,7 +116,7 @@ export const financialAccountRepository = {
       JOIN customer.organization org ON org.organization_id = pr.engaged_party
       WHERE org.name ILIKE ${pattern} OR org.trading_name ILIKE ${pattern}
       ORDER BY org.name, fa.financial_account_id
-      LIMIT ${limit}
+      LIMIT ${limit + 1}
     `);
   },
 
