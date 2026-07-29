@@ -52,6 +52,12 @@ export function compare(a: string, b: string): -1 | 0 | 1 {
   return diff < 0n ? -1 : diff > 0n ? 1 : 0;
 }
 
+// Variadic sum (ac07-spec §3.1) — the header-total = Σ-lines check (§2.3
+// step 2, UNBALANCED_DOC) routes through this rather than a manual reduce.
+export function sum(...amounts: string[]): string {
+  return senToString(amounts.reduce((total, a) => total + stringToSen(a), 0n));
+}
+
 // pgledger balances are signed (debit − credit).
 // Debit-normal (receivables): positive sen = open A/R.
 export function openReceivable(balance: string): bigint {

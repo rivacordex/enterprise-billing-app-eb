@@ -42,6 +42,7 @@ export const AUDIT_EVENT_TYPES = [
   "PRODUCT_OFFERING_RETIRED",
   "PRODUCT_OFFERING_DISCARDED",
   "ACCOUNTS_ONBOARDED",
+  "DOCUMENT_POSTED",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

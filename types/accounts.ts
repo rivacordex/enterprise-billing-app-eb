@@ -13,6 +13,16 @@ export const DOC_STATES = [
 ] as const;
 export type DocState = (typeof DOC_STATES)[number];
 
+// Forward transitions only (ac07-spec §2.2) — `reversed` is entered only by
+// ac11's reversal, never by a transition listed here.
+export const DOC_TRANSITIONS: Record<DocState, readonly DocState[]> = {
+  draft: ["pending_approval", "posted", "cancelled"],
+  pending_approval: ["posted"],
+  posted: [],
+  reversed: [],
+  cancelled: [],
+};
+
 export const LINE_KINDS = [
   "capture",
   "allocation",
@@ -131,6 +141,18 @@ export type LedgerTransferDetail = {
 };
 
 export type ZeroSumRow = { currency: string; total: string; ok: boolean };
+
+// Refund workbench read-side shape (ac07-spec §2.4b) — the "assigned items"
+// picker shared by both entry modes. Lives here (not the service file) so
+// `components/accounts/payment-refund-panel.tsx` can depend on it without
+// violating the `components → services` boundaries rule.
+export type AssignedItem = {
+  allocationLineId: string;
+  paymentDocumentId: string;
+  refSettledDocumentId: string | null;
+  amount: string;
+  eventAt: Date;
+};
 
 export type {
   FinancialAccount,
