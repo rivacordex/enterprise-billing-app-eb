@@ -107,7 +107,7 @@ describe("no parseFloat/Number() on an amount outside money.ts (code-standards Â
         "utf-8",
       );
       expect(src).not.toContain("parseFloat(");
-      expect(src).not.toMatch(/[^.]Number\(/);
+      expect(src).not.toMatch(/(?<![.\w])Number\(/);
     }
   });
 });

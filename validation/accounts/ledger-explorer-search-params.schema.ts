@@ -10,6 +10,11 @@ const ACCOUNT_ID_PATTERN = /^pgla_[0-9A-Za-z]+$/;
 const TRANSFER_ID_PATTERN = /^pglt_[0-9A-Za-z]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+function isCalendarDate(s: string): boolean {
+  const d = new Date(s);
+  return !isNaN(d.getTime()) && s === d.toISOString().slice(0, 10);
+}
+
 // One `sort` searchParam (offering-list precedent): a sort key with an
 // optional `-` prefix for descending. Default is `-event_at` (most recent
 // activity first — a forensic explorer reads newest-first).
@@ -29,8 +34,18 @@ export const ledgerExplorerSearchParamsSchema = z.object({
   // Selected transfer — opens the two-leg drawer.
   transfer: z.string().regex(TRANSFER_ID_PATTERN).nullable().catch(null),
   // event_at range filter (§2.2).
-  from: z.string().regex(DATE_PATTERN).nullable().catch(null),
-  to: z.string().regex(DATE_PATTERN).nullable().catch(null),
+  from: z
+    .string()
+    .regex(DATE_PATTERN)
+    .refine(isCalendarDate)
+    .nullable()
+    .catch(null),
+  to: z
+    .string()
+    .regex(DATE_PATTERN)
+    .refine(isCalendarDate)
+    .nullable()
+    .catch(null),
   // Metadata search across doc/ban/type (§2.2).
   q: z.string().trim().max(100).catch(""),
   sort: z.enum(LEDGER_TRANSFER_SORT_VALUES).catch("-event_at"),

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import { refundDeposit } from "@/services/accounts/refund-deposit";
 import type { RefundDepositResult } from "@/services/accounts/refund-deposit";
 import { refundDepositSchema } from "@/validation/accounts/refund-deposit.schema";
@@ -30,7 +31,8 @@ export async function refundDepositAction(
       LEVELS.EDIT,
     );
     actorId = userId;
-  } catch {
+  } catch (e) {
+    if (!isRedirectError(e)) throw e;
     return { ok: false, code: "FORBIDDEN" };
   }
 

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import { captureDeposit } from "@/services/accounts/capture-deposit";
 import type { CaptureDepositResult } from "@/services/accounts/capture-deposit";
 import { captureDepositSchema } from "@/validation/accounts/capture-deposit.schema";
@@ -30,7 +31,8 @@ export async function captureDepositAction(
       LEVELS.EDIT,
     );
     actorId = userId;
-  } catch {
+  } catch (e) {
+    if (!isRedirectError(e)) throw e;
     return { ok: false, code: "FORBIDDEN" };
   }
 

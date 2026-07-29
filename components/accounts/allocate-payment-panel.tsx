@@ -13,7 +13,10 @@ export interface AllocatePaymentPanelProps {
   billingAccountId: string | undefined;
 }
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function AllocatePaymentPanel({
   financialAccountId,
@@ -37,32 +40,36 @@ export function AllocatePaymentPanel({
     setError(null);
     setMessage(null);
 
-    const result = await allocatePaymentAction({
-      financialAccountId,
-      billingAccountId,
-      amount,
-      refSettledDocumentId: refSettledDocumentId.trim() || null,
-      eventAt,
-      referenceDate,
-      referenceInfo,
-    });
+    try {
+      const result = await allocatePaymentAction({
+        financialAccountId,
+        billingAccountId,
+        amount,
+        refSettledDocumentId: refSettledDocumentId.trim() || null,
+        eventAt,
+        referenceDate,
+        referenceInfo,
+      });
 
-    setSubmitting(false);
+      if (!result.ok) {
+        setError(describeAllocateError(result.code));
+        return;
+      }
 
-    if (!result.ok) {
-      setError(describeAllocateError(result.code));
-      return;
+      setMessage(
+        result.value.state === "posted"
+          ? `Allocated and posted ${result.value.documentId}.`
+          : `Allocation ${result.value.documentId} routed for approval.`,
+      );
+      setAmount("");
+      setRefSettledDocumentId("");
+      setReferenceInfo("");
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    setMessage(
-      result.value.state === "posted"
-        ? `Allocated and posted ${result.value.documentId}.`
-        : `Allocation ${result.value.documentId} routed for approval.`,
-    );
-    setAmount("");
-    setRefSettledDocumentId("");
-    setReferenceInfo("");
-    router.refresh();
   }
 
   return (

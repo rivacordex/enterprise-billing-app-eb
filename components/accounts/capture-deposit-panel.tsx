@@ -48,38 +48,42 @@ export function CaptureDepositPanel({
     setError(null);
     setMessage(null);
 
-    const modeRef =
-      paymentMode === "bank_transfer"
-        ? { bankRef }
-        : paymentMode === "cheque"
-          ? { chequeNo, bank }
-          : { receiptNo };
+    try {
+      const modeRef =
+        paymentMode === "bank_transfer"
+          ? { bankRef }
+          : paymentMode === "cheque"
+            ? { chequeNo, bank }
+            : { receiptNo };
 
-    const result = await captureDepositAction({
-      financialAccountId,
-      amount,
-      payment_mode: paymentMode,
-      mode_ref: modeRef,
-      eventAt,
-      referenceDate,
-      referenceInfo,
-    });
+      const result = await captureDepositAction({
+        financialAccountId,
+        amount,
+        payment_mode: paymentMode,
+        mode_ref: modeRef,
+        eventAt,
+        referenceDate,
+        referenceInfo,
+      });
 
-    setSubmitting(false);
+      if (!result.ok) {
+        setError(describeCaptureDepositError(result.code));
+        return;
+      }
 
-    if (!result.ok) {
-      setError(describeCaptureDepositError(result.code));
-      return;
+      setMessage(
+        result.value.state === "posted"
+          ? `Captured and posted ${result.value.documentId}.`
+          : `Captured ${result.value.documentId} — routed for approval.`,
+      );
+      setAmount("");
+      setReferenceInfo("");
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    setMessage(
-      result.value.state === "posted"
-        ? `Captured and posted ${result.value.documentId}.`
-        : `Captured ${result.value.documentId} — routed for approval.`,
-    );
-    setAmount("");
-    setReferenceInfo("");
-    router.refresh();
   }
 
   return (

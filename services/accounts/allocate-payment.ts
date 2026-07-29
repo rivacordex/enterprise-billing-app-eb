@@ -56,7 +56,9 @@ export async function allocatePayment(
       db,
       input.refSettledDocumentId,
     );
-    if (!settled) return { ok: false, code: "SETTLED_DOCUMENT_NOT_FOUND" };
+    if (!settled || settled.refBillingAccountId !== ban.billingAccountId) {
+      return { ok: false, code: "SETTLED_DOCUMENT_NOT_FOUND" };
+    }
   }
 
   return db.transaction(async (tx) => {
