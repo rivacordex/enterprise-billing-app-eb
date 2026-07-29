@@ -42,16 +42,20 @@ export type PostedLeg = {
   amount: string;
 };
 
-// Natures that resolve to a `sys.{nature}.{ccy}` account (code-standards
-// §2.3 step 4 exception) — `deposit_movement` has none; PAY never uses it,
-// but the guard stays generic for ac08+'s reuse of this posting core.
-const NATURE_HAS_SYS_ACCOUNT = new Set<PostingNature>([
-  "revenue",
-  "revenue_adj",
-  "write_off",
-  "rounding",
-  "cash",
-]);
+// Natures that resolve to a `sys.{name}.{ccy}` counter-account (Module Inv.
+// #8, code-standards §2.3 step 4 exception). `name` is usually the nature
+// itself, except `deposit_movement`, which steers to the existing
+// `sys.cash` account — ac03 seeded no `sys.deposit_movement` account (Q16's
+// `deposits ↔ sys.cash` story, ac08-spec §2.2, flagged in ac03's progress
+// tracker entry for this unit to resolve).
+const NATURE_SYS_ACCOUNT_NAME: Partial<Record<PostingNature, string>> = {
+  revenue: "revenue",
+  revenue_adj: "revenue_adj",
+  write_off: "write_off",
+  rounding: "rounding",
+  cash: "cash",
+  deposit_movement: "cash",
+};
 
 function periodKeyFor(eventAt: Date): string {
   return eventAt.toISOString().slice(0, 7);
@@ -222,16 +226,19 @@ export async function postDocument(
       `unapplied_cash binding not found for FA ${doc.refFinancialAccountId}`,
     );
   }
+  const deposits = ucBindings.find((b) => b.ledgerRole === "deposits");
 
   let sysAccountId: string | null = null;
-  if (NATURE_HAS_SYS_ACCOUNT.has(reason.postingNature as PostingNature)) {
+  const sysAccountName =
+    NATURE_SYS_ACCOUNT_NAME[reason.postingNature as PostingNature];
+  if (sysAccountName) {
     const sysAccount = await ledgerRepository.findByName(
       tx,
-      `sys.${reason.postingNature}.${doc.currency}`,
+      `sys.${sysAccountName}.${doc.currency}`,
     );
     if (!sysAccount) {
       throw new Error(
-        `sys.${reason.postingNature}.${doc.currency} account not found`,
+        `sys.${sysAccountName}.${doc.currency} account not found`,
       );
     }
     sysAccountId = sysAccount.id;
@@ -261,6 +268,7 @@ export async function postDocument(
     );
     const resolved = template({
       financialAccountUnappliedCashId: uc.pgledgerAccountId,
+      financialAccountDepositsId: deposits?.pgledgerAccountId ?? null,
       sysAccountId,
       billingAccountReceivablesId: receivablesAccountId,
     });

@@ -1,14 +1,20 @@
-// PAY leg templates (ac07-spec §2.4, plan §2 T3/T4/refund leg). Keyed on
-// `doc_type` so a future `(DEP, refund)` template (ac08) is distinct from
-// `(PAY, refund)` even though both post the identical payout leg shape.
+// PAY/DEP leg templates (ac07-spec §2.4, ac08-spec §2.2, plan §2
+// T3/T4/refund leg). Keyed on `doc_type` — `(DEP, release)` differs from
+// `(PAY, release)` even though both share the `release` line_kind.
 
 import type { DocType, LineKind } from "@/types/accounts";
 
 export type LegTemplateContext = {
-  // fa.{FIN}.unapplied_cash — every PAY line touches this account.
+  // fa.{FIN}.unapplied_cash — every PAY line, and DEP's release/refund
+  // lines, touch this account.
   financialAccountUnappliedCashId: string;
-  // The nature-resolved sys.{nature}.{ccy} account (post-document.ts §2.3
-  // step 4) — null for line kinds that don't touch a sys account.
+  // fa.{FIN}.deposits (ac08-spec §2.1 — DEP is FA-level) — null when the FA
+  // has no deposits binding resolved for this document (never true for a
+  // DEP document; PAY documents never need it).
+  financialAccountDepositsId: string | null;
+  // The nature-resolved sys.{nature-or-steered-name}.{ccy} account
+  // (post-document.ts §2.3 step 4) — null for line kinds that don't touch a
+  // sys account.
   sysAccountId: string | null;
   // ban.{BAN}.receivables — present only for an `allocation` line.
   billingAccountReceivablesId: string | null;
@@ -70,10 +76,51 @@ const PAY_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
   },
 };
 
+// DEP leg templates (ac08-spec §2.2 — reconciled direction, confirmed
+// 2026-07-25: pgledger `from → to` makes `from` decrease, `to` increase).
+const DEP_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // capture (§2.2): fa.{FIN}.deposits → sys.cash.{ccy}. deposits → −A (held
+  // liability), cash → +A.
+  capture: (ctx) => {
+    if (!ctx.financialAccountDepositsId) {
+      throw new Error(
+        "DEP capture leg requires a resolved fa.deposits account",
+      );
+    }
+    if (!ctx.sysAccountId) {
+      throw new Error("DEP capture leg requires a resolved sys.cash account");
+    }
+    return {
+      fromAccountId: ctx.financialAccountDepositsId,
+      toAccountId: ctx.sysAccountId,
+    };
+  },
+  // reverse-to-account (§2.2): fa.{FIN}.unapplied_cash → fa.{FIN}.deposits —
+  // deposits → 0, unapplied → −A. Internal only, no sys.cash leg. Distinct
+  // from PAY's `release` (the allocation-reversal leg) even though both
+  // share the `release` line_kind — this map is keyed on doc_type too.
+  release: (ctx) => {
+    if (!ctx.financialAccountDepositsId) {
+      throw new Error(
+        "DEP release leg requires a resolved fa.deposits account",
+      );
+    }
+    return {
+      fromAccountId: ctx.financialAccountUnappliedCashId,
+      toAccountId: ctx.financialAccountDepositsId,
+    };
+  },
+  // refund (§2.2): sys.cash.{ccy} → fa.{FIN}.unapplied_cash — the identical
+  // payout leg shape as `(PAY, refund)` (§3.1's noted sharing); reused
+  // directly rather than re-declared.
+  refund: PAY_LEG_TEMPLATES.refund!,
+};
+
 const LEG_TEMPLATES: Partial<
   Record<DocType, Partial<Record<LineKind, LegTemplate>>>
 > = {
   PAY: PAY_LEG_TEMPLATES,
+  DEP: DEP_LEG_TEMPLATES,
 };
 
 export function resolveLegTemplate(

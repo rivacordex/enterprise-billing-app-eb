@@ -41,6 +41,12 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).toContain("PaymentRefundPanel");
     expect(pageSource).toContain("PendingApprovalsList");
   });
+
+  it("imports the DEP capture/reverse/refund panels (ac08-spec §3.5)", () => {
+    expect(pageSource).toContain("CaptureDepositPanel");
+    expect(pageSource).toContain("ReverseDepositPanel");
+    expect(pageSource).toContain("RefundDepositPanel");
+  });
 });
 
 describe("Transactions shared components exist", () => {
@@ -52,6 +58,9 @@ describe("Transactions shared components exist", () => {
     ["allocate-payment-panel.tsx", "AllocatePaymentPanel"],
     ["payment-refund-panel.tsx", "PaymentRefundPanel"],
     ["pending-approvals-list.tsx", "PendingApprovalsList"],
+    ["capture-deposit-panel.tsx", "CaptureDepositPanel"],
+    ["reverse-deposit-panel.tsx", "ReverseDepositPanel"],
+    ["refund-deposit-panel.tsx", "RefundDepositPanel"],
   ])("%s exists and exports %s", (filename, exportName) => {
     const src = readFileSync(resolve(componentRoot, filename), "utf-8");
     expect(src).toContain(`export function ${exportName}`);
@@ -66,6 +75,9 @@ describe("post-document.ts is the only pgledger_create_transfer(s) caller (code-
       "refund-payment.ts",
       "document-state-machine.ts",
       "leg-templates.ts",
+      "capture-deposit.ts",
+      "reverse-deposit.ts",
+      "refund-deposit.ts",
     ];
     for (const filename of servicesToCheck) {
       const src = readFileSync(
@@ -78,13 +90,16 @@ describe("post-document.ts is the only pgledger_create_transfer(s) caller (code-
 });
 
 describe("no parseFloat/Number() on an amount outside money.ts (code-standards §2.2, ac17 grep-gate)", () => {
-  it("post-document.ts and the PAY services never call parseFloat/Number on amounts", () => {
+  it("post-document.ts and the PAY/DEP services never call parseFloat/Number on amounts", () => {
     const filesToCheck = [
       "post-document.ts",
       "capture-payment.ts",
       "allocate-payment.ts",
       "refund-payment.ts",
       "document-state-machine.ts",
+      "capture-deposit.ts",
+      "reverse-deposit.ts",
+      "refund-deposit.ts",
     ];
     for (const filename of filesToCheck) {
       const src = readFileSync(
