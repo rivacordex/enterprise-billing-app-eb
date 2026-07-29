@@ -4,10 +4,13 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
 import { AllocatePaymentPanel } from "@/components/accounts/allocate-payment-panel";
+import { CaptureDepositPanel } from "@/components/accounts/capture-deposit-panel";
 import { CapturePaymentPanel } from "@/components/accounts/capture-payment-panel";
 import { ContextStrip } from "@/components/accounts/context-strip";
 import { PaymentRefundPanel } from "@/components/accounts/payment-refund-panel";
 import { PendingApprovalsList } from "@/components/accounts/pending-approvals-list";
+import { RefundDepositPanel } from "@/components/accounts/refund-deposit-panel";
+import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel";
 import { getBillingAccountDetail } from "@/services/accounts/get-billing-account-detail";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
 import {
@@ -89,6 +92,12 @@ export default async function TransactionsPage({
             assignedItems={refundData.assignedItems}
             unappliedCashAvailable={refundData.unappliedCashAvailable}
           />
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <CaptureDepositPanel financialAccountId={ctx.fa} />
+            <ReverseDepositPanel financialAccountId={ctx.fa} />
+            <RefundDepositPanel financialAccountId={ctx.fa} />
+          </div>
 
           <section className="space-y-3">
             <h2 className="text-h3 font-semibold text-foreground">
