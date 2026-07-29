@@ -48,40 +48,44 @@ export function RefundDepositPanel({
     setError(null);
     setMessage(null);
 
-    const modeRef =
-      payoutMode === "bank_transfer"
-        ? { bankRef }
-        : payoutMode === "cheque"
-          ? { chequeNo, bank }
-          : payoutMode === "cash"
-            ? { receiptNo }
-            : null;
+    try {
+      const modeRef =
+        payoutMode === "bank_transfer"
+          ? { bankRef }
+          : payoutMode === "cheque"
+            ? { chequeNo, bank }
+            : payoutMode === "cash"
+              ? { receiptNo }
+              : null;
 
-    const result = await refundDepositAction({
-      financialAccountId,
-      amount,
-      paymentMode: payoutMode === "none" ? null : payoutMode,
-      modeRef,
-      eventAt,
-      referenceDate,
-      referenceInfo,
-    });
+      const result = await refundDepositAction({
+        financialAccountId,
+        amount,
+        paymentMode: payoutMode === "none" ? null : payoutMode,
+        modeRef,
+        eventAt,
+        referenceDate,
+        referenceInfo,
+      });
 
-    setSubmitting(false);
+      if (!result.ok) {
+        setError(describeRefundDepositError(result.code));
+        return;
+      }
 
-    if (!result.ok) {
-      setError(describeRefundDepositError(result.code));
-      return;
+      setMessage(
+        result.value.state === "posted"
+          ? `Refund ${result.value.documentId} posted.`
+          : `Refund ${result.value.documentId} routed for manager approval (always four-eyes).`,
+      );
+      setAmount("");
+      setReferenceInfo("");
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    setMessage(
-      result.value.state === "posted"
-        ? `Refund ${result.value.documentId} posted.`
-        : `Refund ${result.value.documentId} routed for manager approval (always four-eyes).`,
-    );
-    setAmount("");
-    setReferenceInfo("");
-    router.refresh();
   }
 
   return (

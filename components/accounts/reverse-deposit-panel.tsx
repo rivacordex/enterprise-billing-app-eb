@@ -34,29 +34,33 @@ export function ReverseDepositPanel({
     setError(null);
     setMessage(null);
 
-    const result = await reverseDepositAction({
-      financialAccountId,
-      amount,
-      eventAt,
-      referenceDate,
-      referenceInfo,
-    });
+    try {
+      const result = await reverseDepositAction({
+        financialAccountId,
+        amount,
+        eventAt,
+        referenceDate,
+        referenceInfo,
+      });
 
-    setSubmitting(false);
+      if (!result.ok) {
+        setError(describeReverseDepositError(result.code));
+        return;
+      }
 
-    if (!result.ok) {
-      setError(describeReverseDepositError(result.code));
-      return;
+      setMessage(
+        result.value.state === "posted"
+          ? `Reversal ${result.value.documentId} posted.`
+          : `Reversal ${result.value.documentId} routed for manager approval (always four-eyes).`,
+      );
+      setAmount("");
+      setReferenceInfo("");
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    setMessage(
-      result.value.state === "posted"
-        ? `Reversal ${result.value.documentId} posted.`
-        : `Reversal ${result.value.documentId} routed for manager approval (always four-eyes).`,
-    );
-    setAmount("");
-    setReferenceInfo("");
-    router.refresh();
   }
 
   return (

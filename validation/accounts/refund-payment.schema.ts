@@ -18,19 +18,16 @@ const refundItemSchema = z.object({
   refundedAmount: amountSchema,
 });
 
-export const refundPaymentSchema = z
-  .object({
-    financialAccountId: z
-      .string()
-      .regex(/^FIN\d{6}$/, "Invalid financial account ID"),
-    billingAccountId: z
-      .string()
-      .regex(/^BAN\d{6}$/, "Invalid billing account ID"),
-    refundType: z.enum(["cash", "convert_to_advance"]),
-    items: z
-      .array(refundItemSchema)
-      .min(1, "Select at least one item to refund"),
-  })
-  .merge(documentBaseSchema);
+export const refundPaymentSchema = z.object({
+  financialAccountId: z
+    .string()
+    .regex(/^FIN\d{6}$/, "Invalid financial account ID"),
+  billingAccountId: z
+    .string()
+    .regex(/^BAN\d{6}$/, "Invalid billing account ID"),
+  refundType: z.enum(["cash", "convert_to_advance"]),
+  items: z.array(refundItemSchema).min(1, "Select at least one item to refund"),
+  ...documentBaseSchema.shape,
+});
 
 export type RefundPaymentInput = z.infer<typeof refundPaymentSchema>;

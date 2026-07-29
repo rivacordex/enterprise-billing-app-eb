@@ -53,46 +53,77 @@ export async function reverseDeposit(
   );
   if (!fa) return { ok: false, code: "FINANCIAL_ACCOUNT_NOT_FOUND" };
 
-  const held = await getDepositHeldAmount(fa.financialAccountId);
-  if (money.compare(input.amount, held) > 0) {
-    return { ok: false, code: "AMOUNT_EXCEEDS_HELD_DEPOSIT" };
+  class _SubmitFailed extends Error {
+    constructor(public result: ReverseDepositResult) {
+      super("submit-failed");
+    }
   }
 
-  return db.transaction(async (tx) => {
-    const doc = await documentRepository.insert(tx, "DEP", {
-      state: "draft",
-      refFinancialAccountId: fa.financialAccountId,
-      refBillingAccountId: null,
-      reasonCode: "DEP_REVERSE",
-      currency: fa.currency,
-      totalAmount: input.amount,
-      paymentMode: null,
-      modeRef: null,
-      referenceDate: input.referenceDate,
-      referenceInfo: input.referenceInfo,
-      eventAt: input.eventAt,
-      postedAt: null,
-      reversalOf: null,
-      createdBy: actorId,
-      approvedBy: null,
-      metadata: null,
-      lastEditedBy: actorId,
-    });
+  return db
+    .transaction(async (tx) => {
+      const bindings = await ledgerBindingRepository.findByOwner(
+        tx,
+        "financial_account",
+        fa.financialAccountId,
+      );
+      const deposits = bindings.find((b) => b.ledgerRole === "deposits");
+      if (!deposits) {
+        throw new Error(
+          `deposits binding not found for FA ${fa.financialAccountId}`,
+        );
+      }
+      const balance = await ledgerRepository.balanceByLedgerAccountId(
+        tx,
+        deposits.pgledgerAccountId,
+      );
+      const held = money.subtract("0.00", balance ?? "0.00");
+      if (money.compare(input.amount, held) > 0) {
+        throw new _SubmitFailed({
+          ok: false,
+          code: "AMOUNT_EXCEEDS_HELD_DEPOSIT",
+        });
+      }
 
-    await documentLineRepository.insert(tx, {
-      refDocumentId: doc.documentId,
-      lineNo: 1,
-      lineKind: "release",
-      refBillingAccountId: null,
-      refSettledDocumentId: null,
-      amount: input.amount,
-      pgledgerTransferId: null,
-      reversedByLineId: null,
-      lastEditedBy: actorId,
-    });
+      const doc = await documentRepository.insert(tx, "DEP", {
+        state: "draft",
+        refFinancialAccountId: fa.financialAccountId,
+        refBillingAccountId: null,
+        reasonCode: "DEP_REVERSE",
+        currency: fa.currency,
+        totalAmount: input.amount,
+        paymentMode: null,
+        modeRef: null,
+        referenceDate: input.referenceDate,
+        referenceInfo: input.referenceInfo,
+        eventAt: input.eventAt,
+        postedAt: null,
+        reversalOf: null,
+        createdBy: actorId,
+        approvedBy: null,
+        metadata: null,
+        lastEditedBy: actorId,
+      });
 
-    // Always four-eyes (`auto_post_limit = 0`, Q20) — `submitDocument`
-    // always routes this to `pending_approval`.
-    return submitDocument(tx, doc.documentId, actorId);
-  });
+      await documentLineRepository.insert(tx, {
+        refDocumentId: doc.documentId,
+        lineNo: 1,
+        lineKind: "release",
+        refBillingAccountId: null,
+        refSettledDocumentId: null,
+        amount: input.amount,
+        pgledgerTransferId: null,
+        reversedByLineId: null,
+        lastEditedBy: actorId,
+      });
+
+      // Always four-eyes (`auto_post_limit = 0`, Q20) — `submitDocument`
+      // always routes this to `pending_approval`.
+      const result = await submitDocument(tx, doc.documentId, actorId);
+      if (!result.ok) throw new _SubmitFailed(result);
+      return result;
+    })
+    .catch((e: unknown) => {
+      if (e instanceof _SubmitFailed) return e.result;
+      throw e;
+    });
 }

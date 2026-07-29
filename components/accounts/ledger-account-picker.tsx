@@ -43,6 +43,25 @@ export function LedgerAccountPicker({
         action="/accounts/ledger"
         className="flex flex-wrap items-end gap-3"
       >
+        {baseParams.party && (
+          <input type="hidden" name="party" value={baseParams.party} />
+        )}
+        {baseParams.fa && (
+          <input type="hidden" name="fa" value={baseParams.fa} />
+        )}
+        {baseParams.ban && (
+          <input type="hidden" name="ban" value={baseParams.ban} />
+        )}
+        {baseParams.from && (
+          <input type="hidden" name="from" value={baseParams.from} />
+        )}
+        {baseParams.to && (
+          <input type="hidden" name="to" value={baseParams.to} />
+        )}
+        {baseParams.sort && (
+          <input type="hidden" name="sort" value={baseParams.sort} />
+        )}
+        {baseParams.q && <input type="hidden" name="q" value={baseParams.q} />}
         {selectedAccountId && (
           <input type="hidden" name="account" value={selectedAccountId} />
         )}
@@ -87,6 +106,7 @@ export function LedgerAccountPicker({
                   account: r.id,
                   transfer: undefined,
                   page: undefined,
+                  sort: undefined,
                 });
                 return (
                   <Link

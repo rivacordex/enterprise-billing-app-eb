@@ -23,7 +23,10 @@ export interface PaymentRefundPanelProps {
   unappliedCashAvailable: string;
 }
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function PaymentRefundPanel({
   financialAccountId,
@@ -84,48 +87,52 @@ export function PaymentRefundPanel({
     setError(null);
     setMessage(null);
 
-    const items = Object.entries(selectedAmounts).map(
-      ([allocationLineId, refundedAmount]) => ({
-        allocationLineId,
-        refundedAmount,
-      }),
-    );
-    if (overpaymentEnabled && overpaymentAmount.trim() !== "") {
-      items.push({
-        allocationLineId: null as unknown as string,
-        refundedAmount: overpaymentAmount,
+    try {
+      const items: {
+        allocationLineId: string | null;
+        refundedAmount: string;
+      }[] = Object.entries(selectedAmounts).map(
+        ([allocationLineId, refundedAmount]) => ({
+          allocationLineId,
+          refundedAmount,
+        }),
+      );
+      if (overpaymentEnabled && overpaymentAmount.trim() !== "") {
+        items.push({
+          allocationLineId: null,
+          refundedAmount: overpaymentAmount,
+        });
+      }
+
+      const result = await refundPaymentAction({
+        financialAccountId,
+        billingAccountId,
+        refundType,
+        items,
+        eventAt,
+        referenceDate,
+        referenceInfo,
       });
+
+      if (!result.ok) {
+        setError(describeRefundError(result.code));
+        return;
+      }
+
+      setMessage(
+        result.value.state === "posted"
+          ? `Refund ${result.value.documentId} posted.`
+          : `Refund ${result.value.documentId} routed for manager approval (always four-eyes).`,
+      );
+      setSelectedAmounts({});
+      setOverpaymentAmount("");
+      setReferenceInfo("");
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    const result = await refundPaymentAction({
-      financialAccountId,
-      billingAccountId,
-      refundType,
-      items: items.map((i) => ({
-        allocationLineId: i.allocationLineId,
-        refundedAmount: i.refundedAmount,
-      })),
-      eventAt,
-      referenceDate,
-      referenceInfo,
-    });
-
-    setSubmitting(false);
-
-    if (!result.ok) {
-      setError(describeRefundError(result.code));
-      return;
-    }
-
-    setMessage(
-      result.value.state === "posted"
-        ? `Refund ${result.value.documentId} posted.`
-        : `Refund ${result.value.documentId} routed for manager approval (always four-eyes).`,
-    );
-    setSelectedAmounts({});
-    setOverpaymentAmount("");
-    setReferenceInfo("");
-    router.refresh();
   }
 
   return (

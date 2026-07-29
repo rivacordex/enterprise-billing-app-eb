@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import { approveDocumentStandalone } from "@/services/accounts/document-state-machine";
 import type { ApproveDocumentResult } from "@/services/accounts/document-state-machine";
 import { approveDocumentSchema } from "@/validation/accounts/approve-document.schema";
@@ -31,7 +32,8 @@ export async function approveDocumentAction(
       LEVELS.EDIT,
     );
     actorId = userId;
-  } catch {
+  } catch (e) {
+    if (!isRedirectError(e)) throw e;
     return { ok: false, code: "FORBIDDEN" };
   }
 

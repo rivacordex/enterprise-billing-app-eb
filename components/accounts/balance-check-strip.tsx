@@ -23,7 +23,7 @@ export function BalanceCheckStrip({
 
   return (
     <div
-      role="status"
+      role={allOk ? "status" : "alert"}
       className={cn(
         "flex flex-wrap items-center gap-x-8 gap-y-2 px-4 py-3",
         allOk

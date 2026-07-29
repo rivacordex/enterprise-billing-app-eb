@@ -27,39 +27,52 @@ export async function captureDeposit(
   );
   if (!fa) return { ok: false, code: "FINANCIAL_ACCOUNT_NOT_FOUND" };
 
-  return db.transaction(async (tx) => {
-    const doc = await documentRepository.insert(tx, "DEP", {
-      state: "draft",
-      refFinancialAccountId: fa.financialAccountId,
-      refBillingAccountId: null,
-      reasonCode: "SEC_DEPOSIT",
-      currency: fa.currency,
-      totalAmount: input.amount,
-      paymentMode: input.payment_mode,
-      modeRef: input.mode_ref,
-      referenceDate: input.referenceDate,
-      referenceInfo: input.referenceInfo,
-      eventAt: input.eventAt,
-      postedAt: null,
-      reversalOf: null,
-      createdBy: actorId,
-      approvedBy: null,
-      metadata: null,
-      lastEditedBy: actorId,
-    });
+  class _SubmitFailed extends Error {
+    constructor(public result: CaptureDepositResult) {
+      super("submit-failed");
+    }
+  }
 
-    await documentLineRepository.insert(tx, {
-      refDocumentId: doc.documentId,
-      lineNo: 1,
-      lineKind: "capture",
-      refBillingAccountId: null,
-      refSettledDocumentId: null,
-      amount: input.amount,
-      pgledgerTransferId: null,
-      reversedByLineId: null,
-      lastEditedBy: actorId,
-    });
+  return db
+    .transaction(async (tx) => {
+      const doc = await documentRepository.insert(tx, "DEP", {
+        state: "draft",
+        refFinancialAccountId: fa.financialAccountId,
+        refBillingAccountId: null,
+        reasonCode: "SEC_DEPOSIT",
+        currency: fa.currency,
+        totalAmount: input.amount,
+        paymentMode: input.payment_mode,
+        modeRef: input.mode_ref,
+        referenceDate: input.referenceDate,
+        referenceInfo: input.referenceInfo,
+        eventAt: input.eventAt,
+        postedAt: null,
+        reversalOf: null,
+        createdBy: actorId,
+        approvedBy: null,
+        metadata: null,
+        lastEditedBy: actorId,
+      });
 
-    return submitDocument(tx, doc.documentId, actorId);
-  });
+      await documentLineRepository.insert(tx, {
+        refDocumentId: doc.documentId,
+        lineNo: 1,
+        lineKind: "capture",
+        refBillingAccountId: null,
+        refSettledDocumentId: null,
+        amount: input.amount,
+        pgledgerTransferId: null,
+        reversedByLineId: null,
+        lastEditedBy: actorId,
+      });
+
+      const result = await submitDocument(tx, doc.documentId, actorId);
+      if (!result.ok) throw new _SubmitFailed(result);
+      return result;
+    })
+    .catch((e: unknown) => {
+      if (e instanceof _SubmitFailed) return e.result;
+      throw e;
+    });
 }

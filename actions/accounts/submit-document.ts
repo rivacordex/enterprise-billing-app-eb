@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { isRedirectError } from "@/lib/errors";
 import { submitDocumentStandalone } from "@/services/accounts/document-state-machine";
 import type { SubmitDocumentResult } from "@/services/accounts/document-state-machine";
 import { submitDocumentSchema } from "@/validation/accounts/submit-document.schema";
@@ -27,7 +28,8 @@ export async function submitDocumentAction(
       LEVELS.EDIT,
     );
     actorId = userId;
-  } catch {
+  } catch (e) {
+    if (!isRedirectError(e)) throw e;
     return { ok: false, code: "FORBIDDEN" };
   }
 

@@ -131,6 +131,7 @@ export async function refundPayment(
   }
 
   const resolvedItems: ResolvedItem[] = [];
+  const seenAllocationLineIds = new Set<string>();
   for (const item of input.items) {
     if (item.allocationLineId === null) {
       resolvedItems.push({
@@ -139,6 +140,10 @@ export async function refundPayment(
       });
       continue;
     }
+    if (seenAllocationLineIds.has(item.allocationLineId)) {
+      return { ok: false, code: "ALLOCATION_LINE_NOT_FOUND" };
+    }
+    seenAllocationLineIds.add(item.allocationLineId);
     const line = await documentLineRepository.findById(
       db,
       item.allocationLineId,

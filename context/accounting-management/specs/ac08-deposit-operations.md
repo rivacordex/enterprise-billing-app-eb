@@ -13,7 +13,7 @@ Add the three security-deposit operations to the Transactions page as DEP docume
 
 ## 2. Design
 
-Three new per-operation actions + panels; **no new posting mechanism** — everything routes through ac07's `post-document`, which reads the reason code's nature (`deposit_movement`) and the DEP leg templates added here. Boundary: **`services/accounts/{capture-deposit,reverse-deposit,refund-deposit}.ts`, `validation/accounts/{capture-deposit,reverse-deposit,refund-deposit}.schema.ts`, `actions/accounts/{capture-deposit,reverse-deposit,refund-deposit}.action.ts`, the DEP entries added to `leg-templates.ts`, and the DEP panels in `app/(app)/accounts/transactions/**`**. No schema change, no new permission (reuses `accounts_transactions`).
+Three new per-operation actions + panels; **no new posting mechanism** — everything routes through ac07's `post-document`, which reads the reason code's nature (`deposit_movement`) and the DEP leg templates added here. Boundary: **`services/accounts/{capture-deposit,reverse-deposit,refund-deposit}.ts`, `validation/accounts/{capture-deposit,reverse-deposit,refund-deposit}.schema.ts`, `actions/accounts/{capture-deposit,reverse-deposit,refund-deposit}.ts`, the DEP entries added to `leg-templates.ts`, and the DEP panels in `app/(app)/accounts/transactions/**`**. No schema change, no new permission (reuses `accounts_transactions`).
 
 ### 2.1 DEP is FA-level (Q4/Q15/Q1)
 

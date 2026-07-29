@@ -27,17 +27,22 @@ export function PendingApprovalsList({
   ): Promise<void> {
     setBusyId(documentId);
     setError(null);
-    const result = await approveDocumentAction({ documentId, lastModified });
-    setBusyId(null);
-    if (!result.ok) {
-      setError(
-        result.code === "SELF_APPROVAL"
-          ? "You created this document — a different manager must approve it."
-          : "Approval failed. Please try again.",
-      );
-      return;
+    try {
+      const result = await approveDocumentAction({ documentId, lastModified });
+      if (!result.ok) {
+        setError(
+          result.code === "SELF_APPROVAL"
+            ? "You created this document — a different manager must approve it."
+            : "Approval failed. Please try again.",
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Approval failed. Please try again.");
+    } finally {
+      setBusyId(null);
     }
-    router.refresh();
   }
 
   if (documents.length === 0) {

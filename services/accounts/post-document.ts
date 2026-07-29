@@ -175,7 +175,13 @@ async function finalizePosting(
     doc.lastModified,
     { state: "posted", postedAt, lastEditedBy: actorId },
   );
-  if (!updated) return { ok: false, code: "CONFLICT" };
+  // Ledger transfers are already written — a CAS miss here means concurrent
+  // mutation raced past the transaction boundary. Throw so the enclosing
+  // db.transaction rolls back rather than committing orphaned ledger entries.
+  if (!updated)
+    throw new Error(
+      `CONFLICT: document ${doc.documentId} state update failed after ledger writes`,
+    );
 
   await insertAuditEvent(tx, {
     eventType: "DOCUMENT_POSTED",

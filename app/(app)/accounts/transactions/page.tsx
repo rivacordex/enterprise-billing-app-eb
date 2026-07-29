@@ -46,8 +46,8 @@ export default async function TransactionsPage({
   ]);
 
   const [pendingApprovals, refundData] = await Promise.all([
-    ctx.fa ? listPendingApprovals(ctx.fa) : Promise.resolve([]),
-    ctx.fa && ctx.ban
+    canEdit && ctx.fa ? listPendingApprovals(ctx.fa) : Promise.resolve([]),
+    canEdit && ctx.fa && ctx.ban
       ? getRefundWorkbenchData(ctx.fa, ctx.ban)
       : Promise.resolve({ assignedItems: [], unappliedCashAvailable: "0.00" }),
   ]);
