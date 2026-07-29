@@ -68,6 +68,70 @@ export type TmfAccountRef = {
   relatedParty: TmfRelatedParty[];
 };
 
+// Ledger Explorer types (ac06-spec §2.5) — components may only depend on
+// `types/**`, never `services/**` (boundaries/dependencies), so these live
+// here; `services/accounts/ledger-explorer.ts` is still their sole producer.
+export type LedgerAccountKind = "ban" | "fa" | "sys";
+
+export type LedgerAccountLabel = {
+  kind: LedgerAccountKind;
+  ownerId: string | null;
+  ownerLabel: string | null;
+};
+
+export type LedgerAccountSearchResult = {
+  id: string;
+  name: string;
+  currency: string;
+  balance: string;
+  label: LedgerAccountLabel;
+};
+
+export type LedgerAccountSummary = {
+  id: string;
+  name: string;
+  currency: string;
+  label: LedgerAccountLabel;
+};
+
+export type LedgerTransferListItem = {
+  id: string;
+  fromAccountId: string;
+  fromAccountName: string;
+  fromLabel: LedgerAccountLabel;
+  toAccountId: string;
+  toAccountName: string;
+  toLabel: LedgerAccountLabel;
+  amount: string;
+  eventAt: Date;
+  createdAt: Date;
+  metadataDoc: string | null;
+};
+
+export type LedgerTransferLeg = {
+  accountId: string;
+  accountName: string;
+  label: LedgerAccountLabel;
+  amount: string;
+  accountPreviousBalance: string;
+  accountCurrentBalance: string;
+};
+
+export type LedgerTransferDetail = {
+  id: string;
+  fromAccountId: string;
+  fromAccountName: string;
+  toAccountId: string;
+  toAccountName: string;
+  amount: string;
+  eventAt: Date;
+  createdAt: Date;
+  metadata: Record<string, unknown> | null;
+  legs: LedgerTransferLeg[];
+};
+
+export type ZeroSumRow = { currency: string; total: string; ok: boolean };
+
 export type {
   FinancialAccount,
   FinancialAccountInsert,

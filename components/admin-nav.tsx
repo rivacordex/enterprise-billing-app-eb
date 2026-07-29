@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Building2,
+  Compass,
   Landmark,
   Lock,
   Package,
@@ -86,6 +87,12 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         label: "Overview",
         href: "/accounts/overview",
         icon: Landmark,
+        requiredPermission: { name: "accounts_view", level: "READ" },
+      },
+      {
+        label: "Ledger Explorer",
+        href: "/accounts/ledger",
+        icon: Compass,
         requiredPermission: { name: "accounts_view", level: "READ" },
       },
     ],
