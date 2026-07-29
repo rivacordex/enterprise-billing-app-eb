@@ -8,7 +8,7 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- ac05 — Accounts nav + Overview page (browses FA/BAN created by ac04, shows live balances from pgledger).
+- ac06 — next unit (TBD).
 
 ## Completed
 
@@ -22,15 +22,17 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None
+- None.
 
 ## Completed (recent)
+
+- **ac05 — Accounts nav + Overview page** (`context/accounting-management/specs/ac05-accounts-nav-and-overview.md`). Started and finished 2026-07-28. Shipped: `accounts_view` permission migration (`db/migrations/0015_accounts_view_permission.sql`); idempotent seed helper (`db/seeds/accounts/seed-accounts-permissions.ts`) granting READ to MANAGER/USER/ADMIN, `ACCOUNTS_SEARCH_RESULT_LIMIT = "5"` in `system_config`; CSS design tokens for the Accounts module (`app/globals.css`); "Accounts" nav section with `Landmark` icon (`components/admin-nav.tsx`); `parseAccountsContext` URL parser (`validation/accounts/parse-accounts-context.ts`); `money.ts` bigint-sen arithmetic with `stringToSen`/`senToString`/`add`/`subtract`/`compare`/`openReceivable`/`isHeldLiability`; `ledgerRepository.balanceByLedgerAccountId` + `sumReceivablesForFinancialAccount`; `financialAccountRepository.searchForOverview`; services `searchAccounts`, `getFinancialAccountDetail`, `getBillingAccountDetail` (with pure `deriveOverdue`); shared components `AmountCell`, `PaymentStatusBadge`, `ContextStrip`; server-only Overview page (`app/(app)/accounts/overview/page.tsx`, `force-dynamic`, native GET form, no write affordance). Tests: 10 parse-context unit tests, 9 overdue-derivation unit tests, 6 route-level guardrail tests, V3 live-balance integration test. All 1661 unit tests green. TypeScript clean.
 
 - **ac04 — Customer Onboarding Wizard** (`context/accounting-management/specs/ac04-customer-onboarding-wizard.md`). Started and finished 2026-07-26. One atomic `db.transaction`: (1) `compareAndUpdateStatus → VALIDATED`, (2) FA insert (`billing.financial_account`), (3) BAN insert (`billing.billing_account`), (4) `pgledger_create_account` ×3 → `fa.{FIN}.unapplied_cash`, `fa.{FIN}.deposits`, `ban.{BAN}.receivables`, (5) three `ledger_binding` rows, (6) `ACCOUNTS_ONBOARDED` audit event. Dual-permission check (`accounts_transactions:EDIT` + `customers:EDIT`). Wizard dialog injected into `customer-role-form.tsx`'s VALIDATED-intercept path via deferred Promise. Returning-customer gate shows prior FAs for same org. `services/accounts/term-resolution.ts` (pure `resolveTerm`). New type registrations: `ACCOUNTS_ONBOARDED` audit event, `accounts_view`/`accounts_transactions`/`accounts_config` permission names + display labels. `EffectivePermissionMap` made intersection with optional accounts permissions; `meetsLevel` handles `undefined`. Tests: `tests/services/onboard-customer-accounts.service.test.ts` (16 unit tests — all green), `tests/accounts/v02-binding-integrity.integration.test.ts` (V2 invariant), `tests/accounts/v07-onboarding-atomicity.integration.test.ts` (V7 invariant). Full suite: 175/175 files, 1632/1632 tests green. `typecheck` clean.
 
 ## Next Up
 
-- ac05 — Accounts nav + Overview page (browses FA/BAN created by ac04, shows live balances from pgledger).
+- ac06 — (next unit per the build plan).
 
 ## Open Questions
 

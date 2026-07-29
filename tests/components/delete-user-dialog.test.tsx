@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -106,7 +106,9 @@ describe("DeleteUserDialog", () => {
 
     await waitFor(() => expect(confirm).toBeDisabled());
 
-    resolve({ ok: true });
+    await act(async () => {
+      resolve({ ok: true });
+    });
   });
 
   it("on success calls onOpenChange(false) and onSuccess", async () => {

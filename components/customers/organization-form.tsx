@@ -110,6 +110,7 @@ export function OrganizationForm({
   // rendering is exactly the "Cannot update a component while rendering a
   // different component" violation React warns about.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync reset; see comment above
     setCurrentLastModifiedDatetime(lastModifiedDatetime);
     setConflict(false);
     reset({

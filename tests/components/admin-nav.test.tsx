@@ -223,7 +223,7 @@ describe("AdminNav — Customer section, no permissionMap prop at all", () => {
 });
 
 describe("AdminNav — Customer section, collapsed", () => {
-  it("granted: shows Building2/UserCog items with plain-label titles, and 2 dividers for 3 sections", () => {
+  it("granted: shows Building2/UserCog items with plain-label titles, and 3 dividers for 4 sections", () => {
     const { container } = render(
       <AdminNav collapsed permissionMap={managerMap} />,
     );
@@ -234,7 +234,7 @@ describe("AdminNav — Customer section, collapsed", () => {
     expect(
       screen.getByRole("link", { name: "Manage Customer" }),
     ).toHaveAttribute("title", "Manage Customer");
-    expect(container.querySelectorAll("hr")).toHaveLength(2);
+    expect(container.querySelectorAll("hr")).toHaveLength(3);
   });
 
   it("not granted: locked item's collapsed title is still just the label", () => {

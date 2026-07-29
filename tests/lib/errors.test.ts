@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/logger", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { logger } from "@/lib/logger";
 import {
   AppError,
   conflict,
@@ -46,13 +51,18 @@ describe("toHttpResponse", () => {
     expect(body).toEqual({ error: { code, message: "safe message" } });
   });
 
-  it("coerces an unknown error to INTERNAL with a generic message", async () => {
-    const response = toHttpResponse(new Error("raw internal detail"));
+  it("coerces an unknown error to INTERNAL with a generic message and logs it", async () => {
+    const raw = new Error("raw internal detail");
+    const response = toHttpResponse(raw);
     expect(response.status).toBe(500);
     const body = (await response.json()) as {
       error: { code: string; message: string };
     };
     expect(body.error.code).toBe("INTERNAL");
     expect(body.error.message).not.toContain("raw internal detail");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Unhandled error coerced to INTERNAL",
+      { error: raw },
+    );
   });
 });

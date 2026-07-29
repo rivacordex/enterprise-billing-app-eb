@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -65,7 +65,6 @@ export function NewCustomerForm(): React.JSX.Element {
     handleSubmit,
     control,
     setError,
-    watch,
     formState: { errors },
   } = useForm<NewCustomerFormValues, unknown, NewCustomerFormOutput>({
     resolver: zodResolver(newCustomerFormSchema),
@@ -80,7 +79,7 @@ export function NewCustomerForm(): React.JSX.Element {
     },
   });
 
-  const nameValue = watch("name");
+  const nameValue = useWatch({ control, name: "name", defaultValue: "" });
 
   // Editing the name after a warning was shown invalidates the prior
   // similar-name check — resets `confirmed` so the next submit re-triggers

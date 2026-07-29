@@ -102,6 +102,21 @@
   --banner-warning-bg: var(--color-warning-50);
   --banner-warning-fg: var(--color-warning-700);
 
+  /* Accounting Management Module — Money & ledger surfaces (acctmgmt-ui-context.md §1). */
+  --acct-amount: var(--text-primary);
+  --acct-amount-negative: var(--color-danger-700);
+  --acct-balance-ok: var(--color-success-500);
+  --acct-balance-broken: var(--color-danger-500);
+  --acct-context-strip-bg: var(--surface-selected);
+  --acct-context-strip-border: var(--border-default);
+  /* Ledger account kind chips (acctmgmt-ui-context.md §1.2). */
+  --acct-chip-ban-bg: var(--color-primary-50);
+  --acct-chip-ban-fg: var(--color-primary-700);
+  --acct-chip-fa-bg: var(--color-cyan-50);
+  --acct-chip-fa-fg: var(--color-cyan-700);
+  --acct-chip-sys-bg: var(--color-neutral-100);
+  --acct-chip-sys-fg: var(--color-neutral-600);
+
   /* 4. RESERVED — AI/Iris + gradients (defined, NOT used in v1, UI-context §0/§4) */
   --ai-50: #f0edff;
   --ai-100: #dad2ff;
