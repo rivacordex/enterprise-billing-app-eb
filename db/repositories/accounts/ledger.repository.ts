@@ -120,15 +120,41 @@ export const ledgerRepository = {
     return row?.total ?? "0.00";
   },
 
-  async createTransfer(
-    _tx: Database,
-    _fromAccountId: string,
-    _toAccountId: string,
-    _amount: string,
-    _eventAt: Date,
-    _metadata: Record<string, unknown>,
-  ): Promise<{ id: string }> {
-    throw new Error("not implemented (ac07)");
+  // The sole caller-facing entry point onto `pgledger_create_transfers`
+  // (ac07-spec §3.9, code-standards §1.1/§6.3) — `post-document.ts` is the
+  // only service that calls this. One call posts every leg of a document
+  // atomically: all involved accounts are locked in a stable order inside
+  // the function itself (deadlock-safe), and the whole batch commits or
+  // rolls back together. `metadata` is shared across every leg in the batch
+  // (the function has no per-leg metadata parameter) — every call site
+  // passes `{ doc: documentId }` (Module Inv. #3's both-way trace).
+  //
+  // Row order: the upstream function's final `SELECT ... ORDER BY id` sorts
+  // by the ULID primary key, which pgledger generates time-ordered — since
+  // every leg in one call is inserted in a single sequential loop, this
+  // reliably reproduces the input array's order. Callers zip the returned
+  // rows back onto their input legs by index on that basis.
+  async pgledgerCreateTransfers(
+    tx: Database,
+    legs: { fromAccountId: string; toAccountId: string; amount: string }[],
+    eventAt: Date,
+    metadata: Record<string, unknown>,
+  ): Promise<{ id: string }[]> {
+    if (legs.length === 0) {
+      throw new Error("pgledgerCreateTransfers requires at least one leg");
+    }
+    const legFragments = legs.map(
+      (leg) =>
+        sql`(${leg.fromAccountId}, ${leg.toAccountId}, ${leg.amount}::numeric)::billing.transfer_request`,
+    );
+    const rows = await tx.execute<{ id: string }>(sql`
+      SELECT id FROM billing.pgledger_create_transfers(
+        ARRAY[${sql.join(legFragments, sql`, `)}],
+        ${eventAt.toISOString()}::timestamptz,
+        ${JSON.stringify(metadata)}::jsonb
+      )
+    `);
+    return rows.map((r) => ({ id: r.id }));
   },
 
   // ac06-spec §2.1 — account picker: resolves any pgledger account by its

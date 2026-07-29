@@ -104,4 +104,50 @@ export async function seedAccountsPermissions(tx: Database): Promise<void> {
       });
     }
   }
+
+  const [accountsTransactionsPermission] = await tx
+    .select({ permissionId: permissions.permissionId })
+    .from(permissions)
+    .where(eq(permissions.permissionName, "accounts_transactions"))
+    .limit(1);
+
+  if (!accountsTransactionsPermission) {
+    throw new Error(
+      "accounts_transactions permission not found. Run db:migrate first.",
+    );
+  }
+
+  // accounts_transactions is EDIT for both MANAGER and USER (ac07-spec §2.6,
+  // code-standards §8) — MANAGER-vs-USER approval routing is a service-layer
+  // workflow rule (Q20: threshold + approver ≠ creator), not a permission
+  // level. ADMIN gets EDIT too, matching the accounts_view precedent above.
+  const transactionsGrants: { roleId: string; permissionType: "EDIT" }[] = [
+    { roleId: managerRole.roleId, permissionType: "EDIT" },
+    { roleId: userRole.roleId, permissionType: "EDIT" },
+    { roleId: adminRole.roleId, permissionType: "EDIT" },
+  ];
+
+  for (const grant of transactionsGrants) {
+    const [existing] = await tx
+      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
+      .from(rolePermissionAssign)
+      .where(
+        and(
+          eq(rolePermissionAssign.refRoleId, grant.roleId),
+          eq(
+            rolePermissionAssign.refPermissionId,
+            accountsTransactionsPermission.permissionId,
+          ),
+        ),
+      )
+      .limit(1);
+
+    if (!existing) {
+      await tx.insert(rolePermissionAssign).values({
+        refRoleId: grant.roleId,
+        refPermissionId: accountsTransactionsPermission.permissionId,
+        permissionType: grant.permissionType,
+      });
+    }
+  }
 }

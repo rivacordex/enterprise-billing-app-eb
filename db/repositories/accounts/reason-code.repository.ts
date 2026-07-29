@@ -1,14 +1,19 @@
+import { eq } from "drizzle-orm";
+
 import type { Database } from "@/db/client";
+import { reasonCode } from "@/db/schema/billing/catalogs";
 import type { ReasonCode } from "@/db/schema/billing/catalogs";
 
-// Skeleton (ac02-spec §2.6/§3.5). Reader/CRUD seam for the reason-code
-// catalog (natural PK) — filled by ac03 (seed) and the Accounts Settings
-// config unit.
 export const reasonCodeRepository = {
   async findByCode(
-    _db: Database,
-    _reasonCode: string,
+    db: Database,
+    reasonCodeValue: string,
   ): Promise<ReasonCode | null> {
-    throw new Error("not implemented (ac03)");
+    const [row] = await db
+      .select()
+      .from(reasonCode)
+      .where(eq(reasonCode.reasonCode, reasonCodeValue))
+      .limit(1);
+    return row ?? null;
   },
 };

@@ -4,6 +4,7 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  ArrowLeftRight,
   Building2,
   Compass,
   Landmark,
@@ -94,6 +95,12 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         href: "/accounts/ledger",
         icon: Compass,
         requiredPermission: { name: "accounts_view", level: "READ" },
+      },
+      {
+        label: "Transactions",
+        href: "/accounts/transactions",
+        icon: ArrowLeftRight,
+        requiredPermission: { name: "accounts_transactions", level: "READ" },
       },
     ],
   },

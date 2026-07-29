@@ -1,14 +1,25 @@
+import { and, eq } from "drizzle-orm";
+
 import type { Database } from "@/db/client";
+import { accountingPeriod } from "@/db/schema/billing/periods";
 import type { AccountingPeriod } from "@/db/schema/billing/periods";
 
-// Skeleton (ac02-spec §2.6/§3.5). Period-close seam (Q9/Q11) — filled by
-// ac14.
 export const accountingPeriodRepository = {
   async findByPeriodAndCurrency(
-    _db: Database,
-    _period: string,
-    _currency: string,
+    db: Database,
+    period: string,
+    currency: string,
   ): Promise<AccountingPeriod | null> {
-    throw new Error("not implemented (ac14)");
+    const [row] = await db
+      .select()
+      .from(accountingPeriod)
+      .where(
+        and(
+          eq(accountingPeriod.period, period),
+          eq(accountingPeriod.currency, currency),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
   },
 };
