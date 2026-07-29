@@ -1,6 +1,62 @@
 import { sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
+import type { LEDGER_TRANSFER_SORT_VALUES } from "@/validation/accounts/ledger-explorer-search-params.schema";
+
+export type LedgerTransferSort = (typeof LEDGER_TRANSFER_SORT_VALUES)[number];
+
+export type LedgerAccountRow = {
+  id: string;
+  name: string;
+  currency: string;
+  balance: string;
+};
+
+export type LedgerTransferFilters = {
+  eventFrom: Date | null;
+  eventTo: Date | null;
+  metadataQuery: string;
+  sort: LedgerTransferSort;
+  page: number;
+  pageSize: number;
+};
+
+export type LedgerTransferRow = {
+  id: string;
+  fromAccountId: string;
+  fromAccountName: string;
+  toAccountId: string;
+  toAccountName: string;
+  amount: string;
+  eventAt: Date;
+  createdAt: Date;
+  metadata: Record<string, unknown> | null;
+};
+
+export type LedgerEntryRow = {
+  id: string;
+  accountId: string;
+  accountName: string;
+  amount: string;
+  accountPreviousBalance: string;
+  accountCurrentBalance: string;
+};
+
+// Sort key → deterministic ORDER BY fragment (ac06-spec §2.2 — sort is a URL
+// param so a future export matches on-screen order). `t.id` tie-breaker
+// keeps pagination stable. Fully baked from the validated `sort` enum, never
+// from raw user input, so this is safe to splice into raw SQL.
+const TRANSFER_ORDER_CLAUSES: Record<
+  LedgerTransferSort,
+  ReturnType<typeof sql>
+> = {
+  event_at: sql`t.event_at ASC, t.id ASC`,
+  "-event_at": sql`t.event_at DESC, t.id DESC`,
+  created_at: sql`t.created_at ASC, t.id ASC`,
+  "-created_at": sql`t.created_at DESC, t.id DESC`,
+  amount: sql`t.amount ASC, t.id ASC`,
+  "-amount": sql`t.amount DESC, t.id DESC`,
+};
 
 // The **only** wrapper over `pgledger_create_account` /
 // `pgledger_create_transfer(s)` and the three pgledger views (Module Inv.
@@ -64,14 +120,236 @@ export const ledgerRepository = {
     return row?.total ?? "0.00";
   },
 
-  async createTransfer(
-    _tx: Database,
-    _fromAccountId: string,
-    _toAccountId: string,
-    _amount: string,
-    _eventAt: Date,
-    _metadata: Record<string, unknown>,
-  ): Promise<{ id: string }> {
-    throw new Error("not implemented (ac07)");
+  // The sole caller-facing entry point onto `pgledger_create_transfers`
+  // (ac07-spec §3.9, code-standards §1.1/§6.3) — `post-document.ts` is the
+  // only service that calls this. One call posts every leg of a document
+  // atomically: all involved accounts are locked in a stable order inside
+  // the function itself (deadlock-safe), and the whole batch commits or
+  // rolls back together. `metadata` is shared across every leg in the batch
+  // (the function has no per-leg metadata parameter) — every call site
+  // passes `{ doc: documentId }` (Module Inv. #3's both-way trace).
+  //
+  // Row order: the upstream function's final `SELECT ... ORDER BY id` sorts
+  // by the ULID primary key, which pgledger generates time-ordered — since
+  // every leg in one call is inserted in a single sequential loop, this
+  // reliably reproduces the input array's order. Callers zip the returned
+  // rows back onto their input legs by index on that basis.
+  async pgledgerCreateTransfers(
+    tx: Database,
+    legs: { fromAccountId: string; toAccountId: string; amount: string }[],
+    eventAt: Date,
+    metadata: Record<string, unknown>,
+  ): Promise<{ id: string }[]> {
+    if (legs.length === 0) {
+      throw new Error("pgledgerCreateTransfers requires at least one leg");
+    }
+    const legFragments = legs.map(
+      (leg) =>
+        sql`(${leg.fromAccountId}, ${leg.toAccountId}, ${leg.amount}::numeric)::billing.transfer_request`,
+    );
+    const rows = await tx.execute<{ id: string }>(sql`
+      SELECT id FROM billing.pgledger_create_transfers(
+        ARRAY[${sql.join(legFragments, sql`, `)}],
+        ${eventAt.toISOString()}::timestamptz,
+        ${JSON.stringify(metadata)}::jsonb
+      )
+    `);
+    return rows.map((r) => ({ id: r.id }));
+  },
+
+  // ac06-spec §2.1 — account picker: resolves any pgledger account by its
+  // `ban.*`/`fa.*`/`sys.*` name.
+  async searchAccountsByName(
+    db: Database,
+    query: string,
+    limit: number,
+  ): Promise<LedgerAccountRow[]> {
+    const pattern = `%${query.replace(/[%_\\]/g, "\\$&")}%`;
+    return db.execute<LedgerAccountRow>(sql`
+      SELECT id, name, currency, balance::text AS balance
+      FROM billing.pgledger_accounts_view
+      WHERE name ILIKE ${pattern}
+      ORDER BY name
+      LIMIT ${limit}
+    `);
+  },
+
+  async findAccountById(
+    db: Database,
+    id: string,
+  ): Promise<LedgerAccountRow | null> {
+    const [row] = await db.execute<LedgerAccountRow>(sql`
+      SELECT id, name, currency, balance::text AS balance
+      FROM billing.pgledger_accounts_view
+      WHERE id = ${id}
+      LIMIT 1
+    `);
+    return row ?? null;
+  },
+
+  // ac06-spec §2.2 — the transfers grid: `accountId` matches either leg
+  // (from OR to), filtered by `event_at` range + a single metadata search
+  // across `doc`/`ban`/`type`, server-paginated, URL-driven sort.
+  async listTransfersForAccount(
+    db: Database,
+    accountId: string,
+    filters: LedgerTransferFilters,
+  ): Promise<{ rows: LedgerTransferRow[]; total: number }> {
+    const metaPattern = filters.metadataQuery
+      ? `%${filters.metadataQuery.replace(/[%_\\]/g, "\\$&")}%`
+      : null;
+
+    const whereClause = sql`
+      (t.from_account_id = ${accountId} OR t.to_account_id = ${accountId})
+      ${filters.eventFrom ? sql`AND t.event_at >= ${filters.eventFrom.toISOString()}` : sql``}
+      ${filters.eventTo ? sql`AND t.event_at <= ${filters.eventTo.toISOString()}` : sql``}
+      ${
+        metaPattern
+          ? sql`AND (
+              t.metadata->>'doc' ILIKE ${metaPattern}
+              OR t.metadata->>'ban' ILIKE ${metaPattern}
+              OR t.metadata->>'type' ILIKE ${metaPattern}
+            )`
+          : sql``
+      }
+    `;
+
+    const [countRow] = await db.execute<{ total: string }>(sql`
+      SELECT COUNT(*)::text AS total
+      FROM billing.pgledger_transfers_view t
+      WHERE ${whereClause}
+    `);
+    const total = Number(countRow?.total ?? 0);
+
+    const offset = (filters.page - 1) * filters.pageSize;
+    const rows = await db.execute<{
+      id: string;
+      from_account_id: string;
+      from_account_name: string;
+      to_account_id: string;
+      to_account_name: string;
+      amount: string;
+      event_at: Date;
+      created_at: Date;
+      metadata: Record<string, unknown> | null;
+    }>(sql`
+      SELECT
+        t.id,
+        t.from_account_id, fa.name AS from_account_name,
+        t.to_account_id,   ta.name AS to_account_name,
+        t.amount::text AS amount,
+        t.event_at, t.created_at, t.metadata
+      FROM billing.pgledger_transfers_view t
+      JOIN billing.pgledger_accounts_view fa ON fa.id = t.from_account_id
+      JOIN billing.pgledger_accounts_view ta ON ta.id = t.to_account_id
+      WHERE ${whereClause}
+      ORDER BY ${TRANSFER_ORDER_CLAUSES[filters.sort]}
+      LIMIT ${filters.pageSize} OFFSET ${offset}
+    `);
+
+    return {
+      total,
+      rows: rows.map((r) => ({
+        id: r.id,
+        fromAccountId: r.from_account_id,
+        fromAccountName: r.from_account_name,
+        toAccountId: r.to_account_id,
+        toAccountName: r.to_account_name,
+        amount: r.amount,
+        eventAt: r.event_at,
+        createdAt: r.created_at,
+        metadata: r.metadata,
+      })),
+    };
+  },
+
+  // ac06-spec §2.3 — the transfer-detail drawer's header row.
+  async findTransferById(
+    db: Database,
+    transferId: string,
+  ): Promise<LedgerTransferRow | null> {
+    const [row] = await db.execute<{
+      id: string;
+      from_account_id: string;
+      from_account_name: string;
+      to_account_id: string;
+      to_account_name: string;
+      amount: string;
+      event_at: Date;
+      created_at: Date;
+      metadata: Record<string, unknown> | null;
+    }>(sql`
+      SELECT
+        t.id,
+        t.from_account_id, fa.name AS from_account_name,
+        t.to_account_id,   ta.name AS to_account_name,
+        t.amount::text AS amount,
+        t.event_at, t.created_at, t.metadata
+      FROM billing.pgledger_transfers_view t
+      JOIN billing.pgledger_accounts_view fa ON fa.id = t.from_account_id
+      JOIN billing.pgledger_accounts_view ta ON ta.id = t.to_account_id
+      WHERE t.id = ${transferId}
+      LIMIT 1
+    `);
+    if (!row) return null;
+    return {
+      id: row.id,
+      fromAccountId: row.from_account_id,
+      fromAccountName: row.from_account_name,
+      toAccountId: row.to_account_id,
+      toAccountName: row.to_account_name,
+      amount: row.amount,
+      eventAt: row.event_at,
+      createdAt: row.created_at,
+      metadata: row.metadata,
+    };
+  },
+
+  // ac06-spec §2.3 — the two `pgledger_entries_view` legs (debit + credit)
+  // for a transfer, with the running previous/current balance columns.
+  // Ordered by amount DESC so the debit (positive) leg renders first.
+  async findEntriesByTransferId(
+    db: Database,
+    transferId: string,
+  ): Promise<LedgerEntryRow[]> {
+    const rows = await db.execute<{
+      id: string;
+      account_id: string;
+      account_name: string;
+      amount: string;
+      account_previous_balance: string;
+      account_current_balance: string;
+    }>(sql`
+      SELECT
+        e.id, e.account_id, a.name AS account_name,
+        e.amount::text AS amount,
+        e.account_previous_balance::text AS account_previous_balance,
+        e.account_current_balance::text AS account_current_balance
+      FROM billing.pgledger_entries_view e
+      JOIN billing.pgledger_accounts_view a ON a.id = e.account_id
+      WHERE e.transfer_id = ${transferId}
+      ORDER BY e.amount DESC
+    `);
+    return rows.map((r) => ({
+      id: r.id,
+      accountId: r.account_id,
+      accountName: r.account_name,
+      amount: r.amount,
+      accountPreviousBalance: r.account_previous_balance,
+      accountCurrentBalance: r.account_current_balance,
+    }));
+  },
+
+  // ac06-spec §2.4 — V1 surfaced permanently in the UI: Σ balance per
+  // currency across every pgledger account.
+  async zeroSumByCurrency(
+    db: Database,
+  ): Promise<{ currency: string; total: string }[]> {
+    return db.execute<{ currency: string; total: string }>(sql`
+      SELECT currency, COALESCE(SUM(balance), 0)::text AS total
+      FROM billing.pgledger_accounts_view
+      GROUP BY currency
+      ORDER BY currency
+    `);
   },
 };

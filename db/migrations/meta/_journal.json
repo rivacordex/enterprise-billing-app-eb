@@ -120,6 +120,13 @@
       "when": 1785210000000,
       "tag": "0016_validate_billing_check_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785296616907,
+      "tag": "0017_accounts_transactions_permission",
+      "breakpoints": true
     }
   ]
 }

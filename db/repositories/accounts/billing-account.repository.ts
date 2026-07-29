@@ -28,4 +28,18 @@ export const billingAccountRepository = {
     if (!row) throw new Error("billing_account insert returned no row");
     return row;
   },
+
+  // The `payment_status` write path (ac07-spec §2.7, V8) — flips between
+  // `paid`/`due` on allocation posting. `overdue` is never written here; it
+  // stays a read-time derivation (Q8, ac05's badge).
+  async updatePaymentStatus(
+    tx: Database,
+    billingAccountId: string,
+    paymentStatus: "paid" | "due",
+  ): Promise<void> {
+    await tx
+      .update(billingAccount)
+      .set({ paymentStatus })
+      .where(eq(billingAccount.billingAccountId, billingAccountId));
+  },
 };

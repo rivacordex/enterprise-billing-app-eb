@@ -32,4 +32,19 @@ export const ledgerBindingRepository = {
     if (!row) throw new Error("ledger_binding insert returned no row");
     return row;
   },
+
+  // ac06-spec §2.5 — the reverse lookup `resolveLedgerAccountLabel` needs:
+  // a pgledger account id back to its TMF owner (ban.*/fa.* only; sys.*
+  // accounts have no binding row).
+  async findByPgledgerAccountId(
+    db: Database,
+    pgledgerAccountId: string,
+  ): Promise<LedgerBinding | null> {
+    const [row] = await db
+      .select()
+      .from(ledgerBinding)
+      .where(eq(ledgerBinding.pgledgerAccountId, pgledgerAccountId))
+      .limit(1);
+    return row ?? null;
+  },
 };
