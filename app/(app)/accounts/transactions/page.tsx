@@ -9,6 +9,8 @@ import { CapturePaymentPanel } from "@/components/accounts/capture-payment-panel
 import { ContextStrip } from "@/components/accounts/context-strip";
 import { PaymentRefundPanel } from "@/components/accounts/payment-refund-panel";
 import { PendingApprovalsList } from "@/components/accounts/pending-approvals-list";
+import { RaiseCreditNotePanel } from "@/components/accounts/raise-credit-note-panel";
+import { RaiseDebitNotePanel } from "@/components/accounts/raise-debit-note-panel";
 import { RefundDepositPanel } from "@/components/accounts/refund-deposit-panel";
 import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel";
 import { getBillingAccountDetail } from "@/services/accounts/get-billing-account-detail";
@@ -97,6 +99,17 @@ export default async function TransactionsPage({
             <CaptureDepositPanel financialAccountId={ctx.fa} />
             <ReverseDepositPanel financialAccountId={ctx.fa} />
             <RefundDepositPanel financialAccountId={ctx.fa} />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <RaiseDebitNotePanel
+              financialAccountId={ctx.fa}
+              billingAccountId={ctx.ban}
+            />
+            <RaiseCreditNotePanel
+              financialAccountId={ctx.fa}
+              billingAccountId={ctx.ban}
+            />
           </div>
 
           <section className="space-y-3">
