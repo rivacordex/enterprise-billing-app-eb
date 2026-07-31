@@ -16,8 +16,14 @@ export type LegTemplateContext = {
   // (post-document.ts §2.3 step 4) — null for line kinds that don't touch a
   // sys account.
   sysAccountId: string | null;
-  // ban.{BAN}.receivables — present only for an `allocation` line.
+  // ban.{BAN}.receivables — present only for an `allocation`/`charge` line.
   billingAccountReceivablesId: string | null;
+  // sys.tax_payable.{ccy} (ac09-spec §2.3) — resolved unconditionally by
+  // post-document.ts (like `financialAccountDepositsId`), null when no
+  // sys.tax_payable account exists for the document's currency. Fixed by
+  // design: a DBN's tax line always steers here regardless of the reason
+  // code's posting_nature (Module Inv. #8's one documented exception).
+  taxSysAccountId: string | null;
 };
 
 export type ResolvedLeg = { fromAccountId: string; toAccountId: string };
@@ -116,11 +122,76 @@ const DEP_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
   refund: PAY_LEG_TEMPLATES.refund!,
 };
 
+// DBN/CRN leg templates (ac09-spec §2.2 — nature steering, V12). Both use
+// the `charge` line_kind (direction comes from `doc_type`, disambiguated by
+// this map's top-level key, same as every other entry here).
+const DBN_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // principal (§2.2 table): sys.revenue.{ccy} → ban.{BAN}.receivables.
+  // A/R → +A (customer owes more); revenue → −A (credit).
+  charge: (ctx) => {
+    if (!ctx.sysAccountId) {
+      throw new Error("DBN charge leg requires a resolved sys.revenue account");
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("DBN charge leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.sysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+  // fixed-tax second line (§2.3): sys.tax_payable.{ccy} → ban.{BAN}.receivables.
+  // The tax leg's counter-account is fixed regardless of the reason code's
+  // posting_nature, so it can't share the `charge` key's nature-resolved
+  // `sysAccountId` — it needs a distinct (doc_type, line_kind) map entry to
+  // reach `ctx.taxSysAccountId` instead. The DB's `document_line_line_kind_check`
+  // has no dedicated "tax" value and this unit makes no schema change (§2
+  // boundary), so this reuses the `release` line_kind purely as a
+  // disambiguating map key — the same reuse-with-a-different-meaning-per-
+  // doc_type precedent already established by `(DEP, release)` vs
+  // `(PAY, release)` above.
+  release: (ctx) => {
+    if (!ctx.taxSysAccountId) {
+      throw new Error(
+        "DBN tax leg requires a resolved sys.tax_payable account",
+      );
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("DBN tax leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.taxSysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+};
+
+const CRN_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // credit (§2.2 table): ban.{BAN}.receivables → sys.revenue_adj.{ccy}.
+  // A/R → −A (reduced); revenue_adj → +A.
+  charge: (ctx) => {
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("CRN charge leg requires a receivables account");
+    }
+    if (!ctx.sysAccountId) {
+      throw new Error(
+        "CRN charge leg requires a resolved sys.revenue_adj account",
+      );
+    }
+    return {
+      fromAccountId: ctx.billingAccountReceivablesId,
+      toAccountId: ctx.sysAccountId,
+    };
+  },
+};
+
 const LEG_TEMPLATES: Partial<
   Record<DocType, Partial<Record<LineKind, LegTemplate>>>
 > = {
   PAY: PAY_LEG_TEMPLATES,
   DEP: DEP_LEG_TEMPLATES,
+  DBN: DBN_LEG_TEMPLATES,
+  CRN: CRN_LEG_TEMPLATES,
 };
 
 export function resolveLegTemplate(
