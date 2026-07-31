@@ -9,18 +9,26 @@ import { db } from "@/db/client";
 import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
 import { raiseDebitNote } from "@/services/accounts/raise-debit-note";
 import { raiseCreditNote } from "@/services/accounts/raise-credit-note";
+import { writeOff } from "@/services/accounts/write-off";
+import { roundingAdjustment } from "@/services/accounts/rounding-adjustment";
 import { raiseDebitNoteSchema } from "@/validation/accounts/raise-debit-note.schema";
 import { raiseCreditNoteSchema } from "@/validation/accounts/raise-credit-note.schema";
+import { writeOffSchema } from "@/validation/accounts/write-off.schema";
+import { roundingAdjustmentSchema } from "@/validation/accounts/rounding-adjustment.schema";
 import { approveDocument } from "@/services/accounts/document-state-machine";
 
-// ac09-spec §3.6 v12-posting-nature-steering.integration.test.ts — V12: a
-// DBN `MANUAL_CHARGE` debits A/R and credits `sys.revenue` (GL 4000), its
-// optional tax line credits `sys.tax_payable` (GL 2200); a CRN
-// `GOODWILL_CREDIT` credits `sys.revenue_adj` (GL 4090). Both reuse the same
+// ac09-spec §3.6 / ac10-spec §3.6 v12-posting-nature-steering.integration.test.ts
+// — V12: a DBN `MANUAL_CHARGE` debits A/R and credits `sys.revenue` (GL
+// 4000), its optional tax line credits `sys.tax_payable` (GL 2200); a CRN
+// `GOODWILL_CREDIT` credits `sys.revenue_adj` (GL 4090); an ADJ
+// `BAD_DEBT_WRITEOFF` debits `sys.write_off` (GL 6100); an ADJ
+// `ROUNDING_ADJ` clears a small residue to `sys.rounding` (GL 6900, either
+// direction depending on the residue's sign). All four reuse the same
 // generic `post-document`/`leg-templates` machinery — the sys counter-
 // account comes purely from the reason code's `posting_nature` (Module Inv.
-// #8), never a per-page literal. Thresholds (DBN 10,000 / CRN 1,000) route
-// to approval and reject self-approval. V1 zero-sum after every step.
+// #8), never a per-page literal. Thresholds (DBN 10,000 / CRN 1,000 /
+// write-off 0 (always) / rounding 10) route to approval and reject
+// self-approval. V1 zero-sum after every step.
 const databaseUrl = process.env.DATABASE_URL;
 const EVENT_AT = new Date("2026-03-05T00:00:00.000Z");
 const PERIOD = "2026-03";
@@ -101,31 +109,40 @@ describe.skipIf(!databaseUrl)(
       managerId = manager!.id;
 
       // Minimal CoA + gl_mapping fixture (§3.6 — this is what V12 asserts
-      // against): 4000 (revenue), 4090 (revenue_adj), 2200 (tax_payable).
+      // against): 4000 (revenue), 4090 (revenue_adj), 2200 (tax_payable),
+      // 6100 (write-off, ac10-spec §1), 6900 (rounding, ac10-spec §1).
       await sql`
         INSERT INTO billing.gl_account (gl_code, name, account_class, normal_balance, is_postable)
         VALUES
           ('4000', 'Service Revenue', 'revenue', 'credit', true),
           ('4090', 'Revenue Adjustments', 'revenue', 'credit', true),
-          ('2200', 'SST Payable', 'liability', 'credit', true)
+          ('2200', 'SST Payable', 'liability', 'credit', true),
+          ('6100', 'Bad Debt Expense', 'expense', 'debit', true),
+          ('6900', 'Rounding Differences', 'expense', 'debit', true)
       `;
       await sql`
         INSERT INTO billing.gl_mapping (selector_type, selector, currency, ref_gl_code)
         VALUES
           ('system_account', 'sys.revenue.MYR', 'MYR', '4000'),
           ('system_account', 'sys.revenue_adj.MYR', 'MYR', '4090'),
-          ('system_account', 'sys.tax_payable.MYR', 'MYR', '2200')
+          ('system_account', 'sys.tax_payable.MYR', 'MYR', '2200'),
+          ('system_account', 'sys.write_off.MYR', 'MYR', '6100'),
+          ('system_account', 'sys.rounding.MYR', 'MYR', '6900')
       `;
 
       await sql`SELECT id FROM billing.pgledger_create_account('sys.revenue.MYR', 'MYR')`;
       await sql`SELECT id FROM billing.pgledger_create_account('sys.revenue_adj.MYR', 'MYR')`;
       await sql`SELECT id FROM billing.pgledger_create_account('sys.tax_payable.MYR', 'MYR')`;
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.write_off.MYR', 'MYR')`;
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.rounding.MYR', 'MYR')`;
 
       await sql`
         INSERT INTO billing.reason_code (reason_code, doc_type, posting_nature, auto_post_limit, state)
         VALUES
           ('MANUAL_CHARGE', 'DBN', 'revenue', 10000.00, 'active'),
-          ('GOODWILL_CREDIT', 'CRN', 'revenue_adj', 1000.00, 'active')
+          ('GOODWILL_CREDIT', 'CRN', 'revenue_adj', 1000.00, 'active'),
+          ('BAD_DEBT_WRITEOFF', 'ADJ', 'write_off', 0.00, 'active'),
+          ('ROUNDING_ADJ', 'ADJ', 'rounding', 10.00, 'active')
       `;
 
       const [cycle] = await sql<{ id: string }[]>`
@@ -176,7 +193,7 @@ describe.skipIf(!databaseUrl)(
       await sql.end();
     });
 
-    it("raise-debit-note / raise-credit-note both require a BAN (Q1) — rejected before any posting", () => {
+    it("raise-debit-note / raise-credit-note / write-off / rounding-adjustment all require a BAN (Q1) — rejected before any posting", () => {
       const dbnWithoutBan = raiseDebitNoteSchema.safeParse({
         financialAccountId,
         netAmount: "100.00",
@@ -195,6 +212,24 @@ describe.skipIf(!databaseUrl)(
         referenceInfo: "no BAN",
       });
       expect(crnWithoutBan.success).toBe(false);
+
+      const writeOffWithoutBan = writeOffSchema.safeParse({
+        financialAccountId,
+        amount: "100.00",
+        eventAt: EVENT_AT,
+        referenceDate: EVENT_AT,
+        referenceInfo: "no BAN",
+      });
+      expect(writeOffWithoutBan.success).toBe(false);
+
+      const roundingWithoutBan = roundingAdjustmentSchema.safeParse({
+        financialAccountId,
+        amount: "0.05",
+        eventAt: EVENT_AT,
+        referenceDate: EVENT_AT,
+        referenceInfo: "no BAN",
+      });
+      expect(roundingWithoutBan.success).toBe(false);
     });
 
     it("DBN MANUAL_CHARGE ≤ 10,000 posts directly — net 5,000 + tax 400 debits A/R 5,400, credits sys.revenue (GL 4000) 5,000 and sys.tax_payable (GL 2200) 400", async () => {
@@ -345,6 +380,141 @@ describe.skipIf(!databaseUrl)(
         ok: false,
         code: "BILLING_ACCOUNT_NOT_FOUND",
       });
+    });
+
+    it("write-off BAD_DEBT_WRITEOFF is always four-eyes (limit 0) — rejects self-approval, a non-creator MANAGER posts it, debits sys.write_off (GL 6100) and reduces A/R, leaving a small 0.05 residue", async () => {
+      // receivablesAccountId is at 14100.00 after the CRN tests above.
+      // Write off all but 5 sen, leaving a debit residue for the next test.
+      const raised = await writeOff(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "14099.95",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "V12 write-off",
+        },
+        creatorId,
+      );
+      expect(raised.ok).toBe(true);
+      if (!raised.ok) return;
+      expect(raised.value.state).toBe("pending_approval");
+
+      const selfApprove = await db.transaction((tx) =>
+        approveDocument(tx, raised.value.documentId, creatorId),
+      );
+      expect(selfApprove).toEqual({ ok: false, code: "SELF_APPROVAL" });
+
+      const approved = await db.transaction((tx) =>
+        approveDocument(tx, raised.value.documentId, managerId),
+      );
+      expect(approved.ok).toBe(true);
+      if (!approved.ok) return;
+      expect(approved.value.state).toBe("posted");
+
+      expect(await balanceOf(receivablesAccountId)).toBe(0.05);
+      expect(await glJournalRow("6100")).toEqual({
+        debit: 14099.95,
+        credit: 0,
+      });
+      expect(await zeroSum()).toBe(0);
+    });
+
+    it("a write-off amount exceeding the open A/R balance is rejected (AMOUNT_EXCEEDS_OPEN_RECEIVABLE)", async () => {
+      const result = await writeOff(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "1.00",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "exceeds open A/R",
+        },
+        creatorId,
+      );
+      expect(result).toEqual({
+        ok: false,
+        code: "AMOUNT_EXCEEDS_OPEN_RECEIVABLE",
+      });
+    });
+
+    it("rounding ROUNDING_ADJ ≤ 10 posts directly for a debit/positive residue — clears the 0.05 residue via ban.receivables → sys.rounding (GL 6900)", async () => {
+      const result = await roundingAdjustment(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "0.05",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "V12 rounding — debit residue",
+        },
+        creatorId,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.state).toBe("posted");
+
+      expect(await balanceOf(receivablesAccountId)).toBe(0);
+      expect(await glJournalRow("6900")).toEqual({ debit: 0.05, credit: 0 });
+      expect(await zeroSum()).toBe(0);
+    });
+
+    it("rounding-adjustment on a zero balance is rejected (NO_RESIDUE_TO_CLEAR)", async () => {
+      const result = await roundingAdjustment(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "0.01",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "no residue",
+        },
+        creatorId,
+      );
+      expect(result).toEqual({ ok: false, code: "NO_RESIDUE_TO_CLEAR" });
+    });
+
+    it("rounding direction reverses for a credit/negative residue — sys.rounding → ban.receivables (GL 6900) clears an overshoot from a small CRN", async () => {
+      // Push receivables to a small credit balance (-0.07) with a direct-post
+      // CRN, then confirm rounding clears it via the reversed leg.
+      const crn = await raiseCreditNote(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "0.07",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "V12 rounding setup — small overshoot",
+        },
+        creatorId,
+      );
+      expect(crn.ok).toBe(true);
+      if (!crn.ok) return;
+      expect(crn.value.state).toBe("posted");
+      expect(await balanceOf(receivablesAccountId)).toBe(-0.07);
+
+      const result = await roundingAdjustment(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "0.07",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "V12 rounding — credit residue",
+        },
+        creatorId,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.state).toBe("posted");
+
+      expect(await balanceOf(receivablesAccountId)).toBe(0);
+      // GL 6900 now carries both the earlier debit-residue clearing (0.05,
+      // the `charge` leg direction) and this credit-residue clearing (0.07,
+      // the reversed `release` leg direction) — confirming direction follows
+      // the live residue sign rather than a fixed shape (§2.2).
+      expect(await glJournalRow("6900")).toEqual({ debit: 0.05, credit: 0.07 });
+      expect(await zeroSum()).toBe(0);
     });
 
     it("V12 — end-state: V1 zero-sum holds", async () => {
