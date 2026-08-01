@@ -106,12 +106,6 @@ export async function reverseLine(
 
   const totalAmount = money.sum(...selectedLines.map((l) => l.amount));
 
-  // Load all lines to check full-reversal after this operation.
-  const allLines = await documentLineRepository.findByDocumentId(
-    db,
-    input.originalDocumentId,
-  );
-
   class _Failed extends Error {
     constructor(public result: ReverseLineResult) {
       super("failed");
@@ -130,6 +124,24 @@ export async function reverseLine(
       if (txDoc.lastModified.getTime() !== input.lastModified.getTime()) {
         throw new _Failed({ ok: false, code: "CONFLICT" });
       }
+
+      // Re-validate selected lines inside the transaction to close the TOCTOU
+      // window (lines were fetched before the transaction opened; a concurrent
+      // reversal could have stamped reversedByLineId between then and now).
+      for (const line of selectedLines) {
+        const txLine = await documentLineRepository.findById(
+          tx,
+          line.documentLineId,
+        );
+        if (!txLine || txLine.reversedByLineId !== null) {
+          throw new _Failed({ ok: false, code: "ALREADY_REVERSED" });
+        }
+      }
+      // Re-read all lines via tx handle for an accurate full-reversal check.
+      const txAllLines = await documentLineRepository.findByDocumentId(
+        tx,
+        input.originalDocumentId,
+      );
 
       const reversalDoc = await documentRepository.insert(
         tx,
@@ -187,7 +199,7 @@ export async function reverseLine(
       // Check if original doc is now fully reversed (all lines have
       // reversedByLineId — either from earlier reversals or this one).
       const selectedSet = new Set(input.selectedLineIds);
-      const allNowReversed = allLines.every(
+      const allNowReversed = txAllLines.every(
         (l) => l.reversedByLineId !== null || selectedSet.has(l.documentLineId),
       );
       if (allNowReversed) {

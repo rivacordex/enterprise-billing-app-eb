@@ -98,6 +98,21 @@ export async function reverseDocument(
         throw new _Failed({ ok: false, code: "CONFLICT" });
       }
 
+      // Re-validate lines inside the transaction to close the TOCTOU window
+      // (lines were fetched before the transaction opened; a concurrent
+      // reversal could have stamped reversedByLineId between then and now).
+      const txAllLines = await documentLineRepository.findByDocumentId(
+        tx,
+        input.originalDocumentId,
+      );
+      const txLineById = new Map(txAllLines.map((l) => [l.documentLineId, l]));
+      for (const line of unreversedLines) {
+        const txLine = txLineById.get(line.documentLineId);
+        if (!txLine || txLine.reversedByLineId !== null) {
+          throw new _Failed({ ok: false, code: "ALREADY_REVERSED" });
+        }
+      }
+
       const reversalDoc = await documentRepository.insert(
         tx,
         doc.docType as DocType,

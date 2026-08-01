@@ -28,11 +28,13 @@ const EVENT_AT = new Date("2026-05-01T00:00:00.000Z");
 
 /** Parses a decimal-string amount to integer cents for exact arithmetic. */
 function toCents(amount: string): bigint {
-  const [wholePart, fracPart = "00"] = amount.split(".");
-  return (
+  const negative = amount.startsWith("-");
+  const abs = negative ? amount.slice(1) : amount;
+  const [wholePart, fracPart = "00"] = abs.split(".");
+  const absCents =
     BigInt(wholePart ?? "0") * 100n +
-    BigInt(fracPart.padEnd(2, "0").slice(0, 2))
-  );
+    BigInt(fracPart.padEnd(2, "0").slice(0, 2));
+  return negative ? -absCents : absCents;
 }
 
 /** Converts integer cents to a decimal-string amount ("123" → "1.23"). */
