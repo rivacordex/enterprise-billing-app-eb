@@ -134,3 +134,79 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA "customer" TO app_migrate;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON TABLES TO app_migrate;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON SEQUENCES TO app_migrate;
+--> statement-breakpoint
+-- `billing` schema (ac01+): app_runtime gets DML only on the ten
+-- module-owned tables it writes directly (financial_account, billing_account,
+-- bill_cycle, reason_code, document, document_line, ledger_binding,
+-- gl_account, gl_mapping, accounting_period). The three raw pgledger_*
+-- tables (pgledger_accounts, pgledger_entries, pgledger_transfers) are
+-- deliberately excluded from this grant -- Module Inv. #3/#4 (code-standards
+-- §6.3) restricts all pgledger access to `ledger.repository.ts`, so
+-- app_runtime gets no table-level DML on the ledger internals at all, only
+-- SELECT on the pgledger/composition views and EXECUTE on the
+-- create-account/create-transfer(s) functions that repository wraps.
+GRANT USAGE ON SCHEMA "billing" TO app_runtime;
+--> statement-breakpoint
+-- financial_account, billing_account, accounting_period: full DML (state
+-- transitions, payment-status updates, period open/close). Module Inv. #3
+-- forbids DELETE in app code, but the DB grant is kept permissive here so
+-- migration/admin scripts can use the same role without a separate connection.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+  "billing"."financial_account",
+  "billing"."billing_account",
+  "billing"."accounting_period"
+TO app_runtime;
+--> statement-breakpoint
+-- Catalog tables (bill_cycle, reason_code, gl_account, gl_mapping): retire via
+-- UPDATE; never deleted (Module Inv. #3 / code-standards §1.3). No DELETE grant.
+GRANT SELECT, INSERT, UPDATE ON TABLE
+  "billing"."bill_cycle",
+  "billing"."reason_code",
+  "billing"."gl_account",
+  "billing"."gl_mapping"
+TO app_runtime;
+--> statement-breakpoint
+-- document / document_line: created and state-transitioned; transfer ID set
+-- after posting. Never deleted. No DELETE grant.
+GRANT SELECT, INSERT, UPDATE ON TABLE
+  "billing"."document",
+  "billing"."document_line"
+TO app_runtime;
+--> statement-breakpoint
+-- ledger_binding: written once on onboarding, never updated or deleted.
+-- SELECT + INSERT only.
+GRANT SELECT, INSERT ON TABLE
+  "billing"."ledger_binding"
+TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT ON TABLE
+  "billing"."pgledger_accounts_view",
+  "billing"."pgledger_transfers_view",
+  "billing"."pgledger_entries_view",
+  "billing"."account_view",
+  "billing"."gl_resolution_view",
+  "billing"."gl_journal_view"
+TO app_runtime;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION
+  billing.pgledger_create_account(text, text, boolean, boolean, jsonb),
+  billing.pgledger_create_transfer(text, text, numeric, timestamptz, jsonb),
+  billing.pgledger_create_transfers(billing.transfer_request[]),
+  billing.pgledger_create_transfers(billing.transfer_request[], timestamptz, jsonb)
+TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "billing" TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+--> statement-breakpoint
+GRANT ALL ON SCHEMA "billing" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL TABLES IN SCHEMA "billing" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL SEQUENCES IN SCHEMA "billing" TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON TABLES TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON SEQUENCES TO app_migrate;

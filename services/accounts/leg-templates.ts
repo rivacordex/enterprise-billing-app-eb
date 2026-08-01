@@ -16,8 +16,14 @@ export type LegTemplateContext = {
   // (post-document.ts §2.3 step 4) — null for line kinds that don't touch a
   // sys account.
   sysAccountId: string | null;
-  // ban.{BAN}.receivables — present only for an `allocation` line.
+  // ban.{BAN}.receivables — present only for an `allocation`/`charge` line.
   billingAccountReceivablesId: string | null;
+  // sys.tax_payable.{ccy} (ac09-spec §2.3) — resolved unconditionally by
+  // post-document.ts (like `financialAccountDepositsId`), null when no
+  // sys.tax_payable account exists for the document's currency. Fixed by
+  // design: a DBN's tax line always steers here regardless of the reason
+  // code's posting_nature (Module Inv. #8's one documented exception).
+  taxSysAccountId: string | null;
 };
 
 export type ResolvedLeg = { fromAccountId: string; toAccountId: string };
@@ -116,11 +122,128 @@ const DEP_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
   refund: PAY_LEG_TEMPLATES.refund!,
 };
 
+// DBN/CRN leg templates (ac09-spec §2.2 — nature steering, V12). Both use
+// the `charge` line_kind (direction comes from `doc_type`, disambiguated by
+// this map's top-level key, same as every other entry here).
+const DBN_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // principal (§2.2 table): sys.revenue.{ccy} → ban.{BAN}.receivables.
+  // A/R → +A (customer owes more); revenue → −A (credit).
+  charge: (ctx) => {
+    if (!ctx.sysAccountId) {
+      throw new Error("DBN charge leg requires a resolved sys.revenue account");
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("DBN charge leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.sysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+  // fixed-tax second line (§2.3): sys.tax_payable.{ccy} → ban.{BAN}.receivables.
+  // The tax leg's counter-account is fixed regardless of the reason code's
+  // posting_nature, so it can't share the `charge` key's nature-resolved
+  // `sysAccountId` — it needs a distinct (doc_type, line_kind) map entry to
+  // reach `ctx.taxSysAccountId` instead. The DB's `document_line_line_kind_check`
+  // has no dedicated "tax" value and this unit makes no schema change (§2
+  // boundary), so this reuses the `release` line_kind purely as a
+  // disambiguating map key — the same reuse-with-a-different-meaning-per-
+  // doc_type precedent already established by `(DEP, release)` vs
+  // `(PAY, release)` above.
+  release: (ctx) => {
+    if (!ctx.taxSysAccountId) {
+      throw new Error(
+        "DBN tax leg requires a resolved sys.tax_payable account",
+      );
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("DBN tax leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.taxSysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+};
+
+const CRN_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // credit (§2.2 table): ban.{BAN}.receivables → sys.revenue_adj.{ccy}.
+  // A/R → −A (reduced); revenue_adj → +A.
+  charge: (ctx) => {
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("CRN charge leg requires a receivables account");
+    }
+    if (!ctx.sysAccountId) {
+      throw new Error(
+        "CRN charge leg requires a resolved sys.revenue_adj account",
+      );
+    }
+    return {
+      fromAccountId: ctx.billingAccountReceivablesId,
+      toAccountId: ctx.sysAccountId,
+    };
+  },
+};
+
+// ADJ leg templates (ac10-spec §2.1/§2.2 — write-off + rounding, V12
+// completion). Both natures (`write_off`/`rounding`) already resolve
+// generically to `ctx.sysAccountId` via post-document.ts's
+// `NATURE_SYS_ACCOUNT_NAME` map (no post-document.ts change needed) — this
+// map only needs the leg *shapes*. Write-off is always the `charge`
+// direction. Rounding can be either direction depending on the live A/R
+// residue's sign (§2.2), decided by the calling service *before* the
+// document line is inserted (it picks `charge` for a debit/positive residue,
+// `release` for a credit/negative one) — so, same as `(DBN, release)`'s tax
+// leg, `release` is reused here purely as a disambiguating map key for the
+// reversed direction; `document_line_line_kind_check` has no dedicated value
+// for it and this unit makes no schema change (§2 boundary).
+const ADJ_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // write-off (§2.1 table row 1) + rounding clearing a debit/positive
+  // residue (§2.2 default direction): ban.{BAN}.receivables →
+  // sys.{write_off|rounding}.{ccy}. A/R → −A (removed/reduced); the sys
+  // account → +A.
+  charge: (ctx) => {
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("ADJ charge leg requires a receivables account");
+    }
+    if (!ctx.sysAccountId) {
+      throw new Error(
+        "ADJ charge leg requires a resolved sys.write_off/sys.rounding account",
+      );
+    }
+    return {
+      fromAccountId: ctx.billingAccountReceivablesId,
+      toAccountId: ctx.sysAccountId,
+    };
+  },
+  // rounding clearing a credit/negative residue (§2.2 reverse direction):
+  // sys.rounding.{ccy} → ban.{BAN}.receivables — the exact opposite of
+  // `charge`, above. Never used by write-off (always four-eyes, always the
+  // `charge` direction).
+  release: (ctx) => {
+    if (!ctx.sysAccountId) {
+      throw new Error(
+        "ADJ release leg requires a resolved sys.rounding account",
+      );
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("ADJ release leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.sysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+};
+
 const LEG_TEMPLATES: Partial<
   Record<DocType, Partial<Record<LineKind, LegTemplate>>>
 > = {
   PAY: PAY_LEG_TEMPLATES,
   DEP: DEP_LEG_TEMPLATES,
+  DBN: DBN_LEG_TEMPLATES,
+  CRN: CRN_LEG_TEMPLATES,
+  ADJ: ADJ_LEG_TEMPLATES,
 };
 
 export function resolveLegTemplate(
