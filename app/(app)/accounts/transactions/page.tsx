@@ -13,6 +13,7 @@ import { RaiseCreditNotePanel } from "@/components/accounts/raise-credit-note-pa
 import { RaiseDebitNotePanel } from "@/components/accounts/raise-debit-note-panel";
 import { RefundDepositPanel } from "@/components/accounts/refund-deposit-panel";
 import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel";
+import { ReversalsPanel } from "@/components/accounts/reversals-panel";
 import { RoundingAdjustmentPanel } from "@/components/accounts/rounding-adjustment-panel";
 import { WriteOffPanel } from "@/components/accounts/write-off-panel";
 import { getBillingAccountDetail } from "@/services/accounts/get-billing-account-detail";
@@ -124,6 +125,8 @@ export default async function TransactionsPage({
               billingAccountId={ctx.ban}
             />
           </div>
+
+          <ReversalsPanel financialAccountId={ctx.fa} />
 
           <section className="space-y-3">
             <h2 className="text-h3 font-semibold text-foreground">

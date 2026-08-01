@@ -57,6 +57,10 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).toContain("WriteOffPanel");
     expect(pageSource).toContain("RoundingAdjustmentPanel");
   });
+
+  it("imports the Reversals panel (ac11-spec §3.5)", () => {
+    expect(pageSource).toContain("ReversalsPanel");
+  });
 });
 
 describe("Transactions shared components exist", () => {
@@ -75,6 +79,7 @@ describe("Transactions shared components exist", () => {
     ["raise-credit-note-panel.tsx", "RaiseCreditNotePanel"],
     ["write-off-panel.tsx", "WriteOffPanel"],
     ["rounding-adjustment-panel.tsx", "RoundingAdjustmentPanel"],
+    ["reversals-panel.tsx", "ReversalsPanel"],
   ])("%s exists and exports %s", (filename, exportName) => {
     const src = readFileSync(resolve(componentRoot, filename), "utf-8");
     expect(src).toContain(`export function ${exportName}`);
@@ -96,6 +101,9 @@ describe("post-document.ts is the only pgledger_create_transfer(s) caller (code-
       "raise-credit-note.ts",
       "write-off.ts",
       "rounding-adjustment.ts",
+      "reverse-document.ts",
+      "reverse-line.ts",
+      "get-reversal-preview.ts",
     ];
     for (const filename of servicesToCheck) {
       const src = readFileSync(
@@ -122,6 +130,8 @@ describe("no parseFloat/Number() on an amount outside money.ts (code-standards �
       "raise-credit-note.ts",
       "write-off.ts",
       "rounding-adjustment.ts",
+      "reverse-document.ts",
+      "reverse-line.ts",
     ];
     for (const filename of filesToCheck) {
       const src = readFileSync(

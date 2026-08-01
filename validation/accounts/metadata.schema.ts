@@ -7,6 +7,11 @@ import { z } from "zod";
 // at ERP time, so it must be a string; every other key passes through
 // untyped. This schema never rejects an unknown key — it only constrains
 // the reserved ones when present.
+//
+// ac11 adds `reversalLegs` — an array of {fromAccountId, toAccountId, amount}
+// stored on reversal documents at creation time so that the generic approval
+// flow (approveDocument → postDocument) can post opposite legs without a
+// second transfer-lookup round-trip. Never present on non-reversal documents.
 export const documentMetadataSchema = z.record(z.string(), z.unknown()).refine(
   (value) =>
     Object.entries(value).every(([key, v]) => {
