@@ -31,7 +31,8 @@ export type RoundingAdjustmentResult =
   | SubmitDocumentResult
   | { ok: false; code: "FINANCIAL_ACCOUNT_NOT_FOUND" }
   | { ok: false; code: "BILLING_ACCOUNT_NOT_FOUND" }
-  | { ok: false; code: "NO_RESIDUE_TO_CLEAR" };
+  | { ok: false; code: "NO_RESIDUE_TO_CLEAR" }
+  | { ok: false; code: "AMOUNT_EXCEEDS_OPEN_RECEIVABLE" };
 
 export async function roundingAdjustment(
   input: RoundingAdjustmentInput,
@@ -77,6 +78,17 @@ export async function roundingAdjustment(
       const residueSign = money.compare(balance ?? "0.00", "0.00");
       if (residueSign === 0) {
         throw new _SubmitFailed({ ok: false, code: "NO_RESIDUE_TO_CLEAR" });
+      }
+      // Reject if input.amount exceeds the magnitude of the residue — mirrors
+      // the same guard in write-off.ts, but uses abs(balance) since the residue
+      // can be either sign (§2.2).
+      const balanceSen = money.stringToSen(balance ?? "0.00");
+      const absSen = balanceSen < 0n ? -balanceSen : balanceSen;
+      if (money.stringToSen(input.amount) > absSen) {
+        throw new _SubmitFailed({
+          ok: false,
+          code: "AMOUNT_EXCEEDS_OPEN_RECEIVABLE",
+        });
       }
       // Positive (debit) residue → clear via `charge`
       // (ban.receivables → sys.rounding). Negative (credit) residue →

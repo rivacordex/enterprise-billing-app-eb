@@ -147,17 +147,36 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "customer" GRANT ALL ON 
 -- create-account/create-transfer(s) functions that repository wraps.
 GRANT USAGE ON SCHEMA "billing" TO app_runtime;
 --> statement-breakpoint
+-- financial_account, billing_account, accounting_period: full DML (state
+-- transitions, payment-status updates, period open/close). Module Inv. #3
+-- forbids DELETE in app code, but the DB grant is kept permissive here so
+-- migration/admin scripts can use the same role without a separate connection.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   "billing"."financial_account",
   "billing"."billing_account",
+  "billing"."accounting_period"
+TO app_runtime;
+--> statement-breakpoint
+-- Catalog tables (bill_cycle, reason_code, gl_account, gl_mapping): retire via
+-- UPDATE; never deleted (Module Inv. #3 / code-standards §1.3). No DELETE grant.
+GRANT SELECT, INSERT, UPDATE ON TABLE
   "billing"."bill_cycle",
   "billing"."reason_code",
-  "billing"."document",
-  "billing"."document_line",
-  "billing"."ledger_binding",
   "billing"."gl_account",
-  "billing"."gl_mapping",
-  "billing"."accounting_period"
+  "billing"."gl_mapping"
+TO app_runtime;
+--> statement-breakpoint
+-- document / document_line: created and state-transitioned; transfer ID set
+-- after posting. Never deleted. No DELETE grant.
+GRANT SELECT, INSERT, UPDATE ON TABLE
+  "billing"."document",
+  "billing"."document_line"
+TO app_runtime;
+--> statement-breakpoint
+-- ledger_binding: written once on onboarding, never updated or deleted.
+-- SELECT + INSERT only.
+GRANT SELECT, INSERT ON TABLE
+  "billing"."ledger_binding"
 TO app_runtime;
 --> statement-breakpoint
 GRANT SELECT ON TABLE

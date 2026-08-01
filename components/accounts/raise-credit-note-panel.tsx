@@ -13,7 +13,10 @@ export interface RaiseCreditNotePanelProps {
   billingAccountId: string | undefined;
 }
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function RaiseCreditNotePanel({
   financialAccountId,
@@ -29,37 +32,49 @@ export function RaiseCreditNotePanel({
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<
+    string,
+    string[]
+  > | null>(null);
 
   async function handleSubmit(): Promise<void> {
     if (!financialAccountId || !billingAccountId) return;
     setSubmitting(true);
     setError(null);
     setMessage(null);
+    setFieldErrors(null);
 
-    const result = await raiseCreditNoteAction({
-      financialAccountId,
-      billingAccountId,
-      amount,
-      eventAt,
-      referenceDate,
-      referenceInfo,
-    });
+    try {
+      const result = await raiseCreditNoteAction({
+        financialAccountId,
+        billingAccountId,
+        amount,
+        eventAt,
+        referenceDate,
+        referenceInfo,
+      });
 
-    setSubmitting(false);
+      if (!result.ok) {
+        if (result.code === "VALIDATION_ERROR") {
+          setFieldErrors(result.fieldErrors);
+        }
+        setError(describeRaiseCreditNoteError(result.code));
+        return;
+      }
 
-    if (!result.ok) {
-      setError(describeRaiseCreditNoteError(result.code));
-      return;
+      setMessage(
+        result.value.state === "posted"
+          ? `Raised and posted ${result.value.documentId}.`
+          : `Credit note ${result.value.documentId} routed for approval.`,
+      );
+      setAmount("");
+      setReferenceInfo("");
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    setMessage(
-      result.value.state === "posted"
-        ? `Raised and posted ${result.value.documentId}.`
-        : `Credit note ${result.value.documentId} routed for approval.`,
-    );
-    setAmount("");
-    setReferenceInfo("");
-    router.refresh();
   }
 
   return (
@@ -83,6 +98,9 @@ export function RaiseCreditNotePanel({
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
+          {fieldErrors?.amount?.map((e, i) => (
+            <FieldError key={i}>{e}</FieldError>
+          ))}
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -93,6 +111,9 @@ export function RaiseCreditNotePanel({
               value={eventAt}
               onChange={(e) => setEventAt(e.target.value)}
             />
+            {fieldErrors?.eventAt?.map((e, i) => (
+              <FieldError key={i}>{e}</FieldError>
+            ))}
           </Field>
           <Field>
             <FieldLabel>Reference Date</FieldLabel>
@@ -101,6 +122,9 @@ export function RaiseCreditNotePanel({
               value={referenceDate}
               onChange={(e) => setReferenceDate(e.target.value)}
             />
+            {fieldErrors?.referenceDate?.map((e, i) => (
+              <FieldError key={i}>{e}</FieldError>
+            ))}
           </Field>
         </div>
 
@@ -110,11 +134,18 @@ export function RaiseCreditNotePanel({
             value={referenceInfo}
             onChange={(e) => setReferenceInfo(e.target.value)}
           />
+          {fieldErrors?.referenceInfo?.map((e, i) => (
+            <FieldError key={i}>{e}</FieldError>
+          ))}
         </Field>
 
-        {error && <FieldError>{error}</FieldError>}
+        {error && <FieldError role="alert">{error}</FieldError>}
         {message && (
-          <p className="text-body-sm text-[color:var(--color-success-700)]">
+          <p
+            role="status"
+            aria-live="polite"
+            className="text-body-sm text-[color:var(--color-success-700)]"
+          >
             {message}
           </p>
         )}
@@ -133,6 +164,10 @@ export function RaiseCreditNotePanel({
 
 function describeRaiseCreditNoteError(code: string): string {
   switch (code) {
+    case "VALIDATION_ERROR":
+      return "Some fields are invalid — see details below.";
+    case "FORBIDDEN":
+      return "You do not have permission to perform this action.";
     case "FINANCIAL_ACCOUNT_NOT_FOUND":
       return "Financial account not found.";
     case "BILLING_ACCOUNT_NOT_FOUND":

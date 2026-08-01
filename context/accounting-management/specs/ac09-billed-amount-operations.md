@@ -13,7 +13,7 @@ Add the two billed-amount operations to the Transactions page as CRN and DBN doc
 
 ## 2. Design
 
-Two per-operation actions + panels over ac07's `post-document`; the counter-account is chosen entirely by the reason code's `posting_nature` (Q19/Inv. #8) — never hard-coded per page. Boundary: **`services/accounts/{raise-debit-note,raise-credit-note}.ts`, `validation/accounts/{raise-debit-note,raise-credit-note}.schema.ts`, `actions/accounts/{raise-debit-note,raise-credit-note}.action.ts`, the CRN/DBN entries in `leg-templates.ts`, the CRN/DBN panels in Transactions**. No schema change, no new permission.
+Two per-operation actions + panels over ac07's `post-document`; the counter-account is chosen entirely by the reason code's `posting_nature` (Q19/Inv. #8) — never hard-coded per page. Boundary: **`services/accounts/{raise-debit-note,raise-credit-note}.ts`, `validation/accounts/{raise-debit-note,raise-credit-note}.schema.ts`, `actions/accounts/{raise-debit-note,raise-credit-note}.ts`, the CRN/DBN entries in `leg-templates.ts`, the CRN/DBN panels in Transactions**. No schema change, no new permission.
 
 ### 2.1 BAN-context requirement (Q1)
 
