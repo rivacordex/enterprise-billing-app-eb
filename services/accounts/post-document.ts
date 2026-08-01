@@ -234,6 +234,16 @@ export async function postDocument(
   }
   const deposits = ucBindings.find((b) => b.ledgerRole === "deposits");
 
+  // sys.tax_payable.{ccy} (ac09-spec §2.3) — resolved unconditionally,
+  // mirroring `deposits` above: not every document needs it (only a DBN's
+  // tax line does), and a miss here is not an error — the leg template that
+  // actually needs it throws if it's null.
+  const taxAccount = await ledgerRepository.findByName(
+    tx,
+    `sys.tax_payable.${doc.currency}`,
+  );
+  const taxSysAccountId = taxAccount?.id ?? null;
+
   let sysAccountId: string | null = null;
   const sysAccountName =
     NATURE_SYS_ACCOUNT_NAME[reason.postingNature as PostingNature];
@@ -277,6 +287,7 @@ export async function postDocument(
       financialAccountDepositsId: deposits?.pgledgerAccountId ?? null,
       sysAccountId,
       billingAccountReceivablesId: receivablesAccountId,
+      taxSysAccountId,
     });
     legs.push({ ...resolved, amount: line.amount });
   }
