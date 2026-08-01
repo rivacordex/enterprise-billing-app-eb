@@ -13,6 +13,8 @@ import { RaiseCreditNotePanel } from "@/components/accounts/raise-credit-note-pa
 import { RaiseDebitNotePanel } from "@/components/accounts/raise-debit-note-panel";
 import { RefundDepositPanel } from "@/components/accounts/refund-deposit-panel";
 import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel";
+import { RoundingAdjustmentPanel } from "@/components/accounts/rounding-adjustment-panel";
+import { WriteOffPanel } from "@/components/accounts/write-off-panel";
 import { getBillingAccountDetail } from "@/services/accounts/get-billing-account-detail";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
 import {
@@ -107,6 +109,17 @@ export default async function TransactionsPage({
               billingAccountId={ctx.ban}
             />
             <RaiseCreditNotePanel
+              financialAccountId={ctx.fa}
+              billingAccountId={ctx.ban}
+            />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <WriteOffPanel
+              financialAccountId={ctx.fa}
+              billingAccountId={ctx.ban}
+            />
+            <RoundingAdjustmentPanel
               financialAccountId={ctx.fa}
               billingAccountId={ctx.ban}
             />

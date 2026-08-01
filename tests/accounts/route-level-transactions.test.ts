@@ -52,6 +52,11 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).toContain("RaiseDebitNotePanel");
     expect(pageSource).toContain("RaiseCreditNotePanel");
   });
+
+  it("imports the ADJ write-off/rounding panels (ac10-spec §3.5)", () => {
+    expect(pageSource).toContain("WriteOffPanel");
+    expect(pageSource).toContain("RoundingAdjustmentPanel");
+  });
 });
 
 describe("Transactions shared components exist", () => {
@@ -68,6 +73,8 @@ describe("Transactions shared components exist", () => {
     ["refund-deposit-panel.tsx", "RefundDepositPanel"],
     ["raise-debit-note-panel.tsx", "RaiseDebitNotePanel"],
     ["raise-credit-note-panel.tsx", "RaiseCreditNotePanel"],
+    ["write-off-panel.tsx", "WriteOffPanel"],
+    ["rounding-adjustment-panel.tsx", "RoundingAdjustmentPanel"],
   ])("%s exists and exports %s", (filename, exportName) => {
     const src = readFileSync(resolve(componentRoot, filename), "utf-8");
     expect(src).toContain(`export function ${exportName}`);
@@ -87,6 +94,8 @@ describe("post-document.ts is the only pgledger_create_transfer(s) caller (code-
       "refund-deposit.ts",
       "raise-debit-note.ts",
       "raise-credit-note.ts",
+      "write-off.ts",
+      "rounding-adjustment.ts",
     ];
     for (const filename of servicesToCheck) {
       const src = readFileSync(
@@ -111,6 +120,8 @@ describe("no parseFloat/Number() on an amount outside money.ts (code-standards �
       "refund-deposit.ts",
       "raise-debit-note.ts",
       "raise-credit-note.ts",
+      "write-off.ts",
+      "rounding-adjustment.ts",
     ];
     for (const filename of filesToCheck) {
       const src = readFileSync(

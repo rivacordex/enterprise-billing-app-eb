@@ -185,6 +185,57 @@ const CRN_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
   },
 };
 
+// ADJ leg templates (ac10-spec §2.1/§2.2 — write-off + rounding, V12
+// completion). Both natures (`write_off`/`rounding`) already resolve
+// generically to `ctx.sysAccountId` via post-document.ts's
+// `NATURE_SYS_ACCOUNT_NAME` map (no post-document.ts change needed) — this
+// map only needs the leg *shapes*. Write-off is always the `charge`
+// direction. Rounding can be either direction depending on the live A/R
+// residue's sign (§2.2), decided by the calling service *before* the
+// document line is inserted (it picks `charge` for a debit/positive residue,
+// `release` for a credit/negative one) — so, same as `(DBN, release)`'s tax
+// leg, `release` is reused here purely as a disambiguating map key for the
+// reversed direction; `document_line_line_kind_check` has no dedicated value
+// for it and this unit makes no schema change (§2 boundary).
+const ADJ_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // write-off (§2.1 table row 1) + rounding clearing a debit/positive
+  // residue (§2.2 default direction): ban.{BAN}.receivables →
+  // sys.{write_off|rounding}.{ccy}. A/R → −A (removed/reduced); the sys
+  // account → +A.
+  charge: (ctx) => {
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("ADJ charge leg requires a receivables account");
+    }
+    if (!ctx.sysAccountId) {
+      throw new Error(
+        "ADJ charge leg requires a resolved sys.write_off/sys.rounding account",
+      );
+    }
+    return {
+      fromAccountId: ctx.billingAccountReceivablesId,
+      toAccountId: ctx.sysAccountId,
+    };
+  },
+  // rounding clearing a credit/negative residue (§2.2 reverse direction):
+  // sys.rounding.{ccy} → ban.{BAN}.receivables — the exact opposite of
+  // `charge`, above. Never used by write-off (always four-eyes, always the
+  // `charge` direction).
+  release: (ctx) => {
+    if (!ctx.sysAccountId) {
+      throw new Error(
+        "ADJ release leg requires a resolved sys.rounding account",
+      );
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("ADJ release leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.sysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+};
+
 const LEG_TEMPLATES: Partial<
   Record<DocType, Partial<Record<LineKind, LegTemplate>>>
 > = {
@@ -192,6 +243,7 @@ const LEG_TEMPLATES: Partial<
   DEP: DEP_LEG_TEMPLATES,
   DBN: DBN_LEG_TEMPLATES,
   CRN: CRN_LEG_TEMPLATES,
+  ADJ: ADJ_LEG_TEMPLATES,
 };
 
 export function resolveLegTemplate(
