@@ -127,6 +127,13 @@
       "when": 1785296616907,
       "tag": "0017_accounts_transactions_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785384000000,
+      "tag": "0018_gl_mapping_state",
+      "breakpoints": true
     }
   ]
 }

@@ -438,6 +438,27 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    it("rounding amount exceeding the debit/positive A/R residue is rejected (AMOUNT_EXCEEDS_OPEN_RECEIVABLE)", async () => {
+      // Balance is 0.05 at this point (from the write-off test above).
+      const result = await roundingAdjustment(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "0.10",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "oversized — exceeds 0.05 residue",
+        },
+        creatorId,
+      );
+      expect(result).toEqual({
+        ok: false,
+        code: "AMOUNT_EXCEEDS_OPEN_RECEIVABLE",
+      });
+      // Balance unchanged.
+      expect(await balanceOf(receivablesAccountId)).toBe(0.05);
+    });
+
     it("rounding ROUNDING_ADJ ≤ 10 posts directly for a debit/positive residue — clears the 0.05 residue via ban.receivables → sys.rounding (GL 6900)", async () => {
       const result = await roundingAdjustment(
         {
@@ -491,6 +512,24 @@ describe.skipIf(!databaseUrl)(
       expect(crn.ok).toBe(true);
       if (!crn.ok) return;
       expect(crn.value.state).toBe("posted");
+      expect(await balanceOf(receivablesAccountId)).toBe(-0.07);
+
+      // Oversized amount for a credit residue — 0.10 exceeds abs(-0.07).
+      const oversized = await roundingAdjustment(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "0.10",
+          eventAt: EVENT_AT,
+          referenceDate: EVENT_AT,
+          referenceInfo: "oversized — exceeds -0.07 credit residue",
+        },
+        creatorId,
+      );
+      expect(oversized).toEqual({
+        ok: false,
+        code: "AMOUNT_EXCEEDS_OPEN_RECEIVABLE",
+      });
       expect(await balanceOf(receivablesAccountId)).toBe(-0.07);
 
       const result = await roundingAdjustment(

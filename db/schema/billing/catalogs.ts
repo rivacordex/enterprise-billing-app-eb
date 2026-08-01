@@ -163,6 +163,7 @@ export const glMapping = billing.table(
     refGlCode: text("ref_gl_code")
       .notNull()
       .references(() => glAccount.glCode, { onDelete: "restrict" }),
+    state: text("state").notNull().default("active"),
     lastModified: timestamp("last_modified", {
       withTimezone: true,
       precision: 3,
@@ -187,6 +188,7 @@ export const glMapping = billing.table(
       "gl_mapping_selector_type_check",
       sql`selector_type IN ('ledger_role','system_account')`,
     ),
+    check("gl_mapping_state_check", sql`state IN ('active','retired')`),
   ],
 );
 

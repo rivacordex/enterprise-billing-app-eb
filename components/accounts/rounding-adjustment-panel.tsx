@@ -13,7 +13,10 @@ export interface RoundingAdjustmentPanelProps {
   billingAccountId: string | undefined;
 }
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function RoundingAdjustmentPanel({
   financialAccountId,
@@ -144,6 +147,8 @@ function describeRoundingAdjustmentError(code: string): string {
       return "Billing account not found, or does not belong to this Financial Account.";
     case "NO_RESIDUE_TO_CLEAR":
       return "This billing account has no open A/R residue to clear.";
+    case "AMOUNT_EXCEEDS_OPEN_RECEIVABLE":
+      return "The adjustment amount exceeds the absolute value of the open A/R residue.";
     case "PERIOD_CLOSED":
       return "The entry date falls in a closed accounting period. Choose a date in an open period.";
     case "UNBALANCED_DOC":

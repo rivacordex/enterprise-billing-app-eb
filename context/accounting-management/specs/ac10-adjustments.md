@@ -13,7 +13,7 @@ Add the two adjustment operations to the Transactions page as ADJ documents over
 
 ## 2. Design
 
-Two more per-operation actions over `post-document`; identical pattern to ac09, different natures/limits. Boundary: **`services/accounts/{write-off,rounding-adjustment}.ts`, `validation/accounts/{write-off,rounding-adjustment}.schema.ts`, `actions/accounts/{write-off,rounding-adjustment}.action.ts`, the ADJ entries in `leg-templates.ts`, the ADJ panel in Transactions**. No schema change, no new permission.
+Two more per-operation actions over `post-document`; identical pattern to ac09, different natures/limits. Boundary: **`services/accounts/{write-off,rounding-adjustment}.ts`, `validation/accounts/{write-off,rounding-adjustment}.schema.ts`, `actions/accounts/{write-off,rounding-adjustment}.ts`, the ADJ entries in `leg-templates.ts`, the ADJ panel in Transactions**. No schema change, no new permission.
 
 ### 2.1 Leg templates (nature-steered, Q19/Inv. #8)
 
