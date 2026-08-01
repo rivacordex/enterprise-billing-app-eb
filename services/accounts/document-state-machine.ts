@@ -5,7 +5,10 @@
 
 import { db } from "@/db/client";
 import type { Database } from "@/db/client";
+import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
+import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
+import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { reasonCodeRepository } from "@/db/repositories/accounts/reason-code.repository";
 import * as money from "@/services/accounts/money";
 import { postDocument } from "@/services/accounts/post-document";
@@ -93,7 +96,35 @@ export async function approveDocument(
   );
   if (!updated) return { ok: false, code: "CONFLICT" };
 
-  return postDocument(tx, documentId, actorId);
+  const posted = await postDocument(tx, documentId, actorId);
+  if (!posted.ok || posted.value.state !== "posted") return posted;
+
+  // Re-derive BAN payment_status after approval posts — same live-read pattern
+  // as allocate-payment.ts / raise-credit-note.ts / rounding-adjustment.ts.
+  // FA-only documents (DEP) have null refBillingAccountId and skip this step.
+  if (doc.refBillingAccountId) {
+    const banBindings = await ledgerBindingRepository.findByOwner(
+      tx,
+      "billing_account",
+      doc.refBillingAccountId,
+    );
+    const rec = banBindings.find((b) => b.ledgerRole === "receivables");
+    if (rec) {
+      const balance = await ledgerRepository.balanceByLedgerAccountId(
+        tx,
+        rec.pgledgerAccountId,
+      );
+      const newStatus =
+        money.openReceivable(balance ?? "0.00") > 0n ? "due" : "paid";
+      await billingAccountRepository.updatePaymentStatus(
+        tx,
+        doc.refBillingAccountId,
+        newStatus,
+      );
+    }
+  }
+
+  return posted;
 }
 
 // Standalone entry points for actions (which may not open their own

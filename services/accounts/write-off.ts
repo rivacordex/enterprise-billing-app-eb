@@ -7,11 +7,8 @@
 // `reverse-deposit.ts`/`refund-deposit.ts`). No `payment_status`
 // re-derivation here: `auto_post_limit = 0` means `submitDocument` always
 // routes this to `pending_approval`, never posting synchronously in this
-// service — same as `refund-payment.ts`/`reverse-deposit.ts` (both also
-// always-four-eyes), neither of which re-derives `payment_status` either.
-// Only the services that can post directly in the same call
-// (`allocate-payment.ts`, `raise-credit-note.ts`, `raise-debit-note.ts`, and
-// `rounding-adjustment.ts`) do that live-read-and-update.
+// service. Re-derivation happens in `approveDocument` (document-state-machine.ts)
+// at approval time for all document types with a BAN.
 
 import { db } from "@/db/client";
 import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";

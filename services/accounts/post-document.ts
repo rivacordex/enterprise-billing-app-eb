@@ -211,7 +211,11 @@ async function finalizePosting(
 
 // The one place every non-explicit-leg post resolves its legs from
 // `leg-templates.ts` (§2.3 step 4/5) — capture, allocation, and the simple
-// (unallocated-overpayment) refund case.
+// (unallocated-overpayment) refund case. Reversal documents (doc.reversalOf ≠
+// null) are handled via a special branch that reads pre-computed opposite legs
+// from `doc.metadata.reversalLegs` (stored at creation time by the reversal
+// services, ac11-spec §3.1-§3.2) — this allows the generic approval flow
+// (approveDocument → postDocument) to work unchanged for four-eyes reversals.
 export async function postDocument(
   tx: Database,
   documentId: string,
@@ -219,8 +223,35 @@ export async function postDocument(
 ): Promise<PostDocumentResult> {
   const guarded = await guardAndLoad(tx, documentId);
   if (!guarded.ok) return guarded.result;
-  const { doc, lines, reason } = guarded.value;
+  const { doc, lines } = guarded.value;
 
+  // Reversal documents store their pre-computed opposite legs in metadata
+  // (ac11-spec §3.1/§3.2) so the approval flow reaches here without a second
+  // transfer-lookup. Validate the stored leg count before posting.
+  if (doc.reversalOf) {
+    type StoredLeg = {
+      fromAccountId: string;
+      toAccountId: string;
+      amount: string;
+    };
+    const stored = (doc.metadata as { reversalLegs?: StoredLeg[] } | null)
+      ?.reversalLegs;
+    if (!stored || stored.length !== lines.length) {
+      throw new Error(
+        `Reversal document ${documentId} has invalid or missing reversalLegs in metadata`,
+      );
+    }
+    for (let i = 0; i < lines.length; i++) {
+      if (money.compare(stored[i]!.amount, lines[i]!.amount) !== 0) {
+        throw new Error(
+          `reversalLegs[${i}] amount does not match document line ${lines[i]!.documentLineId}`,
+        );
+      }
+    }
+    return finalizePosting(tx, doc, lines, stored, actorId);
+  }
+
+  const { reason } = guarded.value;
   const ucBindings = await ledgerBindingRepository.findByOwner(
     tx,
     "financial_account",

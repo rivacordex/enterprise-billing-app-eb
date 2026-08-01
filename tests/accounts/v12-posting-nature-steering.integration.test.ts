@@ -418,6 +418,14 @@ describe.skipIf(!databaseUrl)(
         credit: 0,
       });
       expect(await zeroSum()).toBe(0);
+
+      // approveDocument must re-derive payment_status after posting — 0.05
+      // A/R still outstanding so the BAN should be "due", not stale "paid".
+      const [banRow] = await sql<{ payment_status: string }[]>`
+        SELECT payment_status FROM billing.billing_account
+        WHERE billing_account_id = ${billingAccountId}
+      `;
+      expect(banRow!.payment_status).toBe("due");
     });
 
     it("a write-off amount exceeding the open A/R balance is rejected (AMOUNT_EXCEEDS_OPEN_RECEIVABLE)", async () => {
