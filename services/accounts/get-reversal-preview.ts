@@ -40,7 +40,8 @@ export type GetReversalPreviewResult =
   | { ok: true; value: ReversalPreview }
   | { ok: false; code: "DOCUMENT_NOT_FOUND" }
   | { ok: false; code: "WRONG_FINANCIAL_ACCOUNT" }
-  | { ok: false; code: "DOC_STATE_INVALID" };
+  | { ok: false; code: "DOC_STATE_INVALID" }
+  | { ok: false; code: "TRANSFER_NOT_FOUND" };
 
 export async function getReversalPreview(
   documentId: string,
@@ -69,19 +70,21 @@ export async function getReversalPreview(
     let reversalToAccountId = "";
     let reversalToAccountName = "";
 
-    if (line.pgledgerTransferId) {
-      const transfer = await ledgerRepository.findTransferById(
-        db,
-        line.pgledgerTransferId,
-      );
-      if (transfer) {
-        // Opposite leg: swap from ↔ to (ac11-spec §2.1).
-        reversalFromAccountId = transfer.toAccountId;
-        reversalFromAccountName = transfer.toAccountName;
-        reversalToAccountId = transfer.fromAccountId;
-        reversalToAccountName = transfer.fromAccountName;
-      }
+    if (!line.pgledgerTransferId) {
+      return { ok: false, code: "TRANSFER_NOT_FOUND" };
     }
+    const transfer = await ledgerRepository.findTransferById(
+      db,
+      line.pgledgerTransferId,
+    );
+    if (!transfer) {
+      return { ok: false, code: "TRANSFER_NOT_FOUND" };
+    }
+    // Opposite leg: swap from ↔ to (ac11-spec §2.1).
+    reversalFromAccountId = transfer.toAccountId;
+    reversalFromAccountName = transfer.toAccountName;
+    reversalToAccountId = transfer.fromAccountId;
+    reversalToAccountName = transfer.fromAccountName;
 
     previewLines.push({
       documentLineId: line.documentLineId,

@@ -22,6 +22,7 @@ export type ReverseDocumentActionResult =
   | ReverseDocumentResult
   | ReverseLineResult
   | { ok: false; code: "FORBIDDEN" }
+  | { ok: false; code: "INTERNAL_ERROR" }
   | {
       ok: false;
       code: "VALIDATION_ERROR";
@@ -61,9 +62,14 @@ export async function reverseDocumentAction(
   const isLineLevel =
     Array.isArray(selectedLineIds) && selectedLineIds.length > 0;
 
-  const result = isLineLevel
-    ? await reverseLine({ ...rest, selectedLineIds }, actorId)
-    : await reverseDocument(parsed.data, actorId);
+  let result: ReverseDocumentResult | ReverseLineResult;
+  try {
+    result = isLineLevel
+      ? await reverseLine({ ...rest, selectedLineIds }, actorId)
+      : await reverseDocument(parsed.data, actorId);
+  } catch {
+    return { ok: false, code: "INTERNAL_ERROR" };
+  }
 
   if (result.ok) {
     revalidatePath("/accounts/transactions");
