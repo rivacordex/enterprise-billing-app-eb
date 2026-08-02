@@ -24,7 +24,7 @@ const databaseUrl = process.env.DATABASE_URL;
 describe.skipIf(!databaseUrl)(
   "V9 — Bill-cycle catalog integrity (requires DATABASE_URL)",
   () => {
-    let sql: postgresjs.Sql;
+    let sql: postgresjs.Sql | undefined;
     let db: Database;
     let actorId: string;
     let cycleId: string;
@@ -64,7 +64,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     afterAll(async () => {
-      await sql.end();
+      await sql?.end();
     });
 
     it("newly inserted cycle appears in findAllActive", async () => {
@@ -177,7 +177,7 @@ describe("V9 — Bill-cycle service (structural)", () => {
     expect((mod as Record<string, unknown>).deleteBillCycle).toBeUndefined();
   });
 
-  it("bill-cycle.ts exports upsertBillCycle with a billCycleId on the ok result", async () => {
+  it("bill-cycle.ts exports upsertBillCycle", async () => {
     const mod = await import("@/services/accounts/bill-cycle");
     expect(typeof mod.upsertBillCycle).toBe("function");
   });

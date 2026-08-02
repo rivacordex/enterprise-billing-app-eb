@@ -30,6 +30,20 @@ const NATURE_LABELS: Record<string, string> = {
   deposit_movement: "deposit_movement — deposit",
 };
 
+function StateChip({ state }: { state: string }): React.JSX.Element {
+  const cls =
+    state === "active"
+      ? "bg-[color:var(--color-success-50)] text-[color:var(--color-success-700)]"
+      : "bg-[color:var(--color-neutral-100)] text-[color:var(--color-neutral-400)]";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase ${cls}`}
+    >
+      {state === "active" ? "Active" : "Retired"}
+    </span>
+  );
+}
+
 function describeUpsertError(result: UpsertReasonCodeActionResult): string {
   if (!result.ok) {
     if (result.code === "DUPLICATE_CODE")
@@ -37,6 +51,10 @@ function describeUpsertError(result: UpsertReasonCodeActionResult): string {
     if (result.code === "CONFLICT")
       return "Another user modified this record. Refresh and try again.";
     if (result.code === "NOT_FOUND") return "Reason code not found.";
+    if (result.code === "ALREADY_RETIRED")
+      return "This reason code is already retired.";
+    if (result.code === "IMMUTABLE_FIELD")
+      return "Doc type and posting nature cannot be changed after creation.";
     if (result.code === "LAST_MODIFIED_REQUIRED")
       return "Optimistic lock token missing. Refresh and try again.";
     if (result.code === "FORBIDDEN")
@@ -67,7 +85,9 @@ export function AddReasonCodeButton(): React.JSX.Element {
   const [result, setResult] = useState<UpsertReasonCodeActionResult | null>(
     null,
   );
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  const [fieldErrors, setFieldErrors] = useState<
+    Record<string, string[] | undefined>
+  >({});
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -204,7 +224,7 @@ export function AddReasonCodeButton(): React.JSX.Element {
   );
 }
 
-// ── Edit / Retire inline controls ─────────────────────────────────────────────
+// ── Edit / Retire inline controls — renders the complete <tr> ─────────────────
 
 interface ReasonCodeActionsProps {
   row: ReasonCode;
@@ -218,7 +238,9 @@ export function ReasonCodeActions({
   const [result, setResult] = useState<
     UpsertReasonCodeActionResult | RetireReasonCodeActionResult | null
   >(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  const [fieldErrors, setFieldErrors] = useState<
+    Record<string, string[] | undefined>
+  >({});
 
   async function handleEdit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -260,125 +282,154 @@ export function ReasonCodeActions({
       setResult({ ok: false, code: "FORBIDDEN" });
     } finally {
       setSubmitting(false);
-      setMode("idle");
     }
   }
 
   if (mode === "edit") {
     return (
-      <td colSpan={7} className="bg-[color:var(--surface-sunken)] px-4 py-3">
-        <form onSubmit={handleEdit} className="flex flex-wrap items-end gap-3">
-          <FieldWrapper label="Name" error={fieldErrors.name}>
-            <input
-              name="name"
-              defaultValue={row.name ?? ""}
-              className={INPUT_CLS}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Limit (MYR)" error={fieldErrors.autoPostLimit}>
-            <input
-              name="autoPostLimit"
-              defaultValue={row.autoPostLimit}
-              required
-              className={INPUT_CLS}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Description" error={fieldErrors.description}>
-            <input
-              name="description"
-              defaultValue={row.description ?? ""}
-              className={INPUT_CLS}
-            />
-          </FieldWrapper>
-          {result && !result.ok && result.code !== "VALIDATION_ERROR" && (
-            <p role="alert" className="w-full text-body-sm text-destructive">
-              {describeUpsertError(result as UpsertReasonCodeActionResult)}
+      <tr>
+        <td colSpan={7} className="bg-[color:var(--surface-sunken)] px-4 py-3">
+          <form
+            onSubmit={handleEdit}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <FieldWrapper label="Name" error={fieldErrors.name}>
+              <input
+                name="name"
+                defaultValue={row.name ?? ""}
+                className={INPUT_CLS}
+              />
+            </FieldWrapper>
+            <FieldWrapper label="Limit (MYR)" error={fieldErrors.autoPostLimit}>
+              <input
+                name="autoPostLimit"
+                defaultValue={row.autoPostLimit}
+                required
+                className={INPUT_CLS}
+              />
+            </FieldWrapper>
+            <FieldWrapper label="Description" error={fieldErrors.description}>
+              <input
+                name="description"
+                defaultValue={row.description ?? ""}
+                className={INPUT_CLS}
+              />
+            </FieldWrapper>
+            {result && !result.ok && result.code !== "VALIDATION_ERROR" && (
+              <p role="alert" className="w-full text-body-sm text-destructive">
+                {describeUpsertError(result as UpsertReasonCodeActionResult)}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="h-8 rounded-md bg-[color:var(--action-primary-bg)] px-3 text-body-sm font-medium text-white hover:bg-[color:var(--action-primary-bg-hover)] disabled:opacity-50"
+              >
+                {submitting ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("idle");
+                  setResult(null);
+                  setFieldErrors({});
+                }}
+                className="h-8 rounded-md border border-[color:var(--border-default)] px-3 text-body-sm text-foreground hover:bg-[color:var(--surface-sunken)]"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </td>
+      </tr>
+    );
+  }
+
+  if (mode === "retiring") {
+    return (
+      <tr>
+        <td colSpan={7} className="bg-[color:var(--surface-sunken)] px-4 py-3">
+          <div className="flex items-center gap-3">
+            <p className="text-body-sm text-foreground" role="alertdialog">
+              Retire{" "}
+              <span className="font-mono font-semibold">{row.reasonCode}</span>?
+              Existing documents are unaffected; the code will no longer appear
+              for new operations.
             </p>
-          )}
-          <div className="flex gap-2">
+            {result && !result.ok && (
+              <p role="alert" className="text-body-sm text-destructive">
+                {describeRetireError(result as RetireReasonCodeActionResult)}
+              </p>
+            )}
             <button
-              type="submit"
+              type="button"
+              onClick={handleRetire}
               disabled={submitting}
-              className="h-8 rounded-md bg-[color:var(--action-primary-bg)] px-3 text-body-sm font-medium text-white hover:bg-[color:var(--action-primary-bg-hover)] disabled:opacity-50"
+              className="h-8 rounded-md bg-destructive px-3 text-body-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
-              {submitting ? "Saving…" : "Save"}
+              {submitting ? "Retiring…" : "Confirm Retire"}
             </button>
             <button
               type="button"
               onClick={() => {
                 setMode("idle");
                 setResult(null);
-                setFieldErrors({});
               }}
               className="h-8 rounded-md border border-[color:var(--border-default)] px-3 text-body-sm text-foreground hover:bg-[color:var(--surface-sunken)]"
             >
               Cancel
             </button>
           </div>
-        </form>
-      </td>
+        </td>
+      </tr>
     );
   }
 
-  if (mode === "retiring") {
-    return (
-      <td colSpan={7} className="bg-[color:var(--surface-sunken)] px-4 py-3">
-        <div className="flex items-center gap-3">
-          <p className="text-body-sm text-foreground" role="alertdialog">
-            Retire{" "}
-            <span className="font-mono font-semibold">{row.reasonCode}</span>?
-            Existing documents are unaffected; the code will no longer appear
-            for new operations.
-          </p>
-          {result && !result.ok && (
-            <p role="alert" className="text-body-sm text-destructive">
-              {describeRetireError(result as RetireReasonCodeActionResult)}
-            </p>
+  // Idle mode — render the complete data row.
+  return (
+    <tr className="bg-[color:var(--surface-card)] hover:bg-[color:var(--surface-sunken)]">
+      <td className="px-4 py-2 font-mono font-medium text-foreground">
+        {row.reasonCode}
+      </td>
+      <td className="px-4 py-2 text-foreground">
+        {row.name ?? <span className="text-muted-foreground">—</span>}
+      </td>
+      <td className="px-4 py-2 font-mono text-muted-foreground">
+        {row.docType}
+      </td>
+      <td className="px-4 py-2 text-muted-foreground">{row.postingNature}</td>
+      <td className="px-4 py-2 text-foreground tabular-nums">
+        {parseFloat(row.autoPostLimit) === 0 ? (
+          <span className="text-muted-foreground">0 (always four-eyes)</span>
+        ) : (
+          row.autoPostLimit
+        )}
+      </td>
+      <td className="px-4 py-2">
+        <StateChip state={row.state} />
+      </td>
+      <td className="px-4 py-2">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("edit")}
+            className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline"
+          >
+            Edit
+          </button>
+          {row.state === "active" && (
+            <button
+              type="button"
+              onClick={() => setMode("retiring")}
+              className="text-body-sm text-destructive hover:underline"
+            >
+              Retire
+            </button>
           )}
-          <button
-            type="button"
-            onClick={handleRetire}
-            disabled={submitting}
-            className="h-8 rounded-md bg-destructive px-3 text-body-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-          >
-            {submitting ? "Retiring…" : "Confirm Retire"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("idle");
-              setResult(null);
-            }}
-            className="h-8 rounded-md border border-[color:var(--border-default)] px-3 text-body-sm text-foreground hover:bg-[color:var(--surface-sunken)]"
-          >
-            Cancel
-          </button>
         </div>
       </td>
-    );
-  }
-
-  return (
-    <td className="px-4 py-2">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => setMode("edit")}
-          className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline"
-        >
-          Edit
-        </button>
-        {row.state === "active" && (
-          <button
-            type="button"
-            onClick={() => setMode("retiring")}
-            className="text-body-sm text-destructive hover:underline"
-          >
-            Retire
-          </button>
-        )}
-      </div>
-    </td>
+    </tr>
   );
 }
 

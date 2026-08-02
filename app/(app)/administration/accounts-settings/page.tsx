@@ -20,20 +20,6 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Accounts Settings" };
 
-function StateChip({ state }: { state: string }): React.JSX.Element {
-  const cls =
-    state === "active"
-      ? "bg-[color:var(--color-success-50)] text-[color:var(--color-success-700)]"
-      : "bg-[color:var(--color-neutral-100)] text-[color:var(--color-neutral-400)]";
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase ${cls}`}
-    >
-      {state === "active" ? "Active" : "Retired"}
-    </span>
-  );
-}
-
 export default async function AccountsSettingsPage(): Promise<React.JSX.Element> {
   await requirePermission(PERMISSIONS.ACCOUNTS_CONFIG, LEVELS.EDIT);
 
@@ -110,39 +96,7 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
                 </tr>
               ) : (
                 reasonCodes.map((rc) => (
-                  <tr
-                    key={rc.reasonCode}
-                    className="bg-[color:var(--surface-card)] hover:bg-[color:var(--surface-sunken)]"
-                  >
-                    <td className="px-4 py-2 font-mono font-medium text-foreground">
-                      {rc.reasonCode}
-                    </td>
-                    <td className="px-4 py-2 text-foreground">
-                      {rc.name ?? (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 font-mono text-muted-foreground">
-                      {rc.docType}
-                    </td>
-                    <td className="px-4 py-2 text-muted-foreground">
-                      {rc.postingNature}
-                    </td>
-                    <td className="px-4 py-2 text-foreground tabular-nums">
-                      {rc.autoPostLimit === "0" ||
-                      rc.autoPostLimit === "0.00" ? (
-                        <span className="text-muted-foreground">
-                          0 (always four-eyes)
-                        </span>
-                      ) : (
-                        rc.autoPostLimit
-                      )}
-                    </td>
-                    <td className="px-4 py-2">
-                      <StateChip state={rc.state} />
-                    </td>
-                    <ReasonCodeActions row={rc} />
-                  </tr>
+                  <ReasonCodeActions key={rc.reasonCode} row={rc} />
                 ))
               )}
             </tbody>
@@ -201,36 +155,12 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
                 </tr>
               ) : (
                 billCycles.map((bc) => (
-                  <tr
+                  <BillCycleActions
                     key={bc.billCycleId}
-                    className="bg-[color:var(--surface-card)] hover:bg-[color:var(--surface-sunken)]"
-                  >
-                    <td className="px-4 py-2 font-medium text-foreground">
-                      {bc.name}
-                      {bc.billCycleId === wizardDefaults.defaultBillCycleId && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-[color:var(--color-primary-50)] px-2 py-0.5 text-[10px] font-semibold tracking-wider text-[color:var(--color-primary-700)] uppercase">
-                          Default
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-muted-foreground capitalize">
-                      {bc.frequency}
-                    </td>
-                    <td className="px-4 py-2 text-foreground tabular-nums">
-                      Day {bc.cycleDay}
-                    </td>
-                    <td className="px-4 py-2 text-foreground tabular-nums">
-                      {bc.paymentDueDays} days
-                    </td>
-                    <td className="px-4 py-2">
-                      <StateChip state={bc.state} />
-                    </td>
-                    <BillCycleActions
-                      row={bc}
-                      defaultBillCycleId={wizardDefaults.defaultBillCycleId}
-                      currentCreditLimit={wizardDefaults.defaultCreditLimit}
-                    />
-                  </tr>
+                    row={bc}
+                    defaultBillCycleId={wizardDefaults.defaultBillCycleId}
+                    currentCreditLimit={wizardDefaults.defaultCreditLimit}
+                  />
                 ))
               )}
             </tbody>

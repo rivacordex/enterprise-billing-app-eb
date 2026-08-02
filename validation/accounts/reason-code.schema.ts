@@ -17,8 +17,10 @@ export const upsertReasonCodeSchema = z.object({
   postingNature: z.enum(POSTING_NATURES),
   autoPostLimit: z
     .string()
-    .regex(/^\d+(\.\d{1,2})?$/, "Must be a non-negative decimal (e.g. 1000.00)")
-    .refine((v) => parseFloat(v) >= 0, "Must be ≥ 0"),
+    .regex(
+      /^\d{1,16}(\.\d{1,2})?$/,
+      "Must be a non-negative decimal with at most 16 integer digits (e.g. 1000.00)",
+    ),
   // ISO string — present when editing an existing code (CAS lock); absent
   // for new codes. z.coerce.date() converts back in the service layer.
   lastModified: z.iso.datetime().optional(),

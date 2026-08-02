@@ -18,7 +18,7 @@ export type RetireBillCycleActionResult =
   | {
       ok: false;
       code: "VALIDATION_ERROR";
-      fieldErrors: Record<string, string[]>;
+      fieldErrors: Record<string, string[] | undefined>;
     };
 
 export async function retireBillCycleAction(

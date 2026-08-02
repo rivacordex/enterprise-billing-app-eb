@@ -12,6 +12,7 @@ export type UpsertBillCycleResult =
   | { ok: false; code: "DUPLICATE_NAME" }
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "CONFLICT" }
+  | { ok: false; code: "ALREADY_RETIRED" }
   | { ok: false; code: "LAST_MODIFIED_REQUIRED" };
 
 export type RetireBillCycleResult =
@@ -19,6 +20,14 @@ export type RetireBillCycleResult =
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "ALREADY_RETIRED" }
   | { ok: false; code: "CONFLICT" };
+
+function isUniqueViolation(e: unknown): boolean {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { code?: string }).code === "23505"
+  );
+}
 
 export async function listBillCycles(): Promise<BillCycle[]> {
   return billCycleRepository.findAll(db);
@@ -29,41 +38,39 @@ export async function upsertBillCycle(
   actorId: string,
 ): Promise<UpsertBillCycleResult> {
   if (!input.billCycleId) {
-    // New bill cycle.
-    let inserted: BillCycle;
+    // New bill cycle — insert + audit are atomic.
+    let billCycleId: string;
     try {
-      inserted = await billCycleRepository.insert(db, {
-        name: input.name,
-        description: input.description ?? null,
-        frequency: input.frequency,
-        cycleDay: input.cycleDay,
-        paymentDueDays: input.paymentDueDays,
-        lastEditedBy: actorId,
+      const inserted = await db.transaction(async (tx) => {
+        const row = await billCycleRepository.insert(tx, {
+          name: input.name,
+          description: input.description ?? null,
+          frequency: input.frequency,
+          cycleDay: input.cycleDay,
+          paymentDueDays: input.paymentDueDays,
+          lastEditedBy: actorId,
+        });
+        await insertAuditEvent(tx, {
+          eventType: "BILL_CYCLE_CHANGED",
+          actorUserId: actorId,
+          targetEntity: "bill_cycle",
+          targetId: row.billCycleId,
+          beforeData: null,
+          afterData: {
+            name: input.name,
+            frequency: input.frequency,
+            cycleDay: input.cycleDay,
+            paymentDueDays: input.paymentDueDays,
+          },
+        });
+        return row;
       });
+      billCycleId = inserted.billCycleId;
     } catch (e) {
-      if (
-        typeof e === "object" &&
-        e !== null &&
-        (e as { code?: string }).code === "23505"
-      ) {
-        return { ok: false, code: "DUPLICATE_NAME" };
-      }
+      if (isUniqueViolation(e)) return { ok: false, code: "DUPLICATE_NAME" };
       throw e;
     }
-    await insertAuditEvent(db, {
-      eventType: "BILL_CYCLE_CHANGED",
-      actorUserId: actorId,
-      targetEntity: "bill_cycle",
-      targetId: inserted.billCycleId,
-      beforeData: null,
-      afterData: {
-        name: input.name,
-        frequency: input.frequency,
-        cycleDay: input.cycleDay,
-        paymentDueDays: input.paymentDueDays,
-      },
-    });
-    return { ok: true, billCycleId: inserted.billCycleId };
+    return { ok: true, billCycleId };
   }
 
   // Edit existing.
@@ -74,42 +81,60 @@ export async function upsertBillCycle(
   const existing = await billCycleRepository.findById(db, input.billCycleId);
   if (!existing) return { ok: false, code: "NOT_FOUND" };
 
-  const result = await billCycleRepository.update(db, {
-    billCycleId: input.billCycleId,
-    name: input.name,
-    description: input.description ?? null,
-    frequency: input.frequency,
-    cycleDay: input.cycleDay,
-    paymentDueDays: input.paymentDueDays,
-    lastModified: new Date(input.lastModified),
-    lastEditedBy: actorId,
-  });
+  let updateOutcome: "updated" | "conflict" | "already_retired" | "not_found";
+  try {
+    updateOutcome = await db.transaction(async (tx) => {
+      const result = await billCycleRepository.update(tx, {
+        billCycleId: input.billCycleId!,
+        name: input.name,
+        description: input.description ?? null,
+        frequency: input.frequency,
+        cycleDay: input.cycleDay,
+        paymentDueDays: input.paymentDueDays,
+        lastModified: new Date(input.lastModified!),
+        lastEditedBy: actorId,
+      });
 
-  if (result !== "updated") {
-    return {
-      ok: false,
-      code: ({ not_found: "NOT_FOUND", conflict: "CONFLICT" } as const)[result],
-    };
+      if (result !== "updated") return result;
+
+      await insertAuditEvent(tx, {
+        eventType: "BILL_CYCLE_CHANGED",
+        actorUserId: actorId,
+        targetEntity: "bill_cycle",
+        targetId: input.billCycleId!,
+        beforeData: {
+          name: existing.name,
+          frequency: existing.frequency,
+          cycleDay: existing.cycleDay,
+          paymentDueDays: existing.paymentDueDays,
+        },
+        afterData: {
+          name: input.name,
+          frequency: input.frequency,
+          cycleDay: input.cycleDay,
+          paymentDueDays: input.paymentDueDays,
+        },
+      });
+
+      return "updated" as const;
+    });
+  } catch (e) {
+    if (isUniqueViolation(e)) return { ok: false, code: "DUPLICATE_NAME" };
+    throw e;
   }
 
-  await insertAuditEvent(db, {
-    eventType: "BILL_CYCLE_CHANGED",
-    actorUserId: actorId,
-    targetEntity: "bill_cycle",
-    targetId: input.billCycleId,
-    beforeData: {
-      name: existing.name,
-      frequency: existing.frequency,
-      cycleDay: existing.cycleDay,
-      paymentDueDays: existing.paymentDueDays,
-    },
-    afterData: {
-      name: input.name,
-      frequency: input.frequency,
-      cycleDay: input.cycleDay,
-      paymentDueDays: input.paymentDueDays,
-    },
-  });
+  if (updateOutcome !== "updated") {
+    return {
+      ok: false,
+      code: (
+        {
+          not_found: "NOT_FOUND",
+          conflict: "CONFLICT",
+          already_retired: "ALREADY_RETIRED",
+        } as const
+      )[updateOutcome],
+    };
+  }
 
   return { ok: true, billCycleId: input.billCycleId };
 }
@@ -119,14 +144,11 @@ export async function retireBillCycle(
   lastModified: Date,
   actorId: string,
 ): Promise<RetireBillCycleResult> {
-  const result = await billCycleRepository.retire(
-    db,
-    billCycleId,
-    lastModified,
-  );
+  const result = await db.transaction(async (tx) => {
+    const r = await billCycleRepository.retire(tx, billCycleId, lastModified);
+    if (r !== "updated") return r;
 
-  if (result === "updated") {
-    await insertAuditEvent(db, {
+    await insertAuditEvent(tx, {
       eventType: "BILL_CYCLE_CHANGED",
       actorUserId: actorId,
       targetEntity: "bill_cycle",
@@ -134,8 +156,11 @@ export async function retireBillCycle(
       beforeData: { state: "active" },
       afterData: { state: "retired" },
     });
-    return { ok: true };
-  }
+
+    return "updated" as const;
+  });
+
+  if (result === "updated") return { ok: true };
 
   return {
     ok: false,
@@ -156,10 +181,15 @@ export async function setDefaultBillCycle(
   billCycleId: string,
   actorId: string,
 ): Promise<
-  { ok: true } | { ok: false; code: "CYCLE_NOT_FOUND" | "CONFIG_NOT_FOUND" }
+  | { ok: true }
+  | {
+      ok: false;
+      code: "CYCLE_NOT_FOUND" | "CYCLE_RETIRED" | "CONFIG_NOT_FOUND";
+    }
 > {
   const cycle = await billCycleRepository.findById(db, billCycleId);
   if (!cycle) return { ok: false, code: "CYCLE_NOT_FOUND" };
+  if (cycle.state !== "active") return { ok: false, code: "CYCLE_RETIRED" };
 
   const allConfig = await systemConfigRepository.findAllNonSecret(db);
   const row = allConfig.find(
