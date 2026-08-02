@@ -60,6 +60,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   DOCUMENT_POSTED: "Additive",
   PERIOD_CLOSED: "Change",
   JOURNAL_EXPORTED: "Additive",
+  REASON_CODE_CHANGED: "Change",
+  BILL_CYCLE_CHANGED: "Change",
+  WIZARD_DEFAULTS_CHANGED: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the
