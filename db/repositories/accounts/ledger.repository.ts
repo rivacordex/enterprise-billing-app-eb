@@ -340,6 +340,33 @@ export const ledgerRepository = {
     }));
   },
 
+  // ac12-spec §2.4 — V5 health panel: count of pgledger accounts with no
+  // resolved GL code (gl_resolution_view WHERE gl_code IS NULL). Run inside
+  // a transaction after a provisional mapping/code change to implement the
+  // F5 orphan-block: if the count rises above 0, the caller rolls back.
+  async countUnmappedAccounts(db: Database): Promise<number> {
+    const [row] = await db.execute<{ cnt: string }>(sql`
+      SELECT COUNT(*)::text AS cnt
+      FROM billing.gl_resolution_view
+      WHERE gl_code IS NULL
+    `);
+    return Number(row?.cnt ?? 0);
+  },
+
+  // Companion to countUnmappedAccounts — returns the pgledger account names
+  // for the affected-account list shown in the ORPHAN_BLOCK response.
+  async findUnmappedAccountNames(db: Database): Promise<string[]> {
+    const rows = await db.execute<{ name: string }>(sql`
+      SELECT pav.name
+      FROM billing.gl_resolution_view grv
+      JOIN billing.pgledger_accounts_view pav
+        ON pav.id = grv.pgledger_account_id
+      WHERE grv.gl_code IS NULL
+      ORDER BY pav.name
+    `);
+    return rows.map((r) => r.name);
+  },
+
   // ac06-spec §2.4 — V1 surfaced permanently in the UI: Σ balance per
   // currency across every pgledger account.
   async zeroSumByCurrency(

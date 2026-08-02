@@ -84,19 +84,22 @@ export function ReversalsPanel({
   > | null>(null);
 
   async function handleLoadPreview(): Promise<void> {
-    if (!financialAccountId || !docId.trim()) return;
+    const requestDocId = docId.trim();
+    const requestFaId = financialAccountId;
+    if (!requestFaId || !requestDocId) return;
     setLoadingPreview(true);
     setPreviewError(null);
     setPreview(null);
     setSelectedLineIds(new Set());
     setError(null);
     setMessage(null);
+    setFieldErrors(null);
 
     try {
-      const result = await getReversalPreviewAction(
-        docId.trim(),
-        financialAccountId,
-      );
+      const result = await getReversalPreviewAction(requestDocId, requestFaId);
+      // Discard stale result if docId or FA changed while loading.
+      if (docId.trim() !== requestDocId || financialAccountId !== requestFaId)
+        return;
       if (!result.ok) {
         setPreviewError(describeReversalError(result.code));
       } else {
@@ -110,6 +113,8 @@ export function ReversalsPanel({
         setSelectedLineIds(auto);
       }
     } catch {
+      if (docId.trim() !== requestDocId || financialAccountId !== requestFaId)
+        return;
       setPreviewError("Could not load preview. Please try again.");
     } finally {
       setLoadingPreview(false);
@@ -133,9 +138,7 @@ export function ReversalsPanel({
     setFieldErrors(null);
 
     const ids = [...selectedLineIds];
-    const isLineLevel =
-      ids.length > 0 &&
-      ids.length < preview.lines.filter((l) => !l.alreadyReversed).length;
+    const isLineLevel = ids.length > 0;
 
     try {
       const result = await reverseDocumentAction({
@@ -205,6 +208,8 @@ export function ReversalsPanel({
                 setDocId(e.target.value);
                 setPreview(null);
                 setPreviewError(null);
+                setError(null);
+                setFieldErrors(null);
               }}
             />
           </Field>
@@ -222,6 +227,16 @@ export function ReversalsPanel({
 
         {previewError && <FieldError role="alert">{previewError}</FieldError>}
 
+        {message && (
+          <p
+            role="status"
+            aria-live="polite"
+            className="text-body-sm text-[color:var(--color-success-700)]"
+          >
+            {message}
+          </p>
+        )}
+
         {preview && (
           <div className="space-y-3 rounded-md border border-[color:var(--border-muted)] p-3">
             <p className="text-body-sm font-medium text-foreground">
@@ -236,8 +251,8 @@ export function ReversalsPanel({
             ) : (
               <div className="space-y-1">
                 <p className="text-body-sm text-muted-foreground">
-                  Opposite legs that will post (select allocation lines to
-                  reverse individually, or leave all selected for a full
+                  Opposite legs that will post (select specific allocation lines
+                  to reverse individually, or clear all selections for a full
                   document reversal):
                 </p>
                 {unreversedLines.map((line) => (
@@ -312,15 +327,6 @@ export function ReversalsPanel({
             </Field>
 
             {error && <FieldError role="alert">{error}</FieldError>}
-            {message && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="text-body-sm text-[color:var(--color-success-700)]"
-              >
-                {message}
-              </p>
-            )}
 
             <Button
               type="button"
