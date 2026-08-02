@@ -79,15 +79,24 @@ export const documentLineRepository = {
 
   // Marks an original line as settled by a reversal (the refund workbench's
   // allocation-reversal link, ac07-spec §2.4b) — guards against refunding
-  // the same allocation line twice.
+  // the same allocation line twice. Returns true if the stamp succeeded,
+  // false if another concurrent reversal already claimed the line (WHERE IS
+  // NULL is the atomic guard; callers must treat false as ALREADY_REVERSED).
   async setReversedByLineId(
     tx: Database,
     documentLineId: string,
     reversedByLineId: string,
-  ): Promise<void> {
-    await tx
+  ): Promise<boolean> {
+    const result = await tx
       .update(documentLine)
       .set({ reversedByLineId })
-      .where(eq(documentLine.documentLineId, documentLineId));
+      .where(
+        and(
+          eq(documentLine.documentLineId, documentLineId),
+          isNull(documentLine.reversedByLineId),
+        ),
+      )
+      .returning({ documentLineId: documentLine.documentLineId });
+    return result.length > 0;
   },
 };
