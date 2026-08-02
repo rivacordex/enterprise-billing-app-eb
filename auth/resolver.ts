@@ -1,6 +1,8 @@
 import { db } from "@/db/client";
+import { findUserById } from "@/db/repositories/appuser.repository";
 import { roleAssignRepository } from "@/db/repositories/role-assign.repository";
 import { rolePermissionAssignRepository } from "@/db/repositories/role-permission-assign.repository";
+import type { AppUser } from "@/db/schema/identity";
 import { PERMISSION_NAMES } from "@/types/rbac";
 import { LEVEL_RANK, type EffectivePermissionMap } from "@/types/permissions";
 
@@ -8,6 +10,18 @@ function emptyMap(): EffectivePermissionMap {
   return Object.fromEntries(
     PERMISSION_NAMES.map((name) => [name, null]),
   ) as EffectivePermissionMap;
+}
+
+// Fetches the appuser row and confirms it is ACTIVE and not time-locked. Used
+// by Route Handlers that cannot call requirePermission (which redirects).
+// Returns null for missing, inactive, suspended, or currently-locked users.
+export async function findActiveUserById(
+  userId: string,
+): Promise<AppUser | null> {
+  const user = await findUserById(db, userId);
+  if (!user || user.status !== "ACTIVE") return null;
+  if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+  return user;
 }
 
 // The single effective-permission resolver (Invariant #5). Pure query +

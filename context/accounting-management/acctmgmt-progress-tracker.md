@@ -4,15 +4,15 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Mid-build — 13 of 17 units delivered (ac01–ac13). ac14 next.
+- Mid-build — 14 of 17 units delivered (ac01–ac14). ac15 next.
 
 ## Current Goal
 
-- ac14 — Period Close + CSV Export — next.
+- ac15 — Accounts Settings.
 
 ## Status
 
-13 of 17 units implemented (ac01–ac13). Module is mid-build — data core, seeds, onboarding, read pages, the full document-posting core (PAY, DEP, CRN/DBN, ADJ), the reversal workbench, the Chart of Accounts admin page, and the GL Journal page are done. Remaining units (ac14–ac17): ac14 period close + CSV export, ac15 Accounts Settings, ac16 account closure gates, ac17 guardrail & authz sweep.
+14 of 17 units implemented (ac01–ac14). Module is mid-build — data core, seeds, onboarding, read pages, the full document-posting core (PAY, DEP, CRN/DBN, ADJ), the reversal workbench, the Chart of Accounts admin page, the GL Journal page, and period close + CSV export are done. Remaining units (ac15–ac17): ac15 Accounts Settings, ac16 account closure gates, ac17 guardrail & authz sweep.
 
 | Unit | Name                                                                                      | Status                          |
 | ---- | ----------------------------------------------------------------------------------------- | ------------------------------- |
@@ -29,6 +29,7 @@ Update this file after every meaningful implementation change.
 | ac11 | Reversal Workbench (doc-level + line-level reversal of any posted doc type)                | Delivered (+ review fixes)      |
 | ac12 | Chart of Accounts page (CoA tree, GL code CRUD, GL mapping CRUD, F5 orphan-block)         | Delivered                       |
 | ac13 | GL Journal page (period selector, movement/trial-balance toggle, drill-down, V6 balance)   | Delivered                       |
+| ac14 | Period Close + CSV Export (close action, PERIOD_CLOSED re-date UX, GL journal CSV export)  | Delivered                       |
 
 ## Completed
 
@@ -45,6 +46,12 @@ Update this file after every meaningful implementation change.
 - None.
 
 ## Completed (recent)
+
+- **ac14 — Period Close + CSV Export** (`context/accounting-management/specs/ac14-period-close-and-csv-export.md`). Started and finished 2026-08-02. Shipped: `types/audit.ts` extended with `"PERIOD_CLOSED"` and `"JOURNAL_EXPORTED"` audit event types; `db/repositories/accounts/accounting-period.repository.ts` extended with `close(tx, period, currency, actorId)` — idempotent (returns `"already_closed"` if row exists and is closed; UPDATE if open row exists; INSERT directly as closed if no row — spec §2.1 lazy-create); `db/repositories/accounts/document.repository.ts` extended with `updateEventAt(tx, documentId, expectedLastModified, newEventAt, actorId)` — CAS on `lastModified` + `state = 'draft'`, bumps `lastModified` beyond expected; `services/accounts/period-close.ts` (`closePeriod` in `db.transaction` + `getPeriodState` read-only helper); `services/accounts/journal-csv.ts` (`serializeJournalCsv` pure serializer — RFC 4180 CRLF, `csvEscape`, header `gl_code,gl_name,debit,credit`; `buildJournalCsv` — fetches movement rows, balanced guard via `stringToSen`, returns `UNBALANCED_JOURNAL` if Σdebit≠Σcredit); `services/accounts/document-state-machine.ts` extended with `redateAndResubmit` — `_FailResult` sentinel pattern, single transaction updates `event_at` then re-submits; `validation/accounts/close-period.schema.ts` + `validation/accounts/redate-and-post.schema.ts`; `actions/accounts/close-period.action.ts` (`accounts_config:EDIT`, revalidates `/accounts/gl-journal`); `actions/accounts/redate-and-post.action.ts` (`accounts_transactions:EDIT`, revalidates `/accounts/transactions`+`/accounts/overview`+`/accounts/ledger`); `app/api/accounts/gl-journal-export/route.ts` (POST, `accounts_config:EDIT` via `auth.api.getSession`+`findActiveUserById`+`resolveEffectivePermissions`+`meetsLevel` — no redirect, returns 401/403; Zod body validation; `buildJournalCsv`; `JOURNAL_EXPORTED` audit event; `text/csv; charset=utf-8` with `Content-Disposition: attachment`; 409 on UNBALANCED_JOURNAL); `components/accounts/close-period-button.tsx` (client, two-step: button→confirm panel, `role="alertdialog"`, success `role="status"`, `router.refresh()`); `components/accounts/journal-export-button.tsx` (client, POST via `fetch`, `URL.createObjectURL` → `<a download>` → cleanup, UNBALANCED_JOURNAL 409 / 403 / generic error paths); `app/(app)/accounts/gl-journal/page.tsx` extended — `requirePermission` result captured as `permissionMap`, `canEdit` derived from `accounts_config:EDIT`, `getPeriodState` fetched in `Promise.all` when `canEdit`, period-actions section between period selector and view toggle showing period state, `ClosePeriodButton` (only when open), `JournalExportButton`. Tests: `tests/accounts/route-level-gl-journal-ac14.test.ts` (structural guardrails — 30 assertions across 8 describe blocks covering all ac14 surfaces, no-reopen guard, single-route-handler assertion); `tests/accounts/v06b-period-close-export.integration.test.ts` (V6b — 11 tests: period state before close, `closePeriod` ok:true + state transition, idempotent ALREADY_CLOSED, `raiseDebitNote` PERIOD_CLOSED + draft committed, `redateAndResubmit` to August → posted, `buildJournalCsv` July balanced (5,000/5,000), CRLF endings, header row, `serializeJournalCsv` pure unit with CSV escaping, UNBALANCED_JOURNAL guard via unmapped-account transfer in September, August CSV balanced (3,000/3,000), V1 zero-sum throughout). No schema migration (spec §3.9).
+  - **Route Handler auth cannot use `requirePermission`**: `requirePermission` calls `redirect()` which throws a redirect error — not appropriate in a Route Handler (not a server action, no Response boundary to intercept). Used `auth.api.getSession` → `findActiveUserById` → `resolveEffectivePermissions` → `meetsLevel` directly, returning 401/403 `Response.json` objects instead.
+  - **`PERIOD_CLOSED` dual usage**: `PERIOD_CLOSED` exists both as an error code in `PostDocumentResult` (from `post-document.ts`) and as an audit event type in `AUDIT_EVENT_TYPES` (from `types/audit.ts`). These are distinct types (error code vs. audit event) and do not collide — the audit event was added as specified.
+  - **`raiseDebitNote` commits draft on PERIOD_CLOSED**: The entire `raiseDebitNote` flow runs in one `db.transaction`. If `submitDocument` returns `PERIOD_CLOSED` (a non-throwing return), the callback returns that result and Drizzle commits the transaction — document and lines are already inserted. The draft remains in the DB, discoverable by `referenceInfo` for the re-date flow. This is the same mechanism described for `capturePayment` in the context summary (sentinel pattern was not used by `raiseDebitNote`, matching the test approach).
+  - **`redateAndResubmit` sentinel pattern**: Uses `_FailResult extends Error` thrown inside the transaction + `.catch()` at the outer level to ensure Drizzle rolls back the transaction on any non-ok result from `updateEventAt` or `submitDocument` — prevents orphaned partial state.
 
 - **ac13 — GL Journal page** (`context/accounting-management/specs/ac13-gl-journal-page.md`). Started and finished 2026-08-02. Shipped: `db/repositories/accounts/gl-journal.repository.ts` (`glJournalRepository.listSummary` — movement/trial-balance modes over `gl_journal_view`; `glJournalRepository.listDrilldown` — source `pgledger_entries_view` legs joined via `gl_resolution_view` + `pgledger_transfers_view` for doc reference); `services/accounts/gl-journal.ts` (`getPeriodSummary` — totals via `money.ts` `sum()`/`stringToSen()`, balanced flag; `getCodeDrilldown`); `validation/accounts/gl-journal-search-params.schema.ts` (period/currency/view/sort/expand, all `.catch()` fallbacks, sort values inlined per boundary rules); `app/(app)/accounts/gl-journal/page.tsx` (`force-dynamic`, `accounts_config:READ`, period selector form, movement/trial-balance view toggle, sortable summary table with `SortHeader` Links, `<Fragment key>` drill-down expansion, `<tfoot>` total row — `role="alert"` + `--acct-balance-broken` bg when `!balanced`, `role="status"` when balanced); `components/admin-nav.tsx` extended with GL Journal entry (`FileText` icon, avoids the `ScrollText` glyph already used by Audit Log); `tests/app/route-manifest.test.ts` updated with `/accounts/gl-journal`; `tests/accounts/route-level-gl-journal.test.ts` (structural guardrails: force-dynamic, permission gate, no write affordance, no direct pgledger references, AmountCell/LedgerKindChip, balanced-flag total row, no Number() on amounts, service/repository structure); `tests/accounts/v06-journal-balance.integration.test.ts` (V6: onboard FA/BAN, raise + approve DBN MANUAL_CHARGE 16,000 net + 200 tax → `gl_journal_view` July totals 16,200/16,200 (V6a), per-GL-code reconcile to raw `pgledger_entries_view` sums (V6b), drill-down of GL 1200 lists 2 entries referencing the same DBN document (V6c), unmapped-account imbalance fixture flips balanced to false (V6d), trial-balance cumulative scope includes July in August query (V6e), V1 zero-sum throughout). `typecheck`/`lint`/`format:check` all clean; 22/22 structural tests pass.
   - **`Fragment` import (not `React.Fragment`):** `React.Fragment` in JSX is a value expression requiring an explicit `React` import. The project convention (see `admin-nav.tsx`) is `import { Fragment } from "react"`. Using `React.Fragment` caused TS2686 ("UMD global in a module file"); fixed by importing `Fragment` directly.
@@ -97,8 +104,7 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- ac14 — Period Close + CSV Export — `/accounts/gl-journal` extended: close-period action, posts-into-closed-period rejection, GL journal CSV download.
-- (Accounts Settings is ac15.)
+- ac15 — Accounts Settings.
 
 ## Open Questions
 

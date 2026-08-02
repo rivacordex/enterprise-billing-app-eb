@@ -10,13 +10,17 @@ import Link from "next/link";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { AmountCell } from "@/components/accounts/amount-cell";
+import { ClosePeriodButton } from "@/components/accounts/close-period-button";
+import { JournalExportButton } from "@/components/accounts/journal-export-button";
 import { LedgerKindChip } from "@/components/accounts/ledger-kind-chip";
 import { cn } from "@/lib/utils";
 import {
   getPeriodSummary,
   getCodeDrilldown,
 } from "@/services/accounts/gl-journal";
+import { getPeriodState } from "@/services/accounts/period-close";
 import type { LedgerAccountKind } from "@/types/accounts";
+import { meetsLevel } from "@/types/permissions";
 import { glJournalSearchParamsSchema } from "@/validation/accounts/gl-journal-search-params.schema";
 import type { GlJournalSort } from "@/services/accounts/gl-journal";
 
@@ -96,7 +100,14 @@ export default async function GlJournalPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<React.JSX.Element> {
-  await requirePermission(PERMISSIONS.ACCOUNTS_CONFIG, LEVELS.READ);
+  const { permissionMap } = await requirePermission(
+    PERMISSIONS.ACCOUNTS_CONFIG,
+    LEVELS.READ,
+  );
+  const canEdit = meetsLevel(
+    permissionMap[PERMISSIONS.ACCOUNTS_CONFIG],
+    LEVELS.EDIT,
+  );
 
   const rawParams = await searchParams;
   // Flatten string[] → string (take first value) before validating.
@@ -116,9 +127,12 @@ export default async function GlJournalPage({
     expand,
   };
 
-  const [summary, drilldown] = await Promise.all([
+  const [summary, drilldown, periodState] = await Promise.all([
     getPeriodSummary(period, view, sort),
     expand ? getCodeDrilldown(expand, period, view) : Promise.resolve(null),
+    canEdit
+      ? getPeriodState(period, DISPLAY_CURRENCY)
+      : Promise.resolve("open" as const),
   ]);
 
   const { rows, totals } = summary;
@@ -175,6 +189,24 @@ export default async function GlJournalPage({
           Apply
         </button>
       </form>
+
+      {/* ── Period actions: close + export (ac14, accounts_config:EDIT) ─────── */}
+      {canEdit && (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-body-sm text-muted-foreground">
+            {periodLabel}:{" "}
+            <strong>{periodState === "closed" ? "Closed" : "Open"}</strong>
+          </span>
+          {periodState === "open" && (
+            <ClosePeriodButton
+              period={period}
+              currency={DISPLAY_CURRENCY}
+              periodLabel={periodLabel}
+            />
+          )}
+          <JournalExportButton period={period} currency={DISPLAY_CURRENCY} />
+        </div>
+      )}
 
       {/* ── View toggle (P5.5) ─────────────────────────────────────────────── */}
       <div
