@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -62,6 +62,7 @@ export function ReversalsPanel({
 }: ReversalsPanelProps): React.JSX.Element {
   const router = useRouter();
   const disabled = !financialAccountId;
+  const requestIdRef = useRef(0);
 
   const [docId, setDocId] = useState("");
   const [preview, setPreview] = useState<ReversalPreview | null>(null);
@@ -83,20 +84,28 @@ export function ReversalsPanel({
     string[]
   > | null>(null);
 
+  // Cancel any in-flight preview load when financialAccountId changes.
+  useEffect(() => {
+    requestIdRef.current++;
+  }, [financialAccountId]);
+
   async function handleLoadPreview(): Promise<void> {
-    if (!financialAccountId || !docId.trim()) return;
+    const requestFaId = financialAccountId;
+    const requestDocId = docId.trim();
+    if (!requestFaId || !requestDocId) return;
+    // Monotonic token: each call gets a unique ID; stale responses are dropped.
+    const token = ++requestIdRef.current;
     setLoadingPreview(true);
     setPreviewError(null);
     setPreview(null);
     setSelectedLineIds(new Set());
     setError(null);
     setMessage(null);
+    setFieldErrors(null);
 
     try {
-      const result = await getReversalPreviewAction(
-        docId.trim(),
-        financialAccountId,
-      );
+      const result = await getReversalPreviewAction(requestDocId, requestFaId);
+      if (requestIdRef.current !== token) return;
       if (!result.ok) {
         setPreviewError(describeReversalError(result.code));
       } else {
@@ -110,6 +119,7 @@ export function ReversalsPanel({
         setSelectedLineIds(auto);
       }
     } catch {
+      if (requestIdRef.current !== token) return;
       setPreviewError("Could not load preview. Please try again.");
     } finally {
       setLoadingPreview(false);
@@ -133,9 +143,7 @@ export function ReversalsPanel({
     setFieldErrors(null);
 
     const ids = [...selectedLineIds];
-    const isLineLevel =
-      ids.length > 0 &&
-      ids.length < preview.lines.filter((l) => !l.alreadyReversed).length;
+    const isLineLevel = ids.length > 0;
 
     try {
       const result = await reverseDocumentAction({
@@ -205,6 +213,10 @@ export function ReversalsPanel({
                 setDocId(e.target.value);
                 setPreview(null);
                 setPreviewError(null);
+                setError(null);
+                setMessage(null);
+                setFieldErrors(null);
+                requestIdRef.current++;
               }}
             />
           </Field>
@@ -222,6 +234,16 @@ export function ReversalsPanel({
 
         {previewError && <FieldError role="alert">{previewError}</FieldError>}
 
+        {message && (
+          <p
+            role="status"
+            aria-live="polite"
+            className="text-body-sm text-[color:var(--color-success-700)]"
+          >
+            {message}
+          </p>
+        )}
+
         {preview && (
           <div className="space-y-3 rounded-md border border-[color:var(--border-muted)] p-3">
             <p className="text-body-sm font-medium text-foreground">
@@ -236,8 +258,8 @@ export function ReversalsPanel({
             ) : (
               <div className="space-y-1">
                 <p className="text-body-sm text-muted-foreground">
-                  Opposite legs that will post (select allocation lines to
-                  reverse individually, or leave all selected for a full
+                  Opposite legs that will post (select specific allocation lines
+                  to reverse individually, or clear all selections for a full
                   document reversal):
                 </p>
                 {unreversedLines.map((line) => (
@@ -312,15 +334,6 @@ export function ReversalsPanel({
             </Field>
 
             {error && <FieldError role="alert">{error}</FieldError>}
-            {message && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="text-body-sm text-[color:var(--color-success-700)]"
-              >
-                {message}
-              </p>
-            )}
 
             <Button
               type="button"

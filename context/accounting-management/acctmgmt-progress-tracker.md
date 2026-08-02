@@ -4,15 +4,15 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Mid-build — 11 of 17 units delivered (ac01–ac11). Next unit: ac12 (Chart of Accounts page) per `ac00-build-plan.md`.
+- Mid-build — 12 of 17 units delivered (ac01–ac12). Next unit: ac13 (GL Journal page) per `ac00-build-plan.md`.
 
 ## Current Goal
 
-- ac12 — Chart of Accounts page — next unit per the build plan.
+- ac13 — GL Journal page — next unit per the build plan.
 
 ## Status
 
-11 of 17 units implemented (ac01–ac11). Module is mid-build — data core, seeds, onboarding, read pages, the full document-posting core (PAY, DEP, CRN/DBN, ADJ), and the reversal workbench are done. Remaining units (ac12–ac17): ac12 Chart of Accounts page, ac13 GL Journal page, ac14 period close + CSV export, ac15 Accounts Settings, ac16 account closure gates, ac17 guardrail & authz sweep.
+12 of 17 units implemented (ac01–ac12). Module is mid-build — data core, seeds, onboarding, read pages, the full document-posting core (PAY, DEP, CRN/DBN, ADJ), the reversal workbench, and the Chart of Accounts admin page are done. Remaining units (ac13–ac17): ac13 GL Journal page, ac14 period close + CSV export, ac15 Accounts Settings, ac16 account closure gates, ac17 guardrail & authz sweep.
 
 | Unit | Name                                                                                      | Status                          |
 | ---- | ----------------------------------------------------------------------------------------- | ------------------------------- |
@@ -27,6 +27,7 @@ Update this file after every meaningful implementation change.
 | ac09 | Billed-Amount Operations — CRN/DBN (raise-debit-note, raise-credit-note)                  | Delivered                       |
 | ac10 | Adjustments — ADJ (write-off, rounding-adjustment)                                        | Delivered                       |
 | ac11 | Reversal Workbench (doc-level + line-level reversal of any posted doc type)                | Delivered (+ review fixes)      |
+| ac12 | Chart of Accounts page (CoA tree, GL code CRUD, GL mapping CRUD, F5 orphan-block)         | Delivered                       |
 
 ## Completed
 
@@ -43,6 +44,11 @@ Update this file after every meaningful implementation change.
 - None.
 
 ## Completed (recent)
+
+- **ac12 — Chart of Accounts page** (`context/accounting-management/specs/ac12-chart-of-accounts-page.md`). Started and finished 2026-08-02. Shipped: migration `db/migrations/0020_accounts_config_permission.sql` — inserts `accounts_config` permission row + `CREATE OR REPLACE VIEW billing.gl_resolution_view` adding `AND state = 'active'` to the LATERAL join (migration-0018 gap fix); `db/schema/billing/views.sql` updated to match; `db/seeds/accounts/seed-accounts-permissions.ts` updated with `accounts_config:EDIT` grants for MANAGER and ADMIN (USER intentionally excluded); `gl-account.repository.ts` replaced with `findAll`, `findByCode`, `insert`, `retire` (CAS returning `'updated'|'conflict'|'already_retired'|'not_found'`); `gl-mapping.repository.ts` replaced with `findAll`, `findById`, `findBySelector`, `findDuplicateSelector`, `insert`, `update`, `retire`; `ledger.repository.ts` extended with `countUnmappedAccounts` and `findUnmappedAccountNames`; validation schemas `gl-account.schema.ts` + `gl-mapping.schema.ts`; services `gl-health.ts` (`getGlHealth`), `gl-account.ts` (`getGlAccountTree`, `getGlAccount`, `getWhereUsed`, `createGlCode`, `retireGlCode` — with in-transaction orphan check), `gl-mapping.ts` (`listGlMappings`, `upsertGlMapping`, `retireGlMapping` — F5 orphan-block via `OrphanBlockError` + `db.transaction()`); server actions `create-gl-code.ts`, `retire-gl-code.ts`, `upsert-gl-mapping.ts`, `retire-gl-mapping.ts` (all `accounts_config:EDIT`); client components `gl-code-form.tsx`, `gl-mapping-form.tsx`, `retire-gl-buttons.tsx`; page `app/(app)/accounts/chart-of-accounts/page.tsx` (`force-dynamic`, `accounts_config:READ` gate, `canEdit` EDIT guard, CoA tree with depth-based padding via lookup table, GL code detail + where-used panel, GL mapping CRUD, V5 green/red health strip); `admin-nav.tsx` + `route-manifest.test.ts` updated; structural test `route-level-chart-of-accounts.test.ts` + integration test `v05-gl-health-crud.integration.test.ts` added; `billing-schema.test.ts` updated with `state` column for `gl_mapping`. `typecheck`/`lint`/`format:check` all clean, 1727 unit tests green.
+  - **gl_resolution_view state-filter gap (migration-0018 gap):** the view (created in 0012) did not filter `gl_mapping.state = 'active'` because the `state` column was added in migration 0018 without updating the view. Migration 0020 applies `CREATE OR REPLACE VIEW` adding `AND state = 'active'` to the LATERAL join so retired mappings are excluded from resolution.
+  - **F5 orphan-block design:** `upsertGlMapping` and `retireGlMapping` both wrap in `db.transaction()`, then call `countUnmappedAccounts` inside the same transaction after the mutation. If count > 0, `findUnmappedAccountNames` fetches the affected names, an `OrphanBlockError` is thrown (rolling back the transaction), and the service catches it to return `{ ok: false, code: 'ORPHAN_BLOCK', affectedAccounts }`. The check is prospective (post-mutation, pre-commit) to catch cascades the service layer cannot predict.
+  - **Depth-based tree indentation without inline styles:** replaced the banned `style={{ paddingLeft }}` with a pre-computed `DEPTH_PL` lookup object mapping depths 0–4 to Tailwind classes (`pl-3`, `pl-7`, `pl-11`, `pl-[60px]`, `pl-[76px]`). Tailwind cannot purge dynamically constructed class names, so the lookup is the correct approach.
 
 - **ac11 — Reversal Workbench** (`context/accounting-management/specs/ac11-reversal-workbench.md`). Started and finished 2026-08-01. Shipped: `validation/accounts/reverse-document.schema.ts` (shared input schema for both doc-level and line-level reversal, merging `documentBaseSchema` + `documentLockSchema` + `originalDocumentId`/`financialAccountId`/`selectedLineIds?`/`reversalComment`); `services/accounts/get-reversal-preview.ts` (read side — loads a posted doc, builds `ReversalPreviewLine[]` with opposite leg accounts from `ledgerRepository.findTransferById`, `lastModified` exposed as ISO string for server-action serialization safety); `services/accounts/reverse-document.ts` (document-level — reverses all unreversed lines, always flips original to `reversed`); `services/accounts/reverse-line.ts` (line-level — selected lines only, flips original to `reversed` only if ALL lines are now covered); `postDocument` extended with a reversal detection branch (`doc.reversalOf != null` → reads `metadata.reversalLegs` → calls `finalizePosting` directly, bypassing the template system — approval flow unchanged); `actions/accounts/reverse-document.ts` (`reverseDocumentAction` routes to `reverseLine`/`reverseDocument` based on `selectedLineIds`, `getReversalPreviewAction` read-only companion; types re-exported so `reversals-panel.tsx` imports from action layer, not service); `components/accounts/reversals-panel.tsx` (client component: doc-ID lookup → preview with per-line checkboxes for allocation lines → confirm/submit; disabled without FA context); `/accounts/transactions` page extended with `<ReversalsPanel>`; `tests/accounts/route-level-transactions.test.ts` extended with ac11 structural + grep-gate checks; `tests/accounts/v13-line-reversal-conservation.property.test.ts` (V13: capture+allocate PAY, reverse allocation line, assert A/R+unapplied restored, capture untouched, `reversedByLineId` set; repeat 3 cycles; doc-level reversal; double-reverse rejected; closed-period rejection; fast-check `fc.assert` 3-run property); `tests/accounts/v04-cash-conservation.property.test.ts` (V4: fast-check `fc.assert` 5-run property verifying `Σcaptured − Σnet_allocated = −unapplied_balance` after every individual capture/allocate/reverse step; deterministic full-cycle test; boundary test at unapplied=0); `fast-check` installed as dev dependency. `typecheck`/`lint`/`format:check` all clean.
   - **Design decision — `metadata.reversalLegs` stored at creation time, not re-derived at posting time:** the generic `approveDocument → postDocument` flow must be usable for four-eyes reversals (any doc with `auto_post_limit = 0`) without a second transfer-lookup round-trip inside the approval callback. Storing pre-computed opposite legs as `{fromAccountId, toAccountId, amount}[]` in `document.metadata.reversalLegs` at `reverseDocument`/`reverseLine` creation time lets `postDocument` detect `doc.reversalOf != null` and pass them straight to `finalizePosting` — the entire approval flow is unchanged. A sanity check (`stored.length === lines.length` + amount equality) guards against metadata corruption.
@@ -84,8 +90,8 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- ac12 — Chart of Accounts page — `/accounts/chart-of-accounts`: CoA tree over `gl_account`, GL-code detail + where-used, `gl_mapping` CRUD, unmapped-account health panel (V5), and the `accounts_config` permission migration (Q26). Depends on ac03, ac05.
-- (Period open/close + posts-into-closed-period rejection + operator UI is **ac14**, not ac12; GL Journal page is ac13.)
+- ac13 — GL Journal page — `/accounts/gl-journal`: reads `gl_journal_view`; requires a 0-unmapped CoA (ac12 precondition).
+- (Period open/close + posts-into-closed-period rejection + operator UI is **ac14**, not ac13; Accounts Settings is ac15.)
 
 ## Open Questions
 

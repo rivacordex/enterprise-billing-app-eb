@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeftRight,
+  BookOpen,
   Building2,
   Compass,
   Landmark,
@@ -101,6 +102,12 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         href: "/accounts/transactions",
         icon: ArrowLeftRight,
         requiredPermission: { name: "accounts_transactions", level: "READ" },
+      },
+      {
+        label: "Chart of Accounts",
+        href: "/accounts/chart-of-accounts",
+        icon: BookOpen,
+        requiredPermission: { name: "accounts_config", level: "READ" },
       },
     ],
   },
