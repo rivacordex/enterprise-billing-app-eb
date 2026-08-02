@@ -144,11 +144,7 @@ export async function approveDocumentStandalone(
   return db.transaction((tx) => approveDocument(tx, documentId, actorId));
 }
 
-export type RedateAndResubmitResult =
-  | SubmitDocumentResult
-  | { ok: false; code: "DOCUMENT_NOT_FOUND" }
-  | { ok: false; code: "DOC_STATE_INVALID" }
-  | { ok: false; code: "CONFLICT" };
+export type RedateAndResubmitResult = SubmitDocumentResult;
 
 // ac14-spec §3.4 / §2.2 — re-date UX: correct a draft document's event_at
 // (entry date) and re-submit it through the normal posting path. Called when

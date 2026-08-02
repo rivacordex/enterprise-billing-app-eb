@@ -59,7 +59,8 @@ export function JournalExportButton({
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Defer revocation so the browser can initiate the download first.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch {
       setError("Export failed. Please try again.");
     } finally {
