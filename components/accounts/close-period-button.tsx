@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { closePeriodAction } from "@/actions/accounts/close-period.action";
@@ -23,6 +23,11 @@ export function ClosePeriodButton({
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (confirming) confirmButtonRef.current?.focus();
+  }, [confirming]);
 
   async function handleClose(): Promise<void> {
     setSubmitting(true);
@@ -86,6 +91,7 @@ export function ClosePeriodButton({
         </p>
       )}
       <button
+        ref={confirmButtonRef}
         type="button"
         disabled={submitting}
         onClick={() => void handleClose()}

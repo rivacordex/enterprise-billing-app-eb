@@ -17,12 +17,13 @@ import {
   buildJournalCsv,
 } from "@/services/accounts/journal-csv";
 import { meetsLevel } from "@/types/permissions";
+import { currencyCodeSchema } from "@/validation/accounts/currency-code.schema";
 
 const exportBodySchema = z.object({
   period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, {
     message: "period must be YYYY-MM",
   }),
-  currency: z.string().length(3, { message: "currency must be 3 chars" }),
+  currency: currencyCodeSchema,
 });
 
 export async function POST(request: NextRequest): Promise<Response> {

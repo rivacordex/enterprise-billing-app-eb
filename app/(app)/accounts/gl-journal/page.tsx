@@ -130,7 +130,9 @@ export default async function GlJournalPage({
   const [summary, drilldown, periodState] = await Promise.all([
     getPeriodSummary(period, view, sort),
     expand ? getCodeDrilldown(expand, period, view) : Promise.resolve(null),
-    canEdit ? getPeriodState(period, "MYR") : Promise.resolve("open" as const),
+    canEdit
+      ? getPeriodState(period, DISPLAY_CURRENCY)
+      : Promise.resolve("open" as const),
   ]);
 
   const { rows, totals } = summary;
@@ -198,11 +200,11 @@ export default async function GlJournalPage({
           {periodState === "open" && (
             <ClosePeriodButton
               period={period}
-              currency="MYR"
+              currency={DISPLAY_CURRENCY}
               periodLabel={periodLabel}
             />
           )}
-          <JournalExportButton period={period} currency="MYR" />
+          <JournalExportButton period={period} currency={DISPLAY_CURRENCY} />
         </div>
       )}
 

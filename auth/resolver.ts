@@ -12,14 +12,15 @@ function emptyMap(): EffectivePermissionMap {
   ) as EffectivePermissionMap;
 }
 
-// Fetches the appuser row and confirms it is ACTIVE. Used by Route Handlers
-// that cannot call requirePermission (which redirects). Returns null for
-// missing, inactive, or suspended users.
+// Fetches the appuser row and confirms it is ACTIVE and not time-locked. Used
+// by Route Handlers that cannot call requirePermission (which redirects).
+// Returns null for missing, inactive, suspended, or currently-locked users.
 export async function findActiveUserById(
   userId: string,
 ): Promise<AppUser | null> {
   const user = await findUserById(db, userId);
   if (!user || user.status !== "ACTIVE") return null;
+  if (user.lockedUntil && user.lockedUntil > new Date()) return null;
   return user;
 }
 

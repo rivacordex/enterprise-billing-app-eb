@@ -34,8 +34,13 @@ export type BuildJournalCsvResult =
 const CRLF = "\r\n";
 const CSV_HEADER = "gl_code,gl_name,debit,credit";
 
-// Escapes a CSV field value if it contains commas, double-quotes, or newlines.
+// Escapes a CSV field value per RFC 4180. Prefixes formula-trigger characters
+// (=, +, -, @, TAB, CR) with a single quote to mitigate CSV injection before
+// applying quoting for commas, double-quotes, or newlines.
 function csvEscape(val: string): string {
+  if (/^[=+\-@\t\r]/.test(val)) {
+    val = `'${val}`;
+  }
   if (
     val.includes(",") ||
     val.includes('"') ||

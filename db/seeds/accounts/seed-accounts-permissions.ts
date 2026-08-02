@@ -38,7 +38,10 @@ async function grantPermission(
     } else if (existing.permissionType !== grant.permissionType) {
       await tx
         .update(rolePermissionAssign)
-        .set({ permissionType: grant.permissionType })
+        .set({
+          permissionType: grant.permissionType,
+          lastModifiedDatetime: new Date(),
+        })
         .where(
           eq(rolePermissionAssign.rolePermissionId, existing.rolePermissionId),
         );

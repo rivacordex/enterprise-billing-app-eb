@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync, readdirSync } from "fs";
+import { resolve, join } from "path";
 import { describe, expect, it } from "vitest";
 
 // ac14-spec §3.8 — structural guardrail tests for ac14 additions.
@@ -80,10 +80,6 @@ describe("ac14 — gl-journal-export route handler", () => {
     "app/api/accounts/gl-journal-export/route.ts",
   );
   const src = readFileSync(routePath, "utf-8");
-
-  it("route file exists at the specified path (code-standards §5.1)", () => {
-    expect(existsSync(routePath)).toBe(true);
-  });
 
   it("exports POST (not GET — audits, so must be POST, §5.1)", () => {
     expect(src).toContain("export async function POST");
@@ -243,8 +239,20 @@ describe("ac14 — single Route Handler in the module", () => {
     const accountsApiDir = resolve(ROOT, "app/api/accounts");
     expect(existsSync(accountsApiDir)).toBe(true);
 
-    // The only route.ts under accounts/ should be gl-journal-export/route.ts
-    const exportRoute = resolve(accountsApiDir, "gl-journal-export/route.ts");
-    expect(existsSync(exportRoute)).toBe(true);
+    function findRouteFiles(dir: string): string[] {
+      const results: string[] = [];
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) results.push(...findRouteFiles(fullPath));
+        else if (entry.name === "route.ts") results.push(fullPath);
+      }
+      return results;
+    }
+
+    const routeFiles = findRouteFiles(accountsApiDir);
+    expect(routeFiles).toHaveLength(1);
+    expect(routeFiles[0]).toBe(
+      resolve(accountsApiDir, "gl-journal-export/route.ts"),
+    );
   });
 });
