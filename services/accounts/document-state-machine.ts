@@ -144,6 +144,56 @@ export async function approveDocumentStandalone(
   return db.transaction((tx) => approveDocument(tx, documentId, actorId));
 }
 
+export type RedateAndResubmitResult =
+  | SubmitDocumentResult
+  | { ok: false; code: "DOCUMENT_NOT_FOUND" }
+  | { ok: false; code: "DOC_STATE_INVALID" }
+  | { ok: false; code: "CONFLICT" };
+
+// ac14-spec §3.4 / §2.2 — re-date UX: correct a draft document's event_at
+// (entry date) and re-submit it through the normal posting path. Called when
+// the first submit returned PERIOD_CLOSED and committed a draft to the DB.
+// The update and re-submit run in one transaction so a concurrent period close
+// cannot interleave between the eventAt update and the period validation.
+export async function redateAndResubmit(
+  documentId: string,
+  newEventAt: Date,
+  lastModified: Date,
+  actorId: string,
+): Promise<RedateAndResubmitResult> {
+  class _FailResult extends Error {
+    constructor(public result: RedateAndResubmitResult) {
+      super("fail");
+    }
+  }
+
+  return db
+    .transaction(async (tx) => {
+      const doc = await documentRepository.findById(tx, documentId);
+      if (!doc)
+        throw new _FailResult({ ok: false, code: "DOCUMENT_NOT_FOUND" });
+      if (doc.state !== "draft")
+        throw new _FailResult({ ok: false, code: "DOC_STATE_INVALID" });
+
+      const updated = await documentRepository.updateEventAt(
+        tx,
+        documentId,
+        lastModified,
+        newEventAt,
+        actorId,
+      );
+      if (!updated) throw new _FailResult({ ok: false, code: "CONFLICT" });
+
+      const result = await submitDocument(tx, documentId, actorId);
+      if (!result.ok) throw new _FailResult(result);
+      return result;
+    })
+    .catch((e: unknown) => {
+      if (e instanceof _FailResult) return e.result;
+      throw e;
+    });
+}
+
 export type CancelDocumentResult =
   | {
       ok: true;
