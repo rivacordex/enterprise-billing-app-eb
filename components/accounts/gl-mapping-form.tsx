@@ -8,6 +8,7 @@ import {
 } from "@/actions/accounts/upsert-gl-mapping";
 import type { GlAccount, GlMapping } from "@/types/accounts";
 import { GL_SELECTOR_TYPES } from "@/validation/accounts/gl-mapping.schema";
+import { RetireGlMappingButton } from "@/components/accounts/retire-gl-buttons";
 
 function describeUpsertError(result: UpsertGlMappingActionResult): string {
   if (!result.ok) {
@@ -76,6 +77,8 @@ export function GlMappingForm({
       } else if (res.code === "VALIDATION_ERROR") {
         setFieldErrors(res.fieldErrors);
       }
+    } catch {
+      setResult({ ok: false, code: "FORBIDDEN" });
     } finally {
       setSubmitting(false);
     }
@@ -164,6 +167,11 @@ export function GlMappingForm({
               maxLength={3}
               className="h-8 rounded-md border border-[color:var(--border-default)] bg-background px-3 text-body-sm text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-[color:var(--border-focus)] focus:outline-none"
             />
+            {fieldErrors.currency && (
+              <span className="text-[11px] text-destructive">
+                {fieldErrors.currency.join(", ")}
+              </span>
+            )}
           </div>
           <div className="flex flex-col gap-1">
             <label
@@ -218,5 +226,48 @@ export function GlMappingForm({
         </div>
       </form>
     </div>
+  );
+}
+
+// ── Mapping Actions Cell ──────────────────────────────────────────────────────
+// Combines the inline edit form and retire button in one client component so
+// each active-mapping table row can toggle between view and edit mode without
+// requiring the server-rendered page to hold selection state.
+
+interface MappingActionsCellProps {
+  mapping: GlMapping;
+  postableAccounts: GlAccount[];
+}
+
+export function MappingActionsCell({
+  mapping,
+  postableAccounts,
+}: MappingActionsCellProps): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+
+  if (editing) {
+    return (
+      <GlMappingForm
+        editTarget={mapping}
+        postableAccounts={postableAccounts}
+        onClose={() => setEditing(false)}
+      />
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="h-7 rounded-md border border-[color:var(--border-default)] px-2 text-body-sm text-muted-foreground hover:text-foreground"
+      >
+        Edit
+      </button>
+      <RetireGlMappingButton
+        glMappingId={mapping.glMappingId}
+        lastModified={mapping.lastModified.toISOString()}
+      />
+    </span>
   );
 }

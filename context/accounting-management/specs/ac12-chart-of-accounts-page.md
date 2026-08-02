@@ -13,7 +13,7 @@ Add `/accounts/chart-of-accounts` (permission `accounts_config`) — a CoA tree 
 
 ## 2. Design
 
-First `accounts_config` page; config-grade CRUD guarded so GL errors (the costliest kind) can't silently corrupt the export. Boundary: **`app/(app)/accounts/chart-of-accounts/**`, `actions/accounts/{create-gl-code,retire-gl-code,upsert-gl-mapping,retire-gl-mapping}.action.ts`, `services/accounts/{gl-account,gl-mapping,gl-health}.ts`, `validation/accounts/{gl-account,gl-mapping}.schema.ts`, the `gl-account`/`gl-mapping` repository bodies (extend), the `accounts_config` permission migration + wiring**.
+First `accounts_config` page; config-grade CRUD guarded so GL errors (the costliest kind) can't silently corrupt the export. Boundary: **`app/(app)/accounts/chart-of-accounts/**`, `actions/accounts/{create-gl-code,retire-gl-code,upsert-gl-mapping,retire-gl-mapping}.ts`, `services/accounts/{gl-account,gl-mapping,gl-health}.ts`, `validation/accounts/{gl-account,gl-mapping}.schema.ts`, the `gl-account`/`gl-mapping` repository bodies (extend), the `accounts_config` permission migration + wiring**.
 
 ### 2.1 CoA tree (P4.1, Inv. #11)
 
@@ -37,7 +37,7 @@ No DELETE path for `gl_account` or `gl_mapping`. A GL code referenced by history
 
 ### 2.6 `accounts_config` permission (code-standards §8)
 
-Migration + typed constant + grants. `accounts_config:READ` = view CoA/GL Journal + drill-down; `:EDIT` = edit codes/mappings, period close (ac14), export (ac14), Accounts Settings (ac15). Seed grants: **`MANAGER → accounts_config:EDIT`**; USER gets **no** `accounts_config` grant (finance-config is manager/finance-holder only, architecture §4). Route × level seeds ac17's matrix.
+Migration + typed constant + grants. `accounts_config:READ` = view CoA/GL Journal + drill-down; `:EDIT` = edit codes/mappings, period close (ac14), export (ac14), Accounts Settings (ac15). Seed grants: **`MANAGER → accounts_config:EDIT`**; **`ADMIN → accounts_config:EDIT`**; USER gets **no** `accounts_config` grant (finance-config is manager/finance-holder only, architecture §4). Route × level seeds ac17's matrix.
 
 ### 2.7 Structural decisions
 

@@ -15,12 +15,17 @@ import {
 
 function describeRetireCodeError(result: RetireGlCodeActionResult): string {
   if (!result.ok) {
+    if (result.code === "ORPHAN_BLOCK")
+      return `Blocked — would orphan: ${result.affectedAccounts.join(", ")}`;
     if (result.code === "CONFLICT")
       return "This code was edited concurrently. Reload and try again.";
     if (result.code === "ALREADY_RETIRED") return "Already retired.";
     if (result.code === "NOT_FOUND") return "GL code not found.";
     if (result.code === "FORBIDDEN")
       return "You do not have permission to retire GL codes.";
+    if (result.code === "VALIDATION_ERROR")
+      return "Invalid input. Please retry.";
+    return "Something went wrong. Please try again.";
   }
   return "";
 }
@@ -48,28 +53,33 @@ export function RetireGlCodeButton({
         setConfirming(false);
       }
       // On success Next.js revalidates the path and re-renders the page.
+    } catch {
+      setError("Something went wrong. Please try again.");
+      setConfirming(false);
     } finally {
       setBusy(false);
     }
   }
 
-  if (error) {
-    return (
-      <span role="alert" className="text-body-sm text-destructive">
-        {error}
-      </span>
-    );
-  }
-
   if (!confirming) {
     return (
-      <button
-        type="button"
-        onClick={() => setConfirming(true)}
-        className="h-7 rounded-md border border-[color:var(--border-default)] px-2 text-body-sm text-muted-foreground hover:border-destructive hover:text-destructive"
-      >
-        Retire
-      </button>
+      <span className="flex items-center gap-2">
+        {error && (
+          <span role="alert" className="text-body-sm text-destructive">
+            {error}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setError("");
+            setConfirming(true);
+          }}
+          className="h-7 rounded-md border border-[color:var(--border-default)] px-2 text-body-sm text-muted-foreground hover:border-destructive hover:text-destructive"
+        >
+          Retire
+        </button>
+      </span>
     );
   }
 
@@ -109,6 +119,9 @@ function describeRetireMappingError(
     if (result.code === "NOT_FOUND") return "Mapping not found.";
     if (result.code === "FORBIDDEN")
       return "You do not have permission to retire mappings.";
+    if (result.code === "VALIDATION_ERROR")
+      return "Invalid input. Please retry.";
+    return "Something went wrong. Please try again.";
   }
   return "";
 }
@@ -135,28 +148,33 @@ export function RetireGlMappingButton({
         setError(describeRetireMappingError(result));
         setConfirming(false);
       }
+    } catch {
+      setError("Something went wrong. Please try again.");
+      setConfirming(false);
     } finally {
       setBusy(false);
     }
   }
 
-  if (error) {
-    return (
-      <span role="alert" className="text-body-sm text-destructive">
-        {error}
-      </span>
-    );
-  }
-
   if (!confirming) {
     return (
-      <button
-        type="button"
-        onClick={() => setConfirming(true)}
-        className="h-7 rounded-md border border-[color:var(--border-default)] px-2 text-body-sm text-muted-foreground hover:border-destructive hover:text-destructive"
-      >
-        Retire
-      </button>
+      <span className="flex items-center gap-2">
+        {error && (
+          <span role="alert" className="text-body-sm text-destructive">
+            {error}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setError("");
+            setConfirming(true);
+          }}
+          className="h-7 rounded-md border border-[color:var(--border-default)] px-2 text-body-sm text-muted-foreground hover:border-destructive hover:text-destructive"
+        >
+          Retire
+        </button>
+      </span>
     );
   }
 

@@ -60,6 +60,8 @@ export function GlCodeForm({
       } else if (res.code === "VALIDATION_ERROR") {
         setFieldErrors(res.fieldErrors);
       }
+    } catch {
+      setResult({ ok: false, code: "FORBIDDEN" });
     } finally {
       setSubmitting(false);
     }

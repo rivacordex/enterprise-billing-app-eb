@@ -105,12 +105,29 @@ export const glMappingRepository = {
     return row ?? null;
   },
 
-  // CAS retire: same pattern as glAccountRepository.retire.
+  // CAS retire: issues a single atomic UPDATE constrained on glMappingId,
+  // lastModified, and non-retired state. Returns 'updated' on success;
+  // performs a diagnostic SELECT to classify the failure when 0 rows affected.
   async retire(
     db: Database,
     glMappingId: string,
     lastModified: Date,
+    lastEditedBy: string | null,
   ): Promise<"updated" | "conflict" | "already_retired" | "not_found"> {
+    const [updated] = await db
+      .update(glMapping)
+      .set({ state: "retired", lastModified: sql`now()`, lastEditedBy })
+      .where(
+        and(
+          eq(glMapping.glMappingId, glMappingId),
+          eq(glMapping.lastModified, lastModified),
+          ne(glMapping.state, "retired"),
+        ),
+      )
+      .returning();
+
+    if (updated) return "updated";
+
     const [current] = await db
       .select()
       .from(glMapping)
@@ -118,13 +135,6 @@ export const glMappingRepository = {
       .limit(1);
     if (!current) return "not_found";
     if (current.state === "retired") return "already_retired";
-    if (current.lastModified.getTime() !== lastModified.getTime())
-      return "conflict";
-
-    await db
-      .update(glMapping)
-      .set({ state: "retired", lastModified: sql`now()` })
-      .where(eq(glMapping.glMappingId, glMappingId));
-    return "updated";
+    return "conflict";
   },
 };

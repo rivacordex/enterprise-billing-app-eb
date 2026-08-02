@@ -29,9 +29,9 @@ export async function listGlMappings(): Promise<GlMapping[]> {
 
 // F5 orphan-block (ac12-spec §2.3): applies the proposed change inside a
 // transaction, then re-counts unmapped pgledger accounts from
-// gl_resolution_view. A non-zero count means the change would corrupt the
-// eventual journal export; the transaction rolls back and the affected-account
-// list is returned so the UI can show which accounts would be orphaned.
+// gl_resolution_view. The change is blocked only when the post-change count
+// EXCEEDS the pre-change count — repairs that reduce the unmapped count are
+// allowed to commit.
 class OrphanBlockError extends Error {
   constructor(public affectedAccounts: string[]) {
     super("orphan-block");
@@ -42,20 +42,20 @@ export async function upsertGlMapping(
   input: UpsertGlMappingInput,
   actorId: string,
 ): Promise<UpsertGlMappingResult> {
-  // Pre-flight checks outside the transaction (cheap reads).
-  const targetAccount = await glAccountRepository.findByCode(
-    db,
-    input.refGlCode,
-  );
-  if (!targetAccount) return { ok: false, code: "GL_CODE_NOT_FOUND" };
-  if (!targetAccount.isPostable)
-    return { ok: false, code: "NON_POSTABLE_TARGET" };
-
   const currency = input.currency ?? null;
   const isEdit = !!input.glMappingId;
 
   try {
     return await db.transaction(async (tx) => {
+      // Target GL code validation inside the transaction to avoid TOCTOU races.
+      const targetAccount = await glAccountRepository.findByCode(
+        tx,
+        input.refGlCode,
+      );
+      if (!targetAccount) return { ok: false, code: "GL_CODE_NOT_FOUND" };
+      if (!targetAccount.isPostable)
+        return { ok: false, code: "NON_POSTABLE_TARGET" };
+
       // Duplicate-selector guard (UNIQUE constraint proxy — gives a typed
       // result instead of a DB exception).
       const duplicate = await glMappingRepository.findDuplicateSelector(
@@ -67,19 +67,22 @@ export async function upsertGlMapping(
       );
       if (duplicate) return { ok: false, code: "DUPLICATE_SELECTOR" };
 
+      // Baseline unmapped count before the provisional change.
+      const unmappedBefore = await ledgerRepository.countUnmappedAccounts(tx);
+
       let glMappingId: string;
 
       if (isEdit) {
-        // Optimistic-lock check: the client must send back lastModified.
+        // Missing lastModified on an edit = optimistic-lock data absent → CONFLICT.
+        if (!input.lastModified) return { ok: false, code: "CONFLICT" };
         const existing = await glMappingRepository.findById(
           tx,
           input.glMappingId!,
         );
         if (!existing) return { ok: false, code: "NOT_FOUND" };
         if (
-          input.lastModified &&
           existing.lastModified.getTime() !==
-            new Date(input.lastModified).getTime()
+          new Date(input.lastModified).getTime()
         ) {
           return { ok: false, code: "CONFLICT" };
         }
@@ -108,10 +111,10 @@ export async function upsertGlMapping(
         glMappingId = inserted.glMappingId;
       }
 
-      // F5 prospective orphan check — runs after the provisional change so
-      // the view sees the new mapping state within this transaction.
-      const unmapped = await ledgerRepository.countUnmappedAccounts(tx);
-      if (unmapped > 0) {
+      // F5 prospective orphan check — only block if this change introduces new
+      // unmapped accounts (count increases). Repairs that reduce the count commit.
+      const unmappedAfter = await ledgerRepository.countUnmappedAccounts(tx);
+      if (unmappedAfter > unmappedBefore) {
         const affected = await ledgerRepository.findUnmappedAccountNames(tx);
         throw new OrphanBlockError(affected);
       }
@@ -135,13 +138,16 @@ export async function retireGlMapping(
   lastModified: Date,
   actorId: string,
 ): Promise<RetireGlMappingResult> {
-  void actorId;
   try {
     return await db.transaction(async (tx) => {
+      // Baseline unmapped count before the retirement.
+      const unmappedBefore = await ledgerRepository.countUnmappedAccounts(tx);
+
       const result = await glMappingRepository.retire(
         tx,
         glMappingId,
         lastModified,
+        actorId,
       );
       if (result !== "updated") {
         return {
@@ -156,10 +162,9 @@ export async function retireGlMapping(
         };
       }
 
-      // F5 orphan check — retiring a mapping might expose pgledger accounts
-      // that had no other active mapping covering them.
-      const unmapped = await ledgerRepository.countUnmappedAccounts(tx);
-      if (unmapped > 0) {
+      // F5 orphan check — only block if the retirement introduces NEW orphans.
+      const unmappedAfter = await ledgerRepository.countUnmappedAccounts(tx);
+      if (unmappedAfter > unmappedBefore) {
         const affected = await ledgerRepository.findUnmappedAccountNames(tx);
         throw new OrphanBlockError(affected);
       }
