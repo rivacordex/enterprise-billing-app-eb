@@ -201,7 +201,19 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ── V6a-sort: all sort values return the same balanced totals ─────────────
-    it("V6a-sort — sort variants (debit, -debit, credit, -credit, -gl_code) return the same totals", async () => {
+    // Expected row sequences derived from SORT_ORDER in gl-journal.repository.ts:
+    //   GL 1200: debit 16,200 / credit 0   |  GL 2200: debit 0 / credit 200
+    //   GL 4000: debit 0 / credit 16,000
+    // Tie-breaker for equal primary values is always gl_code ASC (string order).
+    it("V6a-sort — sort variants return same totals and the correct GL code sequence", async () => {
+      const EXPECTED: Record<string, string[]> = {
+        "-gl_code": ["4000", "2200", "1200"],
+        debit: ["2200", "4000", "1200"], // 0 ASC tie-broken by gl_code → 2200,4000; then 16200
+        "-debit": ["1200", "2200", "4000"], // 16200 DESC first; 0 tie-broken by gl_code → 2200,4000
+        credit: ["1200", "2200", "4000"], // 0 ASC, then 200, then 16000
+        "-credit": ["4000", "2200", "1200"], // 16000 DESC first, then 200, then 0
+      };
+
       for (const sort of [
         "-gl_code",
         "debit",
@@ -213,8 +225,8 @@ describe.skipIf(!databaseUrl)(
         expect(result.totals.balanced).toBe(true);
         expect(Number(result.totals.totalDebit)).toBe(16200);
         expect(Number(result.totals.totalCredit)).toBe(16200);
-        // Row order varies by sort key but count is always 3 (GL 1200, 4000, 2200)
         expect(result.rows).toHaveLength(3);
+        expect(result.rows.map((r) => r.glCode)).toEqual(EXPECTED[sort]);
       }
     });
 

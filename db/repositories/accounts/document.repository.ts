@@ -71,6 +71,38 @@ export const documentRepository = {
   // matching `partyRoleRepository.compareAndUpdateStatus`'s convention. Zero
   // rows matched (stale lock or unknown id) returns `null`; every caller
   // maps that to `CONFLICT`.
+  // ac14-spec §3.4/§3.6 — update event_at on a draft document so the operator
+  // can correct a rejected entry date (PERIOD_CLOSED re-date flow, spec §2.2).
+  // CAS on lastModified; only updates draft-state rows. Returns null on a stale
+  // lock (caller maps to CONFLICT) or when the document isn't in draft state.
+  async updateEventAt(
+    tx: Database,
+    documentId: string,
+    expectedLastModified: Date,
+    newEventAt: Date,
+    actorId: string,
+  ): Promise<Document | null> {
+    const bumpedLastModified = new Date(
+      Math.max(Date.now(), expectedLastModified.getTime() + 1),
+    );
+    const [row] = await tx
+      .update(document)
+      .set({
+        eventAt: newEventAt,
+        lastModified: bumpedLastModified,
+        lastEditedBy: actorId,
+      })
+      .where(
+        and(
+          eq(document.documentId, documentId),
+          eq(document.lastModified, expectedLastModified),
+          eq(document.state, "draft"),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
   async compareAndUpdateState(
     tx: Database,
     documentId: string,

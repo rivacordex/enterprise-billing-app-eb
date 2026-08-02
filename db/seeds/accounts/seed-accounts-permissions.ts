@@ -16,7 +16,10 @@ async function grantPermission(
 ): Promise<void> {
   for (const grant of grants) {
     const [existing] = await tx
-      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
+      .select({
+        rolePermissionId: rolePermissionAssign.rolePermissionId,
+        permissionType: rolePermissionAssign.permissionType,
+      })
       .from(rolePermissionAssign)
       .where(
         and(
@@ -32,6 +35,13 @@ async function grantPermission(
         refPermissionId: permissionId,
         permissionType: grant.permissionType,
       });
+    } else if (existing.permissionType !== grant.permissionType) {
+      await tx
+        .update(rolePermissionAssign)
+        .set({ permissionType: grant.permissionType })
+        .where(
+          eq(rolePermissionAssign.rolePermissionId, existing.rolePermissionId),
+        );
     }
   }
 }
