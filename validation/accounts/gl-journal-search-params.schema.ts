@@ -2,6 +2,10 @@
 // All params have safe .catch() fallbacks so a bad URL never throws; the page
 // always renders with the default selection. sort is a URL param so a future
 // export (ac14) matches on-screen order (code-standards §4.3).
+//
+// currency is intentionally absent: gl_journal_view has no currency column,
+// so a currency selector would not filter the queried data. AmountCell display
+// uses the hardcoded system currency (MYR) in the page layer.
 
 import { z } from "zod";
 
@@ -23,11 +27,12 @@ function currentPeriod(): string {
 }
 
 export const glJournalSearchParamsSchema = z.object({
+  // Callback form so currentPeriod() is called at each parse invocation,
+  // not once at module evaluation time (avoids stale month on long-lived servers).
   period: z
     .string()
     .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
-    .catch(currentPeriod()),
-  currency: z.string().length(3).catch("MYR"),
+    .catch(() => currentPeriod()),
   view: z.enum(["movement", "trial"]).catch("movement"),
   sort: z.enum(SORT_VALUES).catch("gl_code"),
   expand: z.string().optional().catch(undefined),

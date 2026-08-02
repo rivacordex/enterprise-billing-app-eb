@@ -11,6 +11,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { AmountCell } from "@/components/accounts/amount-cell";
 import { LedgerKindChip } from "@/components/accounts/ledger-kind-chip";
+import { cn } from "@/lib/utils";
 import {
   getPeriodSummary,
   getCodeDrilldown,
@@ -22,6 +23,10 @@ import type { GlJournalSort } from "@/services/accounts/gl-journal";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "GL Journal" };
+
+// gl_journal_view has no currency column; amounts are reported in the system
+// currency. AmountCell uses this constant for its currency-code prefix only.
+const DISPLAY_CURRENCY = "MYR";
 
 // Derive the account kind (ban/fa/sys) from a pgledger account name so the
 // LedgerKindChip can render correctly in the drill-down (ac06 rendering reuse).
@@ -46,6 +51,7 @@ function buildUrl(
 }
 
 // Sort-column header: toggles direction when clicking the active column.
+// aria-sort communicates the current sort direction to assistive technology.
 function SortHeader({
   label,
   colSort,
@@ -66,7 +72,10 @@ function SortHeader({
     isActive && !isDesc ? (`-${colSort}` as GlJournalSort) : colSort;
 
   return (
-    <th className={className}>
+    <th
+      className={className}
+      aria-sort={isActive ? (isDesc ? "descending" : "ascending") : "none"}
+    >
       <Link
         href={buildUrl(baseParams, { sort: nextSort })}
         className="inline-flex items-center gap-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase hover:text-foreground"
@@ -96,19 +105,18 @@ export default async function GlJournalPage({
     flatParams[k] = Array.isArray(v) ? (v[0] ?? undefined) : v;
   }
 
-  const { period, currency, view, sort, expand } =
+  const { period, view, sort, expand } =
     glJournalSearchParamsSchema.parse(flatParams);
 
   // Base params dict for URL builders (all current params minus what we're changing).
   const baseParams: Record<string, string | undefined> = {
     period,
-    currency,
     view,
     sort,
     expand,
   };
 
-  const [summary, drilldownEntries] = await Promise.all([
+  const [summary, drilldown] = await Promise.all([
     getPeriodSummary(period, view, sort),
     expand ? getCodeDrilldown(expand, period, view) : Promise.resolve(null),
   ]);
@@ -154,23 +162,6 @@ export default async function GlJournalPage({
             defaultValue={period}
             className="rounded-sm border border-[color:var(--border-default)] bg-[color:var(--surface-card)] px-3 py-1.5 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
           />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor="currency"
-            className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
-          >
-            Currency
-          </label>
-          <select
-            id="currency"
-            name="currency"
-            defaultValue={currency}
-            className="rounded-sm border border-[color:var(--border-default)] bg-[color:var(--surface-card)] px-3 py-1.5 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
-          >
-            <option value="MYR">MYR</option>
-          </select>
         </div>
 
         {/* Preserve view and sort across period changes */}
@@ -283,10 +274,16 @@ export default async function GlJournalPage({
                           {row.name}
                         </td>
                         <td className="px-4 py-2 text-right">
-                          <AmountCell amount={row.debit} currency={currency} />
+                          <AmountCell
+                            amount={row.debit}
+                            currency={DISPLAY_CURRENCY}
+                          />
                         </td>
                         <td className="px-4 py-2 text-right">
-                          <AmountCell amount={row.credit} currency={currency} />
+                          <AmountCell
+                            amount={row.credit}
+                            currency={DISPLAY_CURRENCY}
+                          />
                         </td>
                         <td className="px-4 py-2 text-right">
                           <Link
@@ -301,70 +298,78 @@ export default async function GlJournalPage({
                       </tr>
 
                       {/* ── Drill-down expansion (P5.3) ─────────────────────── */}
-                      {isExpanded && drilldownEntries && (
+                      {isExpanded && drilldown && (
                         <tr className="bg-[color:var(--surface-sunken)]">
                           <td colSpan={5} className="p-0">
                             <div className="border-t border-[color:var(--border-subtle)] px-6 py-3">
                               <p className="mb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
                                 Source entries — GL {row.glCode} · {row.name}
                               </p>
-                              {drilldownEntries.length === 0 ? (
+                              {drilldown.entries.length === 0 ? (
                                 <p className="text-body-sm text-muted-foreground">
                                   No entries for this GL code in the selected
                                   scope.
                                 </p>
                               ) : (
-                                <table className="min-w-full text-body-sm">
-                                  <thead>
-                                    <tr className="border-b border-[color:var(--border-subtle)]">
-                                      <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Account
-                                      </th>
-                                      <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Kind
-                                      </th>
-                                      <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Date
-                                      </th>
-                                      <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Document
-                                      </th>
-                                      <th className="pb-1 text-right text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Amount
-                                      </th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-[color:var(--border-subtle)]">
-                                    {drilldownEntries.map((entry) => (
-                                      <tr key={entry.entryId}>
-                                        <td className="py-1.5 pr-4 font-mono text-foreground">
-                                          {entry.accountName}
-                                        </td>
-                                        <td className="py-1.5 pr-4">
-                                          <LedgerKindChip
-                                            kind={accountKind(
-                                              entry.accountName,
-                                            )}
-                                          />
-                                        </td>
-                                        <td className="py-1.5 pr-4 text-muted-foreground">
-                                          {entry.eventAt
-                                            .toISOString()
-                                            .slice(0, 10)}
-                                        </td>
-                                        <td className="py-1.5 pr-4 font-mono text-muted-foreground">
-                                          {entry.docId ?? "—"}
-                                        </td>
-                                        <td className="py-1.5 text-right">
-                                          <AmountCell
-                                            amount={entry.amount}
-                                            currency={currency}
-                                          />
-                                        </td>
+                                <>
+                                  <table className="min-w-full text-body-sm">
+                                    <thead>
+                                      <tr className="border-b border-[color:var(--border-subtle)]">
+                                        <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                                          Account
+                                        </th>
+                                        <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                                          Kind
+                                        </th>
+                                        <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                                          Date
+                                        </th>
+                                        <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                                          Document
+                                        </th>
+                                        <th className="pb-1 text-right text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                                          Amount
+                                        </th>
                                       </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                    </thead>
+                                    <tbody className="divide-y divide-[color:var(--border-subtle)]">
+                                      {drilldown.entries.map((entry) => (
+                                        <tr key={entry.entryId}>
+                                          <td className="py-1.5 pr-4 font-mono text-foreground">
+                                            {entry.accountName}
+                                          </td>
+                                          <td className="py-1.5 pr-4">
+                                            <LedgerKindChip
+                                              kind={accountKind(
+                                                entry.accountName,
+                                              )}
+                                            />
+                                          </td>
+                                          <td className="py-1.5 pr-4 text-muted-foreground">
+                                            {entry.eventAt
+                                              .toISOString()
+                                              .slice(0, 10)}
+                                          </td>
+                                          <td className="py-1.5 pr-4 font-mono text-muted-foreground">
+                                            {entry.docId ?? "—"}
+                                          </td>
+                                          <td className="py-1.5 text-right">
+                                            <AmountCell
+                                              amount={entry.amount}
+                                              currency={DISPLAY_CURRENCY}
+                                            />
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  {drilldown.truncated && (
+                                    <p className="mt-2 text-body-sm text-muted-foreground">
+                                      Showing first 500 entries — export the
+                                      full set via the CSV download (ac14).
+                                    </p>
+                                  )}
+                                </>
                               )}
                             </div>
                           </td>
@@ -379,44 +384,45 @@ export default async function GlJournalPage({
             {/* ── Σ total row (V6 — ui-context §3) ─────────────────────────── */}
             <tfoot>
               <tr
-                role={totalRowBroken ? "alert" : "status"}
                 className={[
                   "border-t-2 border-[color:var(--border-default)]",
                   totalRowBroken
-                    ? "bg-[color:var(--acct-balance-broken)] text-white"
+                    ? "bg-[color:var(--acct-balance-broken)]"
                     : "bg-[color:var(--surface-sunken)]",
                 ].join(" ")}
               >
                 <td
                   colSpan={2}
-                  className={[
+                  className={cn(
                     "px-4 py-2.5 text-[15px] font-semibold tabular-nums",
-                    totalRowBroken ? "text-white" : "text-foreground",
-                  ].join(" ")}
+                    totalRowBroken
+                      ? "text-[color:var(--text-on-brand)]"
+                      : "text-foreground",
+                  )}
                 >
                   {totalRowBroken
                     ? "⚠ Σ Debit ≠ Σ Credit — journal is unbalanced"
                     : "Total"}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <span
-                    className={[
-                      "block text-right font-[tabular-nums] text-h4",
-                      totalRowBroken ? "text-white" : "text-foreground",
-                    ].join(" ")}
-                  >
-                    {totals.totalDebit}
-                  </span>
+                  <AmountCell
+                    amount={totals.totalDebit}
+                    currency={DISPLAY_CURRENCY}
+                    className={cn(
+                      "text-h4",
+                      totalRowBroken && "text-[color:var(--text-on-brand)]",
+                    )}
+                  />
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <span
-                    className={[
-                      "block text-right font-[tabular-nums] text-h4",
-                      totalRowBroken ? "text-white" : "text-foreground",
-                    ].join(" ")}
-                  >
-                    {totals.totalCredit}
-                  </span>
+                  <AmountCell
+                    amount={totals.totalCredit}
+                    currency={DISPLAY_CURRENCY}
+                    className={cn(
+                      "text-h4",
+                      totalRowBroken && "text-[color:var(--text-on-brand)]",
+                    )}
+                  />
                 </td>
                 <td />
               </tr>
@@ -424,6 +430,16 @@ export default async function GlJournalPage({
           </table>
         </div>
 
+        {/* Balance status strip — outside the table so live-region semantics
+            are not constrained by table cell / row ARIA roles (spec §2.2). */}
+        {rows.length > 0 && totalRowBroken && (
+          <p
+            role="alert"
+            className="text-body-sm font-medium text-[color:var(--acct-balance-broken)]"
+          >
+            ⚠ Σ Debit ≠ Σ Credit — journal is unbalanced
+          </p>
+        )}
         {rows.length > 0 && !totalRowBroken && (
           <p className="text-body-sm font-medium text-[color:var(--acct-balance-ok)]">
             ✓ Balanced — Σ debit = Σ credit = {totals.totalDebit}

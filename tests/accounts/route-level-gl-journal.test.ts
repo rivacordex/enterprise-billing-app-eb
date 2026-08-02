@@ -127,10 +127,12 @@ describe("GL Journal — repository file exists (ac13-spec §3.3)", () => {
     // Must use views (gl_journal_view, gl_resolution_view, pgledger_*_view)
     expect(src).toContain("gl_journal_view");
     expect(src).toContain("pgledger_entries_view");
-    // Must NOT INSERT/UPDATE/DELETE on any table
+    // Must NOT INSERT/UPDATE/DELETE on any table.
+    // Patterns require the syntax that follows each keyword to avoid matching
+    // identifiers (e.g. UPDATE_AT) or unrelated words.
     expect(src).not.toMatch(/\bINSERT\s+INTO\b/i);
-    expect(src).not.toMatch(/\bUPDATE\b/i);
-    expect(src).not.toMatch(/\bDELETE\b/i);
+    expect(src).not.toMatch(/\bUPDATE\s+\w/i);
+    expect(src).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 });
 

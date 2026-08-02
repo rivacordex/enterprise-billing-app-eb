@@ -16,10 +16,8 @@ export const GL_JOURNAL_SORT_VALUES = [
 ] as const;
 export type GlJournalSort = (typeof GL_JOURNAL_SORT_VALUES)[number];
 
-// Sort key → deterministic ORDER BY fragment. Sort is a URL param so a future
-// export (ac14) matches on-screen order exactly (code-standards §4.3).
-// `debit::numeric` / `credit::numeric` cast the text alias back to numeric for
-// correct numeric ordering (plain string ordering would mis-sort "9" > "10").
+// Movement-branch ORDER BY: debit/credit columns in gl_journal_view are
+// numeric, so a direct ::numeric cast is a no-op but keeps the map symmetric.
 const SORT_ORDER: Record<GlJournalSort, ReturnType<typeof sql>> = {
   gl_code: sql`gl_code ASC`,
   "-gl_code": sql`gl_code DESC`,
@@ -28,6 +26,22 @@ const SORT_ORDER: Record<GlJournalSort, ReturnType<typeof sql>> = {
   credit: sql`credit::numeric ASC NULLS LAST, gl_code ASC`,
   "-credit": sql`credit::numeric DESC NULLS LAST, gl_code ASC`,
 };
+
+// Trial-balance branch ORDER BY: the query uses SUM(debit)/SUM(credit)
+// aggregate expressions aliased as text. Reference them as aggregate
+// expressions explicitly to avoid any ambiguity with the view column names.
+const SORT_ORDER_AGGREGATED: Record<GlJournalSort, ReturnType<typeof sql>> = {
+  gl_code: sql`gl_code ASC`,
+  "-gl_code": sql`gl_code DESC`,
+  debit: sql`(SUM(debit))::numeric ASC NULLS LAST, gl_code ASC`,
+  "-debit": sql`(SUM(debit))::numeric DESC NULLS LAST, gl_code ASC`,
+  credit: sql`(SUM(credit))::numeric ASC NULLS LAST, gl_code ASC`,
+  "-credit": sql`(SUM(credit))::numeric DESC NULLS LAST, gl_code ASC`,
+};
+
+// Maximum drill-down rows returned. Fetching CAP + 1 lets the service detect
+// truncation without a separate COUNT query.
+export const DRILLDOWN_CAP = 500;
 
 export type GlJournalSummaryRow = {
   glCode: string;
@@ -56,9 +70,8 @@ export const glJournalRepository = {
     view: "movement" | "trial",
     sort: GlJournalSort,
   ): Promise<GlJournalSummaryRow[]> {
-    const orderBy = SORT_ORDER[sort];
-
     if (view === "movement") {
+      const orderBy = SORT_ORDER[sort];
       const rows = await db.execute<{
         gl_code: string;
         name: string;
@@ -78,7 +91,10 @@ export const glJournalRepository = {
       }));
     }
 
-    // trial-balance cumulative: sum across all periods ≤ target
+    // Trial-balance cumulative: sum across all periods ≤ target. Uses the
+    // aggregated sort map so ordering is over the aggregate output aliases,
+    // not the underlying view columns.
+    const orderBy = SORT_ORDER_AGGREGATED[sort];
     const rows = await db.execute<{
       gl_code: string;
       name: string;
@@ -105,12 +121,13 @@ export const glJournalRepository = {
   // given GL code for the scope (movement or cumulative). Joins
   // pgledger_entries_view → gl_resolution_view → pgledger_transfers_view for
   // the doc reference (Module Inv. #3 trace chain).
+  // Returns at most DRILLDOWN_CAP entries; truncated: true when more exist.
   async listDrilldown(
     db: Database,
     glCode: string,
     period: string,
     view: "movement" | "trial",
-  ): Promise<GlJournalEntryRow[]> {
+  ): Promise<{ entries: GlJournalEntryRow[]; truncated: boolean }> {
     const periodClause =
       view === "movement"
         ? sql`AND to_char(pev.event_at, 'YYYY-MM') = ${period}`
@@ -141,9 +158,11 @@ export const glJournalRepository = {
       WHERE grv.gl_code = ${glCode}
       ${periodClause}
       ORDER BY pev.event_at, pev.id
+      LIMIT ${DRILLDOWN_CAP + 1}
     `);
 
-    return rows.map((r) => ({
+    const truncated = rows.length > DRILLDOWN_CAP;
+    const entries = rows.slice(0, DRILLDOWN_CAP).map((r) => ({
       entryId: r.entry_id,
       accountId: r.account_id,
       accountName: r.account_name,
@@ -151,5 +170,7 @@ export const glJournalRepository = {
       eventAt: r.event_at,
       docId: r.doc_id,
     }));
+
+    return { entries, truncated };
   },
 };
