@@ -66,7 +66,7 @@ export const reasonCodeRepository = {
       lastModified: Date;
       lastEditedBy: string;
     },
-  ): Promise<"updated" | "conflict" | "not_found"> {
+  ): Promise<"updated" | "conflict" | "already_retired" | "not_found"> {
     const [updated] = await db
       .update(reasonCode)
       .set({
@@ -93,6 +93,7 @@ export const reasonCodeRepository = {
       .where(eq(reasonCode.reasonCode, values.reasonCode))
       .limit(1);
     if (!current) return "not_found";
+    if (current.state === "retired") return "already_retired";
     return "conflict";
   },
 

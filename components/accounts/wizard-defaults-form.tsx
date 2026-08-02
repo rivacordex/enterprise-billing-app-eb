@@ -6,7 +6,7 @@ import {
   setWizardDefaultsAction,
   type SetWizardDefaultsActionResult,
 } from "@/actions/accounts/set-wizard-defaults.action";
-import type { BillCycle } from "@/db/schema/billing/catalogs";
+import type { BillCycle } from "@/types/accounts";
 
 interface WizardDefaultsFormProps {
   activeCycles: Pick<BillCycle, "billCycleId" | "name">[];
@@ -37,7 +37,9 @@ export function WizardDefaultsForm({
   const [result, setResult] = useState<SetWizardDefaultsActionResult | null>(
     null,
   );
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  const [fieldErrors, setFieldErrors] = useState<
+    Record<string, string[] | undefined>
+  >({});
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

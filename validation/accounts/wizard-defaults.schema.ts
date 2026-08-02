@@ -5,8 +5,10 @@ export const setWizardDefaultsSchema = z.object({
   // null = no credit limit pre-fill (manual per customer, ac03 §2.6 resolution)
   defaultCreditLimit: z
     .string()
-    .regex(/^\d+(\.\d{1,2})?$/, "Must be a non-negative decimal (e.g. 5000.00)")
-    .refine((v) => parseFloat(v) >= 0, "Must be ≥ 0")
+    .regex(
+      /^\d{1,16}(\.\d{1,2})?$/,
+      "Must be a non-negative decimal with at most 16 integer digits (e.g. 5000.00)",
+    )
     .nullable()
     .optional(),
 });
