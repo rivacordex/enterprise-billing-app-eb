@@ -24,6 +24,11 @@ export type GlJournalResult = {
   totals: GlJournalTotals;
 };
 
+export type GlJournalDrilldown = {
+  entries: GlJournalEntryRow[];
+  truncated: boolean;
+};
+
 // ac13-spec §2.2 — period summary with balanced Σ total row (V6). Returns the
 // rows plus pre-computed totals so the page never does arithmetic.
 export async function getPeriodSummary(
@@ -45,10 +50,11 @@ export async function getPeriodSummary(
 // ac13-spec §2.3 — drill-down: contributing pgledger_entries_view legs for a
 // given GL code + period scope. Closes the Goal 4 trace chain:
 // document → line → transfer → entry → GL code.
+// Returns at most DRILLDOWN_CAP entries; truncated: true when more exist.
 export async function getCodeDrilldown(
   glCode: string,
   period: string,
   view: "movement" | "trial",
-): Promise<GlJournalEntryRow[]> {
+): Promise<GlJournalDrilldown> {
   return glJournalRepository.listDrilldown(db, glCode, period, view);
 }

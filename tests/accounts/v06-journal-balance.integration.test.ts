@@ -179,6 +179,11 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     afterAll(async () => {
+      // Guard: sql is only assigned after assertTestDatabaseUrl + migrate
+      // succeed. If beforeAll throws before that point (wrong DATABASE_URL,
+      // migration failure), sql is uninitialized and we must not attempt cleanup
+      // — the original error should remain the reported failure.
+      if (!sql) return;
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
@@ -193,6 +198,39 @@ describe.skipIf(!databaseUrl)(
       expect(result.totals.balanced).toBe(true);
       expect(Number(result.totals.totalDebit)).toBe(16200);
       expect(Number(result.totals.totalCredit)).toBe(16200);
+    });
+
+    // ── V6a-sort: all sort values return the same balanced totals ─────────────
+    it("V6a-sort — sort variants (debit, -debit, credit, -credit, -gl_code) return the same totals", async () => {
+      for (const sort of [
+        "-gl_code",
+        "debit",
+        "-debit",
+        "credit",
+        "-credit",
+      ] as const) {
+        const result = await getPeriodSummary(PERIOD_JULY, "movement", sort);
+        expect(result.totals.balanced).toBe(true);
+        expect(Number(result.totals.totalDebit)).toBe(16200);
+        expect(Number(result.totals.totalCredit)).toBe(16200);
+        // Row order varies by sort key but count is always 3 (GL 1200, 4000, 2200)
+        expect(result.rows).toHaveLength(3);
+      }
+    });
+
+    // ── V6a-trial: trial-balance sort variants are also valid ─────────────────
+    it("V6a-trial — trial-balance view with debit/-debit/credit/-credit sorts returns balanced totals", async () => {
+      for (const sort of ["debit", "-debit", "credit", "-credit"] as const) {
+        const result = await getPeriodSummary(PERIOD_JULY, "trial", sort);
+        expect(result.totals.balanced).toBe(true);
+        expect(Number(result.totals.totalDebit)).toBe(16200);
+        expect(Number(result.totals.totalCredit)).toBe(16200);
+      }
+      // Spot-check: sort="debit" (ASC) puts the credit-only codes (4000, 2200)
+      // first (debit = 0) and GL 1200 last (debit = 16,200).
+      const sorted = await getPeriodSummary(PERIOD_JULY, "trial", "debit");
+      const codes = sorted.rows.map((r) => r.glCode);
+      expect(codes.indexOf("1200")).toBeGreaterThan(codes.indexOf("4000"));
     });
 
     // ── V6b: per-GL-code totals reconcile to pgledger_entries_view sums ──────
@@ -221,7 +259,12 @@ describe.skipIf(!databaseUrl)(
 
     // ── V6c: drill-down of GL 1200 lists contributing entries ───────────────
     it("V6c — drill-down of GL 1200 lists exactly 2 A/R entries (charge 16,000 + tax 200) referencing the DBN document", async () => {
-      const entries = await getCodeDrilldown("1200", PERIOD_JULY, "movement");
+      const { entries, truncated } = await getCodeDrilldown(
+        "1200",
+        PERIOD_JULY,
+        "movement",
+      );
+      expect(truncated).toBe(false);
       expect(entries).toHaveLength(2);
       const amounts = entries
         .map((e) => Number(e.amount))
@@ -270,6 +313,10 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ── V6e: trial-balance cumulative scope ───────────────────────────────────
+    // The toBeGreaterThanOrEqual bounds are intentionally inclusive: the nested
+    // V6d imbalance fixture adds a 500-unit August transfer to sys.revenue (GL
+    // 4000), so the August trial-balance cumulative for GL 4000 credit is at
+    // least 16,000 (July DBN) + 500 (August unmapped transfer) = 16,500.
     it("V6e — trial-balance scope for August includes July DBN entries (GL 1200 debit ≥ 16,200)", async () => {
       const trial = await getPeriodSummary("2026-08", "trial", "gl_code");
       const byCode = new Map(trial.rows.map((r) => [r.glCode, r]));
