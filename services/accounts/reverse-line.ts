@@ -125,23 +125,20 @@ export async function reverseLine(
         throw new _Failed({ ok: false, code: "CONFLICT" });
       }
 
-      // Re-validate selected lines inside the transaction to close the TOCTOU
-      // window (lines were fetched before the transaction opened; a concurrent
-      // reversal could have stamped reversedByLineId between then and now).
-      for (const line of selectedLines) {
-        const txLine = await documentLineRepository.findById(
-          tx,
-          line.documentLineId,
-        );
-        if (!txLine || txLine.reversedByLineId !== null) {
-          throw new _Failed({ ok: false, code: "ALREADY_REVERSED" });
-        }
-      }
-      // Re-read all lines via tx handle for an accurate full-reversal check.
+      // Single read for both TOCTOU validation and the post-doc-state check.
+      // READ COMMITTED: sees committed data at statement time, so concurrent
+      // committed stamps from other transactions are visible here.
       const txAllLines = await documentLineRepository.findByDocumentId(
         tx,
         input.originalDocumentId,
       );
+      const txLineById = new Map(txAllLines.map((l) => [l.documentLineId, l]));
+      for (const line of selectedLines) {
+        const txLine = txLineById.get(line.documentLineId);
+        if (!txLine || txLine.reversedByLineId !== null) {
+          throw new _Failed({ ok: false, code: "ALREADY_REVERSED" });
+        }
+      }
 
       const reversalDoc = await documentRepository.insert(
         tx,
@@ -188,19 +185,31 @@ export async function reverseLine(
         reversalLineIds.push(reversalLine.documentLineId);
       }
 
+      // Conditional stamp (WHERE reversed_by_line_id IS NULL): if a concurrent
+      // reversal claimed a line between the TOCTOU check and this UPDATE, the
+      // stamp returns false → ALREADY_REVERSED. Own uncommitted writes are
+      // visible to subsequent reads in the same transaction (PostgreSQL).
       for (let i = 0; i < selectedLines.length; i++) {
-        await documentLineRepository.setReversedByLineId(
+        const stamped = await documentLineRepository.setReversedByLineId(
           tx,
           selectedLines[i]!.documentLineId,
           reversalLineIds[i]!,
         );
+        if (!stamped)
+          throw new _Failed({ ok: false, code: "ALREADY_REVERSED" });
       }
 
-      // Check if original doc is now fully reversed (all lines have
-      // reversedByLineId — either from earlier reversals or this one).
-      const selectedSet = new Set(input.selectedLineIds);
-      const allNowReversed = txAllLines.every(
-        (l) => l.reversedByLineId !== null || selectedSet.has(l.documentLineId),
+      // Post-stamp re-read: own writes + any concurrent committed stamps are
+      // visible here (READ COMMITTED). The last transaction to complete sees
+      // all stamps and is the one that flips the doc to 'reversed', closing
+      // the race where two transactions each reverse different lines and both
+      // see the other's pre-stamp snapshot.
+      const finalLines = await documentLineRepository.findByDocumentId(
+        tx,
+        input.originalDocumentId,
+      );
+      const allNowReversed = finalLines.every(
+        (l) => l.reversedByLineId !== null,
       );
       if (allNowReversed) {
         const updated = await documentRepository.compareAndUpdateState(

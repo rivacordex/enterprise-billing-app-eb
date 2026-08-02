@@ -177,12 +177,13 @@ export function ReversalsPanel({
 
   const unreversedLines =
     preview?.lines.filter((l) => !l.alreadyReversed) ?? [];
-  const hasAllocationLines = unreversedLines.some((l) => l.isAllocation);
+  // No allocation-selection gate: 0 selected lines → doc-level reversal
+  // (reverseDocument); some selected → line-level (reverseLine). Both paths
+  // are valid and intentional — allocation docs support both modes.
   const canSubmit =
     !!preview &&
     reversalComment.trim().length > 0 &&
-    referenceInfo.trim().length > 0 &&
-    (!hasAllocationLines || selectedLineIds.size > 0);
+    referenceInfo.trim().length > 0;
 
   return (
     <section className="space-y-3 rounded-md border border-[color:var(--border-default)] bg-[color:var(--surface-card)] p-4">

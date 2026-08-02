@@ -162,12 +162,17 @@ export async function reverseDocument(
       // Stamp reversedByLineId on original lines (same-transaction stamping,
       // matching refundPayment's allocation-line precedent — the stamp is a
       // durable lock even if the reversal doc ends up in pending_approval).
+      // The conditional WHERE IS NULL is the atomic guard: if a concurrent
+      // reversal claimed the line between our TOCTOU check and this UPDATE,
+      // the stamp returns false and we surface ALREADY_REVERSED.
       for (let i = 0; i < unreversedLines.length; i++) {
-        await documentLineRepository.setReversedByLineId(
+        const stamped = await documentLineRepository.setReversedByLineId(
           tx,
           unreversedLines[i]!.documentLineId,
           reversalLineIds[i]!,
         );
+        if (!stamped)
+          throw new _Failed({ ok: false, code: "ALREADY_REVERSED" });
       }
 
       // Document-level reversal covers all unreversed lines → original is
