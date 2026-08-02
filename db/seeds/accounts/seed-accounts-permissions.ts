@@ -9,6 +9,33 @@ import { systemConfig } from "@/db/schema/system-config";
 const CONFIG_GROUP = "accounts";
 const CONFIG_KEY = "ACCOUNTS_SEARCH_RESULT_LIMIT";
 
+async function grantPermission(
+  tx: Database,
+  permissionId: string,
+  grants: { roleId: string; permissionType: "READ" | "EDIT" }[],
+): Promise<void> {
+  for (const grant of grants) {
+    const [existing] = await tx
+      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
+      .from(rolePermissionAssign)
+      .where(
+        and(
+          eq(rolePermissionAssign.refRoleId, grant.roleId),
+          eq(rolePermissionAssign.refPermissionId, permissionId),
+        ),
+      )
+      .limit(1);
+
+    if (!existing) {
+      await tx.insert(rolePermissionAssign).values({
+        refRoleId: grant.roleId,
+        refPermissionId: permissionId,
+        permissionType: grant.permissionType,
+      });
+    }
+  }
+}
+
 // Idempotent: checks for existing rows before every insert.
 // Must be called inside the caller's transaction (tx).
 export async function seedAccountsPermissions(tx: Database): Promise<void> {
@@ -73,37 +100,11 @@ export async function seedAccountsPermissions(tx: Database): Promise<void> {
 
   // accounts_view is read-only (ac05-spec §2.6) — MANAGER and USER both hold
   // READ; ADMIN gets READ so platform admins can audit the accounts surface.
-  // No EDIT level for this permission (EDIT lives on accounts_transactions /
-  // accounts_config).
-  const grants: { roleId: string; permissionType: "READ" }[] = [
+  await grantPermission(tx, accountsViewPermission.permissionId, [
     { roleId: managerRole.roleId, permissionType: "READ" },
     { roleId: userRole.roleId, permissionType: "READ" },
     { roleId: adminRole.roleId, permissionType: "READ" },
-  ];
-
-  for (const grant of grants) {
-    const [existing] = await tx
-      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
-      .from(rolePermissionAssign)
-      .where(
-        and(
-          eq(rolePermissionAssign.refRoleId, grant.roleId),
-          eq(
-            rolePermissionAssign.refPermissionId,
-            accountsViewPermission.permissionId,
-          ),
-        ),
-      )
-      .limit(1);
-
-    if (!existing) {
-      await tx.insert(rolePermissionAssign).values({
-        refRoleId: grant.roleId,
-        refPermissionId: accountsViewPermission.permissionId,
-        permissionType: grant.permissionType,
-      });
-    }
-  }
+  ]);
 
   const [accountsTransactionsPermission] = await tx
     .select({ permissionId: permissions.permissionId })
@@ -117,39 +118,12 @@ export async function seedAccountsPermissions(tx: Database): Promise<void> {
     );
   }
 
-  // accounts_transactions is EDIT for both MANAGER and USER (ac07-spec §2.6,
-  // code-standards §8) — MANAGER-vs-USER approval routing is a service-layer
-  // workflow rule (Q20: threshold + approver ≠ creator), not a permission
-  // level. ADMIN gets EDIT too, matching the accounts_view precedent above.
-  const transactionsGrants: { roleId: string; permissionType: "EDIT" }[] = [
+  // accounts_transactions is EDIT for MANAGER, USER, and ADMIN (ac07-spec §2.6).
+  await grantPermission(tx, accountsTransactionsPermission.permissionId, [
     { roleId: managerRole.roleId, permissionType: "EDIT" },
     { roleId: userRole.roleId, permissionType: "EDIT" },
     { roleId: adminRole.roleId, permissionType: "EDIT" },
-  ];
-
-  for (const grant of transactionsGrants) {
-    const [existing] = await tx
-      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
-      .from(rolePermissionAssign)
-      .where(
-        and(
-          eq(rolePermissionAssign.refRoleId, grant.roleId),
-          eq(
-            rolePermissionAssign.refPermissionId,
-            accountsTransactionsPermission.permissionId,
-          ),
-        ),
-      )
-      .limit(1);
-
-    if (!existing) {
-      await tx.insert(rolePermissionAssign).values({
-        refRoleId: grant.roleId,
-        refPermissionId: accountsTransactionsPermission.permissionId,
-        permissionType: grant.permissionType,
-      });
-    }
-  }
+  ]);
 
   const [accountsConfigPermission] = await tx
     .select({ permissionId: permissions.permissionId })
@@ -165,32 +139,8 @@ export async function seedAccountsPermissions(tx: Database): Promise<void> {
 
   // accounts_config is finance-config only (ac12-spec §2.6, architecture §4)
   // — MANAGER and ADMIN hold EDIT; USER gets no accounts_config grant at all.
-  const configGrants: { roleId: string; permissionType: "EDIT" }[] = [
+  await grantPermission(tx, accountsConfigPermission.permissionId, [
     { roleId: managerRole.roleId, permissionType: "EDIT" },
     { roleId: adminRole.roleId, permissionType: "EDIT" },
-  ];
-
-  for (const grant of configGrants) {
-    const [existing] = await tx
-      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
-      .from(rolePermissionAssign)
-      .where(
-        and(
-          eq(rolePermissionAssign.refRoleId, grant.roleId),
-          eq(
-            rolePermissionAssign.refPermissionId,
-            accountsConfigPermission.permissionId,
-          ),
-        ),
-      )
-      .limit(1);
-
-    if (!existing) {
-      await tx.insert(rolePermissionAssign).values({
-        refRoleId: grant.roleId,
-        refPermissionId: accountsConfigPermission.permissionId,
-        permissionType: grant.permissionType,
-      });
-    }
-  }
+  ]);
 }

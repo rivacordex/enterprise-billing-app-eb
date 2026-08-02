@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -62,6 +62,7 @@ export function ReversalsPanel({
 }: ReversalsPanelProps): React.JSX.Element {
   const router = useRouter();
   const disabled = !financialAccountId;
+  const requestIdRef = useRef(0);
 
   const [docId, setDocId] = useState("");
   const [preview, setPreview] = useState<ReversalPreview | null>(null);
@@ -83,10 +84,17 @@ export function ReversalsPanel({
     string[]
   > | null>(null);
 
+  // Cancel any in-flight preview load when financialAccountId changes.
+  useEffect(() => {
+    requestIdRef.current++;
+  }, [financialAccountId]);
+
   async function handleLoadPreview(): Promise<void> {
-    const requestDocId = docId.trim();
     const requestFaId = financialAccountId;
+    const requestDocId = docId.trim();
     if (!requestFaId || !requestDocId) return;
+    // Monotonic token: each call gets a unique ID; stale responses are dropped.
+    const token = ++requestIdRef.current;
     setLoadingPreview(true);
     setPreviewError(null);
     setPreview(null);
@@ -97,9 +105,7 @@ export function ReversalsPanel({
 
     try {
       const result = await getReversalPreviewAction(requestDocId, requestFaId);
-      // Discard stale result if docId or FA changed while loading.
-      if (docId.trim() !== requestDocId || financialAccountId !== requestFaId)
-        return;
+      if (requestIdRef.current !== token) return;
       if (!result.ok) {
         setPreviewError(describeReversalError(result.code));
       } else {
@@ -113,8 +119,7 @@ export function ReversalsPanel({
         setSelectedLineIds(auto);
       }
     } catch {
-      if (docId.trim() !== requestDocId || financialAccountId !== requestFaId)
-        return;
+      if (requestIdRef.current !== token) return;
       setPreviewError("Could not load preview. Please try again.");
     } finally {
       setLoadingPreview(false);
@@ -209,7 +214,9 @@ export function ReversalsPanel({
                 setPreview(null);
                 setPreviewError(null);
                 setError(null);
+                setMessage(null);
                 setFieldErrors(null);
+                requestIdRef.current++;
               }}
             />
           </Field>

@@ -4,13 +4,14 @@ import Link from "next/link";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { GlCodeForm } from "@/components/accounts/gl-code-form";
-import { GlMappingForm } from "@/components/accounts/gl-mapping-form";
+import {
+  GlMappingForm,
+  MappingActionsCell,
+} from "@/components/accounts/gl-mapping-form";
 import { RetireGlCodeButton } from "@/components/accounts/retire-gl-buttons";
-import { RetireGlMappingButton } from "@/components/accounts/retire-gl-buttons";
 import { meetsLevel } from "@/types/permissions";
 import {
   getGlAccountTree,
-  getGlAccount,
   type GlAccountNode,
 } from "@/services/accounts/gl-account";
 import { listGlMappings } from "@/services/accounts/gl-mapping";
@@ -103,7 +104,7 @@ function CoaNode({
   return (
     <li>
       <Link
-        href={`${baseHref}&gl=${node.glCode}`}
+        href={`${baseHref}gl=${node.glCode}`}
         aria-current={isSelected ? "true" : undefined}
         className={[
           "flex items-center gap-2 py-1.5 pr-3 text-body-sm transition-colors hover:bg-[color:var(--surface-sunken)]",
@@ -165,13 +166,14 @@ export default async function ChartOfAccountsPage({
     getGlHealth(),
   ]);
 
-  const selectedAccount = selectedGl ? await getGlAccount(selectedGl) : null;
-
-  // Build flat list from tree for form selectors.
+  // Build flat list from tree for form selectors and account lookup.
   function flatten(nodes: GlAccountNode[]): GlAccountNode[] {
     return nodes.flatMap((n) => [n, ...flatten(n.children)]);
   }
   const allAccounts = flatten(tree);
+
+  const selectedAccount =
+    allAccounts.find((a) => a.glCode === selectedGl) ?? null;
   const activeAccounts = allAccounts.filter((a) => a.state === "active");
   const postableAccounts = activeAccounts.filter((a) => a.isPostable);
 
@@ -422,9 +424,9 @@ export default async function ChartOfAccountsPage({
                     </td>
                     {canEdit && (
                       <td className="px-4 py-2">
-                        <RetireGlMappingButton
-                          glMappingId={m.glMappingId}
-                          lastModified={m.lastModified.toISOString()}
+                        <MappingActionsCell
+                          mapping={m}
+                          postableAccounts={postableAccounts}
                         />
                       </td>
                     )}
@@ -444,6 +446,29 @@ export default async function ChartOfAccountsPage({
             </summary>
             <div className="overflow-x-auto">
               <table className="min-w-full text-body-sm">
+                <thead>
+                  <tr className="border-b border-[color:var(--border-subtle)] bg-[color:var(--surface-sunken)]">
+                    <th className="px-4 py-2 text-left text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      ID
+                    </th>
+                    <th className="px-4 py-2 text-left text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      Type
+                    </th>
+                    <th className="px-4 py-2 text-left text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      Selector
+                    </th>
+                    <th className="px-4 py-2 text-left text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      Currency
+                    </th>
+                    <th className="px-4 py-2 text-left text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      Target GL
+                    </th>
+                    <th className="px-4 py-2 text-left text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      State
+                    </th>
+                    {canEdit && <th className="px-4 py-2" />}
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-[color:var(--border-subtle)]">
                   {retiredMappings.map((m) => (
                     <tr

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { glAccount } from "@/db/schema/billing/catalogs";
@@ -35,14 +35,29 @@ export const glAccountRepository = {
     return row;
   },
 
-  // CAS retire: returns 'updated' on success, 'conflict' if lastModified
-  // doesn't match (concurrent edit), 'already_retired' if already retired,
-  // or 'not_found' if the code doesn't exist.
+  // CAS retire: issues a single atomic UPDATE constrained on glCode,
+  // lastModified, and non-retired state. Returns 'updated' on success;
+  // performs a diagnostic SELECT to classify the failure into 'conflict',
+  // 'already_retired', or 'not_found' when 0 rows are affected.
   async retire(
     db: Database,
     glCode: string,
     lastModified: Date,
   ): Promise<"updated" | "conflict" | "already_retired" | "not_found"> {
+    const [updated] = await db
+      .update(glAccount)
+      .set({ state: "retired", lastModified: sql`now()` })
+      .where(
+        and(
+          eq(glAccount.glCode, glCode),
+          eq(glAccount.lastModified, lastModified),
+          ne(glAccount.state, "retired"),
+        ),
+      )
+      .returning();
+
+    if (updated) return "updated";
+
     const [current] = await db
       .select()
       .from(glAccount)
@@ -50,13 +65,6 @@ export const glAccountRepository = {
       .limit(1);
     if (!current) return "not_found";
     if (current.state === "retired") return "already_retired";
-    if (current.lastModified.getTime() !== lastModified.getTime())
-      return "conflict";
-
-    await db
-      .update(glAccount)
-      .set({ state: "retired", lastModified: sql`now()` })
-      .where(eq(glAccount.glCode, glCode));
-    return "updated";
+    return "conflict";
   },
 };

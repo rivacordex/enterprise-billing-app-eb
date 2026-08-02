@@ -84,6 +84,7 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     afterAll(async () => {
+      if (!sql) return;
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
@@ -263,9 +264,11 @@ describe.skipIf(!databaseUrl)(
 
       // Retire the spare mapping inside a transaction (0 orphans — USD accounts
       // don't exist, so no pgledger accounts are affected).
-      await sql`
-        UPDATE billing.gl_mapping SET state = 'retired' WHERE gl_mapping_id = ${spare.id}
-      `;
+      await sql.begin(async (tx) => {
+        await tx`
+          UPDATE billing.gl_mapping SET state = 'retired' WHERE gl_mapping_id = ${spare.id}
+        `;
+      });
 
       // Row must still exist (retired, not deleted).
       const [check] = await sql<{ state: string }[]>`
@@ -278,6 +281,57 @@ describe.skipIf(!databaseUrl)(
         SELECT count(*)::text AS cnt FROM billing.gl_resolution_view WHERE gl_code IS NULL
       `;
       expect(Number(health?.cnt)).toBe(0);
+    });
+
+    // ── Service-layer retire ──────────────────────────────────────────────────
+
+    it("V5 — service-layer retireGlMapping: OK for non-orphaning retire, ORPHAN_BLOCK for sole mapping", async () => {
+      const { retireGlMapping } =
+        await import("@/services/accounts/gl-mapping");
+
+      // Insert a spare (EUR selector — no EUR pgledger accounts, so 0 orphans).
+      const [spare] = await sql<{ id: string; lm: Date }[]>`
+        INSERT INTO billing.gl_mapping (selector_type, selector, currency, ref_gl_code)
+        VALUES ('system_account', 'sys.cash.MYR', 'EUR', '1050')
+        RETURNING gl_mapping_id AS id, last_modified AS lm
+      `;
+      if (!spare) throw new Error("spare insert failed");
+
+      const okResult = await retireGlMapping(spare.id, spare.lm, "test-actor");
+      expect(okResult).toEqual({ ok: true });
+
+      const [retiredRow] = await sql<{ state: string }[]>`
+        SELECT state FROM billing.gl_mapping WHERE gl_mapping_id = ${spare.id} LIMIT 1
+      `;
+      expect(retiredRow?.state).toBe("retired");
+
+      // ORPHAN_BLOCK: retire the sole active MYR mapping for sys.revenue.MYR.
+      const [revRow] = await sql<{ id: string; lm: Date }[]>`
+        SELECT gl_mapping_id AS id, last_modified AS lm
+        FROM billing.gl_mapping
+        WHERE selector_type = 'system_account' AND selector = 'sys.revenue.MYR'
+          AND state = 'active'
+        LIMIT 1
+      `;
+      if (!revRow) throw new Error("sys.revenue.MYR mapping not found");
+
+      const blockResult = await retireGlMapping(
+        revRow.id,
+        revRow.lm,
+        "test-actor",
+      );
+      expect(blockResult.ok).toBe(false);
+      if (!blockResult.ok) {
+        expect(blockResult.code).toBe("ORPHAN_BLOCK");
+        expect(
+          (blockResult as { affectedAccounts: string[] }).affectedAccounts,
+        ).toContain("sys.revenue.MYR");
+      }
+
+      const [check] = await sql<{ state: string }[]>`
+        SELECT state FROM billing.gl_mapping WHERE gl_mapping_id = ${revRow.id} LIMIT 1
+      `;
+      expect(check?.state).toBe("active");
     });
 
     // ── GL code retire: stays in resolution joins ─────────────────────────────

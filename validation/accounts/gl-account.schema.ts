@@ -25,7 +25,7 @@ export const retireGlCodeSchema = z.object({
   glCode: z.string().min(1),
   // ISO string — Date objects don't survive the server-action boundary
   // (ac11 precedent; z.coerce.date() converts back for the service).
-  lastModified: z.string().datetime(),
+  lastModified: z.iso.datetime(),
 });
 
 export type RetireGlCodeInput = z.infer<typeof retireGlCodeSchema>;

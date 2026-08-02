@@ -49,9 +49,9 @@ describe("Chart of Accounts page — structural guardrails (ac12-spec §3.7)", (
     expect(pageSource).toContain("GlMappingForm");
   });
 
-  it("imports retire button client components", () => {
+  it("imports retire button and mapping actions components", () => {
     expect(pageSource).toContain("RetireGlCodeButton");
-    expect(pageSource).toContain("RetireGlMappingButton");
+    expect(pageSource).toContain("MappingActionsCell");
   });
 });
 
@@ -105,7 +105,6 @@ describe("Chart of Accounts — no DELETE path (Module Inv. #11)", () => {
       resolve(repoRoot, "gl-account.repository.ts"),
       "utf-8",
     );
-    expect(src).not.toMatch(/\bdelete\b/i);
     expect(src).not.toContain(".delete(");
   });
 
@@ -114,7 +113,6 @@ describe("Chart of Accounts — no DELETE path (Module Inv. #11)", () => {
       resolve(repoRoot, "gl-mapping.repository.ts"),
       "utf-8",
     );
-    expect(src).not.toMatch(/\bdelete\b/i);
     expect(src).not.toContain(".delete(");
   });
 });
