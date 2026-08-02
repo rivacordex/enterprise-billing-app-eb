@@ -35,6 +35,7 @@ const ROUTE_MANIFEST = [
   "/accounts/ledger",
   "/accounts/transactions",
   "/accounts/chart-of-accounts",
+  "/accounts/gl-journal",
 ] as const;
 
 function collectPageFiles(dir: string): string[] {
