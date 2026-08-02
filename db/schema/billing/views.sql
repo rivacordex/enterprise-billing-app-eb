@@ -76,6 +76,7 @@ LEFT JOIN LATERAL (
       (lb.ledger_role IS NULL AND selector_type = 'system_account' AND selector = pav.name)
     )
     AND (currency IS NULL OR currency = pav.currency)
+    AND state = 'active'
   ORDER BY currency NULLS LAST
   LIMIT 1
 ) gm ON true;

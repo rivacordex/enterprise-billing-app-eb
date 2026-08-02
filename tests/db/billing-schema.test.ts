@@ -210,6 +210,7 @@ describe("billing.gl_mapping", () => {
         "selector",
         "currency",
         "ref_gl_code",
+        "state",
         "last_modified",
         "last_edited_by",
       ].sort(),

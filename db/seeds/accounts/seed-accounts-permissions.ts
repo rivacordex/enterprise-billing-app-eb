@@ -150,4 +150,47 @@ export async function seedAccountsPermissions(tx: Database): Promise<void> {
       });
     }
   }
+
+  const [accountsConfigPermission] = await tx
+    .select({ permissionId: permissions.permissionId })
+    .from(permissions)
+    .where(eq(permissions.permissionName, "accounts_config"))
+    .limit(1);
+
+  if (!accountsConfigPermission) {
+    throw new Error(
+      "accounts_config permission not found. Run db:migrate first.",
+    );
+  }
+
+  // accounts_config is finance-config only (ac12-spec §2.6, architecture §4)
+  // — MANAGER and ADMIN hold EDIT; USER gets no accounts_config grant at all.
+  const configGrants: { roleId: string; permissionType: "EDIT" }[] = [
+    { roleId: managerRole.roleId, permissionType: "EDIT" },
+    { roleId: adminRole.roleId, permissionType: "EDIT" },
+  ];
+
+  for (const grant of configGrants) {
+    const [existing] = await tx
+      .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
+      .from(rolePermissionAssign)
+      .where(
+        and(
+          eq(rolePermissionAssign.refRoleId, grant.roleId),
+          eq(
+            rolePermissionAssign.refPermissionId,
+            accountsConfigPermission.permissionId,
+          ),
+        ),
+      )
+      .limit(1);
+
+    if (!existing) {
+      await tx.insert(rolePermissionAssign).values({
+        refRoleId: grant.roleId,
+        refPermissionId: accountsConfigPermission.permissionId,
+        permissionType: grant.permissionType,
+      });
+    }
+  }
 }
