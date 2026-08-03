@@ -141,6 +141,13 @@
       "when": 1785470400000,
       "tag": "0019_validate_gl_mapping_state",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785556800000,
+      "tag": "0020_accounts_config_permission",
+      "breakpoints": true
     }
   ]
 }
