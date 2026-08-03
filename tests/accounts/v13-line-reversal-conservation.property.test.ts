@@ -1,4 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Hoisted by Vitest before all imports. Service modules imported below
+// (capturePayment, allocatePayment, etc.) transitively import @/db/client,
+// which reads DATABASE_URL at module load and throws when it is absent.
+// This mock intercepts that import: when DATABASE_URL is unset the stub
+// db value is returned so the module loads cleanly; describe.skipIf
+// below ensures the stub is never actually invoked. When DATABASE_URL is
+// present, importOriginal() returns the real module unchanged.
+vi.mock("@/db/client", async (importOriginal) => {
+  if (!process.env.DATABASE_URL) return { db: {} };
+  return importOriginal();
+});
 import * as fc from "fast-check";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -6,7 +18,8 @@ import postgres from "postgres";
 import type postgresjs from "postgres";
 
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { db } from "@/db/client";
+import type { Database } from "@/db/client";
+import * as schema from "@/db/schema";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
@@ -30,6 +43,7 @@ describe.skipIf(!databaseUrl)(
   "V13 — line-level reversal conservation (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let testDb: Database;
     let creatorId: string;
     let financialAccountId: string;
     let billingAccountId: string;
@@ -68,6 +82,7 @@ describe.skipIf(!databaseUrl)(
       await migrateSql.end();
 
       sql = postgres(databaseUrl as string, { max: 1 });
+      testDb = drizzle(sql, { schema }) as unknown as Database;
 
       const [creator] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -216,7 +231,7 @@ describe.skipIf(!databaseUrl)(
 
       // Identify the allocation line.
       const allocLines = await documentLineRepository.findByDocumentId(
-        db,
+        testDb,
         allocDocId,
       );
       expect(allocLines).toHaveLength(1);
@@ -225,7 +240,7 @@ describe.skipIf(!databaseUrl)(
       expect(allocLine.reversedByLineId).toBeNull();
 
       // Get the allocation doc's lastModified for the CAS lock.
-      const allocDoc = await documentRepository.findById(db, allocDocId);
+      const allocDoc = await documentRepository.findById(testDb, allocDocId);
       expect(allocDoc).not.toBeNull();
 
       // Reverse only the allocation line (V13: line-level, Q5).
@@ -253,7 +268,7 @@ describe.skipIf(!databaseUrl)(
 
       // Capture line is untouched — sys.cash still holds the captured 1500.
       const capLines = await documentLineRepository.findByDocumentId(
-        db,
+        testDb,
         cap.value.documentId,
       );
       expect(capLines[0]!.pgledgerTransferId).not.toBeNull();
@@ -261,14 +276,17 @@ describe.skipIf(!databaseUrl)(
 
       // Original allocation line now carries reversedByLineId.
       const updatedAllocLine = await documentLineRepository.findById(
-        db,
+        testDb,
         allocLine.documentLineId,
       );
       expect(updatedAllocLine!.reversedByLineId).not.toBeNull();
 
       // Original alloc doc stays 'posted' (line-level — only one line reversed,
       // and it IS all lines, so the doc flips to 'reversed').
-      const updatedAllocDoc = await documentRepository.findById(db, allocDocId);
+      const updatedAllocDoc = await documentRepository.findById(
+        testDb,
+        allocDocId,
+      );
       expect(updatedAllocDoc!.state).toBe("reversed");
 
       // V1 zero-sum.
@@ -319,10 +337,10 @@ describe.skipIf(!databaseUrl)(
         const allocDocId = alloc.value.documentId;
 
         const allocLines = await documentLineRepository.findByDocumentId(
-          db,
+          testDb,
           allocDocId,
         );
-        const allocDoc = await documentRepository.findById(db, allocDocId);
+        const allocDoc = await documentRepository.findById(testDb, allocDocId);
 
         // Conservation check after allocation.
         const recAfterAlloc = await balanceOf(receivablesAccountId);
@@ -379,7 +397,7 @@ describe.skipIf(!databaseUrl)(
       expect(cap.value.state).toBe("posted");
       const capDocId = cap.value.documentId;
 
-      const capDoc = await documentRepository.findById(db, capDocId);
+      const capDoc = await documentRepository.findById(testDb, capDocId);
       expect(capDoc!.state).toBe("posted");
 
       // Reverse the entire capture document.
@@ -400,12 +418,12 @@ describe.skipIf(!databaseUrl)(
       expect(rev.value.state).toBe("posted");
 
       // Original doc → 'reversed'.
-      const updatedDoc = await documentRepository.findById(db, capDocId);
+      const updatedDoc = await documentRepository.findById(testDb, capDocId);
       expect(updatedDoc!.state).toBe("reversed");
 
       // All original lines stamped.
       const capLines = await documentLineRepository.findByDocumentId(
-        db,
+        testDb,
         capDocId,
       );
       for (const line of capLines) {
@@ -524,11 +542,11 @@ describe.skipIf(!databaseUrl)(
             if (!alloc.ok) return true;
 
             const lines = await documentLineRepository.findByDocumentId(
-              db,
+              testDb,
               alloc.value.documentId,
             );
             const allocDoc = await documentRepository.findById(
-              db,
+              testDb,
               alloc.value.documentId,
             );
 

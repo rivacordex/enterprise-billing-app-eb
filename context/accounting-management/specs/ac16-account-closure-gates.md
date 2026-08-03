@@ -13,7 +13,7 @@ Add BAN and FA closure gated on zero balances (Q11): **close-BAN** requires A/R 
 
 ## 2. Design
 
-The lifecycle's terminal chapter — it composes ac07–ac11 operations behind gates, adding no new posting mechanism. Boundary: **`services/accounts/{close-billing-account,close-financial-account,closure-eligibility}.ts`, `validation/accounts/close-account.schema.ts`, `actions/accounts/{close-billing-account,close-financial-account}.action.ts`, the closure UI + guided settle-first wizard on Accounts Overview (or a closure panel), and the Customer → CLOSED gate touchpoint**. No schema change (ac02's `state` columns), no new permission (`accounts_transactions:EDIT` to close — closing moves money-account state; confirm vs `accounts_config` — this spec uses `accounts_transactions:EDIT` since closure is an operational, not config, act; flag if Khek prefers config).
+The lifecycle's terminal chapter — it composes ac07–ac11 operations behind gates, adding no new posting mechanism. Boundary: **`services/accounts/{close-billing-account,close-financial-account,closure-eligibility}.ts`, `validation/accounts/close-account.schema.ts`, `actions/accounts/{close-billing-account,close-financial-account}.ts`, the closure UI + guided settle-first wizard on Accounts Overview (or a closure panel), and the Customer → CLOSED gate touchpoint**. No schema change (ac02's `state` columns), no new permission (`accounts_transactions:EDIT` to close — closing moves money-account state; confirm vs `accounts_config` — this spec uses `accounts_transactions:EDIT` since closure is an operational, not config, act; flag if Khek prefers config).
 
 ### 2.1 Zero-balance gates (Q11, Inv. #12, code-standards §1.5)
 

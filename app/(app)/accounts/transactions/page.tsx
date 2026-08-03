@@ -65,10 +65,10 @@ export default async function TransactionsPage({
             unappliedCashAvailable: "0.00",
           }),
       canEdit && ctx.ban
-        ? getBillingAccountClosureEligibility(ctx.ban)
+        ? getBillingAccountClosureEligibility(ctx.ban).catch(() => null)
         : Promise.resolve(null),
       canEdit && ctx.fa
-        ? getFinancialAccountClosureEligibility(ctx.fa)
+        ? getFinancialAccountClosureEligibility(ctx.fa).catch(() => null)
         : Promise.resolve(null),
     ]);
 

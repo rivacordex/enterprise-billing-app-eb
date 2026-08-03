@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { isUniqueViolation } from "@/db/errors";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billCycleRepository } from "@/db/repositories/accounts/bill-cycle.repository";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
@@ -20,14 +21,6 @@ export type RetireBillCycleResult =
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "ALREADY_RETIRED" }
   | { ok: false; code: "CONFLICT" };
-
-function isUniqueViolation(e: unknown): boolean {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    (e as { code?: string }).code === "23505"
-  );
-}
 
 export async function listBillCycles(): Promise<BillCycle[]> {
   return billCycleRepository.findAll(db);
@@ -147,6 +140,23 @@ export async function retireBillCycle(
   const result = await db.transaction(async (tx) => {
     const r = await billCycleRepository.retire(tx, billCycleId, lastModified);
     if (r !== "updated") return r;
+
+    // If this cycle is the current default, clear it atomically with retirement.
+    const configRows = await systemConfigRepository.findAllNonSecret(tx);
+    const defaultRow = configRows.find(
+      (c) =>
+        c.configGroup === "accounts" &&
+        c.configKey === "ACCOUNTS_DEFAULT_BILL_CYCLE" &&
+        c.configValue === billCycleId,
+    );
+    if (defaultRow) {
+      await systemConfigRepository.updateValue(
+        tx,
+        defaultRow.configId,
+        null,
+        actorId,
+      );
+    }
 
     await insertAuditEvent(tx, {
       eventType: "BILL_CYCLE_CHANGED",

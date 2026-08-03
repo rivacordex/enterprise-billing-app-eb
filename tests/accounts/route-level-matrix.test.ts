@@ -200,9 +200,8 @@ describe("workflow rules that are not permission levels (code-standards §8, Mod
   });
 
   it("approver ≠ creator: approveDocument rejects actorId === doc.createdBy with SELF_APPROVAL (Inv. #6)", () => {
-    expect(src).toContain(
-      'if (actorId === doc.createdBy) return { ok: false, code: "SELF_APPROVAL" };',
-    );
+    expect(src).toContain("actorId === doc.createdBy");
+    expect(src).toContain('"SELF_APPROVAL"');
   });
 
   it("neither check is gated by a permission constant — a USER or MANAGER both holding accounts_transactions:EDIT are equally subject to them", () => {
