@@ -11,17 +11,22 @@ export interface AmountCellProps {
   className?: string;
 }
 
+// Pure string manipulation — no `Number()`/`parseFloat()` on the amount
+// (code-standards §2.2, ac17 grep-gate: money arithmetic/formatting outside
+// money.ts must never touch a float). `amount` is always a well-formed
+// `numeric(18,2)`-derived string ("1234.56" / "-1234.56" / "0.00"), so sign
+// and grouping are derived directly from the text.
 function formatAmount(amount: string): {
   display: string;
   negative: boolean;
 } {
-  const num = Number(amount);
-  const negative = num < 0;
-  const abs = Math.abs(num);
-  const formatted = abs.toLocaleString("en-MY", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const trimmed = amount.trim();
+  const negative = trimmed.startsWith("-");
+  const unsigned = negative ? trimmed.slice(1) : trimmed;
+  const [wholePart = "0", fractionPart = ""] = unsigned.split(".");
+  const fraction = fractionPart.padEnd(2, "0").slice(0, 2);
+  const grouped = wholePart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const formatted = `${grouped}.${fraction}`;
   return { display: negative ? `(${formatted})` : formatted, negative };
 }
 

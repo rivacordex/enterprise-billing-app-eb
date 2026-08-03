@@ -114,7 +114,7 @@ describe.skipIf(!databaseUrl)(
         expect(result).toHaveLength(3);
       });
 
-      it("ADMIN's mappings are users:DELETE, roles:DELETE, system_config:DELETE, audit_log:READ, products:null", async () => {
+      it("ADMIN's mappings are users:DELETE, roles:DELETE, system_config:DELETE, audit_log:READ, products/customers/accounts_*:null", async () => {
         const result = await getAllRolesWithMappings();
         const admin = result.find((r) => r.roleName === "ADMIN")!;
         expect(admin.mappings).toEqual([
@@ -124,6 +124,9 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "audit_log", assignedLevel: "READ" },
           { permissionName: "products", assignedLevel: null },
           { permissionName: "customers", assignedLevel: null },
+          { permissionName: "accounts_view", assignedLevel: null },
+          { permissionName: "accounts_transactions", assignedLevel: null },
+          { permissionName: "accounts_config", assignedLevel: null },
         ]);
       });
 
@@ -137,7 +140,7 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      it("mappings order is always users, roles, system_config, audit_log, products, customers regardless of DB row order", async () => {
+      it("mappings order is always users, roles, system_config, audit_log, products, customers, accounts_view, accounts_transactions, accounts_config regardless of DB row order", async () => {
         const result = await getAllRolesWithMappings();
         for (const role of result) {
           expect(role.mappings.map((m) => m.permissionName)).toEqual([
@@ -147,6 +150,9 @@ describe.skipIf(!databaseUrl)(
             "audit_log",
             "products",
             "customers",
+            "accounts_view",
+            "accounts_transactions",
+            "accounts_config",
           ]);
         }
       });
@@ -163,6 +169,9 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "audit_log", assignedLevel: "READ" },
           { permissionName: "products", assignedLevel: null },
           { permissionName: "customers", assignedLevel: null },
+          { permissionName: "accounts_view", assignedLevel: null },
+          { permissionName: "accounts_transactions", assignedLevel: null },
+          { permissionName: "accounts_config", assignedLevel: null },
         ]);
       });
 
