@@ -25,9 +25,11 @@ describe("GL Journal page — structural guardrails (ac13-spec §3.6)", () => {
     expect(pageSource).not.toContain("PERMISSIONS.ACCOUNTS_TRANSACTIONS");
   });
 
-  it("has no write affordance (read-only — export/close are ac14)", () => {
+  it("has no server-action affordance (mutations are in actions/, not the page)", () => {
     expect(pageSource).not.toContain('"use server"');
-    expect(pageSource).not.toContain("LEVELS.EDIT");
+    // ac14 added LEVELS.EDIT for the canEdit check (close-period / export
+    // buttons) — the page uses it for a read-only permission check, not for
+    // mutations. The mutation boundary stays in action files.
   });
 
   it("has no direct pgledger references (repository-only access, module inv. #4)", () => {
