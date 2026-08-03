@@ -64,16 +64,32 @@ function collectSourceFiles(): SourceFile[] {
 // mention a restricted identifier by name (common throughout this module's
 // heavily-annotated source — every unit's progress-tracker-style comments
 // reference `pgledger_*` names in prose) isn't mistaken for a real call
-// site. Deliberately simple (line comments only, no block-comment
-// stripping) — matches the actual comment style used throughout this
-// codebase (verified: no module source file uses `/* */` for this kind of
-// prose).
+// site. Line comments only (no block-comment stripping) — matches the actual
+// comment style used throughout this codebase (verified: no module source
+// file uses `/* */` for this kind of prose). String-aware: `//` inside a
+// quoted string literal is preserved so URLs in strings aren't truncated.
 function stripLineComments(content: string): string {
   return content
     .split("\n")
     .map((line) => {
-      const idx = line.indexOf("//");
-      return idx === -1 ? line : line.slice(0, idx);
+      let inString = false;
+      let stringChar = "";
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i]!;
+        if (inString) {
+          if (ch === "\\") {
+            i++; // skip escaped character
+          } else if (ch === stringChar) {
+            inString = false;
+          }
+        } else if (ch === '"' || ch === "'" || ch === "`") {
+          inString = true;
+          stringChar = ch;
+        } else if (ch === "/" && line[i + 1] === "/") {
+          return line.slice(0, i);
+        }
+      }
+      return line;
     })
     .join("\n");
 }
@@ -239,7 +255,9 @@ describe("grep gate — no delete function on any billing.* table (code-standard
   it.each(repoFiles.map((f) => path.relative(REPO_ROOT, f)))(
     "%s has no .delete(/DROP/DELETE FROM billing.* call",
     (relativePath) => {
-      const src = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+      const src = stripLineComments(
+        fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8"),
+      );
       expect(src).not.toContain(".delete(");
       expect(src).not.toMatch(/\bDROP\s+TABLE\b/i);
       expect(src).not.toMatch(/\bDELETE\s+FROM\b/i);
@@ -266,7 +284,9 @@ describe("grep gate — no monetary balance column in any billing module table (
   it.each(schemaFiles.map((f) => path.relative(REPO_ROOT, f)))(
     "%s declares no stored balance column",
     (relativePath) => {
-      const src = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+      const src = stripLineComments(
+        fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8"),
+      );
       expect(src).not.toMatch(BALANCE_COLUMN_PATTERN);
     },
   );
@@ -306,7 +326,9 @@ describe("grep gate — no --ai-*/gradient tokens on any /accounts/** or account
   it.each(surfaceFiles.map((f) => path.relative(REPO_ROOT, f)))(
     "%s has no --ai-*/--gradient-* token",
     (relativePath) => {
-      const src = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+      const src = stripLineComments(
+        fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8"),
+      );
       expect(src).not.toMatch(AI_GRADIENT_PATTERN);
     },
   );

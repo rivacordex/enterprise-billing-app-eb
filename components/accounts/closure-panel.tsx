@@ -73,6 +73,8 @@ export function ClosurePanel({
   const [submittingFa, setSubmittingFa] = useState(false);
   const [banError, setBanError] = useState<string | null>(null);
   const [faError, setFaError] = useState<string | null>(null);
+  const [banConflict, setBanConflict] = useState(false);
+  const [faConflict, setFaConflict] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const disabled = !ban && !fa;
@@ -81,6 +83,7 @@ export function ClosurePanel({
     if (!ban) return;
     setSubmittingBan(true);
     setBanError(null);
+    setBanConflict(false);
     setMessage(null);
     try {
       const result = await closeBillingAccountAction({
@@ -89,6 +92,7 @@ export function ClosurePanel({
       });
       if (!result.ok) {
         setBanError(describeCloseError(result.code));
+        setBanConflict(result.code === "CONFLICT");
         return;
       }
       setMessage(`Billing account ${result.value.billingAccountId} closed.`);
@@ -104,6 +108,7 @@ export function ClosurePanel({
     if (!fa) return;
     setSubmittingFa(true);
     setFaError(null);
+    setFaConflict(false);
     setMessage(null);
     try {
       const result = await closeFinancialAccountAction({
@@ -112,6 +117,7 @@ export function ClosurePanel({
       });
       if (!result.ok) {
         setFaError(describeCloseError(result.code));
+        setFaConflict(result.code === "CONFLICT");
         return;
       }
       setMessage(
@@ -164,7 +170,20 @@ export function ClosurePanel({
               account can close.
             </p>
           )}
-          {banError && <FieldError role="alert">{banError}</FieldError>}
+          {banError && (
+            <>
+              <FieldError role="alert">{banError}</FieldError>
+              {banConflict && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => router.refresh()}
+                >
+                  Reload
+                </Button>
+              )}
+            </>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -207,7 +226,20 @@ export function ClosurePanel({
                 " — unapplied cash and deposits must both reach zero."}
             </p>
           )}
-          {faError && <FieldError role="alert">{faError}</FieldError>}
+          {faError && (
+            <>
+              <FieldError role="alert">{faError}</FieldError>
+              {faConflict && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => router.refresh()}
+                >
+                  Reload
+                </Button>
+              )}
+            </>
+          )}
           <Button
             type="button"
             variant="outline"
