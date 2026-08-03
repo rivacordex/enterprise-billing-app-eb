@@ -141,22 +141,16 @@ export async function retireBillCycle(
     const r = await billCycleRepository.retire(tx, billCycleId, lastModified);
     if (r !== "updated") return r;
 
-    // If this cycle is the current default, clear it atomically with retirement.
-    const configRows = await systemConfigRepository.findAllNonSecret(tx);
-    const defaultRow = configRows.find(
-      (c) =>
-        c.configGroup === "accounts" &&
-        c.configKey === "ACCOUNTS_DEFAULT_BILL_CYCLE" &&
-        c.configValue === billCycleId,
+    // CAS: clear ACCOUNTS_DEFAULT_BILL_CYCLE only if it still points at this
+    // cycle. Zero affected rows means a concurrent writer already moved the
+    // default elsewhere — that's fine; no cleanup needed.
+    await systemConfigRepository.clearValueIfEquals(
+      tx,
+      "accounts",
+      "ACCOUNTS_DEFAULT_BILL_CYCLE",
+      billCycleId,
+      actorId,
     );
-    if (defaultRow) {
-      await systemConfigRepository.updateValue(
-        tx,
-        defaultRow.configId,
-        null,
-        actorId,
-      );
-    }
 
     await insertAuditEvent(tx, {
       eventType: "BILL_CYCLE_CHANGED",
@@ -197,23 +191,25 @@ export async function setDefaultBillCycle(
       code: "CYCLE_NOT_FOUND" | "CYCLE_RETIRED" | "CONFIG_NOT_FOUND";
     }
 > {
-  const cycle = await billCycleRepository.findById(db, billCycleId);
-  if (!cycle) return { ok: false, code: "CYCLE_NOT_FOUND" };
-  if (cycle.state !== "active") return { ok: false, code: "CYCLE_RETIRED" };
+  return db.transaction(async (tx) => {
+    const cycle = await billCycleRepository.findById(tx, billCycleId);
+    if (!cycle) return { ok: false, code: "CYCLE_NOT_FOUND" };
+    if (cycle.state !== "active") return { ok: false, code: "CYCLE_RETIRED" };
 
-  const allConfig = await systemConfigRepository.findAllNonSecret(db);
-  const row = allConfig.find(
-    (r) =>
-      r.configGroup === "accounts" &&
-      r.configKey === "ACCOUNTS_DEFAULT_BILL_CYCLE",
-  );
-  if (!row) return { ok: false, code: "CONFIG_NOT_FOUND" };
+    const allConfig = await systemConfigRepository.findAllNonSecret(tx);
+    const row = allConfig.find(
+      (r) =>
+        r.configGroup === "accounts" &&
+        r.configKey === "ACCOUNTS_DEFAULT_BILL_CYCLE",
+    );
+    if (!row) return { ok: false, code: "CONFIG_NOT_FOUND" };
 
-  await systemConfigRepository.updateValue(
-    db,
-    row.configId,
-    billCycleId,
-    actorId,
-  );
-  return { ok: true };
+    await systemConfigRepository.updateValue(
+      tx,
+      row.configId,
+      billCycleId,
+      actorId,
+    );
+    return { ok: true };
+  });
 }

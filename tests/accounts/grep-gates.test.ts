@@ -68,30 +68,79 @@ function collectSourceFiles(): SourceFile[] {
 // comment style used throughout this codebase (verified: no module source
 // file uses `/* */` for this kind of prose). String-aware: `//` inside a
 // quoted string literal is preserved so URLs in strings aren't truncated.
+// Cross-line state is carried across iterations so multiline template
+// literals are handled correctly — a // on a continuation line is string
+// content, not a comment. Template-literal ${...} interpolation is tracked
+// so expressions inside ${} remain detectable as code.
 function stripLineComments(content: string): string {
-  return content
-    .split("\n")
-    .map((line) => {
-      let inString = false;
-      let stringChar = "";
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i]!;
-        if (inString) {
-          if (ch === "\\") {
-            i++; // skip escaped character
-          } else if (ch === stringChar) {
-            inString = false;
+  // mode/interpDepth persist across lines for multiline template literals.
+  let mode: "code" | "string" | "template" = "code";
+  let stringChar = ""; // closing delimiter for mode === "string" (' or ")
+  let interpDepth = 0; // ${...} nesting depth inside a template literal
+
+  const lines = content.split("\n");
+  const result: string[] = [];
+
+  for (const line of lines) {
+    let cutAt = -1;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]!;
+      const next = line[i + 1];
+
+      if (mode === "string") {
+        if (ch === "\\") {
+          i++; // skip escaped character
+          continue;
+        }
+        if (ch === stringChar) {
+          mode = "code";
+          stringChar = "";
+        }
+      } else if (mode === "template") {
+        if (ch === "\\") {
+          i++;
+          continue;
+        }
+        if (ch === "`") {
+          mode = "code";
+        } else if (ch === "$" && next === "{") {
+          mode = "code";
+          interpDepth = 1;
+          i++; // consume "{"
+        }
+      } else {
+        // code mode — outside any string, or inside a ${...} interpolation
+        if (ch === "\\") {
+          i++;
+          continue;
+        }
+        if (interpDepth > 0) {
+          if (ch === "{") {
+            interpDepth++;
+            continue;
           }
-        } else if (ch === '"' || ch === "'" || ch === "`") {
-          inString = true;
+          if (ch === "}") {
+            if (--interpDepth === 0) mode = "template";
+            continue;
+          }
+        }
+        if (ch === '"' || ch === "'") {
+          mode = "string";
           stringChar = ch;
-        } else if (ch === "/" && line[i + 1] === "/") {
-          return line.slice(0, i);
+        } else if (ch === "`") {
+          mode = "template";
+        } else if (ch === "/" && next === "/") {
+          cutAt = i;
+          break;
         }
       }
-      return line;
-    })
-    .join("\n");
+    }
+
+    result.push(cutAt >= 0 ? line.slice(0, cutAt) : line);
+  }
+
+  return result.join("\n");
 }
 
 const ALL_SOURCE_FILES = collectSourceFiles();
@@ -335,5 +384,40 @@ describe("grep gate — no --ai-*/gradient tokens on any /accounts/** or account
 
   it("at least one Accounts surface file was actually scanned (the gate isn't vacuously passing)", () => {
     expect(surfaceFiles.length).toBeGreaterThan(0);
+  });
+});
+
+describe("stripLineComments — multiline template literal regression", () => {
+  it("preserves URL content after :// on a continuation line of a template literal", () => {
+    const src = ["const x = `", "  https://api.example.com", "`;"].join("\n");
+    const stripped = stripLineComments(src);
+    // Per-line state (broken): line 2 resets to code mode, sees //, strips to
+    // "  https:". Cross-line state (fixed): line 2 is inside the template
+    // literal, // is string content, full URL is preserved.
+    expect(stripped).toContain("https://api.example.com");
+  });
+
+  it("exposes forbidden calls hidden after :// in a multiline template URL (false-negative regression)", () => {
+    const src = [
+      "const msg = `",
+      "  https://api.example.com/data.delete(id)/docs",
+      "`;",
+    ].join("\n");
+    const stripped = stripLineComments(src);
+    // :// was treated as a // comment, stripping the rest of the line and
+    // hiding the .delete( call that follows in the same URL path.
+    expect(stripped).toContain(".delete(id)");
+    expect(stripped).toContain("https://api.example.com");
+  });
+
+  it("exposes ${...} interpolation expressions even when preceded by :// on the same template line", () => {
+    const src = [
+      "const x = `",
+      "  https://api.example.com/${accounts.delete(id)}",
+      "`;",
+    ].join("\n");
+    const stripped = stripLineComments(src);
+    expect(stripped).toContain("accounts.delete(id)");
+    expect(stripped).toContain("https://api.example.com/");
   });
 });
