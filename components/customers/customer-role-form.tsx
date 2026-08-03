@@ -74,6 +74,7 @@ export function CustomerRoleForm({
               | "CONFLICT"
               | "INVALID_TRANSITION"
               | "VALIDATION_ERROR"
+              | "ACCOUNTS_STILL_OPEN"
               | "CANCELLED";
           },
     ) => void;
@@ -121,6 +122,7 @@ export function CustomerRoleForm({
           | "CONFLICT"
           | "INVALID_TRANSITION"
           | "VALIDATION_ERROR"
+          | "ACCOUNTS_STILL_OPEN"
           | "CANCELLED";
       }
   > {
@@ -147,7 +149,11 @@ export function CustomerRoleForm({
       return result;
     }
 
-    if (result.code === "CONFLICT" || result.code === "INVALID_TRANSITION") {
+    if (
+      result.code === "CONFLICT" ||
+      result.code === "INVALID_TRANSITION" ||
+      result.code === "ACCOUNTS_STILL_OPEN"
+    ) {
       return result;
     }
 

@@ -142,6 +142,22 @@ export type LedgerTransferDetail = {
 
 export type ZeroSumRow = { currency: string; total: string; ok: boolean };
 
+// Closure gate status (ac16-spec §2.1/§3.5) — the flattened shape
+// `components/accounts/closure-panel.tsx` renders; the page maps the
+// discriminated `services/accounts/closure-eligibility.ts` result onto this
+// so the component depends only on `types/**` (boundaries/dependencies).
+export type BillingAccountClosureStatus = {
+  eligible: boolean;
+  openReceivable: string;
+};
+
+export type FinancialAccountClosureStatus = {
+  eligible: boolean;
+  unappliedCash: string;
+  deposits: string;
+  openBillingAccountIds: string[];
+};
+
 // Refund workbench read-side shape (ac07-spec §2.4b) — the "assigned items"
 // picker shared by both entry modes. Lives here (not the service file) so
 // `components/accounts/payment-refund-panel.tsx` can depend on it without

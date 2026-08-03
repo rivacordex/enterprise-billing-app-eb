@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
@@ -41,5 +41,49 @@ export const billingAccountRepository = {
       .update(billingAccount)
       .set({ paymentStatus })
       .where(eq(billingAccount.billingAccountId, billingAccountId));
+  },
+
+  // ac16-spec §2.1 — every BAN owned by a given FA, for the FA closure gate
+  // (all BANs must be `closed`) and the FA detail page's BAN selector.
+  async findByFinancialAccountId(
+    db: Database,
+    financialAccountId: string,
+  ): Promise<BillingAccount[]> {
+    return db
+      .select()
+      .from(billingAccount)
+      .where(eq(billingAccount.refFinancialAccountId, financialAccountId))
+      .orderBy(billingAccount.billingAccountId);
+  },
+
+  // ac16-spec §2.1/§3.1/§3.2 — closure CAS write: same four-outcome pattern
+  // as `financialAccountRepository.close` / the catalog `retire` precedent.
+  async close(
+    db: Database,
+    billingAccountId: string,
+    lastModified: Date,
+  ): Promise<"updated" | "conflict" | "already_closed" | "not_found"> {
+    const [updated] = await db
+      .update(billingAccount)
+      .set({ state: "closed", lastModified: sql`now()` })
+      .where(
+        and(
+          eq(billingAccount.billingAccountId, billingAccountId),
+          eq(billingAccount.lastModified, lastModified),
+          ne(billingAccount.state, "closed"),
+        ),
+      )
+      .returning();
+
+    if (updated) return "updated";
+
+    const [current] = await db
+      .select()
+      .from(billingAccount)
+      .where(eq(billingAccount.billingAccountId, billingAccountId))
+      .limit(1);
+    if (!current) return "not_found";
+    if (current.state === "closed") return "already_closed";
+    return "conflict";
   },
 };
