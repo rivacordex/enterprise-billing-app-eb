@@ -111,6 +111,34 @@ export const systemConfigRepository = {
     return rows[0]?.configValue ?? null;
   },
 
+  // Same query as findActiveValue but returns the row identity so callers
+  // can pin a subsequent CAS write to the exact row that was read — prevents
+  // operating on a lower-version ACTIVE row when multiple versions coexist.
+  async findActiveRow(
+    db: Database,
+    group: string,
+    key: string,
+  ): Promise<{ configId: string; configValue: string | null } | null> {
+    const rows = await db
+      .select({
+        configId: systemConfig.configId,
+        configValue: systemConfig.configValue,
+      })
+      .from(systemConfig)
+      .where(
+        and(
+          eq(systemConfig.configGroup, group),
+          eq(systemConfig.configKey, key),
+          eq(systemConfig.status, "ACTIVE"),
+          eq(systemConfig.isSecret, false),
+        ),
+      )
+      .orderBy(desc(systemConfig.configVersion))
+      .limit(1);
+
+    return rows[0] ?? null;
+  },
+
   // Writes the new value + modifier (um23-spec §23.3). No permission check,
   // no audit write — both are the write service's responsibility. Always
   // called within the write service's transaction, so `db` here is a `tx`
@@ -132,16 +160,15 @@ export const systemConfigRepository = {
   },
 
   // CAS clear: sets configValue = null only when the row identified by
-  // (group, key) currently holds expectedValue. Zero affected rows means the
-  // value was already changed by a concurrent writer — treated as a no-op by
-  // the caller (the default is no longer pointing at the value we intended to
-  // clear, so no cleanup is needed). Called from retireBillCycle to
-  // atomically clear ACCOUNTS_DEFAULT_BILL_CYCLE without a read-then-write
-  // TOCTOU window.
+  // configId (from findActiveRow) currently holds expectedValue and is still
+  // ACTIVE. Pinning to configId prevents the UPDATE from matching a
+  // lower-version ACTIVE row or a DRAFT/RETIRED row that happens to carry the
+  // same value. Zero affected rows means the value was changed by a concurrent
+  // writer — treated as a no-op (the default no longer points at the value we
+  // intended to clear). Called from retireBillCycle.
   async clearValueIfEquals(
     db: Database,
-    group: string,
-    key: string,
+    configId: string,
     expectedValue: string,
     modifiedBy: string,
   ): Promise<void> {
@@ -150,9 +177,9 @@ export const systemConfigRepository = {
       .set({ configValue: null, modifiedBy, lastModifiedDatetime: new Date() })
       .where(
         and(
-          eq(systemConfig.configGroup, group),
-          eq(systemConfig.configKey, key),
+          eq(systemConfig.configId, configId),
           eq(systemConfig.configValue, expectedValue),
+          eq(systemConfig.status, "ACTIVE"),
         ),
       );
   },
