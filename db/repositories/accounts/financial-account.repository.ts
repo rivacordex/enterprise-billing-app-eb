@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { financialAccount } from "@/db/schema/billing/accounts";
@@ -129,5 +129,39 @@ export const financialAccountRepository = {
       .select()
       .from(financialAccount)
       .where(inArray(financialAccount.refPartyRoleId, partyRoleIds));
+  },
+
+  // ac16-spec §2.1/§3.1/§3.2 — closure CAS write: same four-outcome pattern
+  // as `billCycleRepository.retire`/`reasonCodeRepository.retire` (catalog
+  // retirement precedent), targeting `state = 'closed'` instead of
+  // `'retired'`. No delete anywhere (Module Inv. #11) — closed is a state,
+  // rows persist.
+  async close(
+    db: Database,
+    financialAccountId: string,
+    lastModified: Date,
+  ): Promise<"updated" | "conflict" | "already_closed" | "not_found"> {
+    const [updated] = await db
+      .update(financialAccount)
+      .set({ state: "closed", lastModified: sql`now()` })
+      .where(
+        and(
+          eq(financialAccount.financialAccountId, financialAccountId),
+          eq(financialAccount.lastModified, lastModified),
+          ne(financialAccount.state, "closed"),
+        ),
+      )
+      .returning();
+
+    if (updated) return "updated";
+
+    const [current] = await db
+      .select()
+      .from(financialAccount)
+      .where(eq(financialAccount.financialAccountId, financialAccountId))
+      .limit(1);
+    if (!current) return "not_found";
+    if (current.state === "closed") return "already_closed";
+    return "conflict";
   },
 };

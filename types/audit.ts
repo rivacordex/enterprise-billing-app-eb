@@ -48,6 +48,7 @@ export const AUDIT_EVENT_TYPES = [
   "REASON_CODE_CHANGED",
   "BILL_CYCLE_CHANGED",
   "WIZARD_DEFAULTS_CHANGED",
+  "ACCOUNT_CLOSED",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

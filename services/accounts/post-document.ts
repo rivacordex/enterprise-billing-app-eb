@@ -6,7 +6,9 @@
 import type { Database } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
+import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
+import { financialAccountRepository } from "@/db/repositories/accounts/financial-account.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
@@ -29,6 +31,7 @@ export type PostDocumentResult =
       };
     }
   | { ok: false; code: "DOCUMENT_NOT_FOUND" }
+  | { ok: false; code: "ACCOUNT_CLOSED" }
   | { ok: false; code: "DOC_STATE_INVALID" }
   | { ok: false; code: "APPROVAL_REQUIRED" }
   | { ok: false; code: "SELF_APPROVAL" }
@@ -82,6 +85,39 @@ async function guardAndLoad(
   const doc = await documentRepository.findById(tx, documentId);
   if (!doc)
     return { ok: false, result: { ok: false, code: "DOCUMENT_NOT_FOUND" } };
+
+  // Closure is the final ledger event on an account (Module Inv. #12, Q11,
+  // ac16-spec §2.2) — a closed FA/BAN rejects every new posting. This is the
+  // single choke point for that guard: `guardAndLoad` is called by both
+  // `postDocument` and `postExplicitLegs`, the only two callers of
+  // `pgledgerCreateTransfers` (module inv. #3), so every ac07-ac11 posting
+  // path is covered here without touching each individual service.
+  const fa = await financialAccountRepository.findById(
+    tx,
+    doc.refFinancialAccountId,
+  );
+  if (!fa) {
+    throw new Error(
+      `financial_account ${doc.refFinancialAccountId} not found for document ${documentId}`,
+    );
+  }
+  if (fa.state === "closed") {
+    return { ok: false, result: { ok: false, code: "ACCOUNT_CLOSED" } };
+  }
+  if (doc.refBillingAccountId) {
+    const ban = await billingAccountRepository.findById(
+      tx,
+      doc.refBillingAccountId,
+    );
+    if (!ban) {
+      throw new Error(
+        `billing_account ${doc.refBillingAccountId} not found for document ${documentId}`,
+      );
+    }
+    if (ban.state === "closed") {
+      return { ok: false, result: { ok: false, code: "ACCOUNT_CLOSED" } };
+    }
+  }
 
   const reason = await reasonCodeRepository.findByCode(tx, doc.reasonCode);
   if (!reason) {

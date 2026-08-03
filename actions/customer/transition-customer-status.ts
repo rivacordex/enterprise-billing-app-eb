@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { customerHasOpenAccounts } from "@/services/accounts/closure-eligibility";
 import { transitionCustomerStatus } from "@/services/customer/transition-customer-status";
 import { transitionCustomerStatusSchema } from "@/validation/customer/transition-customer-status.schema";
 
@@ -12,6 +13,7 @@ export type TransitionCustomerStatusActionResult =
   | { ok: false; code: "CONFLICT" }
   | { ok: false; code: "PARTY_ROLE_NOT_FOUND" }
   | { ok: false; code: "INVALID_TRANSITION" }
+  | { ok: false; code: "ACCOUNTS_STILL_OPEN" }
   | { ok: false; code: "FORBIDDEN" }
   | {
       ok: false;
@@ -43,6 +45,19 @@ export async function transitionCustomerStatusAction(
       code: "VALIDATION_ERROR",
       fieldErrors: parsed.error.flatten().fieldErrors,
     };
+  }
+
+  // ac16-spec §2.4 — Customer → CLOSED is blocked while any of the
+  // customer's accounts (FA or any BAN) remain open. The Accounts service
+  // owns the check (code-standards §3.4 — Customer never queries `billing.*`
+  // directly); this action is the one seam that calls it.
+  if (parsed.data.targetStatus === "CLOSED") {
+    const hasOpenAccounts = await customerHasOpenAccounts(
+      parsed.data.partyRoleId,
+    );
+    if (hasOpenAccounts) {
+      return { ok: false, code: "ACCOUNTS_STILL_OPEN" };
+    }
   }
 
   const result = await transitionCustomerStatus(parsed.data, actorId);

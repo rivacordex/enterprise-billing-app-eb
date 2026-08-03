@@ -6,6 +6,7 @@ import { meetsLevel } from "@/types/permissions";
 import { AllocatePaymentPanel } from "@/components/accounts/allocate-payment-panel";
 import { CaptureDepositPanel } from "@/components/accounts/capture-deposit-panel";
 import { CapturePaymentPanel } from "@/components/accounts/capture-payment-panel";
+import { ClosurePanel } from "@/components/accounts/closure-panel";
 import { ContextStrip } from "@/components/accounts/context-strip";
 import { PaymentRefundPanel } from "@/components/accounts/payment-refund-panel";
 import { PendingApprovalsList } from "@/components/accounts/pending-approvals-list";
@@ -16,6 +17,10 @@ import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel
 import { ReversalsPanel } from "@/components/accounts/reversals-panel";
 import { RoundingAdjustmentPanel } from "@/components/accounts/rounding-adjustment-panel";
 import { WriteOffPanel } from "@/components/accounts/write-off-panel";
+import {
+  getBillingAccountClosureEligibility,
+  getFinancialAccountClosureEligibility,
+} from "@/services/accounts/closure-eligibility";
 import { getBillingAccountDetail } from "@/services/accounts/get-billing-account-detail";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
 import {
@@ -50,12 +55,49 @@ export default async function TransactionsPage({
     ctx.ban ? getBillingAccountDetail(ctx.ban) : null,
   ]);
 
-  const [pendingApprovals, refundData] = await Promise.all([
-    canEdit && ctx.fa ? listPendingApprovals(ctx.fa) : Promise.resolve([]),
-    canEdit && ctx.fa && ctx.ban
-      ? getRefundWorkbenchData(ctx.fa, ctx.ban)
-      : Promise.resolve({ assignedItems: [], unappliedCashAvailable: "0.00" }),
-  ]);
+  const [pendingApprovals, refundData, banEligibility, faEligibility] =
+    await Promise.all([
+      canEdit && ctx.fa ? listPendingApprovals(ctx.fa) : Promise.resolve([]),
+      canEdit && ctx.fa && ctx.ban
+        ? getRefundWorkbenchData(ctx.fa, ctx.ban)
+        : Promise.resolve({
+            assignedItems: [],
+            unappliedCashAvailable: "0.00",
+          }),
+      canEdit && ctx.ban
+        ? getBillingAccountClosureEligibility(ctx.ban)
+        : Promise.resolve(null),
+      canEdit && ctx.fa
+        ? getFinancialAccountClosureEligibility(ctx.fa)
+        : Promise.resolve(null),
+    ]);
+
+  const banClosure =
+    banEligibility && banEligibility.ok && banEligibility.eligible
+      ? { eligible: true as const, openReceivable: "0.00" }
+      : banEligibility && banEligibility.ok && !banEligibility.eligible
+        ? {
+            eligible: false as const,
+            openReceivable: banEligibility.openReceivable,
+          }
+        : null;
+
+  const faClosure =
+    faEligibility && faEligibility.ok && faEligibility.eligible
+      ? {
+          eligible: true as const,
+          unappliedCash: "0.00",
+          deposits: "0.00",
+          openBillingAccountIds: [] as string[],
+        }
+      : faEligibility && faEligibility.ok && !faEligibility.eligible
+        ? {
+            eligible: false as const,
+            unappliedCash: faEligibility.unappliedCash,
+            deposits: faEligibility.deposits,
+            openBillingAccountIds: faEligibility.openBillingAccountIds,
+          }
+        : null;
 
   return (
     <main className="space-y-6 p-6">
@@ -127,6 +169,31 @@ export default async function TransactionsPage({
           </div>
 
           <ReversalsPanel financialAccountId={ctx.fa} />
+
+          <ClosurePanel
+            ban={
+              banDetail
+                ? {
+                    billingAccountId: banDetail.ban.billingAccountId,
+                    state: banDetail.ban.state,
+                    lastModified: banDetail.ban.lastModified,
+                    currency: banDetail.ban.currency,
+                  }
+                : null
+            }
+            banClosure={banClosure}
+            fa={
+              faDetail
+                ? {
+                    financialAccountId: faDetail.fa.financialAccountId,
+                    state: faDetail.fa.state,
+                    lastModified: faDetail.fa.lastModified,
+                    currency: faDetail.fa.currency,
+                  }
+                : null
+            }
+            faClosure={faClosure}
+          />
 
           <section className="space-y-3">
             <h2 className="text-h3 font-semibold text-foreground">
