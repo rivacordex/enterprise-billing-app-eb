@@ -130,4 +130,30 @@ export const systemConfigRepository = {
       })
       .where(eq(systemConfig.configId, configId));
   },
+
+  // CAS clear: sets configValue = null only when the row identified by
+  // (group, key) currently holds expectedValue. Zero affected rows means the
+  // value was already changed by a concurrent writer — treated as a no-op by
+  // the caller (the default is no longer pointing at the value we intended to
+  // clear, so no cleanup is needed). Called from retireBillCycle to
+  // atomically clear ACCOUNTS_DEFAULT_BILL_CYCLE without a read-then-write
+  // TOCTOU window.
+  async clearValueIfEquals(
+    db: Database,
+    group: string,
+    key: string,
+    expectedValue: string,
+    modifiedBy: string,
+  ): Promise<void> {
+    await db
+      .update(systemConfig)
+      .set({ configValue: null, modifiedBy, lastModifiedDatetime: new Date() })
+      .where(
+        and(
+          eq(systemConfig.configGroup, group),
+          eq(systemConfig.configKey, key),
+          eq(systemConfig.configValue, expectedValue),
+        ),
+      );
+  },
 };
