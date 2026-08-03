@@ -141,16 +141,24 @@ export async function retireBillCycle(
     const r = await billCycleRepository.retire(tx, billCycleId, lastModified);
     if (r !== "updated") return r;
 
-    // CAS: clear ACCOUNTS_DEFAULT_BILL_CYCLE only if it still points at this
-    // cycle. Zero affected rows means a concurrent writer already moved the
-    // default elsewhere — that's fine; no cleanup needed.
-    await systemConfigRepository.clearValueIfEquals(
+    // Read the highest-version ACTIVE default row so the CAS UPDATE can pin
+    // to its exact configId — prevents clearing a lower-version ACTIVE row or
+    // a DRAFT/RETIRED row with the same value. Zero affected rows from the
+    // UPDATE means a concurrent writer already moved the default elsewhere;
+    // retirement proceeds (the default no longer points at this cycle).
+    const activeDefault = await systemConfigRepository.findActiveRow(
       tx,
       "accounts",
       "ACCOUNTS_DEFAULT_BILL_CYCLE",
-      billCycleId,
-      actorId,
     );
+    if (activeDefault?.configValue === billCycleId) {
+      await systemConfigRepository.clearValueIfEquals(
+        tx,
+        activeDefault.configId,
+        billCycleId,
+        actorId,
+      );
+    }
 
     await insertAuditEvent(tx, {
       eventType: "BILL_CYCLE_CHANGED",
