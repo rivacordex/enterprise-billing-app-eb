@@ -79,41 +79,12 @@ export const systemConfigRepository = {
     };
   },
 
-  // Resolves a single non-secret ACTIVE config value by (group, key) for the
-  // app-config read path (um28-spec §2.6) — branding logo, locale, currency.
-  // The `ORDER BY config_version DESC` is load-bearing, not cosmetic: the
-  // unique index is `(config_group, config_version, config_key)`, so two
-  // ACTIVE rows for the same `(group, key)` at different versions can legally
-  // coexist; without a deterministic order the returned row is
-  // nondeterministic. `config_version DESC` makes "latest active version
-  // wins" explicit. (All current seeds are version 1 — forward-hardening,
-  // not a present bug.) Returns the value, or `null` for missing/RETIRED/
-  // secret.
-  async findActiveValue(
-    db: Database,
-    group: string,
-    key: string,
-  ): Promise<string | null> {
-    const rows = await db
-      .select({ configValue: systemConfig.configValue })
-      .from(systemConfig)
-      .where(
-        and(
-          eq(systemConfig.configGroup, group),
-          eq(systemConfig.configKey, key),
-          eq(systemConfig.status, "ACTIVE"),
-          eq(systemConfig.isSecret, false),
-        ),
-      )
-      .orderBy(desc(systemConfig.configVersion))
-      .limit(1);
-
-    return rows[0]?.configValue ?? null;
-  },
-
-  // Same query as findActiveValue but returns the row identity so callers
-  // can pin a subsequent CAS write to the exact row that was read — prevents
-  // operating on a lower-version ACTIVE row when multiple versions coexist.
+  // Returns the identity + value of the highest-version non-secret ACTIVE row
+  // for a given (group, key). `ORDER BY config_version DESC` is load-bearing:
+  // the unique index is `(config_group, config_version, config_key)`, so two
+  // ACTIVE rows for the same key at different versions can legally coexist;
+  // the sort makes "latest version wins" explicit. Returns null for missing,
+  // RETIRED, DRAFT, or secret rows.
   async findActiveRow(
     db: Database,
     group: string,
@@ -137,6 +108,18 @@ export const systemConfigRepository = {
       .limit(1);
 
     return rows[0] ?? null;
+  },
+
+  // Convenience wrapper used by the app-config read path (um28-spec §2.6).
+  // Delegates to findActiveRow so both methods share exactly one copy of the
+  // active-row selection criteria.
+  async findActiveValue(
+    db: Database,
+    group: string,
+    key: string,
+  ): Promise<string | null> {
+    const row = await systemConfigRepository.findActiveRow(db, group, key);
+    return row?.configValue ?? null;
   },
 
   // Writes the new value + modifier (um23-spec §23.3). No permission check,
@@ -163,16 +146,15 @@ export const systemConfigRepository = {
   // configId (from findActiveRow) currently holds expectedValue and is still
   // ACTIVE. Pinning to configId prevents the UPDATE from matching a
   // lower-version ACTIVE row or a DRAFT/RETIRED row that happens to carry the
-  // same value. Zero affected rows means the value was changed by a concurrent
-  // writer — treated as a no-op (the default no longer points at the value we
-  // intended to clear). Called from retireBillCycle.
+  // same value. Returns the number of rows actually updated — callers can
+  // distinguish a successful clear (1) from a concurrent no-op (0).
   async clearValueIfEquals(
     db: Database,
     configId: string,
     expectedValue: string,
     modifiedBy: string,
-  ): Promise<void> {
-    await db
+  ): Promise<number> {
+    const updated = await db
       .update(systemConfig)
       .set({ configValue: null, modifiedBy, lastModifiedDatetime: new Date() })
       .where(
@@ -181,6 +163,8 @@ export const systemConfigRepository = {
           eq(systemConfig.configValue, expectedValue),
           eq(systemConfig.status, "ACTIVE"),
         ),
-      );
+      )
+      .returning({ configId: systemConfig.configId });
+    return updated.length;
   },
 };
