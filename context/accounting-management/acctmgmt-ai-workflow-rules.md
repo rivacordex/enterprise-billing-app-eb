@@ -6,7 +6,7 @@ Obey every rule in `context/ai-workflow-rules.md` unchanged; this supplement add
 
 ## 1. Operating Approach — module deltas
 
-1. Cite a Q-number or a doc section for every unit you start. If no Q-decision or doc section authorizes the work, stop and ask — the decision log is closed (Q1–Q28, all resolved); do not reopen a resolved Q on your own.
+1. Cite a decision number or a doc section for every unit you start. If nothing authorizes the work, stop and ask. **Two closed decision logs govern this module:** `Q1–Q28` in `_newmodule-account-plan.md` (original build) and `D1–D7` in `_updatemodule-accounts-transactions-plan.md` (Transactions revision). Both are fully resolved; do not reopen a resolved Q or D on your own. Work on the Transactions page cites D-numbers where a D supersedes or narrows a Q.
 2. Treat money-touching code as high-risk by default: any unit that calls the posting service, adds a ledger leg, or changes a `sys.*` account, reason code, or GL mapping requires its mapped V-test (§5) in the same unit. No exceptions.
 3. Do not begin any UI unit before the pgledger fork migration, module-table migrations, and seeds are merged and their V-tests pass. Data core first, always.
 
@@ -36,7 +36,7 @@ capture payment (PAY) · allocate payment lines · capture deposit (DEP) · depo
 1. Never guess a ledger leg. If the from/to accounts for an operation are not explicit in the plan (Q4, Q15, Q16, Q17, Q19 legs), stop and ask. Do not infer legs from accounting intuition.
 2. Never guess a sign. The signed-balance convention is encapsulated in `money.ts` helpers (code-standards §2.3); if a comparison isn't expressible with an existing helper, stop and ask rather than writing a raw sign check.
 3. Never invent a reason code, posting nature, sys account, GL code, or threshold. These are seed/config data with Q-references; a missing one is a spec gap to raise, not a row to add.
-4. Record every new resolution as the next Q-number in `_newmodule-account-plan.md`'s Q&A log **and** in the owning context doc, in the same change set.
+4. Record every new resolution in the log that owns the surface — the next **Q-number** in `_newmodule-account-plan.md` for module-wide/data-core decisions, or the next **D-number** in `_updatemodule-accounts-transactions-plan.md` for Transactions-page decisions — **and** in the owning context doc, in the same change set. Never open a third log.
 
 ## 5. Guardrails — verification tests you must keep green
 
@@ -54,7 +54,7 @@ Beyond platform §5, do not touch without explicit instruction:
 
 ## 7. Front-End Permission Mapping — module deltas
 
-Use the six-row page map in `acctmgmt-code-standards.md` §8 verbatim — permission names are snake_case (`accounts_view`, `accounts_transactions`, `accounts_config`). Two module-specific rules: (1) MANAGER approval routing is a service-layer rule, not a permission level — never model it as a fourth permission or a DELETE level; (2) the Transactions page renders operation buttons disabled until the URL context strip satisfies Q1's requirements, and the action re-validates the same requirement server-side.
+Use the six-row page map in `acctmgmt-code-standards.md` §8 verbatim — permission names are snake_case (`accounts_view`, `accounts_transactions`, `accounts_config`). Three module-specific rules: (1) MANAGER approval routing is a service-layer rule, not a permission level — never model it as a fourth permission or a DELETE level; (2) the Transactions page renders **create** actions disabled until the URL context strip satisfies Q1's requirements, and the action re-validates the same requirement server-side; (3) **disabled and hidden are different rules on this page — do not conflate them.** Context-gating disables (rule 2); *document eligibility* hides — the reversal control is not rendered at all on documents that are not `posted` with an unreversed line (D4). Neither is authorization: the service re-validates regardless (architecture inv. #18).
 
 ## 8. Verification Checklist — module additions
 

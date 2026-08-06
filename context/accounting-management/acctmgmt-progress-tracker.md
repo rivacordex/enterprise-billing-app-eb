@@ -1,6 +1,6 @@
 # Completed Tracker — Accounts Module
 
-All 17 of 17 units delivered (ac01–ac17). Module is shipped and closed.
+17 of 17 original units delivered (ac01–ac17). The Transactions revision is now underway: `ac18` delivered. **Next up: `ac19`** (action launcher + dialog shells).
 
 ## Status Table
 
@@ -23,6 +23,7 @@ All 17 of 17 units delivered (ac01–ac17). Module is shipped and closed.
 | ac15 | Accounts Settings (reason-code + threshold CRUD, bill-cycle catalog CRUD, wizard defaults) | Delivered |
 | ac16 | Account Closure Gates (zero-balance BAN/FA closure, guided settle-first path, Customer CLOSED block) | Delivered |
 | ac17 | Guardrail & Authz Sweep (route × level matrix, V1–V14 audit, grep gates, docs sync) | Delivered |
+| ac18 | Nav Order + Selection-Context Handoff (Transactions moves to position 2, `?party&fa&ban` propagates across all five Accounts nav links) | Delivered |
 
 ## Unit Summaries
 
@@ -59,6 +60,8 @@ All 17 of 17 units delivered (ac01–ac17). Module is shipped and closed.
 **ac16 — Account Closure Gates.** `closure-eligibility.ts` (`canCloseBillingAccount`, `canCloseFinancialAccount`, `customerHasOpenAccounts`). `billingAccountRepository.close`, `financialAccountRepository.close` (CAS, four-outcome pattern). `close-billing-account.ts`, `close-financial-account.ts` services (gate + CAS + `ACCOUNT_CLOSED` audit in one transaction). `post-document.ts` `guardAndLoad` extended with closed-account check (single choke point for all ac07–ac11 paths). Two close actions (`accounts_transactions:EDIT`). `closure-panel.tsx` wired into `/accounts/transactions`. cm10 touchpoint in `transition-customer-status.ts`. V14 extended with full guided-closure sequence (13 tests total). Key design: closure UI on Transactions page (not Overview); no separate live-preview server action (page-level `router.refresh()` re-runs eligibility reads for free).
 
 **ac17 — Guardrail & Authz Sweep.** Pure gate unit — tests + CI grep gates + docs only; no feature/schema/UI change. Three new test files: `route-level-matrix.test.ts` (six pages + export route `(permission, level)` gates, threshold routing, approver≠creator), `verification-audit.test.ts` (V1–V14 presence/naming/mapping, Inv.#1–14 ↔ V-test cross-reference), `grep-gates.test.ts` (eight static CI gates, tree-wide). 119 new tests, all green. `db/migrations/0020_accounts_config_permission.sql` journal entry registered (was authored but missing). Three genuine pre-existing defects found and fixed: `amount-cell.tsx` raw `Number()`/`< 0` violation; `reason-code-form.tsx` and `accounts-settings/flows/page.tsx` `parseFloat() === 0` violations; `roles-read.service.integration.test.ts` hardcoded permission list missing three Accounts permissions.
+
+**ac18 — Nav Order + Selection-Context Handoff.** `components/admin-nav.tsx` only (D6+D7, ac18-spec). `NavSection` gained `carriesAccountsContext?: boolean`, set on the Accounts section only. Accounts items reordered to Overview → Transactions → Ledger Explorer → Chart of Accounts → GL Journal under a single caption. Module-private `accountsContextQuery` helper routes `useSearchParams()` through the existing `parseAccountsContext` (still the only parser) and allowlists exactly `party`/`fa`/`ban` in that fixed order into a `linkHref` computed separately from `item.href`, so `isActive`/`key`/`aria-current` keep resolving off the bare pathname. Locked items are untouched (still `href`-less). Three existing test files (`admin-nav.test.tsx`, `admin-sidebar.test.tsx`, `admin-layout.test.tsx`) extended with a `useSearchParams` mock; new `admin-nav-accounts-context.test.tsx` covers order, propagation, scope, allowlist, validation, empty-context, determinism, active-state and locked-item behavior. No schema, permission, or style change.
 
 ## Key Module-Wide Architectural Decisions
 
