@@ -4,7 +4,7 @@ This document extends the platform-wide `context/architecture.md` — everything
 
 **Status:** ACTIVE (planning-complete; Transactions revision planning-complete). **Users:** Revenue Operations. **Schema:** `billing`.
 
-### What the Transactions revision changes architecturally
+## What the Transactions revision changes architecturally
 
 Almost nothing, deliberately. It adds **one read path** (document list + per-document lines), **one client-side behaviour** (nav links propagating selection context), and **no tables, columns, migrations, permissions, document types, services with write access, or runtime components**. Every architectural delta below is marked **(D#)** against its decision. Items marked _unchanged_ are restated only because the revision touches the same surface and the boundary must stay explicit.
 
@@ -82,7 +82,7 @@ WHERE ref_financial_account_id = :fa
   AND (ref_billing_account_id = :ban OR ref_billing_account_id IS NULL)
 ```
 
-With no BAN selected, the second clause is dropped and the query is FA-scoped — consistent with the page's existing gating, which enables `CapturePaymentPanel` on `financialAccountId` alone. Documents belonging to a _different_ BAN under the same FA are never returned; that view lives in Accounts Overview and Ledger Explorer.
+With no BAN selected, the second clause is dropped and the query is **FA-wide**: every document for the FA is returned regardless of BAN assignment, consistent with the page's existing gating, which enables `CapturePaymentPanel` on `financialAccountId` alone. When a BAN is selected, documents belonging to a _different_ BAN under the same FA are excluded; the cross-BAN view lives in Accounts Overview and Ledger Explorer.
 
 ID convention follows platform §3 (prefix + zero-padded sequence); pgledger keeps its own prefixed ULIDs (`pgla_`, `pglt_`).
 

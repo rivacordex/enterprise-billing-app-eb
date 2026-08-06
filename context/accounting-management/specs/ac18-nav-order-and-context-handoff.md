@@ -49,7 +49,7 @@ Icons, labels, routes and `requiredPermission` values are **unchanged**; only ar
 
 ### 2.4 The `isActive` trap — keep `item.href` a bare pathname
 
-`isActive` is currently derived as `pathname === item.href || pathname.startsWith(\`${item.href}/\`)`, and `key={item.href}` is used in both render branches. **Putting query params into `item.href` breaks active-state highlighting on every Accounts page** (`/accounts/overview` never equals `/accounts/overview?fa=FIN000001`).
+`isActive` is currently derived as ``pathname === item.href || pathname.startsWith(`${item.href}/`)``, and `key={item.href}` is used in both render branches. **Putting query params into `item.href` breaks active-state highlighting on every Accounts page** (`/accounts/overview` never equals `/accounts/overview?fa=FIN000001`).
 
 Therefore: `NavItem.href` stays the bare pathname and remains the source for `isActive` and `key`. The context-carrying URL is computed separately at render time into a local `linkHref`, used **only** as the `<Link href>`. This keeps the change to one line in the JSX plus one helper.
 
@@ -180,7 +180,7 @@ No change to the Transactions page itself (ac19+), no documents table (ac20), no
 
 **Diff hygiene**
 
-- [ ] Changed: `components/admin-nav.tsx` (types + `NAV_SECTIONS` order + `carriesAccountsContext` flag + helper + `useSearchParams` + `linkHref`); the three test files in §3.5; one new test file in §3.6. **Nothing else.**
+- [ ] Changed: `components/admin-nav.tsx` (types + `NAV_SECTIONS` order + `carriesAccountsContext` flag + helper + `useSearchParams` + `linkHref`); the three test files in §3.5; one new test file in §3.6; `context/accounting-management/acctmgmt-progress-tracker.md` (ac18 complete, Next Up → ac19). **Nothing else.**
 - [ ] `NavItem.href` values are still bare pathnames — grep the file for `href: "` and confirm no `?` in any entry (§2.4).
 - [ ] Icons, labels, routes and `requiredPermission` values are byte-identical to before; only array order changed.
 - [ ] No `TODO`/`console.*`; no `--ai-*` or gradient tokens introduced.
