@@ -10,7 +10,7 @@ This update restructures the shipped Transactions page from a vertical stack of 
 
 1. Make the operator's current position legible before they act: show the documents already raised against the selected context, instead of an action list with no history.
 2. Reduce the page from thirteen simultaneously-rendered panels to a header, an action bar of three controls, and one table — so reaching "Capture Payment" no longer requires scrolling past Reverse Deposit, Write Off and Rounding Adjustment.
-3. Make reversal usable without prior knowledge: replace the free-text `docId` input in `ReversalsPanel` with a control on the document being reversed, shown only where `reverseDocument` would actually succeed.
+3. Make reversal usable without prior knowledge: replace the free-text `docId` input in `ReversalsPanel` with a row-level control shown only where a document is actionable — `state === "posted"` and at least one line has `reversedByLineId === null`. Use `reverseDocument()` when all unreversed lines are selected; use `reverseLine()` for a subset, leaving the remainder reversible on the original document.
 4. Expose line-level reversal, which `reverseLine` already supports but no UI leads to — specifically reversing a payment's allocation line to return funds to unapplied cash while leaving the bank capture posted.
 5. Surface the partially-reversed state, which is currently invisible: a document whose lines are partly reversed stays `posted` and remains actionable on its remainder.
 6. Promote the approval queue from the bottom of the page to a banner and a table filter, so pending documents are visible on arrival rather than after twelve panels of scrolling.
@@ -81,7 +81,7 @@ This update restructures the shipped Transactions page from a vertical stack of 
 - Dialog shells around the ten create-panels; their internals unchanged
 - `components/accounts/reversals-panel.tsx` — free-text `docId` form removed once the table exists (Phase 3)
 - `components/accounts/pending-approvals-list.tsx` — absorbed into the table as a status filter; approve action preserved
-- New read query on `db/repositories/accounts/document.repository.ts` (filters: type, state, date range, free text; with pagination), following the shape `listTransfersForAccount` uses in `services/accounts/ledger-explorer.ts`
+- New read query on `db/repositories/accounts/document.repository.ts` (filters: type, state, reversibility (all / reversible / partially reversed), date range, free text; pagination applied after reversibility filtering within the scope), following the shape `listTransfersForAccount` uses in `services/accounts/ledger-explorer.ts`
 - New `services/accounts/list-transaction-documents.ts` wrapping it, called from the page as `listPendingApprovals` is today
 - Per-document line read for the reversal dialog, via the existing `documentLineRepository.findByDocumentId`
 - Four phases: Phase 0 nav reorder + context preservation · Phase 1 dialog shells · Phase 2 documents table · Phase 3 row-level reversal + drawer

@@ -42,7 +42,7 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 - Reason-code catalog with posting nature and per-code `auto_post_limit`; approver ≠ creator enforced server-side (Q19/Q20)
 - Every document captures three mandatory fields (Q29): `event_at` (entry date — drives period/journal), `reference_date` (manual, defaults to today), and `reference_info` (e.g. transaction code)
 - Payment modes `bank_transfer | cash | cheque` with mode-specific references; all manual, cheques assumed to clear (Q22/Q27)
-- Split context requirements: CRN/DBN/ADJ need the selected BAN; PAY/DEP need only the FA (Q1)
+- Split context requirements: CRN/DBN/ADJ need the selected BAN; PAY capture and DEP capture need only the FA; PAY allocation is a BAN-scoped document but the BAN is supplied by the form rather than required in the URL context (Q1)
 - Document- and line-level reversal with conservation guarantees (Q5)
 - Payment refund (`PAYMENT_REFUND`): bank payout of a customer overpayment / unapplied remainder, `sys.cash → unapplied_cash`, four-eyes (Q17/Q20)
 
@@ -89,5 +89,5 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 2. Validating a customer produces FA + BAN + 3 ledger accounts + 3 bindings in one transaction, and a forced mid-transaction failure leaves zero orphan rows.
 3. Every operation in the RevOps vocabulary (Q17) is executable end-to-end on the Transactions page by a USER within limits and requires MANAGER approval above them; no ledger transfer exists without a posted document line pointing at it (1:1 `pgledger_transfer_id`).
 4. The July sample scenario (Sample Telecom: DBN 5,400 → PAY 5,400 capture+allocation → deposit capture/reverse/refund) reproduces the plan's §2 tables exactly, and its GL journal export totals 16,200/16,200.
-5. Closing a period blocks further postings into it with a re-date error (the user corrects the entry date into an open period); the exported CSV re-runs idempotically.
+5. Closing a period blocks further postings into it with a re-date error (the user corrects the entry date into an open period); the exported CSV re-runs idempotently.
 6. All five Accounts pages + Accounts Settings render with the three-permission RBAC enforced server-side; a user with only `accounts-view` can trace a transaction from Accounts Overview to its GL line without any write affordance visible.
