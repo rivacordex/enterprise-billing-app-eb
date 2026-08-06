@@ -72,6 +72,7 @@ export interface StatusTransitionControlProps {
           | "CONFLICT"
           | "INVALID_TRANSITION"
           | "VALIDATION_ERROR"
+          | "ACCOUNTS_STILL_OPEN"
           | "CANCELLED";
       }
   >;
@@ -134,6 +135,16 @@ export function StatusTransitionControl({
       // CANCELLED: the user closed the intercept wizard — exit submitting
       // state silently without surfacing an error.
       if (result.code === "CANCELLED") return;
+
+      // ac16-spec §2.4 — Customer → CLOSED blocked while any account
+      // remains open; a specific message pointing to the guided remedy
+      // rather than the generic fallback below.
+      if (result.code === "ACCOUNTS_STILL_OPEN") {
+        setError(
+          "This customer still has open Financial or Billing Accounts. Close them from Accounts → Transactions (settle balances to zero first) before closing the customer.",
+        );
+        return;
+      }
 
       // INVALID_TRANSITION / VALIDATION_ERROR: defense-in-depth paths the
       // rendered control can never trigger itself (options are always

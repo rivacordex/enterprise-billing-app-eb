@@ -5,6 +5,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { listReasonCodes } from "@/services/accounts/reason-code";
 import { listBillCycles } from "@/services/accounts/bill-cycle";
+import * as money from "@/services/accounts/money";
 
 export const dynamic = "force-dynamic";
 
@@ -274,8 +275,8 @@ export default async function AccountsSettingsFlowsPage(): Promise<React.JSX.Ele
               </thead>
               <tbody className="divide-y divide-[color:var(--border-subtle)]">
                 {activeReasonCodes.map((rc) => {
-                  const limitNum = parseFloat(rc.autoPostLimit);
-                  const alwaysApproval = limitNum === 0;
+                  const alwaysApproval =
+                    money.compare(rc.autoPostLimit, "0.00") === 0;
                   return (
                     <tr
                       key={rc.reasonCode}

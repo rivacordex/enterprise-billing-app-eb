@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { isUniqueViolation } from "@/db/errors";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { reasonCodeRepository } from "@/db/repositories/accounts/reason-code.repository";
 import type { ReasonCode } from "@/db/schema/billing/catalogs";
@@ -20,14 +21,6 @@ export type RetireReasonCodeResult =
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "ALREADY_RETIRED" }
   | { ok: false; code: "CONFLICT" };
-
-function isUniqueViolation(e: unknown): boolean {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    (e as { code?: string }).code === "23505"
-  );
-}
 
 export async function listReasonCodes(): Promise<ReasonCode[]> {
   return reasonCodeRepository.findAll(db);

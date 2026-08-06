@@ -30,6 +30,17 @@ const NATURE_LABELS: Record<string, string> = {
   deposit_movement: "deposit_movement — deposit",
 };
 
+// Pure string check — components may not import services/accounts/money.ts
+// (eslint-plugin-boundaries: components → services is disallowed), so a
+// zero-threshold display check can't route through money.ts. `parseFloat`/
+// `Number()` on an amount is banned everywhere outside money.ts (code-
+// standards §2.2, ac17 grep-gate) even for a display-only comparison, so
+// this checks the well-formed `numeric(18,2)`-derived string directly
+// rather than converting it to a float.
+function isZeroAmount(amount: string): boolean {
+  return /^-?0+(\.0+)?$/.test(amount.trim());
+}
+
 function StateChip({ state }: { state: string }): React.JSX.Element {
   const cls =
     state === "active"
@@ -400,7 +411,7 @@ export function ReasonCodeActions({
       </td>
       <td className="px-4 py-2 text-muted-foreground">{row.postingNature}</td>
       <td className="px-4 py-2 text-foreground tabular-nums">
-        {parseFloat(row.autoPostLimit) === 0 ? (
+        {isZeroAmount(row.autoPostLimit) ? (
           <span className="text-muted-foreground">0 (always four-eyes)</span>
         ) : (
           row.autoPostLimit

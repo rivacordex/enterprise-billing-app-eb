@@ -63,6 +63,7 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   REASON_CODE_CHANGED: "Change",
   BILL_CYCLE_CHANGED: "Change",
   WIZARD_DEFAULTS_CHANGED: "Change",
+  ACCOUNT_CLOSED: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the

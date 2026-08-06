@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { isUniqueViolation } from "@/db/errors";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billCycleRepository } from "@/db/repositories/accounts/bill-cycle.repository";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
@@ -20,14 +21,6 @@ export type RetireBillCycleResult =
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "ALREADY_RETIRED" }
   | { ok: false; code: "CONFLICT" };
-
-function isUniqueViolation(e: unknown): boolean {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    (e as { code?: string }).code === "23505"
-  );
-}
 
 export async function listBillCycles(): Promise<BillCycle[]> {
   return billCycleRepository.findAll(db);
@@ -148,6 +141,25 @@ export async function retireBillCycle(
     const r = await billCycleRepository.retire(tx, billCycleId, lastModified);
     if (r !== "updated") return r;
 
+    // Read the highest-version ACTIVE default row so the CAS UPDATE can pin
+    // to its exact configId — prevents clearing a lower-version ACTIVE row or
+    // a DRAFT/RETIRED row with the same value. Zero affected rows from the
+    // UPDATE means a concurrent writer already moved the default elsewhere;
+    // retirement proceeds (the default no longer points at this cycle).
+    const activeDefault = await systemConfigRepository.findActiveRow(
+      tx,
+      "accounts",
+      "ACCOUNTS_DEFAULT_BILL_CYCLE",
+    );
+    if (activeDefault?.configValue === billCycleId) {
+      await systemConfigRepository.clearValueIfEquals(
+        tx,
+        activeDefault.configId,
+        billCycleId,
+        actorId,
+      );
+    }
+
     await insertAuditEvent(tx, {
       eventType: "BILL_CYCLE_CHANGED",
       actorUserId: actorId,
@@ -187,23 +199,25 @@ export async function setDefaultBillCycle(
       code: "CYCLE_NOT_FOUND" | "CYCLE_RETIRED" | "CONFIG_NOT_FOUND";
     }
 > {
-  const cycle = await billCycleRepository.findById(db, billCycleId);
-  if (!cycle) return { ok: false, code: "CYCLE_NOT_FOUND" };
-  if (cycle.state !== "active") return { ok: false, code: "CYCLE_RETIRED" };
+  return db.transaction(async (tx) => {
+    const cycle = await billCycleRepository.findById(tx, billCycleId);
+    if (!cycle) return { ok: false, code: "CYCLE_NOT_FOUND" };
+    if (cycle.state !== "active") return { ok: false, code: "CYCLE_RETIRED" };
 
-  const allConfig = await systemConfigRepository.findAllNonSecret(db);
-  const row = allConfig.find(
-    (r) =>
-      r.configGroup === "accounts" &&
-      r.configKey === "ACCOUNTS_DEFAULT_BILL_CYCLE",
-  );
-  if (!row) return { ok: false, code: "CONFIG_NOT_FOUND" };
+    const allConfig = await systemConfigRepository.findAllNonSecret(tx);
+    const row = allConfig.find(
+      (r) =>
+        r.configGroup === "accounts" &&
+        r.configKey === "ACCOUNTS_DEFAULT_BILL_CYCLE",
+    );
+    if (!row) return { ok: false, code: "CONFIG_NOT_FOUND" };
 
-  await systemConfigRepository.updateValue(
-    db,
-    row.configId,
-    billCycleId,
-    actorId,
-  );
-  return { ok: true };
+    await systemConfigRepository.updateValue(
+      tx,
+      row.configId,
+      billCycleId,
+      actorId,
+    );
+    return { ok: true };
+  });
 }

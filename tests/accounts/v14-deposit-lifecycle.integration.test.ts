@@ -11,13 +11,24 @@ import { allocatePayment } from "@/services/accounts/allocate-payment";
 import { captureDeposit } from "@/services/accounts/capture-deposit";
 import { reverseDeposit } from "@/services/accounts/reverse-deposit";
 import { refundDeposit } from "@/services/accounts/refund-deposit";
+import { writeOff } from "@/services/accounts/write-off";
 import { approveDocument } from "@/services/accounts/document-state-machine";
+import { closeBillingAccount } from "@/services/accounts/close-billing-account";
+import { closeFinancialAccount } from "@/services/accounts/close-financial-account";
+import { customerHasOpenAccounts } from "@/services/accounts/closure-eligibility";
 
 // ac08-spec §3.6 v14-deposit-lifecycle.integration.test.ts — V14: the full
 // security-deposit lifecycle (capture → reverse → allocate → refund) ends
 // `deposits = 0`, `unapplied = 0` (Q11 closure eligibility); capture posts
 // directly at/below its limit, reverse/refund always route to approval
 // (limit 0) and reject self-approval; V1 zero-sum after every step.
+//
+// ac16-spec §3.7 extends this file to actual closure (rather than a new
+// v-file — same "extend the mapped V-test" precedent as ac09/ac10 extending
+// v12): write off the residual A/R the V14 sequence deliberately leaves open
+// → close-BAN → close-FA → a posting against the now-closed FA is rejected
+// (ACCOUNT_CLOSED) → the Customer → CLOSED gate flips from blocked to
+// allowed once both accounts are closed.
 const databaseUrl = process.env.DATABASE_URL;
 
 describe.skipIf(!databaseUrl)(
@@ -30,6 +41,8 @@ describe.skipIf(!databaseUrl)(
     let billingAccountId: string;
     let depositsAccountId: string;
     let unappliedAccountId: string;
+    let receivablesAccountId: string;
+    let partyRoleId: string;
 
     async function balanceOf(accountId: string): Promise<number> {
       const [row] = await sql<{ balance: string }[]>`
@@ -86,6 +99,10 @@ describe.skipIf(!databaseUrl)(
       const [sysRevenue] = await sql<{ id: string }[]>`
         SELECT id FROM billing.pgledger_create_account('sys.revenue.MYR', 'MYR')
       `;
+      // ac16 addition — write-off's counter-account (sys.write_off, Q19),
+      // needed to close the residual A/R the V14 sequence deliberately
+      // leaves open before closure can be exercised.
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.write_off.MYR', 'MYR')`;
 
       await sql`
         INSERT INTO billing.reason_code (reason_code, doc_type, posting_nature, auto_post_limit, state)
@@ -93,7 +110,8 @@ describe.skipIf(!databaseUrl)(
           ('CUST_PAYMENT', 'PAY', 'cash', 100000.00, 'active'),
           ('SEC_DEPOSIT', 'DEP', 'deposit_movement', 50000.00, 'active'),
           ('DEP_REVERSE', 'DEP', 'deposit_movement', 0.00, 'active'),
-          ('DEP_REFUND', 'DEP', 'deposit_movement', 0.00, 'active')
+          ('DEP_REFUND', 'DEP', 'deposit_movement', 0.00, 'active'),
+          ('BAD_DEBT_WRITEOFF', 'ADJ', 'write_off', 0.00, 'active')
       `;
 
       const [cycle] = await sql<{ id: string }[]>`
@@ -112,6 +130,7 @@ describe.skipIf(!databaseUrl)(
         VALUES (${org!.id}, 'INITIALIZED', ${creatorId})
         RETURNING party_role_id AS id, last_modified_datetime AS ts
       `;
+      partyRoleId = pr!.id;
 
       const onboarded = await onboardCustomerAccounts(
         {
@@ -148,6 +167,7 @@ describe.skipIf(!databaseUrl)(
         SELECT pgledger_account_id FROM billing.ledger_binding
         WHERE owner_type = 'billing_account' AND owner_id = ${billingAccountId} AND ledger_role = 'receivables'
       `;
+      receivablesAccountId = recBinding!.pgledger_account_id;
       await sql`
         SELECT * FROM billing.pgledger_create_transfer(
           ${sysRevenue!.id}, ${recBinding!.pgledger_account_id}, 8000.00::numeric, NOW(), '{"doc": "v14-fixture-charge"}'::jsonb
@@ -275,6 +295,134 @@ describe.skipIf(!databaseUrl)(
       expect(await balanceOf(depositsAccountId)).toBe(0);
       expect(await balanceOf(unappliedAccountId)).toBe(0);
       expect(await zeroSum()).toBe(0);
+    });
+
+    // ac16-spec §3.7 — extends V14 to actual closure. The sequence above
+    // deliberately leaves the BAN's A/R open at 2,000 (8,000 fixture charge −
+    // 6,000 allocated) — the guided path's exact step 4 (write off residue)
+    // clears it before closure can succeed.
+    async function banLastModified(): Promise<Date> {
+      const [row] = await sql<{ last_modified: Date }[]>`
+        SELECT last_modified FROM billing.billing_account
+        WHERE billing_account_id = ${billingAccountId}
+      `;
+      return row!.last_modified;
+    }
+
+    async function faLastModified(): Promise<Date> {
+      const [row] = await sql<{ last_modified: Date }[]>`
+        SELECT last_modified FROM billing.financial_account
+        WHERE financial_account_id = ${financialAccountId}
+      `;
+      return row!.last_modified;
+    }
+
+    it("Customer → CLOSED gate: still has open accounts before closure", async () => {
+      expect(await customerHasOpenAccounts(partyRoleId)).toBe(true);
+    });
+
+    it("close-BAN blocked while A/R = 2,000 (open) — CLOSURE_BLOCKED", async () => {
+      expect(await balanceOf(receivablesAccountId)).toBe(2000);
+
+      const result = await closeBillingAccount(
+        { billingAccountId, lastModified: await banLastModified() },
+        creatorId,
+      );
+      expect(result).toEqual({
+        ok: false,
+        code: "CLOSURE_BLOCKED",
+        openReceivable: "2000.00",
+      });
+    });
+
+    it("close-FA blocked while its BAN is still open — CLOSURE_BLOCKED lists the open BAN", async () => {
+      const result = await closeFinancialAccount(
+        { financialAccountId, lastModified: await faLastModified() },
+        creatorId,
+      );
+      expect(result).toEqual({
+        ok: false,
+        code: "CLOSURE_BLOCKED",
+        unappliedCash: "0.00",
+        deposits: "0.00",
+        openBillingAccountIds: [billingAccountId],
+      });
+    });
+
+    it("write off the 2,000 residue (BAD_DEBT_WRITEOFF, always four-eyes) — A/R → 0", async () => {
+      const written = await writeOff(
+        {
+          financialAccountId,
+          billingAccountId,
+          amount: "2000.00",
+          eventAt: new Date("2026-03-05T00:00:00.000Z"),
+          referenceDate: new Date("2026-03-05T00:00:00.000Z"),
+          referenceInfo: "V14/ac16 write-off residue",
+        },
+        creatorId,
+      );
+      expect(written.ok).toBe(true);
+      if (!written.ok) return;
+      expect(written.value.state).toBe("pending_approval");
+
+      const selfApprove = await db.transaction((tx) =>
+        approveDocument(tx, written.value.documentId, creatorId),
+      );
+      expect(selfApprove).toEqual({ ok: false, code: "SELF_APPROVAL" });
+
+      const approved = await db.transaction((tx) =>
+        approveDocument(tx, written.value.documentId, managerId),
+      );
+      expect(approved.ok).toBe(true);
+      if (!approved.ok) return;
+      expect(approved.value.state).toBe("posted");
+
+      expect(await balanceOf(receivablesAccountId)).toBe(0);
+      expect(await zeroSum()).toBe(0);
+    });
+
+    it("close-BAN succeeds now that A/R = 0", async () => {
+      const result = await closeBillingAccount(
+        { billingAccountId, lastModified: await banLastModified() },
+        creatorId,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toMatchObject({ billingAccountId, state: "closed" });
+    });
+
+    it("close-FA succeeds now that unapplied = 0, deposits = 0, and the BAN is closed", async () => {
+      const result = await closeFinancialAccount(
+        { financialAccountId, lastModified: await faLastModified() },
+        creatorId,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toMatchObject({
+        financialAccountId,
+        state: "closed",
+      });
+    });
+
+    it("a posting against the now-closed FA is rejected (ACCOUNT_CLOSED) — closure is the last ledger event", async () => {
+      const result = await captureDeposit(
+        {
+          financialAccountId,
+          amount: "100.00",
+          payment_mode: "cash",
+          mode_ref: { receiptNo: "V14-POST-CLOSED" },
+          eventAt: new Date("2026-03-06T00:00:00.000Z"),
+          referenceDate: new Date("2026-03-06T00:00:00.000Z"),
+          referenceInfo: "should be rejected — FA closed",
+        },
+        creatorId,
+      );
+      expect(result).toEqual({ ok: false, code: "ACCOUNT_CLOSED" });
+      expect(await zeroSum()).toBe(0);
+    });
+
+    it("Customer → CLOSED gate: no longer blocked once both FA and BAN are closed", async () => {
+      expect(await customerHasOpenAccounts(partyRoleId)).toBe(false);
     });
   },
 );

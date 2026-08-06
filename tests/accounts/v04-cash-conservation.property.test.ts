@@ -1,4 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Hoisted by Vitest before all imports. Service modules imported below
+// (capturePayment, allocatePayment, etc.) transitively import @/db/client,
+// which reads DATABASE_URL at module load and throws when it is absent.
+// This mock intercepts that import: when DATABASE_URL is unset the stub
+// db value is returned so the module loads cleanly; describe.skipIf
+// below ensures the stub is never actually invoked. When DATABASE_URL is
+// present, importOriginal() returns the real module unchanged.
+vi.mock("@/db/client", async (importOriginal) => {
+  if (!process.env.DATABASE_URL) return { db: {} };
+  return importOriginal();
+});
 import * as fc from "fast-check";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -6,7 +18,8 @@ import postgres from "postgres";
 import type postgresjs from "postgres";
 
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { db } from "@/db/client";
+import type { Database } from "@/db/client";
+import * as schema from "@/db/schema";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
@@ -48,6 +61,7 @@ describe.skipIf(!databaseUrl)(
   "V4 — cash conservation across arbitrary capture/allocate/reverse sequences (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let testDb: Database;
     let creatorId: string;
     let financialAccountId: string;
     let billingAccountId: string;
@@ -107,6 +121,7 @@ describe.skipIf(!databaseUrl)(
       await migrateSql.end();
 
       sql = postgres(databaseUrl as string, { max: 1 });
+      testDb = drizzle(sql, { schema }) as unknown as Database;
 
       const [creator] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -263,11 +278,11 @@ describe.skipIf(!databaseUrl)(
 
               if (step.shouldReverse && alloc.ok) {
                 const lines = await documentLineRepository.findByDocumentId(
-                  db,
+                  testDb,
                   alloc.value.documentId,
                 );
                 const allocDoc = await documentRepository.findById(
-                  db,
+                  testDb,
                   alloc.value.documentId,
                 );
                 if (lines[0] && allocDoc) {
@@ -357,11 +372,11 @@ describe.skipIf(!databaseUrl)(
 
       // Reverse alloc 1.
       const lines1 = await documentLineRepository.findByDocumentId(
-        db,
+        testDb,
         alloc1.value.documentId,
       );
       const doc1 = await documentRepository.findById(
-        db,
+        testDb,
         alloc1.value.documentId,
       );
       const rev1 = await reverseLine(

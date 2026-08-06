@@ -34,7 +34,7 @@ describe("AuditLogFilters", () => {
     expect(screen.queryByText("Clear")).not.toBeInTheDocument();
   });
 
-  it("renders all 49 event types under the correct optgroup", () => {
+  it("renders all 50 event types under the correct optgroup", () => {
     render(<AuditLogFilters actors={ACTORS} />);
     const select = screen.getByLabelText("Event type");
     const additive = within(select).getByRole("group", { name: "Additive" });
@@ -116,8 +116,10 @@ describe("AuditLogFilters", () => {
     expect(
       within(change).getByText("WIZARD_DEFAULTS_CHANGED"),
     ).toBeInTheDocument();
+    // ac16 additions
+    expect(within(change).getByText("ACCOUNT_CLOSED")).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(50); // "All events" + 49
+    expect(within(select).getAllByRole("option")).toHaveLength(51); // "All events" + 50
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

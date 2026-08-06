@@ -113,4 +113,30 @@ describe("StatusTransitionControl", () => {
     await user.click(screen.getByRole("button", { name: "Reload" }));
     expect(mockOnConflict).toHaveBeenCalled();
   });
+
+  it("an ACCOUNTS_STILL_OPEN response (ac16-spec §2.4) shows the guided-remedy message, not the generic fallback", async () => {
+    const user = userEvent.setup();
+    const onTransition = vi
+      .fn()
+      .mockResolvedValue({ ok: false, code: "ACCOUNTS_STILL_OPEN" });
+
+    render(
+      <StatusTransitionControl
+        currentStatus="VALIDATED"
+        entityKind="customer"
+        nextStates={["ACTIVE", "CLOSED"]}
+        onTransition={onTransition}
+        onConflict={mockOnConflict}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: "Closed" }));
+    await user.type(screen.getByLabelText("Reason"), "Wrapping up.");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    expect(
+      await screen.findByText(/still has open Financial or Billing Accounts/),
+    ).toBeInTheDocument();
+  });
 });
