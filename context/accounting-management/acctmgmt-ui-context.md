@@ -12,34 +12,34 @@ Define in `globals.css` alongside the shared tokens; values are references, hex 
 
 ### 1.1 Money & ledger surfaces
 
-| Token | References | Hex | Use |
-|---|---|---|---|
-| `--acct-amount` | `--text-primary` | `#11141A` | Default amount text (`amount-cell`); sign shown by parentheses, not color |
-| `--acct-amount-negative` | `danger-700` | `#8A1717` | Negative/parenthesised amounts — reinforces, never replaces, the parentheses |
-| `--acct-balance-ok` | `success-500` | `#1F9D57` | Ledger Explorer zero-sum strip when `Σ = 0` (V1) |
-| `--acct-balance-broken` | `danger-500` | `#D92D2D` | Zero-sum strip on imbalance; GL journal total row when `Σ debit ≠ Σ credit` (V6) |
-| `--acct-context-strip-bg` | `--surface-selected` | `#EDF0FB` | Persistent party/FA/BAN context strip background |
-| `--acct-context-strip-border` | `--border-default` | `#E0E4EB` | Context strip border |
+| Token                         | References           | Hex       | Use                                                                              |
+| ----------------------------- | -------------------- | --------- | -------------------------------------------------------------------------------- |
+| `--acct-amount`               | `--text-primary`     | `#11141A` | Default amount text (`amount-cell`); sign shown by parentheses, not color        |
+| `--acct-amount-negative`      | `danger-700`         | `#8A1717` | Negative/parenthesised amounts — reinforces, never replaces, the parentheses     |
+| `--acct-balance-ok`           | `success-500`        | `#1F9D57` | Ledger Explorer zero-sum strip when `Σ = 0` (V1)                                 |
+| `--acct-balance-broken`       | `danger-500`         | `#D92D2D` | Zero-sum strip on imbalance; GL journal total row when `Σ debit ≠ Σ credit` (V6) |
+| `--acct-context-strip-bg`     | `--surface-selected` | `#EDF0FB` | Persistent party/FA/BAN context strip background                                 |
+| `--acct-context-strip-border` | `--border-default`   | `#E0E4EB` | Context strip border                                                             |
 
 ### 1.2 Ledger account kind chips (Ledger Explorer, statements)
 
-| Token pair (bg / text) | References | Hex | Use |
-|---|---|---|---|
-| `--acct-chip-ban-bg` / `--acct-chip-ban-fg` | `primary-50` / `primary-700` | `#EDF0FB` / `#1B2A68` | `ban.*` receivables accounts |
-| `--acct-chip-fa-bg` / `--acct-chip-fa-fg` | `cyan-50` / `cyan-700` | `#E2F8FA` / `#006975` | `fa.*` unapplied-cash & deposits accounts |
-| `--acct-chip-sys-bg` / `--acct-chip-sys-fg` | `neutral-100` / `neutral-600` | `#EEF0F4` / `#4C5462` | `sys.*` system accounts |
+| Token pair (bg / text)                      | References                    | Hex                   | Use                                       |
+| ------------------------------------------- | ----------------------------- | --------------------- | ----------------------------------------- |
+| `--acct-chip-ban-bg` / `--acct-chip-ban-fg` | `primary-50` / `primary-700`  | `#EDF0FB` / `#1B2A68` | `ban.*` receivables accounts              |
+| `--acct-chip-fa-bg` / `--acct-chip-fa-fg`   | `cyan-50` / `cyan-700`        | `#E2F8FA` / `#006975` | `fa.*` unapplied-cash & deposits accounts |
+| `--acct-chip-sys-bg` / `--acct-chip-sys-fg` | `neutral-100` / `neutral-600` | `#EEF0F4` / `#4C5462` | `sys.*` system accounts                   |
 
 ### 1.3 Posting-nature series (GL Journal drill-down, any chart)
 
 One fixed color per Q19 posting nature so a nature never renders two ways:
 
-| Nature | References | Hex |
-|---|---|---|
-| `revenue` | `primary-500` | `#2E45A9` |
-| `revenue_adj` | `accent-300` | `#F052A0` |
-| `write_off` | `danger-500` | `#D92D2D` |
-| `rounding` | `neutral-400` | `#99A1B0` |
-| `cash` | `cyan-500` | `#00A9BC` |
+| Nature             | References    | Hex       |
+| ------------------ | ------------- | --------- |
+| `revenue`          | `primary-500` | `#2E45A9` |
+| `revenue_adj`      | `accent-300`  | `#F052A0` |
+| `write_off`        | `danger-500`  | `#D92D2D` |
+| `rounding`         | `neutral-400` | `#99A1B0` |
+| `cash`             | `cyan-500`    | `#00A9BC` |
 | `deposit_movement` | `warning-500` | `#E08600` |
 
 ---
@@ -48,26 +48,27 @@ One fixed color per Q19 posting nature so a nature never renders two ways:
 
 Badges follow the shared rule: dark `-fg` text on light `-bg` tint, icon + label always.
 
-| Domain value | Family | bg / fg |
-|---|---|---|
-| Document `draft` | Neutral | `neutral-100` / `neutral-600` |
-| Document `pending_approval` | Warning | `warning-50` / `warning-700` |
-| Document `posted` | Success | `success-50` / `success-700` |
-| Document `reversed` | Danger | `danger-50` / `danger-700` |
-| Document `cancelled` | Neutral (muted) | `neutral-100` / `neutral-400` |
-| Payment status `paid` | Success | `success-50` / `success-700` |
-| Payment status `due` | Warning | `warning-50` / `warning-700` |
-| **Derived** overdue (Q8 — prop-driven, never stored) | Danger | `danger-50` / `danger-700` |
-| Payment status `in_dispute` | Info | `info-50` / `info-700` |
-| Account `active` | Success | `success-50` / `success-700` |
-| Account `suspended` | Warning | `warning-50` / `warning-700` |
-| Account `closed` | Neutral | `neutral-100` / `neutral-600` |
-| Catalog `active` (cycle, reason code, GL code) | Success | `success-50` / `success-700` |
-| Catalog `retired` | Neutral | `neutral-100` / `neutral-400` |
-| Period `open` | Success | `success-50` / `success-700` |
-| Period `closed` | Neutral | `neutral-100` / `neutral-600` |
+| Domain value                                         | Family          | bg / fg                       |
+| ---------------------------------------------------- | --------------- | ----------------------------- |
+| Document `draft`                                     | Neutral         | `neutral-100` / `neutral-600` |
+| Document `pending_approval`                          | Warning         | `warning-50` / `warning-700`  |
+| Document `posted`                                    | Success         | `success-50` / `success-700`  |
+| Document `reversed`                                  | Danger          | `danger-50` / `danger-700`    |
+| Document `cancelled`                                 | Neutral (muted) | `neutral-100` / `neutral-400` |
+| **Derived** partially reversed (D4 — a `posted` document with some lines carrying `reversed_by_line_id`; never stored) | Warning | `warning-50` / `warning-700` |
+| Payment status `paid`                                | Success         | `success-50` / `success-700`  |
+| Payment status `due`                                 | Warning         | `warning-50` / `warning-700`  |
+| **Derived** overdue (Q8 — prop-driven, never stored) | Danger          | `danger-50` / `danger-700`    |
+| Payment status `in_dispute`                          | Info            | `info-50` / `info-700`        |
+| Account `active`                                     | Success         | `success-50` / `success-700`  |
+| Account `suspended`                                  | Warning         | `warning-50` / `warning-700`  |
+| Account `closed`                                     | Neutral         | `neutral-100` / `neutral-600` |
+| Catalog `active` (cycle, reason code, GL code)       | Success         | `success-50` / `success-700`  |
+| Catalog `retired`                                    | Neutral         | `neutral-100` / `neutral-400` |
+| Period `open`                                        | Success         | `success-50` / `success-700`  |
+| Period `closed`                                      | Neutral         | `neutral-100` / `neutral-600` |
 
-Owning components: `doc-state-badge.tsx`, `payment-status-badge.tsx` (code-standards §4.1) — no page renders a status color outside these.
+Owning components: `doc-state-badge.tsx`, `payment-status-badge.tsx` (code-standards §4.1) — no page renders a status color outside these. Partially-reversed is **not** a `DOC_STATES` value and gets no new component: `doc-state-badge.tsx` takes it as a derived prop and renders it beside the `posted` badge, exactly as `payment-status-badge.tsx` already handles derived overdue.
 
 ---
 
@@ -75,13 +76,13 @@ Owning components: `doc-state-badge.tsx`, `payment-status-badge.tsx` (code-stand
 
 No new sizes or families. Module wiring of the shared scale:
 
-| Surface | Token | Note |
-|---|---|---|
-| All domain ids (`FIN…`, `BAN…`, `PAY…`, `DLN…`, `pglt_…`), ledger account names, GL codes, cheque/bank refs | `--text-mono` | Mono everywhere an id appears, including table cells and the context strip |
-| Amounts (all tables, statements, journal) | `--text-body` + `tabular-nums`, right-aligned | Sans, not mono — per shared §5 numeric rule; 2 dp always |
-| Ledger/journal dense tables | `--text-body-sm` | With `--radius-none` grid treatment |
-| GL journal total row, zero-sum strip figure | `--text-h4` + `tabular-nums` | The only emphasized numerals |
-| Column headers (Debit / Credit / Balance) | `--text-overline` | Debit vs credit is communicated by **column position**, never by color |
+| Surface                                                                                                     | Token                                         | Note                                                                       |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| All domain ids (`FIN…`, `BAN…`, `PAY…`, `DLN…`, `pglt_…`), ledger account names, GL codes, cheque/bank refs | `--text-mono`                                 | Mono everywhere an id appears, including table cells and the context strip |
+| Amounts (all tables, statements, journal)                                                                   | `--text-body` + `tabular-nums`, right-aligned | Sans, not mono — per shared §5 numeric rule; 2 dp always                   |
+| Ledger/journal dense tables                                                                                 | `--text-body-sm`                              | With `--radius-none` grid treatment                                        |
+| GL journal total row, zero-sum strip figure                                                                 | `--text-h4` + `tabular-nums`                  | The only emphasized numerals                                               |
+| Column headers (Debit / Credit / Balance)                                                                   | `--text-overline`                             | Debit vs credit is communicated by **column position**, never by color     |
 
 ---
 

@@ -25,6 +25,7 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
 }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/administration/users",
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn() }),
 }));
 vi.mock("@/auth/client", () => ({

@@ -9,7 +9,7 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 ## Goals
 
 1. Give every validated customer a correct financial structure automatically: FA + BAN + three ledger accounts (`receivables`, `unapplied_cash`, `deposits`) + bindings created in one transaction by the validation wizard (Q2), with bill cycle from the catalog (Q13) and negotiated payment terms (Q14).
-2. Let RevOps execute all eight operations of the transaction vocabulary (Q17) through approval-gated documents (Q18/Q20), with zero direct ledger writes from the UI.
+2. Let RevOps execute every operation of the transaction vocabulary (Q17) through approval-gated documents (Q18/Q20), with zero direct ledger writes from the UI.
 3. Keep balances live, never stored: A/R, unapplied cash, deposit held, and the overdue badge are always computed from `pgledger` views + terms (Q8/Q14).
 4. Make every ringgit traceable: document → lines → transfers → entries → GL code, one unbroken chain (Ledger Explorer, GL Journal drill-down).
 5. Close each accounting period safely: posting into a closed period is rejected with re-date (Q9); the exported journal always balances (Σ debit = Σ credit).
@@ -30,19 +30,24 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 ## Features by category
 
 ### Account management
+
 - Validation wizard: atomic FA/BAN/ledger/binding creation, catalog-driven bill cycle, terms override (Q2/Q13/Q14)
 - Returning customers see prior/closed accounts; explicit re-creation only, no silent duplicates (Q2)
 - Zero-balance-gated closure with guided settle-first path (Q11)
 - `billing.account_view` composes the TMF base-Account shape, including `relatedParty[]` from the `ref_party_role_id` FK (Q6/Q28)
 
 ### Transactions (documents)
+
 - Doc types PAY / DEP / CRN / DBN / ADJ with per-type id prefixes; state machine draft → pending_approval → posted → reversed (Q18)
 - Reason-code catalog with posting nature and per-code `auto_post_limit`; approver ≠ creator enforced server-side (Q19/Q20)
+- Every document captures three mandatory fields (Q29): `event_at` (entry date — drives period/journal), `reference_date` (manual, defaults to today), and `reference_info` (e.g. transaction code)
 - Payment modes `bank_transfer | cash | cheque` with mode-specific references; all manual, cheques assumed to clear (Q22/Q27)
 - Split context requirements: CRN/DBN/ADJ need the selected BAN; PAY/DEP need only the FA (Q1)
 - Document- and line-level reversal with conservation guarantees (Q5)
+- Payment refund (`PAYMENT_REFUND`): bank payout of a customer overpayment / unapplied remainder, `sys.cash → unapplied_cash`, four-eyes (Q17/Q20)
 
 ### Ledger & GL
+
 - pgledger fork in the `billing` schema with vendored upstream + transform script (Q10)
 - Sys accounts per posting nature: `revenue`, `revenue_adj`, `write_off`, `rounding`, `tax_payable`, `cash` (Q19)
 - Chart of Accounts mastered in-module (Q26); role/name mapping rules; unmapped-account health check
@@ -50,6 +55,7 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 - GL dimensions deferred via metadata escrow — `dim_*` keys promoted at ERP time, no re-posting (Q25)
 
 ### Pages & access
+
 - Accounts (left nav): Accounts Overview, Ledger Explorer, Transactions, Chart of Accounts, GL Journal; Administration → Accounts Settings (reason codes, thresholds, bill-cycle catalog, defaults, flows documentation)
 - Persistent selection context strip across Overview / Ledger Explorer / Transactions
 - Three permissions on existing better-auth RBAC: `accounts-view`, `accounts-transactions`, `accounts-config` (Q7/Q20); server actions enforce independently of navigation
@@ -58,8 +64,8 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 
 - `billing.financial_account`, `billing.billing_account`, `billing.account_view`, `billing.bill_cycle`, `billing.reason_code`, `billing.document`, `billing.document_line`, `billing.ledger_binding`, `billing.gl_account`, `billing.gl_mapping`, `billing.accounting_period`, plus the forked pgledger tables/functions — all in the `billing` pg schema
 - Validation wizard (FA/BAN auto-creation) and Customer-module touchpoints (Preferred PIC note, FA/BAN ids on the customer role section with deep links)
-- All eight RevOps operations as documents, with approval workflow and thresholds
-- Manual payment capture and manual allocation only (Q21/Q24)
+- All RevOps operations as documents, with approval workflow and thresholds
+- Manual payment capture, allocation, and refund of overpayments (Q21/Q24)
 - Security-deposit lifecycle: capture, reverse-to-account, refund, error correction via reversal (Q16)
 - Period locking and close workflow; CSV GL journal export with audit events
 - Live balances and read-time overdue derivation; MYR only operationally (Q12)
@@ -83,5 +89,5 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 2. Validating a customer produces FA + BAN + 3 ledger accounts + 3 bindings in one transaction, and a forced mid-transaction failure leaves zero orphan rows.
 3. Every operation in the RevOps vocabulary (Q17) is executable end-to-end on the Transactions page by a USER within limits and requires MANAGER approval above them; no ledger transfer exists without a posted document line pointing at it (1:1 `pgledger_transfer_id`).
 4. The July sample scenario (Sample Telecom: DBN 5,400 → PAY 5,400 capture+allocation → deposit capture/reverse/refund) reproduces the plan's §2 tables exactly, and its GL journal export totals 16,200/16,200.
-5. Closing a period blocks further postings into it with a re-date error preserving the true `event_at`; the exported CSV re-runs idempotically.
+5. Closing a period blocks further postings into it with a re-date error (the user corrects the entry date into an open period); the exported CSV re-runs idempotically.
 6. All five Accounts pages + Accounts Settings render with the three-permission RBAC enforced server-side; a user with only `accounts-view` can trace a transaction from Accounts Overview to its GL line without any write affordance visible.
