@@ -16,6 +16,4 @@ or making any architectural decision related to Accounts Module:
 3. `context/accounting-management/acctmgmt-ui-context.md` — theme, colors, typography, and component conventions
 4. `context/accounting-management/acctmgmt-code-standards.md` — implementation rules and conventions
 5. `context/accounting-management/acctmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-6. `context/accounting-management/acctmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
-
-Update `context/accounting-management/acctmgmt-progress-tracker.md` after each meaningful implementation change.
+6. `context/accounting-management/completed-tracker.md` — completed units, architectural decisions, and resolved questions (module shipped; no further updates needed)
