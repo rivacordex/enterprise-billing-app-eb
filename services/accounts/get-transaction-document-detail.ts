@@ -35,10 +35,15 @@ export async function getTransactionDocumentDetail(
     // Reverse-lookup: find any document whose reversalOf points to this doc.
     // Direct Drizzle query — no formal repo method needed for a one-off
     // display-side cross-link (spec §2: "no new repository method").
+    // Deterministic order: a doc can be referenced by more than one reversal
+    // (successive line-level reversals each insert a reversalOf row), so order
+    // by documentId before LIMIT 1 to keep reversedByDocumentId stable — the
+    // earliest reversing document. The single-ID response shape is unchanged.
     db
       .select({ documentId: documentTable.documentId })
       .from(documentTable)
       .where(eq(documentTable.reversalOf, documentId))
+      .orderBy(documentTable.documentId)
       .limit(1),
   ]);
 

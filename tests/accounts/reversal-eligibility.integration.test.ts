@@ -64,7 +64,11 @@ describe.skipIf(!databaseUrl)(
         },
         100,
       );
-      return rows.find((r) => r.documentId === documentId)?.reversible ?? false;
+      const row = rows.find((r) => r.documentId === documentId);
+      if (!row) {
+        throw new Error(`document ${documentId} not found in the listing`);
+      }
+      return row.reversible;
     }
 
     async function lastModifiedOf(documentId: string): Promise<Date> {

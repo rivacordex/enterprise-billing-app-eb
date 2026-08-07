@@ -2,8 +2,10 @@
 
 // ac21-spec §3.3 — the only client component in this unit. Renders for
 // pending_approval documents when the viewer holds EDIT. Surfaces the
-// Result-code catalog vocabulary (code-standards §9) back to the user;
-// never re-implements the SELF_APPROVAL rule client-side (server enforces it).
+// Result-code catalog vocabulary (code-standards §9) back to the user.
+// The `isSelf` check disables the button client-side purely as an affordance
+// (creator ≠ approver, module inv. #6); the server remains the enforcing
+// authority and returns SELF_APPROVAL if the guard is bypassed.
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -70,17 +72,19 @@ export function DocumentApprovalActions({
           type="button"
           disabled={busy || isSelf}
           onClick={() => void handleApprove()}
-          title={
-            isSelf
-              ? "You created this document — another approver must post it"
-              : undefined
-          }
           aria-label="Approve and post document"
           className="rounded-md bg-[color:var(--action-primary-bg)] px-4 py-2 text-body-sm font-medium text-white hover:bg-[color:var(--action-primary-bg-hover)] focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "Posting…" : "Approve & post"}
         </button>
       </div>
+      {/* Visible reason for the disabled control (not a title-only tooltip) so
+          keyboard/screen-reader users get it too. */}
+      {isSelf && (
+        <p className="text-body-sm text-muted-foreground">
+          You created this document — another approver must post it.
+        </p>
+      )}
       {message && (
         <p className="text-body-sm text-destructive" role="alert">
           {message}

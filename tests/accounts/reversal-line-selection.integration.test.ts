@@ -79,7 +79,11 @@ describe.skipIf(!databaseUrl)(
         },
         200,
       );
-      return rows.find((r) => r.documentId === documentId)?.reversible ?? false;
+      const row = rows.find((r) => r.documentId === documentId);
+      if (!row) {
+        throw new Error(`document ${documentId} not found in the listing`);
+      }
+      return row.reversible;
     }
 
     beforeAll(async () => {
@@ -304,6 +308,11 @@ describe.skipIf(!databaseUrl)(
     });
 
     it("SC8: reversing a PAY allocation line returns funds to unapplied_cash while the capture stays posted", async () => {
+      // Baselines: prior tests in this suite net to zero, but assert deltas so
+      // any residual balance can't mask a regression.
+      const baseUnapplied = await balanceOf(unappliedAccountId);
+      const baseReceivables = await balanceOf(receivablesAccountId);
+
       // Charge A/R (1500), capture (1500 → unapplied), allocate (unapplied → A/R).
       const dbn = await raiseDebitNote(
         {
@@ -336,7 +345,10 @@ describe.skipIf(!databaseUrl)(
       expect(cap.ok).toBe(true);
       if (!cap.ok) return;
       const captureDocId = cap.value.documentId;
-      expect(await balanceOf(unappliedAccountId)).toBeCloseTo(-1500, 2);
+      expect(await balanceOf(unappliedAccountId)).toBeCloseTo(
+        baseUnapplied - 1500,
+        2,
+      );
       expect(await zeroSum()).toBeCloseTo(0, 6);
 
       const alloc = await allocatePayment(
@@ -354,9 +366,12 @@ describe.skipIf(!databaseUrl)(
       expect(alloc.ok).toBe(true);
       if (!alloc.ok) return;
       const allocDocId = alloc.value.documentId;
-      // After allocation, unapplied is back to 0 (funds applied to A/R).
-      expect(await balanceOf(unappliedAccountId)).toBeCloseTo(0, 2);
-      expect(await balanceOf(receivablesAccountId)).toBeCloseTo(0, 2);
+      // After allocation, unapplied returns to baseline (funds applied to A/R).
+      expect(await balanceOf(unappliedAccountId)).toBeCloseTo(baseUnapplied, 2);
+      expect(await balanceOf(receivablesAccountId)).toBeCloseTo(
+        baseReceivables,
+        2,
+      );
       expect(await zeroSum()).toBeCloseTo(0, 6);
 
       // Reverse the single allocation line (all-checked → reverseDocument path,
@@ -385,8 +400,14 @@ describe.skipIf(!databaseUrl)(
       expect(rev.ok).toBe(true);
 
       // Funds returned to unapplied cash; A/R restored to the charged amount.
-      expect(await balanceOf(unappliedAccountId)).toBeCloseTo(-1500, 2);
-      expect(await balanceOf(receivablesAccountId)).toBeCloseTo(1500, 2);
+      expect(await balanceOf(unappliedAccountId)).toBeCloseTo(
+        baseUnapplied - 1500,
+        2,
+      );
+      expect(await balanceOf(receivablesAccountId)).toBeCloseTo(
+        baseReceivables + 1500,
+        2,
+      );
 
       // The bank capture document is untouched — still posted, line unreversed.
       const captureDoc = await documentRepository.findById(db, captureDocId);

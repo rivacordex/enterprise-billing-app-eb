@@ -95,7 +95,10 @@ export const ledgerRepository = {
     pgledgerAccountId: string,
   ): Promise<string | null> {
     const [row] = await db.execute<{ balance: string }>(
-      sql`SELECT balance::text AS balance FROM billing.pgledger_accounts_view WHERE id = ${pgledgerAccountId} LIMIT 1`,
+      // Cast to numeric(18,2) so a zero/unscaled balance serialises as "0.00",
+      // not "0" — the module's money strings are always 2 dp (code-standards
+      // §2.2), matching this method's own "0.00" default below.
+      sql`SELECT balance::numeric(18,2)::text AS balance FROM billing.pgledger_accounts_view WHERE id = ${pgledgerAccountId} LIMIT 1`,
     );
     return row ? (row.balance ?? "0.00") : null;
   },
@@ -108,7 +111,7 @@ export const ledgerRepository = {
     financialAccountId: string,
   ): Promise<string> {
     const [row] = await db.execute<{ total: string }>(sql`
-      SELECT COALESCE(SUM(pav.balance), 0)::text AS total
+      SELECT COALESCE(SUM(pav.balance), 0)::numeric(18,2)::text AS total
       FROM billing.billing_account ban
       JOIN billing.ledger_binding lb
         ON lb.owner_type = 'billing_account'

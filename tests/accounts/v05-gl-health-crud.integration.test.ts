@@ -25,20 +25,37 @@ describe.skipIf(!databaseUrl)(
   "V5 GL health CRUD — orphan-block & catalog retire (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let actorId: string;
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 1 });
 
-      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await migrate(drizzle(sql), {
+      // Migrate on a short-lived connection, then close it and open a fresh one
+      // for reads: migrate() poisons the connection's type-OID cache so later
+      // timestamptz reads on it return raw strings (module Key Decision —
+      // "migrate()-poisons-connection quirk").
+      const migrateSql = postgres(databaseUrl as string, { max: 1 });
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+      await migrate(drizzle(migrateSql), {
         migrationsFolder: "./db/migrations",
         migrationsSchema: "drizzle",
       });
+      await migrateSql.end();
+
+      sql = postgres(databaseUrl as string, { max: 1 });
+
+      // retireGlMapping stamps last_edited_by (FK → core.appuser), so seed a
+      // real actor rather than a literal string.
+      const [actor] = await sql<{ id: string }[]>`
+        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+        VALUES ('test-user-v05', 'V05 Actor', 'v05@example.com', 'LOCAL', 'ACTIVE')
+        RETURNING user_id AS id
+      `;
+      actorId = actor!.id;
 
       // Minimal seed: sys pgledger accounts + CoA + gl_mappings covering all
       // sys accounts. The role-based mappings are omitted so we can test with
@@ -297,7 +314,7 @@ describe.skipIf(!databaseUrl)(
       `;
       if (!spare) throw new Error("spare insert failed");
 
-      const okResult = await retireGlMapping(spare.id, spare.lm, "test-actor");
+      const okResult = await retireGlMapping(spare.id, spare.lm, actorId);
       expect(okResult).toEqual({ ok: true });
 
       const [retiredRow] = await sql<{ state: string }[]>`
@@ -315,11 +332,7 @@ describe.skipIf(!databaseUrl)(
       `;
       if (!revRow) throw new Error("sys.revenue.MYR mapping not found");
 
-      const blockResult = await retireGlMapping(
-        revRow.id,
-        revRow.lm,
-        "test-actor",
-      );
+      const blockResult = await retireGlMapping(revRow.id, revRow.lm, actorId);
       expect(blockResult.ok).toBe(false);
       if (!blockResult.ok) {
         expect(blockResult.code).toBe("ORPHAN_BLOCK");
@@ -342,11 +355,14 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO billing.gl_account (gl_code, name, account_class, normal_balance, is_postable, state)
         VALUES ('9999', 'Test Spare Account', 'asset', 'debit', true, 'active')
       `;
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.cash.SGD', 'SGD')`;
+      // Selector must equal the pgledger account name (gl_resolution_view joins
+      // system_account mappings on selector = pav.name), so map sys.cash.SGD —
+      // not sys.cash.MYR — to resolve the SGD account.
       await sql`
         INSERT INTO billing.gl_mapping (selector_type, selector, currency, ref_gl_code)
-        VALUES ('system_account', 'sys.cash.MYR', 'SGD', '9999')
+        VALUES ('system_account', 'sys.cash.SGD', 'SGD', '9999')
       `;
-      await sql`SELECT id FROM billing.pgledger_create_account('sys.cash.SGD', 'SGD')`;
 
       // Retire the GL code (the mapping row still exists, still active).
       await sql`UPDATE billing.gl_account SET state = 'retired' WHERE gl_code = '9999'`;

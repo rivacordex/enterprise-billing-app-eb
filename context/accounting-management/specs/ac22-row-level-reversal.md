@@ -19,7 +19,7 @@ Replace `ReversalsPanel`'s free-typed document-ID form with a reversal control o
 
 The control renders exactly where `reverse-document.ts` would succeed:
 
-```
+```text
 state === "posted"  AND  at least one line with reversedByLineId === null
 ```
 
@@ -113,7 +113,7 @@ Remove `ReversalsPanel` from `transactions/page.tsx` and delete the component fi
 | posted, all lines reversed | **hidden** | `ALREADY_REVERSED` |
 | `draft` | **hidden** | `DOC_STATE_INVALID` |
 | `pending_approval` | **hidden** | `DOC_STATE_INVALID` |
-| `reversed` | **hidden** | `ALREADY_REVERSED` |
+| `reversed` | **hidden** | `DOC_STATE_INVALID` |
 
 `tests/accounts/reversal-line-selection.integration.test.ts` — **SC7, SC8**:
 
