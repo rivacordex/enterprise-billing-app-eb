@@ -35,34 +35,25 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).not.toContain("pgledger_");
   });
 
-  it("imports the capture, allocate, refund, and pending-approvals panels", () => {
-    expect(pageSource).toContain("CapturePaymentPanel");
-    expect(pageSource).toContain("AllocatePaymentPanel");
-    expect(pageSource).toContain("PaymentRefundPanel");
+  it("imports TransactionsActionBar (ten create-panels moved behind action launcher, ac19)", () => {
+    // ac19 moved the ten create-panels into TransactionsActionBar; the page no
+    // longer imports them individually. ReversalsPanel, ClosurePanel, and
+    // PendingApprovalsList stay directly in the page (retired by ac22/D1/ac20).
+    expect(pageSource).toContain("TransactionsActionBar");
+    expect(pageSource).not.toContain("CapturePaymentPanel");
+    expect(pageSource).not.toContain("CaptureDepositPanel");
+    expect(pageSource).not.toContain("WriteOffPanel");
+  });
+
+  it("still imports PendingApprovalsList directly (to be absorbed by ac20)", () => {
     expect(pageSource).toContain("PendingApprovalsList");
   });
 
-  it("imports the DEP capture/reverse/refund panels (ac08-spec §3.5)", () => {
-    expect(pageSource).toContain("CaptureDepositPanel");
-    expect(pageSource).toContain("ReverseDepositPanel");
-    expect(pageSource).toContain("RefundDepositPanel");
-  });
-
-  it("imports the CRN/DBN panels (ac09-spec §3.5)", () => {
-    expect(pageSource).toContain("RaiseDebitNotePanel");
-    expect(pageSource).toContain("RaiseCreditNotePanel");
-  });
-
-  it("imports the ADJ write-off/rounding panels (ac10-spec §3.5)", () => {
-    expect(pageSource).toContain("WriteOffPanel");
-    expect(pageSource).toContain("RoundingAdjustmentPanel");
-  });
-
-  it("imports the Reversals panel (ac11-spec §3.5)", () => {
+  it("imports the Reversals panel (ac11-spec §3.5 — retained until ac22)", () => {
     expect(pageSource).toContain("ReversalsPanel");
   });
 
-  it("imports the Closure panel (ac16-spec §3.5)", () => {
+  it("imports the Closure panel (ac16-spec §3.5 — deferred per D1)", () => {
     expect(pageSource).toContain("ClosurePanel");
   });
 });
@@ -72,6 +63,7 @@ describe("Transactions shared components exist", () => {
 
   it.each([
     ["doc-state-badge.tsx", "DocStateBadge"],
+    ["transactions-action-bar.tsx", "TransactionsActionBar"],
     ["capture-payment-panel.tsx", "CapturePaymentPanel"],
     ["allocate-payment-panel.tsx", "AllocatePaymentPanel"],
     ["payment-refund-panel.tsx", "PaymentRefundPanel"],

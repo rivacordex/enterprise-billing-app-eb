@@ -1,6 +1,6 @@
 # Completed Tracker — Accounts Module
 
-17 of 17 original units delivered (ac01–ac17). The Transactions revision is now underway: `ac18` delivered. **Next up: `ac19`** (action launcher + dialog shells).
+17 of 17 original units delivered (ac01–ac17). The Transactions revision is now underway: `ac18` and `ac19` delivered. **Next up: `ac20`** (documents table + retire `PendingApprovalsList`). New shared primitive: `components/ui/dropdown-menu.tsx` is now available to all modules.
 
 ## Status Table
 
@@ -24,6 +24,7 @@
 | ac16 | Account Closure Gates (zero-balance BAN/FA closure, guided settle-first path, Customer CLOSED block) | Delivered |
 | ac17 | Guardrail & Authz Sweep (route × level matrix, V1–V14 audit, grep gates, docs sync) | Delivered |
 | ac18 | Nav Order + Selection-Context Handoff (Transactions moves to position 2, `?party&fa&ban` propagates across all five Accounts nav links) | Delivered |
+| ac19 | Action Launcher + Dialog Shells (`+ Payment`, `+ Note`, `More actions` bar; ten panels wrapped in `Dialog`; `DropdownMenu` primitive added) | Delivered |
 
 ## Unit Summaries
 
@@ -62,6 +63,8 @@
 **ac17 — Guardrail & Authz Sweep.** Pure gate unit — tests + CI grep gates + docs only; no feature/schema/UI change. Three new test files: `route-level-matrix.test.ts` (six pages + export route `(permission, level)` gates, threshold routing, approver≠creator), `verification-audit.test.ts` (V1–V14 presence/naming/mapping, Inv.#1–14 ↔ V-test cross-reference), `grep-gates.test.ts` (eight static CI gates, tree-wide). 119 new tests, all green. `db/migrations/0020_accounts_config_permission.sql` journal entry registered (was authored but missing). Three genuine pre-existing defects found and fixed: `amount-cell.tsx` raw `Number()`/`< 0` violation; `reason-code-form.tsx` and `accounts-settings/flows/page.tsx` `parseFloat() === 0` violations; `roles-read.service.integration.test.ts` hardcoded permission list missing three Accounts permissions.
 
 **ac18 — Nav Order + Selection-Context Handoff.** `components/admin-nav.tsx` only (D6+D7, ac18-spec). `NavSection` gained `carriesAccountsContext?: boolean`, set on the Accounts section only. Accounts items reordered to Overview → Transactions → Ledger Explorer → Chart of Accounts → GL Journal under a single caption. Module-private `accountsContextQuery` helper routes `useSearchParams()` through the existing `parseAccountsContext` (still the only parser) and allowlists exactly `party`/`fa`/`ban` in that fixed order into a `linkHref` computed separately from `item.href`, so `isActive`/`key`/`aria-current` keep resolving off the bare pathname. Locked items are untouched (still `href`-less). Three existing test files (`admin-nav.test.tsx`, `admin-sidebar.test.tsx`, `admin-layout.test.tsx`) extended with a `useSearchParams` mock; new `admin-nav-accounts-context.test.tsx` covers order, propagation, scope, allowlist, validation, empty-context, determinism, active-state and locked-item behavior. No schema, permission, or style change.
+
+**ac19 — Action Launcher + Dialog Shells.** New `components/ui/dropdown-menu.tsx` (shadcn-style over the already-installed unified `radix-ui` v1.6.0 package; zero new installs). New `components/accounts/transactions-action-bar.tsx` (`"use client"`, `openAction: ActionKey | null` transient state, three controls: `+ Payment` primary / `+ Note` primary / `More actions` secondary). Ten dialog wrappers co-located in the action bar file; each renders its existing panel byte-identical inside `Dialog` + `DialogTitle` (`PANEL_CLASS` on `DialogContent` strips panel section chrome and hides the internal `<h3>` via CSS — inv. #20 holds; panels remain standalone-renderable). Context gating: FA-only entries (Capture Payment, three Deposits) disable when no FA; FA+BAN entries (Allocate, Refund, Notes, Write Off, Rounding) disable when no BAN; trigger button disables when all its entries are disabled. "Reverse Deposit to Account" carries a one-line description defusing the name collision with ledger reversal. `transactions/page.tsx` replaced the ten inline `<section>` panel renders with a single `<TransactionsActionBar …/>`, keeping `ReversalsPanel`, `ClosurePanel`, and `PendingApprovalsList` unchanged (retired by ac22/D1/ac20 respectively). Tests: `tests/components/transactions-action-bar.test.tsx` (31 tests: triggers, menus, context gating, dialog open/close, reversal absence); `tests/accounts/route-level-transactions.test.ts` updated (panel-import assertions replaced with action-bar check); `tests/accounts/grep-gates.test.ts` extended with inv. #20 wrapping-integrity gate (panel files export their component and contain no Dialog import; `TransactionsActionBar` is the sole Dialog importer among accounts components). 131 tests, all green.
 
 ## Key Module-Wide Architectural Decisions
 
