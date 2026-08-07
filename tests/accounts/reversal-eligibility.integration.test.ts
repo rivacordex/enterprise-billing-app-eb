@@ -99,6 +99,12 @@ describe.skipIf(!databaseUrl)(
 
       await sql`SELECT id FROM billing.pgledger_create_account('sys.cash.MYR', 'MYR')`;
       await sql`SELECT id FROM billing.pgledger_create_account('sys.revenue.MYR', 'MYR')`;
+      // The DBN tax leg steers to sys.tax_payable.{ccy} (ac09-spec §2.3);
+      // the 2-line DBN fixtures below post a tax line, so this must exist.
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.tax_payable.MYR', 'MYR')`;
+      // The DBN tax leg steers to sys.tax_payable.{ccy} (ac09-spec §2.3);
+      // the 2-line DBN fixtures below post a tax line, so this must exist.
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.tax_payable.MYR', 'MYR')`;
 
       await sql`
         INSERT INTO billing.gl_account (gl_code, name, account_class, normal_balance, is_postable)
