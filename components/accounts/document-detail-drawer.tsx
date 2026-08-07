@@ -10,6 +10,7 @@ import Link from "next/link";
 import { AmountCell } from "@/components/accounts/amount-cell";
 import { DocStateBadge } from "@/components/accounts/doc-state-badge";
 import { DocumentApprovalActions } from "@/components/accounts/document-approval-actions";
+import { ReverseButton } from "@/components/accounts/reversal-dialog";
 import { formatDatetime } from "@/lib/formatters";
 import type {
   DocState,
@@ -68,6 +69,13 @@ export interface DocumentDetailDrawerProps {
   timezone: string;
   canEdit: boolean;
   currentUserId: string;
+  // ac22-spec §3.3 — the context FA the document belongs to, passed to the
+  // reversal dialog. Present whenever the drawer renders (the drawer only loads
+  // when ?doc resolves against the selected FA).
+  financialAccountId: string;
+  // Mirror of ac20's `reversible` derivation (inv. #18) computed by the page
+  // from this document's own state/lines. The service re-validates on submit.
+  reversible: boolean;
 }
 
 export function DocumentDetailDrawer({
@@ -77,6 +85,8 @@ export function DocumentDetailDrawer({
   timezone,
   canEdit,
   currentUserId,
+  financialAccountId,
+  reversible,
 }: DocumentDetailDrawerProps): React.JSX.Element {
   const {
     document: doc,
@@ -337,6 +347,34 @@ export function DocumentDetailDrawer({
           createdBy={doc.createdBy}
           currentUserId={currentUserId}
         />
+      )}
+
+      {/* ── Reversal (ac22-spec §3.3) — EDIT only. Eligible → the control;
+          ineligible → one line of explanatory text (informational, not a
+          control) for the case an operator expects the action. Pending is
+          handled above by DocumentApprovalActions (approve/reject), unchanged. */}
+      {canEdit && reversible && (
+        <div className="flex flex-col gap-2 border-t border-[color:var(--border-subtle)] pt-4">
+          <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+            Reversal
+          </h3>
+          <div>
+            <ReverseButton
+              documentId={doc.documentId}
+              financialAccountId={financialAccountId}
+              label="↺ Reverse…"
+            />
+          </div>
+        </div>
+      )}
+      {canEdit && !reversible && docState === "reversed" && (
+        <div className="border-t border-[color:var(--border-subtle)] pt-4">
+          <p className="text-body-sm text-muted-foreground">
+            {reversedByDocumentId
+              ? `Reversed by ${reversedByDocumentId}.`
+              : "This document has been fully reversed."}
+          </p>
+        </div>
       )}
     </aside>
   );

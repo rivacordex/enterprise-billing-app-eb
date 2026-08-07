@@ -416,17 +416,72 @@ describe("grep gate — inv. #20: ten create-panel files export their component 
     },
   );
 
-  it("TransactionsActionBar is the sole Dialog importer among accounts components (the invariant has exactly one owner)", () => {
+  it("Dialog is imported only by the action-bar shell and the ac22 reversal dialog (each a legitimate owner)", () => {
+    // ac19 established TransactionsActionBar as the create-panel Dialog owner;
+    // ac22 adds reversal-dialog.tsx, the document-bound reversal Dialog. The
+    // ten create-panels still import no Dialog (asserted above) — the shell
+    // stays outward of them. These two are the only sanctioned Dialog importers.
     const DIALOG_IMPORT = /from\s+["']@\/components\/ui\/dialog["']/;
     const accountsComponents = ALL_SOURCE_FILES.filter(({ relative }) =>
       relative.startsWith("components/accounts/"),
     );
     const dialogImporters = accountsComponents
       .filter(({ content }) => DIALOG_IMPORT.test(content))
-      .map(({ relative }) => relative);
+      .map(({ relative }) => relative)
+      .sort();
     expect(dialogImporters).toEqual([
+      "components/accounts/reversal-dialog.tsx",
       "components/accounts/transactions-action-bar.tsx",
     ]);
+  });
+});
+
+describe("grep gate — ac22 SC10: reversal always starts from a document, never a free-text doc-ID input", () => {
+  // The retired ReversalsPanel started reversal from a free-typed document ID.
+  // ac22 makes every reversal document-bound (the dialog receives a documentId
+  // prop from the row/drawer). This gate locks that in: the panel file is gone,
+  // and no reversal surface carries a free-text input primed with a document-ID
+  // example (the tell-tale of a type-the-ID-yourself control).
+  //
+  // "Reversal surface" = a component that imports the reverse-document action.
+  // Scoping to that import is what keeps the gate precise: the documents-table
+  // search box and the allocate panel's settled-document field both legitimately
+  // exemplify a document ID, but neither drives a reversal, so neither is swept
+  // in — only a file that both reverses AND types a doc-ID would fail.
+  const REVERSAL_ACTION_IMPORT =
+    /from\s+["']@\/actions\/accounts\/reverse-document["']/;
+  const DOC_ID_INPUT_PATTERN =
+    /placeholder=\s*["'][^"']*(PAY|DEP|CRN|DBN|ADJ)\d{2}/;
+
+  it("reversals-panel.tsx no longer exists", () => {
+    const panelPath = path.join(
+      REPO_ROOT,
+      "components/accounts/reversals-panel.tsx",
+    );
+    expect(fs.existsSync(panelPath)).toBe(false);
+  });
+
+  it("no reversal surface has a free-text document-ID input", () => {
+    const offenders = ALL_SOURCE_FILES.filter(({ relative }) =>
+      relative.startsWith("components/accounts/"),
+    )
+      .filter(({ content }) => REVERSAL_ACTION_IMPORT.test(content))
+      .filter(({ content }) =>
+        DOC_ID_INPUT_PATTERN.test(stripLineComments(content)),
+      )
+      .map(({ relative }) => relative);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("the reversal dialog is document-bound (documentId is a prop, not typed input)", () => {
+    const src = read("components/accounts/reversal-dialog.tsx");
+    // The dialog and its trigger both take documentId as a prop.
+    expect(src).toContain("documentId: string");
+    // It imports the reverse-document action (the reversal surface) …
+    expect(REVERSAL_ACTION_IMPORT.test(src)).toBe(true);
+    // … yet exposes no document-ID example input of its own.
+    expect(DOC_ID_INPUT_PATTERN.test(stripLineComments(src))).toBe(false);
   });
 });
 

@@ -9,6 +9,14 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The ↺ Reverse row action (ac22) pulls in reversal-dialog.tsx, which imports
+// the reverse-document server action — mock it so the "use server" module graph
+// (db client, services) does not load into jsdom.
+vi.mock("@/actions/accounts/reverse-document", () => ({
+  getReversalPreviewAction: vi.fn(),
+  reverseDocumentAction: vi.fn(),
+}));
+
 import { DocumentsTable } from "@/components/accounts/documents-table";
 import type { DocumentsTableProps } from "@/components/accounts/documents-table";
 import type { TransactionDocumentRow } from "@/types/accounts";
@@ -55,6 +63,7 @@ const BASE_PROPS: DocumentsTableProps = {
   timezone: "Asia/Kuala_Lumpur",
   overviewHref: "/accounts/overview",
   financialAccountId: FA_ID,
+  canEdit: true,
 };
 
 // ── Empty state (no FA selected) ─────────────────────────────────────────────
@@ -174,6 +183,36 @@ describe("DocumentsTable — no inline approve column (ac21)", () => {
     render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
     expect(
       screen.queryByRole("button", { name: /approve/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ── ac22 — ↺ Reverse row action (hidden, not disabled) ───────────────────────
+
+describe("DocumentsTable — ↺ Reverse row action (ac22 §3.2)", () => {
+  it("renders the ↺ Reverse control on a reversible row when canEdit", () => {
+    const row = makeRow({ reversible: true });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
+    expect(
+      screen.getByRole("button", { name: /reverse document PAY00000001/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the reverse control on an ineligible (reversible=false) row", () => {
+    const row = makeRow({ state: "draft", reversible: false });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
+    expect(
+      screen.queryByRole("button", { name: /reverse document/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the reverse control for a READ-only holder even on reversible rows (D5/§2.8)", () => {
+    const row = makeRow({ reversible: true });
+    render(
+      <DocumentsTable {...BASE_PROPS} canEdit={false} rows={[row]} total={1} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /reverse document/i }),
     ).not.toBeInTheDocument();
   });
 });
