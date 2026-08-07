@@ -9,19 +9,12 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// Mock approveDocumentAction — prevents "use server" imports from loading in
-// the jsdom test environment (same pattern as transactions-action-bar.test.tsx).
-vi.mock("@/actions/accounts/approve-document", () => ({
-  approveDocumentAction: vi.fn(),
-}));
-
 import { DocumentsTable } from "@/components/accounts/documents-table";
 import type { DocumentsTableProps } from "@/components/accounts/documents-table";
 import type { TransactionDocumentRow } from "@/types/accounts";
 
 const FA_ID = "FIN000001";
 const BAN_ID = "BAN000001";
-const USER_ID = "user-manager-01";
 
 function makeRow(
   overrides: Partial<TransactionDocumentRow> = {},
@@ -60,8 +53,6 @@ const BASE_PROPS: DocumentsTableProps = {
   q: "",
   locale: "en-MY",
   timezone: "Asia/Kuala_Lumpur",
-  currentUserId: USER_ID,
-  canEdit: true,
   overviewHref: "/accounts/overview",
   financialAccountId: FA_ID,
 };
@@ -168,53 +159,22 @@ describe("DocumentsTable — empty results state", () => {
   });
 });
 
-// ── Approve column ────────────────────────────────────────────────────────────
+// ── ac21 — approve moved to drawer ───────────────────────────────────────────
 
-describe("DocumentsTable — approve column visibility", () => {
-  it("renders the Approve column header when canEdit=true", () => {
+describe("DocumentsTable — no inline approve column (ac21)", () => {
+  it("has no Approve column header — approval moved to DocumentDetailDrawer", () => {
     render(<DocumentsTable {...BASE_PROPS} />);
     expect(
-      screen.getByRole("columnheader", { name: /approve/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides the Approve column when canEdit=false", () => {
-    render(<DocumentsTable {...BASE_PROPS} canEdit={false} />);
-    expect(
-      screen.queryByRole("columnheader", { name: /approve/i }),
+      screen.queryByRole("columnheader", { name: /^approve$/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("shows inline Approve button for a pending_approval row when canEdit=true", () => {
-    const row = makeRow({
-      documentId: "PAY00000002",
-      state: "pending_approval",
-      reversible: false,
-      partiallyReversed: false,
-      // Different creator so self-approval guard does not disable the button.
-      createdBy: "user-other-creator",
-    });
-    render(
-      <DocumentsTable {...BASE_PROPS} rows={[row]} total={1} canEdit={true} />,
-    );
+  it("has no inline Approve button for pending_approval rows", () => {
+    const row = makeRow({ state: "pending_approval" });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
     expect(
-      screen.getByRole("button", { name: /approve/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("Approve button is disabled for self-created pending_approval docs", () => {
-    const row = makeRow({
-      documentId: "PAY00000003",
-      state: "pending_approval",
-      reversible: false,
-      partiallyReversed: false,
-      createdBy: USER_ID,
-    });
-    render(
-      <DocumentsTable {...BASE_PROPS} rows={[row]} total={1} canEdit={true} />,
-    );
-    const btn = screen.getByRole("button", { name: /approve/i });
-    expect(btn).toBeDisabled();
+      screen.queryByRole("button", { name: /approve/i }),
+    ).not.toBeInTheDocument();
   });
 });
 

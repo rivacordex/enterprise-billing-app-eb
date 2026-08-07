@@ -51,6 +51,18 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).not.toContain("PendingApprovalsList");
   });
 
+  it("imports DocumentDetailDrawer (ac21 — drawer replaces inline approve stopgap)", () => {
+    expect(pageSource).toContain("DocumentDetailDrawer");
+    expect(pageSource).toContain("getTransactionDocumentDetail");
+  });
+
+  it("SC11 — approve is reached from the drawer, not from a table row", () => {
+    // Page wires the drawer; it no longer passes canEdit/currentUserId to
+    // DocumentsTable (stopgap removed by ac21).
+    expect(pageSource).toContain("DocumentDetailDrawer");
+    expect(pageSource).not.toContain("InlineApproveButton");
+  });
+
   it("imports listTransactionDocuments service (ac20 read path, inv. #15)", () => {
     expect(pageSource).toContain("listTransactionDocuments");
   });
@@ -93,6 +105,9 @@ describe("Transactions shared components exist", () => {
     ["rounding-adjustment-panel.tsx", "RoundingAdjustmentPanel"],
     ["reversals-panel.tsx", "ReversalsPanel"],
     ["closure-panel.tsx", "ClosurePanel"],
+    // ac21 — document detail drawer
+    ["document-detail-drawer.tsx", "DocumentDetailDrawer"],
+    ["document-approval-actions.tsx", "DocumentApprovalActions"],
   ])("%s exists and exports %s", (filename, exportName) => {
     const src = readFileSync(resolve(componentRoot, filename), "utf-8");
     expect(src).toContain(`export function ${exportName}`);
@@ -127,6 +142,7 @@ describe("post-document.ts is the only pgledger_create_transfer(s) caller (code-
       "close-billing-account.ts",
       "close-financial-account.ts",
       "list-transaction-documents.ts",
+      "get-transaction-document-detail.ts",
     ];
     for (const filename of servicesToCheck) {
       const src = readFileSync(
@@ -185,6 +201,25 @@ describe("inv. #15 — list-transaction-documents.ts read path never writes", ()
     expect(src).not.toContain("delete");
     expect(src).not.toContain("pgledger_");
     expect(src).not.toContain("db.transaction");
+  });
+});
+
+describe("inv. #15 — get-transaction-document-detail.ts read path never writes (ac21)", () => {
+  it("service contains no INSERT/UPDATE/DELETE/transaction and no pgledger base-table access", () => {
+    const src = readFileSync(
+      resolve(
+        __dirname,
+        "../../services/accounts/get-transaction-document-detail.ts",
+      ),
+      "utf-8",
+    );
+    // No write operations.
+    expect(src).not.toContain(".insert(");
+    expect(src).not.toContain(".update(");
+    expect(src).not.toContain("delete(");
+    expect(src).not.toContain("db.transaction");
+    // pgledger access via repository only — no raw billing.pgledger_ reference.
+    expect(src).not.toMatch(/\bbilling\.pgledger_/);
   });
 });
 

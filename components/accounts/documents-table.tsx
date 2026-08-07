@@ -17,7 +17,6 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { approveDocumentAction } from "@/actions/accounts/approve-document";
 import { AmountCell } from "@/components/accounts/amount-cell";
 import { DocStateBadge } from "@/components/accounts/doc-state-badge";
 import { formatDatetime } from "@/lib/formatters";
@@ -94,65 +93,6 @@ function DocTypeChip({ docType }: { docType: DocType }): React.JSX.Element {
   );
 }
 
-// Inline approve button — stopgap until ac21 adds the drawer.
-function InlineApproveButton({
-  row,
-  currentUserId,
-  onApproved,
-}: {
-  row: TransactionDocumentRow;
-  currentUserId: string;
-  onApproved: () => void;
-}): React.JSX.Element {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const isSelf = row.createdBy === currentUserId;
-
-  async function handleApprove(): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await approveDocumentAction({
-        documentId: row.documentId,
-        lastModified: row.lastModified,
-      });
-      if (!result.ok) {
-        setError(
-          result.code === "SELF_APPROVAL"
-            ? "Self-approval not permitted."
-            : "Approval failed.",
-        );
-        return;
-      }
-      onApproved();
-    } catch {
-      setError("Approval failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <span className="flex flex-col items-start gap-1">
-      <button
-        type="button"
-        disabled={busy || isSelf}
-        onClick={() => void handleApprove()}
-        title={
-          isSelf
-            ? "You created this document — another manager must approve it"
-            : undefined
-        }
-        className="rounded-sm bg-[color:var(--action-primary-bg)] px-2 py-1 text-[11px] font-medium text-white hover:bg-[color:var(--action-primary-bg-hover)] focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {busy ? "Approving…" : "Approve"}
-      </button>
-      {error && <span className="text-[10px] text-destructive">{error}</span>}
-    </span>
-  );
-}
-
 export interface DocumentsTableProps {
   rows: TransactionDocumentRow[];
   total: number;
@@ -165,8 +105,6 @@ export interface DocumentsTableProps {
   q: string;
   locale: string;
   timezone: string;
-  currentUserId: string;
-  canEdit: boolean;
   // Link for the "no FA" empty state — Overview with context params preserved.
   overviewHref: string;
   // Passed so the component can distinguish "no context" vs "FA present, no results".
@@ -185,8 +123,6 @@ export function DocumentsTable({
   q,
   locale,
   timezone,
-  currentUserId,
-  canEdit,
   overviewHref,
   financialAccountId,
 }: DocumentsTableProps): React.JSX.Element {
@@ -442,17 +378,12 @@ export function DocumentsTable({
               <th className="px-4 py-2 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
                 By
               </th>
-              {canEdit && (
-                <th className="px-4 py-2 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-                  Approve
-                </th>
-              )}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={canEdit ? 8 : 7} className="py-16 text-center">
+                <td colSpan={7} className="py-16 text-center">
                   <FileText className="mx-auto mb-3 size-12 text-[color:var(--text-disabled)]" />
                   <p className="text-body text-muted-foreground">
                     No documents match your filters
@@ -517,22 +448,6 @@ export function DocumentsTable({
                   <td className="max-w-[160px] truncate px-4 py-2 font-mono text-mono text-muted-foreground">
                     {row.createdBy}
                   </td>
-                  {/* Inline approve stopgap (ac21 moves this to the drawer) */}
-                  {canEdit && (
-                    <td
-                      className="px-4 py-2"
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
-                    >
-                      {row.state === "pending_approval" && (
-                        <InlineApproveButton
-                          row={row}
-                          currentUserId={currentUserId}
-                          onApproved={() => router.refresh()}
-                        />
-                      )}
-                    </td>
-                  )}
                 </tr>
               ))
             )}
