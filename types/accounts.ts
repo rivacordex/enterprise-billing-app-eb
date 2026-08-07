@@ -1,3 +1,9 @@
+// `Document` and `DocumentLine` are imported here so they refer to the schema
+// types throughout this file. Without this import, TypeScript resolves
+// `Document` to the DOM global from lib.dom.d.ts, since `export type { X }
+// from "..."` re-exports don't bring identifiers into the file's own scope.
+import type { Document, DocumentLine } from "@/db/schema";
+
 // Domain unions verbatim from acctmgmt-code-standards.md §2.1 — the module's
 // one source of truth; every CHECK constraint that guards one of these
 // columns lists the same members inline in its schema file (ac02-spec §2.1).
@@ -199,6 +205,33 @@ export type TransactionDocumentRow = DocumentListRow & {
   reversible: boolean;
   // Human-readable label: docType + reasonCode (§2.4, inv. #19).
   actionLabel: string;
+};
+
+// Document detail types (ac21-spec §3.1) — produced by
+// get-transaction-document-detail.ts; components depend only on types/**,
+// never services/** (boundaries rule).
+export type DocumentLineWithTransfer = {
+  line: DocumentLine;
+  // null when pgledgerTransferId is unset (not yet posted) or when the
+  // transfer row is not resolvable — renders an em-dash in the drawer (§2.3).
+  transfer: {
+    id: string;
+    fromAccountId: string;
+    fromAccountName: string;
+    toAccountId: string;
+    toAccountName: string;
+    amount: string;
+    eventAt: Date;
+  } | null;
+};
+
+export type TransactionDocumentDetail = {
+  document: Document;
+  lines: DocumentLineWithTransfer[];
+  // Mirror of list-transaction-documents derivation (inv. #18).
+  partiallyReversed: boolean;
+  // Cross-link: ID of the document that reverses this one, if any.
+  reversedByDocumentId: string | null;
 };
 
 export type {
