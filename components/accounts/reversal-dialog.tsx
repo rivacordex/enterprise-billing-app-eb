@@ -318,11 +318,6 @@ export function ReversalDialog({
                         <span className="inline-flex items-center rounded-full bg-[color:var(--color-neutral-100)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-[color:var(--color-neutral-600)] uppercase">
                           {line.lineKind}
                         </span>
-                        {line.isAllocation && (
-                          <span className="inline-flex items-center rounded-full bg-[color:var(--acct-chip-ban-bg)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-[color:var(--acct-chip-ban-fg)] uppercase">
-                            Allocation
-                          </span>
-                        )}
                         {line.alreadyReversed && (
                           <span className="inline-flex items-center rounded-full bg-[color:var(--color-danger-50)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-[color:var(--color-danger-700)] uppercase">
                             Already reversed
