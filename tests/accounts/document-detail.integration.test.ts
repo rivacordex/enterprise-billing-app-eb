@@ -33,6 +33,7 @@ describe.skipIf(!databaseUrl)(
     // Documents created during setup.
     let postedMultiLineDocId: string; // PAY, 2 lines, both have a transfer
     let partiallyReversedDocId: string; // CRN, 2 lines, one reversed
+    let partiallyReversedLine1Id: string; // the stamped-reversed line (line 1)
     let otherFaDocId: string; // DEP, belongs to otherFinancialAccountId
 
     beforeAll(async () => {
@@ -60,6 +61,9 @@ describe.skipIf(!databaseUrl)(
       creatorId = creator!.id;
 
       await sql`SELECT id FROM billing.pgledger_create_account('sys.cash.MYR', 'MYR')`;
+      // A second distinct sys account so the fixture's transfers move between
+      // two different accounts (pgledger rejects same-account transfers).
+      await sql`SELECT id FROM billing.pgledger_create_account('sys.revenue.MYR', 'MYR')`;
 
       await sql`
         INSERT INTO billing.reason_code (reason_code, doc_type, posting_nature, auto_post_limit, state)
@@ -146,33 +150,30 @@ describe.skipIf(!databaseUrl)(
       });
       postedMultiLineDocId = payDoc.documentId;
 
-      // Create two real transfers so the legs are resolvable.
+      // Transfer legs reference pgledger accounts by ULID id, not by name, so
+      // resolve the two distinct sys-account ids first.
+      const [cashRow] = await sql<{ id: string }[]>`
+        SELECT id FROM billing.pgledger_accounts_view WHERE name = 'sys.cash.MYR' LIMIT 1
+      `;
+      const [revenueRow] = await sql<{ id: string }[]>`
+        SELECT id FROM billing.pgledger_accounts_view WHERE name = 'sys.revenue.MYR' LIMIT 1
+      `;
+      const cashId = cashRow!.id;
+      const revenueId = revenueRow!.id;
+
+      // Create two real transfers so the legs are resolvable. Dummy accounts —
+      // the real posting would use FA accounts, but here we only need the
+      // transfer rows to exist so findTransfersByIds resolves them. from ≠ to
+      // because pgledger rejects a same-account transfer.
       const transfers = await ledgerRepository.pgledgerCreateTransfers(
         db,
         [
-          // Dummy legs: sys.cash → sys.cash (same account for test simplicity —
-          // the real posting would use FA accounts, but here we only need the
-          // transfer row to exist so findTransfersByIds can resolve it).
-          {
-            fromAccountId: "sys.cash.MYR",
-            toAccountId: "sys.cash.MYR",
-            amount: "1000.00",
-          },
-          {
-            fromAccountId: "sys.cash.MYR",
-            toAccountId: "sys.cash.MYR",
-            amount: "500.00",
-          },
+          { fromAccountId: cashId, toAccountId: revenueId, amount: "1000.00" },
+          { fromAccountId: revenueId, toAccountId: cashId, amount: "500.00" },
         ],
         eventAt,
         { doc: postedMultiLineDocId },
       );
-
-      // We need pgledger account IDs (ULIDs), not the names.
-      const [cashRow] = await sql<{ id: string }[]>`
-        SELECT id FROM billing.pgledger_accounts_view WHERE name = 'sys.cash.MYR' LIMIT 1
-      `;
-      const cashId = cashRow!.id;
 
       const line1 = await documentLineRepository.insert(db, {
         refDocumentId: postedMultiLineDocId,
@@ -224,6 +225,7 @@ describe.skipIf(!databaseUrl)(
         amount: "100.00",
         lastEditedBy: creatorId,
       });
+      partiallyReversedLine1Id = crnLine1.documentLineId;
       const crnLine2 = await documentLineRepository.insert(db, {
         refDocumentId: partiallyReversedDocId,
         lineNo: 2,
@@ -253,9 +255,6 @@ describe.skipIf(!databaseUrl)(
         lastEditedBy: creatorId,
       });
       otherFaDocId = depDoc.documentId;
-
-      // Suppress unused variable warning — cashId only needed for transfer assertions.
-      void cashId;
     });
 
     afterAll(async () => {
@@ -336,8 +335,8 @@ describe.skipIf(!databaseUrl)(
       const { lines, partiallyReversed } = result.detail;
       expect(lines).toHaveLength(2);
 
-      // Line 1 was stamped as reversed; line 2 is the reversal line itself
-      // (reversedByLineId IS NULL on line2 but IS NULL per our setup).
+      // Only line 1 is stamped as reversed (its reversedByLineId points at
+      // line 2); line 2 is the reversal line itself and stays unreversed.
       const reversedLines = lines.filter(
         ({ line }) => line.reversedByLineId !== null,
       );
@@ -345,6 +344,9 @@ describe.skipIf(!databaseUrl)(
         ({ line }) => line.reversedByLineId === null,
       );
       expect(reversedLines).toHaveLength(1);
+      expect(reversedLines[0]!.line.documentLineId).toBe(
+        partiallyReversedLine1Id,
+      );
       expect(unreversedLines).toHaveLength(1);
       expect(partiallyReversed).toBe(true);
     });

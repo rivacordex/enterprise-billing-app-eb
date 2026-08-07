@@ -184,7 +184,7 @@ export function DocumentDetailDrawer({
       </div>
 
       {/* ── Cross-links ────────────────────────────────────────────── */}
-      {(doc.reversalOf ?? reversedByDocumentId) && (
+      {(doc.reversalOf || reversedByDocumentId) && (
         <div className="space-y-1.5 text-body-sm">
           <span className={DETAIL_LABEL}>Cross-links</span>
           {doc.reversalOf && (

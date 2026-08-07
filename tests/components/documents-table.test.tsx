@@ -1,10 +1,17 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // Mock next/navigation — DocumentsTable uses useRouter, usePathname, and
 // useSearchParams for URL-driven filter state (inv. #17).
+// Hoisted, stable router mocks so a test can assert whether the row's drawer
+// navigation (router.push with ?doc) fired.
+const { pushMock, replaceMock } = vi.hoisted(() => ({
+  pushMock: vi.fn(),
+  replaceMock: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: replaceMock, refresh: vi.fn() }),
   usePathname: () => "/accounts/transactions",
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -214,6 +221,17 @@ describe("DocumentsTable — ↺ Reverse row action (ac22 §3.2)", () => {
     expect(
       screen.queryByRole("button", { name: /reverse document/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("clicking ↺ Reverse does not open the drawer — no ?doc navigation (stopPropagation, §2.3)", () => {
+    pushMock.mockClear();
+    const row = makeRow({ reversible: true });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /reverse document PAY00000001/i }),
+    );
+    // The row's openDoc navigation (router.push with ?doc=...) must not fire.
+    expect(pushMock).not.toHaveBeenCalled();
   });
 });
 

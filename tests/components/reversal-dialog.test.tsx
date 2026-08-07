@@ -195,4 +195,24 @@ describe("ReversalDialog — submit gating and routing", () => {
     };
     expect(arg.selectedLineIds).toEqual(["DLN2"]);
   });
+
+  it("surfaces a reload prompt and does not silently retry on CONFLICT (§2.6)", async () => {
+    vi.mocked(reverseDocumentAction).mockResolvedValue({
+      ok: false,
+      code: "CONFLICT",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    renderDialog();
+    await screen.findByText(
+      /reverses the entire document — it will be marked reversed/i,
+    );
+    fillRequiredFields();
+    fireEvent.click(screen.getByRole("button", { name: /reverse document/i }));
+    // The CONFLICT message is a reload prompt …
+    expect(
+      await screen.findByText(/modified concurrently.*reload/i),
+    ).toBeInTheDocument();
+    // … and the action ran exactly once (no silent retry).
+    expect(reverseDocumentAction).toHaveBeenCalledTimes(1);
+  });
 });

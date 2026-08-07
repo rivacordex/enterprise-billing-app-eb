@@ -275,8 +275,11 @@ export const documentRepository = {
         totalAmount: r.total_amount,
         createdBy: r.created_by,
         approvedBy: r.approved_by,
-        eventAt: r.event_at,
-        lastModified: r.last_modified,
+        // Coerce to Date: this raw db.execute() bypasses drizzle's column type
+        // mapping, so timestamptz arrives as a string — but DocumentListRow
+        // types these as Date and formatDatetime() (Intl) throws on a string.
+        eventAt: new Date(r.event_at),
+        lastModified: new Date(r.last_modified),
         totalLineCount: r.total_line_count,
         unreversedLineCount: r.unreversed_line_count,
       })),

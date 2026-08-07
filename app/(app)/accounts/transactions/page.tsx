@@ -115,8 +115,10 @@ export default async function TransactionsPage({
         )
       : Promise.resolve({ rows: [], total: 0 }),
     // Document detail drawer — loaded only when ?doc is present (ac21-spec §3.4).
+    // Catch to null (like the closure-eligibility loads above) so a detail-load
+    // failure omits only the drawer; the table still renders.
     parsed.doc && ctx.fa
-      ? getTransactionDocumentDetail(parsed.doc, ctx.fa)
+      ? getTransactionDocumentDetail(parsed.doc, ctx.fa).catch(() => null)
       : Promise.resolve(null),
   ]);
 

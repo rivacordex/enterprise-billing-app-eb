@@ -31,18 +31,25 @@ describe.skipIf(!databaseUrl)(
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 1 });
-      db = drizzle(sql, { schema });
 
-      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await migrate(drizzle(sql), {
+      // Migrate on a short-lived connection, then close it and open a fresh one
+      // for reads: migrate() poisons the connection's type-OID cache so later
+      // timestamptz reads on it return raw strings (module Key Decision —
+      // "migrate()-poisons-connection quirk").
+      const migrateSql = postgres(databaseUrl as string, { max: 1 });
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+      await migrate(drizzle(migrateSql), {
         migrationsFolder: "./db/migrations",
         migrationsSchema: "drizzle",
       });
+      await migrateSql.end();
+
+      sql = postgres(databaseUrl as string, { max: 1 });
+      db = drizzle(sql, { schema });
 
       const [user] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -118,8 +125,17 @@ describe.skipIf(!databaseUrl)(
     });
 
     it("CAS conflict returns 'conflict' when lastModified is stale", async () => {
+      // The shared cycleId is already retired by earlier tests, so a stale-CAS
+      // retire on it correctly returns 'already_retired'. A genuine CAS conflict
+      // requires an ACTIVE row with a stale lock — use a fresh cycle.
+      const [fresh] = await sql!<{ id: string }[]>`
+        INSERT INTO billing.bill_cycle (name, frequency, cycle_day, payment_due_days, state)
+        VALUES ('V09 CAS Conflict Cycle', 'monthly', 5, 30, 'active')
+        RETURNING bill_cycle_id AS id
+      `;
+      if (!fresh) throw new Error("fresh cycle insert failed");
       const staleTs = new Date("2000-01-01T00:00:00Z");
-      const result = await billCycleRepository.retire(db, cycleId, staleTs);
+      const result = await billCycleRepository.retire(db, fresh.id, staleTs);
       expect(result).toBe("conflict");
     });
 
