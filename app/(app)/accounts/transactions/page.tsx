@@ -6,12 +6,12 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
 import { ApprovalBanner } from "@/components/accounts/approval-banner";
 import { ClosurePanel } from "@/components/accounts/closure-panel";
+import { DocumentDetailDrawer } from "@/components/accounts/document-detail-drawer";
 import { ContextStrip } from "@/components/accounts/context-strip";
 import {
   DocumentsTable,
   DOCUMENTS_PAGE_SIZE,
 } from "@/components/accounts/documents-table";
-import { ReversalsPanel } from "@/components/accounts/reversals-panel";
 import { TransactionsActionBar } from "@/components/accounts/transactions-action-bar";
 import {
   getBillingAccountClosureEligibility,
@@ -23,6 +23,7 @@ import {
   getRefundWorkbenchData,
   listPendingApprovals,
 } from "@/services/accounts/get-transactions-context";
+import { getTransactionDocumentDetail } from "@/services/accounts/get-transaction-document-detail";
 import { listTransactionDocuments } from "@/services/accounts/list-transaction-documents";
 import {
   getAppLocale,
@@ -81,6 +82,7 @@ export default async function TransactionsPage({
     banEligibility,
     faEligibility,
     docsPage,
+    docDetail,
   ] = await Promise.all([
     // listPendingApprovals retained — banner count uses it (§2.7).
     canEdit && ctx.fa ? listPendingApprovals(ctx.fa) : Promise.resolve([]),
@@ -112,6 +114,12 @@ export default async function TransactionsPage({
           DOCUMENTS_PAGE_SIZE,
         )
       : Promise.resolve({ rows: [], total: 0 }),
+    // Document detail drawer — loaded only when ?doc is present (ac21-spec §3.4).
+    // Catch to null (like the closure-eligibility loads above) so a detail-load
+    // failure omits only the drawer; the table still renders.
+    parsed.doc && ctx.fa
+      ? getTransactionDocumentDetail(parsed.doc, ctx.fa).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   const banClosure =
@@ -147,6 +155,30 @@ export default async function TransactionsPage({
   if (ctx.fa) overviewParams.set("fa", ctx.fa);
   if (ctx.ban) overviewParams.set("ban", ctx.ban);
   const overviewHref = `/accounts/overview${overviewParams.size > 0 ? `?${overviewParams.toString()}` : ""}`;
+
+  // closeDocHref — all current params except ?doc, preserving context and
+  // filters/sort/page so closing the drawer does not reset the table (§2.1).
+  const closeDocParams = new URLSearchParams();
+  if (ctx.party) closeDocParams.set("party", ctx.party);
+  if (ctx.fa) closeDocParams.set("fa", ctx.fa);
+  if (ctx.ban) closeDocParams.set("ban", ctx.ban);
+  if (parsed.type) closeDocParams.set("type", parsed.type);
+  if (parsed.status) closeDocParams.set("status", parsed.status);
+  if (parsed.rev) closeDocParams.set("rev", parsed.rev);
+  if (parsed.q) closeDocParams.set("q", parsed.q);
+  if (parsed.sort !== "-event_at") closeDocParams.set("sort", parsed.sort);
+  if (parsed.page !== 1) closeDocParams.set("page", String(parsed.page));
+  const closeDocQs = closeDocParams.toString();
+  const closeDocHref = `/accounts/transactions${closeDocQs ? `?${closeDocQs}` : ""}`;
+
+  // ac22-spec §3.3 — drawer reversal eligibility, mirroring ac20's `reversible`
+  // derivation (inv. #18): posted with at least one unreversed line. Computed
+  // here from the detail the page already loaded; the service re-validates on
+  // submit. The drawer only renders when ctx.fa is set (docDetail requires it).
+  const drawerReversible =
+    docDetail?.ok === true &&
+    docDetail.detail.document.state === "posted" &&
+    docDetail.detail.lines.some((l) => l.line.reversedByLineId === null);
 
   return (
     <main className="space-y-6 p-6">
@@ -204,42 +236,52 @@ export default async function TransactionsPage({
           q={parsed.q}
           locale={locale}
           timezone={timezone}
-          currentUserId={userId}
-          canEdit={canEdit}
           overviewHref={overviewHref}
           financialAccountId={ctx.fa}
+          canEdit={canEdit}
         />
       </Suspense>
 
-      {canEdit && (
-        <>
-          <ReversalsPanel financialAccountId={ctx.fa} />
+      {/* Document detail drawer — URL-driven, inv. #17. Only when ?doc resolves
+          to a valid document that belongs to the context FA (§2.6). */}
+      {docDetail?.ok && ctx.fa && (
+        <DocumentDetailDrawer
+          detail={docDetail.detail}
+          closeHref={closeDocHref}
+          locale={locale}
+          timezone={timezone}
+          canEdit={canEdit}
+          currentUserId={userId}
+          financialAccountId={ctx.fa}
+          reversible={drawerReversible}
+        />
+      )}
 
-          <ClosurePanel
-            ban={
-              banDetail
-                ? {
-                    billingAccountId: banDetail.ban.billingAccountId,
-                    state: banDetail.ban.state,
-                    lastModified: banDetail.ban.lastModified,
-                    currency: banDetail.ban.currency,
-                  }
-                : null
-            }
-            banClosure={banClosure}
-            fa={
-              faDetail
-                ? {
-                    financialAccountId: faDetail.fa.financialAccountId,
-                    state: faDetail.fa.state,
-                    lastModified: faDetail.fa.lastModified,
-                    currency: faDetail.fa.currency,
-                  }
-                : null
-            }
-            faClosure={faClosure}
-          />
-        </>
+      {canEdit && (
+        <ClosurePanel
+          ban={
+            banDetail
+              ? {
+                  billingAccountId: banDetail.ban.billingAccountId,
+                  state: banDetail.ban.state,
+                  lastModified: banDetail.ban.lastModified,
+                  currency: banDetail.ban.currency,
+                }
+              : null
+          }
+          banClosure={banClosure}
+          fa={
+            faDetail
+              ? {
+                  financialAccountId: faDetail.fa.financialAccountId,
+                  state: faDetail.fa.state,
+                  lastModified: faDetail.fa.lastModified,
+                  currency: faDetail.fa.currency,
+                }
+              : null
+          }
+          faClosure={faClosure}
+        />
       )}
     </main>
   );

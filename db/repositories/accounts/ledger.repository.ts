@@ -95,7 +95,10 @@ export const ledgerRepository = {
     pgledgerAccountId: string,
   ): Promise<string | null> {
     const [row] = await db.execute<{ balance: string }>(
-      sql`SELECT balance::text AS balance FROM billing.pgledger_accounts_view WHERE id = ${pgledgerAccountId} LIMIT 1`,
+      // Cast to numeric(18,2) so a zero/unscaled balance serialises as "0.00",
+      // not "0" — the module's money strings are always 2 dp (code-standards
+      // §2.2), matching this method's own "0.00" default below.
+      sql`SELECT balance::numeric(18,2)::text AS balance FROM billing.pgledger_accounts_view WHERE id = ${pgledgerAccountId} LIMIT 1`,
     );
     return row ? (row.balance ?? "0.00") : null;
   },
@@ -108,7 +111,7 @@ export const ledgerRepository = {
     financialAccountId: string,
   ): Promise<string> {
     const [row] = await db.execute<{ total: string }>(sql`
-      SELECT COALESCE(SUM(pav.balance), 0)::text AS total
+      SELECT COALESCE(SUM(pav.balance), 0)::numeric(18,2)::text AS total
       FROM billing.billing_account ban
       JOIN billing.ledger_binding lb
         ON lb.owner_type = 'billing_account'
@@ -303,6 +306,56 @@ export const ledgerRepository = {
       createdAt: row.created_at,
       metadata: row.metadata,
     };
+  },
+
+  // ac21-spec §2.3 — batch read by a list of transfer IDs; avoids N+1 when a
+  // multi-line document needs all its transfers at once. Views only (inv. #4).
+  async findTransfersByIds(
+    db: Database,
+    ids: string[],
+  ): Promise<Map<string, LedgerTransferRow>> {
+    if (ids.length === 0) return new Map();
+    const idList = sql.join(
+      ids.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const rows = await db.execute<{
+      id: string;
+      from_account_id: string;
+      from_account_name: string;
+      to_account_id: string;
+      to_account_name: string;
+      amount: string;
+      event_at: Date;
+      created_at: Date;
+      metadata: Record<string, unknown> | null;
+    }>(sql`
+      SELECT
+        t.id,
+        t.from_account_id, fa.name AS from_account_name,
+        t.to_account_id,   ta.name AS to_account_name,
+        t.amount::text AS amount,
+        t.event_at, t.created_at, t.metadata
+      FROM billing.pgledger_transfers_view t
+      JOIN billing.pgledger_accounts_view fa ON fa.id = t.from_account_id
+      JOIN billing.pgledger_accounts_view ta ON ta.id = t.to_account_id
+      WHERE t.id = ANY(ARRAY[${idList}])
+    `);
+    const map = new Map<string, LedgerTransferRow>();
+    for (const row of rows) {
+      map.set(row.id, {
+        id: row.id,
+        fromAccountId: row.from_account_id,
+        fromAccountName: row.from_account_name,
+        toAccountId: row.to_account_id,
+        toAccountName: row.to_account_name,
+        amount: row.amount,
+        eventAt: row.event_at,
+        createdAt: row.created_at,
+        metadata: row.metadata,
+      });
+    }
+    return map;
   },
 
   // ac06-spec §2.3 — the two `pgledger_entries_view` legs (debit + credit)

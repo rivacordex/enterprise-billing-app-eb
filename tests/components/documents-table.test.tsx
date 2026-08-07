@@ -1,18 +1,27 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // Mock next/navigation — DocumentsTable uses useRouter, usePathname, and
 // useSearchParams for URL-driven filter state (inv. #17).
+// Hoisted, stable router mocks so a test can assert whether the row's drawer
+// navigation (router.push with ?doc) fired.
+const { pushMock, replaceMock } = vi.hoisted(() => ({
+  pushMock: vi.fn(),
+  replaceMock: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: replaceMock, refresh: vi.fn() }),
   usePathname: () => "/accounts/transactions",
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// Mock approveDocumentAction — prevents "use server" imports from loading in
-// the jsdom test environment (same pattern as transactions-action-bar.test.tsx).
-vi.mock("@/actions/accounts/approve-document", () => ({
-  approveDocumentAction: vi.fn(),
+// The ↺ Reverse row action (ac22) pulls in reversal-dialog.tsx, which imports
+// the reverse-document server action — mock it so the "use server" module graph
+// (db client, services) does not load into jsdom.
+vi.mock("@/actions/accounts/reverse-document", () => ({
+  getReversalPreviewAction: vi.fn(),
+  reverseDocumentAction: vi.fn(),
 }));
 
 import { DocumentsTable } from "@/components/accounts/documents-table";
@@ -21,7 +30,6 @@ import type { TransactionDocumentRow } from "@/types/accounts";
 
 const FA_ID = "FIN000001";
 const BAN_ID = "BAN000001";
-const USER_ID = "user-manager-01";
 
 function makeRow(
   overrides: Partial<TransactionDocumentRow> = {},
@@ -60,10 +68,9 @@ const BASE_PROPS: DocumentsTableProps = {
   q: "",
   locale: "en-MY",
   timezone: "Asia/Kuala_Lumpur",
-  currentUserId: USER_ID,
-  canEdit: true,
   overviewHref: "/accounts/overview",
   financialAccountId: FA_ID,
+  canEdit: true,
 };
 
 // ── Empty state (no FA selected) ─────────────────────────────────────────────
@@ -168,53 +175,63 @@ describe("DocumentsTable — empty results state", () => {
   });
 });
 
-// ── Approve column ────────────────────────────────────────────────────────────
+// ── ac21 — approve moved to drawer ───────────────────────────────────────────
 
-describe("DocumentsTable — approve column visibility", () => {
-  it("renders the Approve column header when canEdit=true", () => {
+describe("DocumentsTable — no inline approve column (ac21)", () => {
+  it("has no Approve column header — approval moved to DocumentDetailDrawer", () => {
     render(<DocumentsTable {...BASE_PROPS} />);
     expect(
-      screen.getByRole("columnheader", { name: /approve/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides the Approve column when canEdit=false", () => {
-    render(<DocumentsTable {...BASE_PROPS} canEdit={false} />);
-    expect(
-      screen.queryByRole("columnheader", { name: /approve/i }),
+      screen.queryByRole("columnheader", { name: /^approve$/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("shows inline Approve button for a pending_approval row when canEdit=true", () => {
-    const row = makeRow({
-      documentId: "PAY00000002",
-      state: "pending_approval",
-      reversible: false,
-      partiallyReversed: false,
-      // Different creator so self-approval guard does not disable the button.
-      createdBy: "user-other-creator",
-    });
-    render(
-      <DocumentsTable {...BASE_PROPS} rows={[row]} total={1} canEdit={true} />,
-    );
+  it("has no inline Approve button for pending_approval rows", () => {
+    const row = makeRow({ state: "pending_approval" });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
     expect(
-      screen.getByRole("button", { name: /approve/i }),
+      screen.queryByRole("button", { name: /approve/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ── ac22 — ↺ Reverse row action (hidden, not disabled) ───────────────────────
+
+describe("DocumentsTable — ↺ Reverse row action (ac22 §3.2)", () => {
+  it("renders the ↺ Reverse control on a reversible row when canEdit", () => {
+    const row = makeRow({ reversible: true });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
+    expect(
+      screen.getByRole("button", { name: /reverse document PAY00000001/i }),
     ).toBeInTheDocument();
   });
 
-  it("Approve button is disabled for self-created pending_approval docs", () => {
-    const row = makeRow({
-      documentId: "PAY00000003",
-      state: "pending_approval",
-      reversible: false,
-      partiallyReversed: false,
-      createdBy: USER_ID,
-    });
+  it("hides the reverse control on an ineligible (reversible=false) row", () => {
+    const row = makeRow({ state: "draft", reversible: false });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
+    expect(
+      screen.queryByRole("button", { name: /reverse document/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the reverse control for a READ-only holder even on reversible rows (D5/§2.8)", () => {
+    const row = makeRow({ reversible: true });
     render(
-      <DocumentsTable {...BASE_PROPS} rows={[row]} total={1} canEdit={true} />,
+      <DocumentsTable {...BASE_PROPS} canEdit={false} rows={[row]} total={1} />,
     );
-    const btn = screen.getByRole("button", { name: /approve/i });
-    expect(btn).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /reverse document/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clicking ↺ Reverse does not open the drawer — no ?doc navigation (stopPropagation, §2.3)", () => {
+    pushMock.mockClear();
+    const row = makeRow({ reversible: true });
+    render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /reverse document PAY00000001/i }),
+    );
+    // The row's openDoc navigation (router.push with ?doc=...) must not fire.
+    expect(pushMock).not.toHaveBeenCalled();
   });
 });
 
