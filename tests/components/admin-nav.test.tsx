@@ -2,8 +2,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockPathname = "/administration/users";
+const mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
+  useSearchParams: () => mockSearchParams,
 }));
 
 import { AdminNav } from "@/components/admin-nav";

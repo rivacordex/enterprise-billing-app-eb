@@ -2,7 +2,8 @@
 
 import { Fragment } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import type { ReadonlyURLSearchParams } from "next/navigation";
 import {
   ArrowLeftRight,
   BookOpen,
@@ -25,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { hasLevel, type EffectivePermissionMap } from "@/types/permissions";
 import type { PermissionName, PermissionType } from "@/types/rbac";
+import { parseAccountsContext } from "@/validation/accounts/parse-accounts-context";
 
 // Roles → `ShieldHalf` (not `ShieldCheck`): the filled shield-check glyph is
 // already the SSO `AuthMethodBadge` (ui-context §3.5), so reusing it for Roles
@@ -49,7 +51,30 @@ type NavItem = {
   // render depends on the viewer's permission level (cm03-spec §2.3.1).
   requiredPermission?: { name: PermissionName; level: PermissionType };
 };
-type NavSection = { caption: string; items: ReadonlyArray<NavItem> };
+type NavSection = {
+  caption: string;
+  items: ReadonlyArray<NavItem>;
+  // D7: only this section's items carry the ?party&fa&ban selection.
+  carriesAccountsContext?: boolean;
+};
+
+// D7: fixed order (§2.6) — deterministic hrefs regardless of incoming order.
+const CONTEXT_KEYS = ["party", "fa", "ban"] as const;
+
+// Module-private (§3.3): nav-render concern; `parseAccountsContext` remains
+// the only *parser* (code-standards §3.1).
+function accountsContextQuery(sp: ReadonlyURLSearchParams): string {
+  // `sp.get` returns the FIRST value for a repeated key — matches
+  // parseAccountsContext's `first()` helper semantics exactly (§2.3c).
+  const ctx = parseAccountsContext({
+    party: sp.get("party") ?? undefined,
+    fa: sp.get("fa") ?? undefined,
+    ban: sp.get("ban") ?? undefined,
+  });
+  const qs = new URLSearchParams();
+  for (const k of CONTEXT_KEYS) if (ctx[k]) qs.set(k, ctx[k]);
+  return qs.toString();
+}
 
 const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   {
@@ -86,6 +111,7 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   },
   {
     caption: "Accounts",
+    carriesAccountsContext: true,
     items: [
       {
         label: "Overview",
@@ -94,16 +120,16 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         requiredPermission: { name: "accounts_view", level: "READ" },
       },
       {
-        label: "Ledger Explorer",
-        href: "/accounts/ledger",
-        icon: Compass,
-        requiredPermission: { name: "accounts_view", level: "READ" },
-      },
-      {
         label: "Transactions",
         href: "/accounts/transactions",
         icon: ArrowLeftRight,
         requiredPermission: { name: "accounts_transactions", level: "READ" },
+      },
+      {
+        label: "Ledger Explorer",
+        href: "/accounts/ledger",
+        icon: Compass,
+        requiredPermission: { name: "accounts_view", level: "READ" },
       },
       {
         label: "Chart of Accounts",
@@ -159,6 +185,8 @@ export function AdminNav({
   permissionMap,
 }: AdminNavProps = {}): React.JSX.Element {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const ctxQuery = accountsContextQuery(searchParams);
 
   return (
     <nav className="flex flex-col py-2">
@@ -264,10 +292,15 @@ export function AdminNav({
               );
             }
 
+            const linkHref =
+              section.carriesAccountsContext && ctxQuery
+                ? `${item.href}?${ctxQuery}`
+                : item.href;
+
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={linkHref}
                 aria-current={isActive ? "page" : undefined}
                 // Collapsed: a hover tooltip for sighted users; the (DOM-present,
                 // visually-clipped) label still provides the accessible name.

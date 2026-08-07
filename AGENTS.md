@@ -12,6 +12,7 @@ Read the following files in order before implementing
 or making any architectural decision related to Accounts Module:
 
 1. `context/accounting-management/acctmgmt-project-overview.md` — product definition, goals, features, and scope
+1a. `context/accounting-management/acctmgmt-update-overview.md` — current update to the Accounts module - current goals, features, and scope
 2. `context/accounting-management/acctmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
 3. `context/accounting-management/acctmgmt-ui-context.md` — theme, colors, typography, and component conventions
 4. `context/accounting-management/acctmgmt-code-standards.md` — implementation rules and conventions
