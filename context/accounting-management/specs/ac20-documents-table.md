@@ -100,18 +100,19 @@ listForContext(db, {
   billingAccountId: string | null;   // null → FA-scoped (§2.2)
   docType: DocType | null;
   state: DocState | null;
-  q: string;                          // documentId / reasonCode
+  rev: "reversible" | "partial" | null; // post-aggregate outer WHERE on CTE
+  q: string;                            // documentId / reasonCode
   sort: TransactionDocumentSort;
   page: number;
   pageSize: number;
 }): Promise<{ rows: DocumentListRow[]; total: number }>
 ```
 
-`DocumentListRow` = the document columns in §2.4 plus `unreversedLineCount` and `totalLineCount` from a grouped `LEFT JOIN billing.document_line` (§2.3). One query for rows, one for `total` — the `listTransfersForAccount` shape. Sort whitelisted to the §2.5 values; never interpolate the sort string.
+`DocumentListRow` = the document columns in §2.4 plus `unreversedLineCount` and `totalLineCount` from a grouped `LEFT JOIN billing.document_line` (§2.3). One query for rows, one for `total` — the `listTransfersForAccount` shape. Sort whitelisted to the §2.5 values; never interpolate the sort string. The `rev` filter is applied post-aggregate in the repository's outer `WHERE` clause (not in the service), because it depends on the CTE-derived `unreversed_line_count`.
 
 ### 3.2 `services/accounts/list-transaction-documents.ts` (new, read-only)
 
-Wraps the repository, derives `partiallyReversed`, `reversible` and the human action label, and applies the `rev` filter (post-aggregate, since it is derived). Returns `{ rows, total }`. No write, no transaction (**inv. #15**).
+Wraps the repository, derives `partiallyReversed`, `reversible` and the human action label, and forwards `rev` to the repository (which applies it post-aggregate). Returns `{ rows, total }`. No write, no transaction (**inv. #15**).
 
 ### 3.3 `validation/accounts/transactions-search-params.schema.ts` (new)
 

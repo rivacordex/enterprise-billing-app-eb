@@ -32,7 +32,7 @@ export const transactionsSearchParamsSchema = z.object({
   // Free text over documentId and reasonCode — trimmed, max 100.
   q: z.string().trim().max(100).catch(""),
   sort: z.enum(TRANSACTION_DOCUMENT_SORT_VALUES).catch("-event_at"),
-  page: z.coerce.number().int().min(1).catch(1),
+  page: z.coerce.number().int().min(1).max(9999).catch(1),
   // Reserved for ac21's document detail drawer — parsed here so ac21 adds no
   // schema change. Unused (inert) in this unit.
   doc: z.string().nullable().catch(null),

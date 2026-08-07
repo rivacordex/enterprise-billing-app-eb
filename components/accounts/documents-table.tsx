@@ -464,22 +464,22 @@ export function DocumentsTable({
                 <tr
                   key={row.documentId}
                   onClick={() => openDoc(row.documentId)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openDoc(row.documentId);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open document ${row.documentId}`}
-                  className="cursor-pointer border-b border-[color:var(--border-subtle)] outline-none last:border-0 hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)]"
+                  className="cursor-pointer border-b border-[color:var(--border-subtle)] last:border-0 hover:bg-[color:var(--action-ghost-hover)]"
                 >
-                  {/* Doc ID — mono per ui-context §3 */}
+                  {/* Doc ID — button provides keyboard + a11y; tr onClick is
+                      mouse-only convenience for the rest of the row cells. */}
                   <td className="px-4 py-2">
-                    <span className="font-mono text-mono text-muted-foreground">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDoc(row.documentId);
+                      }}
+                      aria-label={`Open document ${row.documentId}`}
+                      className="font-mono text-mono text-muted-foreground hover:underline focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none"
+                    >
                       {row.documentId}
-                    </span>
+                    </button>
                   </td>
                   {/* Type / Action / Scope marker */}
                   <td className="px-4 py-2">
@@ -543,11 +543,17 @@ export function DocumentsTable({
       {/* Pagination */}
       {total > 0 && (
         <div className="flex items-center justify-between border-t border-[color:var(--border-subtle)] px-4 py-3">
-          <span className="text-body-sm text-muted-foreground">
-            Showing {(page - 1) * pageSize + 1}–
-            {Math.min(page * pageSize, total)} of {total} document
-            {total !== 1 ? "s" : ""}
-          </span>
+          {rows.length > 0 ? (
+            <span className="text-body-sm text-muted-foreground">
+              Showing {(page - 1) * pageSize + 1}–
+              {Math.min(page * pageSize, total)} of {total} document
+              {total !== 1 ? "s" : ""}
+            </span>
+          ) : (
+            <span className="text-body-sm text-muted-foreground">
+              {total} document{total !== 1 ? "s" : ""}
+            </span>
+          )}
           <div className="flex items-center gap-1">
             <button
               type="button"

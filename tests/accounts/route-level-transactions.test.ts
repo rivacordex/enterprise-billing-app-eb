@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, expect, it } from "vitest";
 
@@ -99,9 +99,8 @@ describe("Transactions shared components exist", () => {
   });
 
   it("pending-approvals-list.tsx is deleted (absorbed by ac20 documents table)", () => {
-    const fs = require("fs");
     expect(
-      fs.existsSync(resolve(componentRoot, "pending-approvals-list.tsx")),
+      existsSync(resolve(componentRoot, "pending-approvals-list.tsx")),
     ).toBe(false);
   });
 });

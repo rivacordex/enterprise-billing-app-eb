@@ -64,7 +64,7 @@ This is the unit's only shared-kit addition and is available to all modules ther
 
 ### 2.6 Page structure after ac19
 
-```
+```text
 <main>
   header (h1 + subtitle)
   <ContextStrip …/>                       ← unchanged
