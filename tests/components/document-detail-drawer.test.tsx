@@ -13,6 +13,13 @@ vi.mock("@/actions/accounts/approve-document", () => ({
   approveDocumentAction: vi.fn(),
 }));
 
+// The drawer footer's ↺ Reverse… control (ac22) imports the reverse-document
+// server action via reversal-dialog.tsx — mock it out of the jsdom graph.
+vi.mock("@/actions/accounts/reverse-document", () => ({
+  getReversalPreviewAction: vi.fn(),
+  reverseDocumentAction: vi.fn(),
+}));
+
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -90,6 +97,9 @@ const BASE_PROPS = {
   timezone: "Asia/Kuala_Lumpur",
   canEdit: true,
   currentUserId: APPROVER_ID,
+  financialAccountId: FA_ID,
+  // Default: not reversible, so the footer reverse control is opt-in per test.
+  reversible: false,
 };
 
 describe("DocumentDetailDrawer — SC11 pending_approval controls", () => {
@@ -264,6 +274,51 @@ describe("DocumentDetailDrawer — lines and ledger legs", () => {
     });
     render(<DocumentDetailDrawer {...BASE_PROPS} detail={detail} />);
     expect(screen.getByText(BAN_ID)).toBeInTheDocument();
+  });
+});
+
+describe("DocumentDetailDrawer — reversal footer (ac22 §3.3)", () => {
+  it("shows ↺ Reverse… when reversible and canEdit", () => {
+    const detail = makeDetail({ document: makeDocument({ state: "posted" }) });
+    render(<DocumentDetailDrawer {...BASE_PROPS} reversible detail={detail} />);
+    expect(
+      screen.getByRole("button", { name: /reverse document PAY00000001/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the reverse control for a READ-only holder (D5/§2.8)", () => {
+    const detail = makeDetail({ document: makeDocument({ state: "posted" }) });
+    render(
+      <DocumentDetailDrawer
+        {...BASE_PROPS}
+        canEdit={false}
+        reversible
+        detail={detail}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /reverse document/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a 'Reversed by' explanation (not a control) for an already-reversed document", () => {
+    const detail = makeDetail({
+      document: makeDocument({ state: "reversed" }),
+      reversedByDocumentId: "PAY00000009",
+    });
+    render(
+      <DocumentDetailDrawer
+        {...BASE_PROPS}
+        reversible={false}
+        detail={detail}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /reverse document/i }),
+    ).not.toBeInTheDocument();
+    // The reverser is named in the footer text (§2.2). Appears in both the
+    // cross-links and the footer explanation — assert at least one match.
+    expect(screen.getAllByText(/PAY00000009/).length).toBeGreaterThan(0);
   });
 });
 

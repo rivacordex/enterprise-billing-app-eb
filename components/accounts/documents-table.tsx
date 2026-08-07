@@ -19,6 +19,7 @@ import { useState, useTransition } from "react";
 
 import { AmountCell } from "@/components/accounts/amount-cell";
 import { DocStateBadge } from "@/components/accounts/doc-state-badge";
+import { ReverseButton } from "@/components/accounts/reversal-dialog";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type {
@@ -109,6 +110,9 @@ export interface DocumentsTableProps {
   overviewHref: string;
   // Passed so the component can distinguish "no context" vs "FA present, no results".
   financialAccountId: string | undefined;
+  // ac22-spec §3.2 — the ↺ Reverse row action renders only for EDIT holders on
+  // eligible rows. READ-only holders see no reversal control (D5/§2.8).
+  canEdit: boolean;
 }
 
 export function DocumentsTable({
@@ -125,6 +129,7 @@ export function DocumentsTable({
   timezone,
   overviewHref,
   financialAccountId,
+  canEdit,
 }: DocumentsTableProps): React.JSX.Element {
   const router = useRouter();
   const pathname = usePathname();
@@ -378,12 +383,15 @@ export function DocumentsTable({
               <th className="px-4 py-2 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
                 By
               </th>
+              <th className="px-4 py-2 text-right text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-16 text-center">
+                <td colSpan={8} className="py-16 text-center">
                   <FileText className="mx-auto mb-3 size-12 text-[color:var(--text-disabled)]" />
                   <p className="text-body text-muted-foreground">
                     No documents match your filters
@@ -447,6 +455,17 @@ export function DocumentsTable({
                   {/* Created by */}
                   <td className="max-w-[160px] truncate px-4 py-2 font-mono text-mono text-muted-foreground">
                     {row.createdBy}
+                  </td>
+                  {/* ac22-spec §3.2 — ↺ Reverse on eligible rows only. Hidden
+                      (not disabled) elsewhere per D4/§2.2. stopPropagation lives
+                      in ReverseButton so the row's drawer link does not fire. */}
+                  <td className="px-4 py-2 text-right">
+                    {canEdit && row.reversible && (
+                      <ReverseButton
+                        documentId={row.documentId}
+                        financialAccountId={financialAccountId}
+                      />
+                    )}
                   </td>
                 </tr>
               ))

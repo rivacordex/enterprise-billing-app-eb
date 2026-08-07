@@ -12,7 +12,6 @@ import {
   DocumentsTable,
   DOCUMENTS_PAGE_SIZE,
 } from "@/components/accounts/documents-table";
-import { ReversalsPanel } from "@/components/accounts/reversals-panel";
 import { TransactionsActionBar } from "@/components/accounts/transactions-action-bar";
 import {
   getBillingAccountClosureEligibility,
@@ -170,6 +169,15 @@ export default async function TransactionsPage({
   const closeDocQs = closeDocParams.toString();
   const closeDocHref = `/accounts/transactions${closeDocQs ? `?${closeDocQs}` : ""}`;
 
+  // ac22-spec §3.3 — drawer reversal eligibility, mirroring ac20's `reversible`
+  // derivation (inv. #18): posted with at least one unreversed line. Computed
+  // here from the detail the page already loaded; the service re-validates on
+  // submit. The drawer only renders when ctx.fa is set (docDetail requires it).
+  const drawerReversible =
+    docDetail?.ok === true &&
+    docDetail.detail.document.state === "posted" &&
+    docDetail.detail.lines.some((l) => l.line.reversedByLineId === null);
+
   return (
     <main className="space-y-6 p-6">
       <header>
@@ -228,12 +236,13 @@ export default async function TransactionsPage({
           timezone={timezone}
           overviewHref={overviewHref}
           financialAccountId={ctx.fa}
+          canEdit={canEdit}
         />
       </Suspense>
 
       {/* Document detail drawer — URL-driven, inv. #17. Only when ?doc resolves
           to a valid document that belongs to the context FA (§2.6). */}
-      {docDetail?.ok && (
+      {docDetail?.ok && ctx.fa && (
         <DocumentDetailDrawer
           detail={docDetail.detail}
           closeHref={closeDocHref}
@@ -241,38 +250,36 @@ export default async function TransactionsPage({
           timezone={timezone}
           canEdit={canEdit}
           currentUserId={userId}
+          financialAccountId={ctx.fa}
+          reversible={drawerReversible}
         />
       )}
 
       {canEdit && (
-        <>
-          <ReversalsPanel financialAccountId={ctx.fa} />
-
-          <ClosurePanel
-            ban={
-              banDetail
-                ? {
-                    billingAccountId: banDetail.ban.billingAccountId,
-                    state: banDetail.ban.state,
-                    lastModified: banDetail.ban.lastModified,
-                    currency: banDetail.ban.currency,
-                  }
-                : null
-            }
-            banClosure={banClosure}
-            fa={
-              faDetail
-                ? {
-                    financialAccountId: faDetail.fa.financialAccountId,
-                    state: faDetail.fa.state,
-                    lastModified: faDetail.fa.lastModified,
-                    currency: faDetail.fa.currency,
-                  }
-                : null
-            }
-            faClosure={faClosure}
-          />
-        </>
+        <ClosurePanel
+          ban={
+            banDetail
+              ? {
+                  billingAccountId: banDetail.ban.billingAccountId,
+                  state: banDetail.ban.state,
+                  lastModified: banDetail.ban.lastModified,
+                  currency: banDetail.ban.currency,
+                }
+              : null
+          }
+          banClosure={banClosure}
+          fa={
+            faDetail
+              ? {
+                  financialAccountId: faDetail.fa.financialAccountId,
+                  state: faDetail.fa.state,
+                  lastModified: faDetail.fa.lastModified,
+                  currency: faDetail.fa.currency,
+                }
+              : null
+          }
+          faClosure={faClosure}
+        />
       )}
     </main>
   );
