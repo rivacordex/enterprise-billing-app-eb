@@ -170,6 +170,37 @@ export type AssignedItem = {
   eventAt: Date;
 };
 
+// Document list types (ac20-spec §2.4/§3.1) — repository raw row + service
+// enriched row. Live in types/** so components depend only on types/**, not
+// services/** (boundary rule). `list-transaction-documents.ts` is the sole
+// producer of TransactionDocumentRow.
+export type DocumentListRow = {
+  documentId: string;
+  docType: DocType;
+  state: DocState;
+  refFinancialAccountId: string;
+  refBillingAccountId: string | null;
+  reasonCode: string;
+  currency: string;
+  totalAmount: string;
+  createdBy: string;
+  approvedBy: string | null;
+  eventAt: Date;
+  // Needed for the inline approve stopgap (ac20) and the ac21 drawer CAS.
+  lastModified: Date;
+  unreversedLineCount: number;
+  totalLineCount: number;
+};
+
+export type TransactionDocumentRow = DocumentListRow & {
+  // Derived by list-transaction-documents.ts (§2.3) — components never compute
+  // these. Mirror of reverse-document.ts's eligibility check (inv. #18).
+  partiallyReversed: boolean;
+  reversible: boolean;
+  // Human-readable label: docType + reasonCode (§2.4, inv. #19).
+  actionLabel: string;
+};
+
 export type {
   FinancialAccount,
   FinancialAccountInsert,
