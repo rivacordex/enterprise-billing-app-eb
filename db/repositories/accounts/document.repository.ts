@@ -3,7 +3,8 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { document } from "@/db/schema/billing/documents";
 import type { Document, DocumentInsert } from "@/db/schema/billing/documents";
-import type { DocType } from "@/types/accounts";
+import type { DocType, DocState, DocumentListRow } from "@/types/accounts";
+import type { TransactionDocumentSort } from "@/validation/accounts/transactions-search-params.schema";
 
 // One dedicated sequence per doc_type (documents.ts) — the documented
 // exception to "IDs are a DB-layer column default" (code-standards §6.2),
@@ -125,5 +126,160 @@ export const documentRepository = {
       )
       .returning();
     return row ?? null;
+  },
+
+  // ac20-spec §2.2/§3.1 — filterable, paginated document list for the
+  // Transactions workbench. One CTE aggregates line counts (for
+  // partiallyReversed/reversible derivation in the service); the outer query
+  // optionally filters by the derived rev predicate, sorts, and paginates.
+  // SELECTs only (inv. #15). Two queries: count then rows (listTransfersForAccount
+  // precedent).
+  async listForContext(
+    db: Database,
+    filters: {
+      financialAccountId: string;
+      billingAccountId: string | null;
+      docType: DocType | null;
+      state: DocState | null;
+      // rev is post-aggregate (derived from line counts) so it lives in the
+      // outer WHERE on the CTE — inv. #16 scope predicate is in the CTE WHERE.
+      rev: "reversible" | "partial" | null;
+      q: string;
+      sort: TransactionDocumentSort;
+      page: number;
+      pageSize: number;
+    },
+  ): Promise<{ rows: DocumentListRow[]; total: number }> {
+    const qTrimmed = filters.q.trim();
+    const qPattern = qTrimmed
+      ? `%${qTrimmed.replace(/[%_\\]/g, "\\$&")}%`
+      : null;
+
+    // inv. #16: BAN predicate admits FA-level docs (refBillingAccountId IS NULL).
+    // When no BAN selected, the clause is omitted — FA-wide scope (§2.2).
+    const cteWhere = sql`
+      d.ref_financial_account_id = ${filters.financialAccountId}
+      ${
+        filters.billingAccountId
+          ? sql`AND (d.ref_billing_account_id = ${filters.billingAccountId} OR d.ref_billing_account_id IS NULL)`
+          : sql``
+      }
+      ${filters.docType ? sql`AND d.doc_type = ${filters.docType}` : sql``}
+      ${filters.state ? sql`AND d.state = ${filters.state}` : sql``}
+      ${
+        qPattern
+          ? sql`AND (d.document_id ILIKE ${qPattern} OR d.reason_code ILIKE ${qPattern})`
+          : sql``
+      }
+    `;
+
+    // Outer WHERE for rev filter — applied on the CTE result after aggregation.
+    const revWhere =
+      filters.rev === "reversible"
+        ? sql`AND state = 'posted' AND unreversed_line_count > 0`
+        : filters.rev === "partial"
+          ? sql`AND state = 'posted' AND unreversed_line_count > 0 AND unreversed_line_count < total_line_count`
+          : sql``;
+
+    // Sort clauses reference CTE column aliases. total_amount_num is the
+    // numeric column added for correct numeric ordering (text would sort wrong).
+    const ORDER_CLAUSES: Record<
+      TransactionDocumentSort,
+      ReturnType<typeof sql>
+    > = {
+      event_at: sql`event_at ASC, document_id ASC`,
+      "-event_at": sql`event_at DESC, document_id DESC`,
+      amount: sql`total_amount_num ASC, document_id ASC`,
+      "-amount": sql`total_amount_num DESC, document_id DESC`,
+    };
+    const orderClause = ORDER_CLAUSES[filters.sort];
+
+    // Count query: minimal CTE columns (state + aggregates) for the rev filter.
+    const [countRow] = await db.execute<{ total: string }>(sql`
+      WITH agg AS (
+        SELECT
+          d.document_id,
+          d.state,
+          COUNT(dl.document_line_id)::int                                            AS total_line_count,
+          COUNT(dl.document_line_id) FILTER (WHERE dl.reversed_by_line_id IS NULL)::int AS unreversed_line_count
+        FROM billing.document d
+        LEFT JOIN billing.document_line dl ON dl.ref_document_id = d.document_id
+        WHERE ${cteWhere}
+        GROUP BY d.document_id, d.state
+      )
+      SELECT COUNT(*)::text AS total FROM agg WHERE 1=1 ${revWhere}
+    `);
+    const total = Number(countRow?.total ?? 0);
+
+    const offset = (filters.page - 1) * filters.pageSize;
+
+    // Data query: full column set + numeric sort proxy.
+    const rows = await db.execute<{
+      document_id: string;
+      doc_type: string;
+      state: string;
+      ref_financial_account_id: string;
+      ref_billing_account_id: string | null;
+      reason_code: string;
+      currency: string;
+      total_amount: string;
+      created_by: string;
+      approved_by: string | null;
+      event_at: Date;
+      last_modified: Date;
+      total_line_count: number;
+      unreversed_line_count: number;
+    }>(sql`
+      WITH agg AS (
+        SELECT
+          d.document_id, d.doc_type, d.state,
+          d.ref_financial_account_id, d.ref_billing_account_id,
+          d.reason_code, d.currency,
+          d.total_amount::text        AS total_amount,
+          d.total_amount              AS total_amount_num,
+          d.created_by, d.approved_by,
+          d.event_at, d.last_modified,
+          COUNT(dl.document_line_id)::int                                            AS total_line_count,
+          COUNT(dl.document_line_id) FILTER (WHERE dl.reversed_by_line_id IS NULL)::int AS unreversed_line_count
+        FROM billing.document d
+        LEFT JOIN billing.document_line dl ON dl.ref_document_id = d.document_id
+        WHERE ${cteWhere}
+        GROUP BY
+          d.document_id, d.doc_type, d.state,
+          d.ref_financial_account_id, d.ref_billing_account_id,
+          d.reason_code, d.currency, d.total_amount,
+          d.created_by, d.approved_by, d.event_at, d.last_modified
+      )
+      SELECT
+        document_id, doc_type, state,
+        ref_financial_account_id, ref_billing_account_id,
+        reason_code, currency, total_amount,
+        created_by, approved_by, event_at, last_modified,
+        total_line_count, unreversed_line_count
+      FROM agg
+      WHERE 1=1 ${revWhere}
+      ORDER BY ${orderClause}
+      LIMIT ${filters.pageSize} OFFSET ${offset}
+    `);
+
+    return {
+      total,
+      rows: rows.map((r) => ({
+        documentId: r.document_id,
+        docType: r.doc_type as DocType,
+        state: r.state as DocState,
+        refFinancialAccountId: r.ref_financial_account_id,
+        refBillingAccountId: r.ref_billing_account_id,
+        reasonCode: r.reason_code,
+        currency: r.currency,
+        totalAmount: r.total_amount,
+        createdBy: r.created_by,
+        approvedBy: r.approved_by,
+        eventAt: r.event_at,
+        lastModified: r.last_modified,
+        totalLineCount: r.total_line_count,
+        unreversedLineCount: r.unreversed_line_count,
+      })),
+    };
   },
 };

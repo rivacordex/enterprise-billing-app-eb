@@ -12,11 +12,11 @@ Read the following files in order before implementing
 or making any architectural decision related to Accounts Module:
 
 1. `context/accounting-management/acctmgmt-project-overview.md` — product definition, goals, features, and scope
-1a. `context/accounting-management/acctmgmt-update-overview.md` — current update to the Accounts module - current goals, features, and scope
-2. `context/accounting-management/acctmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/accounting-management/acctmgmt-ui-context.md` — theme, colors, typography, and component conventions
-4. `context/accounting-management/acctmgmt-code-standards.md` — implementation rules and conventions
-5. `context/accounting-management/acctmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-6. `context/accounting-management/acctmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
+2. `context/accounting-management/acctmgmt-update-overview.md` — current update to the Accounts module - current goals, features, and scope
+3. `context/accounting-management/acctmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+4. `context/accounting-management/acctmgmt-ui-context.md` — theme, colors, typography, and component conventions
+5. `context/accounting-management/acctmgmt-code-standards.md` — implementation rules and conventions
+6. `context/accounting-management/acctmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+7. `context/accounting-management/acctmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
 
 Update `context/accounting-management/acctmgmt-progress-tracker.md` after each meaningful implementation change.
