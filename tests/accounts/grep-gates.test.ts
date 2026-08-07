@@ -387,6 +387,49 @@ describe("grep gate — no --ai-*/gradient tokens on any /accounts/** or account
   });
 });
 
+describe("grep gate — inv. #20: ten create-panel files export their component and import no Dialog (wrapper shell moved outward, ac19)", () => {
+  // The dialog shell is in TransactionsActionBar, not inside the panel files.
+  // Any Dialog import in a panel file would mean the abstraction leaked inward
+  // and inv. #20 (panels remain standalone-renderable) would be violated.
+  const PANEL_ENTRIES: [string, string][] = [
+    ["components/accounts/capture-payment-panel.tsx", "CapturePaymentPanel"],
+    ["components/accounts/allocate-payment-panel.tsx", "AllocatePaymentPanel"],
+    ["components/accounts/payment-refund-panel.tsx", "PaymentRefundPanel"],
+    ["components/accounts/raise-credit-note-panel.tsx", "RaiseCreditNotePanel"],
+    ["components/accounts/raise-debit-note-panel.tsx", "RaiseDebitNotePanel"],
+    ["components/accounts/capture-deposit-panel.tsx", "CaptureDepositPanel"],
+    ["components/accounts/reverse-deposit-panel.tsx", "ReverseDepositPanel"],
+    ["components/accounts/refund-deposit-panel.tsx", "RefundDepositPanel"],
+    ["components/accounts/write-off-panel.tsx", "WriteOffPanel"],
+    [
+      "components/accounts/rounding-adjustment-panel.tsx",
+      "RoundingAdjustmentPanel",
+    ],
+  ];
+
+  it.each(PANEL_ENTRIES)(
+    "%s exports %s and contains no Dialog import",
+    (relativePath, exportName) => {
+      const src = read(relativePath);
+      expect(src).toContain(`export function ${exportName}`);
+      expect(src).not.toMatch(/from\s+["']@\/components\/ui\/dialog["']/);
+    },
+  );
+
+  it("TransactionsActionBar is the sole Dialog importer among accounts components (the invariant has exactly one owner)", () => {
+    const DIALOG_IMPORT = /from\s+["']@\/components\/ui\/dialog["']/;
+    const accountsComponents = ALL_SOURCE_FILES.filter(({ relative }) =>
+      relative.startsWith("components/accounts/"),
+    );
+    const dialogImporters = accountsComponents
+      .filter(({ content }) => DIALOG_IMPORT.test(content))
+      .map(({ relative }) => relative);
+    expect(dialogImporters).toEqual([
+      "components/accounts/transactions-action-bar.tsx",
+    ]);
+  });
+});
+
 describe("stripLineComments — multiline template literal regression", () => {
   it("preserves URL content after :// on a continuation line of a template literal", () => {
     const src = ["const x = `", "  https://api.example.com", "`;"].join("\n");
