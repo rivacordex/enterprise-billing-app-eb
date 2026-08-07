@@ -156,7 +156,7 @@ describe("TransactionsActionBar — + Payment menu entries", () => {
     }
   });
 
-  it("with no context: all three entries disabled", async () => {
+  it("with FA but no BAN: Capture Payment enabled, Allocate and Refund disabled", async () => {
     const user = userEvent.setup();
     // Render with FA to allow the menu to open (trigger is disabled with no context)
     render(<TransactionsActionBar {...faOnly} />);
