@@ -158,7 +158,7 @@ describe.skipIf(!databaseUrl)(
           netAmount: "16000.00",
           taxAmount: "200.00",
           eventAt: EVENT_AT_JULY,
-          referenceDate: EVENT_AT_JULY,
+          entryDate: EVENT_AT_JULY,
           referenceInfo: "V06 July DBN",
         },
         creatorId,

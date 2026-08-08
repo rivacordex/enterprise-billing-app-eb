@@ -181,7 +181,13 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
   // V-series and would report every V-test as "added" — the wrong base.
   // Overridable via AC_REVISION_BASE for CI.
   function resolveRevisionBase(): string | null {
-    if (process.env.AC_REVISION_BASE) return process.env.AC_REVISION_BASE;
+    if (process.env.AC_REVISION_BASE) {
+      // Validate the override resolves to a real commit before trusting it; an
+      // unresolvable value returns null so callers raise the revision-base
+      // error rather than feeding a bad ref into later git commands.
+      const override = git(["rev-parse", process.env.AC_REVISION_BASE]);
+      return override.ok ? override.out : null;
+    }
     const log = git(["log", "--reverse", "--format=%H", "--grep=ac18", "HEAD"]);
     if (!log.ok) return null;
     const earliestAc18 = log.out.split("\n")[0];

@@ -17,7 +17,7 @@
 | Column | Behavior (unchanged by this unit) | Caption today (wrong) | Caption after this unit |
 |---|---|---|---|
 | `event_at` | The document's true business-event date. Drives period validation and GL-journal grouping (`to_char(event_at, 'YYYY-MM')`). Backdatable; a closed-period value is rejected (`PERIOD_CLOSED`, Inv. #7). | "Entry Date" | **"Reference Date"** |
-| `reference_date` → renamed **`entry_date`** | Manually entered, defaults to today. Inert — never read by period validation, GL grouping, or any query. | "Reference Date" | **"Entry Date"** |
+| `reference_date` → renamed **`entry_date`** | Manually entered, defaults to today. Not used by period validation or GL grouping; selected only for read-only display (the document detail drawer). | "Reference Date" | **"Entry Date"** |
 
 ### 2.2 Visual decision: captions swap, field position does not
 
@@ -121,7 +121,7 @@ Deliberately **not** touched, per `ac00-build-plan.md` Part 3's review: `ac06`/`
 - [ ] Each of the 11 write panels/dialogs (including `reversal-dialog.tsx`) shows "Reference Date" next to the field that rejects a closed-period value, and "Entry Date" next to the inert default-today field.
 - [ ] `document-detail-drawer.tsx` shows the same swap on read; the unrelated ledger-transfer `eventAt` display elsewhere in the drawer is untouched.
 - [ ] A closed-period rejection still fires off `event_at` (now captioned "Reference Date") exactly as before — Inv. #7 behavior is unchanged, only the caption next to the field that triggers it.
-- [ ] Grep sweep: zero remaining `reference_date`/`referenceDate` anywhere in `enterprise-billing-app` outside git history.
+- [ ] Grep sweep: zero remaining `reference_date`/`referenceDate` in active consumers — schema, services, tests, UI payloads, and SQL consumers. Excluded by design: the `0022` migration SQL, migration metadata/snapshots, and documentation describing the rename (which necessarily names the old column).
 
 **Docs**
 - [ ] All 9 files in §3.6 updated; `_newmodule-account-plan.md`'s Q29/Q9 entries carry a new revision date, not a silent rewrite.
