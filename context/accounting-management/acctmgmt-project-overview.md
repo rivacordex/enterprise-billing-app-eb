@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Accounts module adds double-entry financial accounting to the Enterprise Billing solution. It manages each validated customer's Financial Account (`FIN…`, one per customer party role) and Billing Accounts (`BAN…`, per contract grouping), and lets RevOps perform every money operation the business needs before invoicing exists: advance payments, payment capture and manual allocation, credit notes (CRN), debit notes (DBN, the only charge vehicle in this phase), write-off and rounding adjustments, reversals, and the security-deposit lifecycle (capture, reverse-to-account, refund). Master data follows TMF666/TMFC024 (two concrete tables plus a `billing.account_view` UNION for the TMF base-Account shape); all money lives in a pgledger double-entry core forked into the `billing` Postgres schema; every operation is a workflow document (draft → pending_approval → posted → reversed) that posts atomically to the ledger; and a role-mapped Chart of Accounts produces a balanced monthly GL journal exported as CSV.
+The Accounts module adds double-entry financial accounting to the Enterprise Billing solution. It manages each validated customer's Financial Account (`FIN…`, one per customer party role) and Billing Accounts (`BAN…`, per contract grouping), and lets RevOps perform every money operation the business needs before invoicing exists: advance payments, payment capture and manual allocation, credit notes (CRN), debit notes (DBN, the only charge vehicle in this phase), write-off and rounding adjustments, reversals, and the security-deposit lifecycle (capture, reverse-to-account, refund). Master data follows TMF666/TMFC024 (two concrete tables plus a `billing.account_view` UNION for the TMF base-Account shape); all money lives in a pgledger double-entry core forked into the `billing` Postgres schema; every operation is a workflow document (draft → pending_approval → posted → reversed) that posts atomically to the ledger — raised, listed, inspected, approved, and reversed from the Transactions document workbench; and a role-mapped Chart of Accounts produces a balanced monthly GL journal exported as CSV.
 
 ## Goals
 
@@ -18,12 +18,12 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 ## Core user flow (start to finish)
 
 1. A customer in the Customer module transitions to `VALIDATED`. The inline wizard opens: currency read-only (MYR, Q12), bill cycle picked from active `billing.bill_cycle` entries (default from Accounts Settings), credit limits, optional payment-terms override (e.g. net 45). Confirming commits status change + `FIN…` + `BAN…` + 3 pgledger accounts + 3 binding rows in one DB transaction.
-2. RevOps opens **Accounts → Accounts Overview**, searches by Creditor/Debtor name, and selects the customer, financial account, and billing account. This selection persists as a context strip across Accounts Overview, Ledger Explorer, and Transactions (locked item 5).
-3. RevOps captures the security deposit on the **Transactions** page: DEP document, reason `SEC_DEPOSIT`, payment mode `cheque` with cheque number in `mode_ref` (Q22). Amount is above the reason's `auto_post_limit` 0? No — `SEC_DEPOSIT` seeds at 50,000, so a USER posts it directly; `deposits → sys.cash` legs post atomically.
-4. On cycle day 1, RevOps raises the monthly charge: DBN document, reason `MANUAL_CHARGE`, RM 5,000 + RM 400 tax → two transfers into `ban.{id}.receivables`. The BAN shows `due`; past due-date (bill date + resolved term) the UI derives **overdue** at read time.
-5. The customer pays RM 5,400 by bank transfer. RevOps captures a PAY document (reason `CUST_PAYMENT`, mode `bank_transfer`, bank ref in `mode_ref`): line 1 `capture` books the money into `unapplied_cash`; line 2 `allocation` applies it to the BAN manually (Q24 — no auto-application). Partial allocation leaves the remainder unapplied (an advance payment is exactly a capture with no/partial allocation, Q15).
-6. A mistake (e.g. wrong BAN allocated) is fixed in the **Reversals** workbench (Q5): pick the posted doc, preview opposite legs, reverse the single allocation line with a reason code — the bank capture stays untouched.
-7. A goodwill credit above RM 1,000 (reason `GOODWILL_CREDIT`) goes to `pending_approval`; a MANAGER (≠ creator) approves, and the CRN posts against `sys.revenue_adj` (Q19/Q20).
+2. RevOps opens **Accounts → Accounts Overview**, searches by Creditor/Debtor name, and selects the customer, financial account, and billing account. The selection is held in the URL (`?party&fa&ban`) and carried across all five Accounts nav links, shown as a context strip on Accounts Overview, Transactions, and Ledger Explorer (locked item 5).
+3. RevOps clicks **Transactions** — now the second item in the Accounts nav, directly beneath Overview — and the page opens as a document workbench scoped to the selection: a scope strip naming the BAN, an amber approval banner, live chips (unapplied cash, pending-approval count, open A/R, last activity), and a filterable table listing every document already raised against the context (newest first). From **More actions** they open the Capture Security Deposit dialog and raise a DEP document, reason `SEC_DEPOSIT`, payment mode `cheque` with cheque number in `mode_ref` (Q22). Amount is above the reason's `auto_post_limit` 0? No — `SEC_DEPOSIT` seeds at 50,000, so a USER posts it directly; `deposits → sys.cash` legs post atomically, and the new document appears as a row in the table.
+4. On cycle day 1, RevOps raises the monthly charge from **+ Note → Raise Debit Note**: DBN document, reason `MANUAL_CHARGE`, RM 5,000 + RM 400 tax → two transfers into `ban.{id}.receivables`. The BAN shows `due`; past due-date (bill date + resolved term) the UI derives **overdue** at read time.
+5. The customer pays RM 5,400 by bank transfer. From **+ Payment → Capture Payment** RevOps records a PAY document (reason `CUST_PAYMENT`, mode `bank_transfer`, bank ref in `mode_ref`): line 1 `capture` books the money into `unapplied_cash` (it lists as an FA-level row); then **+ Payment → Allocate Payment** posts a BAN-scoped PAY document whose `allocation` line applies it to the BAN manually (Q24 — no auto-application). Partial allocation leaves the remainder unapplied (an advance payment is exactly a capture with no/partial allocation, Q15).
+6. A mistake (e.g. wrong BAN allocated) is fixed in place (Q5): RevOps finds the posted allocation document in the table and clicks **↺ Reverse** on its row — the control shows only on reversible documents (`posted` with at least one unreversed line) — previews the opposite legs, and reverses just the allocation line via its checkbox. The bank capture line stays posted, the document stays `posted` with a "Partially reversed" badge, and its remainder stays reversible.
+7. A goodwill credit above RM 1,000 (reason `GOODWILL_CREDIT`) goes to `pending_approval` and surfaces in the approval banner; a MANAGER (≠ creator) opens the document's detail drawer and approves, and the CRN posts against `sys.revenue_adj` (Q19/Q20).
 8. At contract end, RevOps reverses the deposit to the account (`DEP_REVERSE`, always four-eyes), allocates it against final A/R, and refunds the remainder (`DEP_REFUND`). Account closure is only possible at zero balances (Q11).
 9. At month end, a user with `accounts-config` closes the period; late postings are rejected with a re-date prompt (Q9). Finance opens **GL Journal**, verifies Σ debit = Σ credit, drills any GL code to its source entries, and exports the CSV journal (audited).
 
@@ -40,11 +40,18 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 
 - Doc types PAY / DEP / CRN / DBN / ADJ with per-type id prefixes; state machine draft → pending_approval → posted → reversed (Q18)
 - Reason-code catalog with posting nature and per-code `auto_post_limit`; approver ≠ creator enforced server-side (Q19/Q20)
-- Every document captures three mandatory fields (Q29): `event_at` (entry date — drives period/journal), `reference_date` (manual, defaults to today), and `reference_info` (e.g. transaction code)
+- Every document captures three mandatory fields (Q29): `event_at` (captioned "Reference Date" in the UI since AC24 — the business-event date that drives period/journal), `entry_date` (captioned "Entry Date"; manual, defaults to today, inert), and `reference_info` (e.g. transaction code)
 - Payment modes `bank_transfer | cash | cheque` with mode-specific references; all manual, cheques assumed to clear (Q22/Q27)
 - Split context requirements: CRN/DBN/ADJ need the selected BAN; PAY capture and DEP capture need only the FA; PAY allocation is a BAN-scoped document but the BAN is supplied by the form rather than required in the URL context (Q1)
-- Document- and line-level reversal with conservation guarantees (Q5)
 - Payment refund (`PAYMENT_REFUND`): bank payout of a customer overpayment / unapplied remainder, `sys.cash → unapplied_cash`, four-eyes (Q17/Q20)
+
+### Transactions workbench (page structure)
+
+- The Transactions page is a document workbench, not a stack of always-open forms: a scope strip, an approval banner, live chips (unapplied cash, pending-approval count, open A/R, last activity), an action bar, and one documents table
+- Filterable, sortable table of the selected context's documents, newest first, scoped by `ref_financial_account_id = :fa AND (ref_billing_account_id = :ban OR ref_billing_account_id IS NULL)` so FA-level captures and deposits show alongside BAN-scoped documents; per-row scope marker (FA-level vs `BAN…`); filters by type, state, reversibility, and free text — a read-only surface that touches no write path
+- Action launcher opens each existing operation panel unchanged inside a dialog: **+ Payment** (Capture · Allocate · Refund), **+ Note** (Raise Credit Note · Raise Debit Note), **More actions** (Capture Security Deposit · Reverse Deposit to Account · Refund Deposit · Write Off · Rounding Adjustment); context-gated so FA-only and FA+BAN operations disable until their scope is selected
+- Row-click detail drawer: account, scope, reason, amount, per-line reversed state, posted ledger legs, `Reverses`/`Reversed by` cross-links, and the approval timeline with Approve & post for `pending_approval` documents
+- Document- and line-level reversal with conservation guarantees (Q5), launched in place: a row-level **↺ Reverse** control renders only on reversible documents (`state === "posted"` with at least one line where `reversedByLineId` is null); line checkboxes route document-level (`reverseDocument`) vs line-level (`reverseLine`) reversal, previewing the opposite legs and stating any inherited approval requirement before submission. Partially-reversed documents stay `posted`, carry a "Partially reversed" badge, and remain actionable on their remainder
 
 ### Ledger & GL
 
@@ -56,8 +63,8 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 
 ### Pages & access
 
-- Accounts (left nav): Accounts Overview, Ledger Explorer, Transactions, Chart of Accounts, GL Journal; Administration → Accounts Settings (reason codes, thresholds, bill-cycle catalog, defaults, flows documentation)
-- Persistent selection context strip across Overview / Ledger Explorer / Transactions
+- Accounts (left nav), ordered context-establishing → consuming → optional → global: Accounts Overview, Transactions, Ledger Explorer, Chart of Accounts, GL Journal; Administration → Accounts Settings (reason codes, thresholds, bill-cycle catalog, defaults, flows documentation)
+- All five Accounts nav links carry the `?party&fa&ban` selection (Chart of Accounts and GL Journal ignore the params but no longer discard the selection on a round trip); persistent selection context strip across Overview / Transactions / Ledger Explorer
 - Three permissions on existing better-auth RBAC: `accounts-view`, `accounts-transactions`, `accounts-config` (Q7/Q20); server actions enforce independently of navigation
 
 ## In scope
@@ -65,6 +72,7 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 - `billing.financial_account`, `billing.billing_account`, `billing.account_view`, `billing.bill_cycle`, `billing.reason_code`, `billing.document`, `billing.document_line`, `billing.ledger_binding`, `billing.gl_account`, `billing.gl_mapping`, `billing.accounting_period`, plus the forked pgledger tables/functions — all in the `billing` pg schema
 - Validation wizard (FA/BAN auto-creation) and Customer-module touchpoints (Preferred PIC note, FA/BAN ids on the customer role section with deep links)
 - All RevOps operations as documents, with approval workflow and thresholds
+- Transactions document workbench: scoped document list, detail drawer, action launcher, and row-level reversal — all read surfaces added over the existing write path (no new posting logic)
 - Manual payment capture, allocation, and refund of overpayments (Q21/Q24)
 - Security-deposit lifecycle: capture, reverse-to-account, refund, error correction via reversal (Q16)
 - Period locking and close workflow; CSV GL journal export with audit events
@@ -82,6 +90,7 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 - ERP API integration and GL dimensions (CSV + metadata escrow instead; Q25)
 - Cheque clearing lifecycle, post-dated cheques, bounce workflow — bounce = document reversal (Q27)
 - Period reopening after close (Q9)
+- Transactions workbench extras: bulk row actions, saved filter views, and CSV export of the documents table; relocating Account Closure off the Transactions page into a separate Account Lifecycle surface (D1) — all deferred
 
 ## Success criteria (definition of done)
 
@@ -89,5 +98,5 @@ The Accounts module adds double-entry financial accounting to the Enterprise Bil
 2. Validating a customer produces FA + BAN + 3 ledger accounts + 3 bindings in one transaction, and a forced mid-transaction failure leaves zero orphan rows.
 3. Every operation in the RevOps vocabulary (Q17) is executable end-to-end on the Transactions page by a USER within limits and requires MANAGER approval above them; no ledger transfer exists without a posted document line pointing at it (1:1 `pgledger_transfer_id`).
 4. The July sample scenario (Sample Telecom: DBN 5,400 → PAY 5,400 capture+allocation → deposit capture/reverse/refund) reproduces the plan's §2 tables exactly, and its GL journal export totals 16,200/16,200.
-5. Closing a period blocks further postings into it with a re-date error (the user corrects the entry date into an open period); the exported CSV re-runs idempotently.
+5. Closing a period blocks further postings into it with a re-date error (the user corrects the business-event date `event_at`, captioned "Reference Date" since AC24, into an open period); the exported CSV re-runs idempotently.
 6. All five Accounts pages + Accounts Settings render with the three-permission RBAC enforced server-side; a user with only `accounts-view` can trace a transaction from Accounts Overview to its GL line without any write affordance visible.

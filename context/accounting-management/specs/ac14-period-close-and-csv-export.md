@@ -3,7 +3,7 @@
 - **Unit:** 14 of 17 (`ac00-build-plan.md`)
 - **Dependencies:** `ac13` (GL Journal page — the export button + close action attach here; the on-screen journal is what the CSV streams). `ac07` (the `PERIOD_CLOSED` rejection built there; the posting core the re-date re-submits into). `ac02` (`accounting_period` table; `gl_journal_view`). `ac12` (`accounts_config:EDIT`; 0-unmapped precondition).
 - **Authorizing sections:** `acctmgmt-project-overview.md` *Goal 5* (close safely; posting into closed period rejected with re-date; exported journal always balances), *Core user flow* step 9; `acctmgmt-architecture.md` §4 (`accounts-config` — period close, journal export), §5 (period close is a user action, not a job), §6 Module Inv. **#7** (closed periods reject postings; no reopening), **#10** (Σ debit = Σ credit in every exported period — **V6**); `acctmgmt-code-standards.md` §5.1 (the **one** Route Handler `POST /api/accounts/gl-journal-export` — audited, streamed CSV, `accounts_config:EDIT`, POST-because-it-audits), §5.3 (fixed CSV format in `journal-csv.ts`), §2.4 (`PERIOD_CLOSED` carries the open-period hint); decision **Q9** (reject with re-date — the user corrects the entry date; no force-post; no reopening in v1), Q8 (period locking IN scope). Plan §3 step 7 (month-end journal), §4 verification step **6** (balanced journal; export re-runs idempotently).
-- **✓ Re-date / `event_at` model (resolved — Q2 date decisions):** `event_at` is the **entry date** — the date of the document used for the transaction (UI label "Entry Date") — and it drives period validation and GL-journal grouping. It is user-selectable (date-only capture, default today; `timestamptz` in the DB), may be backdated, **but a posting whose `event_at` falls in a closed period is rejected** (`PERIOD_CLOSED`, ac07). On rejection the user simply **corrects the entry date** to an open period and re-submits — there is **no separate posting-date field** and **no original-date preservation** (the entry date *is* the user-entered document date; nothing distinct to preserve). The manual **`reference_date`** (Q29) is reference-only, captured date-only, and untouched.
+- **✓ Re-date / `event_at` model (resolved — Q2 date decisions):** `event_at` is the document's **business-event date** — captioned **"Reference Date"** in the UI since AC24 — and it drives period validation and GL-journal grouping. It is user-selectable (date-only capture, default today; `timestamptz` in the DB), may be backdated, **but a posting whose `event_at` falls in a closed period is rejected** (`PERIOD_CLOSED`, ac07). On rejection the user simply **corrects `event_at`** to an open period and re-submits — there is **no separate posting-date field** and **no original-date preservation** (`event_at` *is* the user-entered document date; nothing distinct to preserve). The manual **`entry_date`** (Q29, captioned "Entry Date"; renamed from `reference_date` by AC24) is reference-only, captured date-only, and untouched.
 
 ---
 
@@ -21,7 +21,7 @@ Write actions over ac13's read surface; the export is the one non-Server-Action 
 
 ### 2.2 Re-date UX (Q9 — the rejection built in ac07, the recovery built here)
 
-ac07 already rejects a post whose `event_at` falls in a closed period with `PERIOD_CLOSED` carrying the open-period hint. This unit builds the **recovery**: the Transactions form catches `PERIOD_CLOSED`, shows the open-period hint, and offers a **re-date** — the operator corrects the **entry date** (`event_at`) to an open period, and the post is re-submitted through the same ac07 `post-document`. No silent rerouting, no force-post override (Q9); **no original-date preservation** (the entry date is the user-entered document date). `reference_date`/`reference_info` (Q29) are untouched. `redate-and-post` is a thin action wrapping the re-submit.
+ac07 already rejects a post whose `event_at` falls in a closed period with `PERIOD_CLOSED` carrying the open-period hint. This unit builds the **recovery**: the Transactions form catches `PERIOD_CLOSED`, shows the open-period hint, and offers a **re-date** — the operator corrects `event_at` (captioned "Reference Date" since AC24) to an open period, and the post is re-submitted through the same ac07 `post-document`. No silent rerouting, no force-post override (Q9); **no original-date preservation** (`event_at` is the user-entered document date). `entry_date`/`reference_info` (Q29) are untouched. `redate-and-post` is a thin action wrapping the re-submit.
 
 ### 2.3 CSV export — the one Route Handler (code-standards §5.1/§5.3)
 
@@ -37,7 +37,7 @@ Because the CoA is 0-unmapped (ac12) and the ledger is zero-sum (Inv. #1), the e
 ### 2.5 Structural decisions
 
 - `period-close` and `journal-csv` are pure services; the route handler is thin (permission + Zod + stream + audit). The re-date is a thin re-submit over ac07.
-- Period validation runs on `event_at` (the entry date) — ac07's `post-document` validates it directly; no separate posting-date field.
+- Period validation runs on `event_at` (the business-event date, captioned "Reference Date" in the UI since AC24) — ac07's `post-document` validates it directly; no separate posting-date field.
 - No new permission (reuses `accounts_config`).
 
 ---
@@ -46,8 +46,8 @@ Because the CoA is 0-unmapped (ac12) and the ledger is zero-sum (Inv. #1), the e
 ### 3.1 `services/accounts/period-close.ts` — `closePeriod(period, currency, actorId)`; period lazy-create/close; audit.
 ### 3.2 `services/accounts/journal-csv.ts` — the fixed CSV serializer (§2.3); shared by the route and any test.
 ### 3.3 `app/api/accounts/gl-journal-export/route.ts` — POST, Zod body, `accounts_config:EDIT`, stream + audit + balanced-guard (§2.3/§2.4).
-### 3.4 Actions — `close-period.action.ts`; `redate-and-post.action.ts` (re-submit with the corrected entry date `event_at`).
-### 3.5 ac07 alignment — `post-document` validates **`event_at`** (the entry date) against the open period and passes it as the pgledger transfers' `event_at`; no separate posting-date field (the earlier workaround is removed).
+### 3.4 Actions — `close-period.action.ts`; `redate-and-post.action.ts` (re-submit with the corrected `event_at` — the field captioned "Reference Date" in the UI since AC24).
+### 3.5 ac07 alignment — `post-document` validates **`event_at`** (the business-event date, captioned "Reference Date" since AC24) against the open period and passes it as the pgledger transfers' `event_at`; no separate posting-date field (the earlier workaround is removed).
 ### 3.6 Repository — `accounting-period.repository` (find/create/close); the export reads `gl_journal_view` (existing).
 ### 3.7 UI — close-period button + confirm on GL Journal; export button (triggers the POST download); re-date prompt in Transactions (catches `PERIOD_CLOSED`).
 ### 3.8 Guardrail tests — completes **V6**: close a month → a late post into it bounces with `PERIOD_CLOSED` + open-period hint; re-date **corrects** `event_at` to the open period and posts; export streams a balanced CSV (fixed format, CRLF) whose totals equal `gl_journal_view` and the on-screen table (§2 July = 16,200/16,200); re-running the export is byte-identical (idempotent); the balanced-guard refuses a (fixture-forced) unbalanced period. Route × level: export requires `accounts_config:EDIT`; a READ-only holder is blocked.

@@ -28,7 +28,7 @@ This is not stylistic preference. A client-state drawer would break three things
 | Section | Content | Source |
 |---|---|---|
 | Header | `documentId` · human action label · `DocStateBadge` (+ partially-reversed chip) · `docType` chip | ac20's row data |
-| Details | account, **scope** (BAN chip or FA-level), reason code, amount, `eventAt`, `referenceDate`, `referenceInfo`, created-by, approved-by | `billing.document` |
+| Details | account, **scope** (BAN chip or FA-level), reason code, amount, `eventAt` (captioned "Reference Date" since AC24), `entryDate` (captioned "Entry Date"), `referenceInfo`, created-by, approved-by | `billing.document` |
 | Cross-links | `Reverses` → `reversalOf`; `Reversed by` → the reversing document | `reversalOf`; reverse-lookup |
 | Lines | per line: `lineNo`, `lineKind`, amount, and **reversed state** | `document_line` incl. `reversedByLineId` |
 | Ledger legs | the posted transfer for each unreversed line | via `pgledgerTransferId` |

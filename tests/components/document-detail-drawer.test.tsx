@@ -48,7 +48,7 @@ function makeDocument(overrides: Partial<Document> = {}): Document {
     totalAmount: "1000.00",
     paymentMode: null,
     modeRef: null,
-    referenceDate: NOW,
+    entryDate: NOW,
     referenceInfo: "Test reference",
     eventAt: NOW,
     postedAt: NOW,

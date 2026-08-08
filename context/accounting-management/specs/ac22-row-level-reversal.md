@@ -86,7 +86,7 @@ No permission change. `reverseDocument` and `reverseLine` both require `accounts
 
 ### 3.1 `components/accounts/reversal-dialog.tsx` (new, `"use client"`)
 
-Props: `documentId`, `financialAccountId`, `open`, `onOpenChange`. On open: `getReversalPreviewAction` → loading → lines (§2.4). Holds checkbox state, the reversal comment, the Q29 date trio (`eventAt`, `referenceDate`, `referenceInfo` — required by `documentBaseSchema`, defaults as `ReversalsPanel` does today), submits `reverseDocumentAction`, maps Result codes via the migrated `describeReversalError`, calls `router.refresh()` on success.
+Props: `documentId`, `financialAccountId`, `open`, `onOpenChange`. On open: `getReversalPreviewAction` → loading → lines (§2.4). Holds checkbox state, the reversal comment, the Q29 date trio (`eventAt`, `entryDate` — renamed from `referenceDate` by AC24 —, `referenceInfo` — required by `documentBaseSchema`, defaults as `ReversalsPanel` does today), submits `reverseDocumentAction`, maps Result codes via the migrated `describeReversalError`, calls `router.refresh()` on success.
 
 Sends `selectedLineIds` **only** when a strict subset is checked; omits it when all are (§2.4).
 

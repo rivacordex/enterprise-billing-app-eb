@@ -43,6 +43,7 @@ describe.skipIf(!databaseUrl)(
   "V13 — line-level reversal conservation (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let drizzleSql: postgresjs.Sql;
     let testDb: Database;
     let creatorId: string;
     let financialAccountId: string;
@@ -82,7 +83,13 @@ describe.skipIf(!databaseUrl)(
       await migrateSql.end();
 
       sql = postgres(databaseUrl as string, { max: 1 });
-      testDb = drizzle(sql, { schema }) as unknown as Database;
+      // drizzle gets its OWN connection: constructing drizzle with the module
+      // `schema` installs type parsers on its postgres.js client that make raw
+      // timestamptz reads come back as strings. Keeping that off the `sql`
+      // connection preserves correct Date parsing for the test's raw
+      // optimistic-lock reads (`last_modified`/`last_modified_datetime`).
+      drizzleSql = postgres(databaseUrl as string, { max: 1 });
+      testDb = drizzle(drizzleSql, { schema }) as unknown as Database;
 
       const [creator] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -159,12 +166,25 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     afterAll(async () => {
-      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await sql.end();
+      // Guard: sql is only assigned after assertTestDatabaseUrl + migrate
+      // succeed. If beforeAll throws before that point (or the suite is skipped
+      // when DATABASE_URL is unset), sql is uninitialized and we must not
+      // attempt cleanup — the original state should remain the reported result.
+      if (!sql) return;
+      try {
+        await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+      } finally {
+        // Close both clients even if a DROP failed. Promise.allSettled runs each
+        // end() independently (one failing doesn't skip the other) and never
+        // rejects, so a DROP error above propagates unchanged as the result.
+        const closes = [sql.end()];
+        if (drizzleSql) closes.push(drizzleSql.end());
+        await Promise.allSettled(closes);
+      }
     });
 
     it("V13: reverse an allocation line → A/R restored, unapplied restored, capture untouched, reversedByLineId set", async () => {
@@ -176,7 +196,7 @@ describe.skipIf(!databaseUrl)(
           netAmount: "1500.00",
           taxAmount: null,
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V13 initial charge",
         },
         creatorId,
@@ -196,7 +216,7 @@ describe.skipIf(!databaseUrl)(
           payment_mode: "bank_transfer",
           mode_ref: { bankRef: "V13-CAP-001" },
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V13 capture",
         },
         creatorId,
@@ -215,7 +235,7 @@ describe.skipIf(!databaseUrl)(
           amount: "1500.00",
           refSettledDocumentId: null,
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V13 allocate",
         },
         creatorId,
@@ -251,7 +271,7 @@ describe.skipIf(!databaseUrl)(
           selectedLineIds: [allocLine.documentLineId],
           reversalComment: "V13 allocation reversal",
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V13 reversal",
           lastModified: allocDoc!.lastModified,
         },
@@ -312,7 +332,7 @@ describe.skipIf(!databaseUrl)(
             netAmount: String(amount) + ".00",
             taxAmount: null,
             eventAt: EVENT_AT,
-            referenceDate: EVENT_AT,
+            entryDate: EVENT_AT,
             referenceInfo: `V4 round ${amount}`,
           },
           creatorId,
@@ -327,7 +347,7 @@ describe.skipIf(!databaseUrl)(
             amount: String(amount) + ".00",
             refSettledDocumentId: null,
             eventAt: EVENT_AT,
-            referenceDate: EVENT_AT,
+            entryDate: EVENT_AT,
             referenceInfo: `V4 alloc ${amount}`,
           },
           creatorId,
@@ -356,7 +376,7 @@ describe.skipIf(!databaseUrl)(
             selectedLineIds: [allocLines[0]!.documentLineId],
             reversalComment: `V4 round ${amount} reversal`,
             eventAt: EVENT_AT,
-            referenceDate: EVENT_AT,
+            entryDate: EVENT_AT,
             referenceInfo: `V4 reversal ${amount}`,
             lastModified: allocDoc!.lastModified,
           },
@@ -387,7 +407,7 @@ describe.skipIf(!databaseUrl)(
           payment_mode: "cash",
           mode_ref: { receiptNo: "V13-DOCREV-001" },
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V13 doc-level capture",
         },
         creatorId,
@@ -407,7 +427,7 @@ describe.skipIf(!databaseUrl)(
           financialAccountId,
           reversalComment: "V13 full-doc reversal",
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V13 full-doc rev ref",
           lastModified: capDoc!.lastModified,
         },
@@ -433,8 +453,10 @@ describe.skipIf(!databaseUrl)(
       expect(await zeroSum()).toBeCloseTo(0, 6);
     });
 
-    it("double-reverse rejected with ALREADY_REVERSED", async () => {
-      // Attempt to reverse the capture doc again — all lines are already reversed.
+    it("double-reverse rejected (doc already reversed → DOC_STATE_INVALID)", async () => {
+      // Attempt to reverse a doc that is already in `reversed` state. The state
+      // guard fires first (reverseDocument rejects a non-`posted` doc with
+      // DOC_STATE_INVALID), so that — not ALREADY_REVERSED — is the code here.
       const [doc] = await sql<{ document_id: string; last_modified: Date }[]>`
         SELECT document_id, last_modified
         FROM billing.document
@@ -453,20 +475,20 @@ describe.skipIf(!databaseUrl)(
           financialAccountId,
           reversalComment: "should fail",
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "double-reverse attempt",
           lastModified: doc.last_modified,
         },
         creatorId,
       );
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.code).toBe("ALREADY_REVERSED");
+      if (!result.ok) expect(result.code).toBe("DOC_STATE_INVALID");
     });
 
     it("reversal into a closed period is rejected with PERIOD_CLOSED", async () => {
       // Close the April 2026 period, then try to reverse with that eventAt.
       await sql`
-        INSERT INTO billing.accounting_period (period, currency, state, last_modified_by)
+        INSERT INTO billing.accounting_period (period, currency, state, last_edited_by)
         VALUES ('2026-04', 'MYR', 'closed', ${creatorId})
         ON CONFLICT (period, currency) DO UPDATE SET state = 'closed'
       `;
@@ -488,7 +510,7 @@ describe.skipIf(!databaseUrl)(
           financialAccountId,
           reversalComment: "closed period reversal",
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "closed period ref",
           lastModified: openDoc.last_modified,
         },
@@ -520,7 +542,7 @@ describe.skipIf(!databaseUrl)(
                 netAmount: amount,
                 taxAmount: null,
                 eventAt: EVENT_AT,
-                referenceDate: EVENT_AT,
+                entryDate: EVENT_AT,
                 referenceInfo: `fc-dbn ${amount}`,
               },
               creatorId,
@@ -534,7 +556,7 @@ describe.skipIf(!databaseUrl)(
                 amount,
                 refSettledDocumentId: null,
                 eventAt: EVENT_AT,
-                referenceDate: EVENT_AT,
+                entryDate: EVENT_AT,
                 referenceInfo: `fc-alloc ${amount}`,
               },
               creatorId,
@@ -558,7 +580,7 @@ describe.skipIf(!databaseUrl)(
                 selectedLineIds: [lines[0]!.documentLineId],
                 reversalComment: `fc-rev ${amount}`,
                 eventAt: EVENT_AT,
-                referenceDate: EVENT_AT,
+                entryDate: EVENT_AT,
                 referenceInfo: `fc-rev-ref ${amount}`,
                 lastModified: allocDoc!.lastModified,
               },

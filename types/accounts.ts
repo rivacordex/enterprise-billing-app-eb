@@ -176,6 +176,28 @@ export type AssignedItem = {
   eventAt: Date;
 };
 
+// Onboarding wizard read-side shapes (ac04-spec §3.5) — the options the
+// customer onboarding wizard renders and the prior-accounts summary it lists.
+// Live here (not the service files) so `components/customers/onboard-accounts-
+// wizard.tsx` can depend on them without violating the components → services
+// boundaries rule; `services/accounts/get-wizard-options.ts` and
+// `list-prior-accounts.ts` remain their sole producers.
+export type PriorAccountSummary = {
+  financialAccountId: string;
+  name: string;
+  state: string;
+};
+
+export type WizardOptions = {
+  activeCycles: { billCycleId: string; name: string; paymentDueDays: number }[];
+  defaults: {
+    currency: string;
+    defaultBillCycleId: string | null;
+    defaultCreditLimit: string | null;
+  };
+  priorAccounts: PriorAccountSummary[];
+};
+
 // Document list types (ac20-spec §2.4/§3.1) — repository raw row + service
 // enriched row. Live in types/** so components depend only on types/**, not
 // services/** (boundary rule). `list-transaction-documents.ts` is the sole

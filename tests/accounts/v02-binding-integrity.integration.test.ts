@@ -30,16 +30,19 @@ describe.skipIf(!databaseUrl)(
       // timestamptz reads on it return raw strings (module Key Decision —
       // "migrate()-poisons-connection quirk").
       const migrateSql = postgres(databaseUrl as string, { max: 1 });
-      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await migrate(drizzle(migrateSql), {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-      await migrateSql.end();
+      try {
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+        await migrate(drizzle(migrateSql), {
+          migrationsFolder: "./db/migrations",
+          migrationsSchema: "drizzle",
+        });
+      } finally {
+        await migrateSql.end();
+      }
 
       sql = postgres(databaseUrl as string, { max: 1 });
 

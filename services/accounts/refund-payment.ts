@@ -81,7 +81,7 @@ export type RefundPaymentInput = {
   refundType: "cash" | "convert_to_advance";
   items: RefundItemInput[];
   eventAt: Date;
-  referenceDate: Date;
+  entryDate: Date;
   referenceInfo: string;
 };
 
@@ -222,7 +222,7 @@ export async function refundPayment(
       totalAmount,
       paymentMode: null,
       modeRef: null,
-      referenceDate: input.referenceDate,
+      entryDate: input.entryDate,
       referenceInfo: input.referenceInfo,
       eventAt: input.eventAt,
       postedAt: null,

@@ -152,7 +152,7 @@ export async function reverseLine(
           totalAmount,
           paymentMode: null,
           modeRef: null,
-          referenceDate: input.referenceDate,
+          entryDate: input.entryDate,
           referenceInfo: input.referenceInfo,
           eventAt: input.eventAt,
           postedAt: null,

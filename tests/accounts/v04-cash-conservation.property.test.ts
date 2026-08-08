@@ -61,6 +61,7 @@ describe.skipIf(!databaseUrl)(
   "V4 — cash conservation across arbitrary capture/allocate/reverse sequences (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let drizzleSql: postgresjs.Sql;
     let testDb: Database;
     let creatorId: string;
     let financialAccountId: string;
@@ -121,7 +122,13 @@ describe.skipIf(!databaseUrl)(
       await migrateSql.end();
 
       sql = postgres(databaseUrl as string, { max: 1 });
-      testDb = drizzle(sql, { schema }) as unknown as Database;
+      // drizzle gets its OWN connection: constructing drizzle with the module
+      // `schema` installs type parsers on its postgres.js client that make raw
+      // timestamptz reads come back as strings. Keeping that off the `sql`
+      // connection preserves correct Date parsing for the test's raw
+      // optimistic-lock reads (`last_modified`/`last_modified_datetime`).
+      drizzleSql = postgres(databaseUrl as string, { max: 1 });
+      testDb = drizzle(drizzleSql, { schema }) as unknown as Database;
 
       const [creator] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -196,12 +203,25 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     afterAll(async () => {
-      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await sql.end();
+      // Guard: sql is only assigned after assertTestDatabaseUrl + migrate
+      // succeed. If beforeAll throws before that point (or the suite is skipped
+      // when DATABASE_URL is unset), sql is uninitialized and we must not
+      // attempt cleanup — the original state should remain the reported result.
+      if (!sql) return;
+      try {
+        await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+      } finally {
+        // Close both clients even if a DROP failed. Promise.allSettled runs each
+        // end() independently (one failing doesn't skip the other) and never
+        // rejects, so a DROP error above propagates unchanged as the result.
+        const closes = [sql.end()];
+        if (drizzleSql) closes.push(drizzleSql.end());
+        await Promise.allSettled(closes);
+      }
     });
 
     it("V4 property: fc.assert that conservation holds after every capture, allocate, and reverse step", async () => {
@@ -233,7 +253,7 @@ describe.skipIf(!databaseUrl)(
                   payment_mode: "bank_transfer",
                   mode_ref: { bankRef: `V04-CAP-${Date.now()}` },
                   eventAt: EVENT_AT,
-                  referenceDate: EVENT_AT,
+                  entryDate: EVENT_AT,
                   referenceInfo: `V4 cap ${amount}`,
                 },
                 creatorId,
@@ -250,7 +270,7 @@ describe.skipIf(!databaseUrl)(
                   netAmount: amount,
                   taxAmount: null,
                   eventAt: EVENT_AT,
-                  referenceDate: EVENT_AT,
+                  entryDate: EVENT_AT,
                   referenceInfo: `V4 dbn ${amount}`,
                 },
                 creatorId,
@@ -267,7 +287,7 @@ describe.skipIf(!databaseUrl)(
                   amount,
                   refSettledDocumentId: null,
                   eventAt: EVENT_AT,
-                  referenceDate: EVENT_AT,
+                  entryDate: EVENT_AT,
                   referenceInfo: `V4 alloc ${amount}`,
                 },
                 creatorId,
@@ -294,7 +314,7 @@ describe.skipIf(!databaseUrl)(
                       selectedLineIds: [lines[0].documentLineId],
                       reversalComment: `V4 reversal ${amount}`,
                       eventAt: EVENT_AT,
-                      referenceDate: EVENT_AT,
+                      entryDate: EVENT_AT,
                       referenceInfo: `V4 rev-ref ${amount}`,
                       lastModified: allocDoc.lastModified,
                     },
@@ -327,7 +347,7 @@ describe.skipIf(!databaseUrl)(
           payment_mode: "cash",
           mode_ref: { receiptNo: "V04-DET-001" },
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V4 det capture",
         },
         creatorId,
@@ -344,7 +364,7 @@ describe.skipIf(!databaseUrl)(
           netAmount: amount,
           taxAmount: null,
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V4 det dbn",
         },
         creatorId,
@@ -359,7 +379,7 @@ describe.skipIf(!databaseUrl)(
           amount,
           refSettledDocumentId: null,
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V4 det alloc 1",
         },
         creatorId,
@@ -386,7 +406,7 @@ describe.skipIf(!databaseUrl)(
           selectedLineIds: [lines1[0]!.documentLineId],
           reversalComment: "V4 det reversal 1",
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V4 det rev-ref 1",
           lastModified: doc1!.lastModified,
         },
@@ -405,7 +425,7 @@ describe.skipIf(!databaseUrl)(
           netAmount: amount,
           taxAmount: null,
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V4 det dbn 2",
         },
         creatorId,
@@ -420,7 +440,7 @@ describe.skipIf(!databaseUrl)(
           amount,
           refSettledDocumentId: null,
           eventAt: EVENT_AT,
-          referenceDate: EVENT_AT,
+          entryDate: EVENT_AT,
           referenceInfo: "V4 det alloc 2",
         },
         creatorId,
@@ -442,7 +462,7 @@ describe.skipIf(!databaseUrl)(
             netAmount: allocAmount,
             taxAmount: null,
             eventAt: EVENT_AT,
-            referenceDate: EVENT_AT,
+            entryDate: EVENT_AT,
             referenceInfo: "V4 boundary settle",
           },
           creatorId,
@@ -454,7 +474,7 @@ describe.skipIf(!databaseUrl)(
             amount: allocAmount,
             refSettledDocumentId: null,
             eventAt: EVENT_AT,
-            referenceDate: EVENT_AT,
+            entryDate: EVENT_AT,
             referenceInfo: "V4 boundary alloc",
           },
           creatorId,

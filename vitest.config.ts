@@ -21,7 +21,12 @@ export default defineConfig({
     setupFiles: ["tests/setup.ts"],
     // The DB integration suite is a separate Vitest project (vitest.integration.config.ts)
     // so this DB-free unit suite never opens a database connection (um02-spec §3.9).
-    exclude: ["node_modules/**", "tests/**/*.integration.test.ts"],
+    exclude: [
+      "node_modules/**",
+      "tests/**/*.integration.test.ts",
+      // DB-backed fast-check suites belong to the integration project.
+      "tests/**/*.property.test.ts",
+    ],
     // Capped below CPU count (16 on dev machines) — running one jsdom
     // environment per core oversubscribes the OS scheduler and produced
     // intermittent timeouts in CPU-sensitive tests (Radix portal mount +

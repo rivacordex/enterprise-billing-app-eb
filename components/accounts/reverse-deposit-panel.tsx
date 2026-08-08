@@ -12,7 +12,12 @@ export interface ReverseDepositPanelProps {
   financialAccountId: string | undefined;
 }
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+// Local calendar date (not UTC) so the default matches the operator's day —
+// same helper as rounding-adjustment-panel.tsx.
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function ReverseDepositPanel({
   financialAccountId,
@@ -22,7 +27,7 @@ export function ReverseDepositPanel({
 
   const [amount, setAmount] = useState("");
   const [eventAt, setEventAt] = useState(today());
-  const [referenceDate, setReferenceDate] = useState(today());
+  const [entryDate, setEntryDate] = useState(today());
   const [referenceInfo, setReferenceInfo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -39,7 +44,7 @@ export function ReverseDepositPanel({
         financialAccountId,
         amount,
         eventAt,
-        referenceDate,
+        entryDate,
         referenceInfo,
       });
 
@@ -88,7 +93,7 @@ export function ReverseDepositPanel({
 
         <div className="grid grid-cols-2 gap-3">
           <Field>
-            <FieldLabel>Entry Date</FieldLabel>
+            <FieldLabel>Reference Date</FieldLabel>
             <Input
               type="date"
               value={eventAt}
@@ -96,11 +101,11 @@ export function ReverseDepositPanel({
             />
           </Field>
           <Field>
-            <FieldLabel>Reference Date</FieldLabel>
+            <FieldLabel>Entry Date</FieldLabel>
             <Input
               type="date"
-              value={referenceDate}
-              onChange={(e) => setReferenceDate(e.target.value)}
+              value={entryDate}
+              onChange={(e) => setEntryDate(e.target.value)}
             />
           </Field>
         </div>

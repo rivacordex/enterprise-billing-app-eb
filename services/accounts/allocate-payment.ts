@@ -23,7 +23,7 @@ export type AllocatePaymentInput = {
   amount: string;
   refSettledDocumentId: string | null;
   eventAt: Date;
-  referenceDate: Date;
+  entryDate: Date;
   referenceInfo: string;
 };
 
@@ -71,7 +71,7 @@ export async function allocatePayment(
       totalAmount: input.amount,
       paymentMode: null,
       modeRef: null,
-      referenceDate: input.referenceDate,
+      entryDate: input.entryDate,
       referenceInfo: input.referenceInfo,
       eventAt: input.eventAt,
       postedAt: null,

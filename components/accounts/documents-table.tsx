@@ -30,10 +30,6 @@ import type {
 import { DOC_STATES, DOC_TYPES } from "@/types/accounts";
 import type { TransactionDocumentSort } from "@/validation/accounts/transactions-search-params.schema";
 
-// ac20-spec §2.5 — fixed constant, following the ac06 no-new-config precedent.
-// Exported so the page can pass it back as pageSize and tests can reference it.
-export const DOCUMENTS_PAGE_SIZE = 20;
-
 type SortColumn = "event_at" | "amount";
 
 const SORTABLE_COLUMNS: Array<{ column: SortColumn; label: string }> = [

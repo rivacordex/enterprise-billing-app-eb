@@ -1,18 +1,8 @@
 import { db } from "@/db/client";
 import { billCycleRepository } from "@/db/repositories/accounts/bill-cycle.repository";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
-import type { PriorAccountSummary } from "@/services/accounts/list-prior-accounts";
 import { listPriorAccountsForParty } from "@/services/accounts/list-prior-accounts";
-
-export interface WizardOptions {
-  activeCycles: { billCycleId: string; name: string; paymentDueDays: number }[];
-  defaults: {
-    currency: string;
-    defaultBillCycleId: string | null;
-    defaultCreditLimit: string | null;
-  };
-  priorAccounts: PriorAccountSummary[];
-}
+import type { WizardOptions } from "@/types/accounts";
 
 export async function getWizardOptions(
   partyRoleId: string,
