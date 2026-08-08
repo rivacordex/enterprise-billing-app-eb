@@ -1,10 +1,11 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, expect, it } from "vitest";
 
-// ac07-spec §3.10 — route × level guardrail tests, structural-analysis style
-// (route-level-ledger.test.ts precedent — Next.js server components can't be
-// rendered in vitest without the full App Router runtime).
+// ac07-spec §3.10 + ac20-spec §3.7 — route × level guardrail tests,
+// structural-analysis style (route-level-ledger.test.ts precedent — Next.js
+// server components can't be rendered in vitest without the full App Router
+// runtime).
 const PAGE_PATH = resolve(
   __dirname,
   "../../app/(app)/accounts/transactions/page.tsx",
@@ -35,29 +36,59 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).not.toContain("pgledger_");
   });
 
-  it("imports the action launcher and the pending-approvals list (ac19-spec §2.6, §3.4)", () => {
+  it("imports TransactionsActionBar (ten create-panels moved behind action launcher, ac19)", () => {
+    // ac19 moved the ten create-panels into TransactionsActionBar.
     expect(pageSource).toContain("TransactionsActionBar");
-    expect(pageSource).toContain("PendingApprovalsList");
-  });
-
-  it("no longer renders the ten create-panels directly — they moved into the action launcher (ac19-spec §2.6)", () => {
     expect(pageSource).not.toContain("CapturePaymentPanel");
-    expect(pageSource).not.toContain("AllocatePaymentPanel");
-    expect(pageSource).not.toContain("PaymentRefundPanel");
     expect(pageSource).not.toContain("CaptureDepositPanel");
-    expect(pageSource).not.toContain("ReverseDepositPanel");
-    expect(pageSource).not.toContain("RefundDepositPanel");
-    expect(pageSource).not.toContain("RaiseDebitNotePanel");
-    expect(pageSource).not.toContain("RaiseCreditNotePanel");
     expect(pageSource).not.toContain("WriteOffPanel");
-    expect(pageSource).not.toContain("RoundingAdjustmentPanel");
   });
 
-  it("imports the Reversals panel (ac11-spec §3.5)", () => {
-    expect(pageSource).toContain("ReversalsPanel");
+  it("imports DocumentsTable and ApprovalBanner (ac20 — PendingApprovalsList absorbed)", () => {
+    expect(pageSource).toContain("DocumentsTable");
+    expect(pageSource).toContain("ApprovalBanner");
+    // PendingApprovalsList retired by ac20.
+    expect(pageSource).not.toContain("PendingApprovalsList");
   });
 
-  it("imports the Closure panel (ac16-spec §3.5)", () => {
+  it("imports DocumentDetailDrawer (ac21 — drawer replaces inline approve stopgap)", () => {
+    expect(pageSource).toContain("DocumentDetailDrawer");
+    expect(pageSource).toContain("getTransactionDocumentDetail");
+  });
+
+  it("SC11 — approve is reached from the drawer, not from a table row", () => {
+    // Page wires the drawer; it no longer passes canEdit/currentUserId to
+    // DocumentsTable (stopgap removed by ac21).
+    expect(pageSource).toContain("DocumentDetailDrawer");
+    expect(pageSource).not.toContain("InlineApproveButton");
+  });
+
+  it("imports listTransactionDocuments service (ac20 read path, inv. #15)", () => {
+    expect(pageSource).toContain("listTransactionDocuments");
+  });
+
+  it("imports transactionsSearchParamsSchema (ac20 URL filter state, inv. #17)", () => {
+    expect(pageSource).toContain("transactionsSearchParamsSchema");
+  });
+
+  it("SC11 — passes pending approval count to ApprovalBanner (banner above filters)", () => {
+    expect(pageSource).toContain("ApprovalBanner");
+    expect(pageSource).toContain("pendingApprovals.length");
+  });
+
+  it("no longer imports the Reversals panel (ac22 — SC10, free-text form retired)", () => {
+    expect(pageSource).not.toContain("ReversalsPanel");
+  });
+
+  it("passes canEdit to DocumentsTable so the ↺ Reverse row action can render (ac22 §3.2)", () => {
+    expect(pageSource).toContain("canEdit={canEdit}");
+  });
+
+  it("passes reversible + financialAccountId to the drawer for its reverse control (ac22 §3.3)", () => {
+    expect(pageSource).toContain("reversible={drawerReversible}");
+  });
+
+  it("imports the Closure panel (ac16-spec §3.5 — deferred per D1)", () => {
     expect(pageSource).toContain("ClosurePanel");
   });
 });
@@ -67,10 +98,12 @@ describe("Transactions shared components exist", () => {
 
   it.each([
     ["doc-state-badge.tsx", "DocStateBadge"],
+    ["transactions-action-bar.tsx", "TransactionsActionBar"],
     ["capture-payment-panel.tsx", "CapturePaymentPanel"],
     ["allocate-payment-panel.tsx", "AllocatePaymentPanel"],
     ["payment-refund-panel.tsx", "PaymentRefundPanel"],
-    ["pending-approvals-list.tsx", "PendingApprovalsList"],
+    ["documents-table.tsx", "DocumentsTable"],
+    ["approval-banner.tsx", "ApprovalBanner"],
     ["capture-deposit-panel.tsx", "CaptureDepositPanel"],
     ["reverse-deposit-panel.tsx", "ReverseDepositPanel"],
     ["refund-deposit-panel.tsx", "RefundDepositPanel"],
@@ -78,11 +111,28 @@ describe("Transactions shared components exist", () => {
     ["raise-credit-note-panel.tsx", "RaiseCreditNotePanel"],
     ["write-off-panel.tsx", "WriteOffPanel"],
     ["rounding-adjustment-panel.tsx", "RoundingAdjustmentPanel"],
-    ["reversals-panel.tsx", "ReversalsPanel"],
     ["closure-panel.tsx", "ClosurePanel"],
+    // ac21 — document detail drawer
+    ["document-detail-drawer.tsx", "DocumentDetailDrawer"],
+    ["document-approval-actions.tsx", "DocumentApprovalActions"],
+    // ac22 — document-bound reversal control + dialog
+    ["reversal-dialog.tsx", "ReversalDialog"],
+    ["reversal-dialog.tsx", "ReverseButton"],
   ])("%s exists and exports %s", (filename, exportName) => {
     const src = readFileSync(resolve(componentRoot, filename), "utf-8");
     expect(src).toContain(`export function ${exportName}`);
+  });
+
+  it("pending-approvals-list.tsx is deleted (absorbed by ac20 documents table)", () => {
+    expect(
+      existsSync(resolve(componentRoot, "pending-approvals-list.tsx")),
+    ).toBe(false);
+  });
+
+  it("reversals-panel.tsx is deleted (ac22 — SC10, document-bound dialog replaces it)", () => {
+    expect(existsSync(resolve(componentRoot, "reversals-panel.tsx"))).toBe(
+      false,
+    );
   });
 });
 
@@ -107,6 +157,8 @@ describe("post-document.ts is the only pgledger_create_transfer(s) caller (code-
       "closure-eligibility.ts",
       "close-billing-account.ts",
       "close-financial-account.ts",
+      "list-transaction-documents.ts",
+      "get-transaction-document-detail.ts",
     ];
     for (const filename of servicesToCheck) {
       const src = readFileSync(
@@ -138,6 +190,7 @@ describe("no parseFloat/Number() on an amount outside money.ts (code-standards �
       "closure-eligibility.ts",
       "close-billing-account.ts",
       "close-financial-account.ts",
+      "list-transaction-documents.ts",
     ];
     for (const filename of filesToCheck) {
       const src = readFileSync(
@@ -147,5 +200,110 @@ describe("no parseFloat/Number() on an amount outside money.ts (code-standards �
       expect(src).not.toContain("parseFloat(");
       expect(src).not.toMatch(/(?<![.\w])Number\(/);
     }
+  });
+});
+
+describe("inv. #15 — list-transaction-documents.ts read path never writes", () => {
+  it("service contains no INSERT/UPDATE/DELETE/transaction and no pgledger call", () => {
+    const src = readFileSync(
+      resolve(
+        __dirname,
+        "../../services/accounts/list-transaction-documents.ts",
+      ),
+      "utf-8",
+    );
+    expect(src).not.toContain("insert");
+    expect(src).not.toContain("update");
+    expect(src).not.toContain("delete");
+    expect(src).not.toContain("pgledger_");
+    expect(src).not.toContain("db.transaction");
+  });
+});
+
+describe("inv. #15 — get-transaction-document-detail.ts read path never writes (ac21)", () => {
+  it("service contains no INSERT/UPDATE/DELETE/transaction and no pgledger base-table access", () => {
+    const src = readFileSync(
+      resolve(
+        __dirname,
+        "../../services/accounts/get-transaction-document-detail.ts",
+      ),
+      "utf-8",
+    );
+    // No write operations.
+    expect(src).not.toContain(".insert(");
+    expect(src).not.toContain(".update(");
+    expect(src).not.toContain("delete(");
+    expect(src).not.toContain("db.transaction");
+    // pgledger access via repository only — no raw billing.pgledger_ reference.
+    expect(src).not.toMatch(/\bbilling\.pgledger_/);
+  });
+});
+
+describe("inv. #19 — exactly five document types offered (documents-table.tsx)", () => {
+  it("DOC_TYPES has exactly five members and documents-table imports them for the type filter", () => {
+    const src = readFileSync(
+      resolve(__dirname, "../../components/accounts/documents-table.tsx"),
+      "utf-8",
+    );
+    expect(src).toContain("DOC_TYPES");
+    // Ensure no sixth type appears in the filter options.
+    expect(src).not.toContain('"reversal"');
+    expect(src).not.toContain('"refund"');
+    expect(src).not.toContain('"write_off"');
+  });
+});
+
+// ac23-spec §2.2/§3.1 — the revision's affordance table. Structural (the page
+// is a Server Component; route-level-*.test.ts precedent). READ holders see the
+// table + drawer with zero write affordance; EDIT holders additionally see the
+// action bar, the row/drawer reversal control and approve (Reject deferred);
+// no-grant is
+// blocked by the route guard.
+describe("SC14 / §2.2 affordance matrix — READ vs EDIT vs no-grant (ac23-spec §3.1)", () => {
+  it("SC13 / no-grant — the route is guarded at accounts_transactions:READ", () => {
+    expect(pageSource).toContain("requirePermission");
+    expect(pageSource).toContain("PERMISSIONS.ACCOUNTS_TRANSACTIONS");
+    expect(pageSource).toContain("LEVELS.READ");
+  });
+
+  it("derives canEdit from accounts_transactions:EDIT (the single write-affordance switch)", () => {
+    expect(pageSource).toMatch(/canEdit\s*=\s*meetsLevel\(/);
+    expect(pageSource).toContain("LEVELS.EDIT");
+  });
+
+  it("SC1 / READ — the documents table renders for every holder (not behind a canEdit guard)", () => {
+    // DocumentsTable is rendered unconditionally (inside <Suspense>, not a
+    // {canEdit && …} guard) and receives canEdit so it can hide the ↺ Reverse
+    // row action from READ holders itself.
+    expect(pageSource).toContain("<DocumentsTable");
+    expect(pageSource).toContain("canEdit={canEdit}");
+    expect(pageSource).not.toMatch(/canEdit && \(\s*<DocumentsTable/);
+  });
+
+  it("SC14 / READ — the detail drawer renders for every holder, gated on ?doc (not canEdit)", () => {
+    // Drawer visibility depends on a resolved ?doc for the context FA, never on
+    // canEdit; the drawer receives canEdit to hide approve/reverse internally.
+    expect(pageSource).toMatch(/docDetail\?\.ok && ctx\.fa && \(/);
+    expect(pageSource).toMatch(
+      /<DocumentDetailDrawer[\s\S]*?canEdit=\{canEdit\}/,
+    );
+    expect(pageSource).not.toMatch(/canEdit && \(\s*<DocumentDetailDrawer/);
+  });
+
+  it("EDIT-only — the action bar (all three controls) is gated behind canEdit", () => {
+    expect(pageSource).toMatch(/canEdit && \(\s*<TransactionsActionBar/);
+  });
+
+  it("EDIT-only — the approval banner is gated behind canEdit", () => {
+    expect(pageSource).toMatch(/canEdit && ctx\.fa && \(/);
+    expect(pageSource).toContain("<ApprovalBanner");
+  });
+
+  it("EDIT-only — the reversal control is EDIT-gated on both the row and the drawer", () => {
+    // Table hides ↺ Reverse unless canEdit (its own logic); the drawer's reverse
+    // footer is likewise canEdit-gated. Both receive canEdit + the reversible
+    // flag derived on the page (inv. #18 mirror, ac22 §3.2/§3.3).
+    expect(pageSource).toContain("canEdit={canEdit}");
+    expect(pageSource).toContain("reversible={drawerReversible}");
   });
 });

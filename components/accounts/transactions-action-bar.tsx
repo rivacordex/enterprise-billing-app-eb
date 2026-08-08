@@ -1,166 +1,45 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
 
+import { AllocatePaymentPanel } from "@/components/accounts/allocate-payment-panel";
+import { CaptureDepositPanel } from "@/components/accounts/capture-deposit-panel";
+import { CapturePaymentPanel } from "@/components/accounts/capture-payment-panel";
+import { PaymentRefundPanel } from "@/components/accounts/payment-refund-panel";
+import { RaiseCreditNotePanel } from "@/components/accounts/raise-credit-note-panel";
+import { RaiseDebitNotePanel } from "@/components/accounts/raise-debit-note-panel";
+import { RefundDepositPanel } from "@/components/accounts/refund-deposit-panel";
+import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel";
+import { RoundingAdjustmentPanel } from "@/components/accounts/rounding-adjustment-panel";
+import { WriteOffPanel } from "@/components/accounts/write-off-panel";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  TransactionDialogs,
-  type ActionKey,
-} from "@/components/accounts/transaction-dialogs";
 import type { AssignedItem } from "@/types/accounts";
 
-// ac19-spec §2.2/§3.2 — the three-control action bar (D3). `openAction` is
-// transient client UI state, not selection context (inv. #17) — it never
-// carries party/FA/BAN, so it's exempt from the URL-context rule that
-// governs `ContextStrip`.
-
-type Requirement = "fa" | "fa+ban";
-
-interface ActionEntry {
-  key: ActionKey;
-  label: string;
-  requirement: Requirement;
-  description?: string;
-}
-
-const PAYMENT_ENTRIES: ActionEntry[] = [
-  { key: "capturePayment", label: "Capture Payment", requirement: "fa" },
-  {
-    key: "allocatePayment",
-    label: "Allocate Payment",
-    requirement: "fa+ban",
-  },
-  { key: "paymentRefund", label: "Payment Refund", requirement: "fa+ban" },
-];
-
-const NOTE_ENTRIES: ActionEntry[] = [
-  {
-    key: "raiseCreditNote",
-    label: "Raise Credit Note",
-    requirement: "fa+ban",
-  },
-  { key: "raiseDebitNote", label: "Raise Debit Note", requirement: "fa+ban" },
-];
-
-const MORE_ENTRIES: ActionEntry[] = [
-  {
-    key: "captureDeposit",
-    label: "Capture Security Deposit",
-    requirement: "fa",
-  },
-  {
-    key: "reverseDeposit",
-    label: "Reverse Deposit to Account",
-    requirement: "fa",
-    description: "Applies deposit to A/R — not a ledger reversal",
-  },
-  { key: "refundDeposit", label: "Refund Deposit", requirement: "fa" },
-  { key: "writeOff", label: "Write Off", requirement: "fa+ban" },
-  {
-    key: "roundingAdjustment",
-    label: "Rounding Adjustment",
-    requirement: "fa+ban",
-  },
-];
-
-function entryState(
-  requirement: Requirement,
-  financialAccountId: string | undefined,
-  billingAccountId: string | undefined,
-): { disabled: boolean; title: string | undefined } {
-  if (!financialAccountId) {
-    return {
-      disabled: true,
-      title: "Select a Financial Account in Overview",
-    };
-  }
-  if (requirement === "fa+ban" && !billingAccountId) {
-    return { disabled: true, title: "Select a Billing Account in Overview" };
-  }
-  return { disabled: false, title: undefined };
-}
-
-function groupState(
-  entries: ActionEntry[],
-  financialAccountId: string | undefined,
-  billingAccountId: string | undefined,
-): { disabled: boolean; title: string | undefined } {
-  const states = entries.map((entry) =>
-    entryState(entry.requirement, financialAccountId, billingAccountId),
-  );
-  const disabled = states.every((state) => state.disabled);
-  return { disabled, title: disabled ? states[0]?.title : undefined };
-}
-
-function ActionMenu({
-  label,
-  entries,
-  variant,
-  showPlus,
-  financialAccountId,
-  billingAccountId,
-  onSelect,
-}: {
-  label: string;
-  entries: ActionEntry[];
-  variant: "default" | "secondary";
-  showPlus: boolean;
-  financialAccountId: string | undefined;
-  billingAccountId: string | undefined;
-  onSelect: (key: ActionKey) => void;
-}): React.JSX.Element {
-  const trigger = groupState(entries, financialAccountId, billingAccountId);
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant={variant}
-          disabled={trigger.disabled}
-          title={trigger.title}
-        >
-          {showPlus && <Plus size={14} aria-hidden />}
-          {label}
-          <ChevronDown size={14} aria-hidden />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent>
-        {entries.map((entry) => {
-          const state = entryState(
-            entry.requirement,
-            financialAccountId,
-            billingAccountId,
-          );
-          return (
-            <DropdownMenuItem
-              key={entry.key}
-              disabled={state.disabled}
-              title={state.title}
-              onSelect={() => onSelect(entry.key)}
-            >
-              <div className="flex flex-col gap-0.5 py-0.5">
-                <span>{entry.label}</span>
-                {entry.description && (
-                  <span className="text-xs text-muted-foreground">
-                    {entry.description}
-                  </span>
-                )}
-              </div>
-            </DropdownMenuItem>
-          );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
+type ActionKey =
+  | "capture_payment"
+  | "allocate_payment"
+  | "payment_refund"
+  | "raise_credit_note"
+  | "raise_debit_note"
+  | "capture_deposit"
+  | "reverse_deposit"
+  | "refund_deposit"
+  | "write_off"
+  | "rounding_adjustment";
 
 export interface TransactionsActionBarProps {
   financialAccountId: string | undefined;
@@ -168,6 +47,15 @@ export interface TransactionsActionBarProps {
   assignedItems: AssignedItem[];
   unappliedCashAvailable: string;
 }
+
+const FA_TITLE = "Select a Financial Account in Overview.";
+const FA_BAN_TITLE = "Select a Billing Account in Overview.";
+
+// Strips the panel's outer section chrome (border/bg/padding) and hides its
+// internal <h3> heading — DialogTitle provides the accessible title instead.
+// inv. #20: panel files are byte-identical; only the wrapper composition changes.
+const PANEL_CLASS =
+  "sm:max-w-lg [&_section]:border-0 [&_section]:bg-transparent [&_section]:p-0 [&_section>h3]:hidden";
 
 export function TransactionsActionBar({
   financialAccountId,
@@ -177,46 +65,298 @@ export function TransactionsActionBar({
 }: TransactionsActionBarProps): React.JSX.Element {
   const [openAction, setOpenAction] = useState<ActionKey | null>(null);
 
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <ActionMenu
-        label="Payment"
-        entries={PAYMENT_ENTRIES}
-        variant="default"
-        showPlus
-        financialAccountId={financialAccountId}
-        billingAccountId={billingAccountId}
-        onSelect={setOpenAction}
-      />
-      <ActionMenu
-        label="Note"
-        entries={NOTE_ENTRIES}
-        variant="default"
-        showPlus
-        financialAccountId={financialAccountId}
-        billingAccountId={billingAccountId}
-        onSelect={setOpenAction}
-      />
-      <ActionMenu
-        label="More actions"
-        entries={MORE_ENTRIES}
-        variant="secondary"
-        showPlus={false}
-        financialAccountId={financialAccountId}
-        billingAccountId={billingAccountId}
-        onSelect={setOpenAction}
-      />
+  const hasFa = Boolean(financialAccountId);
+  const hasFaBan = hasFa && Boolean(billingAccountId);
 
-      <TransactionDialogs
-        openAction={openAction}
-        onOpenChange={(open) => {
-          if (!open) setOpenAction(null);
-        }}
-        financialAccountId={financialAccountId}
-        billingAccountId={billingAccountId}
-        assignedItems={assignedItems}
-        unappliedCashAvailable={unappliedCashAvailable}
-      />
-    </div>
+  function close(): void {
+    setOpenAction(null);
+  }
+
+  function onOpenChange(open: boolean): void {
+    if (!open) close();
+  }
+
+  // Title for a FA+BAN-required entry or trigger when FA and/or BAN are absent.
+  const faBanTitle = !hasFa ? FA_TITLE : FA_BAN_TITLE;
+
+  // + Payment: all three entries need at least FA; trigger disabled only when
+  // all are disabled (i.e. no FA — even with FA-only, Capture Payment is enabled).
+  const paymentTriggerDisabled = !hasFa;
+
+  // + Note: both entries need FA + BAN; trigger disabled when both are disabled.
+  const noteTriggerDisabled = !hasFaBan;
+
+  // More actions: deposit entries need only FA; trigger disabled when all are
+  // disabled (i.e. no FA — with only FA, the three deposit entries are enabled).
+  const moreTriggerDisabled = !hasFa;
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-2">
+        {/* + Payment — primary (D3) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={paymentTriggerDisabled}>
+            <Button
+              variant="default"
+              disabled={paymentTriggerDisabled}
+              title={paymentTriggerDisabled ? FA_TITLE : undefined}
+            >
+              <PlusIcon data-icon="inline-start" />
+              Payment
+              <ChevronDownIcon data-icon="inline-end" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem
+              disabled={!hasFa}
+              title={!hasFa ? FA_TITLE : undefined}
+              onSelect={() => setOpenAction("capture_payment")}
+            >
+              Capture Payment
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!hasFaBan}
+              title={!hasFaBan ? faBanTitle : undefined}
+              onSelect={() => setOpenAction("allocate_payment")}
+            >
+              Allocate Payment
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!hasFaBan}
+              title={!hasFaBan ? faBanTitle : undefined}
+              onSelect={() => setOpenAction("payment_refund")}
+            >
+              Payment Refund
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* + Note — primary (D3) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={noteTriggerDisabled}>
+            <Button
+              variant="default"
+              disabled={noteTriggerDisabled}
+              title={noteTriggerDisabled ? faBanTitle : undefined}
+            >
+              <PlusIcon data-icon="inline-start" />
+              Note
+              <ChevronDownIcon data-icon="inline-end" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem
+              disabled={!hasFaBan}
+              title={!hasFaBan ? faBanTitle : undefined}
+              onSelect={() => setOpenAction("raise_credit_note")}
+            >
+              Raise Credit Note
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!hasFaBan}
+              title={!hasFaBan ? faBanTitle : undefined}
+              onSelect={() => setOpenAction("raise_debit_note")}
+            >
+              Raise Debit Note
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* More actions — secondary (D3) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={moreTriggerDisabled}>
+            <Button
+              variant="outline"
+              disabled={moreTriggerDisabled}
+              title={moreTriggerDisabled ? FA_TITLE : undefined}
+            >
+              More actions
+              <ChevronDownIcon data-icon="inline-end" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem
+              disabled={!hasFa}
+              title={!hasFa ? FA_TITLE : undefined}
+              onSelect={() => setOpenAction("capture_deposit")}
+            >
+              Capture Security Deposit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="flex-col items-start"
+              disabled={!hasFa}
+              title={!hasFa ? FA_TITLE : undefined}
+              onSelect={() => setOpenAction("reverse_deposit")}
+            >
+              <span>Reverse Deposit to Account</span>
+              <span className="text-xs text-muted-foreground">
+                Applies deposit to A/R — not a ledger reversal
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!hasFa}
+              title={!hasFa ? FA_TITLE : undefined}
+              onSelect={() => setOpenAction("refund_deposit")}
+            >
+              Refund Deposit
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={!hasFaBan}
+              title={!hasFaBan ? faBanTitle : undefined}
+              onSelect={() => setOpenAction("write_off")}
+            >
+              Write Off
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!hasFaBan}
+              title={!hasFaBan ? faBanTitle : undefined}
+              onSelect={() => setOpenAction("rounding_adjustment")}
+            >
+              Rounding Adjustment
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Dialog wrappers — one per operation (inv. #20: panels byte-identical) */}
+
+      <Dialog
+        open={openAction === "capture_payment"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Capture Payment</DialogTitle>
+          </DialogHeader>
+          <CapturePaymentPanel financialAccountId={financialAccountId} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "allocate_payment"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Allocate Payment</DialogTitle>
+          </DialogHeader>
+          <AllocatePaymentPanel
+            financialAccountId={financialAccountId}
+            billingAccountId={billingAccountId}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "payment_refund"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Payment Refund</DialogTitle>
+          </DialogHeader>
+          <PaymentRefundPanel
+            financialAccountId={financialAccountId}
+            billingAccountId={billingAccountId}
+            assignedItems={assignedItems}
+            unappliedCashAvailable={unappliedCashAvailable}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "raise_credit_note"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Raise Credit Note</DialogTitle>
+          </DialogHeader>
+          <RaiseCreditNotePanel
+            financialAccountId={financialAccountId}
+            billingAccountId={billingAccountId}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "raise_debit_note"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Raise Debit Note</DialogTitle>
+          </DialogHeader>
+          <RaiseDebitNotePanel
+            financialAccountId={financialAccountId}
+            billingAccountId={billingAccountId}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "capture_deposit"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Capture Security Deposit</DialogTitle>
+          </DialogHeader>
+          <CaptureDepositPanel financialAccountId={financialAccountId} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "reverse_deposit"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Reverse Deposit to Account</DialogTitle>
+          </DialogHeader>
+          <ReverseDepositPanel financialAccountId={financialAccountId} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "refund_deposit"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Refund Deposit</DialogTitle>
+          </DialogHeader>
+          <RefundDepositPanel financialAccountId={financialAccountId} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openAction === "write_off"} onOpenChange={onOpenChange}>
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Write Off</DialogTitle>
+          </DialogHeader>
+          <WriteOffPanel
+            financialAccountId={financialAccountId}
+            billingAccountId={billingAccountId}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openAction === "rounding_adjustment"}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className={PANEL_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Rounding Adjustment</DialogTitle>
+          </DialogHeader>
+          <RoundingAdjustmentPanel
+            financialAccountId={financialAccountId}
+            billingAccountId={billingAccountId}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

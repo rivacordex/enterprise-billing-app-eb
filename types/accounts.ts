@@ -1,3 +1,9 @@
+// `Document` and `DocumentLine` are imported here so they refer to the schema
+// types throughout this file. Without this import, TypeScript resolves
+// `Document` to the DOM global from lib.dom.d.ts, since `export type { X }
+// from "..."` re-exports don't bring identifiers into the file's own scope.
+import type { Document, DocumentLine } from "@/db/schema";
+
 // Domain unions verbatim from acctmgmt-code-standards.md §2.1 — the module's
 // one source of truth; every CHECK constraint that guards one of these
 // columns lists the same members inline in its schema file (ac02-spec §2.1).
@@ -168,6 +174,86 @@ export type AssignedItem = {
   refSettledDocumentId: string | null;
   amount: string;
   eventAt: Date;
+};
+
+// Onboarding wizard read-side shapes (ac04-spec §3.5) — the options the
+// customer onboarding wizard renders and the prior-accounts summary it lists.
+// Live here (not the service files) so `components/customers/onboard-accounts-
+// wizard.tsx` can depend on them without violating the components → services
+// boundaries rule; `services/accounts/get-wizard-options.ts` and
+// `list-prior-accounts.ts` remain their sole producers.
+export type PriorAccountSummary = {
+  financialAccountId: string;
+  name: string;
+  state: string;
+};
+
+export type WizardOptions = {
+  activeCycles: { billCycleId: string; name: string; paymentDueDays: number }[];
+  defaults: {
+    currency: string;
+    defaultBillCycleId: string | null;
+    defaultCreditLimit: string | null;
+  };
+  priorAccounts: PriorAccountSummary[];
+};
+
+// Document list types (ac20-spec §2.4/§3.1) — repository raw row + service
+// enriched row. Live in types/** so components depend only on types/**, not
+// services/** (boundary rule). `list-transaction-documents.ts` is the sole
+// producer of TransactionDocumentRow.
+export type DocumentListRow = {
+  documentId: string;
+  docType: DocType;
+  state: DocState;
+  refFinancialAccountId: string;
+  refBillingAccountId: string | null;
+  reasonCode: string;
+  currency: string;
+  totalAmount: string;
+  createdBy: string;
+  approvedBy: string | null;
+  eventAt: Date;
+  // Needed for the inline approve stopgap (ac20) and the ac21 drawer CAS.
+  lastModified: Date;
+  unreversedLineCount: number;
+  totalLineCount: number;
+};
+
+export type TransactionDocumentRow = DocumentListRow & {
+  // Derived by list-transaction-documents.ts (§2.3) — components never compute
+  // these. Mirror of reverse-document.ts's eligibility check (inv. #18).
+  partiallyReversed: boolean;
+  reversible: boolean;
+  // Human-readable label: docType + reasonCode (§2.4, inv. #19).
+  actionLabel: string;
+};
+
+// Document detail types (ac21-spec §3.1) — produced by
+// get-transaction-document-detail.ts; components depend only on types/**,
+// never services/** (boundaries rule).
+export type DocumentLineWithTransfer = {
+  line: DocumentLine;
+  // null when pgledgerTransferId is unset (not yet posted) or when the
+  // transfer row is not resolvable — renders an em-dash in the drawer (§2.3).
+  transfer: {
+    id: string;
+    fromAccountId: string;
+    fromAccountName: string;
+    toAccountId: string;
+    toAccountName: string;
+    amount: string;
+    eventAt: Date;
+  } | null;
+};
+
+export type TransactionDocumentDetail = {
+  document: Document;
+  lines: DocumentLineWithTransfer[];
+  // Mirror of list-transaction-documents derivation (inv. #18).
+  partiallyReversed: boolean;
+  // Cross-link: ID of the document that reverses this one, if any.
+  reversedByDocumentId: string | null;
 };
 
 export type {

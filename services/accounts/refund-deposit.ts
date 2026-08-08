@@ -74,7 +74,7 @@ export async function refundDeposit(
         totalAmount: input.amount,
         paymentMode: input.paymentMode,
         modeRef: input.modeRef,
-        referenceDate: input.referenceDate,
+        entryDate: input.entryDate,
         referenceInfo: input.referenceInfo,
         eventAt: input.eventAt,
         postedAt: null,

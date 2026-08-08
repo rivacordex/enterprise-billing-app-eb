@@ -37,7 +37,7 @@ export async function capturePayment(
       totalAmount: input.amount,
       paymentMode: input.payment_mode,
       modeRef: input.mode_ref,
-      referenceDate: input.referenceDate,
+      entryDate: input.entryDate,
       referenceInfo: input.referenceInfo,
       eventAt: input.eventAt,
       postedAt: null,

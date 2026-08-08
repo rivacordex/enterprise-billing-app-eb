@@ -1,12 +1,7 @@
 import { db } from "@/db/client";
 import { financialAccountRepository } from "@/db/repositories/accounts/financial-account.repository";
 import { partyRoleRepository } from "@/db/repositories/party-role";
-
-export interface PriorAccountSummary {
-  financialAccountId: string;
-  name: string;
-  state: string;
-}
+import type { PriorAccountSummary } from "@/types/accounts";
 
 // ac04-spec §3.5 — thin service that the wizard options action wraps.
 // Returns all financial accounts belonging to the same organisation as
