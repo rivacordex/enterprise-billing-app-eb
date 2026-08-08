@@ -218,6 +218,28 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
   }
   const revisionTip = resolveRevisionTip();
 
+  // Reject a nonsensical revision range before it can reach changedVTests(): an
+  // inverted, identical, or off-branch [base..tip] would make `git diff
+  // base..tip` report an empty (or misleading) result, letting SC12 pass without
+  // ever inspecting the revision. Require base to be a STRICT ancestor of tip
+  // (identical refs are rejected) and tip to be an ancestor of HEAD; otherwise
+  // the configuration is treated as unresolved and SC12 fails loudly.
+  function isRevisionRangeValid(base: string | null, tip: string): boolean {
+    if (!base) return false;
+    const baseHash = git(["rev-parse", base]);
+    const tipHash = git(["rev-parse", tip]);
+    if (!baseHash.ok || !tipHash.ok) return false;
+    // Strict ancestor: base is an ancestor of tip AND not the same commit.
+    if (baseHash.out === tipHash.out) return false;
+    if (!git(["merge-base", "--is-ancestor", baseHash.out, tipHash.out]).ok)
+      return false;
+    // Tip must lie on HEAD's history (tip === HEAD is allowed).
+    if (!git(["merge-base", "--is-ancestor", tipHash.out, "HEAD"]).ok)
+      return false;
+    return true;
+  }
+  const revisionRangeValid = isRevisionRangeValid(revisionBase, revisionTip);
+
   const V_TEST_RE = /(?:^|\/)v\d{2}[a-z]?-.*\.test\.ts$/;
 
   // The ac11 reversal service tests — the conservation properties that prove the
@@ -297,6 +319,10 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
       revisionBase,
       "SC12 cannot be verified: revision base unresolved. Set AC_REVISION_BASE (CI) or ensure the ac18 commit is reachable in history.",
     ).not.toBeNull();
+    expect(
+      revisionRangeValid,
+      "SC12 cannot be verified: the revision range [base..tip] is invalid — base must be a strict ancestor of tip, and tip an ancestor of HEAD. Check AC_REVISION_BASE / AC_REVISION_TIP.",
+    ).toBe(true);
 
     const behaviouralChanges = changedVTests().filter(
       (file) => !isSanctioned(file),
@@ -312,6 +338,10 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
       revisionBase,
       "SC12 cannot be verified: revision base unresolved. Set AC_REVISION_BASE (CI) or ensure the ac18 commit is reachable in history.",
     ).not.toBeNull();
+    expect(
+      revisionRangeValid,
+      "SC12 cannot be verified: the revision range [base..tip] is invalid — base must be a strict ancestor of tip, and tip an ancestor of HEAD. Check AC_REVISION_BASE / AC_REVISION_TIP.",
+    ).toBe(true);
 
     const changed = changedVTests();
     const touched = AC11_REVERSAL_TESTS.filter((file) =>

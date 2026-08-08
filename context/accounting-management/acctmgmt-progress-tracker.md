@@ -90,6 +90,7 @@ Carried forward explicitly so they are not mistaken for oversights. None is an a
 - **Route Handler auth** cannot use `requirePermission` (which calls `redirect()`). Use `auth.api.getSession` → `findActiveUserById` → `resolveEffectivePermissions` → `meetsLevel` directly, returning `Response.json` 401/403.
 - **`clearValueIfEquals`** in `system-config.repository.ts` closes the TOCTOU window in `retireBillCycle`'s config-clear step — a single atomic `UPDATE … WHERE config_value = ?` that is a safe no-op if the value was already changed by a concurrent writer.
 - **V-test → Invariant cross-reference** is now a permanent, executable fact in `verification-audit.test.ts` — not just prose.
+- **`"use client"` module exports resolve to server reference proxies when imported into a Server Component** (this Next.js build): `documents-table.tsx` exported `DOCUMENTS_PAGE_SIZE = 20` for `transactions/page.tsx` to reuse; on the server the import resolved to a proxy function (not `20`), which then serialized into the `LIMIT`/`OFFSET` SQL params and threw `invalid input syntax for type bigint`. Fixed by moving the constant into `transactions/page.tsx` itself, matching the pre-existing `TRANSFERS_PAGE_SIZE` pattern in `ledger/page.tsx` — a client component must never be the source of a value a Server Component needs by reference; duplicate/local-define constants instead.
 
 ## Resolved Open Questions (summary)
 

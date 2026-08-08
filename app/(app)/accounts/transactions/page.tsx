@@ -8,10 +8,7 @@ import { ApprovalBanner } from "@/components/accounts/approval-banner";
 import { ClosurePanel } from "@/components/accounts/closure-panel";
 import { DocumentDetailDrawer } from "@/components/accounts/document-detail-drawer";
 import { ContextStrip } from "@/components/accounts/context-strip";
-import {
-  DocumentsTable,
-  DOCUMENTS_PAGE_SIZE,
-} from "@/components/accounts/documents-table";
+import { DocumentsTable } from "@/components/accounts/documents-table";
 import { TransactionsActionBar } from "@/components/accounts/transactions-action-bar";
 import {
   getBillingAccountClosureEligibility,
@@ -35,6 +32,13 @@ import { transactionsSearchParamsSchema } from "@/validation/accounts/transactio
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Transactions" };
+
+// ac20-spec §2.5 — fixed constant, following the ac06 no-new-config precedent
+// (see ledger/page.tsx's TRANSFERS_PAGE_SIZE). Defined here rather than in
+// documents-table.tsx because "use client" module exports resolve to server
+// reference proxies when imported into a Server Component in this Next.js
+// build, not their literal values.
+const DOCUMENTS_PAGE_SIZE = 20;
 
 function firstStr(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
