@@ -43,6 +43,7 @@ describe.skipIf(!databaseUrl)(
   "V13 — line-level reversal conservation (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let drizzleSql: postgresjs.Sql;
     let testDb: Database;
     let creatorId: string;
     let financialAccountId: string;
@@ -82,7 +83,13 @@ describe.skipIf(!databaseUrl)(
       await migrateSql.end();
 
       sql = postgres(databaseUrl as string, { max: 1 });
-      testDb = drizzle(sql, { schema }) as unknown as Database;
+      // drizzle gets its OWN connection: constructing drizzle with the module
+      // `schema` installs type parsers on its postgres.js client that make raw
+      // timestamptz reads come back as strings. Keeping that off the `sql`
+      // connection preserves correct Date parsing for the test's raw
+      // optimistic-lock reads (`last_modified`/`last_modified_datetime`).
+      drizzleSql = postgres(databaseUrl as string, { max: 1 });
+      testDb = drizzle(drizzleSql, { schema }) as unknown as Database;
 
       const [creator] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -159,12 +166,18 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     afterAll(async () => {
+      // Guard: sql is only assigned after assertTestDatabaseUrl + migrate
+      // succeed. If beforeAll throws before that point (or the suite is skipped
+      // when DATABASE_URL is unset), sql is uninitialized and we must not
+      // attempt cleanup — the original state should remain the reported result.
+      if (!sql) return;
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.end();
+      if (drizzleSql) await drizzleSql.end();
     });
 
     it("V13: reverse an allocation line → A/R restored, unapplied restored, capture untouched, reversedByLineId set", async () => {
@@ -433,8 +446,10 @@ describe.skipIf(!databaseUrl)(
       expect(await zeroSum()).toBeCloseTo(0, 6);
     });
 
-    it("double-reverse rejected with ALREADY_REVERSED", async () => {
-      // Attempt to reverse the capture doc again — all lines are already reversed.
+    it("double-reverse rejected (doc already reversed → DOC_STATE_INVALID)", async () => {
+      // Attempt to reverse a doc that is already in `reversed` state. The state
+      // guard fires first (reverseDocument rejects a non-`posted` doc with
+      // DOC_STATE_INVALID), so that — not ALREADY_REVERSED — is the code here.
       const [doc] = await sql<{ document_id: string; last_modified: Date }[]>`
         SELECT document_id, last_modified
         FROM billing.document
@@ -460,13 +475,13 @@ describe.skipIf(!databaseUrl)(
         creatorId,
       );
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.code).toBe("ALREADY_REVERSED");
+      if (!result.ok) expect(result.code).toBe("DOC_STATE_INVALID");
     });
 
     it("reversal into a closed period is rejected with PERIOD_CLOSED", async () => {
       // Close the April 2026 period, then try to reverse with that eventAt.
       await sql`
-        INSERT INTO billing.accounting_period (period, currency, state, last_modified_by)
+        INSERT INTO billing.accounting_period (period, currency, state, last_edited_by)
         VALUES ('2026-04', 'MYR', 'closed', ${creatorId})
         ON CONFLICT (period, currency) DO UPDATE SET state = 'closed'
       `;
