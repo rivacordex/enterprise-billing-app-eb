@@ -171,13 +171,20 @@ describe.skipIf(!databaseUrl)(
       // when DATABASE_URL is unset), sql is uninitialized and we must not
       // attempt cleanup — the original state should remain the reported result.
       if (!sql) return;
-      await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await sql.end();
-      if (drizzleSql) await drizzleSql.end();
+      try {
+        await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+        await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+      } finally {
+        // Close both clients even if a DROP failed. Promise.allSettled runs each
+        // end() independently (one failing doesn't skip the other) and never
+        // rejects, so a DROP error above propagates unchanged as the result.
+        const closes = [sql.end()];
+        if (drizzleSql) closes.push(drizzleSql.end());
+        await Promise.allSettled(closes);
+      }
     });
 
     it("V13: reverse an allocation line → A/R restored, unapplied restored, capture untouched, reversedByLineId set", async () => {
