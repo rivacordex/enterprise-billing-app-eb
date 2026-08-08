@@ -256,7 +256,8 @@ describe("inv. #19 — exactly five document types offered (documents-table.tsx)
 // ac23-spec §2.2/§3.1 — the revision's affordance table. Structural (the page
 // is a Server Component; route-level-*.test.ts precedent). READ holders see the
 // table + drawer with zero write affordance; EDIT holders additionally see the
-// action bar, the row/drawer reversal control and approve/reject; no-grant is
+// action bar, the row/drawer reversal control and approve (Reject deferred);
+// no-grant is
 // blocked by the route guard.
 describe("SC14 / §2.2 affordance matrix — READ vs EDIT vs no-grant (ac23-spec §3.1)", () => {
   it("SC13 / no-grant — the route is guarded at accounts_transactions:READ", () => {
