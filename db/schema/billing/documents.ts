@@ -77,16 +77,21 @@ export const document = billing.table(
     // it doesn't apply to every doc_type.
     paymentMode: text("payment_mode"),
     modeRef: jsonb("mode_ref").$type<ModeRef>(),
-    // A user-entered reference date, captured date-only in the UI (Q29).
-    referenceDate: timestamp("reference_date", {
+    // Captioned "Entry Date" in the UI (AC24). Manually entered, defaults to
+    // today; inert — never read by period validation, GL grouping, or any
+    // query (Q29). Renamed from `reference_date` in migration 0022 so the
+    // column name matches its corrected caption.
+    entryDate: timestamp("entry_date", {
       withTimezone: true,
       mode: "date",
     })
       .notNull()
       .default(sql`now()`),
     referenceInfo: text("reference_info").notNull(),
-    // The entry date — drives period + journal (Q9/Q29); backdatable but
-    // rejected by the posting repository when the target period is closed.
+    // Captioned "Reference Date" in the UI (AC24) — despite that label this is
+    // the document's true business-event date: it drives period validation +
+    // GL-journal grouping (Q9/Q29). Backdatable but rejected by the posting
+    // repository when the target period is closed (Inv. #7).
     eventAt: timestamp("event_at", {
       withTimezone: true,
       mode: "date",

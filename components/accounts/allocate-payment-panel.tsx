@@ -28,7 +28,7 @@ export function AllocatePaymentPanel({
   const [amount, setAmount] = useState("");
   const [refSettledDocumentId, setRefSettledDocumentId] = useState("");
   const [eventAt, setEventAt] = useState(today());
-  const [referenceDate, setReferenceDate] = useState(today());
+  const [entryDate, setEntryDate] = useState(today());
   const [referenceInfo, setReferenceInfo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -47,7 +47,7 @@ export function AllocatePaymentPanel({
         amount,
         refSettledDocumentId: refSettledDocumentId.trim() || null,
         eventAt,
-        referenceDate,
+        entryDate,
         referenceInfo,
       });
 
@@ -106,7 +106,7 @@ export function AllocatePaymentPanel({
 
         <div className="grid grid-cols-2 gap-3">
           <Field>
-            <FieldLabel>Entry Date</FieldLabel>
+            <FieldLabel>Reference Date</FieldLabel>
             <Input
               type="date"
               value={eventAt}
@@ -114,11 +114,11 @@ export function AllocatePaymentPanel({
             />
           </Field>
           <Field>
-            <FieldLabel>Reference Date</FieldLabel>
+            <FieldLabel>Entry Date</FieldLabel>
             <Input
               type="date"
-              value={referenceDate}
-              onChange={(e) => setReferenceDate(e.target.value)}
+              value={entryDate}
+              onChange={(e) => setEntryDate(e.target.value)}
             />
           </Field>
         </div>

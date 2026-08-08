@@ -60,7 +60,7 @@ export async function raiseDebitNote(
       totalAmount,
       paymentMode: null,
       modeRef: null,
-      referenceDate: input.referenceDate,
+      entryDate: input.entryDate,
       referenceInfo: input.referenceInfo,
       eventAt: input.eventAt,
       postedAt: null,

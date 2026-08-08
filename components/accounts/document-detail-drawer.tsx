@@ -152,15 +152,15 @@ export function DocumentDetailDrawer({
           </span>
         </div>
         <div>
-          <span className={DETAIL_LABEL}>Entry Date</span>
+          <span className={DETAIL_LABEL}>Reference Date</span>
           <span className={DETAIL_VALUE}>
             {formatDatetime(doc.eventAt, locale, timezone)}
           </span>
         </div>
         <div>
-          <span className={DETAIL_LABEL}>Reference Date</span>
+          <span className={DETAIL_LABEL}>Entry Date</span>
           <span className={DETAIL_VALUE}>
-            {formatDatetime(doc.referenceDate, locale, timezone)}
+            {formatDatetime(doc.entryDate, locale, timezone)}
           </span>
         </div>
         <div>

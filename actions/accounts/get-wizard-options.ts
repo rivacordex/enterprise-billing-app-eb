@@ -5,7 +5,6 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { getWizardOptions } from "@/services/accounts/get-wizard-options";
 
 import type { WizardOptions } from "@/services/accounts/get-wizard-options";
-export type { WizardOptions };
 
 // Returns the data the onboarding wizard needs to render:
 //   - active bill cycles for the selector
