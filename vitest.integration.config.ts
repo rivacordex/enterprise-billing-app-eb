@@ -20,7 +20,10 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    include: ["tests/**/*.integration.test.ts"],
+    // `.property.test.ts` (fast-check) suites are also DB-backed — they run
+    // here (with DATABASE_URL) alongside the `.integration.test.ts` files, not
+    // in the DB-free default project where they would only ever skip.
+    include: ["tests/**/*.integration.test.ts", "tests/**/*.property.test.ts"],
     // Each suite owns the whole `core`/`drizzle` schema for its own
     // DROP/migrate/teardown cycle against one shared DATABASE_URL; running
     // files in parallel races those DDL statements against each other.

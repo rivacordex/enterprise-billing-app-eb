@@ -61,6 +61,7 @@ describe.skipIf(!databaseUrl)(
   "V4 — cash conservation across arbitrary capture/allocate/reverse sequences (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    let drizzleSql: postgresjs.Sql;
     let testDb: Database;
     let creatorId: string;
     let financialAccountId: string;
@@ -121,7 +122,13 @@ describe.skipIf(!databaseUrl)(
       await migrateSql.end();
 
       sql = postgres(databaseUrl as string, { max: 1 });
-      testDb = drizzle(sql, { schema }) as unknown as Database;
+      // drizzle gets its OWN connection: constructing drizzle with the module
+      // `schema` installs type parsers on its postgres.js client that make raw
+      // timestamptz reads come back as strings. Keeping that off the `sql`
+      // connection preserves correct Date parsing for the test's raw
+      // optimistic-lock reads (`last_modified`/`last_modified_datetime`).
+      drizzleSql = postgres(databaseUrl as string, { max: 1 });
+      testDb = drizzle(drizzleSql, { schema }) as unknown as Database;
 
       const [creator] = await sql<{ id: string }[]>`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -196,12 +203,18 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     afterAll(async () => {
+      // Guard: sql is only assigned after assertTestDatabaseUrl + migrate
+      // succeed. If beforeAll throws before that point (or the suite is skipped
+      // when DATABASE_URL is unset), sql is uninitialized and we must not
+      // attempt cleanup — the original state should remain the reported result.
+      if (!sql) return;
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.end();
+      if (drizzleSql) await drizzleSql.end();
     });
 
     it("V4 property: fc.assert that conservation holds after every capture, allocate, and reverse step", async () => {

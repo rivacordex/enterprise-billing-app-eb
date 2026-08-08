@@ -197,6 +197,27 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
   }
   const revisionBase = resolveRevisionBase();
 
+  // The revision ENDS just before ac24 — the first unit after the ac18–ac23
+  // revision. Symmetric to resolveRevisionBase (parent of the earliest commit
+  // whose message names the unit). Diffing to this pin instead of HEAD keeps
+  // SC12 scoped to the revision, so a later unit's sanctioned cross-cutting edit
+  // — ac24's `reference_date`→`entry_date` rename across the V-series — is not
+  // misread as "the revision changed a V-test". Falls back to HEAD when no ac24
+  // commit is reachable (i.e. before ac24 landed, the original behaviour).
+  function resolveRevisionTip(): string {
+    if (process.env.AC_REVISION_TIP) {
+      const override = git(["rev-parse", process.env.AC_REVISION_TIP]);
+      if (override.ok) return override.out;
+    }
+    const log = git(["log", "--reverse", "--format=%H", "--grep=ac24", "HEAD"]);
+    if (!log.ok) return "HEAD";
+    const earliestAc24 = log.out.split("\n")[0];
+    if (!earliestAc24) return "HEAD";
+    const tip = git(["rev-parse", `${earliestAc24}~1`]);
+    return tip.ok ? tip.out : "HEAD";
+  }
+  const revisionTip = resolveRevisionTip();
+
   const V_TEST_RE = /(?:^|\/)v\d{2}[a-z]?-.*\.test\.ts$/;
 
   // The ac11 reversal service tests — the conservation properties that prove the
@@ -217,12 +238,13 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
   // no assertion.
   //
   // The exemption is PINNED to the approved CONTENT of each file (its git blob
-  // hash at the ac23 commit), not just its name — a filename allowlist would let
-  // a future assertion edit to one of these files bypass SC12. If any of these
-  // files changes again, `git hash-object` diverges from the pin and the file is
-  // treated as an unexplained change that fails SC12, forcing a fresh review
-  // (re-pin only after confirming the edit is another fixture-only repair). Any
-  // OTHER V-test change — and any change to the ac11 reversal tests — fails too.
+  // hash as of the revision tip), not just its name — a filename allowlist would
+  // let an assertion edit made DURING the revision bypass SC12. If a sanctioned
+  // file's content at the revision tip diverges from its pin, it is treated as
+  // an unexplained change that fails SC12, forcing a fresh review (re-pin only
+  // after confirming the edit is another fixture-only repair). Any OTHER V-test
+  // change within the revision — and any change to the ac11 reversal tests —
+  // fails too.
   const APPROVED_FIXTURE_REPAIRS: Record<string, string> = {
     "tests/accounts/v02-binding-integrity.integration.test.ts":
       "f358d619cd6dd04a4b74fed6aac38e74402bfa9a",
@@ -241,15 +263,18 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
   function isSanctioned(file: string): boolean {
     const approved = APPROVED_FIXTURE_REPAIRS[file];
     if (approved === undefined) return false;
-    const current = git(["hash-object", file]);
-    return current.ok && current.out === approved;
+    // Compare the file's content AS OF the revision tip (not the working tree),
+    // so a later unit's sanctioned edit to the same file doesn't retroactively
+    // un-sanction the revision's fixture repair.
+    const atTip = git(["rev-parse", `${revisionTip}:${file}`]);
+    return atTip.ok && atTip.out === approved;
   }
 
   function changedVTests(): string[] {
     const diff = git([
       "diff",
       "--name-only",
-      `${revisionBase}..HEAD`,
+      `${revisionBase}..${revisionTip}`,
       "--",
       "tests/accounts",
     ]);

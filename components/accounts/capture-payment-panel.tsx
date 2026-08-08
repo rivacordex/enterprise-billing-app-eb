@@ -21,7 +21,11 @@ export interface CapturePaymentPanelProps {
 
 type PaymentMode = "bank_transfer" | "cheque" | "cash";
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+// Local calendar date (not UTC) so the default matches the operator's day.
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function CapturePaymentPanel({
   financialAccountId,
