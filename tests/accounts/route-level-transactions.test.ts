@@ -252,3 +252,57 @@ describe("inv. #19 — exactly five document types offered (documents-table.tsx)
     expect(src).not.toContain('"write_off"');
   });
 });
+
+// ac23-spec §2.2/§3.1 — the revision's affordance table. Structural (the page
+// is a Server Component; route-level-*.test.ts precedent). READ holders see the
+// table + drawer with zero write affordance; EDIT holders additionally see the
+// action bar, the row/drawer reversal control and approve/reject; no-grant is
+// blocked by the route guard.
+describe("SC14 / §2.2 affordance matrix — READ vs EDIT vs no-grant (ac23-spec §3.1)", () => {
+  it("SC13 / no-grant — the route is guarded at accounts_transactions:READ", () => {
+    expect(pageSource).toContain("requirePermission");
+    expect(pageSource).toContain("PERMISSIONS.ACCOUNTS_TRANSACTIONS");
+    expect(pageSource).toContain("LEVELS.READ");
+  });
+
+  it("derives canEdit from accounts_transactions:EDIT (the single write-affordance switch)", () => {
+    expect(pageSource).toMatch(/canEdit\s*=\s*meetsLevel\(/);
+    expect(pageSource).toContain("LEVELS.EDIT");
+  });
+
+  it("SC1 / READ — the documents table renders for every holder (not behind a canEdit guard)", () => {
+    // DocumentsTable is rendered unconditionally (inside <Suspense>, not a
+    // {canEdit && …} guard) and receives canEdit so it can hide the ↺ Reverse
+    // row action from READ holders itself.
+    expect(pageSource).toContain("<DocumentsTable");
+    expect(pageSource).toContain("canEdit={canEdit}");
+    expect(pageSource).not.toMatch(/canEdit && \(\s*<DocumentsTable/);
+  });
+
+  it("SC14 / READ — the detail drawer renders for every holder, gated on ?doc (not canEdit)", () => {
+    // Drawer visibility depends on a resolved ?doc for the context FA, never on
+    // canEdit; the drawer receives canEdit to hide approve/reverse internally.
+    expect(pageSource).toMatch(/docDetail\?\.ok && ctx\.fa && \(/);
+    expect(pageSource).toMatch(
+      /<DocumentDetailDrawer[\s\S]*?canEdit=\{canEdit\}/,
+    );
+    expect(pageSource).not.toMatch(/canEdit && \(\s*<DocumentDetailDrawer/);
+  });
+
+  it("EDIT-only — the action bar (all three controls) is gated behind canEdit", () => {
+    expect(pageSource).toMatch(/canEdit && \(\s*<TransactionsActionBar/);
+  });
+
+  it("EDIT-only — the approval banner is gated behind canEdit", () => {
+    expect(pageSource).toMatch(/canEdit && ctx\.fa && \(/);
+    expect(pageSource).toContain("<ApprovalBanner");
+  });
+
+  it("EDIT-only — the reversal control is EDIT-gated on both the row and the drawer", () => {
+    // Table hides ↺ Reverse unless canEdit (its own logic); the drawer's reverse
+    // footer is likewise canEdit-gated. Both receive canEdit + the reversible
+    // flag derived on the page (inv. #18 mirror, ac22 §3.2/§3.3).
+    expect(pageSource).toContain("canEdit={canEdit}");
+    expect(pageSource).toContain("reversible={drawerReversible}");
+  });
+});
