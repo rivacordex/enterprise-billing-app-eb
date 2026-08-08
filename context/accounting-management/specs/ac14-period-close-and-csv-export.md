@@ -37,7 +37,7 @@ Because the CoA is 0-unmapped (ac12) and the ledger is zero-sum (Inv. #1), the e
 ### 2.5 Structural decisions
 
 - `period-close` and `journal-csv` are pure services; the route handler is thin (permission + Zod + stream + audit). The re-date is a thin re-submit over ac07.
-- Period validation runs on `event_at` (the entry date) — ac07's `post-document` validates it directly; no separate posting-date field.
+- Period validation runs on `event_at` (the business-event date, captioned "Reference Date" in the UI since AC24) — ac07's `post-document` validates it directly; no separate posting-date field.
 - No new permission (reuses `accounts_config`).
 
 ---
@@ -46,8 +46,8 @@ Because the CoA is 0-unmapped (ac12) and the ledger is zero-sum (Inv. #1), the e
 ### 3.1 `services/accounts/period-close.ts` — `closePeriod(period, currency, actorId)`; period lazy-create/close; audit.
 ### 3.2 `services/accounts/journal-csv.ts` — the fixed CSV serializer (§2.3); shared by the route and any test.
 ### 3.3 `app/api/accounts/gl-journal-export/route.ts` — POST, Zod body, `accounts_config:EDIT`, stream + audit + balanced-guard (§2.3/§2.4).
-### 3.4 Actions — `close-period.action.ts`; `redate-and-post.action.ts` (re-submit with the corrected entry date `event_at`).
-### 3.5 ac07 alignment — `post-document` validates **`event_at`** (the entry date) against the open period and passes it as the pgledger transfers' `event_at`; no separate posting-date field (the earlier workaround is removed).
+### 3.4 Actions — `close-period.action.ts`; `redate-and-post.action.ts` (re-submit with the corrected `event_at` — the field captioned "Reference Date" in the UI since AC24).
+### 3.5 ac07 alignment — `post-document` validates **`event_at`** (the business-event date, captioned "Reference Date" since AC24) against the open period and passes it as the pgledger transfers' `event_at`; no separate posting-date field (the earlier workaround is removed).
 ### 3.6 Repository — `accounting-period.repository` (find/create/close); the export reads `gl_journal_view` (existing).
 ### 3.7 UI — close-period button + confirm on GL Journal; export button (triggers the POST download); re-date prompt in Transactions (catches `PERIOD_CLOSED`).
 ### 3.8 Guardrail tests — completes **V6**: close a month → a late post into it bounces with `PERIOD_CLOSED` + open-period hint; re-date **corrects** `event_at` to the open period and posts; export streams a balanced CSV (fixed format, CRLF) whose totals equal `gl_journal_view` and the on-screen table (§2 July = 16,200/16,200); re-running the export is byte-identical (idempotent); the balanced-guard refuses a (fixture-forced) unbalanced period. Route × level: export requires `accounts_config:EDIT`; a READ-only holder is blocked.

@@ -1,13 +1,15 @@
 import { z } from "zod";
 
-// Q29 — every document requires these three fields: `eventAt` (entry date,
-// drives period validation + GL journal), `referenceDate`, `referenceInfo`.
-// All three are `timestamptz` in the DB but captured date-only in the UI
-// (default today); `z.coerce.date()` accepts either a `Date` or a
-// date-only/ISO string from a native `<input type="date">`.
+// Q29 — every document requires these three fields (AC24 corrected the
+// captions): `eventAt` (captioned "Reference Date" in the UI; the true
+// business-event date that drives period validation + GL journal), `entryDate`
+// (captioned "Entry Date"; inert, defaults to today, never read by period/GL),
+// `referenceInfo`. All three are `timestamptz` in the DB but captured date-only
+// in the UI; `z.coerce.date()` accepts either a `Date` or a date-only/ISO
+// string from a native `<input type="date">`.
 export const documentBaseSchema = z.object({
   eventAt: z.coerce.date(),
-  referenceDate: z.coerce.date(),
+  entryDate: z.coerce.date(),
   referenceInfo: z.string().trim().min(1).max(200),
 });
 export type DocumentBaseInput = z.infer<typeof documentBaseSchema>;

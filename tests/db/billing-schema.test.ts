@@ -251,7 +251,7 @@ describe("billing.document", () => {
         "total_amount",
         "payment_mode",
         "mode_ref",
-        "reference_date",
+        "entry_date",
         "reference_info",
         "event_at",
         "posted_at",

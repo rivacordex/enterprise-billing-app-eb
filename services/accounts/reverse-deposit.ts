@@ -93,7 +93,7 @@ export async function reverseDeposit(
         totalAmount: input.amount,
         paymentMode: null,
         modeRef: null,
-        referenceDate: input.referenceDate,
+        entryDate: input.entryDate,
         referenceInfo: input.referenceInfo,
         eventAt: input.eventAt,
         postedAt: null,

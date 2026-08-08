@@ -102,7 +102,7 @@ export function ReversalDialog({
   const [checkedLineIds, setCheckedLineIds] = useState<Set<string>>(new Set());
   const [reversalComment, setReversalComment] = useState("");
   const [eventAt, setEventAt] = useState(today());
-  const [referenceDate, setReferenceDate] = useState(today());
+  const [entryDate, setEntryDate] = useState(today());
   const [referenceInfo, setReferenceInfo] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -136,7 +136,7 @@ export function ReversalDialog({
       setReversalComment("");
       setReferenceInfo("");
       setEventAt(today());
-      setReferenceDate(today());
+      setEntryDate(today());
     }
   }
 
@@ -231,7 +231,7 @@ export function ReversalDialog({
         selectedLineIds,
         reversalComment,
         eventAt,
-        referenceDate,
+        entryDate,
         referenceInfo,
         lastModified: preview.lastModified,
       });
@@ -384,7 +384,7 @@ export function ReversalDialog({
 
               <div className="grid grid-cols-2 gap-3">
                 <Field>
-                  <FieldLabel>Entry Date</FieldLabel>
+                  <FieldLabel>Reference Date</FieldLabel>
                   <Input
                     type="date"
                     value={eventAt}
@@ -395,13 +395,13 @@ export function ReversalDialog({
                   ))}
                 </Field>
                 <Field>
-                  <FieldLabel>Reference Date</FieldLabel>
+                  <FieldLabel>Entry Date</FieldLabel>
                   <Input
                     type="date"
-                    value={referenceDate}
-                    onChange={(e) => setReferenceDate(e.target.value)}
+                    value={entryDate}
+                    onChange={(e) => setEntryDate(e.target.value)}
                   />
-                  {fieldErrors?.referenceDate?.map((e, i) => (
+                  {fieldErrors?.entryDate?.map((e, i) => (
                     <FieldError key={i}>{e}</FieldError>
                   ))}
                 </Field>
