@@ -583,16 +583,23 @@ describe("grep gate — inv. #17: selection context is URL-derived and nav-prese
     content: fs.readFileSync(filePath, "utf8"),
   }));
   const FORBIDDEN_HOLDER = /\b(localStorage|sessionStorage|createContext)\b/;
+  // inv. #17 also forbids holding the selection context in component state. Match
+  // a React state tuple whose first binding is exactly party/fa/ban (the trailing
+  // `\s*,` keeps `banner`/`fallback` out), or a useState initialised from the
+  // parsed context — either would be a URL-context copy living in state.
+  const CONTEXT_IN_STATE =
+    /\[\s*(?:party|fa|ban)\s*,[^\]]*\]\s*=\s*useState|useState\s*(?:<[^>]*>)?\s*\([^)]*parseAccountsContext/;
 
   it("at least one Accounts UI file was scanned (the gate isn't vacuously passing)", () => {
     expect(uiFiles.length).toBeGreaterThan(0);
   });
 
-  it("no Accounts page or component holds context in storage or a context provider", () => {
+  it("no Accounts page or component holds context in storage, a context provider, or component state", () => {
     const offenders = uiFiles
-      .filter(({ content }) =>
-        FORBIDDEN_HOLDER.test(stripLineComments(content)),
-      )
+      .filter(({ content }) => {
+        const src = stripLineComments(content);
+        return FORBIDDEN_HOLDER.test(src) || CONTEXT_IN_STATE.test(src);
+      })
       .map(({ relative }) => relative);
     expect(offenders).toEqual([]);
   });
@@ -695,7 +702,12 @@ describe("grep gate — code-standards §9: the Result-code catalog is current",
       "context/accounting-management/acctmgmt-code-standards.md",
     );
     const start = doc.indexOf("## 9. Result Error Code Catalog");
-    const section = start >= 0 ? doc.slice(start) : "";
+    if (start < 0) return new Set<string>();
+    // Bound the scan to §9 only — from its heading to the next top-level "## "
+    // heading (or EOF if §9 is last) — so a future §10 can't leak codes in.
+    const after = doc.slice(start);
+    const nextHeading = after.indexOf("\n## ");
+    const section = nextHeading >= 0 ? after.slice(0, nextHeading) : after;
     const codes = new Set<string>();
     for (const match of section.matchAll(/`([A-Z][A-Z0-9_]+)`/g)) {
       codes.add(match[1]!);

@@ -26,8 +26,8 @@ Extends `route-level-transactions.test.ts` rather than replacing it. The page's 
 | Level | Sees | Must NOT see |
 |---|---|---|
 | no grant | nothing — blocked by the route guard | the page at all |
-| `READ` | context strip, scope strip, banner, filters, documents table, detail drawer, lines, posted legs | action bar (all three controls), reversal control (row + drawer), approve/reject |
-| `EDIT` | all of the above plus the action bar, the reversal control on eligible documents, approve/reject on pending ones | — |
+| `READ` | context strip, scope strip, banner, filters, documents table, detail drawer, lines, posted legs | action bar (all three controls), reversal control (row + drawer), approve |
+| `EDIT` | all of the above plus the action bar, the reversal control on eligible documents, approve on pending ones (Reject is deferred — §2.7) | — |
 
 **SC14** is the READ row: a read-only holder can trace a document from the table into the drawer with no write affordance rendered anywhere.
 
@@ -60,15 +60,25 @@ Not re-implementations — this unit ensures each exists and runs together:
 
 ### 2.5 The unmodified-tests gate (SC12)
 
-The strongest available evidence that the revision was UI-only: the ac11 reversal service tests and the V-series must pass **with zero edits**.
+The strongest available evidence that the revision was UI-only: the ac11 reversal service tests (`v04-cash-conservation`, `v13-line-reversal-conservation`) must be **byte-unmodified** across the revision, and the rest of the V-series must not change either — save the five documented fixture exceptions below.
 
-```
+```sh
 git diff --stat <revision-base>..HEAD -- tests/accounts/v*.test.ts
 ```
 
-must be empty. Any edit to a V-test during ac18–ac22 means a behavioural change slipped in and the owning unit must be re-examined. Wire this as an explicit check, not a habit.
+where `<revision-base>` is the ac17→ac18 boundary (the parent of the earliest `ac18` commit — **not** `merge-base HEAD main`, which predates the whole module and reports every V-test as added). Set `AC_REVISION_BASE` in CI so the check does not depend on commit-message archaeology and fails loudly rather than passing when git evidence is unavailable.
 
-Note the one legitimate exception recorded in ac19/ac20: `route-level-transactions.test.ts` **does** change (affordances moved). That file is not a V-test and is outside this gate's scope.
+The diff must be empty **except** for five sanctioned fixtures whose only edit is the module-wide `migrate()`-poisons-connection workaround (splitting `migrate()` onto a short-lived connection to fix timestamptz parsing — no assertion changed):
+
+- `tests/accounts/v02-binding-integrity.integration.test.ts`
+- `tests/accounts/v03-live-balances.integration.test.ts`
+- `tests/accounts/v05-gl-health-crud.integration.test.ts`
+- `tests/accounts/v07-onboarding-atomicity.integration.test.ts`
+- `tests/accounts/v09-bill-cycle-integrity.integration.test.ts`
+
+The exemption is **pinned to the approved content** of each file — `tests/accounts/transactions-revision-audit.test.ts` records each one's git blob hash, so a filename pass is not enough: any further edit to one of these five diverges its hash and re-fails SC12, forcing a fresh review. Any edit to any **other** V-test, and any edit to the ac11 reversal tests, fails the gate outright — a behavioural change slipped into a unit that claimed to be UI-only, and the owning unit must be re-examined. Wire this as an explicit check, not a habit.
+
+Note the one further legitimate exception recorded in ac19/ac20: `route-level-transactions.test.ts` **does** change (affordances moved). That file is not a V-test and is outside this gate's scope.
 
 ### 2.6 Documentation sync
 
@@ -101,7 +111,7 @@ Carried forward explicitly so they are not mistaken for oversights:
 
 ### 3.1 Extend `tests/accounts/route-level-transactions.test.ts`
 
-Add the §2.2 affordance matrix: no-grant blocked; READ sees table + drawer and **zero** write affordances (assert absence of the action-bar triggers, the reversal control, and approve/reject); EDIT sees all three.
+Add the §2.2 affordance matrix: no-grant blocked; READ sees table + drawer and **zero** write affordances (assert absence of the action-bar triggers, the reversal control, and approve); EDIT sees all three.
 
 ### 3.2 Extend `tests/accounts/grep-gates.test.ts`
 
@@ -142,7 +152,7 @@ No application code. No new permission, migration, table, column, document type 
 
 **Behavior — the point of the unit**
 
-- [ ] **SC14 / §2.2 matrix:** READ sees table + drawer with no action bar, no reversal control, no approve/reject; EDIT sees all three; no-grant is blocked.
+- [ ] **SC14 / §2.2 matrix:** READ sees table + drawer with no action bar, no reversal control, no approve; EDIT sees all three; no-grant is blocked.
 - [ ] All eight static gates in §2.3 pass, and each fails when deliberately violated in a scratch commit (a gate that cannot fail is not a gate — verify at least the inv. #16 and inv. #18 gates this way).
 - [ ] **SC12:** `git diff --stat` over `tests/accounts/v*.test.ts` is empty; the ac11 reversal service tests pass unmodified.
 - [ ] **SC13:** `npm run typecheck`, `npm run lint` and `tests/accounts/route-level-transactions.test.ts` all pass.

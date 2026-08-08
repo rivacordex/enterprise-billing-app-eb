@@ -148,21 +148,30 @@ describe("SC1–SC14 completeness audit (ac23-spec §2.4/§3.3)", () => {
 });
 
 // ac23-spec §2.5/§3.4 — the strongest available evidence the revision was
-// UI-only: the ac11 reversal service tests and the whole V-series must pass with
-// ZERO edits across ac18–ac23. A V-test edit means a behavioural change slipped
-// into a unit that claimed to be UI-only; the owning unit must be re-examined.
+// UI-only: the ac11 reversal service tests must be byte-unmodified across
+// ac18–ac23, and the rest of the V-series must not change either, save the five
+// pinned migrate()-connection fixture repairs. Any other V-test edit means a
+// behavioural change slipped into a unit that claimed to be UI-only; the owning
+// unit must be re-examined. This gate REQUIRES git evidence: it fails loudly
+// when the base or diff cannot be gathered rather than passing on an empty
+// result (a check that can't gather evidence is not a gate).
 //
 // route-level-transactions.test.ts is the one legitimate exception (affordances
 // moved, ac19/ac20) — it is NOT a V-test, so the `v*.test.ts` glob excludes it.
 describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2.5)", () => {
-  function git(args: string[]): string | null {
+  // Distinguish "command failed" (evidence unavailable → SC12 fails) from
+  // "command succeeded with empty output" (a valid empty diff → SC12 passes).
+  function git(args: string[]): { ok: true; out: string } | { ok: false } {
     try {
-      return execFileSync("git", args, {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-      }).trim();
+      return {
+        ok: true,
+        out: execFileSync("git", args, {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+        }).trim(),
+      };
     } catch {
-      return null;
+      return { ok: false };
     }
   }
 
@@ -173,15 +182,12 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
   // Overridable via AC_REVISION_BASE for CI.
   function resolveRevisionBase(): string | null {
     if (process.env.AC_REVISION_BASE) return process.env.AC_REVISION_BASE;
-    const earliestAc18 = git([
-      "log",
-      "--reverse",
-      "--format=%H",
-      "--grep=ac18",
-      "HEAD",
-    ])?.split("\n")[0];
+    const log = git(["log", "--reverse", "--format=%H", "--grep=ac18", "HEAD"]);
+    if (!log.ok) return null;
+    const earliestAc18 = log.out.split("\n")[0];
     if (!earliestAc18) return null;
-    return git(["rev-parse", `${earliestAc18}~1`]);
+    const base = git(["rev-parse", `${earliestAc18}~1`]);
+    return base.ok ? base.out : null;
   }
   const revisionBase = resolveRevisionBase();
 
@@ -195,67 +201,87 @@ describe("SC12 — the V-series is unmodified across the revision (ac23-spec §2
     "tests/accounts/v13-line-reversal-conservation.property.test.ts",
   ];
 
-  // Spec-vs-reality reconciliation (recorded here, in the tracker, and surfaced
-  // to the reviewer): ac23-spec §2.5 assumes "any V-test edit ⟹ a behavioural
-  // change slipped in", so `git diff v*.test.ts` should be empty. In THIS repo
-  // that premise is falsified by a sanctioned infrastructure repair: the review
-  // commit 74be4fb split the fixtures' `migrate()` onto a short-lived connection
-  // (the module-wide "migrate()-poisons-connection quirk" Key Decision — a
-  // timestamptz-parsing fix), explicitly "pre-existing, unrelated to the feature
-  // work". Those five fixture-plumbing repairs changed no assertion. They are
-  // allowlisted below (the same carve-out ac23-spec §2.5 already grants
-  // route-level-transactions.test.ts). Any OTHER V-test change — and any change
-  // to the ac11 reversal tests — still fails the gate.
-  const SANCTIONED_FIXTURE_REPAIRS = new Set([
-    "tests/accounts/v02-binding-integrity.integration.test.ts",
-    "tests/accounts/v03-live-balances.integration.test.ts",
-    "tests/accounts/v05-gl-health-crud.integration.test.ts",
-    "tests/accounts/v07-onboarding-atomicity.integration.test.ts",
-    "tests/accounts/v09-bill-cycle-integrity.integration.test.ts",
-  ]);
+  // Spec-vs-reality reconciliation (recorded here, in the tracker, and the spec):
+  // ac23-spec §2.5 assumes "any V-test edit ⟹ a behavioural change slipped in",
+  // so `git diff v*.test.ts` should be empty. In THIS repo that premise is
+  // falsified by a sanctioned infrastructure repair: review commit 74be4fb split
+  // the fixtures' `migrate()` onto a short-lived connection (the module-wide
+  // "migrate()-poisons-connection quirk" Key Decision — a timestamptz-parsing
+  // fix), explicitly "pre-existing, unrelated to the feature work" and changing
+  // no assertion.
+  //
+  // The exemption is PINNED to the approved CONTENT of each file (its git blob
+  // hash at the ac23 commit), not just its name — a filename allowlist would let
+  // a future assertion edit to one of these files bypass SC12. If any of these
+  // files changes again, `git hash-object` diverges from the pin and the file is
+  // treated as an unexplained change that fails SC12, forcing a fresh review
+  // (re-pin only after confirming the edit is another fixture-only repair). Any
+  // OTHER V-test change — and any change to the ac11 reversal tests — fails too.
+  const APPROVED_FIXTURE_REPAIRS: Record<string, string> = {
+    "tests/accounts/v02-binding-integrity.integration.test.ts":
+      "f358d619cd6dd04a4b74fed6aac38e74402bfa9a",
+    "tests/accounts/v03-live-balances.integration.test.ts":
+      "45153cdcefb86e98adecbcfc8aa10e372e4ae321",
+    "tests/accounts/v05-gl-health-crud.integration.test.ts":
+      "0771ec0876acd3fb80e6265cb5af694c4683faf2",
+    "tests/accounts/v07-onboarding-atomicity.integration.test.ts":
+      "f90dc900515cdc15f0e23ff4a1b68fdaea7c0161",
+    "tests/accounts/v09-bill-cycle-integrity.integration.test.ts":
+      "46af34ed7455f65f3617b86669249f6413b0c90d",
+  };
+
+  // A changed V-test is exempt ONLY if it is a documented fixture repair AND its
+  // current content still matches the approved blob hash.
+  function isSanctioned(file: string): boolean {
+    const approved = APPROVED_FIXTURE_REPAIRS[file];
+    if (approved === undefined) return false;
+    const current = git(["hash-object", file]);
+    return current.ok && current.out === approved;
+  }
 
   function changedVTests(): string[] {
-    const changed =
-      git([
-        "diff",
-        "--name-only",
-        `${revisionBase}..HEAD`,
-        "--",
-        "tests/accounts",
-      ]) ?? "";
-    return changed
+    const diff = git([
+      "diff",
+      "--name-only",
+      `${revisionBase}..HEAD`,
+      "--",
+      "tests/accounts",
+    ]);
+    if (!diff.ok) {
+      // Evidence unavailable — SC12 cannot be verified. Fail loudly rather than
+      // pass on an empty result (ac23-spec §2.5; CI must provide git history).
+      throw new Error(
+        "SC12 cannot be verified: `git diff` failed (no git, or history unavailable). Set AC_REVISION_BASE and ensure full history in CI.",
+      );
+    }
+    return diff.out
       .split("\n")
       .map((line) => line.trim())
       .filter((file) => V_TEST_RE.test(file));
   }
 
-  it("no V-test changed behaviourally across the revision (only sanctioned fixture repairs)", () => {
-    if (!revisionBase) {
-      // Harness cannot shell out / no base ref (e.g. a shallow CI clone):
-      // ac23-spec §3.4 routes this assertion to the CI job in that case.
-      // eslint-disable-next-line no-console -- intentional deferral signal on the no-git fallback path
-      console.warn(
-        "SC12: revision base unresolved (no git / ac18 boundary not found); V-test diff check deferred to the CI job per ac23-spec §3.4",
-      );
-      return;
-    }
+  it("no V-test changed behaviourally across the revision (only pinned fixture repairs)", () => {
+    // A gate that cannot gather evidence must fail, not pass (ac23-spec §2.5).
+    expect(
+      revisionBase,
+      "SC12 cannot be verified: revision base unresolved. Set AC_REVISION_BASE (CI) or ensure the ac18 commit is reachable in history.",
+    ).not.toBeNull();
+
     const behaviouralChanges = changedVTests().filter(
-      (file) => !SANCTIONED_FIXTURE_REPAIRS.has(file),
+      (file) => !isSanctioned(file),
     );
     expect(
       behaviouralChanges,
-      `SC12 violated: a V-test changed during the Transactions revision (ac18–ac23) outside the sanctioned migrate()-connection fixture repairs, implying a behavioural change slipped into a unit that claimed to be UI-only. Re-examine the owning unit. Changed: ${behaviouralChanges.join(", ")}`,
+      `SC12 violated: a V-test changed during the Transactions revision (ac18–ac23) beyond the pinned migrate()-connection fixture repairs — a behavioural change slipped into a unit that claimed to be UI-only, or a sanctioned fixture was edited further (re-pin its blob hash only after review). Re-examine the owning unit. Offending: ${behaviouralChanges.join(", ")}`,
     ).toEqual([]);
   });
 
   it("SC12 headline — the ac11 reversal service tests (V4 + V13) are byte-unmodified across the revision", () => {
-    if (!revisionBase) {
-      // eslint-disable-next-line no-console -- intentional deferral signal on the no-git fallback path
-      console.warn(
-        "SC12: revision base unresolved; ac11-reversal-test diff check deferred to the CI job per ac23-spec §3.4",
-      );
-      return;
-    }
+    expect(
+      revisionBase,
+      "SC12 cannot be verified: revision base unresolved. Set AC_REVISION_BASE (CI) or ensure the ac18 commit is reachable in history.",
+    ).not.toBeNull();
+
     const changed = changedVTests();
     const touched = AC11_REVERSAL_TESTS.filter((file) =>
       changed.includes(file),
