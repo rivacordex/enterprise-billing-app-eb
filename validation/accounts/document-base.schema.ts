@@ -4,9 +4,10 @@ import { z } from "zod";
 // captions): `eventAt` (captioned "Reference Date" in the UI; the true
 // business-event date that drives period validation + GL journal), `entryDate`
 // (captioned "Entry Date"; inert, defaults to today, never read by period/GL),
-// `referenceInfo`. All three are `timestamptz` in the DB but captured date-only
-// in the UI; `z.coerce.date()` accepts either a `Date` or a date-only/ISO
-// string from a native `<input type="date">`.
+// `referenceInfo`. `eventAt` and `entryDate` are `timestamptz` in the DB,
+// captured date-only in the UI (`z.coerce.date()` accepts either a `Date` or a
+// date-only/ISO string from a native `<input type="date">`); `referenceInfo`
+// is `text`.
 export const documentBaseSchema = z.object({
   eventAt: z.coerce.date(),
   entryDate: z.coerce.date(),

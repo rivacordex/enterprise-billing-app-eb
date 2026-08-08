@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { getWizardOptionsAction } from "@/actions/accounts/get-wizard-options";
-import type { WizardOptions } from "@/services/accounts/get-wizard-options";
+import type { WizardOptions } from "@/types/accounts";
 import { onboardCustomerAccountsAction } from "@/actions/accounts/onboard-customer-accounts";
 import { Button } from "@/components/ui/button";
 import {
