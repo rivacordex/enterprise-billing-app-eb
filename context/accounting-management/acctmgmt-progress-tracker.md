@@ -1,6 +1,6 @@
 # Completed Tracker — Accounts Module
 
-17 of 17 original units delivered (ac01–ac17). The Transactions revision is now underway: `ac18` delivered. **Next up: `ac19`** (action launcher + dialog shells).
+17 of 17 original units delivered (ac01–ac17). The Transactions revision is now underway: `ac18`–`ac19` delivered. **Next up: `ac20`** (documents table, retires `PendingApprovalsList`).
 
 ## Status Table
 
@@ -24,6 +24,7 @@
 | ac16 | Account Closure Gates (zero-balance BAN/FA closure, guided settle-first path, Customer CLOSED block) | Delivered |
 | ac17 | Guardrail & Authz Sweep (route × level matrix, V1–V14 audit, grep gates, docs sync) | Delivered |
 | ac18 | Nav Order + Selection-Context Handoff (Transactions moves to position 2, `?party&fa&ban` propagates across all five Accounts nav links) | Delivered |
+| ac19 | Action Launcher + Dialog Shells (three-control action bar, `DropdownMenu` primitive, ten panels moved into dialogs) | Delivered |
 
 ## Unit Summaries
 
@@ -62,6 +63,8 @@
 **ac17 — Guardrail & Authz Sweep.** Pure gate unit — tests + CI grep gates + docs only; no feature/schema/UI change. Three new test files: `route-level-matrix.test.ts` (six pages + export route `(permission, level)` gates, threshold routing, approver≠creator), `verification-audit.test.ts` (V1–V14 presence/naming/mapping, Inv.#1–14 ↔ V-test cross-reference), `grep-gates.test.ts` (eight static CI gates, tree-wide). 119 new tests, all green. `db/migrations/0020_accounts_config_permission.sql` journal entry registered (was authored but missing). Three genuine pre-existing defects found and fixed: `amount-cell.tsx` raw `Number()`/`< 0` violation; `reason-code-form.tsx` and `accounts-settings/flows/page.tsx` `parseFloat() === 0` violations; `roles-read.service.integration.test.ts` hardcoded permission list missing three Accounts permissions.
 
 **ac18 — Nav Order + Selection-Context Handoff.** `components/admin-nav.tsx` only (D6+D7, ac18-spec). `NavSection` gained `carriesAccountsContext?: boolean`, set on the Accounts section only. Accounts items reordered to Overview → Transactions → Ledger Explorer → Chart of Accounts → GL Journal under a single caption. Module-private `accountsContextQuery` helper routes `useSearchParams()` through the existing `parseAccountsContext` (still the only parser) and allowlists exactly `party`/`fa`/`ban` in that fixed order into a `linkHref` computed separately from `item.href`, so `isActive`/`key`/`aria-current` keep resolving off the bare pathname. Locked items are untouched (still `href`-less). Three existing test files (`admin-nav.test.tsx`, `admin-sidebar.test.tsx`, `admin-layout.test.tsx`) extended with a `useSearchParams` mock; new `admin-nav-accounts-context.test.tsx` covers order, propagation, scope, allowlist, validation, empty-context, determinism, active-state and locked-item behavior. No schema, permission, or style change.
+
+**ac19 — Action Launcher + Dialog Shells.** `components/ui/dropdown-menu.tsx` (new shared primitive — `DropdownMenu`, `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem`, `DropdownMenuLabel`, `DropdownMenuSeparator` — built on the already-installed unified `radix-ui` package, mirroring `select.tsx`'s import style; available to all modules thereafter). `components/accounts/transactions-action-bar.tsx` (three triggers — **+ Payment**, **+ Note**, **More actions** (D3) — owning `openAction: ActionKey | null` client state and the per-entry FA/FA+BAN context-gating predicate). `components/accounts/transaction-dialogs.tsx` (ten `Dialog`+`DialogContent`+`DialogTitle` wrappers, one per create-panel). `app/(app)/accounts/transactions/page.tsx`: the ten inline panel renders replaced by `<TransactionsActionBar>`; `ReversalsPanel`, `ClosurePanel`, `PendingApprovalsList` untouched. All ten panel files verified byte-unchanged (props/schema/action/error-mapping, inv. #20) — `grep-gates.test.ts` gained a static check that no panel module imports `Dialog`. Reversal stays absent from all three menus (D4, deferred to ac22). Key design: the panel's own `<h3>` is visually dropped via a wrapper-scoped `[&_h3]:hidden` CSS selector (not a panel edit) in favour of `DialogTitle`; none of the ten panels expose an `onSuccess` callback today, so every dialog stays open on submit showing the panel's own success message (no success-plumbing added, per inv. #20).
 
 ## Key Module-Wide Architectural Decisions
 

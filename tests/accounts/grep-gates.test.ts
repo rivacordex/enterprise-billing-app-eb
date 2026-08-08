@@ -387,6 +387,51 @@ describe("grep gate — no --ai-*/gradient tokens on any /accounts/** or account
   });
 });
 
+describe("grep gate — dialog wrapping preserves panel contracts (ac19-spec §2.4/§3.5, Inv. #20)", () => {
+  // The ten create-panels stay their own file with their own default export;
+  // the dialog shell lives in transaction-dialogs.tsx / transactions-action-
+  // bar.tsx and imports the panel rather than the panel importing Dialog.
+  // Proves the shell moved outward: no panel module imports `Dialog`.
+  const PANEL_FILES = [
+    "capture-payment-panel.tsx",
+    "allocate-payment-panel.tsx",
+    "payment-refund-panel.tsx",
+    "capture-deposit-panel.tsx",
+    "reverse-deposit-panel.tsx",
+    "refund-deposit-panel.tsx",
+    "raise-debit-note-panel.tsx",
+    "raise-credit-note-panel.tsx",
+    "write-off-panel.tsx",
+    "rounding-adjustment-panel.tsx",
+  ];
+  const PANEL_EXPORTS: Record<string, string> = {
+    "capture-payment-panel.tsx": "CapturePaymentPanel",
+    "allocate-payment-panel.tsx": "AllocatePaymentPanel",
+    "payment-refund-panel.tsx": "PaymentRefundPanel",
+    "capture-deposit-panel.tsx": "CaptureDepositPanel",
+    "reverse-deposit-panel.tsx": "ReverseDepositPanel",
+    "refund-deposit-panel.tsx": "RefundDepositPanel",
+    "raise-debit-note-panel.tsx": "RaiseDebitNotePanel",
+    "raise-credit-note-panel.tsx": "RaiseCreditNotePanel",
+    "write-off-panel.tsx": "WriteOffPanel",
+    "rounding-adjustment-panel.tsx": "RoundingAdjustmentPanel",
+  };
+
+  it.each(PANEL_FILES)(
+    "%s still exports its component and contains no Dialog import",
+    (filename) => {
+      const src = read(`components/accounts/${filename}`);
+      expect(src).toContain(`export function ${PANEL_EXPORTS[filename]}`);
+      expect(src).not.toMatch(/\bDialog\b/);
+    },
+  );
+
+  it("the dialog shell (not the panels) references Dialog", () => {
+    const src = read("components/accounts/transaction-dialogs.tsx");
+    expect(src).toMatch(/\bDialog\b/);
+  });
+});
+
 describe("stripLineComments — multiline template literal regression", () => {
   it("preserves URL content after :// on a continuation line of a template literal", () => {
     const src = ["const x = `", "  https://api.example.com", "`;"].join("\n");

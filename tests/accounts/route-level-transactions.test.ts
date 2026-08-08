@@ -35,27 +35,22 @@ describe("Transactions page — structural guardrails (ac07-spec §3.10)", () =>
     expect(pageSource).not.toContain("pgledger_");
   });
 
-  it("imports the capture, allocate, refund, and pending-approvals panels", () => {
-    expect(pageSource).toContain("CapturePaymentPanel");
-    expect(pageSource).toContain("AllocatePaymentPanel");
-    expect(pageSource).toContain("PaymentRefundPanel");
+  it("imports the action launcher and the pending-approvals list (ac19-spec §2.6, §3.4)", () => {
+    expect(pageSource).toContain("TransactionsActionBar");
     expect(pageSource).toContain("PendingApprovalsList");
   });
 
-  it("imports the DEP capture/reverse/refund panels (ac08-spec §3.5)", () => {
-    expect(pageSource).toContain("CaptureDepositPanel");
-    expect(pageSource).toContain("ReverseDepositPanel");
-    expect(pageSource).toContain("RefundDepositPanel");
-  });
-
-  it("imports the CRN/DBN panels (ac09-spec §3.5)", () => {
-    expect(pageSource).toContain("RaiseDebitNotePanel");
-    expect(pageSource).toContain("RaiseCreditNotePanel");
-  });
-
-  it("imports the ADJ write-off/rounding panels (ac10-spec §3.5)", () => {
-    expect(pageSource).toContain("WriteOffPanel");
-    expect(pageSource).toContain("RoundingAdjustmentPanel");
+  it("no longer renders the ten create-panels directly — they moved into the action launcher (ac19-spec §2.6)", () => {
+    expect(pageSource).not.toContain("CapturePaymentPanel");
+    expect(pageSource).not.toContain("AllocatePaymentPanel");
+    expect(pageSource).not.toContain("PaymentRefundPanel");
+    expect(pageSource).not.toContain("CaptureDepositPanel");
+    expect(pageSource).not.toContain("ReverseDepositPanel");
+    expect(pageSource).not.toContain("RefundDepositPanel");
+    expect(pageSource).not.toContain("RaiseDebitNotePanel");
+    expect(pageSource).not.toContain("RaiseCreditNotePanel");
+    expect(pageSource).not.toContain("WriteOffPanel");
+    expect(pageSource).not.toContain("RoundingAdjustmentPanel");
   });
 
   it("imports the Reversals panel (ac11-spec §3.5)", () => {

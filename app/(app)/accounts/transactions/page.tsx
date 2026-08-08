@@ -3,20 +3,11 @@ import type { Metadata } from "next";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
-import { AllocatePaymentPanel } from "@/components/accounts/allocate-payment-panel";
-import { CaptureDepositPanel } from "@/components/accounts/capture-deposit-panel";
-import { CapturePaymentPanel } from "@/components/accounts/capture-payment-panel";
 import { ClosurePanel } from "@/components/accounts/closure-panel";
 import { ContextStrip } from "@/components/accounts/context-strip";
-import { PaymentRefundPanel } from "@/components/accounts/payment-refund-panel";
 import { PendingApprovalsList } from "@/components/accounts/pending-approvals-list";
-import { RaiseCreditNotePanel } from "@/components/accounts/raise-credit-note-panel";
-import { RaiseDebitNotePanel } from "@/components/accounts/raise-debit-note-panel";
-import { RefundDepositPanel } from "@/components/accounts/refund-deposit-panel";
-import { ReverseDepositPanel } from "@/components/accounts/reverse-deposit-panel";
 import { ReversalsPanel } from "@/components/accounts/reversals-panel";
-import { RoundingAdjustmentPanel } from "@/components/accounts/rounding-adjustment-panel";
-import { WriteOffPanel } from "@/components/accounts/write-off-panel";
+import { TransactionsActionBar } from "@/components/accounts/transactions-action-bar";
 import {
   getBillingAccountClosureEligibility,
   getFinancialAccountClosureEligibility,
@@ -125,48 +116,12 @@ export default async function TransactionsPage({
 
       {canEdit && (
         <>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <CapturePaymentPanel financialAccountId={ctx.fa} />
-            <AllocatePaymentPanel
-              financialAccountId={ctx.fa}
-              billingAccountId={ctx.ban}
-            />
-          </div>
-
-          <PaymentRefundPanel
+          <TransactionsActionBar
             financialAccountId={ctx.fa}
             billingAccountId={ctx.ban}
             assignedItems={refundData.assignedItems}
             unappliedCashAvailable={refundData.unappliedCashAvailable}
           />
-
-          <div className="grid gap-4 lg:grid-cols-3">
-            <CaptureDepositPanel financialAccountId={ctx.fa} />
-            <ReverseDepositPanel financialAccountId={ctx.fa} />
-            <RefundDepositPanel financialAccountId={ctx.fa} />
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <RaiseDebitNotePanel
-              financialAccountId={ctx.fa}
-              billingAccountId={ctx.ban}
-            />
-            <RaiseCreditNotePanel
-              financialAccountId={ctx.fa}
-              billingAccountId={ctx.ban}
-            />
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <WriteOffPanel
-              financialAccountId={ctx.fa}
-              billingAccountId={ctx.ban}
-            />
-            <RoundingAdjustmentPanel
-              financialAccountId={ctx.fa}
-              billingAccountId={ctx.ban}
-            />
-          </div>
 
           <ReversalsPanel financialAccountId={ctx.fa} />
 
