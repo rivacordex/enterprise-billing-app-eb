@@ -1,6 +1,6 @@
 # AI Coding Agent Workflow Rules — All Modules
 
-Binding rules for any AI coding agent building a module of the rebuilt **enterprise billing application**. They govern *how you work* — scope, sequence, split, clarify, verify, keep docs in sync — not the product or technical design.
+Binding rules for any AI coding agent building a module of the rebuilt **enterprise billing application**. They govern _how you work_ — scope, sequence, split, clarify, verify, keep docs in sync — not the product or technical design.
 
 **Companion docs (authoritative — do not restate or contradict).** Every module ships its own set:
 
