@@ -36,6 +36,8 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       db = drizzle(sql, { schema });
@@ -103,6 +105,8 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.end();
@@ -127,6 +131,8 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "accounts_view", assignedLevel: null },
           { permissionName: "accounts_transactions", assignedLevel: null },
           { permissionName: "accounts_config", assignedLevel: null },
+          { permissionName: "product_orders", assignedLevel: null },
+          { permissionName: "product_inventory", assignedLevel: null },
         ]);
       });
 
@@ -153,6 +159,8 @@ describe.skipIf(!databaseUrl)(
             "accounts_view",
             "accounts_transactions",
             "accounts_config",
+            "product_orders",
+            "product_inventory",
           ]);
         }
       });
@@ -172,6 +180,8 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "accounts_view", assignedLevel: null },
           { permissionName: "accounts_transactions", assignedLevel: null },
           { permissionName: "accounts_config", assignedLevel: null },
+          { permissionName: "product_orders", assignedLevel: null },
+          { permissionName: "product_inventory", assignedLevel: null },
         ]);
       });
 
