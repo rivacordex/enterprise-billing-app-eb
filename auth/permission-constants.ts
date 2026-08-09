@@ -13,6 +13,8 @@ export const PERMISSIONS = {
   ACCOUNTS_VIEW: "accounts_view",
   ACCOUNTS_TRANSACTIONS: "accounts_transactions",
   ACCOUNTS_CONFIG: "accounts_config",
+  PRODUCT_ORDERS: "product_orders",
+  PRODUCT_INVENTORY: "product_inventory",
 } as const satisfies Record<string, PermissionName>;
 
 export const LEVELS = {

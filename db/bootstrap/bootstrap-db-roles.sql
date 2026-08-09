@@ -19,8 +19,8 @@
 -- unlike `CREATE TABLE`/`CREATE INDEX`). Deliberately contains no password:
 -- see infra/docs/db-role-verification.md for the manual `ALTER ROLE ...
 -- PASSWORD` follow-up (never committed to source control). `core`,
--- `product`, and `customer` are covered below; repeat the GRANT/REVOKE
--- block for `billing`/`accounting` as those schemas ship.
+-- `product`, `customer`, `billing`, `ordering`, and `inventory` are covered
+-- below; repeat the GRANT/REVOKE block for future schemas as they ship.
 --
 -- The statement-breakpoint marker lines below let `db/bootstrap/
 -- bootstrap-db-roles.ts` split the file into individual statements; they are
@@ -210,3 +210,54 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA "billing" TO app_migrate;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON TABLES TO app_migrate;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON SEQUENCES TO app_migrate;
+--> statement-breakpoint
+-- `ordering` schema (pm25+): same app_runtime/app_migrate split as `product`/
+-- `customer` — product_order/product_order_item/order_item_price_override ID
+-- columns default to nextval(...), so app_runtime needs USAGE on those
+-- sequences to satisfy plain INSERTs. No audit_log-style table exists here, so
+-- no extra REVOKE. (Append-only tables — order_item_price_override — are kept
+-- INSERT-only at the repository surface, not the grant surface, matching the
+-- billing.ledger_binding precedent's finer split only where load-bearing.)
+GRANT USAGE ON SCHEMA "ordering" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "ordering" TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "ordering" TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+--> statement-breakpoint
+GRANT ALL ON SCHEMA "ordering" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL TABLES IN SCHEMA "ordering" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL SEQUENCES IN SCHEMA "ordering" TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT ALL ON TABLES TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT ALL ON SEQUENCES TO app_migrate;
+--> statement-breakpoint
+-- `inventory` schema (pm25+): same app_runtime/app_migrate split as `ordering`
+-- — product_inventory/inventory_status_history ID columns default to
+-- nextval(...), so app_runtime needs USAGE on those sequences. No
+-- audit_log-style table exists here, so no extra REVOKE.
+GRANT USAGE ON SCHEMA "inventory" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "inventory" TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "inventory" TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+--> statement-breakpoint
+GRANT ALL ON SCHEMA "inventory" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL TABLES IN SCHEMA "inventory" TO app_migrate;
+--> statement-breakpoint
+GRANT ALL ON ALL SEQUENCES IN SCHEMA "inventory" TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT ALL ON TABLES TO app_migrate;
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT ALL ON SEQUENCES TO app_migrate;
