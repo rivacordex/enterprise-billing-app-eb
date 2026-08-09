@@ -53,9 +53,11 @@ Standardize every human-readable ID on **8-digit** zero-padded suffix — matche
 
 ## 4. Implementation
 
-### 4.1 Migration — new file, do this first
+### 4.1 Migration
 
-Next free index is **0023** (latest is `0022_document_rename_reference_date_to_entry_date.sql` — reconfirm immediately before authoring, per this project's usual caution about the index drifting mid-planning).
+> **As shipped (supersedes the `0023` plan in this subsection).** This did not go out as a standalone `0023`. The `SET DEFAULT` widening was folded directly into the base CREATE migrations — `0006_product.sql`, `0009_customer.sql`, `0012_billing_module_tables.sql` — and the drizzle-kit baseline was re-generated as `meta/0021_snapshot.json` (there is no `0023` migration or snapshot). The `0023`-based SQL below is retained only as the original planning record.
+
+Originally planned as a new file at the next free index (`0023`, the latest then being `0022_document_rename_reference_date_to_entry_date.sql`):
 
 `db/migrations/0023_widen_id_sequence_padding.sql`:
 
@@ -150,16 +152,16 @@ Default to (a) unless a clean baseline is specifically wanted before the next de
 
 ## 6. Sequencing
 
-Migration (4.1) and schema (4.2) land together — same as every prior schema change in this project. Validation (4.3) can land in the same commit or immediately after; until it lands, the exact-length regexes will reject any newly-inserted 8-digit ID passed back through a form (e.g. selecting a brand-new `financial_account` in the payment-allocation flow would fail client validation) — so don't ship 4.1/4.2 to an environment already exercising these flows without 4.3. Tests (4.4) follow, then `typecheck`/`lint`/full suite green, then docs (4.6).
+Migration (4.1) and schema (4.2) land together — same as every prior schema change in this project. Validation (4.3) can land in the same commit or immediately after; until it lands, the exact-length regexes will reject any newly-inserted 8-digit ID passed back through a form (e.g. selecting a brand-new `financial_account` in the payment-allocation flow would fail client validation) — so don't ship 4.1/4.2 to an environment already exercising these flows without 4.3. Tests (4.4) follow, then `typecheck`/`lint`/full suite green, then docs (4.6). *As shipped:* 4.1 landed folded into the base migrations (`0006`/`0009`/`0012`) rather than a new `0023`; the remaining steps (4.2–4.6) applied as described.
 
 ## 7. Verification checklist
 
-- [ ] Migration applies cleanly; `INSERT` into each of the 9 tables (no explicit ID) produces an 8-digit-suffixed ID; a `SELECT` of a pre-existing (pre-migration) row's ID is unchanged.
-- [ ] All 9 `db/schema/*.ts` default expressions match the new migration exactly (`8` in both places).
-- [ ] Grep sweep: zero remaining `\{6\}` / `\{7\}` exact-length ID regexes for the 9 prefixes in `validation/` (confirms §4.3 fully applied).
-- [ ] A validation call with a **pre-existing narrow-width ID** (e.g. a seeded 6-digit `financial_account_id`) still passes its schema — the specific regression §4.3 is designed to prevent.
-- [ ] `typecheck` / `lint` / full test suite green, including the 5 files in §4.4.
-- [ ] `code-standards.md` #18 updated.
+- [x] Schema + base migrations build the 8-digit defaults (folded into `0006`/`0009`/`0012`); a rebuilt DB shows all 9 tables with `lpad(..., 8, '0')` and fresh inserts 8-digit (confirmed by read-only query).
+- [x] All 9 `db/schema/*.ts` default expressions are `8` and match the base migrations.
+- [x] Grep sweep: zero remaining `\{6\}` / `\{7\}` exact-length ID regexes for the 9 prefixes in `validation/` (confirms §4.3 fully applied).
+- [x] `typecheck` / `lint` / full unit suite green (2097 tests), including the 5 files in §4.4.
+- [x] `code-standards.md` #18 updated.
+- [ ] **Pending:** full DB-integration suite (`vitest --config vitest.integration.config.ts`) against a disposable/CI DB — not run locally (it drops+rebuilds all schemas). The pre-existing narrow-width regression check is moot here: the DB was rebuilt to a uniform 8-digit baseline, so no narrow-width rows remain.
 
 ## 8. Explicitly not in this change
 

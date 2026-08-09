@@ -19,10 +19,10 @@ Update this file after every meaningful implementation change.
 
 - Change: Standardize Human-Readable ID Sequences to 8-Digit Padding
   (`_change-id-padding-standardization-plan.md`) — code complete.
-  - [x] 4.1 Migration `0023_widen_id_sequence_padding.sql` (hand-authored, 9× SET
-        DEFAULT only) + `_journal.json` idx 23. No snapshot file (deviation from
-        plan §4.1) — repo has not regenerated `meta/*_snapshot.json` since 0017;
-        0018–0022 are journal-only, so 0023 follows that established convention.
+  - [x] 4.1 Migration — the 8-digit `SET DEFAULT` widening shipped folded into the
+        base CREATE migrations (`0006`/`0009`/`0012`), not a standalone `0023`
+        (see *Migration-chain consolidation* below); the drizzle-kit baseline was
+        later re-generated as `meta/0021_snapshot.json`.
   - [x] 4.2 Drizzle schema — 9 lpad `6/7 → 8` edits across product.ts, customer.ts,
         billing/accounts.ts, billing/catalogs.ts, billing/ledger-binding.ts.
   - [x] 4.3 Validation — 23 regexes → `^PREFIX\d+$` across 15 files (FIN, BAN, BCY,
