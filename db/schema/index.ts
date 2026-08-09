@@ -8,3 +8,5 @@ export * from "@/db/schema/system-config";
 export * from "@/db/schema/product";
 export * from "@/db/schema/customer";
 export * from "@/db/schema/billing";
+export * from "@/db/schema/ordering";
+export * from "@/db/schema/inventory";
