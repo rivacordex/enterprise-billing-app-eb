@@ -31,7 +31,7 @@ export const billCycle = billing.table(
     billCycleId: text("bill_cycle_id")
       .primaryKey()
       .default(
-        sql`'BCY' || lpad(nextval('billing.bill_cycle_seq')::text, 6, '0')`,
+        sql`'BCY' || lpad(nextval('billing.bill_cycle_seq')::text, 8, '0')`,
       ),
     name: text("name").notNull().unique(),
     description: text("description"),
@@ -154,7 +154,7 @@ export const glMapping = billing.table(
     glMappingId: text("gl_mapping_id")
       .primaryKey()
       .default(
-        sql`'GLM' || lpad(nextval('billing.gl_mapping_seq')::text, 6, '0')`,
+        sql`'GLM' || lpad(nextval('billing.gl_mapping_seq')::text, 8, '0')`,
       ),
     selectorType: text("selector_type").notNull(),
     selector: text("selector").notNull(),

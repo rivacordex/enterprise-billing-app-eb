@@ -140,7 +140,7 @@ One PostgreSQL database; no file storage or cache tier in v1 (architecture §3, 
 15. **No secret in the database.** `SYSTEM_CONFIG` holds only non-secret params; `is_secret` is reserved and always `FALSE` in v1. Provider secrets live in `.env` (inv. #18).
 16. **Monetary columns are `numeric`, never `float`/`double`**, mapped to `string` in Drizzle (§2.15). `currency` is its own ISO-4217 column.
 17. **JSONB is schema-guarded** (architecture §3). A JSONB column is typed at the Drizzle table via `.$type<T>()` where `T` is `z.infer` of the owning `validation/` schema (discriminated per type column where applicable, e.g. per `pricing_model`). Every write — **including seeds** — passes that schema first; no unvalidated JSONB reaches the DB. No junk-drawer JSONB.
-18. **Human-readable IDs** (architecture §3): domain-table IDs are a fixed prefix + zero-padded per-table DB sequence (e.g. `PRDOFR000001`). ID assembly happens in the DB layer (default expression or repository insert) — never in services or UI.
+18. **Human-readable IDs** (architecture §3): domain-table IDs are a fixed prefix + an **8-digit** zero-padded per-table DB sequence (e.g. `PRDOFR00000001`). ID assembly happens in the DB layer (default expression or repository insert) — never in services or UI. Validate the *shape* (`^PREFIX\d+$`), not a fixed digit count, so legacy narrower rows and future width changes both stay valid.
 
 ---
 

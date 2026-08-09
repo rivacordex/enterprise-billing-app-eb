@@ -16,7 +16,7 @@ const creditLimitSchema = z
 export const onboardCustomerAccountsSchema = z
   .object({
     partyRoleId: z.string().regex(/^PTRL\d{8}$/, "Invalid party role ID"),
-    billCycleId: z.string().regex(/^BCY\d{6}$/, "Invalid bill cycle ID"),
+    billCycleId: z.string().regex(/^BCY\d+$/, "Invalid bill cycle ID"),
     currency: z.literal("MYR"),
     faCreditLimit: creditLimitSchema.optional(),
     banCreditLimit: creditLimitSchema.optional(),

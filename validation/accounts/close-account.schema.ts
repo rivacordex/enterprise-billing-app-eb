@@ -4,9 +4,7 @@ import { z } from "zod";
 // transfer, no document), so unlike write-off/rounding this schema doesn't
 // merge `documentBaseSchema` — just the target id and the CAS lock token.
 export const closeBillingAccountSchema = z.object({
-  billingAccountId: z
-    .string()
-    .regex(/^BAN\d{6}$/, "Invalid billing account ID"),
+  billingAccountId: z.string().regex(/^BAN\d+$/, "Invalid billing account ID"),
   lastModified: z.coerce.date(),
 });
 export type CloseBillingAccountInput = z.infer<
@@ -16,7 +14,7 @@ export type CloseBillingAccountInput = z.infer<
 export const closeFinancialAccountSchema = z.object({
   financialAccountId: z
     .string()
-    .regex(/^FIN\d{6}$/, "Invalid financial account ID"),
+    .regex(/^FIN\d+$/, "Invalid financial account ID"),
   lastModified: z.coerce.date(),
 });
 export type CloseFinancialAccountInput = z.infer<

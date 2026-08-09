@@ -14,10 +14,10 @@ export const allocatePaymentSchema = z
   .object({
     financialAccountId: z
       .string()
-      .regex(/^FIN\d{6}$/, "Invalid financial account ID"),
+      .regex(/^FIN\d+$/, "Invalid financial account ID"),
     billingAccountId: z
       .string()
-      .regex(/^BAN\d{6}$/, "Invalid billing account ID"),
+      .regex(/^BAN\d+$/, "Invalid billing account ID"),
     amount: amountSchema,
     refSettledDocumentId: documentIdSchema.nullable().default(null),
   })

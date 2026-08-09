@@ -102,7 +102,7 @@ describe.skipIf(!databaseUrl)(
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error("expected ok:true");
 
-      expect(result.value.organizationId).toMatch(/^ORG\d{7}$/);
+      expect(result.value.organizationId).toMatch(/^ORG\d{8}$/);
       expect(result.value.partyRoleId).toMatch(/^PTRL\d{8}$/);
 
       const [orgRow] = await db

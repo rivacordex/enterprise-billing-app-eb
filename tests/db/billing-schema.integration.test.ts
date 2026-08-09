@@ -197,10 +197,10 @@ describe.skipIf(!databaseUrl)(
       const billCycleId = await insertBillCycle("Id Format Cycle");
 
       const faId = await insertFinancialAccount(partyRoleId);
-      expect(faId).toMatch(/^FIN\d{6}$/);
+      expect(faId).toMatch(/^FIN\d{8}$/);
 
       const banId = await insertBillingAccount(partyRoleId, faId, billCycleId);
-      expect(banId).toMatch(/^BAN\d{6}$/);
+      expect(banId).toMatch(/^BAN\d{8}$/);
     });
 
     test("a document insert per doc_type yields the right prefix from its per-type sequence", async () => {

@@ -43,7 +43,7 @@ export const productOffering = product.table(
     productOfferingId: text("product_offering_id")
       .primaryKey()
       .default(
-        sql`'PRDOFR' || lpad(nextval('product.product_offering_seq')::text, 6, '0')`,
+        sql`'PRDOFR' || lpad(nextval('product.product_offering_seq')::text, 8, '0')`,
       ),
     name: text("name").notNull(),
     isBundle: boolean("is_bundle").notNull(),
@@ -82,7 +82,7 @@ export const productSpecifications = product.table(
     productSpecId: text("product_spec_id")
       .primaryKey()
       .default(
-        sql`'PRDSMD' || lpad(nextval('product.product_specifications_seq')::text, 6, '0')`,
+        sql`'PRDSMD' || lpad(nextval('product.product_specifications_seq')::text, 8, '0')`,
       ),
     refProductOfferingId: text("ref_product_offering_id")
       .notNull()
@@ -108,7 +108,7 @@ export const productOfferingPrice = product.table(
     productOfferingPriceId: text("product_offering_price_id")
       .primaryKey()
       .default(
-        sql`'PRDOFP' || lpad(nextval('product.product_offering_price_seq')::text, 6, '0')`,
+        sql`'PRDOFP' || lpad(nextval('product.product_offering_price_seq')::text, 8, '0')`,
       ),
     productOfferingId: text("product_offering_id")
       .notNull()
