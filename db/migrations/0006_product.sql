@@ -5,7 +5,7 @@ CREATE SEQUENCE "product"."product_offering_price_seq" INCREMENT BY 1 MINVALUE 1
 CREATE SEQUENCE "product"."product_offering_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE SEQUENCE "product"."product_specifications_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE TABLE "product"."product_offering" (
-	"product_offering_id" text PRIMARY KEY DEFAULT 'PRDOFR' || lpad(nextval('product.product_offering_seq')::text, 6, '0') NOT NULL,
+	"product_offering_id" text PRIMARY KEY DEFAULT 'PRDOFR' || lpad(nextval('product.product_offering_seq')::text, 8, '0') NOT NULL,
 	"name" text NOT NULL,
 	"is_bundle" boolean NOT NULL,
 	"is_sellable" boolean NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE "product"."product_offering" (
 );
 --> statement-breakpoint
 CREATE TABLE "product"."product_offering_price" (
-	"product_offering_price_id" text PRIMARY KEY DEFAULT 'PRDOFP' || lpad(nextval('product.product_offering_price_seq')::text, 6, '0') NOT NULL,
+	"product_offering_price_id" text PRIMARY KEY DEFAULT 'PRDOFP' || lpad(nextval('product.product_offering_price_seq')::text, 8, '0') NOT NULL,
 	"product_offering_id" text NOT NULL,
 	"name" text NOT NULL,
 	"price_type" text NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE "product"."product_offering_price" (
 );
 --> statement-breakpoint
 CREATE TABLE "product"."product_specifications" (
-	"product_spec_id" text PRIMARY KEY DEFAULT 'PRDSMD' || lpad(nextval('product.product_specifications_seq')::text, 6, '0') NOT NULL,
+	"product_spec_id" text PRIMARY KEY DEFAULT 'PRDSMD' || lpad(nextval('product.product_specifications_seq')::text, 8, '0') NOT NULL,
 	"ref_product_offering_id" text NOT NULL,
 	"name" text NOT NULL,
 	"is_mandatory" boolean NOT NULL,

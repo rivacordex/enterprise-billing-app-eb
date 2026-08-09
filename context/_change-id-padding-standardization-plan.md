@@ -1,7 +1,7 @@
 # Change: Standardize Human-Readable ID Sequences to 8-Digit Padding
 
 - **Type:** Consistency fix to already-delivered schema/validation code. Not a new feature.
-- **Status:** Draft for review — not yet authorized for implementation.
+- **Status:** Implemented and verified — schema, validation, tests, and docs delivered; later folded into the base migrations (`0006`/`0009`/`0012`) and confirmed against a rebuilt database.
 - **Date:** 2026-08-09
 - **Modules touched:** Product, Customer, Billing (Accounts/Transactions) — schema, validation, tests, one doc.
 - **Depends on:** `architecture.md` §3 / `code-standards.md` #18 ("Human-readable IDs: fixed prefix + zero-padded DB sequence"). This plan pins the digit count that convention left unspecified; it doesn't change the convention itself.
@@ -145,6 +145,8 @@ Dev/staging already has rows inserted under the old width via `db/seeds/**` (e.g
 - **(b) Wipe and reseed** dev/staging for a cosmetically consistent baseline (all IDs 8 digits from row 1). Trivial since seeding is already script-driven (`db/seeds/**`), but purely cosmetic — not required for correctness.
 
 Default to (a) unless a clean baseline is specifically wanted before the next demo/test cycle.
+
+**Outcome + ordering audit (post-implementation).** The database was rebuilt from `0000`, so every row is 8-digit — the mixed-width state option (a) would create does not actually exist here. Before relying on that uniformity, the callers that order/compare IDs as strings were audited: `db/repositories/accounts/billing-account.repository.ts`, `db/repositories/contact-medium.ts`, `services/accounts/get-financial-account-detail.ts`, and `services/accounts/get-transaction-document-detail.ts` all `ORDER BY <id>`. With uniform 8-digit width, lexical order equals numeric (creation) order, so these are correct as-is. If option (a) (genuinely mixed widths) is ever adopted, or a sequence passes 8 digits, switch those sorts to a numeric suffix or a creation-order/timestamp column.
 
 ## 6. Sequencing
 
