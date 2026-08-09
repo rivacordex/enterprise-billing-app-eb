@@ -109,7 +109,7 @@ describe.skipIf(!databaseUrl)(
 
     test("inserted rows get ORG/PTRL/CTMD-format IDs from the column defaults", async () => {
       const organizationId = await insertOrganization("ID Format Org");
-      expect(organizationId).toMatch(/^ORG\d{7}$/);
+      expect(organizationId).toMatch(/^ORG\d{8}$/);
 
       const partyRoleId = await insertPartyRole(organizationId);
       expect(partyRoleId).toMatch(/^PTRL\d{8}$/);

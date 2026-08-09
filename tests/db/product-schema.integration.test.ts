@@ -81,7 +81,7 @@ describe.skipIf(!databaseUrl)(
 
     test("inserted offering rows get PRDOFR-format IDs from the column default", async () => {
       const id = await insertOffering("Test Offering");
-      expect(id).toMatch(/^PRDOFR\d{6}$/);
+      expect(id).toMatch(/^PRDOFR\d{8}$/);
     });
 
     test("duplicate (product_offering_id, price_type, start_date_time) insert fails (revised Inv. #2)", async () => {

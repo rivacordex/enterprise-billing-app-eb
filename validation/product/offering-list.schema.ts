@@ -28,7 +28,7 @@ export const offeringListSearchParamsSchema = z.object({
   page: z.coerce.number().int().min(1).catch(1),
   offering: z
     .string()
-    .regex(/^PRDOFR\d{6}$/)
+    .regex(/^PRDOFR\d+$/)
     .nullable()
     .catch(null),
 });

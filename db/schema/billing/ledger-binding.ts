@@ -19,7 +19,7 @@ export const ledgerBinding = billing.table(
     ledgerBindingId: text("ledger_binding_id")
       .primaryKey()
       .default(
-        sql`'LBD' || lpad(nextval('billing.ledger_binding_seq')::text, 6, '0')`,
+        sql`'LBD' || lpad(nextval('billing.ledger_binding_seq')::text, 8, '0')`,
       ),
     ownerType: text("owner_type").notNull(),
     // Polymorphic `BAN…`/`FIN…` — app/trigger-checked, deliberately not a DB

@@ -31,7 +31,7 @@ export const financialAccount = billing.table(
     financialAccountId: text("financial_account_id")
       .primaryKey()
       .default(
-        sql`'FIN' || lpad(nextval('billing.financial_account_seq')::text, 6, '0')`,
+        sql`'FIN' || lpad(nextval('billing.financial_account_seq')::text, 8, '0')`,
       ),
     name: text("name").notNull(),
     description: text("description"),
@@ -79,7 +79,7 @@ export const billingAccount = billing.table(
     billingAccountId: text("billing_account_id")
       .primaryKey()
       .default(
-        sql`'BAN' || lpad(nextval('billing.billing_account_seq')::text, 6, '0')`,
+        sql`'BAN' || lpad(nextval('billing.billing_account_seq')::text, 8, '0')`,
       ),
     name: text("name").notNull(),
     description: text("description"),
