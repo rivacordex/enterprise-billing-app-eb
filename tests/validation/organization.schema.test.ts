@@ -10,8 +10,16 @@ describe("organizationIdSchema", () => {
     expect(organizationIdSchema.safeParse("ORG0000001").success).toBe(true);
   });
 
-  it("rejects a wrong-length numeric suffix", () => {
-    expect(organizationIdSchema.safeParse("ORG1").success).toBe(false);
+  it("accepts any numeric suffix width (shape check, not fixed length)", () => {
+    // ^ORG\d+$ validates shape, not a fixed digit count, so legacy narrow-width
+    // and newer 8-digit ids both pass. See
+    // _change-id-padding-standardization-plan.md §4.3.
+    expect(organizationIdSchema.safeParse("ORG1").success).toBe(true);
+    expect(organizationIdSchema.safeParse("ORG00000001").success).toBe(true);
+  });
+
+  it("rejects a non-numeric suffix", () => {
+    expect(organizationIdSchema.safeParse("ORGABC").success).toBe(false);
   });
 
   it("rejects a wrong prefix", () => {

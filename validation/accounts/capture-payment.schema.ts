@@ -20,7 +20,7 @@ import {
 const captureBaseFields = {
   financialAccountId: z
     .string()
-    .regex(/^FIN\d{6}$/, "Invalid financial account ID"),
+    .regex(/^FIN\d+$/, "Invalid financial account ID"),
   reasonCode: z.enum(["CUST_PAYMENT", "ADVANCE_PAYMENT"]),
   amount: amountSchema,
   ...documentBaseSchema.shape,

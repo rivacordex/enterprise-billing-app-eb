@@ -41,11 +41,18 @@ describe("parseAccountsContext", () => {
     });
   });
 
-  it("rejects a FA id with wrong digit count", () => {
-    // FIN needs exactly 6 digits
+  it("accepts a FA id of any digit width (shape check, not fixed length)", () => {
+    // IDs are validated by shape (^FIN\d+$), not a fixed digit count, so both a
+    // legacy narrow-width id and a newer 8-digit id are accepted. See
+    // _change-id-padding-standardization-plan.md §4.3.
     expect(parseAccountsContext({ fa: "FIN0000001" })).toEqual({
       party: undefined,
-      fa: undefined,
+      fa: "FIN0000001",
+      ban: undefined,
+    });
+    expect(parseAccountsContext({ fa: "FIN00000001" })).toEqual({
+      party: undefined,
+      fa: "FIN00000001",
       ban: undefined,
     });
   });

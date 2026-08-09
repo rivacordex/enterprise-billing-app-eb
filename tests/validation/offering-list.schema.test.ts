@@ -55,11 +55,17 @@ describe("offeringListSearchParamsSchema", () => {
     expect(result.offering).toBe("PRDOFR000001");
   });
 
-  it("rejects a short numeric suffix (PRDOFR1)", () => {
-    const result = offeringListSearchParamsSchema.parse({
-      offering: "PRDOFR1",
-    });
-    expect(result.offering).toBeNull();
+  it("accepts any numeric suffix width (shape check, not fixed length)", () => {
+    // ^PRDOFR\d+$ validates shape, not a fixed digit count, so a narrow legacy
+    // suffix and a newer 8-digit one both pass. See
+    // _change-id-padding-standardization-plan.md §4.3.
+    expect(
+      offeringListSearchParamsSchema.parse({ offering: "PRDOFR1" }).offering,
+    ).toBe("PRDOFR1");
+    expect(
+      offeringListSearchParamsSchema.parse({ offering: "PRDOFR00000001" })
+        .offering,
+    ).toBe("PRDOFR00000001");
   });
 
   it("rejects a wrong-prefix ID (PRDSMD000001)", () => {

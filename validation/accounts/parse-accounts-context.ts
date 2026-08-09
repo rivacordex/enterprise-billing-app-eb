@@ -3,8 +3,8 @@
 // id-pattern validation ensures only well-formed IDs enter the service layer.
 
 const PARTY_PATTERN = /^PTRL\d{8}$/;
-const FA_PATTERN = /^FIN\d{6}$/;
-const BAN_PATTERN = /^BAN\d{6}$/;
+const FA_PATTERN = /^FIN\d+$/;
+const BAN_PATTERN = /^BAN\d+$/;
 
 function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;

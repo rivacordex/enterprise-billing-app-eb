@@ -353,7 +353,7 @@ describe.skipIf(!databaseUrl)(
 
       const byKey = new Map(configs.map((c) => [c.config_key, c.config_value]));
       expect(byKey.has("ACCOUNTS_DEFAULT_BILL_CYCLE")).toBe(true);
-      expect(byKey.get("ACCOUNTS_DEFAULT_BILL_CYCLE")).toMatch(/^BCY\d{6}$/);
+      expect(byKey.get("ACCOUNTS_DEFAULT_BILL_CYCLE")).toMatch(/^BCY\d{8}$/);
       expect(byKey.get("ACCOUNTS_DEFAULT_CURRENCY")).toBe("MYR");
       expect(byKey.has("ACCOUNTS_DEFAULT_CREDIT_LIMIT")).toBe(true);
       expect(byKey.get("ACCOUNTS_DEFAULT_CREDIT_LIMIT")).toBeNull();
