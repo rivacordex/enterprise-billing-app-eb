@@ -36,7 +36,7 @@ export const refundDepositSchema = z
   .object({
     financialAccountId: z
       .string()
-      .regex(/^FIN\d{6}$/, "Invalid financial account ID"),
+      .regex(/^FIN\d+$/, "Invalid financial account ID"),
     amount: amountSchema,
     paymentMode: z.enum(PAYMENT_MODES).nullable().default(null),
     modeRef: modeRefUnionSchema.nullable().default(null),

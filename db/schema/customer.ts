@@ -34,7 +34,7 @@ export const organization = customer.table(
     organizationId: text("organization_id")
       .primaryKey()
       .default(
-        sql`'ORG' || lpad(nextval('customer.organization_seq')::text, 7, '0')`,
+        sql`'ORG' || lpad(nextval('customer.organization_seq')::text, 8, '0')`,
       ),
     name: text("name").notNull(),
     tradingName: text("trading_name"),
