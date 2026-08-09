@@ -4,6 +4,8 @@
 
 **Companion docs:** `prodmgmt-project-overview.md` (product spec) and `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture *Invariants*, the **Invariants win** and the conflict is a bug to fix here.
 
+> **Scope note:** this doc covers the shipped catalog pages only. The planned **Product Ordering & Inventory update** (Orders/Subscriptions — `prodmgmt-update-overview.md`, `_updatemodule-product-ordering-inventory-plan.md`, architecture Inv. #15–22) has no conventions here yet; its rules are added to this file per-unit as that phase is built, not speculatively in advance.
+
 ---
 
 ## 1. General Rules (module-specific)

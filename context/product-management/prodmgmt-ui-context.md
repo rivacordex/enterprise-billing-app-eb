@@ -9,6 +9,8 @@
 
 Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | ACTIVE | RETIRED` → `LifecycleBadge`), **price type** (`recurring | usage | once` → `PriceTypeBadge`), **offering flags** (bundle / sellable / billing-only chips), **spec/tier JSONB entries** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, and the Manage Products table/dialogs/forms.
 
+> **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is not wired here yet — its status badges (TMF622 order states, TMF637 subscription states), negotiated-price indicator, and review-screen treatments get defined in this file when that phase's UI units are specced. Until then, `mockup-product-ordering.html` (planning folder) is the visual reference; it uses the shared token families, not new ones.
+
 Two deliberate exclusions (same rules as User Management), applying to **both** product pages:
 
 1. **The AI / Iris-violet family and `--gradient-ai` are NOT used anywhere in Product Management.** Neither page has AI/ML components; the AI tokens (ui-context §4) remain reserved. Defining them in `globals.css` is fine; using them here is a scope violation.
