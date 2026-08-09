@@ -4,7 +4,7 @@ CREATE SEQUENCE "customer"."organization_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE
 CREATE SEQUENCE "customer"."party_role_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE SEQUENCE "customer"."contact_medium_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE TABLE "customer"."organization" (
-	"organization_id" text PRIMARY KEY DEFAULT 'ORG' || lpad(nextval('customer.organization_seq')::text, 7, '0') NOT NULL,
+	"organization_id" text PRIMARY KEY DEFAULT 'ORG' || lpad(nextval('customer.organization_seq')::text, 8, '0') NOT NULL,
 	"name" text NOT NULL,
 	"trading_name" text,
 	"organization_type" text NOT NULL,

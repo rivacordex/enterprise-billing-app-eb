@@ -16,7 +16,7 @@ CREATE SEQUENCE "billing"."document_line_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE
 CREATE SEQUENCE "billing"."document_pay_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE SEQUENCE "billing"."ledger_binding_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE TABLE "billing"."billing_account" (
-	"billing_account_id" text PRIMARY KEY DEFAULT 'BAN' || lpad(nextval('billing.billing_account_seq')::text, 6, '0') NOT NULL,
+	"billing_account_id" text PRIMARY KEY DEFAULT 'BAN' || lpad(nextval('billing.billing_account_seq')::text, 8, '0') NOT NULL,
 	"name" text NOT NULL,
 	"description" text,
 	"state" text DEFAULT 'active' NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE "billing"."billing_account" (
 );
 --> statement-breakpoint
 CREATE TABLE "billing"."financial_account" (
-	"financial_account_id" text PRIMARY KEY DEFAULT 'FIN' || lpad(nextval('billing.financial_account_seq')::text, 6, '0') NOT NULL,
+	"financial_account_id" text PRIMARY KEY DEFAULT 'FIN' || lpad(nextval('billing.financial_account_seq')::text, 8, '0') NOT NULL,
 	"name" text NOT NULL,
 	"description" text,
 	"state" text DEFAULT 'active' NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE "billing"."financial_account" (
 );
 --> statement-breakpoint
 CREATE TABLE "billing"."bill_cycle" (
-	"bill_cycle_id" text PRIMARY KEY DEFAULT 'BCY' || lpad(nextval('billing.bill_cycle_seq')::text, 6, '0') NOT NULL,
+	"bill_cycle_id" text PRIMARY KEY DEFAULT 'BCY' || lpad(nextval('billing.bill_cycle_seq')::text, 8, '0') NOT NULL,
 	"name" text NOT NULL,
 	"description" text,
 	"frequency" text DEFAULT 'monthly' NOT NULL,
@@ -83,7 +83,7 @@ CREATE TABLE "billing"."gl_account" (
 );
 --> statement-breakpoint
 CREATE TABLE "billing"."gl_mapping" (
-	"gl_mapping_id" text PRIMARY KEY DEFAULT 'GLM' || lpad(nextval('billing.gl_mapping_seq')::text, 6, '0') NOT NULL,
+	"gl_mapping_id" text PRIMARY KEY DEFAULT 'GLM' || lpad(nextval('billing.gl_mapping_seq')::text, 8, '0') NOT NULL,
 	"selector_type" text NOT NULL,
 	"selector" text NOT NULL,
 	"currency" char(3),
@@ -120,7 +120,7 @@ CREATE TABLE "billing"."document" (
 	"total_amount" numeric(18, 2) NOT NULL,
 	"payment_mode" text,
 	"mode_ref" jsonb,
-	"reference_date" timestamp with time zone DEFAULT now() NOT NULL,
+	"entry_date" timestamp with time zone DEFAULT now() NOT NULL,
 	"reference_info" text NOT NULL,
 	"event_at" timestamp with time zone NOT NULL,
 	"posted_at" timestamp with time zone,
@@ -154,7 +154,7 @@ CREATE TABLE "billing"."document_line" (
 );
 --> statement-breakpoint
 CREATE TABLE "billing"."ledger_binding" (
-	"ledger_binding_id" text PRIMARY KEY DEFAULT 'LBD' || lpad(nextval('billing.ledger_binding_seq')::text, 6, '0') NOT NULL,
+	"ledger_binding_id" text PRIMARY KEY DEFAULT 'LBD' || lpad(nextval('billing.ledger_binding_seq')::text, 8, '0') NOT NULL,
 	"owner_type" text NOT NULL,
 	"owner_id" text NOT NULL,
 	"ledger_role" text NOT NULL,

@@ -6,6 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
+<!-- 
 ## Accounts Module Building Context
 
 Read the following files in order before implementing
@@ -19,3 +20,4 @@ or making any architectural decision related to Accounts Module:
 6. `context/accounting-management/acctmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
 
 Update `context/accounting-management/acctmgmt-progress-tracker.md` after each meaningful implementation change.
+-->
