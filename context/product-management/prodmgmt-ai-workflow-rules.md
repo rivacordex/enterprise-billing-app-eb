@@ -1,13 +1,14 @@
 # Product Management — AI Workflow Rules (Module Supplement)
 
-This document supplements `context/ai-workflow-rules.md` (binding for all modules — read it first); everything there applies unchanged. The module is now **fully editable**: both the read-only catalog (View Product) and the CRUD surface (Manage Products) are implemented and ship-gate-verified (units pm01–pm24). This doc pins the module's guardrails, permissions, protected files, and doc-section references for any future work on the module (bug fixes, a Phase 3, or unrelated changes that happen to touch this module's files).
+This document supplements `context/ai-workflow-rules.md` (binding for all modules — read it first); everything there applies unchanged. The module is now **fully editable**: both the read-only catalog (View Product) and the CRUD surface (Manage Products) are implemented and ship-gate-verified (units pm01–pm24). One further phase is **planned but not built**: the **Product Ordering & Inventory update** (Orders + Subscriptions pages, `ordering`/`inventory` schemas). This doc pins the module's guardrails, permissions, protected files, and doc-section references for any future work on the module (bug fixes, the Ordering update, or unrelated changes that happen to touch this module's files).
 
 **Companion docs (authoritative — do not restate or contradict):**
 
 - `prodmgmt-project-overview.md` — product spec: user flows (View Product + Manage Products), the four-section page, the CRUD/versioning model, 3-table data model, in/out of scope, success criteria.
-- `prodmgmt-architecture.md` — technical design: `product` schema, JSONB usage, permission matrix (§4), 14 numbered **Module Invariants** (§6).
-- `prodmgmt-code-standards.md` — module coding conventions, file tree (§7), permission map (§8), guardrail tests (§9).
+- `prodmgmt-architecture.md` — technical design: `product` schema, JSONB usage, permission matrix (§4), 22 numbered **Module Invariants** (§6; #15–22 belong to the planned Ordering update).
+- `prodmgmt-code-standards.md` — module coding conventions, file tree (§7), permission map (§8), guardrail tests (§9). Catalog scope only until the Ordering update is built.
 - `prodmgmt-progress-tracker.md` — build history: unit-by-unit notes for pm01–pm24, plus the recurring-ripple patterns any future unit is likely to hit again (permission-name additions, new-audit-event-type additions, new-pgSchema integration-test setup, etc.).
+- **Ordering update (planned):** `prodmgmt-update-overview.md` (spec, scope, success criteria) and `_updatemodule-product-ordering-inventory-plan.md` (decisions Q1–Q20, tables, sample data) are the authorizing documents for that work — a unit implementing the update cites them, not the catalog overview. Hard dependency: the accounts module's `billing.*` tables ship first (architecture header).
 
 **Precedence** per the general doc: module architecture **Invariants** → overview → architecture → code-standards → this supplement → general workflow rules.
 
@@ -25,6 +26,8 @@ This document supplements `context/ai-workflow-rules.md` (binding for all module
    - Editing an `ACTIVE` offering never mutates it in place — always branch first via `branchOfferingAsDraft` (Inv. #14).
    - Every branch-vs-in-place decision reads its target's status inside the transaction, locked, immediately before the decision — never a pre-transaction snapshot (code-standards §1 rule 13; this exact TOCTOU bug was found and fixed independently in pm14, pm15, pm16, and pm20 — treat a pre-transaction status read as a review-blocking defect on sight).
 
+   The Ordering update, once built, adds its own permanent rules of the same rank (architecture Inv. #15–22) — most critically: the `inventory_status_history` and `order_item_price_override` repositories never gain update/delete; no cycle/frequency column ever appears on `ordering.*`/`inventory.*` tables; order approval always re-runs full validation under locks and never accepts reviewer = submitter.
+
 ## 2. Units — One at a Time
 
 The general doc's "one unit at a time, in dependency order, previous unit verified and committed before the next starts" (§2) still governs any future work. The module's original build order (pm01–pm24) is recorded in full, unit-by-unit, in `prodmgmt-progress-tracker.md` — treat it as the reference example of how this module gets built in dependency-ordered, independently-verified slices, not as a checklist with remaining items. A new unit of work (bug fix, extension, Phase 3 feature) gets its own fresh unit plan following that same discipline; it does not resume the pm-numbering sequence unless the user says otherwise.
@@ -32,7 +35,7 @@ The general doc's "one unit at a time, in dependency order, previous unit verifi
 ## 3. Scoping — No Speculative Changes
 
 1. **Do not** create a second Route Handler surface, a second nav component, or a parallel table implementation — the module has exactly one of each pattern (`actions/product/`, `components/admin-nav.tsx`, the shared Administration table primitives) and forking one is a defect, not a convenience.
-2. **Do not** build out-of-scope features without explicit instruction: CSV export, `bundle_link`/child-offering views, a `product_pricing` permission split, tier child tables, `policy`-column semantics, hard delete of any product entity, merging or splitting version families, or a second schema addition beyond `family_offering_id` (overview *Out of Scope*, architecture §5).
+2. **Do not** build out-of-scope features without explicit instruction: CSV export, `bundle_link`/child-offering views, a `product_pricing` permission split, tier child tables, `policy`-column semantics, hard delete of any product entity, merging or splitting version families, or a second schema addition beyond `family_offering_id` **to the `product` schema** (overview *Out of Scope*, architecture §5). This rule scopes the *catalog*: the planned Ordering update's `ordering`/`inventory` schemas are separately authorized by `prodmgmt-update-overview.md` and do not touch the `product` schema at all — an ordering unit that finds itself modifying `db/schema/product.ts` is out of bounds and must stop.
 3. **Do not** add columns, flags, or abstractions the current unit doesn't need — including a stored `end_date_time` or `last_update` on prices (Inv. #3) or a second `version`-like counter.
 4. **Do not** touch Administration pages or other modules' files beyond genuinely shared primitives you extend (never fork, code-standards §4.2/general §5). Unrelated fixes: note and raise separately.
 5. **Respect layer boundaries**: `page.tsx` files are thin orchestrators — no DB access, no business rules; `services/product` has no `next/*` imports; SQL lives only in `db/**`; `actions/product/**` has no DB access of its own.
