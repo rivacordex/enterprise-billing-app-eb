@@ -12,12 +12,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
 Read the following files in order before implementing
 or making any architectural decision related to Products Module update for Ordering and Subscription:
 
-1. `context/product-management/prodmgmt-update-overview.md` & `context/product-management/prodmgmt-project-overview.md` — product definition, goals, features, and scope
-2. `context/product-management/prodmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/product-management/prodmgmt-ui-context.md` — theme, colors, typography, and component conventions
-4. `context/product-management/prodmgmt-code-standards.md` — implementation rules and conventions
-5. `context/product-management/prodmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-6. `context/product-management/prodmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
+1. `context/product-management/acctmgmt-update-overview.md` & `context/product-management/acctmgmt-project-overview.md` — product definition, goals, features, and scope
+2. `context/product-management/acctmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+3. `context/product-management/acctmgmt-ui-context.md` — theme, colors, typography, and component conventions
+4. `context/product-management/acctmgmt-code-standards.md` — implementation rules and conventions
+5. `context/product-management/acctmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+6. `context/product-management/acctmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
 
-Update `context/product-management/prodmgmt-progress-tracker.md` after each meaningful implementation change.
+Update `context/product-management/acctmgmt-progress-tracker.md` after each meaningful implementation change.
 

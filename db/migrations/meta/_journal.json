@@ -155,20 +155,6 @@
       "when": 1785643200000,
       "tag": "0021_billing_pgledger_security_definer",
       "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1786316192721,
-      "tag": "0022_ordering_inventory",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1786316228365,
-      "tag": "0023_ordering_inventory_permissions",
-      "breakpoints": true
     }
   ]
 }
