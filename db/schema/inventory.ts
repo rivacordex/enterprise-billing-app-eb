@@ -7,6 +7,7 @@ import {
   pgSchema,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -132,6 +133,11 @@ export const inventoryStatusHistory = inventory.table(
   },
   (t) => [
     index("inventory_status_history_inventory_idx").on(t.productInventoryId),
+    // At most one creation row (from_status IS NULL) per instance — the
+    // append-only, gap-free log (Inv. #18) has exactly one genesis transition.
+    uniqueIndex("inventory_status_history_one_creation_row_unique")
+      .on(t.productInventoryId)
+      .where(sql`from_status IS NULL`),
   ],
 );
 

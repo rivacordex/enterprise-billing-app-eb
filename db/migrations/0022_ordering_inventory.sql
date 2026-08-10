@@ -17,7 +17,9 @@ CREATE TABLE "ordering"."order_item_price_override" (
 	"currency" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "order_item_price_override_item_type_unique" UNIQUE("product_order_item_id","price_type"),
-	CONSTRAINT "order_item_price_override_amount_check" CHECK (amount > 0)
+	CONSTRAINT "order_item_price_override_amount_check" CHECK (amount > 0),
+	CONSTRAINT "order_item_price_override_price_type_check" CHECK (price_type IN ('recurring','usage','once')),
+	CONSTRAINT "order_item_price_override_currency_check" CHECK (char_length(currency) = 3)
 );
 --> statement-breakpoint
 CREATE TABLE "ordering"."product_order" (
@@ -93,9 +95,11 @@ CREATE INDEX "order_item_price_override_item_idx" ON "ordering"."order_item_pric
 CREATE INDEX "product_order_customer_idx" ON "ordering"."product_order" USING btree ("customer_party_role_id");--> statement-breakpoint
 CREATE INDEX "product_order_billing_account_idx" ON "ordering"."product_order" USING btree ("billing_account_id");--> statement-breakpoint
 CREATE INDEX "product_order_status_idx" ON "ordering"."product_order" USING btree ("status");--> statement-breakpoint
+CREATE INDEX "product_order_submitted_at_idx" ON "ordering"."product_order" USING btree ("submitted_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "product_order_item_order_idx" ON "ordering"."product_order_item" USING btree ("product_order_id");--> statement-breakpoint
 CREATE INDEX "product_order_item_offering_idx" ON "ordering"."product_order_item" USING btree ("product_offering_id");--> statement-breakpoint
 CREATE INDEX "inventory_status_history_inventory_idx" ON "inventory"."inventory_status_history" USING btree ("product_inventory_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "inventory_status_history_one_creation_row_unique" ON "inventory"."inventory_status_history" USING btree ("product_inventory_id") WHERE from_status IS NULL;--> statement-breakpoint
 CREATE INDEX "product_inventory_customer_idx" ON "inventory"."product_inventory" USING btree ("customer_party_role_id");--> statement-breakpoint
 CREATE INDEX "product_inventory_billing_account_idx" ON "inventory"."product_inventory" USING btree ("billing_account_id");--> statement-breakpoint
 CREATE INDEX "product_inventory_offering_idx" ON "inventory"."product_inventory" USING btree ("product_offering_id");--> statement-breakpoint

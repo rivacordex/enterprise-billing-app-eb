@@ -3,9 +3,11 @@ import { z } from "zod";
 import { inclusiveBilledDateSchema } from "@/validation/backdating-tolerance";
 import { characteristicsRecordSchema } from "@/validation/characteristics.schema";
 
-// Up-to-2-decimal positive money string; matches numeric(12,2) and the DB
-// `amount > 0` CHECK on order_item_price_override.
-const MONEY_2DP_REGEX = /^\d+(\.\d{1,2})?$/;
+// Up-to-2-decimal positive money string, capped at 10 integer digits so it
+// fits numeric(12,2)'s max (9999999999.99) — the regex enforces the bound
+// decimal-safely (no float rounding), matching the DB `amount > 0` CHECK on
+// order_item_price_override.
+const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
 
 // A negotiated per-line override. `priceType` validity (exists ∧
 // pricing_model = flat) and `currency` = BAN currency are **service-checked**
@@ -17,7 +19,7 @@ const overrideSchema = z.object({
     .trim()
     .regex(
       MONEY_2DP_REGEX,
-      "Amount must be a positive number with up to 2 decimals",
+      "Amount must be a positive number up to 9999999999.99 with at most 2 decimals",
     )
     .refine((v) => Number(v) > 0, "Amount must be greater than 0"),
   currency: z.string().trim().length(3, "Currency must be a 3-letter code"),

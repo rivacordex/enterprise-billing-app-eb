@@ -46,7 +46,7 @@ Resolve seeded party/BAN/offering ids at runtime by lookup (customer-seed patter
 
 ### 6. Guardrail tests (owned here)
 
-Integration tests (new-pgSchema setup ripple — see progress-tracker note): each constraint trips — qty 0, duplicate (item, price_type) override, `reviewed_by = submitted_by`, `end_date < start_date`, override amount ≤ 0, duplicate inventory for one order item, FK violations to closed/absent rows. Plus: `db/schema/product.ts` byte-diff guardrail still green.
+Integration tests (new-pgSchema setup ripple — see progress-tracker note): each constraint trips — qty 0, duplicate (item, price_type) override, `reviewed_by = submitted_by`, `end_date < start_date`, override amount ≤ 0, duplicate inventory for one order item, FK violations to **absent** rows. (Rejecting a *closed* party / *closed* BAN is a service-layer check owned by pm26 — the FK only enforces row existence, not ACTIVE/non-closed status, so that case belongs in a service-level test, not a DB-constraint test.) Plus: `db/schema/product.ts` byte-diff guardrail still green.
 
 ## Dependencies
 
