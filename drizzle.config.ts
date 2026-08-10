@@ -8,14 +8,7 @@ export default defineConfig({
   schema: "./db/schema",
   out: "./db/migrations",
   dbCredentials: { url: process.env.DATABASE_URL! },
-  schemaFilter: [
-    "core",
-    "product",
-    "customer",
-    "billing",
-    "ordering",
-    "inventory",
-  ],
+  schemaFilter: ["core", "product", "customer", "billing"],
   // pgledger's own tables/functions/views (ac01) are vendored raw SQL, never
   // introspected/diffed by drizzle-kit — only the module tables above are
   // Drizzle-managed (ac02-spec §2.5/§3.5).
