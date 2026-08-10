@@ -79,9 +79,9 @@ export const document = billing.table(
     modeRef: jsonb("mode_ref").$type<ModeRef>(),
     // Captioned "Entry Date" in the UI (AC24). Manually entered, defaults to
     // today (Q29); not used by period validation or GL grouping, though it is
-    // selected for read-only display (the document detail drawer). Renamed
-    // from `reference_date` in migration 0022 so the column name matches its
-    // corrected caption.
+    // selected for read-only display (the document detail drawer). Named
+    // `entry_date` so the column name matches its caption (originally shipped
+    // as `reference_date`; folded into the 0012 create migration).
     entryDate: timestamp("entry_date", {
       withTimezone: true,
       mode: "date",

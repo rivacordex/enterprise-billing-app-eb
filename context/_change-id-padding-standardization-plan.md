@@ -1,7 +1,7 @@
 # Change: Standardize Human-Readable ID Sequences to 8-Digit Padding
 
 - **Type:** Consistency fix to already-delivered schema/validation code. Not a new feature.
-- **Status:** Draft for review — not yet authorized for implementation.
+- **Status:** Implemented and verified — schema, validation, tests, and docs delivered; later folded into the base migrations (`0006`/`0009`/`0012`) and confirmed against a rebuilt database.
 - **Date:** 2026-08-09
 - **Modules touched:** Product, Customer, Billing (Accounts/Transactions) — schema, validation, tests, one doc.
 - **Depends on:** `architecture.md` §3 / `code-standards.md` #18 ("Human-readable IDs: fixed prefix + zero-padded DB sequence"). This plan pins the digit count that convention left unspecified; it doesn't change the convention itself.
@@ -53,9 +53,11 @@ Standardize every human-readable ID on **8-digit** zero-padded suffix — matche
 
 ## 4. Implementation
 
-### 4.1 Migration — new file, do this first
+### 4.1 Migration
 
-Next free index is **0023** (latest is `0022_document_rename_reference_date_to_entry_date.sql` — reconfirm immediately before authoring, per this project's usual caution about the index drifting mid-planning).
+> **As shipped (supersedes the `0023` plan in this subsection).** This did not go out as a standalone `0023`. The `SET DEFAULT` widening was folded directly into the base CREATE migrations — `0006_product.sql`, `0009_customer.sql`, `0012_billing_module_tables.sql` — and the drizzle-kit baseline was re-generated as `meta/0021_snapshot.json` (there is no `0023` migration or snapshot). The `0023`-based SQL below is retained only as the original planning record.
+
+Originally planned as a new file at the next free index (`0023`, the latest then being `0022_document_rename_reference_date_to_entry_date.sql`):
 
 `db/migrations/0023_widen_id_sequence_padding.sql`:
 
@@ -146,18 +148,20 @@ Dev/staging already has rows inserted under the old width via `db/seeds/**` (e.g
 
 Default to (a) unless a clean baseline is specifically wanted before the next demo/test cycle.
 
+**Outcome + ordering audit (post-implementation).** The database was rebuilt from `0000`, so every row is 8-digit — the mixed-width state option (a) would create does not actually exist here. Before relying on that uniformity, the callers that order/compare IDs as strings were audited: `db/repositories/accounts/billing-account.repository.ts`, `db/repositories/contact-medium.ts`, `services/accounts/get-financial-account-detail.ts`, and `services/accounts/get-transaction-document-detail.ts` all `ORDER BY <id>`. With uniform 8-digit width, lexical order equals numeric (creation) order, so these are correct as-is. If option (a) (genuinely mixed widths) is ever adopted, or a sequence passes 8 digits, switch those sorts to a numeric suffix or a creation-order/timestamp column.
+
 ## 6. Sequencing
 
-Migration (4.1) and schema (4.2) land together — same as every prior schema change in this project. Validation (4.3) can land in the same commit or immediately after; until it lands, the exact-length regexes will reject any newly-inserted 8-digit ID passed back through a form (e.g. selecting a brand-new `financial_account` in the payment-allocation flow would fail client validation) — so don't ship 4.1/4.2 to an environment already exercising these flows without 4.3. Tests (4.4) follow, then `typecheck`/`lint`/full suite green, then docs (4.6).
+Migration (4.1) and schema (4.2) land together — same as every prior schema change in this project. Validation (4.3) can land in the same commit or immediately after; until it lands, the exact-length regexes will reject any newly-inserted 8-digit ID passed back through a form (e.g. selecting a brand-new `financial_account` in the payment-allocation flow would fail client validation) — so don't ship 4.1/4.2 to an environment already exercising these flows without 4.3. Tests (4.4) follow, then `typecheck`/`lint`/full suite green, then docs (4.6). *As shipped:* 4.1 landed folded into the base migrations (`0006`/`0009`/`0012`) rather than a new `0023`; the remaining steps (4.2–4.6) applied as described.
 
 ## 7. Verification checklist
 
-- [ ] Migration applies cleanly; `INSERT` into each of the 9 tables (no explicit ID) produces an 8-digit-suffixed ID; a `SELECT` of a pre-existing (pre-migration) row's ID is unchanged.
-- [ ] All 9 `db/schema/*.ts` default expressions match the new migration exactly (`8` in both places).
-- [ ] Grep sweep: zero remaining `\{6\}` / `\{7\}` exact-length ID regexes for the 9 prefixes in `validation/` (confirms §4.3 fully applied).
-- [ ] A validation call with a **pre-existing narrow-width ID** (e.g. a seeded 6-digit `financial_account_id`) still passes its schema — the specific regression §4.3 is designed to prevent.
-- [ ] `typecheck` / `lint` / full test suite green, including the 5 files in §4.4.
-- [ ] `code-standards.md` #18 updated.
+- [x] Schema + base migrations build the 8-digit defaults (folded into `0006`/`0009`/`0012`); a rebuilt DB shows all 9 tables with `lpad(..., 8, '0')` and fresh inserts 8-digit (confirmed by read-only query).
+- [x] All 9 `db/schema/*.ts` default expressions are `8` and match the base migrations.
+- [x] Grep sweep: zero remaining `\{6\}` / `\{7\}` exact-length ID regexes for the 9 prefixes in `validation/` (confirms §4.3 fully applied).
+- [x] `typecheck` / `lint` / full unit suite green (2097 tests), including the 5 files in §4.4.
+- [x] `code-standards.md` #18 updated.
+- [ ] **Pending:** full DB-integration suite (`vitest --config vitest.integration.config.ts`) against a disposable/CI DB — not run locally (it drops+rebuilds all schemas). The pre-existing narrow-width regression check is moot here: the DB was rebuilt to a uniform 8-digit baseline, so no narrow-width rows remain.
 
 ## 8. Explicitly not in this change
 
