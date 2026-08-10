@@ -94,6 +94,9 @@ export const productOrder = ordering.table(
     index("product_order_customer_idx").on(t.customerPartyRoleId),
     index("product_order_billing_account_idx").on(t.billingAccountId),
     index("product_order_status_idx").on(t.status),
+    // Supports the orders-list default sort (submitted_at desc, orders-list
+    // schema) — a listing scan resolves from the index rather than sorting.
+    index("product_order_submitted_at_idx").on(t.submittedAt.desc()),
     check(
       "product_order_reviewer_check",
       sql`reviewed_by IS NULL OR reviewed_by <> submitted_by`,
@@ -175,6 +178,18 @@ export const orderItemPriceOverride = ordering.table(
     ),
     index("order_item_price_override_item_idx").on(t.productOrderItemId),
     check("order_item_price_override_amount_check", sql`amount > 0`),
+    // Normalize price_type/currency so the (item, price_type) unique constraint
+    // can't be defeated by casing/spelling variants (catalog
+    // product_offering_price precedent): only flat catalog price types, and a
+    // 3-char currency code.
+    check(
+      "order_item_price_override_price_type_check",
+      sql`price_type IN ('recurring','usage','once')`,
+    ),
+    check(
+      "order_item_price_override_currency_check",
+      sql`char_length(currency) = 3`,
+    ),
   ],
 );
 

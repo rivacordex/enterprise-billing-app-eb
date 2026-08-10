@@ -211,20 +211,27 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON T
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "billing" GRANT ALL ON SEQUENCES TO app_migrate;
 --> statement-breakpoint
--- `ordering` schema (pm25+): same app_runtime/app_migrate split as `product`/
--- `customer` — product_order/product_order_item/order_item_price_override ID
--- columns default to nextval(...), so app_runtime needs USAGE on those
--- sequences to satisfy plain INSERTs. No audit_log-style table exists here, so
--- no extra REVOKE. (Append-only tables — order_item_price_override — are kept
--- INSERT-only at the repository surface, not the grant surface, matching the
--- billing.ledger_binding precedent's finer split only where load-bearing.)
+-- `ordering` schema (pm25+): per-table least-privilege runtime grants
+-- (billing.ledger_binding precedent). Order items are write-once (Inv. #15) and
+-- price overrides are insert-only (Inv. #16), so app_runtime gets no
+-- UPDATE/DELETE on them; only product_order — whose status/review/completion
+-- columns change — gets UPDATE. No DELETE anywhere: orders and their children
+-- are never hard-deleted. ID columns default to nextval(...), so app_runtime
+-- needs USAGE on the sequences. No audit_log-style table here, so no REVOKE.
 GRANT USAGE ON SCHEMA "ordering" TO app_runtime;
 --> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "ordering" TO app_runtime;
+GRANT SELECT, INSERT, UPDATE ON "ordering"."product_order" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT ON "ordering"."product_order_item" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT ON "ordering"."order_item_price_override" TO app_runtime;
 --> statement-breakpoint
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "ordering" TO app_runtime;
 --> statement-breakpoint
-ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+-- Default privileges (future ordering tables) stay conservative — SELECT +
+-- INSERT only; a future table needing UPDATE/DELETE gets it via an explicit
+-- per-table GRANT in the same change that adds it.
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT SELECT, INSERT ON TABLES TO app_runtime;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
 --> statement-breakpoint
@@ -238,17 +245,24 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT ALL ON 
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "ordering" GRANT ALL ON SEQUENCES TO app_migrate;
 --> statement-breakpoint
--- `inventory` schema (pm25+): same app_runtime/app_migrate split as `ordering`
--- — product_inventory/inventory_status_history ID columns default to
--- nextval(...), so app_runtime needs USAGE on those sequences. No
--- audit_log-style table exists here, so no extra REVOKE.
+-- `inventory` schema (pm25+): per-table least-privilege runtime grants. Status
+-- history is append-only (Inv. #18), so app_runtime gets SELECT + INSERT only;
+-- product_inventory — whose status/end_date/characteristics columns change —
+-- also gets UPDATE. No DELETE anywhere. ID columns default to nextval(...), so
+-- app_runtime needs USAGE on the sequences. No audit_log-style table here, so
+-- no REVOKE.
 GRANT USAGE ON SCHEMA "inventory" TO app_runtime;
 --> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "inventory" TO app_runtime;
+GRANT SELECT, INSERT, UPDATE ON "inventory"."product_inventory" TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT ON "inventory"."inventory_status_history" TO app_runtime;
 --> statement-breakpoint
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "inventory" TO app_runtime;
 --> statement-breakpoint
-ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+-- Default privileges (future inventory tables) stay conservative — SELECT +
+-- INSERT only; UPDATE/DELETE for a future table comes via an explicit per-table
+-- GRANT alongside it.
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT SELECT, INSERT ON TABLES TO app_runtime;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "inventory" GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
 --> statement-breakpoint
