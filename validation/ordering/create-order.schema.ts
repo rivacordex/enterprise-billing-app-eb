@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { inclusiveBilledDateSchema } from "@/validation/backdating-tolerance";
 import { characteristicsRecordSchema } from "@/validation/characteristics.schema";
+import { PRICE_TYPES } from "@/types/product";
 
 // Up-to-2-decimal positive money string, capped at 10 integer digits so it
 // fits numeric(12,2)'s max (9999999999.99) — the regex enforces the bound
@@ -9,11 +10,23 @@ import { characteristicsRecordSchema } from "@/validation/characteristics.schema
 // order_item_price_override.
 const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
 
-// A negotiated per-line override. `priceType` validity (exists ∧
-// pricing_model = flat) and `currency` = BAN currency are **service-checked**
-// (architecture §1) — they need DB state, not just shape.
+// A negotiated per-line override. `priceType` must be one of the DB-supported
+// lowercase catalog values (`recurring`/`usage`/`once`, PRICE_TYPES) — the same
+// set the `order_item_price_override_price_type_check` DB CHECK enforces, so an
+// uppercase or unsupported value is rejected at the shape layer before it can
+// reach the constraint. The *deeper* checks — that the type actually exists on
+// the pinned offering as `pricing_model = flat`, and `currency` = BAN currency
+// — stay **service-checked** (architecture §1): they need DB state, not shape.
 const overrideSchema = z.object({
-  priceType: z.string().trim().min(1, "Price type is required"),
+  priceType: z
+    .string()
+    .trim()
+    .min(1, "Price type is required")
+    .pipe(
+      z.enum(PRICE_TYPES, {
+        error: "Price type must be one of: recurring, usage, once",
+      }),
+    ),
   amount: z
     .string()
     .trim()
