@@ -48,6 +48,8 @@ describe.skipIf(!databaseUrl)(
       // Two-connection pattern: migrate() poisons its own connection's
       // type-OID cache (ledger-explorer.integration.test.ts §beforeAll note).
       const migrateSql = postgres(databaseUrl as string, { max: 1 });
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
