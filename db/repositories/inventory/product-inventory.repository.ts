@@ -146,7 +146,11 @@ export const productInventoryRepository = {
     const sortKey = filters.sort.startsWith("-")
       ? filters.sort.slice(1)
       : filters.sort;
-    const sortColumn = SORT_COLUMNS[sortKey as keyof typeof SORT_COLUMNS];
+    // Defensive fallback (see product-order.repository) — never pass `undefined`
+    // to asc/desc if a Zod-bypassing caller supplies an unknown sort key.
+    const sortColumn =
+      SORT_COLUMNS[sortKey as keyof typeof SORT_COLUMNS] ??
+      productInventory.productInventoryId;
     const orderBy = filters.sort.startsWith("-")
       ? [desc(sortColumn), asc(productInventory.productInventoryId)]
       : [asc(sortColumn), asc(productInventory.productInventoryId)];

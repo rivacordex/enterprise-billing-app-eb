@@ -35,7 +35,7 @@ const CHARACTERISTICS = { SST_ID: "01", SD_ID: "A0C4E2" };
 describe.skipIf(!databaseUrl)(
   "ordering read repositories + services (requires DATABASE_URL)",
   () => {
-    let sql: postgresjs.Sql;
+    let sql: postgresjs.Sql | undefined;
     let db: ReturnType<typeof drizzle<typeof schema>>;
     let getOrderDetail: typeof GetOrderDetail;
     let listOrders: typeof ListOrders;
@@ -293,6 +293,10 @@ describe.skipIf(!databaseUrl)(
     }, 30_000);
 
     afterAll(async () => {
+      // If beforeAll threw before `sql` was assigned (e.g. assertTestDatabaseUrl
+      // rejected the URL), skip cleanup so the original failure surfaces instead
+      // of a masking "Cannot read properties of undefined" from `sql.unsafe`.
+      if (!sql) return;
       await sql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
