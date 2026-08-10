@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 
 describe("PermissionMatrixEditor", () => {
-  it("renders 9 rows in PERMISSION_NAMES order", () => {
+  it("renders 11 rows in PERMISSION_NAMES order", () => {
     render(<PermissionMatrixEditor role={ADMIN_ROLE} />);
     const rowLabels = screen
       .getAllByRole("row")
@@ -77,6 +77,8 @@ describe("PermissionMatrixEditor", () => {
       "Accounts – View",
       "Accounts – Transactions",
       "Accounts – Config",
+      "Product Orders",
+      "Product Inventory",
     ]);
   });
 
@@ -273,6 +275,8 @@ describe("PermissionMatrixEditor", () => {
       "Permission level for Accounts – View",
       "Permission level for Accounts – Transactions",
       "Permission level for Accounts – Config",
+      "Permission level for Product Orders",
+      "Permission level for Product Inventory",
     ]);
   });
 });
