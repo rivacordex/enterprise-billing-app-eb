@@ -50,6 +50,8 @@ describe.skipIf(!databaseUrl)(
       // driver/environment quirk, not a app-layer bug). A fresh connection
       // for all actual test queries avoids it.
       const migrateSql = postgres(databaseUrl as string, { max: 1 });
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');

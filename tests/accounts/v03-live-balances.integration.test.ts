@@ -34,6 +34,8 @@ describe.skipIf(!databaseUrl)(
       // "migrate()-poisons-connection quirk").
       const migrateSql = postgres(databaseUrl as string, { max: 1 });
       try {
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+        await migrateSql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
         await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
         await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
         await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');

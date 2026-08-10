@@ -36,6 +36,8 @@ describe.skipIf(!databaseUrl)(
       // cache, causing later timestamptz reads to come back as raw strings
       // instead of parsed Dates on that same connection.
       const migrateSql = postgres(databaseUrl as string, { max: 1 });
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+      await migrateSql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await migrateSql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
