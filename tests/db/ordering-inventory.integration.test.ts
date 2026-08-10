@@ -345,5 +345,62 @@ describe.skipIf(!databaseUrl)(
         }),
       ).rejects.toThrow();
     });
+
+    it("rejects an override with an invalid price_type (check constraint)", async () => {
+      const itemId = await newOrderItem();
+      await expect(
+        db.insert(orderItemPriceOverride).values({
+          productOrderItemId: itemId,
+          priceType: "RECURRING", // wrong casing — must be a flat catalog type
+          amount: "10.00",
+          currency: "MYR",
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("rejects an override with a non-3-char currency (check constraint)", async () => {
+      const itemId = await newOrderItem();
+      await expect(
+        db.insert(orderItemPriceOverride).values({
+          productOrderItemId: itemId,
+          priceType: "recurring",
+          amount: "10.00",
+          currency: "MYRR",
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("rejects a second creation history row (from_status NULL) for one instance", async () => {
+      const itemId = await newOrderItem();
+      const [inv] = await db
+        .insert(productInventory)
+        .values({
+          productOrderItemId: itemId,
+          customerPartyRoleId: partyRoleId,
+          billingAccountId: bannId,
+          productOfferingId: offeringId,
+          quantity: 1,
+          status: "ACTIVE",
+          startDate: "2026-03-01",
+        })
+        .returning({ productInventoryId: productInventory.productInventoryId });
+      await db.insert(inventoryStatusHistory).values({
+        productInventoryId: inv!.productInventoryId,
+        fromStatus: null,
+        toStatus: "ACTIVE",
+        effectiveDate: "2026-03-01",
+        changedBy: submitterId,
+      });
+      // Partial unique index: at most one from_status IS NULL row per instance.
+      await expect(
+        db.insert(inventoryStatusHistory).values({
+          productInventoryId: inv!.productInventoryId,
+          fromStatus: null,
+          toStatus: "SUSPENDED",
+          effectiveDate: "2026-04-01",
+          changedBy: submitterId,
+        }),
+      ).rejects.toThrow();
+    });
   },
 );

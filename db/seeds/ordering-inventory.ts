@@ -84,7 +84,10 @@ async function grantOrderingPermissions(tx: Database): Promise<void> {
     }
     for (const grant of grants) {
       const [existing] = await tx
-        .select({ rolePermissionId: rolePermissionAssign.rolePermissionId })
+        .select({
+          rolePermissionId: rolePermissionAssign.rolePermissionId,
+          permissionType: rolePermissionAssign.permissionType,
+        })
         .from(rolePermissionAssign)
         .where(
           and(
@@ -99,6 +102,21 @@ async function grantOrderingPermissions(tx: Database): Promise<void> {
           refPermissionId: permission.permissionId,
           permissionType: grant.permissionType,
         });
+      } else if (existing.permissionType !== grant.permissionType) {
+        // Reconcile a changed grant level on rerun (accounts-seed precedent);
+        // matching grants are left untouched, keeping reruns idempotent.
+        await tx
+          .update(rolePermissionAssign)
+          .set({
+            permissionType: grant.permissionType,
+            lastModifiedDatetime: new Date(),
+          })
+          .where(
+            eq(
+              rolePermissionAssign.rolePermissionId,
+              existing.rolePermissionId,
+            ),
+          );
       }
     }
   }
