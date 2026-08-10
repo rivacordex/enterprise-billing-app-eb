@@ -1,20 +1,26 @@
 import type { PermissionName, PermissionType } from "@/types/rbac";
 
-type AccountsPermissionName =
+// Optional module permissions: absent for users whose roles pre-date the
+// owning module (accounts — um06; ordering/inventory — pm25), matching the DB
+// resolver behaviour (it omits any permission a user's roles hold no grant
+// for). Keeping them out of the required set is also what stops a new module's
+// permission from rippling `null` into every hardcoded EffectivePermissionMap
+// fixture across the test suite.
+type OptionalPermissionName =
   | "accounts_view"
   | "accounts_transactions"
-  | "accounts_config";
-type CorePermissionName = Exclude<PermissionName, AccountsPermissionName>;
+  | "accounts_config"
+  | "product_orders"
+  | "product_inventory";
+type CorePermissionName = Exclude<PermissionName, OptionalPermissionName>;
 
-// Core module permissions (users, roles, etc.) are always present.
-// Accounts module permissions are optional — they're absent for users whose
-// roles pre-date the accounts module, matching the DB resolver behaviour
-// (um06-spec §"Resolver output shape").
+// Core module permissions (users, roles, etc.) are always present; optional
+// module permissions (above) are present only when granted.
 export type EffectivePermissionMap = Record<
   CorePermissionName,
   PermissionType | null
 > &
-  Partial<Record<AccountsPermissionName, PermissionType | null>>;
+  Partial<Record<OptionalPermissionName, PermissionType | null>>;
 
 export const LEVEL_RANK: Record<PermissionType, number> = {
   READ: 1,

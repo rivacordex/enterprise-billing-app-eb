@@ -27,7 +27,8 @@
     "db:seed-product": "node --conditions=react-server --env-file=.env --import tsx db/seeds/product.ts",
     "db:seed-customer": "node --conditions=react-server --env-file=.env --import tsx db/seeds/customer.ts",
     "db:seed-accounts": "node --conditions=react-server --env-file=.env --import tsx db/seeds/accounts/seed-accounts.ts",
-    "db:setup": "npm run db:migrate && npm run db:seed && npm run db:seed-rbac && npm run db:seed-product && npm run db:seed-customer && npm run db:seed-accounts",
+    "db:seed-ordering": "node --conditions=react-server --env-file=.env --import tsx db/seeds/ordering-inventory.ts",
+    "db:setup": "npm run db:migrate && npm run db:seed && npm run db:seed-rbac && npm run db:seed-product && npm run db:seed-customer && npm run db:seed-accounts && npm run db:seed-ordering",
     "db:introspect": "drizzle-kit introspect"
   },
   "dependencies": {
