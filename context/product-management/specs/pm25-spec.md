@@ -7,7 +7,7 @@ Create the `ordering` and `inventory` pg schemas (5 tables, enums, sequences, co
 ## Design
 
 - Two schemas split on TMF component lines: `ordering` (TMF622 — write-once intake) and `inventory` (TMF637 — long-lived subscriptions, future bill-run read path). No change to `db/schema/product.ts` (guardrail: schema-diff must stay byte-identical).
-- IDs: house convention, prefix + `lpad(nextval, 6, '0')` — `PRDORD` (order), `PRDORI` (item), `PRDOPO` (override), `PRDINV` (inventory), `PRDIVE` (history); one sequence per table.
+- IDs: house convention, prefix + `lpad(nextval, 8, '0')` (repo-wide 8-digit standard, commit `b27bb3e`) — `PRDORD` (order), `PRDORI` (item), `PRDOPO` (override), `PRDINV` (inventory), `PRDIVE` (history); one sequence per table.
 - Status enums seeded in full, used-subset documented: `ordering.order_status` = `ACKNOWLEDGED / REJECTED / PENDING / HELD / IN_PROGRESS / CANCELLED / COMPLETED / FAILED / PARTIAL`; `inventory.product_status` = `CREATED / PENDING_ACTIVE / ACTIVE / SUSPENDED / PENDING_TERMINATE / TERMINATED / CANCELLED / ABORTED`.
 - All dates are **inclusive-billed** (Inv. #21) — state this in a schema-file comment block; column type `date`, not timestamptz, for `start_date` / `end_date` / `effective_date`.
 
@@ -35,7 +35,7 @@ Create the `ordering` and `inventory` pg schemas (5 tables, enums, sequences, co
 
 ### 4. `validation/ordering/**` + `validation/inventory/**`
 
-- `create-order.schema.ts`: `customerPartyRoleId` (`/^PTRL\d{8}$/` — match the customer module's actual format), `billingAccountId` (`/^BAN\d{6}$/`), `productOfferingId` (`/^PRDOFR\d{6}$/`), `quantity` int ≥ 1 default 1, `startDate` (ISO date; fast-fail ≥ today − 3 days — authoritative re-check in pm28's service against injectable `now`, pm15 pattern), `characteristics` `z.record(z.string().min(1), z.string())` optional, `overrides` array of `{ priceType: z.string(), amount: 2dp-string regex, currency: z.literal-set from BAN currency check deferred to service }` optional, max one per priceType (refine).
+- `create-order.schema.ts`: `customerPartyRoleId` (`/^PTRL\d{8}$/` — match the customer module's actual format), `billingAccountId` (`/^BAN\d{8}$/`), `productOfferingId` (`/^PRDOFR\d{8}$/`) — all 8-digit, matching the repo-wide standard (commit `b27bb3e`); the spec's earlier `\d{6}` was a pre-standardization artifact, `quantity` int ≥ 1 default 1, `startDate` (ISO date; fast-fail ≥ today − 3 days — authoritative re-check in pm28's service against injectable `now`, pm15 pattern), `characteristics` `z.record(z.string().min(1), z.string())` optional, `overrides` array of `{ priceType: z.string(), amount: 2dp-string regex, currency: z.literal-set from BAN currency check deferred to service }` optional, max one per priceType (refine).
 - `review-order.schema.ts`: `orderId`; `reason` optional (approve) / required min 1 (reject) — two derived schemas.
 - `orders-list.schema.ts` / `subscriptions-list.schema.ts`: searchParams (`q`, `status`, `page`, `sort`, `order` / `subscription` selection) with invalid → defaults.
 - `inventory` lifecycle schemas: `suspend` (`inventoryId`, `effectiveDate`, `reason` min 1), `resume` (`inventoryId`, `effectiveDate`), `terminate` (`inventoryId`, `endDate`, `reason` min 1), `update-characteristics` (`inventoryId`, `characteristics` record). All date fields carry the same 3-day fast-fail refine.
@@ -46,7 +46,7 @@ Resolve seeded party/BAN/offering ids at runtime by lookup (customer-seed patter
 
 ### 6. Guardrail tests (owned here)
 
-Integration tests (new-pgSchema setup ripple — see progress-tracker note): each constraint trips — qty 0, duplicate (item, price_type) override, `reviewed_by = submitted_by`, `end_date < start_date`, override amount ≤ 0, duplicate inventory for one order item, FK violations to closed/absent rows. Plus: `db/schema/product.ts` byte-diff guardrail still green.
+Integration tests (new-pgSchema setup ripple — see progress-tracker note): each constraint trips — qty 0, duplicate (item, price_type) override, `reviewed_by = submitted_by`, `end_date < start_date`, override amount ≤ 0, duplicate inventory for one order item, FK violations to **absent** rows. (Rejecting a *closed* party / *closed* BAN is a service-layer check owned by pm26 — the FK only enforces row existence, not ACTIVE/non-closed status, so that case belongs in a service-level test, not a DB-constraint test.) Plus: `db/schema/product.ts` byte-diff guardrail still green.
 
 ## Dependencies
 
