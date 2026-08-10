@@ -14,7 +14,7 @@ import { productInventoryRepository } from "@/db/repositories/inventory/product-
 // order and inventory repositories carry a deliberately narrow, named write
 // surface (status/characteristics only — never the billing-relevant core).
 const MUTATION_NAME_PATTERN =
-  /^(insert|create|update|delete|remove|set|branch)/;
+  /^(insert|create|update|delete|remove|set|branch|upsert|patch|save|purge|replace)/i;
 
 const ALLOWED_ORDER_MUTATIONS = new Set(["insertOrder", "updateStatus"]);
 const ALLOWED_INVENTORY_MUTATIONS = new Set([
