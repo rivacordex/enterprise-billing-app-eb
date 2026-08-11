@@ -61,6 +61,13 @@ describe("AuditLogFilters", () => {
       within(additive).getByText("PRODUCT_OFFERING_ACTIVATED"),
     ).toBeInTheDocument();
     expect(within(additive).getByText("DOCUMENT_POSTED")).toBeInTheDocument();
+    // pm28 additions
+    expect(
+      within(additive).getByText("PRODUCT_ORDER_CREATED"),
+    ).toBeInTheDocument();
+    expect(
+      within(additive).getByText("PRODUCT_INVENTORY_CREATED"),
+    ).toBeInTheDocument();
 
     const change = within(select).getByRole("group", { name: "Change" });
     expect(
@@ -118,8 +125,24 @@ describe("AuditLogFilters", () => {
     ).toBeInTheDocument();
     // ac16 additions
     expect(within(change).getByText("ACCOUNT_CLOSED")).toBeInTheDocument();
+    // pm28 additions
+    expect(
+      within(change).getByText("PRODUCT_ORDER_PENDING_APPROVAL"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_ORDER_APPROVED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_ORDER_COMPLETED"),
+    ).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_ORDER_REJECTED"),
+    ).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_ORDER_FAILED"),
+    ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(51); // "All events" + 50
+    expect(within(select).getAllByRole("option")).toHaveLength(58); // "All events" + 57
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

@@ -86,4 +86,30 @@ export const billingAccountRepository = {
     if (current.state === "closed") return "already_closed";
     return "conflict";
   },
+
+  // Disclosed additive method (pm28-spec §Design, ac04/pm16 locking
+  // precedent) — a single-row `FOR UPDATE` finder for the ordering module's
+  // in-transaction TOCTOU re-check of the BAN's state (Q15), owning party
+  // (mismatch guard), and currency (override currency gate). No join, so
+  // `FOR UPDATE` is legal here.
+  async findStateByIdForUpdate(
+    tx: Database,
+    billingAccountId: string,
+  ): Promise<{
+    state: string;
+    refPartyRoleId: string;
+    currency: string;
+  } | null> {
+    const [row] = await tx
+      .select({
+        state: billingAccount.state,
+        refPartyRoleId: billingAccount.refPartyRoleId,
+        currency: billingAccount.currency,
+      })
+      .from(billingAccount)
+      .where(eq(billingAccount.billingAccountId, billingAccountId))
+      .for("update")
+      .limit(1);
+    return row ?? null;
+  },
 };
