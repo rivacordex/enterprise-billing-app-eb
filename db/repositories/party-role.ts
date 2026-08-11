@@ -184,4 +184,21 @@ export const partyRoleRepository = {
       .set({ contactMedium: contactMediumId })
       .where(eq(partyRole.partyRoleId, partyRoleId));
   },
+
+  // Disclosed additive method (pm28-spec §Design, ac04/pm16 locking
+  // precedent) — a single-row `FOR UPDATE` finder for the ordering module's
+  // in-transaction TOCTOU re-check of the customer party's status (Q14).
+  // No join, so `FOR UPDATE` is legal here.
+  async findStatusByIdForUpdate(
+    tx: Database,
+    partyRoleId: string,
+  ): Promise<{ status: CustomerStatus } | null> {
+    const [row] = await tx
+      .select({ status: partyRole.status })
+      .from(partyRole)
+      .where(eq(partyRole.partyRoleId, partyRoleId))
+      .for("update")
+      .limit(1);
+    return row ? { status: row.status as CustomerStatus } : null;
+  },
 };
