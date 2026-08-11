@@ -12,7 +12,10 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { OrderStatusBadge } from "@/components/products/ordering/order-status-badge";
+import {
+  ORDER_STATUS_LABELS,
+  OrderStatusBadge,
+} from "@/components/products/ordering/order-status-badge";
 import { Button } from "@/components/ui/button";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -37,14 +40,6 @@ interface OrdersTableProps {
   sort: OrderSort;
   locale: string;
   timezone: string;
-}
-
-function statusLabel(status: OrderStatus): string {
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 function parseSort(sort: OrderSort): { column: string; dir: "asc" | "desc" } {
@@ -197,7 +192,7 @@ export function OrdersTable({
               <option value="">All statuses</option>
               {ORDER_STATUSES.map((s) => (
                 <option key={s} value={s}>
-                  {statusLabel(s)}
+                  {ORDER_STATUS_LABELS[s]}
                 </option>
               ))}
             </select>
@@ -335,6 +330,7 @@ export function OrdersTable({
                             type="button"
                             aria-label={`Review order ${row.orderId}`}
                             onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
                             className="rounded-sm border-[0.5px] border-[color:var(--border)] px-1.5 py-0.5 text-caption text-muted-foreground"
                           >
                             Review
@@ -368,10 +364,14 @@ export function OrdersTable({
 
       {total > 0 && (
         <div className="flex items-center justify-between border-t border-[color:var(--border-subtle)] px-4 py-4">
-          <span className="text-body text-muted-foreground">
-            Showing {(page - 1) * pageSize + 1}–
-            {Math.min(page * pageSize, total)} of {total} orders
-          </span>
+          {rows.length > 0 ? (
+            <span className="text-body text-muted-foreground">
+              Showing {(page - 1) * pageSize + 1}–
+              {Math.min(page * pageSize, total)} of {total} orders
+            </span>
+          ) : (
+            <span />
+          )}
           <div className="flex items-center gap-1">
             <button
               type="button"

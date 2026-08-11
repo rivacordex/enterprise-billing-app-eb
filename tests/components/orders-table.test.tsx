@@ -144,6 +144,33 @@ describe("OrdersTable", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("keyboard-activating Review (Enter/Space) does not bubble to trigger row selection", async () => {
+    const user = userEvent.setup();
+    render(<OrdersTable {...DEFAULT_PROPS} />);
+
+    const reviewButton = screen.getByRole("button", { name: /Review order/ });
+    reviewButton.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("activates row selection via keyboard Enter and Space", async () => {
+    const user = userEvent.setup();
+    render(<OrdersTable {...DEFAULT_PROPS} />);
+
+    const row = screen.getByText("Acme Corp").closest("tr")!;
+    row.focus();
+
+    await user.keyboard("{Enter}");
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(lastNavigatedUrl(mockPush).get("order")).toBe("PRDORD00000001");
+
+    await user.keyboard(" ");
+    expect(mockPush).toHaveBeenCalledTimes(2);
+  });
+
   it("renders the inert 'New order' CTA", () => {
     render(<OrdersTable {...DEFAULT_PROPS} />);
     expect(
@@ -242,6 +269,9 @@ describe("OrdersTable", () => {
     expect(
       screen.getByText("No orders match your filters"),
     ).toBeInTheDocument();
+    // No order data rows should render — a sample row's content is absent.
+    expect(screen.queryByText("Acme Corp")).not.toBeInTheDocument();
+    expect(screen.queryByText("PRDORD00000001")).not.toBeInTheDocument();
   });
 
   it("hides pagination controls when total is 0", () => {
@@ -249,7 +279,22 @@ describe("OrdersTable", () => {
     expect(screen.queryByLabelText("Next page")).not.toBeInTheDocument();
   });
 
-  it("Next/Prev call goToPage preserving order and q; disabled at bounds", async () => {
+  it("disables Previous on the first page and Next on the last page", () => {
+    const { unmount } = render(
+      <OrdersTable {...DEFAULT_PROPS} page={1} total={45} pageSize={20} />,
+    );
+    expect(screen.getByLabelText("Previous page")).toBeDisabled();
+    expect(screen.getByLabelText("Next page")).not.toBeDisabled();
+    unmount();
+
+    render(
+      <OrdersTable {...DEFAULT_PROPS} page={3} total={45} pageSize={20} />,
+    );
+    expect(screen.getByLabelText("Next page")).toBeDisabled();
+    expect(screen.getByLabelText("Previous page")).not.toBeDisabled();
+  });
+
+  it("Next/Prev call goToPage preserving order and q", async () => {
     mockSearchParams = new URLSearchParams({
       q: "Acme",
       order: "PRDORD00000001",

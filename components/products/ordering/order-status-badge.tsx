@@ -65,7 +65,7 @@ const ORDER_STATUS_ICONS = {
   PARTIAL: CircleDashed,
 } as const satisfies Record<OrderStatus, typeof Clock>;
 
-const ORDER_STATUS_LABELS = {
+export const ORDER_STATUS_LABELS = {
   ACKNOWLEDGED: "Acknowledged",
   REJECTED: "Rejected",
   PENDING: "Pending",
