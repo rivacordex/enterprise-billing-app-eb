@@ -31,6 +31,7 @@ import {
 import { auditLog } from "@/db/schema/audit";
 import { productInventoryRepository } from "@/db/repositories/inventory/product-inventory.repository";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import { BACKDATING_TOLERANCE_DAYS } from "@/validation/backdating-tolerance";
 import type { createOrder as CreateOrder } from "@/services/ordering/create-order";
 import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
 
@@ -507,6 +508,23 @@ describe.skipIf(!databaseUrl)(
         );
         expect(result).toEqual({ ok: false, code: "BACKDATED_START_TOO_FAR" });
         expect(await countOrdersFor(goodPartyRoleId)).toBe(before);
+      });
+
+      it("accepts a start date exactly BACKDATING_TOLERANCE_DAYS before now (inclusive boundary)", async () => {
+        const before = await countOrdersFor(goodPartyRoleId);
+
+        const boundary = new Date(NOW);
+        boundary.setUTCDate(boundary.getUTCDate() - BACKDATING_TOLERANCE_DAYS);
+        const startDate = boundary.toISOString().slice(0, 10); // exactly the tolerance, still allowed
+
+        const result = await createOrder(
+          baseInput({ startDate }),
+          actorId,
+          () => NOW,
+        );
+
+        expect(result.ok).toBe(true);
+        expect(await countOrdersFor(goodPartyRoleId)).toBe(before + 1);
       });
     });
 
