@@ -26,6 +26,7 @@ const ROUTE_MANIFEST = [
   "/administration/audit-log",
   "/products/product-offering",
   "/products/manage-products",
+  "/products/orders",
   "/customers/view",
   "/customers/view/[id]",
   "/customers/manage",

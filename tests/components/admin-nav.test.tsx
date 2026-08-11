@@ -29,13 +29,15 @@ const managerMap = permissionMap({ customers: "EDIT" });
 const userMap = permissionMap({ customers: "READ" });
 
 describe("AdminNav — expanded", () => {
-  it("shows the Products and Administration captions and all six labelled links", () => {
+  it("shows the Products and Administration captions and all eight labelled links", () => {
     render(<AdminNav permissionMap={managerMap} />);
     expect(screen.getByText("Products")).toBeInTheDocument();
     expect(screen.getByText("Administration")).toBeInTheDocument();
     for (const label of [
       "View Product",
       "Manage Products",
+      "Orders",
+      "Subscriptions",
       "Users",
       "Roles",
       "System Configuration",
@@ -50,6 +52,23 @@ describe("AdminNav — expanded", () => {
     expect(
       screen.getByRole("link", { name: "Manage Products" }),
     ).toHaveAttribute("href", "/products/manage-products");
+    expect(screen.getByRole("link", { name: "Orders" })).toHaveAttribute(
+      "href",
+      "/products/orders",
+    );
+    expect(screen.getByRole("link", { name: "Subscriptions" })).toHaveAttribute(
+      "href",
+      "/products/subscriptions",
+    );
+  });
+
+  it("renders Orders and Subscriptions as real, unlocked links even with no permissionMap prop at all", () => {
+    render(<AdminNav />);
+    for (const label of ["Orders", "Subscriptions"]) {
+      const link = screen.getByRole("link", { name: label });
+      expect(link).toBeInTheDocument();
+      expect(link).not.toHaveAttribute("aria-disabled");
+    }
   });
 
   it("renders Manage Products as a real, unlocked link even with no permissionMap prop at all", () => {
@@ -134,11 +153,13 @@ describe("AdminNav — collapsed rail", () => {
     expect(screen.queryByText("Administration")).not.toBeInTheDocument();
   });
 
-  it("keeps all six links reachable with a title tooltip", () => {
+  it("keeps all eight links reachable with a title tooltip", () => {
     render(<AdminNav collapsed permissionMap={managerMap} />);
     for (const label of [
       "View Product",
       "Manage Products",
+      "Orders",
+      "Subscriptions",
       "Users",
       "Roles",
       "System Configuration",

@@ -8,9 +8,11 @@ import {
   ArrowLeftRight,
   BookOpen,
   Building2,
+  ClipboardList,
   Compass,
   FileText,
   Landmark,
+  Layers,
   Lock,
   Package,
   PackagePlus,
@@ -89,6 +91,19 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         label: "Manage Products",
         href: "/products/manage-products",
         icon: PackagePlus,
+      },
+      // pm27: Orders/Subscriptions, same nav-renders-regardless convention
+      // as View Product/Manage Products (no requiredPermission) — the page
+      // guard enforces. `/products/subscriptions` 404s until pm33.
+      {
+        label: "Orders",
+        href: "/products/orders",
+        icon: ClipboardList,
+      },
+      {
+        label: "Subscriptions",
+        href: "/products/subscriptions",
+        icon: Layers,
       },
     ],
   },
