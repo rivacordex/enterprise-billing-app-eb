@@ -9,7 +9,7 @@
 
 Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | ACTIVE | RETIRED` → `LifecycleBadge`), **price type** (`recurring | usage | once` → `PriceTypeBadge`), **offering flags** (bundle / sellable / billing-only chips), **spec/tier JSONB entries** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, and the Manage Products table/dialogs/forms.
 
-> **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is not wired here yet — its status badges (TMF622 order states, TMF637 subscription states), negotiated-price indicator, and review-screen treatments get defined in this file when that phase's UI units are specced. Until then, `mockup-product-ordering.html` (planning folder) is the visual reference; it uses the shared token families, not new ones.
+> **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is only partly wired here — pm27 (§8 below) wires the Orders list: `OrderStatusBadge` (TMF622 order states) and the negotiated-price indicator. Still undefined: TMF637 subscription states (Subscriptions page, pm33) and the manager review-screen treatment (pm31). `mockup-product-ordering.html` (planning folder) remains the visual reference for those; it uses the shared token families, not new ones.
 
 Two deliberate exclusions (same rules as User Management), applying to **both** product pages:
 
@@ -111,3 +111,27 @@ Both include an optional "Reason" text input — a plain, unlabeled-as-required 
 **Version-family grouping.** The Manage Products table shows one row per family by default (its `ACTIVE` version, or latest `DRAFT` if never active). A chevron-style expand affordance (`chevron-down`/`chevron-right`, `--text-muted`, rotates on expand — same interaction convention as any other disclosure control in the app) reveals the family's other versions as indented sub-rows beneath the primary row, each with its own status badge and its own row actions per the table above. Non-primary rows use a subtly recessed background (`--surface-sunken`, the same token used by empty-panel states) to visually subordinate them to the family's primary row without introducing a new surface token.
 
 **Activate confirmation.** Not a danger dialog (activation isn't destructive) — a plain confirmation dialog, default button styling for "Cancel," accent-filled for "Activate" (the one place besides "New offering" where an accent button appears — acceptable since they never render in the same view). Body copy states the precondition plainly and, when relevant, that activating will retire the family's current active version automatically: *"`<Name>` will become billable once activated. Requires at least one price and all mandatory specs resolved. If another version of this product is currently active, it will be retired automatically."* Includes the same optional "Reason" field as the Discard/Retire dialog.
+
+---
+
+## 8. Ordering — Orders Page (pm27)
+
+Patterns for `/products/orders`. `--action-cta-bg` is used exactly once on this page too ("New order," same one-accent-button-per-view rule as Manage Products' "New offering" — the two pages never render together, so no conflict).
+
+**`OrderStatusBadge` (TMF622 order status).** Same pill construction as `LifecycleBadge`/`PriceTypeBadge` (§1/§2 — dark `-fg` text on light `-bg` tint, icon + label, never color-only). All nine seeded `ORDER_STATUSES` get a variant; the phase only ever writes `ACKNOWLEDGED`/`PENDING`/`COMPLETED`/`REJECTED`/`FAILED` (architecture §3), so the remaining four (`HELD`/`IN_PROGRESS`/`CANCELLED`/`PARTIAL`) render if the full enum is ever exercised but are otherwise unused:
+
+| `status` | Meaning | `-fg` text | `-bg` tint | Icon |
+|---|---|---|---|---|
+| `COMPLETED` | Order fulfilled; inventory instantiated | `--color-success-700` | `--color-success-50` | check-circle |
+| `PENDING` | Awaiting manager review (has a negotiated price) | `--color-warning-700` | `--color-warning-50` | clock |
+| `REJECTED` | Manager declined; terminal, no inventory | `--color-danger-700` | `--color-danger-50` | x-circle |
+| `FAILED` | Completion attempt failed | `--color-danger-700` | `--color-danger-50` | alert-triangle |
+| `ACKNOWLEDGED` / `HELD` / `IN_PROGRESS` / `CANCELLED` / `PARTIAL` | In-flight or terminal states not yet written by this phase | `--color-neutral-700` | `--color-neutral-100` | status-specific, distinct per state |
+
+**Negotiated-price indicator.** Renders in the Orders table's Price column on `hasOverride` rows — **not** the AI/Iris-violet family (§0 exclusion still applies in full to this page). Uses the shared **Accent** scale instead (ui-context §1.2 — the brand's own "magenta → violet" energy accent, distinct from the reserved AI tokens): a pill, `--color-accent-50` bg / `--color-accent-700` text, a `handshake` icon, label "Negotiated." A row with no override renders plain muted text, lowercase "list" (not a pill — the absence of a negotiated price isn't a status worth badging).
+
+**Review affordance.** A small quiet button next to the status badge on `PENDING` rows only ("Review"), `--text-secondary`/`text-muted-foreground` treatment matching Manage Products' quiet row actions (§7). Inert in pm27 (seam for pm31); stops click propagation so it never triggers the row's own `?order=` selection.
+
+**"New order" CTA.** Header button, `--action-cta-bg`, same treatment as "New offering." Inert in pm27 (seam for pm29).
+
+**Reviewed column.** `— (auto)` in muted text for a standard (no-override) order that reached `COMPLETED` without a human reviewer — distinct from a plain `—` (unreviewed, still in flight) so the two "nothing to show" cases stay visually distinguishable via text alone (no color coding needed for a muted informational column).
