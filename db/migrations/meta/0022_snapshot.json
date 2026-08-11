@@ -1,5 +1,5 @@
 {
-  "id": "84aaf6ed-24b6-495e-bd84-139528db2138",
+  "id": "eded6822-6c0a-4481-894b-c24527381d24",
   "prevId": "83d4e0e5-7c67-4f49-bd17-29a1e2e762d8",
   "version": "7",
   "dialect": "postgresql",
@@ -3127,6 +3127,14 @@
         "order_item_price_override_amount_check": {
           "name": "order_item_price_override_amount_check",
           "value": "amount > 0"
+        },
+        "order_item_price_override_price_type_check": {
+          "name": "order_item_price_override_price_type_check",
+          "value": "price_type IN ('recurring','usage','once')"
+        },
+        "order_item_price_override_currency_check": {
+          "name": "order_item_price_override_currency_check",
+          "value": "char_length(currency) = 3"
         }
       },
       "isRLSEnabled": false
@@ -3251,6 +3259,21 @@
               "expression": "status",
               "isExpression": false,
               "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "product_order_submitted_at_idx": {
+          "name": "product_order_submitted_at_idx",
+          "columns": [
+            {
+              "expression": "submitted_at",
+              "isExpression": false,
+              "asc": false,
               "nulls": "last"
             }
           ],
@@ -3496,6 +3519,22 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "inventory_status_history_one_creation_row_unique": {
+          "name": "inventory_status_history_one_creation_row_unique",
+          "columns": [
+            {
+              "expression": "product_inventory_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "from_status IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
