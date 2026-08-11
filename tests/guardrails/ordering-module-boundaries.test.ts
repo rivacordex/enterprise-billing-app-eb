@@ -14,7 +14,7 @@ function collectFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = path.join(dir, entry.name);
     if (entry.isDirectory()) return collectFiles(entryPath);
-    return /\.ts$/.test(entry.name) ? [entryPath] : [];
+    return /\.tsx?$/.test(entry.name) ? [entryPath] : [];
   });
 }
 
@@ -32,9 +32,12 @@ describe("ordering module boundaries (pm26 §4)", () => {
     expect(servicesOrderingFiles().length).toBeGreaterThan(0);
   });
 
-  it("no services/ordering file imports from next/*", () => {
+  it("no services/ordering file imports from next/* (static, side-effect, or dynamic)", () => {
+    // Catches `from "next/..."`, bare side-effect `import "next/..."`, and
+    // dynamic `import("next/...")` (and the bare `"next"` package) alike.
+    const NEXT_IMPORT = /(?:from|import)\s*\(?\s*["']next(?:\/|["'])/;
     const offenders = servicesOrderingFiles()
-      .filter(({ content }) => /from\s+["']next(\/|["'])/.test(content))
+      .filter(({ content }) => NEXT_IMPORT.test(content))
       .map(({ relative }) => relative);
     expect(offenders).toEqual([]);
   });

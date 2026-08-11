@@ -155,7 +155,12 @@ export const productOrderRepository = {
     const sortKey = filters.sort.startsWith("-")
       ? filters.sort.slice(1)
       : filters.sort;
-    const sortColumn = SORT_COLUMNS[sortKey as keyof typeof SORT_COLUMNS];
+    // `?? productOrderId` is a defensive fallback: `filters.sort` is a validated
+    // `OrderSort` at the type boundary, so an unknown key can only arise from a
+    // direct (Zod-bypassing) caller — never pass `undefined` to asc/desc.
+    const sortColumn =
+      SORT_COLUMNS[sortKey as keyof typeof SORT_COLUMNS] ??
+      productOrder.productOrderId;
     const orderBy = filters.sort.startsWith("-")
       ? [desc(sortColumn), asc(productOrder.productOrderId)]
       : [asc(sortColumn), asc(productOrder.productOrderId)];
