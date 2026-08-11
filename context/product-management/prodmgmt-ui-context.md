@@ -126,7 +126,8 @@ Patterns for `/products/orders`. `--action-cta-bg` is used exactly once on this 
 | `PENDING` | Awaiting manager review (has a negotiated price) | `--color-warning-700` | `--color-warning-50` | clock |
 | `REJECTED` | Manager declined; terminal, no inventory | `--color-danger-700` | `--color-danger-50` | x-circle |
 | `FAILED` | Completion attempt failed | `--color-danger-700` | `--color-danger-50` | alert-triangle |
-| `ACKNOWLEDGED` / `HELD` / `IN_PROGRESS` / `CANCELLED` / `PARTIAL` | In-flight or terminal states not yet written by this phase | `--color-neutral-700` | `--color-neutral-100` | status-specific, distinct per state |
+| `ACKNOWLEDGED` | Order received and acknowledged (a standard, no-override order's initial state before auto-completion) | `--color-neutral-700` | `--color-neutral-100` | file-check |
+| `HELD` / `IN_PROGRESS` / `CANCELLED` / `PARTIAL` | In-flight or terminal states not yet written by this phase | `--color-neutral-700` | `--color-neutral-100` | status-specific, distinct per state |
 
 **Negotiated-price indicator.** Renders in the Orders table's Price column on `hasOverride` rows — **not** the AI/Iris-violet family (§0 exclusion still applies in full to this page). Uses the shared **Accent** scale instead (ui-context §1.2 — the brand's own "magenta → violet" energy accent, distinct from the reserved AI tokens): a pill, `--color-accent-50` bg / `--color-accent-700` text, a `handshake` icon, label "Negotiated." A row with no override renders plain muted text, lowercase "list" (not a pill — the absence of a negotiated price isn't a status worth badging).
 
