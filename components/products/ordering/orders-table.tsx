@@ -327,13 +327,18 @@ export function OrdersTable({
                       <div className="flex items-center gap-2">
                         <OrderStatusBadge status={row.status} />
                         {row.status === "PENDING" && (
-                          // pm31 seam: opens the manager review screen. No
-                          // handler yet — renders fully wired-looking, does
-                          // nothing on click.
+                          // pm31: fills pm27's Review seam — selects the row
+                          // (sets `?order=`), opening the review panel below.
+                          // stopPropagation keeps it from double-firing the
+                          // row's own click handler (which does the same),
+                          // matching pm27's stop-propagation contract.
                           <button
                             type="button"
                             aria-label={`Review order ${row.orderId}`}
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectRow(row.orderId);
+                            }}
                             onKeyDown={(e) => e.stopPropagation()}
                             className="rounded-sm border-[0.5px] border-[color:var(--border)] px-1.5 py-0.5 text-caption text-muted-foreground"
                           >

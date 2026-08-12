@@ -131,6 +131,11 @@ const eslintConfig = defineConfig([
                     "services",
                     "auth",
                     "auth-permission-constants",
+                    // "auth-roles" added for pm31's orders/page.tsx, which
+                    // calls `actorHasRole` to resolve `canReview` (MANAGER
+                    // role half of the review-eligibility check) — same
+                    // carve-out shape `services` already uses for pm30.
+                    "auth-roles",
                     "components",
                     "validation",
                     "types",

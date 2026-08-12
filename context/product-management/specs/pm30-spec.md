@@ -24,7 +24,7 @@ Additive repository method `findRoleNamesByUserId(userId): string[]` (join `role
   3. Re-run `checkOrderPreconditions(tx, …)` — any failure returns its concrete code (`CUSTOMER_NOT_ACTIVE`, …) and the order **stays `PENDING`** (transaction aborts; the reviewer sees why and can reject).
   4. Instantiate exactly as pm28 §2.3 (inventory + history + audit), `updateStatus` → `COMPLETED` with `reviewed_by = actorId`, `reviewed_at`, `completed_at`; audit `PRODUCT_ORDER_APPROVED` + `PRODUCT_INVENTORY_CREATED` + `PRODUCT_ORDER_COMPLETED`.
 - `rejectOrder(orderId, actorId, reason)`: same steps 1–2; sets `REJECTED` + `failure_reason = reason` + `reviewed_by/reviewed_at`; audit `PRODUCT_ORDER_REJECTED`. Terminal; no inventory. Reason required (Zod, pm25).
-- Shared instantiation code between pm28 and this unit factored into one internal `instantiateOrder(tx, order, item, actorId)` — one definition of "create the subscription", two callers.
+- Shared instantiation code between pm28 and this unit factored into one exported module function `instantiateOrder(tx, order, item, actorId, now, review?)` in `services/ordering/instantiate-order.ts` — one definition of "create the subscription", two callers. The optional `review` argument carries the approval path's `reviewed_by`/`reviewed_at` metadata, stamped onto the same `COMPLETED` update; the standard `createOrder` path omits it (an auto-completed order was never reviewed). `now` is the injected clock both callers already thread through.
 
 ### 3. Integration + concurrency tests (live-DB script)
 

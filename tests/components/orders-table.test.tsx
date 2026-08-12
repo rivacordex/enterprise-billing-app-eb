@@ -145,7 +145,7 @@ describe("OrdersTable", () => {
     expect(row?.textContent).not.toContain("(auto)");
   });
 
-  it("renders a Review affordance only on the PENDING row, and it does not trigger row selection", async () => {
+  it("renders a Review affordance only on the PENDING row, and clicking it selects that order exactly once (pm31 seam)", async () => {
     const user = userEvent.setup();
     render(<OrdersTable {...DEFAULT_PROPS} />);
 
@@ -155,19 +155,22 @@ describe("OrdersTable", () => {
     expect(reviewButtons).toHaveLength(1);
 
     await user.click(reviewButtons[0]!);
-    expect(mockPush).not.toHaveBeenCalled();
+    // Sets ?order= (opening the review panel). stopPropagation keeps the row's
+    // own click from firing a second, redundant navigation.
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(lastNavigatedUrl(mockPush).get("order")).toBe("PRDORD00000002");
   });
 
-  it("keyboard-activating Review (Enter/Space) does not bubble to trigger row selection", async () => {
+  it("keyboard-activating Review selects the order without bubbling to a second navigation", async () => {
     const user = userEvent.setup();
     render(<OrdersTable {...DEFAULT_PROPS} />);
 
     const reviewButton = screen.getByRole("button", { name: /Review order/ });
     reviewButton.focus();
     await user.keyboard("{Enter}");
-    await user.keyboard(" ");
 
-    expect(mockPush).not.toHaveBeenCalled();
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(lastNavigatedUrl(mockPush).get("order")).toBe("PRDORD00000002");
   });
 
   it("activates row selection via keyboard Enter and Space", async () => {
