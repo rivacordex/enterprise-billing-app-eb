@@ -70,26 +70,30 @@ describe("ReviewActions", () => {
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
   });
 
-  it("disables the buttons with the submitter tooltip", () => {
+  it("disables the buttons and exposes the submitter reason as visible, AT-associated text", () => {
     renderActions({
       canReview: false,
       disabledReason: "You submitted this order",
     });
-    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
-    expect(
-      screen.getAllByTitle("You submitted this order").length,
-    ).toBeGreaterThan(0);
+    const approve = screen.getByRole("button", { name: "Approve" });
+    const reject = screen.getByRole("button", { name: "Reject" });
+    expect(approve).toBeDisabled();
+    expect(reject).toBeDisabled();
+
+    // Visible helper text, not a title-only tooltip on a non-focusable span.
+    const reason = screen.getByText("You submitted this order");
+    expect(reason).toBeVisible();
+    // Both buttons point at it via aria-describedby.
+    expect(approve).toHaveAttribute("aria-describedby", reason.id);
+    expect(reject).toHaveAttribute("aria-describedby", reason.id);
   });
 
-  it("disables the buttons with the non-manager tooltip", () => {
+  it("exposes the non-manager reason as visible text", () => {
     renderActions({
       canReview: false,
       disabledReason: "Requires MANAGER role",
     });
-    expect(
-      screen.getAllByTitle("Requires MANAGER role").length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByText("Requires MANAGER role")).toBeVisible();
   });
 
   it("restates list vs negotiated in the approve confirmation and submits { orderId }", async () => {

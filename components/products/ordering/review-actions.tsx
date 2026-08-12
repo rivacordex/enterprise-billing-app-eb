@@ -171,27 +171,41 @@ export function ReviewActions({
     }
   }
 
-  // Disabled path (platform Inv. #3, UX only): a plain `title` tooltip on a
-  // wrapping span — there is no shared Tooltip primitive in components/ui, and
-  // a disabled <button> doesn't emit the hover events a JS tooltip would need,
-  // so the native title on the enclosing span is the accessible choice.
+  // Disabled path (platform Inv. #3, UX only): render the reason as visible
+  // helper text (not just a `title` on a non-focusable span, which keyboard
+  // and assistive-technology users can never reach) and associate it with both
+  // buttons via `aria-describedby`. The buttons stay `disabled`; the text is
+  // page content every user — sighted, keyboard, or AT — encounters.
+  const disabledReasonId = "review-disabled-reason";
   if (!canReview) {
     return (
-      <div className="flex items-center gap-2">
-        <span title={disabledReason ?? undefined}>
+      <div className="flex flex-col items-end gap-1.5">
+        <div className="flex items-center gap-2">
           <Button
             type="button"
             disabled
+            aria-describedby={disabledReason ? disabledReasonId : undefined}
             className="bg-[color:var(--action-cta-bg)]"
           >
             Approve
           </Button>
-        </span>
-        <span title={disabledReason ?? undefined}>
-          <Button type="button" variant="destructive" disabled>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled
+            aria-describedby={disabledReason ? disabledReasonId : undefined}
+          >
             Reject
           </Button>
-        </span>
+        </div>
+        {disabledReason && (
+          <p
+            id={disabledReasonId}
+            className="text-body-sm text-muted-foreground"
+          >
+            {disabledReason}
+          </p>
+        )}
       </div>
     );
   }
