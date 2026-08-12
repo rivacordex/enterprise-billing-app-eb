@@ -223,6 +223,19 @@ describe("grep gate — money arithmetic only in services/accounts/money.ts (cod
   const PARSE_FLOAT_PATTERN = /\bparseFloat\(/;
   const NUMBER_ON_AMOUNT_PATTERN = /\bNumber\(\s*[a-zA-Z.?[\]]*[Aa]mount/;
 
+  // Documented, reviewed carve-out (pm31, user-confirmed 2026-08-12): the
+  // order review panel computes a **display-only** Δ% between an order's list
+  // and negotiated price to help a manager judge an override at approval time.
+  // It is not money arithmetic in the sense this gate guards — it never
+  // produces a monetary value and is never a rating/billing source (product
+  // Inv. #7/#16: bills are reconstructed only from immutable price + override
+  // rows, never from a rendered percentage). The pm31 spec mandates the Δ%
+  // column explicitly; this is the single sanctioned `Number(<amount>)` call
+  // site outside money.ts, allow-listed here rather than dodged by renaming.
+  const NUMBER_ON_AMOUNT_ALLOWED = new Set<string>([
+    "components/products/ordering/order-review-panel.tsx",
+  ]);
+
   it("no source file outside money.ts calls parseFloat(", () => {
     const offenders = ALL_SOURCE_FILES.filter(
       ({ relative }) => relative !== OWN_FILE,
@@ -237,7 +250,8 @@ describe("grep gate — money arithmetic only in services/accounts/money.ts (cod
 
   it("no source file outside money.ts calls Number( on an amount-named value", () => {
     const offenders = ALL_SOURCE_FILES.filter(
-      ({ relative }) => relative !== OWN_FILE,
+      ({ relative }) =>
+        relative !== OWN_FILE && !NUMBER_ON_AMOUNT_ALLOWED.has(relative),
     )
       .filter(({ content }) =>
         NUMBER_ON_AMOUNT_PATTERN.test(stripLineComments(content)),
@@ -245,6 +259,20 @@ describe("grep gate — money arithmetic only in services/accounts/money.ts (cod
       .map(({ relative }) => relative);
 
     expect(offenders).toEqual([]);
+  });
+
+  it("the Number(<amount>) allow-list is not vacuous — each entry genuinely trips the pattern", () => {
+    // Guards the carve-out from silently rotting: if the review panel ever
+    // stops doing the Δ% computation, drop it from the allow-list rather than
+    // leaving a dead exception behind.
+    for (const relative of NUMBER_ON_AMOUNT_ALLOWED) {
+      const entry = ALL_SOURCE_FILES.find((f) => f.relative === relative);
+      expect(entry, `${relative} should exist`).toBeDefined();
+      expect(
+        NUMBER_ON_AMOUNT_PATTERN.test(stripLineComments(entry!.content)),
+        `${relative} should still contain the allow-listed Number(<amount>) call`,
+      ).toBe(true);
+    }
   });
 });
 
