@@ -210,6 +210,77 @@ describe("NewOrderWizard — override entry shows the approval banner", () => {
 });
 
 describe("NewOrderWizard — submit", () => {
+  async function reachStep3WithOffer(user: ReturnType<typeof userEvent.setup>) {
+    await openAndSelectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText(/Acme main account/);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await user.type(screen.getByLabelText("Search offers"), "fiber");
+    await screen.findByText("Fiber 100");
+    await user.click(screen.getByRole("button", { name: /Fiber 100/ }));
+    await screen.findByText("Current effective prices");
+  }
+
+  it("exits the billing-account loading state when the accounts read rejects", async () => {
+    mockGetCustomerAccounts.mockRejectedValue(new Error("network down"));
+    const user = userEvent.setup();
+    renderWizard();
+
+    await openAndSelectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    // A rejected read must not leave the spinner stuck: the derived loading
+    // flag clears (via the effect's `finally`) and the empty-state message
+    // shows instead of "Loading billing accounts…" forever.
+    expect(
+      await screen.findByText(
+        "No open billing accounts found for this customer.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Loading billing accounts…"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("maps a BILLING_ACCOUNT_CLOSED precondition failure to its form-level message", async () => {
+    mockCreateOrderAction.mockResolvedValue({
+      ok: false,
+      code: "BILLING_ACCOUNT_CLOSED",
+    });
+    const user = userEvent.setup();
+    renderWizard();
+
+    await reachStep3WithOffer(user);
+    await user.click(screen.getByRole("button", { name: "Submit order" }));
+
+    expect(
+      await screen.findByText(
+        "This billing account has been closed. Please choose another.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the approval toast when a submitted order lands PENDING", async () => {
+    mockCreateOrderAction.mockResolvedValue({
+      ok: true,
+      orderId: "PRDORD00000002",
+      inventoryId: null,
+      status: "PENDING",
+    });
+    const user = userEvent.setup();
+    renderWizard();
+
+    await reachStep3WithOffer(user);
+    await user.click(screen.getByRole("button", { name: "Submit order" }));
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        "Order PRDORD00000002 submitted for approval",
+      );
+    });
+  });
+
   it("submits a standard order with the assembled payload and closes on success", async () => {
     mockCreateOrderAction.mockResolvedValue({
       ok: true,

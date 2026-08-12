@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { wizardSearchCustomersAction } from "@/actions/accounts/new-order-wizard-reads";
 import type { CustomerSearchResult } from "@/types/customer";
@@ -34,11 +35,26 @@ export function WizardStepCustomer({
     if (query.trim() === "") return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      void wizardSearchCustomersAction(query).then((data) => {
-        if (cancelled) return;
-        setResults(data?.results ?? []);
-        setResultsForQuery(query);
-      });
+      void wizardSearchCustomersAction(query)
+        .then((data) => {
+          if (cancelled) return;
+          setResults(data?.results ?? []);
+        })
+        .catch(() => {
+          // A rejected search must not leave stale results or an unhandled
+          // rejection — clear the list; `setResultsForQuery` (which clears the
+          // derived `isSearching` flag) moves to `finally` so it runs on both
+          // success and failure. Toast so a failed search is distinguishable
+          // from a genuinely empty result set (matching the other fetch
+          // effects' error handling).
+          if (cancelled) return;
+          setResults([]);
+          toast.error("Couldn't search customers. Please try again.");
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setResultsForQuery(query);
+        });
     }, 250);
     return () => {
       cancelled = true;
@@ -90,6 +106,7 @@ export function WizardStepCustomer({
                 type="button"
                 disabled={!isOrderable}
                 aria-disabled={!isOrderable}
+                aria-pressed={isSelected}
                 onClick={() => isOrderable && onSelect(customer)}
                 className={
                   "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-body-sm " +

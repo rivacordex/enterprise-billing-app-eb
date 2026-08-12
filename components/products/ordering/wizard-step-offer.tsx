@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
+import { toast } from "sonner";
 
 import { CharacteristicsEditor } from "@/components/products/ordering/characteristics-editor";
 import { OverridePriceFields } from "@/components/products/ordering/override-price-fields";
@@ -13,9 +14,10 @@ import type { WizardFormValues } from "@/components/products/ordering/wizard-for
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { formatCurrency } from "@/lib/formatters";
+import { BACKDATING_TOLERANCE_DAYS } from "@/validation/backdating-tolerance";
 import type { OfferingDetail } from "@/types/product";
 
-const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export interface WizardStepOfferProps {
   selectedOffering: WizardOfferingOption | null;
@@ -64,11 +66,26 @@ export function WizardStepOffer({
     if (query.trim() === "") return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      void wizardSearchOfferingsAction(query).then((data) => {
-        if (cancelled) return;
-        setResults(data ?? []);
-        setResultsForQuery(query);
-      });
+      void wizardSearchOfferingsAction(query)
+        .then((data) => {
+          if (cancelled) return;
+          setResults(data ?? []);
+        })
+        .catch(() => {
+          // A rejected search must not leave stale results or an unhandled
+          // rejection — clear the list; `setResultsForQuery` (which clears the
+          // derived `isSearching` flag) moves to `finally` so it runs on both
+          // success and failure. Toast so a failed search (e.g. the offering
+          // page-loop tripping its safety ceiling) is distinguishable from a
+          // genuinely empty result set.
+          if (cancelled) return;
+          setResults([]);
+          toast.error("Couldn't search offers. Please try again.");
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setResultsForQuery(query);
+        });
     }, 250);
     return () => {
       cancelled = true;
@@ -78,7 +95,16 @@ export function WizardStepOffer({
 
   const visibleResults = query.trim() === "" ? [] : results;
 
-  const [nowMs] = useState(() => Date.now());
+  // A mount-time snapshot of *today's local calendar day* (midnight), not the
+  // wall-clock instant — so the backdate banner compares whole calendar days
+  // (today is 0 days back, not "a few hours"), and today itself never trips it.
+  // Snapshotted via a lazy initializer rather than a bare `new Date()` in the
+  // render body to satisfy this codebase's `react-hooks/purity` rule (a
+  // short-lived dialog can't outlive a day boundary meaningfully).
+  const [todayLocalMs] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  });
 
   const currentPrices =
     offeringDetail?.prices.filter((p) => p.effectivityStatus === "current") ??
@@ -219,8 +245,17 @@ export function WizardStepOffer({
                     (() => {
                       const start = new Date(`${startDate}T00:00:00`);
                       if (Number.isNaN(start.getTime())) return null;
-                      const msSinceStart = nowMs - start.getTime();
-                      if (msSinceStart > 0 && msSinceStart <= THREE_DAYS_MS) {
+                      // Whole calendar days between today and the start date;
+                      // the banner is the in-tolerance historical window only
+                      // (1..3 days back). Today (0) shows nothing; > tolerance
+                      // is handled by the schema's blocking field error.
+                      const daysInPast = Math.round(
+                        (todayLocalMs - start.getTime()) / MS_PER_DAY,
+                      );
+                      if (
+                        daysInPast >= 1 &&
+                        daysInPast <= BACKDATING_TOLERANCE_DAYS
+                      ) {
                         return (
                           <div className="rounded-[var(--radius)] bg-[color:var(--bg-warning)] px-3 py-2 text-body-sm text-[color:var(--text-warning)]">
                             This order is backdated to {startDate}; historical
