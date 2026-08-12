@@ -3,6 +3,7 @@ import { and, count, eq, ne } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
 import { roleAssign } from "@/db/schema/role-assign";
+import { roles } from "@/db/schema/roles";
 import type { RoleAssign } from "@/types/rbac";
 
 export const roleAssignRepository = {
@@ -13,6 +14,20 @@ export const roleAssignRepository = {
       .where(eq(roleAssign.refUserId, userId));
 
     return rows.map((row) => row.refRoleId);
+  },
+
+  // Additive finder (pm30-spec §1): the assigned role *names* for a user, via
+  // `role_assign → roles.role_name`. Backs `auth/actorHasRole`'s live
+  // per-request MANAGER-role check for order approval — the codebase's first
+  // role-name (not permission) authority check.
+  async findRoleNamesByUserId(db: Database, userId: string): Promise<string[]> {
+    const rows = await db
+      .select({ roleName: roles.roleName })
+      .from(roleAssign)
+      .innerJoin(roles, eq(roles.roleId, roleAssign.refRoleId))
+      .where(eq(roleAssign.refUserId, userId));
+
+    return rows.map((row) => row.roleName);
   },
 
   // Bulk-inserts initial role grants for a newly created user (um08-spec

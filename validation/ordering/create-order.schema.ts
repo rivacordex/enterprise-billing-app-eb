@@ -7,8 +7,10 @@ import { PRICE_TYPES } from "@/types/product";
 // Up-to-2-decimal positive money string, capped at 10 integer digits so it
 // fits numeric(12,2)'s max (9999999999.99) — the regex enforces the bound
 // decimal-safely (no float rounding), matching the DB `amount > 0` CHECK on
-// order_item_price_override.
-const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
+// order_item_price_override. Exported so the wizard's client-side fast-fail
+// (new-order-wizard.tsx) validates override amounts against the exact same
+// rule this wire schema enforces, rather than duplicating the literal.
+export const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
 
 // A negotiated per-line override. `priceType` must be one of the DB-supported
 // lowercase catalog values (`recurring`/`usage`/`once`, PRICE_TYPES) — the same

@@ -38,6 +38,14 @@ const BOUNDARIES_ELEMENTS = [
   // to import directly, same shape as the `auth-permission-constants`
   // carve-out above.
   { type: "auth-lockout", mode: "full", pattern: "auth/lockout.ts" },
+  // Carved out ahead of the general "auth" pattern (pm30-spec §1): the live
+  // per-request role-name helper `actorHasRole`, imported by
+  // `services/ordering/review-order.ts` for the MANAGER-role approval gate.
+  // Same shape as the `auth-lockout` carve-out above — a thin auth helper
+  // `services/**` may depend on — except this one reads the DB, so it is
+  // allowed to import `db` (see its own from-rule below), unlike the pure
+  // decision helper `auth-lockout`.
+  { type: "auth-roles", mode: "full", pattern: "auth/roles.ts" },
   { type: "auth", mode: "full", pattern: "auth/**" },
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
@@ -164,6 +172,10 @@ const eslintConfig = defineConfig([
                   type: [
                     "db",
                     "auth-lockout",
+                    // "auth-roles" added for pm30's `review-order.ts`, which
+                    // calls `actorHasRole` for the MANAGER-role approval gate
+                    // (same carve-out shape as `auth-lockout`).
+                    "auth-roles",
                     "validation",
                     "types",
                     "lib",
@@ -198,6 +210,13 @@ const eslintConfig = defineConfig([
             {
               from: { type: "auth-lockout" },
               allow: { to: { type: ["types"] } },
+            },
+            {
+              // `auth/roles.ts` reads role_assign → roles via the repository,
+              // so it reaches `db` (pm30-spec §1) — unlike the pure
+              // `auth-lockout` helper above.
+              from: { type: "auth-roles" },
+              allow: { to: { type: ["db", "types", "lib"] } },
             },
             {
               // "validation" added for pm02's `db/schema/product.ts` (a
