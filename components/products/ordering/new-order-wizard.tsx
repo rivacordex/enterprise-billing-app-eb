@@ -322,6 +322,13 @@ export function NewOrderWizard({
     setCustomer(next);
     setAccounts([]);
     setFinancialAccountName(null);
+    // Reset the loaded-for marker alongside the accounts (same reasoning as
+    // `selectOffering` below). Re-searching and reselecting the same customer
+    // yields a new object with the same `partyRoleId`, so the `[customer]`
+    // effect refetches — but without clearing this marker, `isLoadingAccounts`
+    // would read false during that refetch (marker still === partyRoleId),
+    // flashing the empty "no accounts" state instead of the loading indicator.
+    setAccountsLoadedFor(null);
     setAccount(null);
   }
 
@@ -406,7 +413,16 @@ export function NewOrderWizard({
 
   const canGoToStep2 = customer !== null;
   const canGoToStep3 = canGoToStep2 && account !== null;
-  const canSubmit = canGoToStep3 && offering !== null;
+  // Submit only once the selected offer's detail has actually loaded: the
+  // `characteristicsList`/`overrides` fields are initialized from
+  // `offeringDetail` in the effect above, so enabling Submit while it is still
+  // loading — or after a null/rejected load — would post an under-initialized
+  // payload. Stays disabled during the load and when detail is null/rejected.
+  const canSubmit =
+    canGoToStep3 &&
+    offering !== null &&
+    !isLoadingOfferingDetail &&
+    offeringDetail !== null;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
