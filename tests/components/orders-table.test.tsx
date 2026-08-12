@@ -12,6 +12,20 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
+// pm29: `OrdersTable` now composes `NewOrderWizard` at its "New order" seam
+// (previously an inert `<button>`) — that pulls in `createOrderAction`
+// (`db/client`-backed) at import time, so it must be mocked here the same
+// way every other manage-table test mocks its own dialog's action.
+vi.mock("@/actions/ordering/create-order.action", () => ({
+  createOrderAction: vi.fn(),
+}));
+vi.mock("@/actions/accounts/new-order-wizard-reads", () => ({
+  wizardSearchCustomersAction: vi.fn(),
+  wizardGetCustomerAccountsAction: vi.fn(),
+  wizardSearchOfferingsAction: vi.fn(),
+  wizardGetOfferingDetailAction: vi.fn(),
+}));
+
 import { OrdersTable } from "@/components/products/ordering/orders-table";
 import type { OrderListRow } from "@/types/ordering";
 

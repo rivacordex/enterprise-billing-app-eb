@@ -12,6 +12,7 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { NewOrderWizard } from "@/components/products/ordering/new-order-wizard";
 import {
   ORDER_STATUS_LABELS,
   OrderStatusBadge,
@@ -199,16 +200,19 @@ export function OrdersTable({
           </div>
         </div>
 
-        {/* pm29 seam: New order opens the 3-step wizard. No handler yet —
-            renders fully wired-looking, does nothing on click. */}
-        <button
-          type="button"
-          aria-label="New order"
-          className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-cta-bg)] px-3 py-2 text-body-sm font-semibold text-white"
-        >
-          <Plus size={16} aria-hidden />
-          New order
-        </button>
+        <NewOrderWizard
+          locale={locale}
+          trigger={
+            <button
+              type="button"
+              aria-label="New order"
+              className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-cta-bg)] px-3 py-2 text-body-sm font-semibold text-white"
+            >
+              <Plus size={16} aria-hidden />
+              New order
+            </button>
+          }
+        />
       </div>
 
       <div
