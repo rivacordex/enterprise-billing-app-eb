@@ -55,6 +55,7 @@ export function WizardStepAccount({
             <li key={ban.billingAccountId}>
               <button
                 type="button"
+                aria-pressed={isSelected}
                 onClick={() => onSelect(ban)}
                 className={
                   "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-body-sm hover:bg-[color:var(--action-ghost-hover)]" +

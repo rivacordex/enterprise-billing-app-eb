@@ -34,17 +34,18 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { inclusiveBilledDateSchema } from "@/validation/backdating-tolerance";
+import { MONEY_2DP_REGEX } from "@/validation/ordering/create-order.schema";
 import { PRICE_TYPES } from "@/types/product";
 import type { OfferingDetail } from "@/types/product";
 import type { CustomerSearchResult } from "@/types/customer";
 import type { CreateOrderActionResult } from "@/actions/ordering/create-order.action";
 
-const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
-
 // pm29-spec §Implementation-2. UI-only, mirroring createOrderSchema's own
 // rules (fast-fail) without literally reusing the object — useFieldArray
 // needs the array shapes, the same local-schema-plus-translation call
 // price-form.tsx/specification-form.tsx already make for the same reason.
+// `MONEY_2DP_REGEX` is imported from the wire schema (not re-declared) so the
+// client fast-fail can never drift from the server rule it mirrors.
 const wizardFormSchema = z
   .object({
     quantity: z
@@ -72,6 +73,26 @@ const wizardFormSchema = z
           message: "Enter a valid positive amount, up to 2 decimals.",
           path: ["overrides", index, "amount"],
         });
+      }
+    });
+
+    // `listToRecord` (the wire translation) does `Object.fromEntries`, so two
+    // rows with the same key would silently collapse — the later value
+    // overwriting the earlier, unflagged. Reject repeated non-empty keys here
+    // (trimmed, matching the field's own `.trim()`) so the user sees the
+    // collision instead of losing a row's value at submit.
+    const seenKeys = new Set<string>();
+    value.characteristicsList.forEach((entry, index) => {
+      const key = entry.key.trim();
+      if (key === "") return;
+      if (seenKeys.has(key)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Duplicate characteristic key.",
+          path: ["characteristicsList", index, "key"],
+        });
+      } else {
+        seenKeys.add(key);
       }
     });
   });
@@ -181,15 +202,31 @@ export function NewOrderWizard({
     // `financialAccountName` itself, in the event handler, not here.
     if (!customer) return;
     let cancelled = false;
-    void wizardGetCustomerAccountsAction(customer.partyRoleId).then((data) => {
-      if (cancelled) return;
-      setAccounts(data?.bans ?? []);
-      setFinancialAccountName(data?.financialAccountName ?? null);
-      setAccountsLoadedFor(customer.partyRoleId);
-      if (data?.bans.length === 1 && data.bans[0]) {
-        setAccount(data.bans[0]);
-      }
-    });
+    void wizardGetCustomerAccountsAction(customer.partyRoleId)
+      .then((data) => {
+        if (cancelled) return;
+        setAccounts(data?.bans ?? []);
+        setFinancialAccountName(data?.financialAccountName ?? null);
+        if (data?.bans.length === 1 && data.bans[0]) {
+          setAccount(data.bans[0]);
+        }
+      })
+      .catch(() => {
+        // A rejected read must still clear the derived loading flag (below) —
+        // otherwise `isLoadingAccounts` stays stuck true forever — and must not
+        // surface as an unhandled rejection. Reset to an empty, non-loading
+        // state and tell the user.
+        if (cancelled) return;
+        setAccounts([]);
+        setFinancialAccountName(null);
+        toast.error("Couldn't load billing accounts. Please try again.");
+      })
+      .finally(() => {
+        // Moves `accountsLoadedFor` out of the resolve path into `finally` so
+        // the loading flag clears on both success and failure.
+        if (cancelled) return;
+        setAccountsLoadedFor(customer.partyRoleId);
+      });
     return () => {
       cancelled = true;
     };
@@ -218,11 +255,10 @@ export function NewOrderWizard({
     // explicitly clears `offeringDetail` itself, in the event handler.
     if (!offering) return;
     let cancelled = false;
-    void wizardGetOfferingDetailAction(offering.productOfferingId).then(
-      (detail) => {
+    void wizardGetOfferingDetailAction(offering.productOfferingId)
+      .then((detail) => {
         if (cancelled) return;
         setOfferingDetail(detail);
-        setOfferingDetailLoadedFor(offering.productOfferingId);
         if (!detail) return;
 
         // Prefill from the version's spec-characteristic keys + defaults
@@ -243,8 +279,19 @@ export function NewOrderWizard({
           "overrides",
           flatPrices.map((p) => ({ priceType: p.priceType, amount: "" })),
         );
-      },
-    );
+      })
+      .catch(() => {
+        // As with the accounts effect: a rejected read must still clear the
+        // derived loading flag (via `finally` below) and never leak an
+        // unhandled rejection. Drop back to a no-detail state and tell the user.
+        if (cancelled) return;
+        setOfferingDetail(null);
+        toast.error("Couldn't load offer details. Please try again.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setOfferingDetailLoadedFor(offering.productOfferingId);
+      });
     return () => {
       cancelled = true;
     };
@@ -280,7 +327,15 @@ export function NewOrderWizard({
 
   function selectOffering(next: WizardOfferingOption | null): void {
     setOffering(next);
-    if (!next) setOfferingDetail(null);
+    // Reset the loaded detail *and* its loaded-for marker on every selection
+    // change, not just when clearing. Otherwise reselecting the same offering
+    // after "Change offer" (null → same id) leaves `offeringDetailLoadedFor`
+    // matching the new `offering`, so `isLoadingOfferingDetail` reads false
+    // while `offeringDetail` is null — a blank step with neither the loading
+    // indicator nor the detail block. Clearing the marker forces the effect's
+    // refetch to be reflected as "loading."
+    setOfferingDetail(null);
+    setOfferingDetailLoadedFor(null);
   }
 
   async function submitOrder(values: WizardFormValues): Promise<void> {

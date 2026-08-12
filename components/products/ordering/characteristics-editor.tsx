@@ -24,13 +24,18 @@ export function recordToList(
   return Object.entries(record).map(([key, value]) => ({ key, value }));
 }
 
+// Keys are trimmed to their normalized form before the record is built, so a
+// row like `" A"` lands under `"A"` — the same normalization `wizardFormSchema`
+// applies (`key: z.string().trim()`) and validates for duplicates against, so
+// the translated wire record can't disagree with what was validated. Blank
+// (whitespace-only) keys are dropped.
 export function listToRecord(
   list: { key: string; value: string }[],
 ): CharacteristicsRecord {
   return Object.fromEntries(
     list
-      .filter(({ key }) => key.trim() !== "")
-      .map(({ key, value }) => [key, value]),
+      .map(({ key, value }) => [key.trim(), value] as const)
+      .filter(([key]) => key !== ""),
   );
 }
 

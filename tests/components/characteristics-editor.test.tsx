@@ -34,6 +34,19 @@ describe("recordToList / listToRecord", () => {
       ]),
     ).toEqual({ A: "1" });
   });
+
+  it("listToRecord normalizes a key with surrounding whitespace to its trimmed form", () => {
+    expect(listToRecord([{ key: " A", value: "1" }])).toEqual({ A: "1" });
+  });
+
+  it("listToRecord drops a whitespace-only key", () => {
+    expect(
+      listToRecord([
+        { key: "A", value: "1" },
+        { key: "   ", value: "ignored" },
+      ]),
+    ).toEqual({ A: "1" });
+  });
 });
 
 function Harness({
