@@ -3,12 +3,11 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { productOrderRepository } from "@/db/repositories/ordering/product-order.repository";
 import { productOrderItemRepository } from "@/db/repositories/ordering/product-order-item.repository";
 import { orderItemPriceOverrideRepository } from "@/db/repositories/ordering/order-item-price-override.repository";
-import { productInventoryRepository } from "@/db/repositories/inventory/product-inventory.repository";
-import { inventoryStatusHistoryRepository } from "@/db/repositories/inventory/inventory-status-history.repository";
 import {
   checkOrderPreconditions,
   type OrderPreconditionErrorCode,
 } from "@/services/ordering/order-preconditions";
+import { instantiateOrder } from "@/services/ordering/instantiate-order";
 import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
 import type { OrderStatus } from "@/types/ordering";
 
@@ -112,62 +111,21 @@ export async function createOrder(
 
     // Standard (no-override) path: instantiate the subscription and complete
     // the order — same transaction, same atomicity guarantee as everything
-    // above.
-    const inventory = await productInventoryRepository.insertInventory(tx, {
-      productOrderItemId: item.productOrderItemId,
-      customerPartyRoleId: input.customerPartyRoleId,
-      billingAccountId: input.billingAccountId,
-      productOfferingId: input.productOfferingId,
-      quantity: input.quantity,
-      instanceCharacteristics: orderedCharacteristics,
-      status: "ACTIVE",
-      startDate: input.startDate,
-    });
-
-    await inventoryStatusHistoryRepository.insertTransition(tx, {
-      productInventoryId: inventory.productInventoryId,
-      fromStatus: null,
-      toStatus: "ACTIVE",
-      effectiveDate: input.startDate,
-      reason: `order ${order.productOrderId} completed`,
-      changedBy: actorId,
-    });
-
-    await productOrderRepository.updateStatus(tx, order.productOrderId, {
-      status: "COMPLETED",
-      completedAt: nowValue,
-    });
-
-    await insertAuditEvent(tx, {
-      eventType: "PRODUCT_INVENTORY_CREATED",
-      actorUserId: actorId,
-      targetEntity: "PRODUCT_INVENTORY",
-      targetId: inventory.productInventoryId,
-      beforeData: null,
-      afterData: {
-        productOrderItemId: item.productOrderItemId,
-        customerPartyRoleId: input.customerPartyRoleId,
-        billingAccountId: input.billingAccountId,
-        productOfferingId: input.productOfferingId,
-        quantity: input.quantity,
-        startDate: input.startDate,
-        status: "ACTIVE",
-      },
-    });
-
-    await insertAuditEvent(tx, {
-      eventType: "PRODUCT_ORDER_COMPLETED",
-      actorUserId: actorId,
-      targetEntity: "PRODUCT_ORDER",
-      targetId: order.productOrderId,
-      beforeData: { status: order.status },
-      afterData: { status: "COMPLETED", completedAt: nowValue },
-    });
+    // above. Shared verbatim with pm30's approval path via `instantiateOrder`
+    // (one definition of "create the subscription"); no `review` here — an
+    // auto-completed order was never reviewed.
+    const inventoryId = await instantiateOrder(
+      tx,
+      order,
+      item,
+      actorId,
+      nowValue,
+    );
 
     return {
       ok: true,
       orderId: order.productOrderId,
-      inventoryId: inventory.productInventoryId,
+      inventoryId,
       status: "COMPLETED",
     };
   });
