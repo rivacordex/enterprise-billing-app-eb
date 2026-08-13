@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
@@ -44,7 +45,7 @@ export async function updateCharacteristicsAction(
     return {
       ok: false,
       code: "VALIDATION_ERROR",
-      fieldErrors: parsed.error.flatten().fieldErrors,
+      fieldErrors: z.flattenError(parsed.error).fieldErrors,
     };
   }
 

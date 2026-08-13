@@ -77,7 +77,15 @@ export function TerminateDialog({
   const [dateError, setDateError] = useState<string | null>(null);
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [nowMs] = useState(() => Date.now());
+  // Mount-time local midnight, so the warning boundary is a whole-calendar-day
+  // count independent of the current time of day. This uses *local* midnight
+  // (the user's calendar); the authoritative server check (`isBackdatedTooFar`)
+  // uses UTC midnight — the divergence is display-only, the service still
+  // enforces the real >tolerance boundary.
+  const [todayMs] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  });
 
   function handleOpenChange(next: boolean): void {
     if (isSubmitting) return;
@@ -91,10 +99,10 @@ export function TerminateDialog({
   }
 
   const backdatedWarning = (() => {
-    const start = new Date(`${endDate}T00:00:00`);
-    if (Number.isNaN(start.getTime())) return null;
-    const msSince = nowMs - start.getTime();
-    if (msSince > 0 && msSince <= BACKDATING_TOLERANCE_DAYS * MS_PER_DAY) {
+    const end = new Date(`${endDate}T00:00:00`);
+    if (Number.isNaN(end.getTime())) return null;
+    const daysBack = Math.round((todayMs - end.getTime()) / MS_PER_DAY);
+    if (daysBack > 0 && daysBack <= BACKDATING_TOLERANCE_DAYS) {
       return `This is backdated to ${endDate}; historical bills may be affected.`;
     }
     return null;

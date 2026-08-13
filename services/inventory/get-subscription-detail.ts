@@ -36,14 +36,32 @@ export function deriveSuspensionWindows(
 export async function getSubscriptionDetail(
   inventoryId: string,
 ): Promise<SubscriptionDetail | null> {
-  const row = await productInventoryRepository.findDetailById(db, inventoryId);
+  // Read the inventory row and its transition history from one consistent
+  // snapshot — a lifecycle transition committing between the two reads could
+  // otherwise surface a `status`/`endDate` that disagrees with the derived
+  // history/windows. postgres-js defaults to READ COMMITTED (re-snapshots per
+  // statement), so pin both reads with a read-only REPEATABLE READ transaction.
+  // (First read-only/repeatable-read transaction in the codebase — the other
+  // `db.transaction` callers are default-isolation write paths.)
+  const { row, historyRows } = await db.transaction(
+    async (tx) => {
+      const row = await productInventoryRepository.findDetailById(
+        tx,
+        inventoryId,
+      );
+      if (!row) return { row: null, historyRows: [] };
+      const historyRows =
+        await inventoryStatusHistoryRepository.findByInventoryIdWithChangedByName(
+          tx,
+          inventoryId,
+        );
+      return { row, historyRows };
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+
   if (!row) return null;
 
-  const historyRows =
-    await inventoryStatusHistoryRepository.findByInventoryIdWithChangedByName(
-      db,
-      inventoryId,
-    );
   const history: StatusHistoryEntry[] = historyRows.map((entry) => ({
     from: entry.fromStatus,
     to: entry.toStatus,
