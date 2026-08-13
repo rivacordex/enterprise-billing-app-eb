@@ -9,7 +9,7 @@
 
 Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | ACTIVE | RETIRED` → `LifecycleBadge`), **price type** (`recurring | usage | once` → `PriceTypeBadge`), **offering flags** (bundle / sellable / billing-only chips), **spec/tier JSONB entries** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, and the Manage Products table/dialogs/forms.
 
-> **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is only partly wired here — pm27 (§8 below) wires the Orders list: `OrderStatusBadge` (TMF622 order states) and the negotiated-price indicator. Still undefined: TMF637 subscription states (Subscriptions page, pm33) and the manager review-screen treatment (pm31). `mockup-product-ordering.html` (planning folder) remains the visual reference for those; it uses the shared token families, not new ones.
+> **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is wired here — pm27 (§8) wires the Orders list: `OrderStatusBadge` (TMF622 order states) and the negotiated-price indicator; pm31 wires the manager review-screen treatment (reuses §8's tokens, no new ones). pm33 (§9) wires the Subscriptions page: `SubscriptionStatusBadge` (TMF637 subscription states) and the status-history sub-row treatment. `mockup-product-ordering.html` (referenced in the planning docs) is not present in this repo — pm33 follows the Manage Products family-expand affordance (§7) as the closest in-repo precedent for the status-history sub-rows instead.
 
 Two deliberate exclusions (same rules as User Management), applying to **both** product pages:
 
@@ -136,3 +136,38 @@ Patterns for `/products/orders`. `--action-cta-bg` is used exactly once on this 
 **"New order" CTA.** Header button, `--action-cta-bg`, same treatment as "New offering." Inert in pm27 (seam for pm29).
 
 **Reviewed column.** `— (auto)` in muted text for a standard (no-override) order that reached `COMPLETED` without a human reviewer — distinct from a plain `—` (unreviewed, still in flight) so the two "nothing to show" cases stay visually distinguishable via text alone (no color coding needed for a muted informational column).
+
+---
+
+## 9. Ordering — Subscriptions Page (pm33)
+
+Patterns for `/products/subscriptions`. No `--action-cta-bg` on this page — subscriptions are created only via a completed order (Orders page), never directly, so there is no "New" CTA to reserve it for.
+
+**`SubscriptionStatusBadge` (TMF637 subscription status).** Same pill construction as `LifecycleBadge`/`PriceTypeBadge`/`OrderStatusBadge` (§1/§2/§8). All eight seeded `PRODUCT_STATUSES` get a variant; the phase only ever writes `ACTIVE`/`SUSPENDED`/`TERMINATED` (architecture §3), so the remaining five render if the full enum is ever exercised but are otherwise unused:
+
+| `status` | Meaning | `-fg` text | `-bg` tint | Icon |
+|---|---|---|---|---|
+| `ACTIVE` | Billable now | `--color-success-700` | `--color-success-50` | check-circle |
+| `SUSPENDED` | Temporarily held; excluded from rating for the open window | `--color-warning-700` | `--color-warning-50` | pause-circle |
+| `TERMINATED` | Ended, terminal — reuses the catalog's `RETIRED`-row convention (§1: archive icon, row muted, no actions) | `--color-neutral-700` | `--color-neutral-100` | archive |
+| `CREATED` / `PENDING_ACTIVE` / `PENDING_TERMINATE` / `CANCELLED` / `ABORTED` | Not yet written by this phase | `--color-neutral-700` | `--color-neutral-100` | status-specific, distinct per state |
+
+**Status-history sub-rows.** Row expand reuses the Manage Products family-expand affordance (§7 "Version-family grouping" — chevron rotates on expand, `--surface-sunken` recessed background) rather than a new disclosure pattern: clicking a row's chevron reveals its append-only transition log (architecture Inv. #18) as indented sub-rows beneath it, each showing from → to status (as `SubscriptionStatusBadge` pairs), effective date, reason, and actor. A derived suspension-window note renders beneath the transition table when the instance has one or more: *"Suspended `<from>` → `<to or 'ongoing'>` — excluded from rating."* Only one subscription row is expanded at a time (URL-driven, `?subscription=`), matching View Product's single-selection deep-link convention (code-standards §3.5) rather than Manage Products' independent per-family toggle state.
+
+**Negotiated-price indicator.** Same treatment as the Orders table (§8) — a `hasOverride` row shows the Accent-scale "Negotiated" pill (`handshake` icon) in the Offer column; a row with no override renders plain muted "list" text.
+
+**Row actions.** Icon-only, 28px square, `0.5px solid var(--border)` — the same construction as Manage Products' row actions (§7), quiet role except Terminate:
+
+| Action | Icon | Color role | Shown on |
+|---|---|---|---|
+| Suspend | `pause-circle` | `--text-secondary` (quiet) | `ACTIVE` only |
+| Resume | `play-circle` | `--text-secondary` (quiet) | `SUSPENDED` only |
+| Terminate | `x-circle` | `--text-danger` | `ACTIVE`, `SUSPENDED` |
+| Edit characteristics | `pencil` | `--text-secondary` (quiet) | any non-`TERMINATED` status |
+| — | — | — | `TERMINATED` rows show no action buttons — muted row, replaced with plain `--text-muted` text, "No actions — terminated" (the catalog's RETIRED-row convention, §1/§7). |
+
+**Backdating warning/error.** Suspend/resume/terminate's effective-date field reuses the catalog's exact backdating banner treatment (§7 "Backdating warning" — `--bg-warning`/`--text-warning`, no icon) for a date within the 3-day tolerance, and the standard `FieldError` red-text treatment beyond it — same split Add Price's start-date field uses, applied here to `effective_date`/`end_date` (architecture Inv. #21/Q19).
+
+**Terminate confirmation.** A danger `AlertDialog` (`alert-triangle` icon in `--text-danger`, danger-role confirm button — the Discard/Retire dialog's construction, §7), since termination is destructive and irreversible. Copy pattern: *"Terminating ends billing after `<end date>`. This cannot be undone."* Suspend and Resume are plain (non-danger) confirmation dialogs — reversible lifecycle moves, not terminal ones.
+
+**Edit characteristics.** Reuses the Ordering wizard's `CharacteristicsEditor` (§8's sibling component, `components/products/ordering/characteristics-editor.tsx`) unmodified against `instance_characteristics`. Body copy states plainly that the edit never affects pricing: characteristics are descriptive only and are never a rating input (architecture §3, `instance_characteristics` row).
