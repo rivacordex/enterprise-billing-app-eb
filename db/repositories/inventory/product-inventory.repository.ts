@@ -1,13 +1,26 @@
-import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  ilike,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { organization, partyRole } from "@/db/schema/customer";
 import { productOffering } from "@/db/schema/product";
 import { productInventory } from "@/db/schema/inventory";
+import { orderItemPriceOverride } from "@/db/schema/ordering";
 import type {
   ProductInventory,
   ProductInventoryInsert,
   ProductStatus,
+  SubscriptionDetail,
+  SubscriptionListRow,
 } from "@/types/inventory";
 import type { SUBSCRIPTION_SORT_VALUES } from "@/validation/inventory/subscriptions-list.schema";
 
@@ -90,31 +103,16 @@ export const productInventoryRepository = {
     return row ?? null;
   },
 
-  // Backs the subscriptions list. Joins the customer organization name (search
-  // + display) and pins the offering version; no ACTIVE filter on the offering
-  // (Inv. #17 — a pinned version is a rating source regardless of
-  // lifecycle_status).
+  // Backs the subscriptions list (pm32-spec §1). Joins the customer
+  // organization name (search + display), pins the offering version, and
+  // flags a negotiated price via a correlated exists on the order item's
+  // overrides; no ACTIVE filter on the offering (Inv. #17 — a pinned version
+  // is a rating source regardless of lifecycle_status).
   async findList(
     db: Database,
     filters: SubscriptionListFilters,
   ): Promise<{
-    rows: Array<
-      Pick<
-        ProductInventory,
-        | "productInventoryId"
-        | "customerPartyRoleId"
-        | "billingAccountId"
-        | "productOfferingId"
-        | "quantity"
-        | "status"
-        | "startDate"
-        | "endDate"
-      > & {
-        customerName: string;
-        offeringName: string;
-        offeringVersion: number;
-      }
-    >;
+    rows: SubscriptionListRow[];
     total: number;
   }> {
     const whereClause = buildWhereClause(filters.q, filters.status);
@@ -158,13 +156,15 @@ export const productInventoryRepository = {
     const page = Math.max(1, filters.page);
     const rows = await db
       .select({
-        productInventoryId: productInventory.productInventoryId,
+        inventoryId: productInventory.productInventoryId,
         customerName: organization.name,
-        customerPartyRoleId: productInventory.customerPartyRoleId,
         billingAccountId: productInventory.billingAccountId,
-        productOfferingId: productInventory.productOfferingId,
         offeringName: productOffering.name,
         offeringVersion: productOffering.version,
+        hasOverride: sql<boolean>`exists (
+          select 1 from ${orderItemPriceOverride}
+          where ${orderItemPriceOverride.productOrderItemId} = ${productInventory.productOrderItemId}
+        )`.as("has_override"),
         quantity: productInventory.quantity,
         status: productInventory.status,
         startDate: productInventory.startDate,
@@ -196,7 +196,60 @@ export const productInventoryRepository = {
       rows: rows.map((row) => ({
         ...row,
         status: row.status as ProductStatus,
+        hasOverride: Boolean(row.hasOverride),
       })),
+    };
+  },
+
+  // Backs the subscription detail view (pm32-spec §1) — the same row shape
+  // `findList` renders, for exactly one instance, plus the editable
+  // `instance_characteristics` field. Returns `null` for an unknown id.
+  async findDetailById(
+    db: Database,
+    productInventoryId: string,
+  ): Promise<Omit<SubscriptionDetail, "history" | "suspensionWindows"> | null> {
+    const [row] = await db
+      .select({
+        inventoryId: productInventory.productInventoryId,
+        customerName: organization.name,
+        billingAccountId: productInventory.billingAccountId,
+        offeringName: productOffering.name,
+        offeringVersion: productOffering.version,
+        hasOverride: sql<boolean>`exists (
+          select 1 from ${orderItemPriceOverride}
+          where ${orderItemPriceOverride.productOrderItemId} = ${productInventory.productOrderItemId}
+        )`.as("has_override"),
+        quantity: productInventory.quantity,
+        status: productInventory.status,
+        startDate: productInventory.startDate,
+        endDate: productInventory.endDate,
+        instanceCharacteristics: productInventory.instanceCharacteristics,
+      })
+      .from(productInventory)
+      .innerJoin(
+        productOffering,
+        eq(
+          productOffering.productOfferingId,
+          productInventory.productOfferingId,
+        ),
+      )
+      .innerJoin(
+        partyRole,
+        eq(partyRole.partyRoleId, productInventory.customerPartyRoleId),
+      )
+      .innerJoin(
+        organization,
+        eq(organization.organizationId, partyRole.engagedParty),
+      )
+      .where(eq(productInventory.productInventoryId, productInventoryId))
+      .limit(1);
+
+    if (!row) return null;
+    return {
+      ...row,
+      status: row.status as ProductStatus,
+      hasOverride: Boolean(row.hasOverride),
+      instanceCharacteristics: row.instanceCharacteristics ?? null,
     };
   },
 
