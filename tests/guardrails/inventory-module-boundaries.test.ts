@@ -28,6 +28,15 @@ function servicesInventoryFiles(): { relative: string; content: string }[] {
   );
 }
 
+// pm33-spec §4 — the inventory module's first Server Action folder
+// (ordering-module-boundaries' EXPECTED_ORDERING_ACTION_FILES precedent).
+const EXPECTED_INVENTORY_ACTION_FILES: Record<string, string> = {
+  "suspend-subscription.action.ts": "suspendSubscriptionAction",
+  "resume-subscription.action.ts": "resumeSubscriptionAction",
+  "terminate-subscription.action.ts": "terminateSubscriptionAction",
+  "update-characteristics.action.ts": "updateCharacteristicsAction",
+};
+
 describe("inventory module boundaries (pm32-spec verification checklist)", () => {
   it("has service files under services/inventory", () => {
     expect(servicesInventoryFiles().length).toBeGreaterThan(0);
@@ -49,5 +58,28 @@ describe("inventory module boundaries (pm32-spec verification checklist)", () =>
       )
       .map(({ relative }) => relative);
     expect(offenders).toEqual([]);
+  });
+
+  it("actions/inventory/ exists and exports exactly this phase's action set", () => {
+    const actionsDir = path.join(REPO_ROOT, "actions", "inventory");
+    expect(fs.existsSync(actionsDir)).toBe(true);
+
+    const actualFiles = fs
+      .readdirSync(actionsDir)
+      .filter((name) => name.endsWith(".action.ts"))
+      .sort();
+    expect(actualFiles).toEqual(
+      Object.keys(EXPECTED_INVENTORY_ACTION_FILES).sort(),
+    );
+
+    for (const [fileName, exportName] of Object.entries(
+      EXPECTED_INVENTORY_ACTION_FILES,
+    )) {
+      const source = fs.readFileSync(path.join(actionsDir, fileName), "utf8");
+      const exportedFunctionNames = [
+        ...source.matchAll(/export\s+async\s+function\s+(\w+)\s*\(/g),
+      ].map((m) => m[1]);
+      expect(exportedFunctionNames).toEqual([exportName]);
+    }
   });
 });

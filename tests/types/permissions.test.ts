@@ -60,4 +60,25 @@ describe("hasLevel", () => {
 
     expect(hasLevel(catalogOnlyMap, "product_orders", "READ")).toBe(false);
   });
+
+  // pm33-spec §Ripple — Subscriptions is gated by `product_inventory`, a
+  // distinct permission from `product_orders` (architecture §4: no overlap
+  // between the ordering and inventory permissions, either direction). A
+  // `product_orders`-only grant map has no `product_inventory` entry at all,
+  // so `hasLevel` must reject it — proving the separation holds in both
+  // directions (pm27's proof covered products -> product_orders; this one
+  // covers product_orders -> product_inventory).
+  it("a product_orders-only grant does not satisfy product_inventory (permission separation)", () => {
+    const ordersOnlyMap: EffectivePermissionMap = {
+      users: null,
+      roles: null,
+      system_config: null,
+      audit_log: null,
+      products: null,
+      customers: null,
+      product_orders: "EDIT",
+    };
+
+    expect(hasLevel(ordersOnlyMap, "product_inventory", "READ")).toBe(false);
+  });
 });
