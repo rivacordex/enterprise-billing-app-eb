@@ -26,11 +26,21 @@ export function StatusHistoryRows({
             <table className="w-full max-w-2xl border-collapse text-body-sm">
               <thead>
                 <tr className="border-b border-[color:var(--border-subtle)] text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-                  <th className="px-3 py-1.5 text-left">From</th>
-                  <th className="px-3 py-1.5 text-left">To</th>
-                  <th className="px-3 py-1.5 text-left">Effective</th>
-                  <th className="px-3 py-1.5 text-left">Reason</th>
-                  <th className="px-3 py-1.5 text-left">Actor</th>
+                  <th scope="col" className="px-3 py-1.5 text-left">
+                    From
+                  </th>
+                  <th scope="col" className="px-3 py-1.5 text-left">
+                    To
+                  </th>
+                  <th scope="col" className="px-3 py-1.5 text-left">
+                    Effective
+                  </th>
+                  <th scope="col" className="px-3 py-1.5 text-left">
+                    Reason
+                  </th>
+                  <th scope="col" className="px-3 py-1.5 text-left">
+                    Actor
+                  </th>
                 </tr>
               </thead>
               <tbody>

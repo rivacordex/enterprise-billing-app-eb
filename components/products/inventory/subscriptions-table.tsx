@@ -508,18 +508,20 @@ function RowActions({
           }
         />
       )}
-      <TerminateDialog
-        inventoryId={row.inventoryId}
-        trigger={
-          <button
-            type="button"
-            aria-label={`Terminate ${row.inventoryId}`}
-            className={cn(ACTION_BUTTON_CLASS, "text-destructive")}
-          >
-            <XCircle size={14} aria-hidden />
-          </button>
-        }
-      />
+      {(row.status === "ACTIVE" || row.status === "SUSPENDED") && (
+        <TerminateDialog
+          inventoryId={row.inventoryId}
+          trigger={
+            <button
+              type="button"
+              aria-label={`Terminate ${row.inventoryId}`}
+              className={cn(ACTION_BUTTON_CLASS, "text-destructive")}
+            >
+              <XCircle size={14} aria-hidden />
+            </button>
+          }
+        />
+      )}
       {isExpanded && detail ? (
         <EditCharacteristicsDialog
           inventoryId={row.inventoryId}

@@ -54,7 +54,8 @@ describe("inventory module boundaries (pm32-spec verification checklist)", () =>
     const offenders = servicesInventoryFiles()
       .filter(
         ({ content }) =>
-          /\bsql`/.test(content) || /from\s+["']drizzle-orm["']/.test(content),
+          /\bsql`/.test(content) ||
+          /from\s+["']drizzle-orm(?:\/[^"']*)?["']/.test(content),
       )
       .map(({ relative }) => relative);
     expect(offenders).toEqual([]);
@@ -80,6 +81,18 @@ describe("inventory module boundaries (pm32-spec verification checklist)", () =>
         ...source.matchAll(/export\s+async\s+function\s+(\w+)\s*\(/g),
       ].map((m) => m[1]);
       expect(exportedFunctionNames).toEqual([exportName]);
+
+      // …and nothing else runtime-exported: an action file's only runtime
+      // export must be that one async function. Type-only `export type` /
+      // `export interface` (erased) are allowed; every other export form —
+      // `export const/let/var`, non-async `export function`, `export class`,
+      // `export default`, `export { … }` re-exports, `export *` — is not.
+      const disallowedRuntimeExports = [
+        ...source.matchAll(
+          /^export\s+(?!type\s|interface\s)(?:default\b|const\b|let\b|var\b|class\b|function\b|\{|\*)/gm,
+        ),
+      ].map((m) => m[0].trim());
+      expect(disallowedRuntimeExports).toEqual([]);
     }
   });
 });
