@@ -4,7 +4,7 @@
 
 **Companion docs:** `prodmgmt-project-overview.md` (product spec) and `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture *Invariants*, the **Invariants win** and the conflict is a bug to fix here.
 
-> **Scope note:** this doc covers the shipped catalog pages only. The planned **Product Ordering & Inventory update** (Orders/Subscriptions — `prodmgmt-update-overview.md`, `_updatemodule-product-ordering-inventory-plan.md`, architecture Inv. #15–22) has no conventions here yet; its rules are added to this file per-unit as that phase is built, not speculatively in advance.
+> **Status:** this doc now covers all three shipped surfaces — the read-only catalog (View Product), the CRUD fast-follow (Manage Products), and the **Product Ordering & Inventory update** (Orders/Subscriptions — `prodmgmt-update-overview.md`, architecture Inv. #15–22), ship-gate-verified as of pm34. Every Ordering-update addition below is marked *(Ordering update)*.
 
 ---
 
@@ -23,6 +23,7 @@
 11. **Discard and Retire are the same repository call with different audit events.** `retireOffering(tx, offeringId)` sets `lifecycle_status = RETIRED` regardless of the row's prior status; the calling service logs `PRODUCT_OFFERING_DISCARDED` when the source was `DRAFT` and `PRODUCT_OFFERING_RETIRED` when it was `ACTIVE`. Do not fork this into two repository methods — the DB-level operation is identical, only the audit semantics differ.
 12. **Backdating tolerance is a service-layer check, not a DB constraint.** `insertPrice`'s caller rejects a `start_date_time` more than 3 days in the past (`BACKDATED_START_TOO_FAR`) and flags (non-blocking) anything backdated within that window; checked against the transaction's `now()`, not the Zod schema alone (Zod can validate "is this a valid date," not "is this within tolerance of the current instant at write time").
 13. **Every status read that gates a branch-vs-in-place decision must happen inside the transaction, immediately before the decision, not before the transaction opens.** A pre-transaction read of `lifecycleStatus` (or a spec's current content) is a TOCTOU window — the row can change between the read and the write. Every write service (`updateOffering`, `addSpecification`/`updateSpecification`/`deleteSpecification`, `insertPrice`, `activateOffering`, `retireOffering`) re-reads its target's status via a locked (`FOR UPDATE`) query on `tx`, not `db`, as the last step before branching or writing.
+14. **Cross-module transactional reads never call another module's service** *(Ordering update)*. `services/ordering/**` and `services/inventory/**` read another module's data two different ways depending on purpose: a display/form read (customer search, BAN list, offer detail) calls that module's own `services/*` function normally; an in-transaction precondition re-check (party `ACTIVE`, BAN non-closed, offering `ACTIVE ∧ billing_only ∧ is_sellable`) calls that other module's **repository's own locked (`FOR UPDATE`) finder directly** (e.g. `partyRoleRepository.findStatusByIdForUpdate`, `billingAccountRepository.findStateByIdForUpdate`), never a service function — a service of another module cannot participate in this module's open transaction. No cross-module SQL joins beyond the list-view joins each module's own repositories declare.
 
 ---
 
@@ -176,6 +177,78 @@ tests/…                     # mirrors source; authz-matrix entries for both pa
                              #   versioning-invariant + guardrail tests
 ```
 
+*(Ordering update)* Additions to the tree above, ship-gate-verified as of pm34:
+
+```
+app/(app)/products/orders/
+  page.tsx            # OrdersPage — guard (product_orders:READ), list + review seam
+  loading.tsx
+  error.tsx
+app/(app)/products/subscriptions/
+  page.tsx            # SubscriptionsPage — guard (product_inventory:READ), list + history
+  loading.tsx
+  error.tsx
+actions/ordering/
+  create-order.action.ts
+  approve-order.action.ts
+  reject-order.action.ts
+actions/inventory/
+  suspend-subscription.action.ts
+  resume-subscription.action.ts
+  terminate-subscription.action.ts
+  update-characteristics.action.ts
+actions/accounts/
+  new-order-wizard-reads.ts  # cross-module wizard reads (disclosed pm29 placement call)
+components/products/ordering/
+  order-status-badge.tsx      # OrderStatusBadge
+  orders-table.tsx            # OrdersTable
+  new-order-wizard.tsx        # NewOrderWizard (3-step)
+  wizard-step-customer.tsx, wizard-step-account.tsx, wizard-step-offer.tsx
+  characteristics-editor.tsx  # CharacteristicsEditor
+  override-price-fields.tsx   # OverridePriceFields
+  order-review-panel.tsx      # OrderReviewPanel
+  review-actions.tsx          # ReviewActions
+components/products/inventory/
+  subscription-status-badge.tsx  # SubscriptionStatusBadge
+  subscriptions-table.tsx        # SubscriptionsTable
+  status-history-rows.tsx        # StatusHistoryRows
+  suspend-dialog.tsx, resume-dialog.tsx, terminate-dialog.tsx
+  edit-characteristics-dialog.tsx
+services/ordering/
+  list-orders.ts, get-order-detail.ts     # read services
+  order-preconditions.ts                  # shared checkOrderPreconditions
+  create-order.ts, instantiate-order.ts   # shared instantiation primitive
+  review-order.ts                         # approveOrder/rejectOrder
+services/inventory/
+  list-subscriptions.ts, get-subscription-detail.ts
+  lifecycle-guards.ts   # shared isLegalTransition/isBackdatedTooFar/isBeforeLatestEffectiveDate
+  suspend-subscription.ts, resume-subscription.ts, terminate-subscription.ts
+  update-instance-characteristics.ts
+db/schema/ordering.ts       # product_order, product_order_item, order_item_price_override
+db/schema/inventory.ts      # product_inventory, inventory_status_history
+db/repositories/ordering/
+  product-order.repository.ts             # insert/finders + updateStatus (status-workflow only)
+  product-order-item.repository.ts        # insert + finders only (Inv. #15)
+  order-item-price-override.repository.ts # insert + finders only (Inv. #16)
+db/repositories/inventory/
+  product-inventory.repository.ts         # insert/finders + updateStatus/updateCharacteristics only
+  inventory-status-history.repository.ts  # insert + finders only (Inv. #18)
+validation/ordering/
+  create-order.schema.ts, review-order.schema.ts, orders-list.schema.ts
+validation/inventory/
+  suspend.schema.ts, resume.schema.ts, terminate.schema.ts
+  update-characteristics.schema.ts, subscriptions-list.schema.ts
+tests/…                     # mirrors source; authz-matrix entries for both new pages
+                             #   (tests/auth/guard.integration.test.ts); guardrail sweep
+                             #   (tests/guardrails/ordering-module-boundaries.test.ts,
+                             #   inventory-module-boundaries.test.ts,
+                             #   ordering-inventory-ship-gate.test.ts); live-DB integration
+                             #   suites per write path plus
+                             #   tests/db/ship-gate-guardrails.integration.test.ts
+tests/helpers/assert-inventory-gap-free.ts  # reusable Inv. #18 derivability assert (pm32),
+                                             #   reused by the pm34 sweep
+```
+
 1. **The nav refactor lives in `components/admin-nav.tsx`** — `NAV_ITEMS` → `NAV_SECTIONS` (caption + items). Do not create a second nav component or a product-specific nav file.
 2. **`services/product` stays framework-agnostic** — no `next/*` imports (general §3.14); functions accept parsed, typed params and return the §2.7 read models.
 3. **The route-group rename** (historical, pm01) moved `app/(admin)/**` → `app/(app)/**` and updated every `@/app/(admin)/…` import in one commit; nothing else changed in that commit.
@@ -194,12 +267,16 @@ Authoritative; mirrors architecture §4. New pages are appended before they ship
 | View Product — list + detail + specifications + prices | `/products/product-offering` | `ProductOfferingPage` → `OfferingTable`, `OfferingDetail`, `SpecificationsPanel`, `PricesPanel` | `app/(app)/products/product-offering/` | `products` : **READ** |
 | Manage Products — create / edit / branch / activate | `/products/manage-products` | `ManageProductsPage` → `ManageOfferingTable`, `OfferingForm`, `PriceForm`, `SpecificationForm` | `app/(app)/products/manage-products/`, `actions/product/` | `products` : **EDIT** |
 | Manage Products — retire / discard | `/products/manage-products` | `RetireOfferingDialog` | `actions/product/retire-offering.action.ts` | `products` : **DELETE** |
+| Orders — list + New order + Review *(Ordering update)* | `/products/orders` | `OrdersPage` → `OrdersTable`, `NewOrderWizard`, `OrderReviewPanel` | `app/(app)/products/orders/`, `actions/ordering/` | `product_orders` : **READ** (list) / **EDIT** (create/approve/reject) |
+| Orders — approve / reject a `PENDING` order *(Ordering update)* | `/products/orders` | `ReviewActions` | `actions/ordering/{approve,reject}-order.action.ts` | `product_orders` : **EDIT** + **MANAGER role** + reviewer ≠ submitter |
+| Subscriptions — list + lifecycle + edit characteristics *(Ordering update)* | `/products/subscriptions` | `SubscriptionsPage` → `SubscriptionsTable`, suspend/resume/terminate/edit-characteristics dialogs | `app/(app)/products/subscriptions/`, `actions/inventory/` | `product_inventory` : **READ** (list) / **EDIT** (mutations) |
 
 **Notes**
 
 - Component names are the binding convention; create them exactly so the page ↔ route ↔ component ↔ permission chain stays traceable (general §9).
 - A user without `products : READ` sees the "View Product" nav item but is stopped by the page guard → no-access state; no partial rendering of specs or prices under a weaker check (module Inv. #10). A user without `products : EDIT` sees "Manage Products" but is likewise stopped at the guard.
 - Deep links (`?offering=PRDOFR000001`) pass through the View Product guard — the searchParam grants nothing.
+- *(Ordering update)* `product_orders`/`product_inventory` carry no grant overlap with `products` or with each other, in either direction — ship-gate-proven both ways in `tests/auth/guard.integration.test.ts` (pm34) and, DB-free, in `tests/types/permissions.test.ts` (pm27/pm33). Neither permission has a `DELETE` level in use; both pages guard on `READ`, mutations are gated per-action on `EDIT`. Order approval is the module's only role-conditioned gate: `product_orders:EDIT` alone reaches `approveOrderAction`/`rejectOrderAction` but is refused `NOT_MANAGER` by the service unless the caller also holds the `MANAGER` role and is not the order's own submitter (architecture §4).
 
 ---
 
@@ -221,3 +298,14 @@ The general test-suite gate includes this module's guardrail tests, all of which
 12. **Route manifest** — both `/products/product-offering` and `/products/manage-products` appear exactly once each in the frozen route manifest.
 13. **Schema-diff check** — `db/schema/product.ts`'s only diff from its original shape is `family_offering_id` + its index on `product_offering`; `product_specifications` and `product_offering_price` are byte-identical to their original definitions.
 14. **TOCTOU-safe status reads** — every write service that branches conditionally on `lifecycleStatus` reads that status via a locked query on the active transaction (`tx`), not a pre-transaction `db` read (module code-standards §1 rule 13).
+
+*(Ordering update — pm34 ship gate.)* Numbered continuing the list above, per this unit's own Design section:
+
+15. **Insert-only surfaces** — `order_item_price_override` (Inv. #16) and `inventory_status_history` (Inv. #18) repositories export no `update*`/`delete*`, ever; `product_order_item` is likewise write-once (Inv. #15). First landed in pm26 (`tests/db/ordering-repository-exports.test.ts`); that file is the permanent home for this guardrail, re-asserted here rather than duplicated.
+16. **Grandfathering** — activating a new version of an ordered offering through the real catalog services (`branchOfferingAsDraft` + `activateOffering`, not a raw status flip) leaves an existing subscription's pinned `product_offering_id` unchanged and its `OrderPriceLine`/rating reads (`getOrderDetail`) resolving byte-identically from the now-`RETIRED` version's rows (Inv. #17). `tests/db/ship-gate-guardrails.integration.test.ts`.
+17. **Gap-free history** — `assertInventoryGapFree` (pm32, `tests/helpers/assert-inventory-gap-free.ts`) run across every `product_inventory` instance a ship-gate run creates: latest history `to_status` ≡ the instance's `status` column; transitions read in insertion order (`inventoryStatusHistoryId`, not `created_at` — pm32's own concurrency fix) never regress in `effective_date`. `tests/db/ship-gate-guardrails.integration.test.ts`.
+18. **Write-once core** — no code path updates `product_order_item` columns or inventory core columns: the item repository exports insert+finders only; the inventory repository's update surface is exactly `updateStatus` + `updateCharacteristics`, structurally asserted in `tests/db/ordering-repository-exports.test.ts` (pm26, same permanent home as guardrail 15).
+19. **Boundary sweeps** — `EXPECTED_ORDERING_ACTION_FILES`/`EXPECTED_INVENTORY_ACTION_FILES` exact (`tests/guardrails/ordering-module-boundaries.test.ts`/`inventory-module-boundaries.test.ts`, pm29/pm33); `app/api/ordering*`/`app/api/inventory*`/`app/api/product*` absent (`tests/guardrails/ordering-inventory-ship-gate.test.ts`, pm34, alongside `product-module-boundaries.test.ts`'s pre-existing `product*` check); `components/products/*` (View Product) still imports nothing from the ordering/inventory write surface (`ordering-inventory-ship-gate.test.ts`, pm34); `db/schema/product.ts` still byte-identical to Phase 2's shape (`product-module-boundaries.test.ts`'s pre-existing schema-diff check — unaffected by pm25–33, re-confirmed not re-implemented by this unit).
+20. **No-cycle-column** — schema introspection: no column name in `ordering.*`/`inventory.*` matches `%cycle%`/`%frequency%` (Inv. #20). `tests/guardrails/ordering-inventory-ship-gate.test.ts`.
+21. **Route manifest** — `/products/orders` and `/products/subscriptions` each appear exactly once in the frozen manifest. `tests/guardrails/ordering-inventory-ship-gate.test.ts`.
+22. **Reviewer ≠ submitter** — the DB CHECK (`product_order_reviewer_check`) fires on a direct SQL write, proven in `tests/db/review-order.integration.test.ts`'s `"the DB CHECK reviewed_by <> submitted_by rejects a direct SQL self-review write"` test (pm30); the service-layer `SELF_REVIEW` guard is covered in the same file. Referenced here as this guardrail's permanent home, not duplicated.
