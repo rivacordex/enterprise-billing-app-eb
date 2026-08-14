@@ -2,9 +2,9 @@
 
 This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Product Management module adds or changes**. Anything not stated here is inherited unchanged. The product spec (user flows, data model, features) is in `prodmgmt-project-overview.md`; the Ordering & Inventory update's spec is in `prodmgmt-update-overview.md`, with key decisions canonical in `_updatemodule-product-ordering-inventory-plan.md` (Q1–Q20).
 
-**Status:** SHIPPED — read-only catalog (units pm01–pm09, decisions agreed 2026-07-03) and the CRUD fast-follow (units pm10–pm24, decisions agreed 2026-07-20) are both implemented and ship-gate-verified. **PLANNED — the Product Ordering & Inventory update** (decisions locked 2026-07-23/31, pre-implementation); its additions are marked *(Ordering update)* throughout this document. Changes to *Module Invariants* require a documented design review.
+**Status:** SHIPPED — read-only catalog (units pm01–pm09, decisions agreed 2026-07-03), the CRUD fast-follow (units pm10–pm24, decisions agreed 2026-07-20), and the **Product Ordering & Inventory update** (units pm25–pm34, decisions locked 2026-07-23/31) are all implemented and ship-gate-verified. Its additions are still marked *(Ordering update)* throughout this document to distinguish them from the original catalog. Changes to *Module Invariants* require a documented design review.
 
-**Scope:** The module has two shipped pages — **View Product** (`/products/product-offering`), a read-only catalog viewer, and **Manage Products** (`/products/manage-products`), the full create/edit/branch/activate/retire surface — sharing the three `product` schema tables and the `products` permission. The Ordering update adds two planned pages: **Orders** (`/products/orders`, manual intake of billing-only offers with a manager-approval path for negotiated prices) and **Subscriptions** (`/products/subscriptions`, the product inventory instances with suspend/resume/terminate lifecycle), on two new schemas (`ordering`, `inventory`) and two new permissions (`product_orders`, `product_inventory`). **Ordering-update hard dependency:** the accounts module's `billing.financial_account` / `billing.billing_account` tables (and `billing.bill_cycle`, account-plan Q13) must exist first; pre-agreed fallback if accounts slips — the `billing.*` FKs become plain text columns validated in the service, upgraded to real FKs by a one-line migration when accounts lands.
+**Scope:** The module has four shipped pages — **View Product** (`/products/product-offering`), a read-only catalog viewer; **Manage Products** (`/products/manage-products`), the full create/edit/branch/activate/retire surface; **Orders** (`/products/orders`), manual intake of billing-only offers with a manager-approval path for negotiated prices; and **Subscriptions** (`/products/subscriptions`), the product inventory instances with suspend/resume/terminate lifecycle. View Product and Manage Products share the three `product` schema tables and the `products` permission; Orders and Subscriptions add two new schemas (`ordering`, `inventory`) and two new permissions (`product_orders`, `product_inventory`), built on top of the accounts module's `billing.financial_account` / `billing.billing_account` / `billing.bill_cycle` tables, which landed first as this update's hard dependency.
 
 ---
 
@@ -41,7 +41,7 @@ Dependency rule unchanged (UI → actions/routes → services → repositories �
 | `validation/product/**` | Zod schemas for list params, `pricing_characteristics` per `pricing_model`, create/update-offering, create/update-specification, insert-price (backdating), activate/retire (optional `reason`). | Parsed before any service call. |
 | `tests/**` | Repo/service unit tests, integration tests for every write path and versioning invariant, authz-matrix entries for both `/products/product-offering` and `/products/manage-products`, and the module guardrail suite (`product-module-boundaries.test.ts`). | Both pages must appear in the authz matrix (platform §5). |
 
-*(Ordering update — planned additions to this table:)*
+*(Ordering update — additions to this table:)*
 
 | Path | Owns | Notes |
 |---|---|---|
@@ -72,7 +72,7 @@ All in Postgres, `product` schema; no file storage or cache (platform §3). Colu
 
 **Why a self-referencing column rather than matching on `name` for version linkage:** names change, and two unrelated offerings can legitimately share one. A flat, one-hop self-reference costs one column and one index and stays correct regardless of renames. `family_offering_id` is the only schema addition beyond v1's original 3 tables; `product_specifications` and `product_offering_price` are otherwise unchanged in shape.
 
-### Ordering & Inventory storage *(Ordering update — planned)*
+### Ordering & Inventory storage *(Ordering update)*
 
 New schemas `ordering` and `inventory`; the `product` schema tables above are **not modified**. Column detail and sample data are in `_updatemodule-product-ordering-inventory-plan.md` §Data & storage.
 
@@ -141,7 +141,7 @@ Platform Invariants (`architecture.md` §7) all apply. Additional rules this mod
 13. **Single-active-per-family is enforced transactionally, not by a single DB constraint.** A plain unique index on `family_offering_id` can't cleanly cover "the root itself is `ACTIVE`, one of its branches also tries to activate," because the root's `family_offering_id` is `NULL` and NULLs don't collide in a unique index. `activateOffering` row-locks the family (`findActiveInFamily(...).for("update")`) and re-checks "is there currently another `ACTIVE` row in this family?" **inside** the transaction before flipping status — the same defense-in-depth pattern `roles-write.service.ts`'s `deleteRole` uses to close a race window. This is a deliberate, documented trade-off, not an oversight.
 14. **Editing an `ACTIVE` offering never mutates it in place.** There is no in-place write path for an `ACTIVE` offering's own fields, its specifications, or its prices. Any such edit first clones the offering plus all of its specifications and all of its prices into a new `DRAFT` row (`branchOfferingAsDraft`), then applies the edit to that clone. The original `ACTIVE` row and everything attached to it are provably untouched — the same "immutable, insert instead of update" discipline established for prices alone (Inv. #1), extended to the offering and its specifications whenever the source is live.
 
-*Invariants 15–22 are introduced by the Ordering & Inventory update (planned); #16 and #18 strengthen platform Inv. #18 for this module's tables.*
+*Invariants 15–22 are introduced by the Ordering & Inventory update; #16 and #18 strengthen platform Inv. #18 for this module's tables. Their CI-enforceable test homes are code-standards §9 guardrails 15–22 (pm34 ship gate).*
 
 15. **Order items and subscriptions are write-once at the billing-relevant core.** `product_offering_id`, `quantity`, `start_date`, `ordered_characteristics`, and every override row never change after creation; corrections are terminate + re-order. Sole exception: `inventory.instance_characteristics` (audited, descriptive, never rated).
 16. **Every price a customer pays is either an immutable catalog price row or an insert-only, manager-approved override row.** No third source; no editable price column exists anywhere. Rating resolves override-else-catalog per price type. An order with an override reaches `COMPLETED` only through the approval path.
