@@ -218,7 +218,7 @@ Seed data (all names keep the `TOREMOVE-Template-` prefix — protected, workflo
 
 ### 3.9 Commit
 
-One commit, e.g. `product data layer: schema, migration 0006, validation, seeds, guardrails (pm02)`. Contents: exactly §3.1–§3.8. Explicitly **not** in this commit: repositories or `services/product` (pm03), nav changes (pm04), any `app/**` or `components/**` file, `actions/product/` or `app/api/product*` (forbidden in v1), any npm dependency or lockfile change, any edit to an applied migration, any `AUDIT_LOG` write. Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` Unit 2 entry) stays outside the app-repo commit.
+One commit, e.g. `product data layer: schema, migration 0006, validation, seeds, guardrails (pm02)`. Contents: exactly §3.1–§3.8. Explicitly **not** in this commit: repositories or `services/product` (pm03), nav changes (pm04), any `app/**` or `components/**` file, `actions/product/` or `app/api/product*` (forbidden in v1), any npm dependency or lockfile change, any edit to an applied migration, any `AUDIT_LOG` write. Plan-folder bookkeeping (`prodmgmt-completed-tracker.md` Unit 2 entry) stays outside the app-repo commit.
 
 ## 4. Dependencies
 
@@ -249,7 +249,7 @@ One commit, e.g. `product data layer: schema, migration 0006, validation, seeds,
 
 **Docs in sync**
 - [ ] Plan-folder docs carry the 2026-07-04 constraint revision (pm00, architecture Inv. #2/§3, code-standards §6.4/§9.3, overview, workflow rules) — done with this spec.
-- [ ] `prodmgmt-progress-tracker.md` marks Unit 2 complete with the commit reference.
+- [ ] `prodmgmt-completed-tracker.md` marks Unit 2 complete with the commit reference.
 
 **Pipeline**
 - [ ] CI green end-to-end including SAST + ZAP DAST baseline (no runtime behavior changed — no new routes).

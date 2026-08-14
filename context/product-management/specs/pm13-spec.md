@@ -316,6 +316,6 @@ Per the build plan's boundary line and dependency graph, `actions/product/update
 - [ ] Existing Phase 1, pm11, and pm12 tests still pass unmodified — this unit adds one repository method, two audit-type entries, and one new service file; it touches no existing method's behavior or signature.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm13 entry with the commit reference, once this actually ships.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm13 entry with the commit reference, once this actually ships.
 
 Any failing item means the unit is not done. Units pm14 (specifications) and pm15 (prices) do not depend on this unit directly (both depend on pm12 only), but pm20 (Edit offering UI) depends on `updateOffering`'s exact result shape — including the `branched`/`offeringId` fields — existing and verified; do not start pm20 until every item above passes.

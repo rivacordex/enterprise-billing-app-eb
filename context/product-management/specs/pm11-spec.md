@@ -168,6 +168,6 @@ Per the build plan's boundary line ("no `next/*` imports") and dependency graph,
 - [ ] Existing Phase 1 tests and pm10's own verification suite still pass unmodified — this unit adds one new repository method and one new audit-type entry, touching no existing read path (`findList`/`findDetailById` are untouched).
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm11 entry with the commit reference, once this actually ships.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm11 entry with the commit reference, once this actually ships.
 
 Any failing item means the unit is not done. pm12 (`branchOfferingAsDraft`) depends on `insertOffering`'s exact insert shape existing and verified — do not start it until every item above passes.

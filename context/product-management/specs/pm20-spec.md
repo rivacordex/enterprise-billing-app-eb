@@ -665,7 +665,7 @@ One commit. Contents: `validation/product/update-offering.schema.ts` (edit — o
 - [ ] `npm run build` passes.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy) gets a pm20 entry with the commit reference, and explicitly records the two design calls a future unit (pm21–pm23) might otherwise re-litigate: no separate `edit-offering-dialog.tsx` file (Design §2.1), and `billingOnly` now flows through `OfferingListRow`/`findList` (Design §2.3) — so pm21/pm22 don't independently reach for either pattern under a different name.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm20 entry with the commit reference, and explicitly records the two design calls a future unit (pm21–pm23) might otherwise re-litigate: no separate `edit-offering-dialog.tsx` file (Design §2.1), and `billingOnly` now flows through `OfferingListRow`/`findList` (Design §2.3) — so pm21/pm22 don't independently reach for either pattern under a different name.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit adds one action file to an already-established mutation surface (pm19's `create-offering.action.ts` was the first); the SAST/DAST baseline should show no new finding beyond what's already expected for a standard Server-Action-backed edit form.

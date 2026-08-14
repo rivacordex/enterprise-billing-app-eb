@@ -4,7 +4,7 @@
 
 **Companion docs:** `prodmgmt-project-overview.md` (product spec) and `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture *Invariants*, the **Invariants win** and the conflict is a bug to fix here.
 
-> **Status:** this doc now covers all three shipped surfaces — the read-only catalog (View Product), the CRUD fast-follow (Manage Products), and the **Product Ordering & Inventory update** (Orders/Subscriptions — `prodmgmt-update-overview.md`, architecture Inv. #15–22), ship-gate-verified as of pm34. Every Ordering-update addition below is marked *(Ordering update)*.
+> **Status:** this doc now covers all three shipped surfaces — the read-only catalog (View Product), the CRUD fast-follow (Manage Products), and the **Product Ordering & Inventory update** (Orders/Subscriptions — `prodmgmt-project-overview.md`, architecture Inv. #15–22), ship-gate-verified as of pm34. Every Ordering-update addition below is marked *(Ordering update)*.
 
 ---
 

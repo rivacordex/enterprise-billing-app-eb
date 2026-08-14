@@ -39,5 +39,30 @@ export default defineConfig({
       BOOTSTRAP_ADMIN_EMAIL: "bootstrap-admin@example.com",
       BOOTSTRAP_ADMIN_PASSWORD: "test-only-bootstrap-password",
     },
+    // Every suite resets its schemas with `DROP SCHEMA IF EXISTS ... CASCADE`
+    // in beforeAll/afterAll. postgres.js's default notice handler `console.log`s
+    // every server NOTICE (connection.js `NoticeResponse`), so those drops
+    // flood stdout with thousands of benign "schema … does not exist, skipping"
+    // / "drop cascades to N objects" lines. Centralized here rather than
+    // threading `onnotice: () => {}` through the ~60 suites that each construct
+    // their own `postgres()` client.
+    //
+    // SAFETY: this gates console *display* only — it never affects assertions
+    // or pass/fail, so it cannot hide a test failure. The match is pinned to the
+    // full postgres NOTICE signature: a whole-log object literal carrying
+    // `severity: 'NOTICE'` alongside the `code:` (SQLSTATE) and `routine:` fields
+    // every server notice has. It therefore cannot match a WARNING/ERROR/FATAL
+    // notice, a thrown pg error, or an app JSON log (double-quoted keys) — only
+    // genuine NOTICE-level teardown chatter is dropped.
+    onConsoleLog(log) {
+      const t = log.trim();
+      const isBenignPgNotice =
+        t.startsWith("{") &&
+        t.endsWith("}") &&
+        /\bseverity: 'NOTICE'/.test(t) &&
+        /\bcode: '/.test(t) &&
+        /\broutine: '/.test(t);
+      if (isBenignPgNotice) return false;
+    },
   },
 });

@@ -682,6 +682,6 @@ The existing "no product read path imports the audit-log write path" test (§3.5
 - [ ] Existing Phase 1, pm11, and pm12 tests still pass unmodified — this unit adds two schemas, three repository methods, three service files, and one guardrail `Set` extension; it touches no existing method's behavior or signature.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm14 entry with the commit reference, once this actually ships.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm14 entry with the commit reference, once this actually ships.
 
 Any failing item means the unit is not done. Units pm21 (Specification management UI) depends on all three services' exact result shapes — including `offeringId`/`productSpecId`/`branched` — existing and verified; do not start it until every item above passes. Unit pm24 (ship gate) depends on this unit's guardrail-10 behavior holding, whether asserted structurally by then or only by construction as verified here.
