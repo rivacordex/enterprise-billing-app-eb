@@ -112,6 +112,6 @@ Read the actual generated file and confirm: (a) it's a plain `ALTER TABLE ADD CO
 - [ ] `tests/db/product-schema*.test.ts` passes after intentionally updating `tests/db/product-schema.test.ts`'s exact-column assertion to include `family_offering_id`; existing repository/service tests still pass unmodified — this unit changes no behavior any of them exercises, only adds a column nothing yet reads or writes.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm10 entry with the commit reference, once this actually ships.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm10 entry with the commit reference, once this actually ships.
 
 Any failing item means the unit is not done. pm11 (Create offering) must not start until this migration is applied and verified.

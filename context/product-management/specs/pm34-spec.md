@@ -33,7 +33,7 @@ Land the update's ship gate: authz-matrix entries for both new pages, the update
 ### 4. Doc sync (merged here — no standalone visible result)
 
 - `prodmgmt-code-standards.md`: update conventions — file tree additions (§7), permission map rows for both pages + approval (§8), guardrails 15–22 (§9), the cross-module transactional-read rule (§1), replacing the interim scope note.
-- `prodmgmt-progress-tracker.md`: pm25–pm34 unit notes (ripple patterns included: new-pgSchema test setup, audit-filter counts, cross-module locked finders).
+- `prodmgmt-completed-tracker.md`: pm25–pm34 unit notes (ripple patterns included: new-pgSchema test setup, audit-filter counts, cross-module locked finders).
 - `prodmgmt-architecture.md`: flip the update's status markers from PLANNED to SHIPPED; drop the dead FK-fallback sentence.
 - `prodmgmt-ai-workflow-rules.md`: the update's permanent rules move from "once built" phrasing into the standing §1.4 list.
 

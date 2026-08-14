@@ -422,7 +422,7 @@ One commit. Contents: `types/product.ts` (edit — two additions), `db/repositor
 - [ ] `npm run build` passes.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy) gets a pm18 entry with the commit reference, and explicitly records which way §3.8's "View Product heading" question landed (already done by pm17, done here, or still outstanding) so pm24's ship-gate sweep doesn't have to re-derive it.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm18 entry with the commit reference, and explicitly records which way §3.8's "View Product heading" question landed (already done by pm17, done here, or still outstanding) so pm24's ship-gate sweep doesn't have to re-derive it.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit adds exactly one new route (`/products/manage-products`) with no mutation surface behind it yet — the SAST/DAST baseline should show no new finding beyond the expected new-route entry pm24 will formally add to the frozen route manifest.

@@ -485,7 +485,7 @@ One commit, e.g. `product module phase 2 ship gate: guardrails + authz matrix + 
 **Docs in sync (verify, don't duplicate)**
 
 - [ ] `prodmgmt-architecture-phase2.md` §4 and `prodmgmt-code-standards-phase2.md` §8 already carry the `/products/manage-products` permission rows (EDIT for mutations, DELETE for retire/discard) — confirmed, not re-authored.
-- [ ] `prodmgmt-progress-tracker.md` marks Unit pm24 complete with commit ref, guardrail-audit results, and the phase's ship-gate sign-off.
+- [ ] `prodmgmt-completed-tracker.md` marks Unit pm24 complete with commit ref, guardrail-audit results, and the phase's ship-gate sign-off.
 
 **Pipeline (workflow §8.7; code-standards §10)**
 

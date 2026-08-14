@@ -105,7 +105,7 @@ This test is permanent, not scaffolding — it remains the Inv. #12 / code-stand
 
 One commit, e.g. `rename route group (admin) -> (app); update refs; add rename-invariance guard (pm01)`. Contents: exactly §3.1–§3.5. Explicitly **not** in this commit: nav changes (`components/admin-nav.tsx` untouched — Unit 4), any `db/`, `services/`, `validation/` file, any product code, any dependency or config change, any `infra/**` edit (the new test runs inside the existing `npm run test` CI gate; no pipeline YAML change is needed or permitted — protected files §6.5).
 
-Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` entry for Unit 1) is updated in the plan directory, outside the app repo commit.
+Plan-folder bookkeeping (`prodmgmt-completed-tracker.md` entry for Unit 1) is updated in the plan directory, outside the app repo commit.
 
 ## 4. Dependencies
 
@@ -136,7 +136,7 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 
 **Docs in sync**
 - [ ] Repo `usrmgmt-architecture.md` and `usrmgmt-code-standards.md` contain no bare `(admin)` path references (only the deliberate "renamed from" note).
-- [ ] `prodmgmt-progress-tracker.md` (plan folder) marks Unit 1 complete with the commit reference.
+- [ ] `prodmgmt-completed-tracker.md` (plan folder) marks Unit 1 complete with the commit reference.
 
 **Pipeline**
 - [ ] CI pipeline green end-to-end on the branch, including SAST + ZAP DAST baseline (no new findings — no runtime behavior changed).

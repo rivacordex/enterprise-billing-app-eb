@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // Mock next/navigation — DocumentsTable uses useRouter, usePathname, and
@@ -223,13 +223,18 @@ describe("DocumentsTable — ↺ Reverse row action (ac22 §3.2)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("clicking ↺ Reverse does not open the drawer — no ?doc navigation (stopPropagation, §2.3)", () => {
+  it("clicking ↺ Reverse does not open the drawer — no ?doc navigation (stopPropagation, §2.3)", async () => {
     pushMock.mockClear();
     const row = makeRow({ reversible: true });
     render(<DocumentsTable {...BASE_PROPS} rows={[row]} total={1} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /reverse document PAY00000001/i }),
-    );
+    // Opening the ReversalDialog kicks off its async preview fetch; wrap the
+    // click in act() so those post-await state updates settle inside act
+    // rather than leaking a "not wrapped in act(...)" warning after the test.
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: /reverse document PAY00000001/i }),
+      );
+    });
     // The row's openDoc navigation (router.push with ?doc=...) must not fire.
     expect(pushMock).not.toHaveBeenCalled();
   });

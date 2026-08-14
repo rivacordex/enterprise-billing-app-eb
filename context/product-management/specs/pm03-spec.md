@@ -201,7 +201,7 @@ New `config_group` `'products'` (platform §3: SYSTEM_CONFIG partitioned by `con
 
 ### 3.9 Commit
 
-One commit, e.g. `product repositories + services/product: list, detail, derived effectivity (pm03)`. Contents: exactly §3.1–§3.8. Explicitly **not** in this commit: any `app/**`, `components/**`, or nav file (pm04/pm05); `actions/product/` or `app/api/product*` (forbidden in v1); any mutation export in the three repositories; edits to migrations `0000`–`0006` or to pm02's seed/validation/schema files; any `AUDIT_LOG` write; any npm dependency or lockfile change. Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` Unit 3 entry) stays outside the app-repo commit.
+One commit, e.g. `product repositories + services/product: list, detail, derived effectivity (pm03)`. Contents: exactly §3.1–§3.8. Explicitly **not** in this commit: any `app/**`, `components/**`, or nav file (pm04/pm05); `actions/product/` or `app/api/product*` (forbidden in v1); any mutation export in the three repositories; edits to migrations `0000`–`0006` or to pm02's seed/validation/schema files; any `AUDIT_LOG` write; any npm dependency or lockfile change. Plan-folder bookkeeping (`prodmgmt-completed-tracker.md` Unit 3 entry) stays outside the app-repo commit.
 
 ## 4. Dependencies
 
@@ -230,7 +230,7 @@ One commit, e.g. `product repositories + services/product: list, detail, derived
 - [ ] With the pm02 seed data and today's clock: offering 1's 2026 recurring price is `current` (end `2027-01-01`), the 2027 successor is `future` (end `null`) — spot-checked via a scratch invocation or the integration suite.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` marks Unit 3 complete with the commit reference.
+- [ ] `prodmgmt-completed-tracker.md` marks Unit 3 complete with the commit reference.
 - [ ] This spec records the three 2026-07-04 user decisions (page size 5 + SYSTEM_CONFIG-configurable — revised from 10 at spec close; all price rows returned; effectivity status with injectable `now`) — done with this file.
 
 **Pipeline**

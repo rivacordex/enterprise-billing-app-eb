@@ -687,7 +687,9 @@ describe.skipIf(!databaseUrl)(
           LEVELS.READ,
         );
         expect(result.userId).toBe(ordersReadUserId);
-        expect(result.permissionMap.product_orders).not.toBeNull();
+        // Exact granted level, not just non-null — a resolver that leaked EDIT
+        // (or dropped the key entirely) must fail here.
+        expect(result.permissionMap.product_orders).toBe(LEVELS.READ);
       });
 
       it.each([
@@ -697,7 +699,8 @@ describe.skipIf(!databaseUrl)(
         mockSession(ordersEditUserId);
         const result = await requirePermission(name, level);
         expect(result.userId).toBe(ordersEditUserId);
-        expect(result.permissionMap[name]).not.toBeNull();
+        // Granted level is EDIT regardless of the required level under test.
+        expect(result.permissionMap[name]).toBe(LEVELS.EDIT);
       });
 
       it("inventory_read_user satisfies product_inventory:READ", async () => {
@@ -707,7 +710,7 @@ describe.skipIf(!databaseUrl)(
           LEVELS.READ,
         );
         expect(result.userId).toBe(inventoryReadUserId);
-        expect(result.permissionMap.product_inventory).not.toBeNull();
+        expect(result.permissionMap.product_inventory).toBe(LEVELS.READ);
       });
 
       it.each([
@@ -719,7 +722,7 @@ describe.skipIf(!databaseUrl)(
           mockSession(inventoryEditUserId);
           const result = await requirePermission(name, level);
           expect(result.userId).toBe(inventoryEditUserId);
-          expect(result.permissionMap[name]).not.toBeNull();
+          expect(result.permissionMap[name]).toBe(LEVELS.EDIT);
         },
       );
 

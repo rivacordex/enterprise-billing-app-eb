@@ -763,7 +763,7 @@ No `react-hook-form`, `@hookform/resolvers/zod`, or `zod` import is added by eit
 - [ ] `npm run build` passes.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm23 entry with the commit reference, explicitly noting that this is the final UI unit of the five (`pm19`–`pm23`) and that every `pm18` seam is now filled, so `pm24`'s ship-gate sweep can proceed without checking for any outstanding inert button.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm23 entry with the commit reference, explicitly noting that this is the final UI unit of the five (`pm19`–`pm23`) and that every `pm18` seam is now filled, so `pm24`'s ship-gate sweep can proceed without checking for any outstanding inert button.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit completes the product module's mutation surface (eight action files total); the SAST/DAST baseline should show no new finding beyond what's already expected for two standard Server-Action-backed confirmation flows, one of them destructive.

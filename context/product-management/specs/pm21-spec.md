@@ -1114,7 +1114,7 @@ One commit. Contents: `app/(app)/products/manage-products/page.tsx` (edit — on
 
 **Docs in sync**
 - [ ] `prodmgmt-code-standards-phase2.md` §4/§7 and `prodmgmt-ui-context-phase2.md`'s row-action table both show `SpecificationsDialog`/the new "Specifications" row, added in this unit's own commit (§3.9), not deferred.
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy) gets a pm21 entry with the commit reference, and explicitly records the two design calls a future unit (pm22/pm23) might otherwise re-litigate: the "stay open + `router.refresh()`" pattern for direct (non-branching) success (Design §2.5) as a deliberate departure from pm19/pm20's own "always close" convention, and the read-model resolution (Design §2.3, reusing `getOfferingDetail` per-row rather than widening `OfferingListRow`) — so a later unit doesn't independently re-derive either decision under a different shape.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm21 entry with the commit reference, and explicitly records the two design calls a future unit (pm22/pm23) might otherwise re-litigate: the "stay open + `router.refresh()`" pattern for direct (non-branching) success (Design §2.5) as a deliberate departure from pm19/pm20's own "always close" convention, and the read-model resolution (Design §2.3, reusing `getOfferingDetail` per-row rather than widening `OfferingListRow`) — so a later unit doesn't independently re-derive either decision under a different shape.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit adds three action files to an already-established mutation surface and one new dialog; the SAST/DAST baseline should show no new finding beyond what's already expected for a standard Server-Action-backed CRUD-over-a-list dialog.

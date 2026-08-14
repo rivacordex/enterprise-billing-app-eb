@@ -484,7 +484,7 @@ No Zod, Drizzle, or Postgres-driver change — this unit adds no validation sche
 - [ ] `npm run build` passes.
 
 **Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy) gets a pm19 entry with the commit reference, and explicitly records that the guardrail assertion for `actions/product/` was updated here (not deferred to pm24) so pm20–pm23 know to extend `EXPECTED_PRODUCT_ACTION_FILES` themselves rather than assuming it's still pm24's job alone.
+- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm19 entry with the commit reference, and explicitly records that the guardrail assertion for `actions/product/` was updated here (not deferred to pm24) so pm20–pm23 know to extend `EXPECTED_PRODUCT_ACTION_FILES` themselves rather than assuming it's still pm24's job alone.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit is the first to add a real mutation surface to the product module — confirm the SAST/DAST baseline shows no new finding beyond what's expected for a standard Server-Action-backed create form (matching the pattern already established by `actions/roles/create-role.action.ts`).
