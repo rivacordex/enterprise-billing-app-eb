@@ -376,10 +376,6 @@ If pm17's §2.6 decision deferred the "View Product" `H1`/`metadata.title` renam
 - `tests/components/manage-offering-table.test.tsx` (new) — renders each of the three status action-button sets and asserts the exact button set/labels per §2.6's table; asserts a single-version family renders no chevron; asserts an expand click reveals the family's other versions with their own independent action sets; asserts every action button and the "New offering" CTA are present, focusable, and have no attached behavior that changes any observable state on click (a `fireEvent.click` on each produces no callback invocation, no navigation, no state change beyond the component's own local expand/collapse state) — this is the executable form of the "seam, not real yet" claim, not just a comment trusted at face value.
 - `tests/guardrails/product-module-boundaries.test.ts` — no edit expected in this unit (pm24 owns the guardrail rewrites); run the existing suite and confirm it still passes unmodified, in particular the "no product read path imports the audit-log write path" check now also scanning this unit's two new page files and its one new component.
 
-### 3.10 Commit
-
-One commit. Contents: `types/product.ts` (edit — two additions), `db/repositories/product-offering.ts` (edit — one field added to `findList`'s SELECT only), `app/(app)/products/manage-products/page.tsx` (new), `app/(app)/products/manage-products/loading.tsx` (new), `app/(app)/products/manage-products/error.tsx` (new), `components/products/manage/manage-offering-table.tsx` (new), the two new test files. Explicitly **not** in this commit: `actions/product/**`, any `*-write.service.ts`, any file under `app/(app)/products/product-offering/` (unless §3.8 applies), `components/admin-nav.tsx` (pm17's own file), any migration.
-
 ## 4. Dependencies
 
 **No new npm packages.** `lucide-react` (already installed, `^1.20.0`) supplies every icon this unit needs: `ChevronRight`, `ChevronDown` (expand affordance — not yet imported by `manage-offering-table.tsx` since the file is new, but already used elsewhere in this codebase for the identical chevron pattern), `Pencil`, `CircleDollarSign`, `Check`, `Trash2`, `Archive` (row actions — `Archive` already imported by `lifecycle-badge.tsx`; this unit imports it again locally in the new file, no shared-import refactor needed), `Plus` (CTA, already used by `customers/manage/page.tsx`), `PackageSearch` (empty state, already used by `offering-table.tsx`). `Skeleton` (`components/ui/skeleton.tsx`) and the existing `Button`/`cn` primitives are reused as-is. No Zod, Drizzle, or Postgres-driver version change — this unit adds one column to one existing SELECT, no schema/migration change.
@@ -420,9 +416,6 @@ One commit. Contents: `types/product.ts` (edit — two additions), `db/repositor
 - [ ] `npm run format:check` green.
 - [ ] `npm run test` green — all pre-existing product-module tests plus this unit's two new test files.
 - [ ] `npm run build` passes.
-
-**Docs in sync**
-- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm18 entry with the commit reference, and explicitly records which way §3.8's "View Product heading" question landed (already done by pm17, done here, or still outstanding) so pm24's ship-gate sweep doesn't have to re-derive it.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit adds exactly one new route (`/products/manage-products`) with no mutation surface behind it yet — the SAST/DAST baseline should show no new finding beyond the expected new-route entry pm24 will formally add to the frozen route manifest.

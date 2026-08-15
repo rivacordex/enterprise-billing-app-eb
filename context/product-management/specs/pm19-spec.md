@@ -435,10 +435,6 @@ No other assertion in this file changes — `PRODUCT_WRITE_SERVICE_FILES` (a sep
 - `tests/components/manage-offering-table.test.tsx` (**edit**, pm18-owned file) — this file's existing seam test currently asserts the "New offering" CTA has "no attached behavior that changes any observable state on click" (pm18-spec §3.9). That assertion is no longer true for the CTA specifically once this unit lands — update it to assert clicking the CTA opens `CreateOfferingDialog` (e.g., the dialog's title text "New offering" becomes visible) instead of asserting no-op behavior. Leave every row-action button's own "no attached behavior" assertion untouched — those remain real seams for pm20–pm23.
 - `tests/guardrails/product-module-boundaries.test.ts` — run the full suite; confirm the rewritten assertion (§3.6) passes and no other existing assertion regresses.
 
-### 3.8 Commit
-
-One commit. Contents: `actions/product/create-offering.action.ts` (new — first file in a new directory), `components/products/manage/offering-form.tsx` (new), `components/products/manage/create-offering-dialog.tsx` (new), `components/products/manage/manage-offering-table.tsx` (edit — one seam filled, one import added), `tests/guardrails/product-module-boundaries.test.ts` (edit — one assertion replaced), `tests/actions/create-offering.action.test.ts` (new), `tests/components/create-offering-dialog.test.tsx` (new), `tests/components/manage-offering-table.test.tsx` (edit — one assertion updated). Explicitly **not** in this commit: any change to `services/product/`, `db/repositories/`, `validation/product/`, `db/migrations/`, or `app/(app)/products/manage-products/page.tsx`.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything this unit needs is already installed and already used elsewhere in this codebase:
@@ -482,9 +478,6 @@ No Zod, Drizzle, or Postgres-driver change — this unit adds no validation sche
 - [ ] `npm run format:check` green.
 - [ ] `npm run test` green — full suite, including the three new/edited test files above.
 - [ ] `npm run build` passes.
-
-**Docs in sync**
-- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm19 entry with the commit reference, and explicitly records that the guardrail assertion for `actions/product/` was updated here (not deferred to pm24) so pm20–pm23 know to extend `EXPECTED_PRODUCT_ACTION_FILES` themselves rather than assuming it's still pm24's job alone.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit is the first to add a real mutation surface to the product module — confirm the SAST/DAST baseline shows no new finding beyond what's expected for a standard Server-Action-backed create form (matching the pattern already established by `actions/roles/create-role.action.ts`).

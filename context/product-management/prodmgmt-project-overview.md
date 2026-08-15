@@ -37,7 +37,7 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 
 **Ordering & Inventory:**
 
-10. Record every sale as a TMF622-shaped order (`ordering.product_order` + `ordering.product_order_item`) with the full TMF622 status enum seeded and the module using `ACKNOWLEDGED / PENDING / COMPLETED / REJECTED / FAILED`.
+10. Record every sale as a TMF622-shaped order (`ordering.product_order` + `ordering.product_order_item`) with the full TMF622 status enum seeded and the module persisting `ACKNOWLEDGED / PENDING / COMPLETED / REJECTED`. `FAILED` remains seeded solely for enum completeness and is never written — a failed order rolls back fully rather than persisting a FAILED row.
 11. Instantiate exactly one TMF637-shaped subscription (`inventory.product_inventory`) per completed order item, automatically, in the same transaction as order completion — no manual fulfilment step.
 12. Guarantee grandfathered pricing: the order item and subscription FK the exact `product.product_offering` version row ordered; later catalog version activations never change an existing subscriber's price.
 13. Make every customer price provable: either an immutable catalog price row or an insert-only, manager-approved override row in `ordering.order_item_price_override` — no third source, no editable price anywhere.

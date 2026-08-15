@@ -803,10 +803,6 @@ No other assertion in this file changes. `PRODUCT_WRITE_SERVICE_FILES` (a separa
 - `tests/components/manage-offering-table.test.tsx` (**edit**, pm18/pm19/pm20/pm21-owned file) — this file's Add-price-button assertion currently asserts "no attached behavior" alongside whichever other row actions haven't been filled yet (pm18-spec §3.9). Update it, and only it: clicking "Add price" on any `DRAFT` or `ACTIVE` row (primary or an expanded sibling) opens `AddPriceDialog` (confirmed via its title text); a successful, `branched: true` result asserts the row's family id is added to `expandedFamilies` (its other version rows become visible without a further click). Leave every other seam's own "no attached behavior" assertion untouched — Activate/Discard/Retire remain real seams for pm23.
 - `tests/guardrails/product-module-boundaries.test.ts` — run the full suite; confirm the appended array entry (§3.6) passes and no other assertion regresses.
 
-### 3.8 Commit
-
-One commit. Contents: `actions/product/insert-price.action.ts` (new), `components/products/manage/price-form.tsx` (new), `components/products/manage/add-price-dialog.tsx` (new), `components/products/manage/manage-offering-table.tsx` (edit — Add-price seams filled, one import added), `tests/guardrails/product-module-boundaries.test.ts` (edit — one array entry appended), `tests/actions/insert-price.action.test.ts` (new), `tests/components/price-form.test.tsx` (new), `tests/components/add-price-dialog.test.tsx` (new), `tests/components/manage-offering-table.test.tsx` (edit — Add-price-seam assertions replaced, others untouched). Explicitly **not** in this commit: any change to `services/product/insert-price.ts`, `db/repositories/product-offering-price.ts`, `validation/product/insert-price.schema.ts` (pm15's own code, consumed here unmodified), any `db/migrations/` file, any change to `create-offering.action.ts`/`update-offering.action.ts`/`offering-form.tsx`/`create-offering-dialog.tsx` (pm19/pm20's own files), any change to `app/(app)/products/manage-products/page.tsx`.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything this unit needs is already installed and already used elsewhere in this codebase:
@@ -862,9 +858,6 @@ No Drizzle or Postgres-driver change — this unit adds no validation schema und
 - [ ] `npm run format:check` green.
 - [ ] `npm run test` green — full suite, including the new/edited test files above.
 - [ ] `npm run build` passes.
-
-**Docs in sync**
-- [ ] `prodmgmt-completed-tracker.md` (real repo copy) gets a pm22 entry with the commit reference, and explicitly records the one open implementation choice this spec flagged rather than mandated (§3.3's note on `Controller`-wrapped vs. manually-wired `RadioGroup`), so a later reviewer doesn't mistake whichever way it landed for a deviation from spec.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit adds one action file to the already-established mutation surface; the SAST/DAST baseline should show no new finding beyond what's already expected for a standard Server-Action-backed create-style form.
