@@ -218,10 +218,6 @@ Component tests under `tests/` (vitest + Testing Library; patterns: `tests/compo
 
 Aside from the one intended edit above (region populated-Specifications assertion), **no pre-existing test assertion changes** — pm07 adds two new components + two new test files and fills one seam. The page test (`tests/app/product-offering-page.test.tsx`) is **not** touched (no page change).
 
-### 3.6 Commit
-
-One commit, e.g. `product offering specifications panel: populated SpecificationsPanel (pm07)`. Contents: `components/products/characteristic-chip.tsx` (new), `components/products/specifications-panel.tsx` (new), `components/products/offering-detail-region.tsx` (edit — Specifications seam), `tests/components/characteristic-chip.test.tsx` (new), `tests/components/specifications-panel.test.tsx` (new), and the one intended test edit (`offering-detail-region.test.tsx`, §3.5). Explicitly **not** in this commit: any `services/**`, `db/**`, `validation/**` change; `app/(app)/products/product-offering/page.tsx` (untouched); `components/products/offering-detail.tsx` (pm06 — not touched); `components/products/offering-table.tsx` (pm05); `components/admin-nav.tsx` (pm04); any prices rendering, `PriceTypeBadge`, `TierTable`, or `formatCurrency` (pm08); any `actions/product/`, `app/api/product*`, mutation, or CTA; any authz-matrix file (pm09); any dependency or lockfile change. Plan-folder bookkeeping (`prodmgmt-completed-tracker.md` Unit 7 entry) stays outside the app-repo commit.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything is already installed: `lucide-react` (`Asterisk`, `Star`, `ListChecks`/`FileText` icons), `class-variance-authority` + `cn` (if the badges reuse the `cva` pattern), vitest + Testing Library. No DB, schema, migration, validation, or service change (pm07 is UI-only). Requires pm06 merged: the `OfferingDetailRegion` populated branch with the `offering` prop and the Specifications seam; and (transitively) pm03's `SpecificationCard` read model / `offering.specifications` (specs scoped + ordered in the service) and pm02's `ProductSpecCharacteristics` flat-record type.
@@ -259,7 +255,6 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 **Docs in sync**
 
 - [ ] No companion-doc edit required: overview *Features — Specifications panel* and architecture §2/§3 already describe this section; the authz-matrix entry is **pm09**.
-- [ ] `prodmgmt-completed-tracker.md` (plan folder) marks Unit pm07 complete with the commit reference.
 
 **Pipeline**
 
