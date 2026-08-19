@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatCalendarDate,
   formatCurrency,
   formatDatetime,
   formatMoney,
@@ -9,6 +10,30 @@ import {
 } from "@/lib/formatters";
 import { DEFAULT_LOCALE } from "@/lib/locale";
 import type { SystemConfigDisplayRow } from "@/types/system-config";
+
+describe("formatCalendarDate", () => {
+  it("formats a valid YYYY-MM-DD as dd Mon yyyy", () => {
+    expect(formatCalendarDate("2026-08-01")).toBe("01 Aug 2026");
+    expect(formatCalendarDate("2024-02-29")).toBe("29 Feb 2024"); // leap year
+  });
+
+  it("returns the raw input for a malformed string", () => {
+    expect(formatCalendarDate("not-a-date")).toBe("not-a-date");
+    expect(formatCalendarDate("2026-8-1")).toBe("2026-8-1");
+  });
+
+  it("returns the raw input for an out-of-range month", () => {
+    expect(formatCalendarDate("2026-00-10")).toBe("2026-00-10");
+    expect(formatCalendarDate("2026-13-10")).toBe("2026-13-10");
+  });
+
+  it("returns the raw input for an impossible day", () => {
+    expect(formatCalendarDate("2026-02-30")).toBe("2026-02-30");
+    expect(formatCalendarDate("2026-02-29")).toBe("2026-02-29"); // 2026 not leap
+    expect(formatCalendarDate("2026-04-31")).toBe("2026-04-31");
+    expect(formatCalendarDate("2026-08-00")).toBe("2026-08-00");
+  });
+});
 
 describe("formatDatetime", () => {
   it('returns "Never" for null with no fallback given', () => {

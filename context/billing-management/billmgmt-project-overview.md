@@ -58,7 +58,7 @@ The primary flow — RevOps runs, reviews, and posts the July bill run for the E
 - Signal-based handoff: the completion call carries no charge payload; the app reads the charge records from the `rating` schema itself.
 - Idempotency enforced solely by a database unique constraint on `(run, ban, stage, attempt)` — never by the orchestrator.
 - Ownership boundary as a Postgres grant: rating has full rights on `rating.*` and `SELECT` on the billing tables it rates from; the app has `SELECT` on `rating.*` plus `UPDATE` on the one **claim marker** column of `rating.udr_rated` (the bill run stamps its run ref to claim the records it bills). No cross-schema foreign keys in either direction.
-- Retention & immutability contract: the rating subsystem may not purge or overwrite an `APPROVED` run's charge records until `COMPLETED`, and once a record is posted it is permanently immutable — posting reads it, and any tampering with a posted invoice's lines is caught by the bill's `charge_checksum`.
+- Retention & immutability contract: once a run is `APPROVED` the rating subsystem may not purge or overwrite its charge records, which remain immutable for the invoice's statutory life (architecture Inv. #14 — not just until `COMPLETED`); once a record is posted it is permanently immutable — posting reads it, and any tampering with a posted invoice's lines is caught by the bill's `charge_checksum`.
 
 ### Rerun and correction
 - Full or partial rerun while unapproved, from a selectable stage, with a mandatory reason.
@@ -98,7 +98,7 @@ The primary flow — RevOps runs, reviews, and posts the July bill run for the E
 - The `rating` schema, its dedicated Postgres role and grants, and the claim-marker `UPDATE` the app holds on `rating.udr_rated`.
 - Additive changes to Accounts-owned objects: `document_inv_seq`, `'INV'` added to the document type check, an INV reason code with unlimited `autoPostLimit`, GL mapping rows, and the period-close guard.
 - Route handlers under `app/api/billrun/` for stage completion and status, service-token authenticated, calling the same service layer as the server actions.
-- Server actions for materialize, trigger, rerun, cancel, approve, and post, each wrapping validate → mutate → audit in one transaction.
+- Server actions for trigger, rerun, cancel, approve, and post, each wrapping validate → mutate → audit in one transaction. Materialization is not a server action — it is the write performed on the Bill Runs list page's server render (the single materialization entry point).
 - Monthly on-cycle runs, recurring subscription charges only.
 - Workflow-engine deployment (namespace, definition, private-network placement, secret wiring) and the pipeline orchestration, including injectable HARD/SOFT/INFRA failures and on-demand stalling for testing.
 - RBAC permission rows and the Billing Viewer role seed.

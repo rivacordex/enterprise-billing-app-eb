@@ -32,6 +32,11 @@ export function BillRunsFilters({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  // Draft selects seeded from the URL. The parent re-mounts this component
+  // (via a `key` derived from the active filters) whenever the URL changes —
+  // tab switch, browser back/forward — so these initialisers re-read the
+  // current params and the displayed filters always match the server query,
+  // without a setState-in-effect resync.
   const [cycle, setCycle] = useState(searchParams.get("cycle") ?? "");
   const [status, setStatus] = useState(searchParams.get("status") ?? "");
   const showStatus = tab === "historical";

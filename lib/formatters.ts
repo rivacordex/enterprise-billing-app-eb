@@ -91,8 +91,17 @@ export function formatCalendarDate(ymd: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
   if (!match) return ymd;
   const [, year, month, day] = match;
-  const monthLabel = MONTHS_SHORT[Number(month) - 1];
-  return monthLabel ? `${day} ${monthLabel} ${year}` : ymd;
+  const monthNum = Number(month);
+  const monthLabel = MONTHS_SHORT[monthNum - 1];
+  if (!monthLabel) return ymd;
+  // Reject an impossible day (0, month-end overflow, Feb 29 in a common year).
+  // `Date.UTC(y, m, 0)` is the last day of month `m` (1-based), leap-aware.
+  const dayNum = Number(day);
+  const daysInMonth = new Date(
+    Date.UTC(Number(year), monthNum, 0),
+  ).getUTCDate();
+  if (dayNum < 1 || dayNum > daysInMonth) return ymd;
+  return `${day} ${monthLabel} ${year}`;
 }
 
 // Used by `ConfigTable`'s "Last Modified" column (um22-spec §22.5).

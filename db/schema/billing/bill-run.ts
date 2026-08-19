@@ -127,6 +127,16 @@ export const billRun = billing.table(
       "bill_run_approver_distinct_check",
       sql`approved_by IS NULL OR approved_by <> triggered_by`,
     ),
+    // Period-window invariants (bm02-spec Design §Structural). `period_start`
+    // never past `period_end` holds for any run type; the in-arrears
+    // `scheduled_run_date = period_end + 1` is an on-cycle rule, so it is
+    // guarded on `run_type = 'onCycle'` (all bm02 writes) and left open for the
+    // modelled off-cycle runs later.
+    check("bill_run_period_order_check", sql`period_start <= period_end`),
+    check(
+      "bill_run_oncycle_schedule_check",
+      sql`run_type <> 'onCycle' OR scheduled_run_date = period_end + 1`,
+    ),
   ],
 );
 
