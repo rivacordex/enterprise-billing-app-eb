@@ -1,7 +1,8 @@
 import type { PermissionName, PermissionType } from "@/types/rbac";
 
 // Optional module permissions: absent for users whose roles pre-date the
-// owning module (accounts — um06; ordering/inventory — pm25), matching the DB
+// owning module (accounts — um06; ordering/inventory — pm25; bill run — bm01),
+// matching the DB
 // resolver behaviour (it omits any permission a user's roles hold no grant
 // for). Keeping them out of the required set is also what stops a new module's
 // permission from rippling `null` into every hardcoded EffectivePermissionMap
@@ -11,7 +12,10 @@ type OptionalPermissionName =
   | "accounts_transactions"
   | "accounts_config"
   | "product_orders"
-  | "product_inventory";
+  | "product_inventory"
+  | "billrun_view"
+  | "billrun_operate"
+  | "billrun_approve";
 type CorePermissionName = Exclude<PermissionName, OptionalPermissionName>;
 
 // Core module permissions (users, roles, etc.) are always present; optional

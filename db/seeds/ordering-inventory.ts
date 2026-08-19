@@ -12,6 +12,8 @@ import { rolePermissionAssign } from "@/db/schema/role-permission-assign";
 import { organization, partyRole } from "@/db/schema/customer";
 import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
+import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
+import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
 import { productOffering } from "@/db/schema/product";
 import {
   productOrder,
@@ -270,6 +272,60 @@ async function resolvePrerequisites(tx: Database): Promise<{
   }
   const billingAccountId = ban!.billingAccountId;
 
+  // The onboarding flow (services/accounts/onboard-customer-accounts.ts)
+  // provisions each FA/BAN's pgledger accounts + `ledger_binding` rows; the
+  // accounts read path (getBillingAccountDetail §2.5) hard-requires the BAN's
+  // `receivables` binding and throws without it. Since this seed self-creates
+  // its FA/BAN (no onboarding service is invoked), it must mirror steps 2c/2d
+  // here, or every order review panel for this BAN 500s. Idempotent: each
+  // (owner, role) triple is created only when its binding is absent, so a
+  // re-run never double-provisions or orphans a pgledger account.
+  const ensureBinding = async (
+    ownerType: "financial_account" | "billing_account",
+    ownerId: string,
+    ledgerRole: "unapplied_cash" | "deposits" | "receivables",
+    accountName: string,
+  ): Promise<void> => {
+    const existing = await ledgerBindingRepository.findByOwner(
+      tx,
+      ownerType,
+      ownerId,
+    );
+    if (existing.some((b) => b.ledgerRole === ledgerRole)) return;
+
+    const account = await ledgerRepository.createAccount(
+      tx,
+      accountName,
+      CURRENCY,
+    );
+    await ledgerBindingRepository.insert(tx, {
+      ownerType,
+      ownerId,
+      ledgerRole,
+      pgledgerAccountId: account.id,
+      lastEditedBy: submitterId,
+    });
+  };
+
+  await ensureBinding(
+    "financial_account",
+    financialAccountId,
+    "unapplied_cash",
+    `fa.${financialAccountId}.unapplied_cash`,
+  );
+  await ensureBinding(
+    "financial_account",
+    financialAccountId,
+    "deposits",
+    `fa.${financialAccountId}.deposits`,
+  );
+  await ensureBinding(
+    "billing_account",
+    billingAccountId,
+    "receivables",
+    `ban.${billingAccountId}.receivables`,
+  );
+
   // The offering db:seed-product creates (ACTIVE). Its list recurring price is
   // 5000.00 — the story's overrides (420.00 / 399.00) undercut it.
   const [offering] = await tx
@@ -501,6 +557,14 @@ async function main(): Promise<void> {
     await db.transaction(async (tx) => {
       await grantOrderingPermissions(tx);
 
+      // Prerequisites are get-or-create idempotent and now also provision the
+      // FA/BAN `ledger_binding` rows the accounts read path requires — so they
+      // run unconditionally, ahead of the story short-circuit below. This
+      // self-heals a DB seeded before binding provisioning existed (the BAN's
+      // `receivables` binding is backfilled on re-run) without re-creating the
+      // one-time sample orders.
+      const ctx = await resolvePrerequisites(tx);
+
       const [existingOrder] = await tx
         .select({ productOrderId: productOrder.productOrderId })
         .from(productOrder)
@@ -510,7 +574,6 @@ async function main(): Promise<void> {
         return;
       }
 
-      const ctx = await resolvePrerequisites(tx);
       await seedStory(tx, ctx);
     });
 

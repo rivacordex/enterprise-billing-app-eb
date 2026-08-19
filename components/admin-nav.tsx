@@ -16,6 +16,7 @@ import {
   Lock,
   Package,
   PackagePlus,
+  ReceiptText,
   ScrollText,
   Settings,
   ShieldHalf,
@@ -157,6 +158,17 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         href: "/accounts/gl-journal",
         icon: FileText,
         requiredPermission: { name: "accounts_config", level: "READ" },
+      },
+    ],
+  },
+  {
+    caption: "Billing",
+    items: [
+      {
+        label: "Bill Runs",
+        href: "/billing/bill-runs",
+        icon: ReceiptText,
+        requiredPermission: { name: "billrun_view", level: "READ" },
       },
     ],
   },
