@@ -64,8 +64,8 @@ Update this file after every meaningful implementation change.
 
 ## Session Notes
 
-- Context docs live under `context/billling-management/` (triple-l), not the
-  `context/billing-management/` path AGENTS.md references.
+- Context docs live under `context/billing-management/` (matches AGENTS.md).
+  The folder was renamed from an earlier `billling-management` (triple-l) typo.
 - Adding the three permission names required mechanical fixture updates in
   `tests/{auth/resolver, services/roles-read.service, components/{admin-nav,
   permission-matrix-editor,role-detail}}` (permission count 11 → 14) and

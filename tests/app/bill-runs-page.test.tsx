@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm01-spec Verification — route × level matrix for /billing/bill-runs.
@@ -75,5 +78,13 @@ describe("BillRunsPage (bm01 — route × level matrix)", () => {
     mockRequirePermission.mockRejectedValue(redirectError("/login"));
 
     await expect(BillRunsPage()).rejects.toThrow("NEXT_REDIRECT");
+  });
+
+  it("declares dynamic = 'force-dynamic' (authenticated, uncached — code-standards §3.6)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "../../app/(app)/billing/bill-runs/page.tsx"),
+      "utf-8",
+    );
+    expect(src).toMatch(/export const dynamic\s*=\s*["']force-dynamic["']/);
   });
 });
