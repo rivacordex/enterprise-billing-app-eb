@@ -1,5 +1,6 @@
 export * from "@/db/schema/billing/pg-schema";
 export * from "@/db/schema/billing/accounts";
+export * from "@/db/schema/billing/bill-run";
 export * from "@/db/schema/billing/catalogs";
 export * from "@/db/schema/billing/documents";
 export * from "@/db/schema/billing/ledger-binding";

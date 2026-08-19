@@ -104,6 +104,10 @@ import { requirePermission } from "@/auth/guard";
 import { PERMISSIONS, LEVELS } from "@/auth/permission-constants";
 import { BillRunsEmptyState } from "@/components/billing/bill-runs-empty-state";
 
+// Authenticated, uncached — the guard reads the session (and later units read
+// run state live), so the route is explicitly dynamic (code-standards §3.6).
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = { title: "Bill Runs" };
 
 export default async function BillRunsPage(): Promise<React.JSX.Element> {
@@ -112,7 +116,7 @@ export default async function BillRunsPage(): Promise<React.JSX.Element> {
 }
 ```
 - `requirePermission` redirects unauthenticated → `/login` (via `getActiveUser`) and unauthorized → `/no-access`; no other guard is needed.
-- The route is dynamic by virtue of the session read in the guard (no explicit `force-dynamic` — matches the existing admin pages).
+- The route declares `export const dynamic = "force-dynamic"` (authenticated, uncached — code-standards §3.6): the guard reads the session and later units read run status/totals live, so the page must never be statically cached.
 
 `loading.tsx` — a `Skeleton` card, same shape as `app/(app)/administration/system-config/loading.tsx`.
 
@@ -173,7 +177,7 @@ Route × level matrix test (`tests/…`, mirrors the existing admin-page matrix)
 Scaffold discipline
 - [ ] No `bill_run` (or any billing domain) table is created; no data fetch in `page.tsx`; no `StubDataBanner`, no CTA.
 - [ ] `loading.tsx` and `error.tsx` exist for the segment; component `BillRunsEmptyState` is created with that exact name.
-- [ ] Only these files changed: `types/rbac.ts`, `auth/permission-constants.ts`, `components/admin-nav.tsx`, the new migration, `db/seeds/billing.ts`, `package.json`, the three files under `app/(app)/billing/bill-runs/`, `components/billing/bill-runs-empty-state.tsx`, and the four doc updates. No drive-by edits.
+- [ ] Only these files changed: `types/rbac.ts`, `auth/permission-constants.ts`, `components/admin-nav.tsx`, the new migration, `db/seeds/billing.ts`, `package.json`, the three files under `app/(app)/billing/bill-runs/`, `components/billing/bill-runs-empty-state.tsx`, and the four doc updates — **plus the mechanical test-fixture updates the new permission count (11 → 14) forces**: the RBAC fixtures under `tests/` (the resolver and roles-read-service tests and the `admin-nav`/`permission-matrix-editor`/`role-detail` component tests), the `route-manifest` registration of `/billing/bill-runs`, and that route's route×level page test. These fixture updates are expected, not drive-by edits; only *unrelated* edits are out of bounds.
 
 Docs
 - [ ] `billmgmt-architecture.md` §4, `billmgmt-code-standards.md` §7/§8, and `billmgmt-progress-tracker.md` updated in the same change set to the snake_case names and the `/billing/bill-runs` route.

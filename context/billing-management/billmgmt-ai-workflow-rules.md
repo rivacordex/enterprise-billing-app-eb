@@ -18,7 +18,7 @@ This document supplements `context/ai-workflow-rules.md` (binding for all module
 1. **Build spec-driven and bottom-up.** Before writing any unit, name the authorizing section (an overview feature, an architecture §-row/Invariant, a code-standards rule). No section, no mandate — stop and ask (general §4). Build in dependency order: schema/migration → repository → service → action/handler + guard → page/component → tests.
 2. **Do not build the rating engine.** `rating.udr_rated`/`rating.udr_exception` are a **stub** you build against, not something you implement. In v1 the collection/claim stage auto-completes and the deployment runs in stub-data mode. Any unit that starts computing charge amounts is out of bounds — stop.
 3. **The bill run rates nothing; it claims.** Every unit that reads charges reads already-rated amounts from `rating.udr_rated` and sums them in SQL. Never add a charge-derivation function (Inv. #1).
-4. **Land the schema before the behavior.** Unit 1 is the migration alone — the six `billing` tables, `partition_management` registration rows, the three `billrun_*` `PERMISSIONS` rows, the **Billing Viewer** role seed — verified in isolation before any repository depends on it.
+4. **Land the schema before the behavior.** Unit 1 is the migration (plus its accompanying seed) before any behavior: the **migration** owns the six `billing` tables, the `partition_management` registration rows, and the three `billrun_*` `PERMISSIONS` rows; the **Billing Viewer** role and its grants are created by the **seed** (`db/seeds/billing.ts`), never by the migration — all verified in isolation before any repository depends on it.
 5. **Treat these as permanent, cross-unit rules that never expire** (any unit that violates one is a review-blocking defect, on sight):
    - The **only** `rating.*` write is the claim marker (`ref_bill_run_id` + `attempt`) on `rating.udr_rated`; it lives in exactly one file, `db/repositories/billing/rating-claim.ts` (Inv. #2).
    - There is **no billing-side charge table**, ever; `charge_checksum` + `posted_attempt` are the only anchor (Inv. #3).
@@ -35,7 +35,7 @@ This document supplements `context/ai-workflow-rules.md` (binding for all module
 
 Deliver one vertical unit per pass, verified and committed before the next (general §2). The module's reference build order — split further whenever §4 triggers; each is its own unit:
 
-1. **Schema migration** (§1.4) — tables + partition registration + `billrun_*` permissions + Billing Viewer role. Migration only.
+1. **Schema migration + seed** (§1.4) — the migration owns tables + partition registration + the `billrun_*` permission rows; the **Billing Viewer** role and its grants ship in the accompanying `db/seeds/billing.ts` seed, not the migration. No repository/service/UI in this unit.
 2. **Accounts-side additive changes** — `document_inv_seq`, `'INV'` doc-type, the unlimited-`autoPostLimit` INV reason code, GL mapping rows, the **period-close guard**. This is a **cross-module unit** — see §3.6.
 3. **Lazy materialization + run list read** — `billing/bill-runs/page.tsx`, the materialize service, `RunListRow`, `billrun_view` guard.
 4. **Trigger** — snapshot accounts, `PROCESSING`, resolve `gl_event_at = scheduled_run_date`, call the engine client, double-trigger guard (`billrun_operate`).
@@ -104,7 +104,7 @@ The general doc §5 list applies in full. Module-specific detail and additions �
 1. **`components/ui/`** — managed shadcn/Radix vendor layer. Build new billing indicators/dialogs in `components/billing/` by composition; never edit a primitive.
 2. **Better-Auth managed tables and the `auth/` field mapping** — this module only references `core.APPUSER` by FK (`triggered_by`, `approved_by`, `created_by`); it creates no identity/RBAC/session/config/audit tables.
 3. **Applied migrations** — forward-only. New columns/constraints/partitions ship in a new migration; never edit an applied one; no manual production DDL.
-4. **The permission registry mechanism** — the three `billrun_*` rows and the Billing Viewer role come only from a committed migration; no code path inserts `PERMISSIONS` rows.
+4. **The permission registry mechanism** — the three `billrun_*` permission rows come only from a committed migration, and the Billing Viewer role + its grants only from the committed `db/seeds/billing.ts` seed; no application runtime code path inserts `PERMISSIONS` rows or role grants.
 5. **`tsconfig` strict flags, ESLint/Prettier, CI (`infra/**`)** — including the security-scan and route × level gates; never weaken one to pass a build.
 6. **Lockfiles/dependencies** — `pg_partman`/`pg_cron` are DB extensions provisioned by infra, not an npm change; any npm dependency change is its own requested unit.
 7. **The Accounts document engine, `postDocument`, pgledger, `billing.document`, and the INV reason code** — reuse only; changing them is an Accounts unit, coordinated and authorized (§3.6, §3.7).

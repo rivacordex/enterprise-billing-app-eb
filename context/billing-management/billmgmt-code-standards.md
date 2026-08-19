@@ -209,6 +209,7 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 - `billrun_operate` and `billrun_approve` gate **mutations**; a `billrun_view`-only principal reaches every read surface and no action (verified by the route × level matrix against server actions and handlers, not just navigation).
 - The two M2M handlers are **not** in the RBAC matrix — they authenticate a service token and are covered by their own auth tests (401 on bad token; 409 unless `PROCESSING`; 200 replay).
 - Deep links (`/billing/bill-runs/[runId]?tab=…`) pass through the `billrun_view` guard; the searchParam grants nothing.
+- **bm02 (delivered):** the `/billing/bill-runs` list page lazily materializes each active monthly cycle's single most-recent due run on its RSC render (a write, not an action/route/job — Inv. #10) before the read. Materialization writes exactly one `BILL_RUN_MATERIALIZED` `core.AUDIT_LOG` row **per row actually inserted**, as a **system write with `actorUserId = null`** (it is triggered by a page view but is not an operator mutation); a no-op load writes none. The Historical CSV export is a `billrun_view`-guarded **Server Action** (`actions/billing/export-runs.action.ts`), never a Route Handler, and — being read-only — is **not** audited. The `STUB_DATA_MODE` env flag drives `StubDataBanner`/`StubBadge` (Inv. #15); it is threaded server-side as a prop, never read in a client component.
 
 ---
 
@@ -217,7 +218,7 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 The general test-suite gate includes this module's guardrails; each ships with the unit that introduces the behavior:
 
 1. **Authz matrix** — the three pages × role/level, incl. the `operate` ≠ `approve` split (an `operate`-only principal cannot approve/post; four-eyes: approver == final trigger actor → reject).
-2. **M2M auth** — missing/invalid bearer → 401; valid stage signal advances `bill_run_account_stage` in one txn; **replay `(run,ban,stage,attempt,period_partition)` → 200 no-op**; signal after `APPROVED` → 409; charge fields in body → rejected.
+2. **M2M auth** — missing/invalid bearer → 401; valid stage signal advances `bill_run_account_stage` in one txn; **replay `(run,ban,stage,attempt,period_partition)` → 200 no-op**; signal after `APPROVED` → 409; charge fields in body → rejected; **the stage signal writes NO per-signal `core.AUDIT_LOG` row** — the appended `bill_run_account_stage` row is the sole stage audit surface (§1.10). Land this assertion with the M2M-handler unit that introduces the signal path.
 3. **Claim correctness** — a UDR already claimed by another run is never re-claimed; rerun releases then re-claims; release refused for rows on a posted invoice; the claim is the only `rating.*` write (asserted structurally against `db/repositories/billing/`).
 4. **Finalization latch** — a `customer_bill` with `ref_inv_document_id` set cannot be deleted or invalidated; posting retry skips already-`INVOICED` accounts; a crash between INV-number consumption and the stamp commit does not double-post.
 5. **No billing charge copy** — no table in `db/schema/billing/` stores charge amounts; `charge_checksum` detects a change to a posted invoice's `rating` lines.
