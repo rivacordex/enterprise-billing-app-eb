@@ -6,6 +6,7 @@
 import { db } from "@/db/client";
 import { glJournalRepository } from "@/db/repositories/accounts/gl-journal.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import { csvField } from "@/lib/csv";
 import { sum, stringToSen } from "@/services/accounts/money";
 
 export type JournalCsvRow = {
@@ -34,31 +35,14 @@ export type BuildJournalCsvResult =
 const CRLF = "\r\n";
 const CSV_HEADER = "gl_code,gl_name,debit,credit";
 
-// Escapes a CSV field value per RFC 4180. Prefixes formula-trigger characters
-// (=, +, -, @, TAB, CR) with a single quote to mitigate CSV injection before
-// applying quoting for commas, double-quotes, or newlines.
-function csvEscape(val: string): string {
-  if (/^[=+\-@\t\r]/.test(val)) {
-    val = `'${val}`;
-  }
-  if (
-    val.includes(",") ||
-    val.includes('"') ||
-    val.includes("\r") ||
-    val.includes("\n")
-  ) {
-    return `"${val.replace(/"/g, '""')}"`;
-  }
-  return val;
-}
-
 // Pure serializer (testable without DB). Returns UTF-8 string with CRLF line
-// endings; the last line also ends with CRLF per RFC 4180.
+// endings; the last line also ends with CRLF per RFC 4180. Field escaping
+// (RFC-4180 quoting + formula-injection prefix) is the shared `csvField`.
 export function serializeJournalCsv(rows: JournalCsvRow[]): string {
   const lines = [CSV_HEADER];
   for (const row of rows) {
     lines.push(
-      [csvEscape(row.glCode), csvEscape(row.name), row.debit, row.credit].join(
+      [csvField(row.glCode), csvField(row.name), row.debit, row.credit].join(
         ",",
       ),
     );

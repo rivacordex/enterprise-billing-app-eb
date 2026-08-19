@@ -75,6 +75,12 @@ const envSchema = z.object({
   // posture to `PASSWORD_MIN_LENGTH=abc`. Read once at boot, never at runtime
   // (Inv. #17 — the zone defines billing-period boundaries).
   APP_TIMEZONE: z.enum(SUPPORTED_TIMEZONES).default(DEFAULT_TIMEZONE),
+  // bm02-spec §2 / architecture Inv. #15. While set, every bill run is loudly
+  // badged as fixture data (the always-on `StubDataBanner`) because the
+  // rating engine is a stub in v1. An environment flag, never a per-run
+  // column (code-standards §6.11). Defaults to `false` so production behavior
+  // is unchanged until a stub/UAT deployment opts in.
+  STUB_DATA_MODE: booleanEnvSchema("false"),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -97,6 +103,7 @@ function loadConfig(): Config {
     PASSWORD_REQUIRE_SPECIAL: process.env.PASSWORD_REQUIRE_SPECIAL,
     PASSWORD_SPECIAL_CHARS: process.env.PASSWORD_SPECIAL_CHARS,
     APP_TIMEZONE: process.env.APP_TIMEZONE,
+    STUB_DATA_MODE: process.env.STUB_DATA_MODE,
   });
 
   if (!parsed.success) {
@@ -134,6 +141,11 @@ export const isSsoConfigured: boolean =
   !!entraConfig.tenantId &&
   !!entraConfig.clientId &&
   !!entraConfig.clientSecret;
+
+// bm02-spec §2 / architecture Inv. #15. Frozen boolean accessor for the
+// stub-data flag, threaded server-side into the bill-run page as a prop and
+// on to `StubDataBanner`/`StubBadge` — never read from a client component.
+export const stubDataMode: boolean = config.STUB_DATA_MODE;
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

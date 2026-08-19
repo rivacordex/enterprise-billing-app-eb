@@ -176,6 +176,13 @@
       "when": 1787144366275,
       "tag": "0024_billrun_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787151530429,
+      "tag": "0025_billing_bill_run",
+      "breakpoints": true
     }
   ]
 }

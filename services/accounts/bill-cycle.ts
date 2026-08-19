@@ -26,6 +26,14 @@ export async function listBillCycles(): Promise<BillCycle[]> {
   return billCycleRepository.findAll(db);
 }
 
+// Active cycles only — the set that can actually produce bill runs (bm02). The
+// bill-run list uses this for the cycle filter and the "no cycles configured"
+// empty state, so both agree with what materialization iterates
+// (`findAllActive`).
+export async function listActiveBillCycles(): Promise<BillCycle[]> {
+  return billCycleRepository.findAllActive(db);
+}
+
 export async function upsertBillCycle(
   input: UpsertBillCycleInput,
   actorId: string,

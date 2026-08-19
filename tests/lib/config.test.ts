@@ -70,6 +70,7 @@ describe("config", () => {
       PASSWORD_REQUIRE_SPECIAL: true,
       PASSWORD_SPECIAL_CHARS: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
       APP_TIMEZONE: "UTC",
+      STUB_DATA_MODE: false,
     });
   });
 

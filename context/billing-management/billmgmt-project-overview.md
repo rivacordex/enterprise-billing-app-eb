@@ -89,7 +89,7 @@ The primary flow — RevOps runs, reviews, and posts the July bill run for the E
 - New **Billing Viewer** role carrying `billrun_view` alone, for Finance and Internal Audit.
 - Four-eyes enforced in the service layer: approver ≠ the user who triggered the final attempt.
 - Machine-to-machine ingest endpoints carry no session semantics: bearer service token, constant-time compare, never logged, Zod-validated, HTTPS only, rejected unless the run is `PROCESSING`.
-- Audit events for materialization, trigger, stage completion, rerun, approval, cancellation.
+- Audit events for materialization, trigger, rerun, approval, and cancellation; per-account **stage completion** is recorded as the append-only `bill_run_account_stage` row (the drill-down/audit surface), **not** a per-signal `core.AUDIT_LOG` event (code-standards §1.10).
 
 ## In scope
 
