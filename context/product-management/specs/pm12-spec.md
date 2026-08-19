@@ -238,7 +238,4 @@ Note `productSpecId` and `productOfferingPriceId` are absent from both `.values(
 - [ ] `npm run lint` and `npm run format:check` green.
 - [ ] Existing Phase 1 and pm11 tests still pass unmodified — this unit adds one type, one private helper, and one repository method; it touches no existing method's behavior or signature.
 
-**Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm12 entry with the commit reference, once this actually ships.
-
 Any failing item means the unit is not done. Units pm13 (update), pm14 (specifications), pm15 (prices), and pm16 (activation preconditions) all depend on `branchOfferingAsDraft`'s exact behavior existing and verified — do not start any of them until every item above passes.

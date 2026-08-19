@@ -277,10 +277,6 @@ Component/RSC tests under `tests/` (vitest + Testing Library; patterns: `tests/c
 
 No existing test assertions change — pm05 adds a brand-new route and new components; it edits no prior page. (The only cross-cutting page count that could exist is a route-manifest/authz test; the authz-matrix entry is **pm09**, so pm05 adds no matrix row and must not trip a "matrix ↔ routes in sync" test if one exists — if such a test exists and fails on the new unlisted route, that is a **pm09** concern flagged, not silenced here. Verify at implementation time whether pm01's route-manifest test enumerates pages; if it does, add `/products/product-offering` to that manifest as the conscious, called-out exception.)
 
-### 3.6 Commit
-
-One commit, e.g. `product offering page: guard + searchParams + offerings table (pm05)`. Contents: exactly `app/(app)/products/product-offering/page.tsx` (new), `components/products/lifecycle-badge.tsx` + `offering-table.tsx` + `offering-detail-region.tsx` (new), and the four new test files (plus a one-line route-manifest addition **iff** §3.5 finds such a test). Explicitly **not** in this commit: any `services/**`, `db/**`, `validation/**` change (pm02/pm03 own those); `components/admin-nav.tsx` (pm04); any `actions/product/`, `app/api/product*`, or mutation code; any authz-matrix file (pm09); any `PriceTypeBadge`, spec-chip, or price/spec field rendering (pm07/pm08); any dependency or lockfile change. Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` Unit 5 entry) stays outside the app-repo commit.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything is already installed: `lucide-react` (icons), `class-variance-authority` + `cn` (badge), `next/navigation` hooks, `@/components/ui/button`, vitest + Testing Library. No DB, schema, or migration change (pm05 is UI-only). Requires pm02's `offeringListSearchParamsSchema` + `PERMISSIONS.PRODUCTS` and pm03's `listOfferings` / `getOfferingDetail` / read models already merged.
@@ -322,7 +318,6 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 **Docs in sync**
 
 - [ ] No companion-doc edit required: architecture §2/§4 already record this page and its guard as planned; the authz-matrix entry is **pm09**, not here.
-- [ ] `prodmgmt-progress-tracker.md` (plan folder) marks Unit pm05 complete with the commit reference.
 
 **Pipeline**
 

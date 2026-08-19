@@ -514,7 +514,4 @@ Same reasoning every prior unit's own §3.8/§3.5 gave: `activate-offering.ts` a
 - [ ] `npm run lint` and `npm run format:check` green.
 - [ ] Existing Phase 1, pm11, pm12, pm13 (if landed), pm14, and pm15 tests still pass unmodified — this unit adds two schemas, three repository methods, two service files, one audit-type extension (four entries), and one guardrail `Set` extension; it touches no existing method's behavior or signature.
 
-**Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm16 entry with the commit reference, once this actually ships.
-
 Any failing item means the unit is not done. Unit pm18 (Manage Products page shell) depends on real `DRAFT`/`ACTIVE`/`RETIRED` rows existing to display, which this unit (alongside pm11–pm15) is what produces them. Unit pm23 (Lifecycle actions UI) depends on `activateOffering`'s and `retireOffering`'s exact result shapes — including `supersededOfferingId` and `eventType` — existing and verified; do not start it until every item above passes. Unit pm24 (ship gate) depends on this unit's guardrail-8 behavior holding under its own dedicated concurrency test, not just this unit's own — re-run this spec's concurrency test as part of pm24's full sweep, not only once here.

@@ -393,7 +393,4 @@ This is the exact same shape as this file's own `productOfferingRepository` asse
 - [ ] `npm run lint` and `npm run format:check` green.
 - [ ] Existing Phase 1, pm11, and pm12 tests still pass unmodified — this unit adds one schema, one repository method, one service file, one audit-type entry, and two small test-file edits; it touches no existing method's behavior or signature.
 
-**Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm15 entry with the commit reference, once this actually ships.
-
 Any failing item means the unit is not done. Unit pm22 (Price management UI) depends on `insertPrice`'s exact result shape — including `offeringId`/`productOfferingPriceId`/`branched`/`backdated` — existing and verified; do not start it until every item above passes. Unit pm16 (Activation & Retirement) depends on being able to populate a `DRAFT` with at least one price through this unit's real service (not raw fixture SQL) before exercising its own activation-precondition tests; do not start pm16's price-precondition fixtures until this unit ships.

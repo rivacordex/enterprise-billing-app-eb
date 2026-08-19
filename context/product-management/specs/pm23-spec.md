@@ -692,10 +692,6 @@ No other assertion in this file changes. `PRODUCT_WRITE_SERVICE_FILES` already c
 - `tests/components/manage-offering-table.test.tsx` (**edit**, the pm18-owned file every prior UI unit has incrementally edited) — this is the **final** edit to this file's seam assertions: replace the remaining "no attached behavior" assertions for Activate, Discard, and Retire (primary rows and expanded sibling rows alike) with real-behavior assertions — clicking Activate on any `DRAFT` row opens `ActivateOfferingDialog` (confirmed via its title text "Activate offering"); clicking Discard on a `DRAFT` row opens `RetireOfferingDialog` titled "Discard draft"; clicking Retire on an `ACTIVE` row opens `RetireOfferingDialog` titled "Retire offering"; a successful, superseding Activate result asserts the family's `expandedFamilies` set gains the family id. After this edit, no row-action button or the "New offering" CTA in this file has a remaining "no attached behavior" assertion anywhere — every seam `pm18` originally left inert is now behaviorally tested.
 - `tests/guardrails/product-module-boundaries.test.ts` — run the full suite; confirm the extended array (§3.7) passes and no other assertion regresses.
 
-### 3.9 Commit
-
-One commit. Contents: `actions/product/activate-offering.action.ts` (new), `actions/product/retire-offering.action.ts` (new), `components/products/manage/activate-offering-dialog.tsx` (new), `components/products/manage/retire-offering-dialog.tsx` (new), `components/products/manage/manage-offering-table.tsx` (edit — three seam categories filled across primary and sibling rows, two imports added), `tests/guardrails/product-module-boundaries.test.ts` (edit — one array extended by exactly two entries), `tests/actions/activate-offering.action.test.ts` (new), `tests/actions/retire-offering.action.test.ts` (new), `tests/components/activate-offering-dialog.test.tsx` (new), `tests/components/retire-offering-dialog.test.tsx` (new), `tests/components/manage-offering-table.test.tsx` (edit — remaining seam assertions replaced). Explicitly **not** in this commit: any change to `services/product/activate-offering.ts`/`retire-offering.ts`, `db/repositories/product-offering.ts`, `validation/product/activate-offering.schema.ts`/`retire-offering.schema.ts` (`pm16`'s own code, consumed here unmodified), any `db/migrations/` file, any change to `create-offering.action.ts`/`update-offering.action.ts`/`insert-price.action.ts`/any specification action file or their dialogs/forms (`pm19`–`pm22`'s own files), any change to `app/(app)/products/manage-products/page.tsx`, any change to View Product's default-status filter (Design §2.7).
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything this unit needs is already installed and already used elsewhere in this codebase:
@@ -761,9 +757,6 @@ No `react-hook-form`, `@hookform/resolvers/zod`, or `zod` import is added by eit
 - [ ] `npm run format:check` green.
 - [ ] `npm run test` green — full suite, including the four new and one edited test file above.
 - [ ] `npm run build` passes.
-
-**Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (real repo copy, not the plan-folder mirror) gets a pm23 entry with the commit reference, explicitly noting that this is the final UI unit of the five (`pm19`–`pm23`) and that every `pm18` seam is now filled, so `pm24`'s ship-gate sweep can proceed without checking for any outstanding inert button.
 
 **Pipeline**
 - [ ] CI green end-to-end. This unit completes the product module's mutation surface (eight action files total); the SAST/DAST baseline should show no new finding beyond what's already expected for two standard Server-Action-backed confirmation flows, one of them destructive.

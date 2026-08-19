@@ -124,12 +124,6 @@ Working from the actual current file (reproduced in full in the research for thi
 8. **"keeps all five links reachable with a title tooltip"** (collapsed) — becomes six: add `"Manage Products"` to the loop array (rename `"Product Offering"` to `"View Product"` in it too), asserting `title="Manage Products"` the same way every other collapsed item is checked.
 9. **Every existing "Customer" section test** (`managerMap`/`userMap`-driven, `cm03`'s locked-rendering assertions, the divider-count-of-2-in-collapsed-mode assertion) — unaffected by this unit; the `Products` section's item count doesn't factor into any of those assertions. Confirm they still pass unmodified rather than assuming it.
 
-### 3.6 Commit
-
-One commit (plus, if §2.6/§3.4 is folded in, the page-heading file in the same commit — call this out explicitly in the commit message either way). Contents: `components/admin-nav.tsx`, `tests/components/admin-nav.test.tsx`, and optionally `app/(app)/products/product-offering/page.tsx` (text-only diff, §3.4). Explicitly **not** in this commit: any file under `app/(app)/products/manage-products/`, `actions/product/`, `services/product/`, `db/`, or `validation/`; any change to the "Customer" or "Administration" section objects; any change to `AdminNav`'s props, types, or render loop; any dependency or config change.
-
-Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` entry for Unit pm17, including which way §2.6's page-heading question was resolved) is updated in the plan directory, outside the app repo commit.
-
 ## 4. Dependencies
 
 **None.** No npm packages added, removed, or upgraded. `PackagePlus` ships with the already-installed `lucide-react` (`^1.20.0`, confirmed present in `node_modules`). No DB, schema, validation, service, or Server Action change of any kind — this is a frontend-shell-only unit.
@@ -157,9 +151,6 @@ Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` entry for Unit pm17, inc
 - [ ] Collapsed rail: "Manage Products" appears with its `PackagePlus` icon and a `title="Manage Products"` tooltip; divider count between sections is unchanged from before this unit (still reflects section count, not item count).
 - [ ] "Customer" section's existing greyed/locked behavior (`cm03`) is completely unaffected — re-verify, don't just assume, since both features live in the same render loop.
 - [ ] If §2.6 was folded in: `/products/product-offering` now shows "View Product" as its page heading and browser-tab title; every other aspect of the page (data, filters, components) is pixel-identical to before this unit.
-
-**Docs in sync**
-- [ ] `prodmgmt-progress-tracker.md` (plan folder) marks Unit pm17 complete with the commit reference, and records explicitly which way the §2.6 page-heading question was resolved (folded into this unit, or deferred to `pm18`) so `pm18`'s own implementer doesn't have to re-derive it.
 
 **Pipeline**
 - [ ] CI green end-to-end on the branch — one shared shell component (plus, optionally, one page's text) changed; no new route surface yet (the manage-products route has no page), so the SAST/DAST baseline should show no new findings.

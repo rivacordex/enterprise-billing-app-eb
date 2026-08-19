@@ -182,10 +182,6 @@ Component tests under `tests/` (vitest + Testing Library; patterns: `tests/compo
 
 Aside from the two intended edits above (region populated-Details assertion; page threading `offering`/`locale`/`timezone`), **no pre-existing test assertion changes** — pm06 adds one new component + one new test file and fills one seam.
 
-### 3.6 Commit
-
-One commit, e.g. `product offering detail section: populated OfferingDetail (pm06)`. Contents: `components/products/offering-detail.tsx` (new), `components/products/offering-detail-region.tsx` (edit — props + Details seam), `app/(app)/products/product-offering/page.tsx` (edit — thread `offering`/`locale`/`timezone`), `tests/components/offering-detail.test.tsx` (new), and the two intended test edits (§3.5). Explicitly **not** in this commit: any `services/**`, `db/**`, `validation/**` change; `components/admin-nav.tsx` (pm04); `offering-table.tsx` (pm05 — not touched); any specs/prices field rendering, `PriceTypeBadge`, spec chip, or tier table (pm07/pm08); any `actions/product/`, `app/api/product*`, mutation, or CTA; any authz-matrix file (pm09); any dependency or lockfile change. Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` Unit 6 entry) stays outside the app-repo commit.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything is already installed: `lucide-react` (`Boxes`, `ShoppingCart`, `Receipt`, `AlertTriangle` icons), `class-variance-authority` + `cn` (via the reused `LifecycleBadge`), vitest + Testing Library. No DB, schema, migration, or validation change (pm06 is UI-only). Requires pm05 merged: `OfferingDetailRegion` seam + `LifecycleBadge`, the page's `getOfferingDetail` wiring and `locale`/`timezone` computation; and (transitively) pm03's `getOfferingDetail` + `OfferingDetail` read model with `lastEditedByName` resolved, and `lib/formatters.formatDatetime`.
@@ -222,7 +218,6 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 **Docs in sync**
 
 - [ ] No companion-doc edit required: overview *Features — Offering detail* and architecture §2/§3 already describe this section; the authz-matrix entry is **pm09**.
-- [ ] `prodmgmt-progress-tracker.md` (plan folder) marks Unit pm06 complete with the commit reference.
 
 **Pipeline**
 

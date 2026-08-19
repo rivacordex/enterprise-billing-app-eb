@@ -27,6 +27,7 @@ const ROUTE_MANIFEST = [
   "/products/product-offering",
   "/products/manage-products",
   "/products/orders",
+  "/products/subscriptions",
   "/customers/view",
   "/customers/view/[id]",
   "/customers/manage",

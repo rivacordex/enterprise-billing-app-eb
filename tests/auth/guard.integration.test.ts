@@ -92,6 +92,16 @@ describe.skipIf(!databaseUrl)(
     // the split exists on its own — an EDIT-only principal is required.
     let productsManagerUserId: string;
     let productActions: Record<string, () => Promise<unknown>>;
+    // pm34-spec §1 — the Ordering update's own READ-vs-EDIT split principals,
+    // mirroring customerManagerUserId/customerUserRoleUserId, one pair per new
+    // permission so the matrix proves READ sees lists while EDIT is required
+    // for mutations, not just "some grant satisfies some level."
+    let ordersReadUserId: string;
+    let ordersEditUserId: string;
+    let inventoryReadUserId: string;
+    let inventoryEditUserId: string;
+    let orderingActions: Record<string, (input: unknown) => Promise<unknown>>;
+    let inventoryActions: Record<string, (input: unknown) => Promise<unknown>>;
 
     async function insertUser(params: {
       id: string;
@@ -139,6 +149,10 @@ describe.skipIf(!databaseUrl)(
       customerManagerUserId = randomUUID();
       customerUserRoleUserId = randomUUID();
       productsManagerUserId = randomUUID();
+      ordersReadUserId = randomUUID();
+      ordersEditUserId = randomUUID();
+      inventoryReadUserId = randomUUID();
+      inventoryEditUserId = randomUUID();
 
       await insertUser({ id: adminUserId });
       await insertUser({ id: noGrantsUserId });
@@ -156,6 +170,10 @@ describe.skipIf(!databaseUrl)(
       await insertUser({ id: customerManagerUserId });
       await insertUser({ id: customerUserRoleUserId });
       await insertUser({ id: productsManagerUserId });
+      await insertUser({ id: ordersReadUserId });
+      await insertUser({ id: ordersEditUserId });
+      await insertUser({ id: inventoryReadUserId });
+      await insertUser({ id: inventoryEditUserId });
 
       const [adminRole] = await db
         .insert(roles)
@@ -177,6 +195,24 @@ describe.skipIf(!databaseUrl)(
       const [productsManagerRole] = await db
         .insert(roles)
         .values({ roleName: "PRODUCTS_MANAGER", roleDescr: "Products Manager" })
+        .returning({ roleId: roles.roleId });
+      // pm34-spec §1 — one role per Ordering-update READ-vs-EDIT split
+      // principal, mirroring productsManagerRole above.
+      const [ordersReadRole] = await db
+        .insert(roles)
+        .values({ roleName: "ORDERS_READER", roleDescr: "Orders Reader" })
+        .returning({ roleId: roles.roleId });
+      const [ordersEditRole] = await db
+        .insert(roles)
+        .values({ roleName: "ORDERS_EDITOR", roleDescr: "Orders Editor" })
+        .returning({ roleId: roles.roleId });
+      const [inventoryReadRole] = await db
+        .insert(roles)
+        .values({ roleName: "INVENTORY_READER", roleDescr: "Inventory Reader" })
+        .returning({ roleId: roles.roleId });
+      const [inventoryEditRole] = await db
+        .insert(roles)
+        .values({ roleName: "INVENTORY_EDITOR", roleDescr: "Inventory Editor" })
         .returning({ roleId: roles.roleId });
 
       const insertedPermissions = await db
@@ -224,10 +260,43 @@ describe.skipIf(!databaseUrl)(
         );
       }
 
+      // pm34-spec §1 — product_orders/product_inventory are migration-seeded
+      // (0023_ordering_inventory_permissions.sql), same "look up, don't
+      // re-insert" discipline as products/customers above.
+      const [productOrdersPermission] = await db
+        .select({
+          permissionId: permissions.permissionId,
+          permissionName: permissions.permissionName,
+        })
+        .from(permissions)
+        .where(eq(permissions.permissionName, "product_orders"));
+      if (!productOrdersPermission) {
+        throw new Error(
+          "Expected migration 0023_ordering_inventory_permissions.sql to have seeded the 'product_orders' permission row.",
+        );
+      }
+
+      const [productInventoryPermission] = await db
+        .select({
+          permissionId: permissions.permissionId,
+          permissionName: permissions.permissionName,
+        })
+        .from(permissions)
+        .where(eq(permissions.permissionName, "product_inventory"));
+      if (!productInventoryPermission) {
+        throw new Error(
+          "Expected migration 0023_ordering_inventory_permissions.sql to have seeded the 'product_inventory' permission row.",
+        );
+      }
+
       const permissionIdByName = new Map(
-        [...insertedPermissions, productsPermission, customersPermission].map(
-          (p) => [p.permissionName, p.permissionId],
-        ),
+        [
+          ...insertedPermissions,
+          productsPermission,
+          customersPermission,
+          productOrdersPermission,
+          productInventoryPermission,
+        ].map((p) => [p.permissionName, p.permissionId]),
       );
 
       const grants: { name: PermissionName; type: PermissionType }[] = [
@@ -293,6 +362,56 @@ describe.skipIf(!databaseUrl)(
         refRoleId: productsManagerRole!.roleId,
         assignedBy: null,
       });
+
+      // pm34-spec §1 — product_orders/product_inventory READ-vs-EDIT split,
+      // one role/grant/assignment triple per principal, mirroring
+      // customerManagerRole/customerUserRole above. Deliberately no DELETE
+      // grant anywhere here — neither permission has a DELETE-gated action
+      // (architecture §4 permission matrix), unlike products.
+      await db.insert(rolePermissionAssign).values([
+        {
+          refRoleId: ordersReadRole!.roleId,
+          refPermissionId: productOrdersPermission.permissionId,
+          permissionType: "READ",
+        },
+        {
+          refRoleId: ordersEditRole!.roleId,
+          refPermissionId: productOrdersPermission.permissionId,
+          permissionType: "EDIT",
+        },
+        {
+          refRoleId: inventoryReadRole!.roleId,
+          refPermissionId: productInventoryPermission.permissionId,
+          permissionType: "READ",
+        },
+        {
+          refRoleId: inventoryEditRole!.roleId,
+          refPermissionId: productInventoryPermission.permissionId,
+          permissionType: "EDIT",
+        },
+      ]);
+      await db.insert(roleAssign).values([
+        {
+          refUserId: ordersReadUserId,
+          refRoleId: ordersReadRole!.roleId,
+          assignedBy: null,
+        },
+        {
+          refUserId: ordersEditUserId,
+          refRoleId: ordersEditRole!.roleId,
+          assignedBy: null,
+        },
+        {
+          refUserId: inventoryReadUserId,
+          refRoleId: inventoryReadRole!.roleId,
+          assignedBy: null,
+        },
+        {
+          refUserId: inventoryEditUserId,
+          refRoleId: inventoryEditRole!.roleId,
+          assignedBy: null,
+        },
+      ]);
 
       // cm16-spec §3.2 point 4 / §2.3 — the direct-Server-Action USER-denial
       // loop needs every actions/customer/* export. Imported dynamically,
@@ -392,6 +511,48 @@ describe.skipIf(!databaseUrl)(
         retireOfferingAction: () =>
           retireOfferingMod.retireOfferingAction("PRDOFR000001", {}),
       };
+
+      // pm34-spec §1 — the ordering/inventory analogue of the products block
+      // above. Every ordering/inventory action takes exactly one `rawInput:
+      // unknown` argument (unlike product's varying positional-id arity), so
+      // these two maps stay `(input: unknown) => Promise<unknown>` — the
+      // guard runs before the input is ever parsed, so the placeholder shape
+      // just needs to be a plausible object, not a valid one.
+      const [
+        createOrderMod,
+        approveOrderMod,
+        rejectOrderMod,
+        suspendSubscriptionMod,
+        resumeSubscriptionMod,
+        terminateSubscriptionMod,
+        updateCharacteristicsMod,
+      ] = await Promise.all([
+        import("@/actions/ordering/create-order.action"),
+        import("@/actions/ordering/approve-order.action"),
+        import("@/actions/ordering/reject-order.action"),
+        import("@/actions/inventory/suspend-subscription.action"),
+        import("@/actions/inventory/resume-subscription.action"),
+        import("@/actions/inventory/terminate-subscription.action"),
+        import("@/actions/inventory/update-characteristics.action"),
+      ]);
+
+      orderingActions = {
+        createOrderAction: (input) => createOrderMod.createOrderAction(input),
+        approveOrderAction: (input) =>
+          approveOrderMod.approveOrderAction(input),
+        rejectOrderAction: (input) => rejectOrderMod.rejectOrderAction(input),
+      };
+
+      inventoryActions = {
+        suspendSubscriptionAction: (input) =>
+          suspendSubscriptionMod.suspendSubscriptionAction(input),
+        resumeSubscriptionAction: (input) =>
+          resumeSubscriptionMod.resumeSubscriptionAction(input),
+        terminateSubscriptionAction: (input) =>
+          terminateSubscriptionMod.terminateSubscriptionAction(input),
+        updateCharacteristicsAction: (input) =>
+          updateCharacteristicsMod.updateCharacteristicsAction(input),
+      };
     }, 30_000);
 
     afterAll(async () => {
@@ -453,6 +614,10 @@ describe.skipIf(!databaseUrl)(
         PERMISSIONS.AUDIT_LOG,
         PERMISSIONS.PRODUCTS,
         PERMISSIONS.CUSTOMERS,
+        // pm34-spec §1 — no `product_orders`/`product_inventory` grant
+        // redirects to /no-access, same as every other permission.
+        PERMISSIONS.PRODUCT_ORDERS,
+        PERMISSIONS.PRODUCT_INVENTORY,
       ])("no_grants_user is denied %s:READ", async (name) => {
         mockSession(noGrantsUserId);
         await expect(requirePermission(name, LEVELS.READ)).rejects.toSatisfy(
@@ -504,6 +669,114 @@ describe.skipIf(!databaseUrl)(
         mockSession(customerUserRoleUserId);
         await expect(
           requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.EDIT),
+        ).rejects.toSatisfy(
+          (err: unknown) => redirectTarget(err) === "/no-access",
+        );
+      });
+
+      // pm34-spec §1 — Ordering-update authz matrix: `/products/orders`
+      // (product_orders) and `/products/subscriptions` (product_inventory),
+      // the cm16/pm24 READ-vs-EDIT split pattern applied to both new
+      // permissions. READ sees the list; EDIT is required for mutations
+      // (proven separately below via the direct-Server-Action blocks, since
+      // neither page itself requires more than READ to render).
+      it("orders_read_user satisfies product_orders:READ", async () => {
+        mockSession(ordersReadUserId);
+        const result = await requirePermission(
+          PERMISSIONS.PRODUCT_ORDERS,
+          LEVELS.READ,
+        );
+        expect(result.userId).toBe(ordersReadUserId);
+        // Exact granted level, not just non-null — a resolver that leaked EDIT
+        // (or dropped the key entirely) must fail here.
+        expect(result.permissionMap.product_orders).toBe(LEVELS.READ);
+      });
+
+      it.each([
+        [PERMISSIONS.PRODUCT_ORDERS, LEVELS.READ],
+        [PERMISSIONS.PRODUCT_ORDERS, LEVELS.EDIT],
+      ] as const)("orders_edit_user satisfies %s:%s", async (name, level) => {
+        mockSession(ordersEditUserId);
+        const result = await requirePermission(name, level);
+        expect(result.userId).toBe(ordersEditUserId);
+        // Granted level is EDIT regardless of the required level under test.
+        expect(result.permissionMap[name]).toBe(LEVELS.EDIT);
+      });
+
+      it("inventory_read_user satisfies product_inventory:READ", async () => {
+        mockSession(inventoryReadUserId);
+        const result = await requirePermission(
+          PERMISSIONS.PRODUCT_INVENTORY,
+          LEVELS.READ,
+        );
+        expect(result.userId).toBe(inventoryReadUserId);
+        expect(result.permissionMap.product_inventory).toBe(LEVELS.READ);
+      });
+
+      it.each([
+        [PERMISSIONS.PRODUCT_INVENTORY, LEVELS.READ],
+        [PERMISSIONS.PRODUCT_INVENTORY, LEVELS.EDIT],
+      ] as const)(
+        "inventory_edit_user satisfies %s:%s",
+        async (name, level) => {
+          mockSession(inventoryEditUserId);
+          const result = await requirePermission(name, level);
+          expect(result.userId).toBe(inventoryEditUserId);
+          expect(result.permissionMap[name]).toBe(LEVELS.EDIT);
+        },
+      );
+
+      it("orders_read_user is denied product_orders:EDIT (only READ granted)", async () => {
+        mockSession(ordersReadUserId);
+        await expect(
+          requirePermission(PERMISSIONS.PRODUCT_ORDERS, LEVELS.EDIT),
+        ).rejects.toSatisfy(
+          (err: unknown) => redirectTarget(err) === "/no-access",
+        );
+      });
+
+      it("inventory_read_user is denied product_inventory:EDIT (only READ granted)", async () => {
+        mockSession(inventoryReadUserId);
+        await expect(
+          requirePermission(PERMISSIONS.PRODUCT_INVENTORY, LEVELS.EDIT),
+        ).rejects.toSatisfy(
+          (err: unknown) => redirectTarget(err) === "/no-access",
+        );
+      });
+
+      // pm34-spec §1 — cross-permission separation, proven both directions
+      // via the live DB (types/permissions.test.ts already proves the
+      // DB-free EffectivePermissionMap half; this is the requirePermission-
+      // backed behavioral half the pm27 note flagged as still pm34's job).
+      // Direction 1: a catalog `products:DELETE` principal (admin_user, the
+      // ceiling of every catalog level) has no access to either new page.
+      it.each([PERMISSIONS.PRODUCT_ORDERS, PERMISSIONS.PRODUCT_INVENTORY])(
+        "admin_user (products:DELETE, no ordering grants) is denied %s:READ",
+        async (name) => {
+          mockSession(adminUserId);
+          await expect(requirePermission(name, LEVELS.READ)).rejects.toSatisfy(
+            (err: unknown) => redirectTarget(err) === "/no-access",
+          );
+        },
+      );
+
+      // Direction 2: a product_orders/product_inventory principal has no
+      // catalog write access — the reverse of pm27's "products grants no
+      // ordering access" proof, one level down (pm33's own analogue for
+      // product_inventory).
+      it("orders_edit_user (product_orders:EDIT) is denied products:EDIT", async () => {
+        mockSession(ordersEditUserId);
+        await expect(
+          requirePermission(PERMISSIONS.PRODUCTS, LEVELS.EDIT),
+        ).rejects.toSatisfy(
+          (err: unknown) => redirectTarget(err) === "/no-access",
+        );
+      });
+
+      it("inventory_edit_user (product_inventory:EDIT) is denied products:EDIT", async () => {
+        mockSession(inventoryEditUserId);
+        await expect(
+          requirePermission(PERMISSIONS.PRODUCTS, LEVELS.EDIT),
         ).rejects.toSatisfy(
           (err: unknown) => redirectTarget(err) === "/no-access",
         );
@@ -758,6 +1031,106 @@ describe.skipIf(!databaseUrl)(
           productActions.retireOfferingAction!,
         );
         expect(rejected).toBe(true);
+      });
+    });
+
+    // pm34-spec §1 — the Ordering-update analogue of the products block
+    // above. Every ordering/inventory action catches the guard's redirect
+    // and returns `{ ok: false, code: "FORBIDDEN" }` (confirmed by reading
+    // each actions/ordering|inventory/*.action.ts file — no
+    // propagating-exception variant here, unlike createCustomerAction), so
+    // `isOrderingPermissionRejection` only needs the return-value shape, but
+    // still handles a thrown redirect for robustness against either
+    // behavior, same discipline as the products block's own helper.
+    describe("direct Server Action calls reject an under-permissioned caller (ordering/inventory)", () => {
+      const ORDERING_ACTION_NAMES = [
+        "createOrderAction",
+        "approveOrderAction",
+        "rejectOrderAction",
+      ] as const;
+      const INVENTORY_ACTION_NAMES = [
+        "suspendSubscriptionAction",
+        "resumeSubscriptionAction",
+        "terminateSubscriptionAction",
+        "updateCharacteristicsAction",
+      ] as const;
+
+      async function isPermissionRejection(
+        action: () => Promise<unknown>,
+      ): Promise<boolean> {
+        let result: unknown;
+        try {
+          result = await action();
+        } catch (err) {
+          return redirectTarget(err) === "/no-access";
+        }
+        return (
+          typeof result === "object" &&
+          result !== null &&
+          (result as { ok?: unknown }).ok === false &&
+          (result as { code?: unknown }).code === "FORBIDDEN"
+        );
+      }
+
+      it.each(ORDERING_ACTION_NAMES)(
+        "%s does not reject orders_edit_user (product_orders:EDIT) on permission grounds",
+        async (name) => {
+          mockSession(ordersEditUserId);
+          const rejected = await isPermissionRejection(() =>
+            orderingActions[name]!({}),
+          );
+          expect(rejected).toBe(false);
+        },
+      );
+
+      it.each(ORDERING_ACTION_NAMES)(
+        "%s rejects a no_grants_user caller",
+        async (name) => {
+          mockSession(noGrantsUserId);
+          const rejected = await isPermissionRejection(() =>
+            orderingActions[name]!({}),
+          );
+          expect(rejected).toBe(true);
+        },
+      );
+
+      it.each(INVENTORY_ACTION_NAMES)(
+        "%s does not reject inventory_edit_user (product_inventory:EDIT) on permission grounds",
+        async (name) => {
+          mockSession(inventoryEditUserId);
+          const rejected = await isPermissionRejection(() =>
+            inventoryActions[name]!({}),
+          );
+          expect(rejected).toBe(false);
+        },
+      );
+
+      it.each(INVENTORY_ACTION_NAMES)(
+        "%s rejects a no_grants_user caller",
+        async (name) => {
+          mockSession(noGrantsUserId);
+          const rejected = await isPermissionRejection(() =>
+            inventoryActions[name]!({}),
+          );
+          expect(rejected).toBe(true);
+        },
+      );
+
+      // pm34-spec §1 — approval is additionally MANAGER-role-gated
+      // (architecture §4: `product_orders:EDIT` + MANAGER role + reviewer ≠
+      // submitter). orders_edit_user holds EDIT but was never assigned the
+      // MANAGER role, so it clears `requirePermission` and reaches
+      // `approveOrder`'s own role check, which pm30's service returns as
+      // `{ ok: false, code: "NOT_MANAGER" }` — proving EDIT alone is not
+      // sufficient for approval, distinctly from a permission-layer FORBIDDEN.
+      // The MANAGER-role check runs before any order lookup (review-order.ts),
+      // so a syntactically valid but non-existent orderId is sufficient.
+      it("approveOrderAction rejects orders_edit_user (product_orders:EDIT, no MANAGER role) with NOT_MANAGER", async () => {
+        mockSession(ordersEditUserId);
+        const result = await orderingActions.approveOrderAction!({
+          orderId: "PRDORD00000001",
+        });
+        expect(result).toMatchObject({ ok: false, code: "NOT_MANAGER" });
       });
     });
   },

@@ -56,7 +56,7 @@ By Inv. #11 and code-standards §1.1/§5.3/§7.2, v1 adds no mutation surface; b
 
 ### 3.1 Pre-flight guardrail audit (do first, non-optional)
 
-Before writing anything, confirm each inherited guardrail (§2.2 rows 2–7) actually exists and is green on `main`, and record the exact file/test name in `prodmgmt-progress-tracker.md`. Command sketch (adjust to the real filenames pm02–pm08 committed):
+Before writing anything, confirm each inherited guardrail (§2.2 rows 2–7) actually exists and is green on `main`, and record the exact file/test name in `prodmgmt-completed-tracker.md`. Command sketch (adjust to the real filenames pm02–pm08 committed):
 
 ```
 # every guardrail should map to a passing test; list them
@@ -134,10 +134,6 @@ Run the entire general §8 / module §8 checklist and record the results in the 
 
 Any failing item means the unit — and the module — is not done (workflow §8).
 
-### 3.6 Commit
-
-One commit, e.g. `product module ship gate: authz-matrix entry + guardrail sweep (pm09)`. Contents: `tests/auth/guard.integration.test.ts` (edit — products seed/grant + route × level cases + no-grant denial), `tests/guardrails/product-module-boundaries.test.ts` (new), and — only if §3.3.5 required it — the `tests/app/route-manifest.test.ts` manifest extension. Explicitly **not** in this commit: any `app/**`, `services/**`, `db/**`, `validation/**`, `components/**`, `actions/**`, `app/api/**`, `auth/**`, or `infra/**` change; any dependency/lockfile change; any doc edit unless §3.4's audit found a genuine gap. Plan-folder bookkeeping (`prodmgmt-progress-tracker.md`: Unit pm09 complete + the guardrail-audit results + the module ship-gate sign-off) stays outside the app-repo commit.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything is already installed: `vitest` + `drizzle-orm`/`postgres` (integration matrix), `node:fs`/`node:path` (sweep test) — the same toolchain pm01's `route-manifest.test.ts` uses. **No DB extension, no schema/migration/validation/service/component change** (pm09 is tests + CI only). Requires pm01–pm08 merged and green (§Dependencies header) — in particular pm02's `products` permission + typed constant + `PERMISSION_NAMES`/`EffectivePermissionMap` ripple, pm03's price-repo shape + derived-effectivity read models, and pm05's guarded page + deep-link test. The CI integration stage must provide `DATABASE_URL` so the extended `guard.integration.test.ts` block actually runs (it `skipIf`-skips without it — a silently-skipped ship gate proves nothing).
@@ -181,7 +177,6 @@ Run before declaring the unit — and the module — done (general workflow §8;
 **Docs in sync (verify, don't duplicate)**
 
 - [ ] `prodmgmt-architecture.md` §4 + `prodmgmt-code-standards.md` §8 carry the `/products/product-offering → products : READ` rows (+ seeded EDIT/DELETE); `PERMISSIONS.PRODUCTS`/`PERMISSION_NAMES` carry `"products"`. No new/parallel map introduced.
-- [ ] `prodmgmt-progress-tracker.md` marks Unit pm09 complete with the commit ref, the guardrail-audit results, and the module ship-gate sign-off.
 
 **Pipeline (workflow §8.7; code-standards §10)**
 

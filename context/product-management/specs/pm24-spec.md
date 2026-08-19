@@ -432,10 +432,6 @@ Confirm, per pm09-spec §3.4's identical convention: `prodmgmt-architecture-phas
 - **Security scan** — SAST + OWASP ZAP DAST baseline against the staging revision with `/products/manage-products` now live: no high/critical finding; confirm unauthenticated → `/login`, authenticated-without-EDIT → `/no-access`.
 - **Manual walkthrough** (dev server, per pm99's literal sequence and the overview's Success Criteria): sign in as a `products:EDIT`+`DELETE` user → create a new offering → add a mandatory specification → add a flat price → activate it (reaches `ACTIVE`, appears correctly on View Product) → edit the now-`ACTIVE` offering (produces a new sibling `DRAFT`, original untouched) → activate that new draft (confirm the previously-active sibling auto-retires in the same action, audited as `PRODUCT_OFFERING_SUPERSEDED`) → separately, start a second draft and discard it before it ever goes live (confirm it disappears from View Product's default filter and is audited as `PRODUCT_OFFERING_DISCARDED`, distinct from `_RETIRED`).
 
-### 3.11 Commit
-
-One commit, e.g. `product module phase 2 ship gate: guardrails + authz matrix + full sweep (pm24)`. Contents: `tests/guardrails/product-module-boundaries.test.ts` (rewritten assertion 1, new assertions for guardrails 11/13, extended guardrail-12 check, extended `PRODUCT_WRITE_SERVICE_FILES`, optional guardrail-10 backstop), `tests/auth/guard.integration.test.ts` (edit — new `productsManagerUserId` principal + direct-call describe block), and — only if the audit found it missing — `tests/app/route-manifest.test.ts` (manifest extension). Explicitly **not** in this commit: any `app/**`, `services/**`, `db/**`, `validation/**`, `components/**`, `actions/**`, or `infra/**` change; no dependency/lockfile change; no doc edit unless §3.9's audit found a genuine gap.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything needed — `vitest`, `drizzle-orm`/`postgres`, `node:fs`/`node:path` — is already installed and already used by the exact files pm24 edits. No DB extension, no schema/migration/validation/service/component change (pm24 is tests + CI only). Requires pm10–pm23 merged and green — in particular pm18's family-grouped read model (so the manual walkthrough has real UI to click through), pm19–pm23's eight action files (so the rewritten assertion 1 and the authz-matrix extension have something real to check), and pm14/pm15/pm16's integration tests (so guardrails 8/9/10/14 are inherited-green, not missing). The CI integration stage must provide `DATABASE_URL` so the extended `guard.integration.test.ts` block actually runs.
@@ -485,7 +481,6 @@ One commit, e.g. `product module phase 2 ship gate: guardrails + authz matrix + 
 **Docs in sync (verify, don't duplicate)**
 
 - [ ] `prodmgmt-architecture-phase2.md` §4 and `prodmgmt-code-standards-phase2.md` §8 already carry the `/products/manage-products` permission rows (EDIT for mutations, DELETE for retire/discard) — confirmed, not re-authored.
-- [ ] `prodmgmt-progress-tracker.md` marks Unit pm24 complete with commit ref, guardrail-audit results, and the phase's ship-gate sign-off.
 
 **Pipeline (workflow §8.7; code-standards §10)**
 

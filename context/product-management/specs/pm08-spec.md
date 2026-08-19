@@ -326,10 +326,6 @@ Vitest + Testing Library (patterns: `tests/lib/formatters.test.ts`, `tests/compo
 
 Aside from the two intended edits above (the `formatCurrency` addition to the formatters test, and the region populated-Prices assertion), **no pre-existing test assertion changes** — pm08 adds one formatter + three components + three new test files and fills one seam. The page test (`tests/app/product-offering-page.test.tsx`) is **not** touched (no page change).
 
-### 3.8 Commit
-
-One commit, e.g. `product offering prices panel: populated PricesPanel + formatCurrency (pm08)`. Contents: `lib/formatters.ts` (edit — add `formatCurrency`), `components/products/price-type-badge.tsx` (new), `components/products/tier-table.tsx` (new), `components/products/prices-panel.tsx` (new), `components/products/offering-detail-region.tsx` (edit — Prices seam), `tests/lib/formatters.test.ts` (edit — `formatCurrency` cases), `tests/components/price-type-badge.test.tsx` (new), `tests/components/tier-table.test.tsx` (new), `tests/components/prices-panel.test.tsx` (new), and the one intended region test edit (§3.7). Plus, only if the `--color-cyan-*` tokens are genuinely absent, the `globals.css` token additions (§3.2). Explicitly **not** in this commit: any `services/**`, `db/**`, `validation/**` change; `app/(app)/products/product-offering/page.tsx` (untouched); `components/products/offering-detail.tsx` (pm06) or `specifications-panel.tsx` (pm07) — not touched; `components/products/offering-table.tsx` (pm05); `components/admin-nav.tsx` (pm04); any `formatMoney` rename or user-management call-site change; any `actions/product/`, `app/api/product*`, mutation, or CTA; any authz-matrix file (pm09); any dependency or lockfile change. Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` Unit 8 entry) stays outside the app-repo commit.
-
 ## 4. Dependencies
 
 **No new npm packages.** Everything is already installed: `lucide-react` (`Repeat`, `Gauge`, `Zap`, `Receipt` icons), `class-variance-authority` + `cn`, and `Intl` (platform built-in for `formatCurrency`), vitest + Testing Library. No DB, schema, migration, validation, or service change (pm08 is UI + one `lib/` formatter). Requires pm07 merged: the `OfferingDetailRegion` populated branch with the `offering` / `locale` / `timezone` props and the Prices seam; and (transitively) pm03's `PriceCard` read model / `offering.prices` (prices scoped, ordered, with derived `endDateTime` and computed `effectivityStatus`) and pm02's `TieredPricingCharacteristics` / `Tier` types and the `amount`-XOR-tiers CHECK. The only new shared surface is `formatCurrency` in `lib/formatters.ts` (§3.1).
@@ -368,7 +364,6 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 **Docs in sync**
 
 - [ ] No companion-doc edit required: overview *Features — Prices panel* and architecture §2/§3/§4 already describe this section; the authz-matrix entry is **pm09**.
-- [ ] `prodmgmt-progress-tracker.md` (plan folder) marks Unit pm08 complete with the commit reference, and records the five 2026-07-04 user decisions (add `formatCurrency` wrapper; render all price fields incl. `unitOfMeasure`/`policy`/`createdAt`; show all price rows inline styled by state, multiple-current allowed; open-ended top tier renders "and above"; **JSONB tier values display as stored text — not modelled or re-formatted**).
 
 **Pipeline**
 

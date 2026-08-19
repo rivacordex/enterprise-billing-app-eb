@@ -100,12 +100,6 @@ Existing four tests keep their assertions (Administration caption, four labelled
 
 No other test file changes. The pm01 route-manifest test is unaffected — this unit adds no `page.tsx`.
 
-### 3.4 Commit
-
-One commit, e.g. `refactor nav to NAV_SECTIONS; add Products section (pm04)`. Contents: exactly `components/admin-nav.tsx` + `tests/components/admin-nav.test.tsx`. Explicitly **not** in this commit: `components/admin-sidebar.tsx`, any `app/**` file (no product page — pm05), any `db/`, `services/`, `validation/` file, any permission or guard code, any dependency or config change.
-
-Plan-folder bookkeeping (`prodmgmt-progress-tracker.md` entry for Unit pm04) is updated in the plan directory, outside the app repo commit.
-
 ## 4. Dependencies
 
 **None.** No npm packages added, removed, or upgraded (pm00: "no new npm packages anywhere"). `Package` ships with the already-installed `lucide-react`.
@@ -136,7 +130,6 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 
 **Docs in sync**
 - [ ] No companion-doc edits required: architecture §2 / code-standards §7.1 already record this refactor as planned; no permission map change (nav is permission-blind).
-- [ ] `prodmgmt-progress-tracker.md` (plan folder) marks Unit pm04 complete with the commit reference.
 
 **Pipeline**
 - [ ] CI green end-to-end on the branch, including the pm01 rename-invariance test (no route changes) and SAST/DAST baseline (no new findings — one shell component changed).

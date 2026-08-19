@@ -141,8 +141,21 @@ describe("AuditLogFilters", () => {
     expect(
       within(removal).getByText("PRODUCT_ORDER_FAILED"),
     ).toBeInTheDocument();
+    // pm32 additions
+    expect(
+      within(change).getByText("PRODUCT_INVENTORY_CHARACTERISTICS_UPDATED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_INVENTORY_SUSPENDED"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_INVENTORY_RESUMED"),
+    ).toBeInTheDocument();
+    expect(
+      within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
+    ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(58); // "All events" + 57
+    expect(within(select).getAllByRole("option")).toHaveLength(62); // "All events" + 61
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {
