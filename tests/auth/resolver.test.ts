@@ -46,6 +46,9 @@ describe("resolveEffectivePermissions", () => {
       accounts_config: null,
       product_orders: null,
       product_inventory: null,
+      billrun_view: null,
+      billrun_operate: null,
+      billrun_approve: null,
     });
     expect(findGrantsByRoleIds).not.toHaveBeenCalled();
   });
@@ -70,6 +73,9 @@ describe("resolveEffectivePermissions", () => {
       accounts_config: null,
       product_orders: null,
       product_inventory: null,
+      billrun_view: null,
+      billrun_operate: null,
+      billrun_approve: null,
     });
   });
 
@@ -96,6 +102,9 @@ describe("resolveEffectivePermissions", () => {
       accounts_config: null,
       product_orders: null,
       product_inventory: null,
+      billrun_view: null,
+      billrun_operate: null,
+      billrun_approve: null,
     });
   });
 
@@ -141,6 +150,9 @@ describe("resolveEffectivePermissions", () => {
       accounts_config: null,
       product_orders: null,
       product_inventory: null,
+      billrun_view: null,
+      billrun_operate: null,
+      billrun_approve: null,
     });
   });
 

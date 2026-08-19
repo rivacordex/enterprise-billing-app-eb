@@ -174,7 +174,7 @@ describe("RoleDetail", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders all 11 permission rows in PERMISSION_NAMES order", () => {
+  it("renders all 14 permission rows in PERMISSION_NAMES order", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -200,6 +200,9 @@ describe("RoleDetail", () => {
       "Accounts – Config",
       "Product Orders",
       "Product Inventory",
+      "Bill Runs – View",
+      "Bill Runs – Operate",
+      "Bill Runs – Approve",
     ]);
   });
 
@@ -217,7 +220,7 @@ describe("RoleDetail", () => {
     expect(screen.getByText("READ")).toBeInTheDocument();
   });
 
-  it("MANAGER: all 11 matrix rows show '—'", () => {
+  it("MANAGER: all 14 matrix rows show '—'", () => {
     render(
       <RoleDetail
         locale="en-GB"
@@ -227,7 +230,7 @@ describe("RoleDetail", () => {
         permissionMap={emptyMap()}
       />,
     );
-    expect(screen.getAllByText("—")).toHaveLength(11);
+    expect(screen.getAllByText("—")).toHaveLength(14);
   });
 
   it("renders '—' for description when roleDescr is null", () => {

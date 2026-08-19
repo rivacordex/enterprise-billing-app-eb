@@ -7,17 +7,17 @@ This version has breaking changes — APIs, conventions, and file structure may 
 <!-- END:nextjs-agent-rules -->
 
  
-## Products Module Building Context
+## Billing Module Building Context
 
 Read the following files in order before implementing
-or making any architectural decision related to Products Module update for Ordering and Subscription:
+or making any architectural decision related to Billing Module update for Bill Run:
 
-1. `context/product-management/prodmgmt-project-overview.md` — product definition, goals, features, and scope (catalog + Ordering/Inventory, all three phases)
-2. `context/product-management/prodmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/product-management/prodmgmt-ui-context.md` — theme, colors, typography, and component conventions
-4. `context/product-management/prodmgmt-code-standards.md` — implementation rules and conventions
-5. `context/product-management/prodmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-6. `context/product-management/prodmgmt-completed-tracker.md` — the delivered build record (per-unit deliverables pm01–pm34, recurring patterns, permanent lessons)
+1. `context/billing-management/billmgmt-project-overview.md` — product definition, goals, features, and scope (catalog + Ordering/Inventory, all three phases)
+2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+3. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
+4. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
+5. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+6. `context/billing-management/billmgmt-completed-tracker.md` — the delivered build record (per-unit deliverables bm01–bm13, recurring patterns, permanent lessons)
 
-Update `context/product-management/prodmgmt-completed-tracker.md` after each meaningful implementation change.
+Update `context/billing-management/billmgmt-completed-tracker.md` after each meaningful implementation change.
 
