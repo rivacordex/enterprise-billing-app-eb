@@ -133,6 +133,9 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "accounts_config", assignedLevel: null },
           { permissionName: "product_orders", assignedLevel: null },
           { permissionName: "product_inventory", assignedLevel: null },
+          { permissionName: "billrun_view", assignedLevel: null },
+          { permissionName: "billrun_operate", assignedLevel: null },
+          { permissionName: "billrun_approve", assignedLevel: null },
         ]);
       });
 
@@ -161,6 +164,9 @@ describe.skipIf(!databaseUrl)(
             "accounts_config",
             "product_orders",
             "product_inventory",
+            "billrun_view",
+            "billrun_operate",
+            "billrun_approve",
           ]);
         }
       });
@@ -182,6 +188,9 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "accounts_config", assignedLevel: null },
           { permissionName: "product_orders", assignedLevel: null },
           { permissionName: "product_inventory", assignedLevel: null },
+          { permissionName: "billrun_view", assignedLevel: null },
+          { permissionName: "billrun_operate", assignedLevel: null },
+          { permissionName: "billrun_approve", assignedLevel: null },
         ]);
       });
 
