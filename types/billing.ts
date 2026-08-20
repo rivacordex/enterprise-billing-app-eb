@@ -22,6 +22,23 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 export const RUN_TYPES = ["onCycle", "offCycle"] as const;
 export type RunType = (typeof RUN_TYPES)[number];
 
+// bm03-spec §Design/§1. `EXCLUDED` is a bm03 addition to the plan's 9-member
+// AccountStatus union (code-standards §2.1) — a scoping-time partial-period
+// exclusion, never written by anything downstream of the trigger.
+export const ACCOUNT_STATUSES = [
+  "PENDING",
+  "PROCESSING",
+  "PROCESSED",
+  "INVOICED",
+  "DISTRIBUTING",
+  "COMPLETED",
+  "PROCESSING_FAILED",
+  "DISTRIBUTION_FAILED",
+  "SKIPPED",
+  "EXCLUDED",
+] as const;
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
 // The two terminal history states (bm02-spec Design §Structural): Historical
 // lists these read-only. Everything else lives in Current & Upcoming — a
 // `*_FAILED` run is operable-again, not history.

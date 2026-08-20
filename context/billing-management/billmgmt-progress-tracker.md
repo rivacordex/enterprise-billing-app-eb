@@ -8,9 +8,11 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01 + bm02 delivered: the Billing nav section, RBAC scaffold, the
-  `billing.bill_run` header table, lazy materialization, and the two-tab run
-  list. Next: bm03 (Trigger — snapshot accounts / Run).
+- bm01 + bm02 + bm03 delivered: the Billing nav section, RBAC scaffold, the
+  `billing.bill_run` header table, lazy materialization, the two-tab run list,
+  and the Trigger/Run path (snapshot + scoping + mockable outbound engine).
+  Next: bm04 (per-account stage ingest — the M2M signal path that drives
+  `bill_run_account` past PENDING).
 
 ## Completed
 
@@ -74,6 +76,83 @@ Update this file after every meaningful implementation change.
     integration idempotency (`tests/db/materialize-runs.integration.test.ts`,
     concurrent → exactly one row).
 
+- **bm03 — Trigger a run (+ Scoping + outbound engine)**
+  (`specs/bm03-trigger-scoping-engine.md`).
+  - Schema: new partitioned `billing.bill_run_account` table (typing-only
+    Drizzle declaration mirroring `db/schema/audit.ts`; physical DDL in
+    `db/migrations/0027_bill_run_account.sql`) — composite PK
+    `(bill_run_account_id, period_partition)`, UNIQUE
+    `(ref_bill_run_id, ref_billing_account_id, period_partition)`, `AccountStatus`
+    CHECK **including the new `EXCLUDED` member** (10 values, up from the
+    plan's 9), `BRA` id default, default partition. `period_partition` is
+    stamped as the 1st of the run's `period_start` month at snapshot time
+    (`firstOfMonth`, `services/billing/derive-periods.ts`) — fixed per run,
+    never insert time.
+  - Partman bootstrap: `db/bootstrap/billing-partman-setup.{sql,ts}` +
+    `db:setup-partman-billing` script, registering `billing.bill_run_account`
+    with pg_partman (monthly, 4-premake, **7-year `retention_keep_table = true`
+    detach-not-drop** per architecture §6.9 — deliberately different from
+    `audit_log`'s drop-on-expiry policy). Reuses the existing
+    `audit-log-partman-maintenance` daily cron (`run_maintenance_proc()` with
+    no table arg sweeps every registered parent) — no second cron job.
+  - Scoping: `services/billing/partial-period.ts` (`isPartialPeriod`, pure,
+    **strict** boundary rule — a start on `period_start` or a cease on
+    `period_end` is full-period) + `services/billing/scope-accounts.ts`
+    (`scopeAccounts`, batches the active-account/window/transition repository
+    reads and splits into `pending`/`excluded` snapshot rows). New repository
+    finders (read-only, no ripple to the inventory module's insert-only
+    structural test): `billingAccountRepository.findActiveByCycleId`,
+    `productInventoryRepository.findWindowsByBillingAccountIds`,
+    `inventoryStatusHistoryRepository.findTransitionsByInventoryIds`.
+  - Engine client: `services/billing/engine-client.ts` — `EngineClient`
+    interface, `realEngineClient` (Basic-Auth `fetch` to
+    `${BILLRUN_ENGINE_URL}/executions/billing/bill_run`, typed `EngineError`
+    on non-2xx/network/timeout/malformed-response), `stubEngineClient`
+    (`stub-exec-{runId}`, no HTTP), `getEngineClient()` selecting by the new
+    `isBillRunEngineConfigured` flag (`lib/config.ts` —
+    `BILLRUN_ENGINE_URL`/`BILLRUN_ENGINE_AUTH`, both optional, absent ⇒ stub).
+  - Trigger: `services/billing/trigger-run.ts` (`triggerRun`) — one
+    `db.transaction`: `findByIdForUpdate` (row lock, double-trigger guard:
+    reject unless `SCHEDULED` and `scheduled_run_date <= today`) →
+    `scopeAccounts` → `billRunAccountRepository.insertSnapshot` → **the engine
+    call runs inside the txn** — a thrown `EngineError` is caught, rethrown as
+    an internal `EngineUnreachableSignal` so the whole transaction rolls back,
+    then caught again outside `db.transaction` and mapped to
+    `{ ok: false, code: "ENGINE_UNREACHABLE" }` (the DB write is discarded; the
+    typed result is not). Success →
+    `billRunRepository.markProcessing` (`PROCESSING`, `gl_event_at`,
+    `triggered_by`, `last_progress_at`, the stored execution ref) →
+    `insertAuditEvent(tx, BILL_RUN_TRIGGERED)`.
+  - Action + UI: `actions/billing/trigger-run.action.ts` (`billrun_operate:EDIT`,
+    `validation/billing/trigger-run.schema.ts` `BRN`-format check,
+    `revalidatePath` on success only) → `components/billing/trigger-run-dialog.tsx`
+    (`TriggerRunDialog`, the Deep-Petrol `--billrun-cta-bg` featured CTA +
+    inline confirm/submitting/error states, `close-period-button.tsx`
+    precedent) wired into `RunActionCard` (replacing bm02's inert disabled
+    button). New CSS tokens in `app/globals.css`
+    (`--billrun-cta-bg{,-hover,-active}`, `--billrun-cta-text`; base aliases
+    the existing `--color-cyan-700`).
+  - Audit: `BILL_RUN_TRIGGERED` added to `AUDIT_EVENT_TYPES`
+    (`types/audit.ts`) and `AUDIT_EVENT_CATEGORY_MAP` as `"Change"`
+    (`types/audit-log.ts`) — a state transition, not a new entity (unlike
+    bm02's `BILL_RUN_MATERIALIZED`, `"Additive"`).
+  - Tests: `partial-period.test.ts` (boundary + suspend/resume cases),
+    `scope-accounts.test.ts`, `engine-client.test.ts` (stub + real, incl.
+    non-2xx/network/malformed-body → `EngineError`), `trigger-run.service.test.ts`
+    (happy path, double-trigger, upcoming-run, zero-eligible,
+    engine-unreachable rollback, unrelated-error passthrough),
+    `trigger-run.action.test.ts` (route × level matrix), `firstOfMonth` cases
+    added to `derive-periods.test.ts`, `bill-run-account-schema.test.ts`
+    (structural). Two DB-gated integration suites (`skipIf` no
+    `DATABASE_URL`/`BOOTSTRAP_DATABASE_URL`, same as bm02's
+    `materialize-runs.integration.test.ts` — **not run in this environment**,
+    no local Postgres reachable): `trigger-run.integration.test.ts` (real
+    snapshot + PROCESSING flip + double-trigger row-lock + zero-eligible; the
+    engine-unreachable rollback path is proven at the unit level instead,
+    where the failure can be injected deterministically) and
+    `billing-partman-setup.integration.test.ts` (parent registered,
+    `retention_keep_table = true`, ≥1 month partition materialized).
+
 ## In Progress
 
 - None.
@@ -128,7 +207,9 @@ Second review round (doc + hardening):
 
 ## Next Up
 
-- **bm03** — snapshot accounts / Run trigger (the Run button is inert in bm02).
+- **bm04** — per-account stage ingest (the M2M signal path that advances
+  `bill_run_account` past `PENDING`; the Uncharged tab reading `EXCLUDED`
+  rows lands in bm07).
 
 ## Open Questions
 
@@ -181,3 +262,37 @@ Second review round (doc + hardening):
   the list read. The plan docs `_newmodule-billing-billrun-plan.md` /
   `bm00-build-plan.md` referenced by the spec are not in the repo, so the
   bm02 spec (Design §Structural) was the authoritative source.
+- **bm03 migration `0027_bill_run_account.sql` is hand-authored raw SQL (not
+  drizzle-kit generated)** — Drizzle can't express `PARTITION BY`, so it
+  follows the `0001_audit.sql` precedent exactly (composite PK, default
+  partition, journal entry added by hand). Like bm02's `0025`, it was
+  reviewed but **NOT applied** — no local Postgres is reachable in this
+  environment; `db:migrate` then `db:setup-partman-billing` must be run
+  wherever the database lives, in that order (the bootstrap script assumes
+  the migration's parent table already exists).
+- **`TriggerRunDialog` confirm copy deviates from the spec's literal template**
+  (`"...snapshots {N} eligible accounts..."`) — scoping only runs server-side
+  at click time, so no pre-click count exists without adding a preview
+  endpoint outside bm03's scope (Discipline: no surface beyond what's listed
+  in Implementation §1–9). The dialog asks to run the period without a count;
+  the actual `banCount`/`excludedCount` appear in the post-trigger success
+  message instead. Revisit only if a future unit adds a cheap pre-trigger
+  eligible-count read.
+- **bm03 ripples** from the new `BILL_RUN_TRIGGERED` audit event +
+  `BILLRUN_ENGINE_URL`/`BILLRUN_ENGINE_AUTH` config fields: mechanical updates
+  to `tests/components/audit-log-filters.test.tsx` (option count 63 → 64) and
+  `tests/lib/config.test.ts` (`ENV_KEYS` gains the two engine vars; new
+  `billRunEngineConfig`/`isBillRunEngineConfigured` test coverage) — same
+  class of ripple bm01/bm02 hit. `AUDIT_EVENT_CATEGORY_MAP`'s own coverage
+  test (`tests/types/audit-log.test.ts`) iterates `AUDIT_EVENT_TYPES`
+  dynamically and needed **no** change, unlike the filter-count ripple.
+- **No inventory-module structural-test ripple** — the three new repository
+  finders added for scoping (`findActiveByCycleId`,
+  `findWindowsByBillingAccountIds`, `findTransitionsByInventoryIds`) are all
+  read-only (`find*`), so `tests/db/ordering-repository-exports.test.ts`'s
+  insert-only assertion on `inventoryStatusHistoryRepository` /
+  insert-once assertion on `productInventoryRepository` needed no update.
+- **No 28-file `DROP SCHEMA CASCADE` ripple** (unlike the `new-pgschema-
+  integration-test-ripple` memory) — `bill_run_account` lives in the
+  already-provisioned `billing` schema, not a new `pgSchema`, so no existing
+  integration test's `beforeAll`/`afterAll` needed touching.

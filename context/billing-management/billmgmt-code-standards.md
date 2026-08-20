@@ -27,7 +27,7 @@
 
 1. **Domain unions** (general §2.6), each defined once as an `as const` string-literal union in the module types — never a TS `enum`, never re-declared:
    - `RunStatus`: `'SCHEDULED' | 'PROCESSING' | 'PROCESSED' | 'APPROVED' | 'POSTING' | 'INVOICED' | 'DISTRIBUTING' | 'COMPLETED' | 'PROCESSING_FAILED' | 'DISTRIBUTION_FAILED' | 'CANCELLED'`
-   - `AccountStatus`: `'PENDING' | 'PROCESSING' | 'PROCESSED' | 'INVOICED' | 'DISTRIBUTING' | 'COMPLETED' | 'PROCESSING_FAILED' | 'DISTRIBUTION_FAILED' | 'SKIPPED'`
+   - `AccountStatus`: `'PENDING' | 'PROCESSING' | 'PROCESSED' | 'INVOICED' | 'DISTRIBUTING' | 'COMPLETED' | 'PROCESSING_FAILED' | 'DISTRIBUTION_FAILED' | 'SKIPPED' | 'EXCLUDED'` — `EXCLUDED` is a bm03 addition (not in the original plan's 9-member union): a scoping-time partial-period exclusion, written only by the trigger's snapshot, never by any downstream stage.
    - `Stage`: `'scoping' | 'validation' | 'collection' | 'aggregation' | 'taxation' | 'verification' | 'posting' | 'rendering' | 'distribution'`
    - `StageStatus`: `'PENDING' | 'RUNNING' | 'DONE' | 'FAILED' | 'SKIPPED'`
    - `ErrorClass`: `'HARD' | 'SOFT' | 'INFRA'`
@@ -64,7 +64,7 @@
 
 1. **Shared indicator components** (general §4.8) — one visual treatment per domain value, created with exactly these names in `components/billing/`:
    - `RunStatusBadge` — the 11 `RunStatus` values (semantic tokens only; `INVOICED`/`COMPLETED` success, `*_FAILED` destructive, `CANCELLED` muted, in-flight neutral).
-   - `AccountStatusBadge` — the 9 `AccountStatus` values, incl. `SKIPPED` (muted) and `PROCESSING_FAILED` (destructive).
+   - `AccountStatusBadge` — the 10 `AccountStatus` values, incl. `SKIPPED` (muted), `PROCESSING_FAILED` (destructive), and `EXCLUDED` (muted — a scoping-time exclusion, not a failure). Not built in bm03 — `bill_run_account` has no UI reader yet (bm04+/the Uncharged tab, bm07); ships with the first unit that renders a per-account row.
    - `StageStatusBadge` — `PENDING/RUNNING/DONE/FAILED/SKIPPED`.
    - `ErrorClassBadge` — `HARD` (destructive) / `SOFT` (warning) / `INFRA` (neutral).
    - `BillCategoryBadge` — `trial` (muted/outline) / `normal` / `last`.
@@ -210,6 +210,7 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 - The two M2M handlers are **not** in the RBAC matrix — they authenticate a service token and are covered by their own auth tests (401 on bad token; 409 unless `PROCESSING`; 200 replay).
 - Deep links (`/billing/bill-runs/[runId]?tab=…`) pass through the `billrun_view` guard; the searchParam grants nothing.
 - **bm02 (delivered):** the `/billing/bill-runs` list page lazily materializes each active monthly cycle's single most-recent due run on its RSC render (a write, not an action/route/job — Inv. #10) before the read. Materialization writes exactly one `BILL_RUN_MATERIALIZED` `core.AUDIT_LOG` row **per row actually inserted**, as a **system write with `actorUserId = null`** (it is triggered by a page view but is not an operator mutation); a no-op load writes none. The Historical CSV export is a `billrun_view`-guarded **Server Action** (`actions/billing/export-runs.action.ts`), never a Route Handler, and — being read-only — is **not** audited. The `STUB_DATA_MODE` env flag drives `StubDataBanner`/`StubBadge` (Inv. #15); it is threaded server-side as a prop, never read in a client component.
+- **bm03 (delivered):** the Run action lives on the **list page's `RunActionCard`** (`components/billing/trigger-run-dialog.tsx`, the `TriggerRunDialog` interaction leaf) — **not** the `/billing/bill-runs/[runId]` detail route in the table row above, which bm03 does not build (the detail page, and moving Trigger/Rerun/Cancel there, land with a later unit). `actions/billing/trigger-run.action.ts` requires `billrun_operate:EDIT` and delegates to `services/billing/trigger-run.ts`, which snapshots the cycle's active accounts into `bill_run_account` (marking any partial-period subscription `EXCLUDED`), flips `SCHEDULED → PROCESSING`, resolves `gl_event_at = scheduled_run_date`, and writes one `BILL_RUN_TRIGGERED` audit row — all in one transaction, including the **mockable engine client** call (`services/billing/engine-client.ts`, real fetch client or a `stub-exec-{runId}` stub selected by `isBillRunEngineConfigured`): an engine failure throws, rolling the whole trigger back so the run stays `SCHEDULED` with no orphan snapshot. The confirm-dialog copy omits the plan's `{N} eligible accounts` placeholder (scoping only happens server-side at click time, so no pre-click count exists without a new preview endpoint out of this unit's scope) — the actual `banCount`/`excludedCount` are shown in the post-trigger success message instead.
 
 ---
 

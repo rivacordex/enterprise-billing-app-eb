@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { currentDuePeriod } from "@/services/billing/derive-periods";
+import {
+  currentDuePeriod,
+  firstOfMonth,
+} from "@/services/billing/derive-periods";
 
 // bm02-spec §4/§8. Pure window-derivation unit tests: the monthly in-arrears
 // window for cycle_day 1 / 15 / 28, the none-due-yet null, and month/year
@@ -73,5 +76,26 @@ describe("currentDuePeriod (bm02-spec §4)", () => {
 
   it("is total — a malformed today yields null rather than throwing", () => {
     expect(currentDuePeriod(15, "not-a-date")).toBeNull();
+  });
+});
+
+// bm03-spec §1/§6 — period_partition is the 1st of the run's period month,
+// fixed at snapshot time. Verified for a mid-month, month-start, and
+// cross-month rerun (§9's "period_partition = 1st of period_start even for a
+// cross-month rerun" check).
+describe("firstOfMonth (bm03-spec §1)", () => {
+  it("returns the 1st of the month for a mid-month date", () => {
+    expect(firstOfMonth("2026-07-15")).toBe("2026-07-01");
+  });
+
+  it("is idempotent for a date already on the 1st", () => {
+    expect(firstOfMonth("2026-07-01")).toBe("2026-07-01");
+  });
+
+  it("stays anchored to the ORIGINAL period_start's month across a cross-month rerun", () => {
+    // A run whose period_start is July stays July-partitioned even if the
+    // rerun itself happens in August or later — the caller always passes the
+    // run's stored period_start, never "today".
+    expect(firstOfMonth("2026-07-31")).toBe("2026-07-01");
   });
 });

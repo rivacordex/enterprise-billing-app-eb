@@ -81,6 +81,13 @@ const envSchema = z.object({
   // column (code-standards §6.11). Defaults to `false` so production behavior
   // is unchanged until a stub/UAT deployment opts in.
   STUB_DATA_MODE: booleanEnvSchema("false"),
+  // bm03-spec §Design/§4. The outbound workflow engine — treated as
+  // not-yet-deployed. Both optional; absence selects the stub engine client
+  // (`isBillRunEngineConfigured` below), so a bill run's trigger stays fully
+  // testable with no live Kestra. Production sources BILLRUN_ENGINE_AUTH from
+  // Key Vault via Managed Identity, matching every other credential here.
+  BILLRUN_ENGINE_URL: z.url().optional(),
+  BILLRUN_ENGINE_AUTH: z.string().optional(),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -104,6 +111,8 @@ function loadConfig(): Config {
     PASSWORD_SPECIAL_CHARS: process.env.PASSWORD_SPECIAL_CHARS,
     APP_TIMEZONE: process.env.APP_TIMEZONE,
     STUB_DATA_MODE: process.env.STUB_DATA_MODE,
+    BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
+    BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
   });
 
   if (!parsed.success) {
@@ -146,6 +155,16 @@ export const isSsoConfigured: boolean =
 // stub-data flag, threaded server-side into the bill-run page as a prop and
 // on to `StubDataBanner`/`StubBadge` — never read from a client component.
 export const stubDataMode: boolean = config.STUB_DATA_MODE;
+
+// bm03-spec §Design/§4. The mockable engine client (services/billing/engine-client.ts)
+// selects its implementation from this flag — never re-reads process.env itself.
+export const billRunEngineConfig = {
+  url: config.BILLRUN_ENGINE_URL ?? null,
+  auth: config.BILLRUN_ENGINE_AUTH ?? null,
+} as const;
+
+export const isBillRunEngineConfigured: boolean =
+  !!billRunEngineConfig.url && !!billRunEngineConfig.auth;
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

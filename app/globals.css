@@ -117,6 +117,15 @@
   --acct-chip-sys-bg: var(--color-neutral-100);
   --acct-chip-sys-fg: var(--color-neutral-600);
 
+  /* Billing Management (Bill Run) — the module's one featured accent
+     (billmgmt-ui-context.md §7): Deep Petrol, used ONCE per screen for the
+     "Run" action on an operable run card. Base aliases the existing cyan
+     scale; the hover/active shades have no existing equivalent. */
+  --billrun-cta-bg: var(--color-cyan-700);
+  --billrun-cta-bg-hover: #00525c;
+  --billrun-cta-bg-active: #003e46;
+  --billrun-cta-text: #ffffff;
+
   /* 4. RESERVED — AI/Iris + gradients (defined, NOT used in v1, UI-context §0/§4) */
   --ai-50: #f0edff;
   --ai-100: #dad2ff;

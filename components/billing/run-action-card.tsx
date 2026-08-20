@@ -1,13 +1,13 @@
-// bm02-spec §6 (Design §Operability). The operable-run surface on the Current
-// & Upcoming tab — the single operable run per cycle. Server component: the
-// "Run" button is INERT in bm02 (the Run action, and its Deep Petrol featured
-// CTA styling, land in bm03). Period columns render as calendar dates
-// (`dd Mon yyyy`); no money is shown (bm02-spec §Visual).
-
-import { Play } from "lucide-react";
+// bm02-spec §6 (Design §Operability), bm03-spec §Visual. The operable-run
+// surface on the Current & Upcoming tab — the single operable run per cycle.
+// Server component: the Deep-Petrol "Run" CTA + its confirm dialog are the
+// `TriggerRunDialog` interaction leaf (code-standards §3.7). Period columns
+// render as calendar dates (`dd Mon yyyy`); no money is shown (bm02-spec
+// §Visual).
 
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { StubBadge } from "@/components/billing/stub-data-banner";
+import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
 import { formatCalendarDate } from "@/lib/formatters";
 import type { RunListRow } from "@/types/billing";
 
@@ -49,19 +49,12 @@ export function RunActionCard({
           </div>
         </div>
 
-        {/* Inert in bm02 — the Run action arrives in bm03. Disabled so the
-            operable surface is visible without offering a non-functional
-            control. */}
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          title="Running a bill run is not available yet."
-          className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--color-primary-600)] px-4 py-2 text-body-sm font-semibold text-[color:var(--color-primary-50)] opacity-50"
-        >
-          <Play size={14} aria-hidden="true" />
-          Run
-        </button>
+        <TriggerRunDialog
+          billRunId={run.billRunId}
+          cycleName={run.cycleName}
+          periodStart={run.periodStart}
+          periodEnd={run.periodEnd}
+        />
       </div>
     </div>
   );

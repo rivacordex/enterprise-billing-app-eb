@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   ilike,
+  inArray,
   or,
   sql,
   type SQL,
@@ -276,6 +277,32 @@ export const productInventoryRepository = {
       );
     }
     return { productInventoryId: row.productInventoryId };
+  },
+
+  // bm03-spec §Design/§6 — batched read for the partial-period predicate:
+  // every subscription window (account + start/end dates) for a set of
+  // billing accounts, no join fan-out (one row per instance).
+  async findWindowsByBillingAccountIds(
+    db: Database,
+    billingAccountIds: string[],
+  ): Promise<
+    {
+      productInventoryId: string;
+      billingAccountId: string;
+      startDate: string;
+      endDate: string | null;
+    }[]
+  > {
+    if (billingAccountIds.length === 0) return [];
+    return db
+      .select({
+        productInventoryId: productInventory.productInventoryId,
+        billingAccountId: productInventory.billingAccountId,
+        startDate: productInventory.startDate,
+        endDate: productInventory.endDate,
+      })
+      .from(productInventory)
+      .where(inArray(productInventory.billingAccountId, billingAccountIds));
   },
 
   // The one editable, never-rated field (Inv. #15) — descriptive
