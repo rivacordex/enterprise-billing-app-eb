@@ -39,6 +39,7 @@ const ROUTE_MANIFEST = [
   "/accounts/chart-of-accounts",
   "/accounts/gl-journal",
   "/billing/bill-runs",
+  "/billing/bill-runs/[runId]",
   "/administration/accounts-settings",
   "/administration/accounts-settings/flows",
 ] as const;

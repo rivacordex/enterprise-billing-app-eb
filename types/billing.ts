@@ -73,3 +73,67 @@ export interface RunListPage {
   page: number;
   pageSize: number;
 }
+
+// bm04-spec §Design/§1, code-standards §2.1. The six pipeline stages built
+// this release plus the three deferred ones (`posting`/`rendering`/
+// `distribution`) modelled for state-machine completeness — matches the
+// `bill_run_account_stage.stage` CHECK exactly.
+export const STAGES = [
+  "scoping",
+  "validation",
+  "collection",
+  "aggregation",
+  "taxation",
+  "verification",
+  "posting",
+  "rendering",
+  "distribution",
+] as const;
+export type Stage = (typeof STAGES)[number];
+
+export const STAGE_STATUSES = [
+  "PENDING",
+  "RUNNING",
+  "DONE",
+  "FAILED",
+  "SKIPPED",
+] as const;
+export type StageStatus = (typeof STAGE_STATUSES)[number];
+
+export const ERROR_CLASSES = ["HARD", "SOFT", "INFRA"] as const;
+export type ErrorClass = (typeof ERROR_CLASSES)[number];
+
+// bm04-spec §Implementation §9. The run-detail header read model — the
+// Workflow tab (and the later tabs) compose around this.
+export interface RunDetail {
+  billRunId: string;
+  cycleName: string;
+  periodStart: string;
+  periodEnd: string;
+  scheduledRunDate: string;
+  status: RunStatus;
+}
+
+// One stage cell in the `StageTimeline` grid — `null` status means no signal
+// has landed for this (account, stage) pair yet (rendered as the neutral
+// `PENDING` badge, never a stored row).
+export interface StageTimelineCell {
+  stage: Stage;
+  status: StageStatus | null;
+  errorClass: ErrorClass | null;
+}
+
+export interface StageTimelineRow {
+  billingAccountId: string;
+  accountStatus: AccountStatus;
+  cells: StageTimelineCell[];
+}
+
+// The Workflow tab's mid-flight summary — always derived from
+// `bill_run_account`, never the optional cache (architecture Inv. #12).
+export interface StageTimelineSummary {
+  total: number;
+  processed: number;
+  processingFailed: number;
+  excluded: number;
+}

@@ -8,11 +8,13 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01 + bm02 + bm03 delivered: the Billing nav section, RBAC scaffold, the
-  `billing.bill_run` header table, lazy materialization, the two-tab run list,
-  and the Trigger/Run path (snapshot + scoping + mockable outbound engine).
-  Next: bm04 (per-account stage ingest — the M2M signal path that drives
-  `bill_run_account` past PENDING).
+- bm01 + bm02 + bm03 + bm04 delivered: the Billing nav section, RBAC
+  scaffold, the `billing.bill_run` header table, lazy materialization, the
+  two-tab run list, the Trigger/Run path, and the M2M stage-ingest path that
+  drives `bill_run_account` past `PENDING` to `PROCESSED`/`PROCESSING_FAILED`
+  with the run-detail Workflow tab's live stage timeline. Next: bm05+
+  (Collection/Aggregation/Taxation/Verification's real per-stage effects, the
+  remaining run-detail tabs, Rerun/Approve/Post).
 
 ## Completed
 
@@ -157,6 +159,99 @@ Update this file after every meaningful implementation change.
 
 - None.
 
+- **bm04 — M2M stage ingest + stage-timeline observability**
+  (`specs/bm04-stage-ingest-observability.md`).
+  - Schema: new partitioned `billing.bill_run_account_stage` table (typing-
+    only Drizzle declaration, `db/schema/billing/bill-run-account-stage.ts`;
+    physical DDL `db/migrations/0028_bill_run_account_stage.sql`, following
+    the bm03 `bill_run_account`/`audit_log` hand-authored-partition pattern —
+    not drizzle-kit generated) — composite PK `(bill_run_account_stage_id,
+    period_partition)`, the idempotency-latch UNIQUE `(ref_bill_run_id,
+    ref_billing_account_id, stage, attempt, period_partition)`, `Stage`/
+    `StageStatus`/`ErrorClass` CHECKs, FKs to `bill_run`/`billing_account`,
+    default partition. `db/bootstrap/billing-partman-setup.sql` extended with
+    a second `partman.create_parent` registration for the new table (same
+    monthly/7-year-detach shape as `bill_run_account`; one shared
+    `run_maintenance_proc()` call covers both parents, no second cron job).
+  - Types: `Stage` (9 members)/`StageStatus`/`ErrorClass` unions,
+    `RunDetail`/`StageTimelineRow`/`StageTimelineCell`/`StageTimelineSummary`
+    read models (`types/billing.ts`).
+  - Config + auth: `BILLRUN_APP_TOKEN` (optional, min 32 chars,
+    `lib/config.ts` + `.env.example`) — absent ⇒ every M2M call 401s
+    (fail-closed). `lib/service-token.ts` (`serviceTokenMatches` mirrors
+    `csrfTokensMatch`'s length-guard + `timingSafeEqual` idiom;
+    `requireServiceToken` extracts `Authorization: Bearer`, throws
+    `UNAUTHENTICATED` on any miss, never logs the token).
+  - Validation: `validation/billing/{run-id,stage-signal,status-push,
+    run-detail}.schema.ts` — `stageSignalBodySchema` accepts no charge
+    fields; `statusPushBodySchema` is `{ status: "PROCESSING_FAILED",
+    error_detail? }` (see Session Notes — the spec left this body's exact
+    shape unstated beyond "an execution-failure marks the run
+    PROCESSING_FAILED").
+  - Route Handlers: `app/api/billrun/[runId]/stage/[stage]/complete/route.ts`
+    and `.../status/route.ts` — `requireServiceToken` → Zod-parse params +
+    body → delegate → `toHttpResponse`. No `getSession`, no business logic.
+  - Services: `services/billing/handle-stage-signal.ts` (the transaction:
+    `findByIdForUpdate` row-lock + `PROCESSING` guard → insert the stage row
+    first, catching a unique-violation as a `replayed: true` 200 no-op → the
+    Validation stage's outcome is **computed by the app**
+    (`validate-account.ts`, a readiness gate over
+    currency/bill-cycle/payment-terms resolvability — overrides whatever the
+    caller's body said for that stage only); every other stage is pass-
+    through record-and-advance → `advanceAccountStatus` (pure, exported for
+    testing: `PENDING→PROCESSING` on first signal, `HARD`→
+    `PROCESSING_FAILED`, `INFRA`→ no terminal change, the terminal stage
+    `verification` `DONE`/`SKIPPED` → `PROCESSED`) → recompute
+    `bill_run.status` via the pure `compute-run-status.ts` (`PROCESSED` once
+    every account is `PROCESSED`/`PROCESSING_FAILED`/`EXCLUDED` — `EXCLUDED`
+    counts as terminal since bm03 never signals it) under the row lock
+    already held by `findByIdForUpdate` (no second lock). The optional
+    `ban_count`/`rated_count`/`failed_count` cache is refreshed from the same
+    derived counts every recompute (stored == derived by construction).
+    `handle-status-push.ts` is the narrower execution-failure push,
+    `PROCESSING` → `PROCESSING_FAILED`. No `AUDIT_LOG` write in either path —
+    the appended stage row is the audit surface.
+  - Repositories: `bill-run-account-stage.repository.ts`
+    (`insertStageRow`/`listLatestForRun` via `selectDistinctOn` picking the
+    highest attempt per `(account, stage)`); `bill-run-account.repository.ts`
+    extended with `findStatus`/`updateStatus`/`listStatusesForRun`;
+    `bill-run.repository.ts` extended with `findDetailById`/
+    `recomputeStatus`/`markProcessingFailed`.
+  - Detail page + Workflow tab: `app/(app)/billing/bill-runs/[runId]/`
+    (`page.tsx` guards `billrun_view:READ`, parses `runId`, `notFound()` on
+    invalid/unknown, `generateMetadata`, `force-dynamic`; `loading.tsx`/
+    `error.tsx`). `components/billing/`: `run-detail-tabs.tsx`
+    (`?tab=` switcher; Workflow renders `StageTimeline`, the other four are
+    inert placeholders for bm05-07), `stage-timeline.tsx`, and three new
+    badges — `stage-status-badge.tsx`, `error-class-badge.tsx`, and
+    `account-status-badge.tsx` (code-standards §4.1 — ships with "the first
+    unit that renders a per-account row", which is this one). Read services:
+    `services/billing/read/{get-run-detail,get-stage-timeline}.ts` — both
+    derive live, no cache read.
+  - Tests: `lib/service-token.test.ts`, `compute-run-status.test.ts`,
+    `validate-account.test.ts`, `handle-stage-signal.test.ts` (guards,
+    replay/idempotency, HARD/INFRA/terminal-stage advancement, the
+    Validation stage's app-computed override, `advanceAccountStatus` pure
+    unit cases), `handle-status-push.test.ts`, `get-stage-timeline.test.ts`,
+    the two M2M route-handler auth/status-code matrices
+    (`tests/app/api/billrun-{stage-complete,status}.test.ts`),
+    `bill-run-account-stage-schema.test.ts` (structural), the three new
+    badge coverage tests, and `bill-run-detail-page.test.tsx` (route × level
+    matrix: guard-first, `notFound()` on invalid/unknown run, redirect
+    propagation, force-dynamic, stub-banner). DB-gated integration coverage
+    (concurrent-signal atomicity under `FOR UPDATE`, the real unique-
+    violation replay path) is **not added in this environment** — no local
+    Postgres reachable, same constraint noted for bm02/bm03's integration
+    suites.
+  - `typecheck`/`lint`/`format:check` clean; full DB-free vitest run green
+    (238/243 files, 2470/2484 tests) — the 5 failing files/14 failing tests
+    are all in `tests/actions/{create-order,resume,suspend,terminate}-
+    subscription*` and are the **same pre-existing, unrelated hardcoded-date
+    drift** noted for bm01-bm03 (now 5 files instead of 4, since today,
+    2026-08-20, pushed one more borderline case past the "3 days in the
+    past" threshold); confirmed via `git status`/`git diff` that bm04
+    touched none of those files.
+
 ## Post-review hardening (bm02)
 
 Fixes from a high-effort code review of the bm02 diff:
@@ -207,9 +302,13 @@ Second review round (doc + hardening):
 
 ## Next Up
 
-- **bm04** — per-account stage ingest (the M2M signal path that advances
-  `bill_run_account` past `PENDING`; the Uncharged tab reading `EXCLUDED`
-  rows lands in bm07).
+- **bm05+** — the real per-stage effects for Collection (claim `rating.udr_rated`),
+  Aggregation (`customer_bill`), Taxation (`customer_bill_tax_item`), and
+  Verification (exceptions/findings) — bm04's record-and-advance pass-through
+  for these four stages is replaced one stage per unit. The remaining
+  run-detail tabs (Customers & Bills, Uncharged, Errors, Audit) land with the
+  unit that gives them real data; the Uncharged tab reading `EXCLUDED` rows
+  lands in bm07 per the original plan.
 
 ## Open Questions
 
@@ -296,3 +395,39 @@ Second review round (doc + hardening):
   integration-test-ripple` memory) — `bill_run_account` lives in the
   already-provisioned `billing` schema, not a new `pgSchema`, so no existing
   integration test's `beforeAll`/`afterAll` needed touching.
+- **bm04 resolved decisions** (recorded so they aren't re-litigated, per
+  ai-workflow-rules §5.8 — the spec left each of these underspecified):
+  - **`POST /api/billrun/[runId]/status` body shape.** The spec states only
+    "the workflow's error/`finally` handlers POST a terminal status ... an
+    execution-failure marks the run `PROCESSING_FAILED`" without giving the
+    field names. Resolved as `{ status: "PROCESSING_FAILED", error_detail?
+    }` — a `PROCESSED` push is never accepted here because `PROCESSED` is
+    always *derived* by `handleStageSignal`'s run-status recompute once
+    every account is terminal (architecture Inv. #12); accepting a pushed
+    `PROCESSED` would create a second, competing way to set that status.
+    Revisit only if a future unit needs the engine to push a different
+    terminal run status.
+  - **Which stage flips an account to `PROCESSED`.** bm04 implements only
+    six of the nine `Stage` union members this release (scoping already ran
+    at bm03's trigger; posting/rendering/distribution are unbuilt). Resolved
+    `verification` (the last of the six, matching `Stage` union order in
+    `types/billing.ts`) as the terminal stage — a `DONE`/`SKIPPED` signal
+    for it moves the account to `PROCESSED`. Revisit when posting/rendering/
+    distribution land — the terminal stage moves to `distribution`.
+  - **`EXCLUDED` counts as run-recompute-terminal.** The spec's Design §4
+    literally lists only `PROCESSED`/`PROCESSING_FAILED` as the "every
+    account is terminal" set, but `EXCLUDED` accounts (bm03, scoping-time
+    partial-period exclusion) are never signalled downstream — without
+    treating `EXCLUDED` as terminal too, a run with any excluded account
+    could never reach `PROCESSED`. `compute-run-status.ts` therefore treats
+    `{PROCESSED, PROCESSING_FAILED, EXCLUDED}` as the terminal set.
+  - **The Validation stage's outcome overrides the caller's signal body.**
+    Every other stage is pass-through record-and-advance (the caller's
+    `status`/`error_class` are recorded verbatim), but for `stage:
+    "validation"` the app computes the outcome itself via
+    `validate-account.ts` and that computed outcome — not the request
+    body's `status`/`error_class`/`error_code`/`error_detail` — is what gets
+    written to the stage row and used to advance the account. This is the
+    only way the spec's "the Validation stage's readiness logic is
+    implemented" (goal statement) is meaningfully true, since the workflow
+    engine has no visibility into billing-profile resolvability.
