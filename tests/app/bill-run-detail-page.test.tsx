@@ -18,6 +18,12 @@ vi.mock("@/services/billing/read/get-run-detail", () => ({
 vi.mock("@/services/billing/read/get-stage-timeline", () => ({
   getStageTimeline: vi.fn(),
 }));
+vi.mock("@/services/billing/read/list-account-bills", () => ({
+  listAccountBills: vi.fn(),
+}));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppLocale: vi.fn(),
+}));
 vi.mock("@/lib/config", () => ({
   get stubDataMode() {
     return configState.stub;
@@ -35,10 +41,14 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
+import { listAccountBills } from "@/services/billing/read/list-account-bills";
+import { getAppLocale } from "@/services/system-config/app-config-read.service";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockGetRunDetail = vi.mocked(getRunDetail);
 const mockGetStageTimeline = vi.mocked(getStageTimeline);
+const mockListAccountBills = vi.mocked(listAccountBills);
+const mockGetAppLocale = vi.mocked(getAppLocale);
 
 function redirectError(target: string): Error & { digest: string } {
   const error = new Error("NEXT_REDIRECT") as Error & { digest: string };
@@ -75,6 +85,8 @@ beforeEach(() => {
     rows: [],
     summary: { total: 0, processed: 0, processingFailed: 0, excluded: 0 },
   });
+  mockListAccountBills.mockResolvedValue([]);
+  mockGetAppLocale.mockResolvedValue("en-MY");
 });
 
 describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
@@ -119,6 +131,14 @@ describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
   it("only reads the stage timeline for the workflow tab", async () => {
     await BillRunDetailPage(props("BRN00000001", { tab: "customers" }));
     expect(mockGetStageTimeline).not.toHaveBeenCalled();
+  });
+
+  it("only reads the account bills for the customers tab", async () => {
+    await BillRunDetailPage(props());
+    expect(mockListAccountBills).not.toHaveBeenCalled();
+
+    await BillRunDetailPage(props("BRN00000001", { tab: "customers" }));
+    expect(mockListAccountBills).toHaveBeenCalledWith("BRN00000001");
   });
 
   it("shows StubDataBanner when STUB_DATA_MODE is on", async () => {

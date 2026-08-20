@@ -252,6 +252,87 @@ Update this file after every meaningful implementation change.
     past" threshold); confirmed via `git status`/`git diff` that bm04
     touched none of those files.
 
+- **bm05 — Draft bill generation (Claim + Aggregation)**
+  (`specs/bm05-draft-bill-generation.md`).
+  - Schema: new partitioned `billing.customer_bill` table (typing-only
+    Drizzle declaration, `db/schema/billing/customer-bill.ts`; physical DDL
+    `db/migrations/0029_customer_bill.sql`, following the bm03/bm04 hand-
+    authored-partition pattern — not drizzle-kit generated) — composite PK
+    `(customer_bill_id, period_partition)`, UNIQUE `(ref_bill_run_id,
+    ref_billing_account_id, period_partition)`, `BillCategory`/`BillState`
+    CHECKs, `CBL` id default, FKs to `bill_run`/`billing_account` only (
+    `ref_bill_format_id`/`ref_bill_template_version_id` are reserved,
+    nullable, **no FK** — the catalog/rendering phase is deferred), the
+    nullable `ref_inv_document_id`/`posted_attempt`/`charge_checksum`
+    finalization-latch columns (none populated in v1), default partition.
+    `db/bootstrap/billing-partman-setup.sql` extended with a third
+    `partman.create_parent` registration (same monthly/7-year-detach shape
+    as `bill_run_account`/`bill_run_account_stage`; the existing shared
+    `run_maintenance_proc()` call still covers all three parents, no second
+    cron job). `BillCategory`/`BillState` unions + the `CustomerBillRow` read
+    model added to `types/billing.ts`.
+  - Collection/Claim (stage 3): `services/billing/collect-claim.ts`
+    (`collectClaim`) — a pure, synchronous v1 no-op that always returns
+    `DONE`, wired into `handle-stage-signal.ts` as a third app-computed
+    override alongside bm04's Validation (the caller's signalled
+    status/error fields are discarded for this stage, same as Validation).
+    No `rating.*` object exists yet, so there is no claim repository, no
+    rating grant, and no cross-schema write — a `// deferred: rating claim +
+    grant land with the rating engine` marker documents where the real claim
+    goes.
+  - Aggregation (stage 4): `services/billing/aggregate-bill.ts`
+    (`aggregateBill(tx, run, banId)`) — resolves the payment-term days via
+    the existing `coalesce(account.paymentDueDaysOverride, cycle.paymentDueDays)`
+    resolution (`resolveTerm`, reused from `validate-account.ts`'s
+    precedent), computes `payment_due_date` via the new pure `addDays`
+    helper (`services/billing/derive-periods.ts`, UTC `Date.UTC` math,
+    `currentDuePeriod`'s idiom) applied to `run.scheduledRunDate`, and writes
+    the trial row through a rerun-safe conditional `DELETE ... WHERE
+    ref_inv_document_id IS NULL` + INSERT
+    (`db/repositories/billing/customer-bill.repository.ts`). `subtotal` is a
+    **deterministic synthetic stub** (`deriveStubSubtotal`, exported for
+    testing) — a pure, stable function of `billing_account_id` alone (a base
+    + a per-account increment derived from the BAN's numeric suffix mod
+    1000, **no randomness**), computed in integer sen via the platform
+    decimal helper (`services/accounts/money.ts`'s `senToString`), never JS
+    float. `tax_total` is hardcoded `"0.00"` and `total_amount` equals
+    `subtotal` in v1 — Taxation (bm06) is out of scope here. Wired into
+    `handle-stage-signal.ts` as a **side effect** (not an outcome override,
+    unlike Validation/Collection): a `DONE` `aggregation` signal triggers
+    `aggregateBill` inside the same transaction, after the idempotency-latch
+    stage-row insert succeeds — a replayed (duplicate) signal never reaches
+    it, and a `FAILED` aggregation signal never triggers it.
+  - Customers & Bills tab: fills the bm04 placeholder.
+    `services/billing/read/list-account-bills.ts` (`listAccountBills`) joins
+    `customer_bill` → `billing_account` for the account name/currency (
+    neither lives on `customer_bill`) — `EXCLUDED` accounts never appear
+    structurally (they never reach Aggregation; bm04's
+    `advanceAccountStatus` keeps them terminal, so no row is ever written
+    for them). `components/billing/`: `bill-category-badge.tsx`
+    (`BillCategoryBadge` — `trial` renders outline-only per ui-context §5,
+    the one badge family in this module that does) and
+    `customer-bill-table.tsx` (`CustomerBillTable` — a **server component**;
+    the per-row charge-lines expander is a native `<details>` disclosure, so
+    no `'use client'` leaf was needed, unlike every other interactive leaf in
+    this module). `app/(app)/billing/bill-runs/[runId]/page.tsx` now also
+    resolves `getAppLocale()` and reads `listAccountBills` only for the
+    `customers` tab (same fetch-only-for-active-tab idiom as the Workflow
+    timeline).
+  - Tests: `customer-bill-schema.test.ts` (structural), `collect-claim.test.ts`,
+    `aggregate-bill.test.ts` (rerun-safe delete-before-insert ordering, term
+    resolution incl. override, `deriveStubSubtotal` determinism/stability),
+    `list-account-bills.test.ts`, `bill-category-badge.test.tsx` (all 3
+    values + the trial outline-only assertion), `handle-stage-signal.test.ts`
+    extended with the Collection override and the Aggregation side-effect
+    (DONE triggers it, FAILED/replay/other-stages don't), and
+    `bill-run-detail-page.test.tsx` extended to assert `listAccountBills` is
+    only called for the `customers` tab. `typecheck`/`lint`/`format` clean;
+    full DB-free vitest run green (244/248 files, 2512/2526 tests) — the
+    4 failing files/14 failing tests are the same pre-existing, unrelated
+    hardcoded-date drift noted for bm01-bm04 (`tests/actions/{create-order,
+    resume,suspend,terminate}-subscription*`); confirmed via `git status`/
+    `git diff` that bm05 touched none of those files.
+
 ## Post-review hardening (bm02)
 
 Fixes from a high-effort code review of the bm02 diff:
@@ -302,13 +383,12 @@ Second review round (doc + hardening):
 
 ## Next Up
 
-- **bm05+** — the real per-stage effects for Collection (claim `rating.udr_rated`),
-  Aggregation (`customer_bill`), Taxation (`customer_bill_tax_item`), and
-  Verification (exceptions/findings) — bm04's record-and-advance pass-through
-  for these four stages is replaced one stage per unit. The remaining
-  run-detail tabs (Customers & Bills, Uncharged, Errors, Audit) land with the
-  unit that gives them real data; the Uncharged tab reading `EXCLUDED` rows
-  lands in bm07 per the original plan.
+- **bm06+** — Taxation (`customer_bill_tax_item`, real `tax_total`/
+  `total_amount`) and Verification (exceptions/findings) replace bm04's
+  record-and-advance pass-through for the remaining two stages. The
+  remaining run-detail tabs (Uncharged, Errors, Audit) land with the unit
+  that gives them real data; the Uncharged tab reading `EXCLUDED` rows lands
+  in bm07 per the original plan.
 
 ## Open Questions
 
@@ -431,3 +511,48 @@ Second review round (doc + hardening):
     only way the spec's "the Validation stage's readiness logic is
     implemented" (goal statement) is meaningfully true, since the workflow
     engine has no visibility into billing-profile resolvability.
+- **bm05 resolved decisions** (recorded so they aren't re-litigated, per
+  ai-workflow-rules §5.8 — the spec left each of these underspecified):
+  - **Collection is an app-computed override; Aggregation is a side effect,
+    not an override.** The spec's wording differs subtly between the two
+    ("the ingest's collection signal records the stage DONE" vs. "invoked
+    when the aggregation stage signal arrives"). Resolved: Collection joins
+    Validation as a third stage whose *recorded outcome* the app computes
+    itself (always `DONE`, discarding the caller's body) — there is nothing
+    for a no-op to fail on. Aggregation stays record-and-advance pass-through
+    for the stage row itself (whatever the caller signals is what's
+    recorded), but a `DONE` signal additionally triggers the `customer_bill`
+    write as a side effect. Revisit only if a future spec explicitly wants
+    Aggregation's own outcome to be app-computed too.
+  - **`tax_total`/`total_amount` in v1.** The spec is silent on what
+    Aggregation should write for these beyond "money is `numeric(18,2)`/
+    `string`". Resolved: `tax_total = "0.00"` (hardcoded, not computed —
+    Taxation is bm06's stage per the Discipline checklist's "no taxation
+    logic here"), `total_amount = subtotal` (their sum, trivially, since tax
+    is zero). Revisit when bm06 lands — Taxation will overwrite both on the
+    same row rather than Aggregation re-deriving them.
+  - **The synthetic stub formula.** The spec asks only for "a stable
+    function of the `billing_account_id`... e.g. a base amount plus a fixed
+    offset derived from the BAN's numeric suffix". Resolved as `100.00 +
+    (suffix mod 1000) × 7.50`, computed in integer sen
+    (`deriveStubSubtotal`, `services/billing/aggregate-bill.ts`) — an
+    arbitrary but stable, non-random, two-decimal-safe choice. Revisit only
+    if a demo/UAT need calls for a different stub shape; the *mechanism*
+    (pure function of the BAN id, sen arithmetic) is the part that matters,
+    not the specific constants.
+- **Environment note, not a bm05 defect:** `tests/services/billing/
+  trigger-run.service.test.ts` (bm03, untouched by bm05) fails with an
+  "Invalid environment configuration" `ZodError` (missing `DATABASE_URL`/
+  `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL`) whenever this shell's real
+  environment doesn't already have those three set — `services/billing/
+  trigger-run.ts`'s import graph pulls in `services/billing/business-today.ts`
+  → `services/system-config/app-config-read.service.ts` → `lib/config.ts`,
+  which eagerly validates the full env schema on module load, and nothing in
+  `tests/setup.ts` stubs it. Confirmed this is pre-existing and unrelated to
+  bm05 (the file imports nothing bm05 touched): it fails identically with or
+  without the bm05 diff applied, and passes cleanly once the three vars are
+  exported into the shell before `vitest run`. The full-suite counts reported
+  above (244/248, 2512/2526) were taken with those three vars stubbed for
+  exactly this reason — running `vitest run` in a shell that hasn't sourced
+  a real `.env` will show this file as a 5th failure on top of the 4 known
+  date-drift ones.

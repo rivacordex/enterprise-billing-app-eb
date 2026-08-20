@@ -74,12 +74,35 @@ SET retention            = '7 years',
 WHERE parent_table = 'billing.bill_run_account_stage';
 --> statement-breakpoint
 
+-- bm05-spec §Implementation §1. Third parent registration in this same
+-- bootstrap file: billing.customer_bill (created by
+-- 0029_customer_bill.sql). Same monthly/7-year-detach shape as the two
+-- parents above — the finalization latch (`ref_inv_document_id`) means a
+-- posted bill's partition must never be dropped within the statutory window.
+SELECT partman.create_parent(
+  p_parent_table  := 'billing.customer_bill',
+  p_control       := 'period_partition',
+  p_interval      := '1 month',
+  p_type          := 'range',
+  p_premake       := 4,
+  p_default_table := false
+);
+--> statement-breakpoint
+
+UPDATE partman.part_config
+SET retention            = '7 years',
+    retention_keep_table = true,
+    premake              = 4,
+    infinite_time_partitions = true
+WHERE parent_table = 'billing.customer_bill';
+--> statement-breakpoint
+
 -- Materialise premake/forward partitions immediately on a fresh install
--- (covers both parents registered above).
+-- (covers all three parents registered above).
 CALL partman.run_maintenance_proc();
 
 -- No second cron job: the audit-log-partman-maintenance job
 -- (audit-partman-setup.sql) already calls partman.run_maintenance_proc()
 -- with no table argument, which sweeps every registered parent — including
--- both parents registered in this file, once their create_parent calls have
+-- every parent registered in this file, once their create_parent calls have
 -- run. Do not schedule a second `cron.schedule_in_database` here.

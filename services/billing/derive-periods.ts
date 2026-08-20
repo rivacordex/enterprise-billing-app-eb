@@ -64,3 +64,14 @@ export function currentDuePeriod(
 export function firstOfMonth(periodStart: string): string {
   return `${periodStart.slice(0, 7)}-01`;
 }
+
+// bm05-spec §Design/§Implementation §4 — Aggregation's `payment_due_date`
+// calc: the run date (`scheduled_run_date`) plus the resolved payment-term
+// days. UTC `Date.UTC` math (the `currentDuePeriod` idiom above), never
+// float/string date arithmetic — day/month/year overflow is normalized by
+// `Date.UTC` itself.
+export function addDays(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  if (!y || !m || !d) return date;
+  return toYmd(Date.UTC(y, m - 1, d + days));
+}

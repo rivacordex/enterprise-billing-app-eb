@@ -2,15 +2,20 @@
 // tab switcher — a plain `<Link ?tab=>` (view state in the URL), server
 // component (no interaction beyond navigation, so no 'use client' leaf is
 // needed here — mirrors `components/billing/bill-run-list.tsx`'s tab nav).
-// Only Workflow is populated in bm04; the rest are inert placeholders filled
-// by bm05-07 (they show no data, no `customer_bill`/claim logic here).
+// Workflow (bm04) and Customers & Bills (bm05) are populated; the rest stay
+// inert placeholders filled by bm06-07.
 
 import Link from "next/link";
 
+import { CustomerBillTable } from "@/components/billing/customer-bill-table";
 import { StageTimeline } from "@/components/billing/stage-timeline";
 import type { RunDetailTab } from "@/validation/billing/run-detail.schema";
 import { RUN_DETAIL_TABS } from "@/validation/billing/run-detail.schema";
-import type { StageTimelineRow, StageTimelineSummary } from "@/types/billing";
+import type {
+  CustomerBillRow,
+  StageTimelineRow,
+  StageTimelineSummary,
+} from "@/types/billing";
 
 const TAB_LABELS: Record<RunDetailTab, string> = {
   workflow: "Workflow",
@@ -26,11 +31,15 @@ export interface RunDetailTabsProps {
     rows: StageTimelineRow[];
     summary: StageTimelineSummary;
   };
+  customerBills: CustomerBillRow[];
+  locale: string;
 }
 
 export function RunDetailTabs({
   activeTab,
   timeline,
+  customerBills,
+  locale,
 }: RunDetailTabsProps): React.JSX.Element {
   return (
     <div className="space-y-4">
@@ -59,6 +68,8 @@ export function RunDetailTabs({
 
       {activeTab === "workflow" ? (
         <StageTimeline rows={timeline.rows} summary={timeline.summary} />
+      ) : activeTab === "customers" ? (
+        <CustomerBillTable rows={customerBills} locale={locale} />
       ) : (
         <PlaceholderPanel label={TAB_LABELS[activeTab]} />
       )}

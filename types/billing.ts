@@ -137,3 +137,30 @@ export interface StageTimelineSummary {
   processingFailed: number;
   excluded: number;
 }
+
+// bm05-spec §Design/§Implementation §2, code-standards §2.1. `customer_bill`
+// domain unions — v1 only ever writes `category: 'trial'` / `state: 'new'`;
+// `normal`/`last` and `validated`/`sent` are modelled for state-machine
+// completeness (posting/taxation land in later units).
+export const BILL_CATEGORIES = ["trial", "normal", "last"] as const;
+export type BillCategory = (typeof BILL_CATEGORIES)[number];
+
+export const BILL_STATES = ["new", "validated", "sent"] as const;
+export type BillState = (typeof BILL_STATES)[number];
+
+// bm05-spec §Implementation §2/§5. The Customers & Bills tab's read model —
+// one row per trial `customer_bill`, joined to the account name. Money
+// fields are `string` (code-standards §2.3); `subtotal` in v1 is a
+// deterministic synthetic stub (`services/billing/aggregate-bill.ts`), never
+// a sum over real charges (there is no `rating` table yet).
+export interface CustomerBillRow {
+  customerBillId: string;
+  billingAccountId: string;
+  accountName: string;
+  category: BillCategory;
+  currency: string;
+  subtotal: string;
+  taxTotal: string;
+  totalAmount: string;
+  paymentDueDate: string;
+}
