@@ -1,0 +1,2 @@
+ALTER TABLE "billing"."bill_run" ADD CONSTRAINT "bill_run_period_order_check" CHECK (period_start <= period_end);--> statement-breakpoint
+ALTER TABLE "billing"."bill_run" ADD CONSTRAINT "bill_run_oncycle_schedule_check" CHECK (run_type <> 'onCycle' OR scheduled_run_date = period_end + 1);

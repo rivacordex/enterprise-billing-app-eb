@@ -1,0 +1,58 @@
+// Bill Run domain unions + read models (bm02-spec §3, code-standards §2.1).
+// `as const` string-literal unions — never a TS `enum`, never re-declared;
+// the same members appear inline in the `bill_run` CHECK constraints
+// (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
+// the service so the page never re-derives operability (code-standards §2.7).
+
+export const RUN_STATUSES = [
+  "SCHEDULED",
+  "PROCESSING",
+  "PROCESSED",
+  "APPROVED",
+  "POSTING",
+  "INVOICED",
+  "DISTRIBUTING",
+  "COMPLETED",
+  "PROCESSING_FAILED",
+  "DISTRIBUTION_FAILED",
+  "CANCELLED",
+] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export const RUN_TYPES = ["onCycle", "offCycle"] as const;
+export type RunType = (typeof RUN_TYPES)[number];
+
+// The two terminal history states (bm02-spec Design §Structural): Historical
+// lists these read-only. Everything else lives in Current & Upcoming — a
+// `*_FAILED` run is operable-again, not history.
+export const TERMINAL_RUN_STATUSES = ["COMPLETED", "CANCELLED"] as const;
+export type TerminalRunStatus = (typeof TERMINAL_RUN_STATUSES)[number];
+
+// One list row, fully derived by the read service (bm02-spec §3). `operable`
+// is the single operable run per cycle (oldest `status < APPROVED`,
+// `scheduled_run_date <= today`); `pastDue` marks a run whose period already
+// closed (`scheduled_run_date <= today`). Period columns are calendar-date
+// strings (`YYYY-MM-DD`); no money is shown in bm02.
+export interface RunListRow {
+  billRunId: string;
+  cycleId: string;
+  cycleName: string;
+  periodStart: string;
+  periodEnd: string;
+  scheduledRunDate: string;
+  status: RunStatus;
+  runType: RunType;
+  operable: boolean;
+  pastDue: boolean;
+}
+
+// The paginated run-list read model returned by the list service (bm02-spec
+// §3/§4). Lives in `types/` so both the service and the UI can reference it
+// without crossing the component → service boundary.
+export interface RunListPage {
+  tab: "current" | "historical";
+  rows: RunListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

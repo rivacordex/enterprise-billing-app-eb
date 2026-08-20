@@ -142,6 +142,14 @@ export function formatZoneWallClock(date: Date, timeZone: string): string {
   );
 }
 
+// The current calendar day (`YYYY-MM-DD`) in `timeZone` — the business "today"
+// used for the bill-run in-arrears window and operability math (bm02-spec §4).
+// Pure; `now` is injected so callers stay testable. `formatZoneWallClock`
+// yields `YYYY-MM-DD HH:mm:ss`; the leading 10 chars are the calendar day.
+export function todayInZone(now: Date, timeZone: string): string {
+  return formatZoneWallClock(now, timeZone).slice(0, 10);
+}
+
 // Full audit-style timestamp: local wall-clock + zone label. For `UTC` returns
 // the exact existing literal `"2026-06-17 09:14:22 UTC"` (no parentheses,
 // byte-identical to today, um29-spec §2.5); for other zones returns

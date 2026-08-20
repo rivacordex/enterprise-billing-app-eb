@@ -67,6 +67,43 @@ export function formatCurrency(
   }).format(Number(amount));
 }
 
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+// Calendar-date display (bm02 — ui-context §8). A `YYYY-MM-DD` string (a `date`
+// column, no timezone) rendered as `dd Mon yyyy` (e.g. "01 Aug 2026"). No
+// timezone conversion — a calendar date has no instant, so shifting it by a
+// zone offset would move it to the wrong day. Returns the raw input unchanged
+// if it isn't a well-formed `YYYY-MM-DD`.
+export function formatCalendarDate(ymd: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!match) return ymd;
+  const [, year, month, day] = match;
+  const monthNum = Number(month);
+  const monthLabel = MONTHS_SHORT[monthNum - 1];
+  if (!monthLabel) return ymd;
+  // Reject an impossible day (0, month-end overflow, Feb 29 in a common year).
+  // `Date.UTC(y, m, 0)` is the last day of month `m` (1-based), leap-aware.
+  const dayNum = Number(day);
+  const daysInMonth = new Date(
+    Date.UTC(Number(year), monthNum, 0),
+  ).getUTCDate();
+  if (dayNum < 1 || dayNum > daysInMonth) return ymd;
+  return `${day} ${monthLabel} ${year}`;
+}
+
 // Used by `ConfigTable`'s "Last Modified" column (um22-spec §22.5).
 export function formatRelativeTime(date: Date): string {
   const diffMs = Date.now() - date.getTime();

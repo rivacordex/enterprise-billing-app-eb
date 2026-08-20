@@ -30,4 +30,7 @@ export const PERMISSION_DISPLAY_NAMES: Record<PermissionName, string> = {
   accounts_config: "Accounts – Config",
   product_orders: "Product Orders",
   product_inventory: "Product Inventory",
+  billrun_view: "Bill Runs – View",
+  billrun_operate: "Bill Runs – Operate",
+  billrun_approve: "Bill Runs – Approve",
 } as const;

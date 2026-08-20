@@ -15,6 +15,9 @@ export const PERMISSIONS = {
   ACCOUNTS_CONFIG: "accounts_config",
   PRODUCT_ORDERS: "product_orders",
   PRODUCT_INVENTORY: "product_inventory",
+  BILLRUN_VIEW: "billrun_view",
+  BILLRUN_OPERATE: "billrun_operate",
+  BILLRUN_APPROVE: "billrun_approve",
 } as const satisfies Record<string, PermissionName>;
 
 export const LEVELS = {
