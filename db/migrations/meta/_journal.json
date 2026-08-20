@@ -183,6 +183,13 @@
       "when": 1787151530429,
       "tag": "0025_billing_bill_run",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1787159229614,
+      "tag": "0026_bill_run_period_checks",
+      "breakpoints": true
     }
   ]
 }

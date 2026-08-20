@@ -26,6 +26,10 @@ interface BillRunListProps {
   cycles: CycleOption[];
   hasCycles: boolean;
   stubDataMode: boolean;
+  // The active filters, so a tab switch preserves them (cycle applies to both
+  // tabs; status is Historical-only). Page always resets to 1 (by omission).
+  activeCycle: string | null;
+  activeStatus: string | null;
 }
 
 const TABS = [
@@ -33,11 +37,27 @@ const TABS = [
   { key: "historical", label: "Historical" },
 ] as const;
 
+function tabHref(
+  tab: "current" | "historical",
+  activeCycle: string | null,
+  activeStatus: string | null,
+): string {
+  const params = new URLSearchParams();
+  params.set("tab", tab);
+  if (activeCycle) params.set("cycle", activeCycle);
+  // Status only makes sense on Historical; dropping it on Current keeps the
+  // operability resolution over the full non-terminal set.
+  if (tab === "historical" && activeStatus) params.set("status", activeStatus);
+  return `?${params.toString()}`;
+}
+
 export function BillRunList({
   page,
   cycles,
   hasCycles,
   stubDataMode,
+  activeCycle,
+  activeStatus,
 }: BillRunListProps): React.JSX.Element {
   return (
     <div className="space-y-4">
@@ -50,7 +70,7 @@ export function BillRunList({
           return (
             <Link
               key={t.key}
-              href={`?tab=${t.key}`}
+              href={tabHref(t.key, activeCycle, activeStatus)}
               aria-current={active ? "page" : undefined}
               className={
                 active
@@ -64,7 +84,13 @@ export function BillRunList({
         })}
       </nav>
 
-      <BillRunsFilters cycles={cycles} tab={page.tab} />
+      {/* Re-mount on any filter/tab change so the draft selects re-seed from
+          the fresh URL (no setState-in-effect resync). */}
+      <BillRunsFilters
+        key={`${page.tab}:${activeCycle ?? ""}:${activeStatus ?? ""}`}
+        cycles={cycles}
+        tab={page.tab}
+      />
 
       {page.tab === "current" ? (
         <CurrentAndUpcoming

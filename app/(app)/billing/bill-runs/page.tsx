@@ -90,6 +90,8 @@ export default async function BillRunsPage({
         cycles={cycles.map((c) => ({ id: c.billCycleId, name: c.name }))}
         hasCycles={cycles.length > 0}
         stubDataMode={stubDataMode}
+        activeCycle={parsed.cycle}
+        activeStatus={parsed.status}
       />
     </main>
   );

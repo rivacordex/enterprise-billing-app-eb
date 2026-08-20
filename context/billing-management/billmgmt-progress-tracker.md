@@ -108,6 +108,24 @@ Fixes from a high-effort code review of the bm02 diff:
 Full DB-free vitest run green except the 4 pre-existing date-dependent action
 suites; `typecheck`/`lint`/`format:check` clean.
 
+Second review round (doc + hardening):
+
+- **Filters survive tab switches** — the tab links preserve the cycle filter on
+  both tabs and status on Historical (page always resets to 1); `BillRunsFilters`
+  is re-keyed on filter/tab change so its draft selects re-seed from the URL
+  (no stale mount-time values, no setState-in-effect).
+- **Period-window DB checks** — `bill_run` now enforces `period_start <=
+  period_end` (all runs) and, for on-cycle runs, `scheduled_run_date =
+  period_end + 1` (guarded on `run_type` so modelled off-cycle runs stay open).
+  Shipped as a new generated migration `0026_bill_run_period_checks.sql`
+  (forward-only; 0025 left untouched).
+- **`formatCalendarDate` day validation** — rejects impossible days (0,
+  month-end overflow, Feb 29 in a common year), returning the raw input.
+- **Docs aligned:** materialization is documented as the sole RSC-render entry
+  point (removed from the Server Action lists in architecture §2 and overview);
+  the overview retention contract now matches architecture Inv. #14 (approved-run
+  rating records immutable for statutory life, not just "until COMPLETED").
+
 ## Next Up
 
 - **bm03** — snapshot accounts / Run trigger (the Run button is inert in bm02).
