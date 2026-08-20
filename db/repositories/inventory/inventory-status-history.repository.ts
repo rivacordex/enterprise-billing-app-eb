@@ -1,4 +1,4 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { inventoryStatusHistory } from "@/db/schema/inventory";
@@ -73,6 +73,35 @@ export const inventoryStatusHistoryRepository = {
       .orderBy(desc(inventoryStatusHistory.inventoryStatusHistoryId))
       .limit(1);
     return row ?? null;
+  },
+
+  // bm03-spec §Design/§6 — batched read for the partial-period predicate:
+  // every transition for a set of instances, id + status + date only (no
+  // actor join — that's `findByInventoryIdWithChangedByName`, unrelated to
+  // scoping).
+  async findTransitionsByInventoryIds(
+    db: Database,
+    productInventoryIds: string[],
+  ): Promise<
+    {
+      productInventoryId: string;
+      fromStatus: string | null;
+      toStatus: string;
+      effectiveDate: string;
+    }[]
+  > {
+    if (productInventoryIds.length === 0) return [];
+    return db
+      .select({
+        productInventoryId: inventoryStatusHistory.productInventoryId,
+        fromStatus: inventoryStatusHistory.fromStatus,
+        toStatus: inventoryStatusHistory.toStatus,
+        effectiveDate: inventoryStatusHistory.effectiveDate,
+      })
+      .from(inventoryStatusHistory)
+      .where(
+        inArray(inventoryStatusHistory.productInventoryId, productInventoryIds),
+      );
   },
 
   // Full transition history with the actor's display name resolved (backs

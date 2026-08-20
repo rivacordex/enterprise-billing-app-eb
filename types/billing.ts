@@ -22,6 +22,23 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 export const RUN_TYPES = ["onCycle", "offCycle"] as const;
 export type RunType = (typeof RUN_TYPES)[number];
 
+// bm03-spec §Design/§1. `EXCLUDED` is a bm03 addition to the plan's 9-member
+// AccountStatus union (code-standards §2.1) — a scoping-time partial-period
+// exclusion, never written by anything downstream of the trigger.
+export const ACCOUNT_STATUSES = [
+  "PENDING",
+  "PROCESSING",
+  "PROCESSED",
+  "INVOICED",
+  "DISTRIBUTING",
+  "COMPLETED",
+  "PROCESSING_FAILED",
+  "DISTRIBUTION_FAILED",
+  "SKIPPED",
+  "EXCLUDED",
+] as const;
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
 // The two terminal history states (bm02-spec Design §Structural): Historical
 // lists these read-only. Everything else lives in Current & Upcoming — a
 // `*_FAILED` run is operable-again, not history.
@@ -55,4 +72,95 @@ export interface RunListPage {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// bm04-spec §Design/§1, code-standards §2.1. The six pipeline stages built
+// this release plus the three deferred ones (`posting`/`rendering`/
+// `distribution`) modelled for state-machine completeness — matches the
+// `bill_run_account_stage.stage` CHECK exactly.
+export const STAGES = [
+  "scoping",
+  "validation",
+  "collection",
+  "aggregation",
+  "taxation",
+  "verification",
+  "posting",
+  "rendering",
+  "distribution",
+] as const;
+export type Stage = (typeof STAGES)[number];
+
+export const STAGE_STATUSES = [
+  "PENDING",
+  "RUNNING",
+  "DONE",
+  "FAILED",
+  "SKIPPED",
+] as const;
+export type StageStatus = (typeof STAGE_STATUSES)[number];
+
+export const ERROR_CLASSES = ["HARD", "SOFT", "INFRA"] as const;
+export type ErrorClass = (typeof ERROR_CLASSES)[number];
+
+// bm04-spec §Implementation §9. The run-detail header read model — the
+// Workflow tab (and the later tabs) compose around this.
+export interface RunDetail {
+  billRunId: string;
+  cycleName: string;
+  periodStart: string;
+  periodEnd: string;
+  scheduledRunDate: string;
+  status: RunStatus;
+}
+
+// One stage cell in the `StageTimeline` grid — `null` status means no signal
+// has landed for this (account, stage) pair yet (rendered as the neutral
+// `PENDING` badge, never a stored row).
+export interface StageTimelineCell {
+  stage: Stage;
+  status: StageStatus | null;
+  errorClass: ErrorClass | null;
+}
+
+export interface StageTimelineRow {
+  billingAccountId: string;
+  accountStatus: AccountStatus;
+  cells: StageTimelineCell[];
+}
+
+// The Workflow tab's mid-flight summary — always derived from
+// `bill_run_account`, never the optional cache (architecture Inv. #12).
+export interface StageTimelineSummary {
+  total: number;
+  processed: number;
+  processingFailed: number;
+  excluded: number;
+}
+
+// bm05-spec §Design/§Implementation §2, code-standards §2.1. `customer_bill`
+// domain unions — v1 only ever writes `category: 'trial'` / `state: 'new'`;
+// `normal`/`last` and `validated`/`sent` are modelled for state-machine
+// completeness (posting/taxation land in later units).
+export const BILL_CATEGORIES = ["trial", "normal", "last"] as const;
+export type BillCategory = (typeof BILL_CATEGORIES)[number];
+
+export const BILL_STATES = ["new", "validated", "sent"] as const;
+export type BillState = (typeof BILL_STATES)[number];
+
+// bm05-spec §Implementation §2/§5. The Customers & Bills tab's read model —
+// one row per trial `customer_bill`, joined to the account name. Money
+// fields are `string` (code-standards §2.3); `subtotal` in v1 is a
+// deterministic synthetic stub (`services/billing/aggregate-bill.ts`), never
+// a sum over real charges (there is no `rating` table yet).
+export interface CustomerBillRow {
+  customerBillId: string;
+  billingAccountId: string;
+  accountName: string;
+  category: BillCategory;
+  currency: string;
+  subtotal: string;
+  taxTotal: string;
+  totalAmount: string;
+  paymentDueDate: string;
 }

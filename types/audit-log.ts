@@ -78,6 +78,8 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // bm02 — a bill_run row lazily created on list-page render. Additive: it
   // brings a new run into existence (one row per period actually inserted).
   BILL_RUN_MATERIALIZED: "Additive",
+  // bm03 — SCHEDULED → PROCESSING is a state transition, not a new entity.
+  BILL_RUN_TRIGGERED: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the

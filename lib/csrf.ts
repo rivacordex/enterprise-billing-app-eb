@@ -27,8 +27,13 @@ export function csrfTokensMatch(
   submitted: string | null | undefined,
   expected: string | null | undefined,
 ): boolean {
-  if (!submitted || !expected || submitted.length !== expected.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(submitted), Buffer.from(expected));
+  if (!submitted || !expected) return false;
+  // Compare BYTE lengths, not `String.length` (UTF-16 code units): a crafted
+  // multibyte submitted token can match the code-unit length while differing
+  // in UTF-8 byte length, and `timingSafeEqual` throws a RangeError on
+  // unequal-length buffers (a 500 instead of a clean rejection).
+  const submittedBuf = Buffer.from(submitted);
+  const expectedBuf = Buffer.from(expected);
+  if (submittedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(submittedBuf, expectedBuf);
 }

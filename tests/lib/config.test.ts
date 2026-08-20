@@ -18,6 +18,9 @@ const ENV_KEYS = [
   "PASSWORD_REQUIRE_SPECIAL",
   "PASSWORD_SPECIAL_CHARS",
   "APP_TIMEZONE",
+  "BILLRUN_ENGINE_URL",
+  "BILLRUN_ENGINE_AUTH",
+  "BILLRUN_APP_TOKEN",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -321,5 +324,79 @@ describe("entraConfig / isSsoConfigured", () => {
     const { entraConfig } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
 
     expect(entraConfig.redirectUri).toBeNull();
+  });
+});
+
+describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is unconfigured when both engine vars are absent (stub client selected)", async () => {
+    const { billRunEngineConfig, isBillRunEngineConfigured } =
+      await loadConfigWithEnv(VALID_REQUIRED_ENV);
+
+    expect(isBillRunEngineConfigured).toBe(false);
+    expect(billRunEngineConfig.url).toBeNull();
+    expect(billRunEngineConfig.auth).toBeNull();
+  });
+
+  it("is unconfigured when only one of the two vars is present", async () => {
+    const { isBillRunEngineConfigured } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_ENGINE_URL: "https://engine.example.com",
+    });
+
+    expect(isBillRunEngineConfigured).toBe(false);
+  });
+
+  it("is configured when both engine vars are present", async () => {
+    const { billRunEngineConfig, isBillRunEngineConfigured } =
+      await loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_URL: "https://engine.example.com",
+        BILLRUN_ENGINE_AUTH: "user:pass",
+      });
+
+    expect(isBillRunEngineConfigured).toBe(true);
+    expect(billRunEngineConfig.url).toBe("https://engine.example.com");
+    expect(billRunEngineConfig.auth).toBe("user:pass");
+  });
+
+  it("fails loud when BILLRUN_ENGINE_URL is not a valid URL", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_URL: "not-a-url",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("BILLRUN_APP_TOKEN (bm04)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is undefined when absent (fail-closed — every M2M call is rejected)", async () => {
+    const { config } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(config.BILLRUN_APP_TOKEN).toBeUndefined();
+  });
+
+  it("accepts a 32+ character token", async () => {
+    const { config } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_APP_TOKEN: "a".repeat(32),
+    });
+    expect(config.BILLRUN_APP_TOKEN).toBe("a".repeat(32));
+  });
+
+  it("fails loud when BILLRUN_APP_TOKEN is shorter than 32 characters", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_APP_TOKEN: "too-short",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
 });
