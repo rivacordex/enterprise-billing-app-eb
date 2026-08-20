@@ -10,8 +10,9 @@ export const runIdParamSchema = billRunIdSchema;
 export const stageParamSchema = z.enum(STAGES);
 
 // The stage-complete body. No charge fields are accepted (code-standards
-// §5.5) — the signal never carries an amount.
-export const stageSignalBodySchema = z.object({
+// §5.5) — the signal never carries an amount. `strictObject` rejects any
+// undeclared key (e.g. `amount`) with a 422 rather than silently dropping it.
+export const stageSignalBodySchema = z.strictObject({
   ban_id: z.string().regex(/^BAN\d{8}$/, "Invalid billing account id."),
   attempt: z.number().int().min(1),
   status: z.enum(STAGE_STATUSES),

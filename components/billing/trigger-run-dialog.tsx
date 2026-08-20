@@ -31,9 +31,18 @@ export function TriggerRunDialog({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const runButtonRef = useRef<HTMLButtonElement>(null);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    if (confirming) confirmButtonRef.current?.focus();
+    if (confirming) {
+      confirmButtonRef.current?.focus();
+    } else if (cancelledRef.current) {
+      // Return focus to the Run button after cancelling the confirmation,
+      // so keyboard/AT focus is not dropped to <body> when Cancel unmounts.
+      cancelledRef.current = false;
+      runButtonRef.current?.focus();
+    }
   }, [confirming]);
 
   async function handleTrigger(): Promise<void> {
@@ -42,8 +51,9 @@ export function TriggerRunDialog({
     try {
       const result = await triggerRunAction({ billRunId });
       if (!result.ok) {
+        // Stay in the confirmation panel so the inline error stays visible —
+        // the plain "Run" button branch renders no error region.
         setError(describeError(result.code));
-        setConfirming(false);
         return;
       }
       const { banCount, excludedCount } = result.value;
@@ -77,6 +87,7 @@ export function TriggerRunDialog({
   if (!confirming) {
     return (
       <button
+        ref={runButtonRef}
         type="button"
         onClick={() => setConfirming(true)}
         className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--billrun-cta-bg)] px-4 py-2 text-body-sm font-semibold text-[color:var(--billrun-cta-text)] hover:bg-[color:var(--billrun-cta-bg-hover)] focus:outline-none focus-visible:[box-shadow:var(--focus-ring)] active:bg-[color:var(--billrun-cta-bg-active)]"
@@ -116,6 +127,7 @@ export function TriggerRunDialog({
         type="button"
         disabled={submitting}
         onClick={() => {
+          cancelledRef.current = true;
           setConfirming(false);
           setError(null);
         }}

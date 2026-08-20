@@ -38,6 +38,14 @@ describe("serviceTokenMatches", () => {
     expect(serviceTokenMatches("a".repeat(10), VALID_TOKEN)).toBe(false);
   });
 
+  it("returns false (not a RangeError) for a multibyte token of equal code-unit length", () => {
+    // 31 ASCII + 1 multibyte char = 32 UTF-16 code units but 33+ UTF-8 bytes;
+    // must compare byte lengths so timingSafeEqual never throws.
+    const multibyte = `${"a".repeat(31)}é`;
+    expect(multibyte.length).toBe(VALID_TOKEN.length);
+    expect(serviceTokenMatches(multibyte, VALID_TOKEN)).toBe(false);
+  });
+
   it("rejects when either side is null/undefined", () => {
     expect(serviceTokenMatches(null, VALID_TOKEN)).toBe(false);
     expect(serviceTokenMatches(VALID_TOKEN, undefined)).toBe(false);

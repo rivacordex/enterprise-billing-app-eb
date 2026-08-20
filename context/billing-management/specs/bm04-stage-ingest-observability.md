@@ -1,7 +1,7 @@
 # bm04 — M2M stage ingest + stage-timeline observability — Spec
 
 **Unit:** bm04 (`bm00-build-plan.md`). **Boundary:** M2M Route Handlers (`app/api/billrun/*`) + the `bill-runs` detail read. **Depends on:** bm03 (`bill_run_account`, `PROCESSING`, partman bootstrap); an inbound bearer service token in Key Vault.
-**Grounded in** `F:/Projects/enterprise-billing-app/`: `lib/http.ts` (`toHttpResponse`, `STATUS_BY_CODE`), `lib/errors.ts` (`AppError`/`AppErrorCode`), `lib/csrf.ts` (`timingSafeEqual` constant-time compare idiom), `app/api/auth/signin/microsoft/route.ts` (route-handler idiom, `export const dynamic = "force-dynamic"`), `db/bootstrap/audit-partman-setup.*` (partman), `db/client.ts` (`db.transaction`/`tx`), `lib/config.ts`.
+**Grounded in** (repo-relative): `lib/http.ts` (`toHttpResponse`, `STATUS_BY_CODE`), `lib/errors.ts` (`AppError`/`AppErrorCode`), `lib/csrf.ts` (`timingSafeEqual` constant-time compare idiom), `app/api/auth/signin/microsoft/route.ts` (route-handler idiom, `export const dynamic = "force-dynamic"`), `db/bootstrap/audit-partman-setup.*` (partman), `db/client.ts` (`db.transaction`/`tx`), `lib/config.ts`.
 
 ---
 

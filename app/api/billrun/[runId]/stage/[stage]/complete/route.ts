@@ -28,7 +28,14 @@ export async function POST(
       throw validationFailed("Invalid run id or stage.");
     }
 
-    const bodyResult = stageSignalBodySchema.safeParse(await request.json());
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      // Malformed JSON is a client error (422), not an internal 500.
+      throw validationFailed("Invalid stage-signal body.");
+    }
+    const bodyResult = stageSignalBodySchema.safeParse(rawBody);
     if (!bodyResult.success) {
       throw validationFailed("Invalid stage-signal body.");
     }

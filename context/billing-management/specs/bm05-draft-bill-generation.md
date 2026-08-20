@@ -1,10 +1,10 @@
 # bm05 — Draft bill generation (Claim + Aggregation) — Spec
 
 **Unit:** bm05 (`bm00-build-plan.md`). **Boundary:** `billing` schema + the (deferred) rating boundary. **Depends on:** bm04 (stage ingest, Validation, detail page).
-**Grounded in** `F:/Projects/enterprise-billing-app/`: `db/schema/billing/{catalogs,accounts}.ts` (`bill_cycle.payment_due_days`, `billing_account.payment_due_days_override`), the existing **payment-term resolution** (`coalesce(account override, cycle default)`, `tests/accounts/v10-term-resolution.test.ts`), the billing-table + partman idioms from bm02–bm04. **`bill_format` has no schema table (deferred, rendering phase).**
+**Grounded in** (repo-relative): `db/schema/billing/{catalogs,accounts}.ts` (`bill_cycle.payment_due_days`, `billing_account.payment_due_days_override`), the existing **payment-term resolution** (`coalesce(account override, cycle default)`, `tests/accounts/v10-term-resolution.test.ts`), the billing-table + partman idioms from bm02–bm04. **`bill_format` has no schema table (deferred, rendering phase).**
 
 > **Reshaped by the "no `rating` table in v1" decision.** There is no `rating.udr_rated` and no dummy rows, so bm05 has **no rating grant, no `rating-claim.ts`, no charge-line source**. The **Collection/Claim** stage is a **no-op** that records completion; **Aggregation** writes a trial `customer_bill` per account with a **deterministic synthetic stub total** (the figure is generated, not summed from data) so the stub-data UI shows realistic non-zero amounts.
-
+>
 > **Resolved:** v1 bill totals are a **deterministic synthetic stub** figure per account, generated in Aggregation (gated by stub-data mode) — **not** real charges (there is no `rating` table). The figure is **stable across reruns and tests** (no randomness — `Math.random` is banned anyway). When the rating engine lands, Aggregation reads real charges from `rating.udr_rated` instead.
 
 ---

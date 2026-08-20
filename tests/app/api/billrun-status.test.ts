@@ -60,6 +60,15 @@ describe("POST /api/billrun/[runId]/status", () => {
     expect(mockHandleStatusPush).not.toHaveBeenCalled();
   });
 
+  it("422s on a body carrying an undeclared field (strict — no charge fields)", async () => {
+    const response = await POST(
+      request({ status: "PROCESSING_FAILED", amount: "42.00" }),
+      ctx(),
+    );
+    expect(response.status).toBe(422);
+    expect(mockHandleStatusPush).not.toHaveBeenCalled();
+  });
+
   it("409s when the service rejects a push on a non-PROCESSING run", async () => {
     mockHandleStatusPush.mockRejectedValue(
       new AppError("CONFLICT", "Bill run is not PROCESSING."),
