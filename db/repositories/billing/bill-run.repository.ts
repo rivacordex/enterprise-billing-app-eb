@@ -1,7 +1,17 @@
-import { and, asc, count, desc, eq, inArray, notInArray } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRun } from "@/db/schema/billing/bill-run";
+import type { BillRun } from "@/db/schema/billing/bill-run";
 import { billCycle } from "@/db/schema/billing/catalogs";
 import { TERMINAL_RUN_STATUSES } from "@/types/billing";
 
@@ -134,5 +144,51 @@ export const billRunRepository = {
     return opts.limit !== null
       ? base.limit(opts.limit).offset(opts.offset)
       : base;
+  },
+
+  // bm03-spec §Design — the trigger transaction's double-trigger guard: locks
+  // the run row so a concurrent second click blocks then bounces on the
+  // `status = 'SCHEDULED'` check (findByIdForUpdate + accounts.repository's
+  // FOR UPDATE precedent).
+  async findByIdForUpdate(
+    tx: Database,
+    billRunId: string,
+  ): Promise<BillRun | null> {
+    const [row] = await tx
+      .select()
+      .from(billRun)
+      .where(eq(billRun.billRunId, billRunId))
+      .for("update")
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm03-spec §Design/§7 — the trigger write: SCHEDULED → PROCESSING, resolves
+  // `gl_event_at = scheduled_run_date` (never recomputed after, code-standards
+  // §2.5), stamps `triggered_by`/`last_progress_at`, and stores the (stub or
+  // real) engine execution reference.
+  async markProcessing(
+    tx: Database,
+    billRunId: string,
+    data: {
+      glEventAt: string;
+      triggeredBy: string;
+      workflowExecutionId: string;
+      workflowDefinitionId: string;
+      workflowDefinitionRevision: number;
+    },
+  ): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({
+        status: "PROCESSING",
+        glEventAt: data.glEventAt,
+        triggeredBy: data.triggeredBy,
+        lastProgressAt: sql`now()`,
+        workflowExecutionId: data.workflowExecutionId,
+        workflowDefinitionId: data.workflowDefinitionId,
+        workflowDefinitionRevision: data.workflowDefinitionRevision,
+      })
+      .where(eq(billRun.billRunId, billRunId));
   },
 };

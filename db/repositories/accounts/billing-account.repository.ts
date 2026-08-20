@@ -112,4 +112,22 @@ export const billingAccountRepository = {
       .limit(1);
     return row ?? null;
   },
+
+  // bm03-spec §Design — the scoping snapshot source: every `active` billing
+  // account under a cycle, no `rating_type`/`payment_status` filter in v1
+  // (resolved decision #1).
+  async findActiveByCycleId(
+    db: Database,
+    refBillCycleId: string,
+  ): Promise<Pick<BillingAccount, "billingAccountId">[]> {
+    return db
+      .select({ billingAccountId: billingAccount.billingAccountId })
+      .from(billingAccount)
+      .where(
+        and(
+          eq(billingAccount.refBillCycleId, refBillCycleId),
+          eq(billingAccount.state, "active"),
+        ),
+      );
+  },
 };

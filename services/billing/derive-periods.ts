@@ -56,3 +56,11 @@ export function currentDuePeriod(
     scheduledRunDate: toYmd(scheduledMs),
   };
 }
+
+// bm03-spec §1/§6 — the `bill_run_account.period_partition` value: the 1st of
+// the run's period month, fixed at scoping time (architecture Inv. #11). Plain
+// string slicing, not `Date` math — `periodStart` is already a `YYYY-MM-DD`
+// calendar date, so no UTC/local conversion is at risk here.
+export function firstOfMonth(periodStart: string): string {
+  return `${periodStart.slice(0, 7)}-01`;
+}
