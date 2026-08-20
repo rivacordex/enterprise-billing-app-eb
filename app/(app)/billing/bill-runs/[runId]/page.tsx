@@ -10,11 +10,15 @@ import { stubDataMode } from "@/lib/config";
 import { formatCalendarDate } from "@/lib/formatters";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
+import { listAccountBills } from "@/services/billing/read/list-account-bills";
+import { getAppLocale } from "@/services/system-config/app-config-read.service";
 import { billRunIdSchema } from "@/validation/billing/run-id.schema";
 import { runDetailSearchParamsSchema } from "@/validation/billing/run-detail.schema";
 
 // bm04-spec §Implementation §9, code-standards §3.1/§3.6. Guard → parse
-// params → read → compose tabs. Live status, uncached (Inv. #12).
+// params → read → compose tabs. Live status, uncached (Inv. #12). bm05 adds
+// the Customers & Bills read (§Implementation §5), fetched only for its own
+// tab, same idiom as the Workflow timeline below.
 export const dynamic = "force-dynamic";
 
 interface BillRunDetailPageProps {
@@ -63,6 +67,13 @@ export default async function BillRunDetailPage({
           summary: { total: 0, processed: 0, processingFailed: 0, excluded: 0 },
         };
 
+  const customerBills =
+    parsedSearch.tab === "customers"
+      ? await listAccountBills(detail.billRunId)
+      : [];
+
+  const locale = await getAppLocale();
+
   return (
     <main className="space-y-6 p-6">
       <header className="space-y-2">
@@ -80,7 +91,12 @@ export default async function BillRunDetailPage({
 
       {stubDataMode && <StubDataBanner />}
 
-      <RunDetailTabs activeTab={parsedSearch.tab} timeline={timeline} />
+      <RunDetailTabs
+        activeTab={parsedSearch.tab}
+        timeline={timeline}
+        customerBills={customerBills}
+        locale={locale}
+      />
     </main>
   );
 }

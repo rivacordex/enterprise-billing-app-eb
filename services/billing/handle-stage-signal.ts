@@ -4,6 +4,8 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { conflict, notFound } from "@/lib/errors";
+import { aggregateBill } from "@/services/billing/aggregate-bill";
+import { collectClaim } from "@/services/billing/collect-claim";
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { validateAccount } from "@/services/billing/validate-account";
 import { computeRunStatus } from "@/services/billing/compute-run-status";
@@ -96,18 +98,22 @@ export async function handleStageSignal(
 
     const periodPartition = firstOfMonth(run.periodStart);
 
-    // The Validation stage's outcome is computed by the app (§31); every
-    // other stage records exactly what the caller signalled (record-and-
-    // advance pass-through, real effects land in bm05-07).
+    // The Validation stage's outcome is computed by the app (§31); the
+    // Collection/Claim stage is a v1 no-op that always records DONE (bm05-spec
+    // §Design §2 — there is no `rating` table to claim from). Every other
+    // stage records exactly what the caller signalled (record-and-advance
+    // pass-through; Taxation/Verification's real effects land in bm06-07).
     const effective =
       input.stage === "validation"
         ? await validateAccount(tx, input.banId)
-        : {
-            status: input.status,
-            errorClass: input.errorClass ?? null,
-            errorCode: input.errorCode ?? null,
-            errorDetail: input.errorDetail ?? null,
-          };
+        : input.stage === "collection"
+          ? collectClaim()
+          : {
+              status: input.status,
+              errorClass: input.errorClass ?? null,
+              errorCode: input.errorCode ?? null,
+              errorDetail: input.errorDetail ?? null,
+            };
 
     try {
       await billRunAccountStageRepository.insertStageRow(tx, {
@@ -137,6 +143,16 @@ export async function handleStageSignal(
         };
       }
       throw err;
+    }
+
+    // bm05-spec §Design/§Implementation §4 — Aggregation's write is a side
+    // effect of a successful signal, not an override of the recorded stage
+    // outcome (unlike Validation/Collection above): a DONE aggregation
+    // signal for a scoped account writes the trial `customer_bill` inside
+    // this same transaction. A duplicate signal never reaches here — it is
+    // caught as a replay above, before any write.
+    if (input.stage === "aggregation" && effective.status === "DONE") {
+      await aggregateBill(tx, run, input.banId);
     }
 
     const currentAccount = await billRunAccountRepository.findStatus(
