@@ -17,6 +17,13 @@ export const customerBillRepository = {
     billRunId: string,
     billingAccountId: string,
   ): Promise<void> {
+    // Keyed exactly on the `(run, ban, period)` UNIQUE plus the finalization
+    // latch: delete the single UNPOSTED row so the re-derived trial can be
+    // inserted without colliding on the unique key. A posted row
+    // (`ref_inv_document_id` set) is never touched (architecture Inv. #4). A
+    // `category` predicate is deliberately NOT added — with at most one row per
+    // key, filtering to `trial` would skip a non-trial unposted row and then
+    // collide on `insertTrial`.
     await tx
       .delete(customerBill)
       .where(

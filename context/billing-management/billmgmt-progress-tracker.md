@@ -155,10 +155,6 @@ Update this file after every meaningful implementation change.
     `billing-partman-setup.integration.test.ts` (parent registered,
     `retention_keep_table = true`, ≥1 month partition materialized).
 
-## In Progress
-
-- None.
-
 - **bm04 — M2M stage ingest + stage-timeline observability**
   (`specs/bm04-stage-ingest-observability.md`).
   - Schema: new partitioned `billing.bill_run_account_stage` table (typing-
@@ -243,9 +239,10 @@ Update this file after every meaningful implementation change.
     violation replay path) is **not added in this environment** — no local
     Postgres reachable, same constraint noted for bm02/bm03's integration
     suites.
-  - `typecheck`/`lint`/`format:check` clean; full DB-free vitest run green
-    (238/243 files, 2470/2484 tests) — the 5 failing files/14 failing tests
-    are all in `tests/actions/{create-order,resume,suspend,terminate}-
+  - `typecheck`/`lint`/`format:check` clean; full DB-free vitest run passes
+    except a known pre-existing failing set (238/243 files, 2470/2484 tests;
+    5 files/14 tests failing) — those are all in
+    `tests/actions/{create-order,resume,suspend,terminate}-
     subscription*` and are the **same pre-existing, unrelated hardcoded-date
     drift** noted for bm01-bm03 (now 5 files instead of 4, since today,
     2026-08-20, pushed one more borderline case past the "3 days in the
@@ -327,11 +324,15 @@ Update this file after every meaningful implementation change.
     (DONE triggers it, FAILED/replay/other-stages don't), and
     `bill-run-detail-page.test.tsx` extended to assert `listAccountBills` is
     only called for the `customers` tab. `typecheck`/`lint`/`format` clean;
-    full DB-free vitest run green (244/248 files, 2512/2526 tests) — the
-    4 failing files/14 failing tests are the same pre-existing, unrelated
-    hardcoded-date drift noted for bm01-bm04 (`tests/actions/{create-order,
+    full DB-free vitest run passes except a known pre-existing failing set
+    (244/248 files, 2512/2526 tests; 4 files/14 tests failing) — those are the
+    same pre-existing, unrelated hardcoded-date drift noted for bm01-bm04 (`tests/actions/{create-order,
     resume,suspend,terminate}-subscription*`); confirmed via `git status`/
     `git diff` that bm05 touched none of those files.
+
+## In Progress
+
+- None.
 
 ## Post-review hardening (bm02)
 
@@ -380,6 +381,76 @@ Second review round (doc + hardening):
   point (removed from the Server Action lists in architecture §2 and overview);
   the overview retention contract now matches architecture Inv. #14 (approved-run
   rating records immutable for statutory life, not just "until COMPLETED").
+
+## Post-review hardening (bm03–bm05)
+
+Fixes from a code review of the bm03/bm04/bm05 diffs (only still-valid issues;
+each verified against current code):
+
+- **Stage error diagnostics are preserved (but transients still recorded)** —
+  `handleStageSignal` stamps `bill_run_account.error_code`/`error_detail` from
+  the signal unless the account was ALREADY terminal (`PROCESSING_FAILED`/
+  `EXCLUDED`) before it, so a stray later signal cannot wipe the failure reason,
+  while a non-terminal INFRA/SOFT failure still records its diagnostics (not
+  blank). `updateStatus` omits the error fields when not provided. *(Second
+  round refined the initial `newlyFailed`-only rule, which dropped transient
+  diagnostics.)*
+- **Malformed M2M JSON → 422, not 500** — both Route Handlers wrap
+  `request.json()` so a body-parse error maps to `validationFailed` (422).
+- **Stage-signal body is strict** — `stageSignalBodySchema` is `strictObject`,
+  so an undeclared charge field (`amount`) is rejected 422 (code-standards §5.5)
+  rather than silently dropped; route test asserts it.
+- **Stage rows record no fabricated start** — a completion signal writes
+  `started_at = null` (only `ended_at` is real), not a false zero-duration.
+- **Snapshot insert is batched** — `insertSnapshot` chunks rows (1000/stmt) so a
+  large cycle can't exceed Postgres's 65535 bind-parameter limit.
+- **Deterministic active-account order** — `findActiveByCycleId` orders by
+  `billing_account_id` (matching `findByFinancialAccountId`).
+- **Trigger dialog UX** — a failed action keeps the confirm panel open so the
+  inline error stays visible; Cancel restores focus to the Run button.
+- **Test hardening** — the partman bootstrap integration test guards
+  `BOOTSTRAP_DATABASE_URL` with `assertTestDatabaseUrl`; the double-trigger test
+  asserts the exact snapshot row count.
+- **Docs** — bm03 spec trigger order matches `triggerRun` (startExecution
+  before markProcessing), dialog copy/inline-error wording corrected; specs use
+  repo-relative "Grounded in" paths (no local `F:/…` prefix); tracker's
+  delivered bm04/bm05 no longer sit under "In Progress: None" and the
+  test-result summaries no longer read "green" while failures remain.
+
+Skipped (verified not still-valid): the trigger's in-txn engine call (a
+documented flagged decision, not a bug); `BILLRUN_ENGINE_URL` HTTPS-only (spec
+mandates a plain URL; the outbound path is private-network); `import.meta.dirname`
+in the partman bootstrap (works under the repo's `tsx`/ESM run mode); the
+default-partition index removal (`period_partition` is not a leading key of the
+PK/unique, so the standalone index is not redundant); `inArray` chunking on
+inventory reads (single-param SELECTs, empty-input already guarded).
+
+### Second round (review of the remediation + re-scan of the three commits)
+
+- **Aggregation writes a bill only for an in-progress account** —
+  `handleStageSignal` reads the account status BEFORE the aggregation write and
+  gates `aggregateBill` on `status === 'PROCESSING'`, so an untrusted M2M
+  `aggregation`+`DONE` for an `EXCLUDED` (scoped-out), still-`PENDING` (never
+  validated), or already-terminal account no longer produces a trial
+  `customer_bill`.
+- **Terminal stage completes only a started account** — `advanceAccountStatus`
+  requires the account to be past `PENDING` before a `verification` DONE/SKIPPED
+  can mark it `PROCESSED`; a lone terminal-stage signal on a `PENDING` account
+  advances it to `PROCESSING`, not a false `PROCESSED`.
+- **Constant-time token compare guards BYTE length** — `serviceTokenMatches`
+  (and the mirrored `csrfTokensMatch`) compare `Buffer` byte lengths, not
+  `String.length` (UTF-16 units), so a crafted multibyte token returns a clean
+  reject instead of a `timingSafeEqual` RangeError → 500.
+- **status-push body is strict; unsupported field dropped** —
+  `statusPushBodySchema` is `strictObject` (rejects charge/unknown fields 422,
+  matching stage-signal) and no longer declares `error_detail`, which was
+  validated then silently discarded (v1 has no `bill_run` column or read
+  surface for it; it returns with those).
+- **Trial delete reverted to latch-only** — the first round's added
+  `category = 'trial'` predicate was removed: with at most one `customer_bill`
+  per `(run, ban, period)` UNIQUE, filtering to `trial` would skip a non-trial
+  unposted row and then collide on `insertTrial`. The delete keys exactly on the
+  UNIQUE + the `ref_inv_document_id IS NULL` latch, matching the bm05 spec.
 
 ## Next Up
 

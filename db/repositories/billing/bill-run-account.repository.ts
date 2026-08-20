@@ -15,7 +15,13 @@ export const billRunAccountRepository = {
     rows: BillRunAccountInsert[],
   ): Promise<void> {
     if (rows.length === 0) return;
-    await tx.insert(billRunAccount).values(rows);
+    // Postgres caps a single statement at 65535 bind parameters; a large
+    // cycle snapshot (thousands of accounts × ~9 columns) can exceed it, so
+    // chunk the insert to stay well under the limit.
+    const CHUNK_SIZE = 1000;
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      await tx.insert(billRunAccount).values(rows.slice(i, i + CHUNK_SIZE));
+    }
   },
 
   // bm04-spec §Design/§Implementation §8 — read before advancing, inside the
@@ -47,16 +53,20 @@ export const billRunAccountRepository = {
     billingAccountId: string,
     data: {
       status: AccountStatus;
-      errorCode: string | null;
-      errorDetail: string | null;
+      // Omit to preserve the stored diagnostics (a later non-failing signal
+      // must not clear the error that explains a prior failure).
+      errorCode?: string | null;
+      errorDetail?: string | null;
     },
   ): Promise<void> {
     await tx
       .update(billRunAccount)
       .set({
         status: data.status,
-        errorCode: data.errorCode,
-        errorDetail: data.errorDetail,
+        ...(data.errorCode !== undefined && { errorCode: data.errorCode }),
+        ...(data.errorDetail !== undefined && {
+          errorDetail: data.errorDetail,
+        }),
         lastProcessedAt: new Date(),
       })
       .where(

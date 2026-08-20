@@ -13,10 +13,15 @@ export function serviceTokenMatches(
   submitted: string | null | undefined,
   expected: string | null | undefined,
 ): boolean {
-  if (!submitted || !expected || submitted.length !== expected.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(submitted), Buffer.from(expected));
+  if (!submitted || !expected) return false;
+  // Compare BYTE lengths, not `String.length` (UTF-16 code units): a crafted
+  // multibyte bearer can match the code-unit length while differing in UTF-8
+  // byte length, and `timingSafeEqual` throws a RangeError on unequal-length
+  // buffers — which would surface as a 500 instead of a clean 401.
+  const submittedBuf = Buffer.from(submitted);
+  const expectedBuf = Buffer.from(expected);
+  if (submittedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(submittedBuf, expectedBuf);
 }
 
 // Extracts the `Authorization: Bearer <token>` header and constant-time

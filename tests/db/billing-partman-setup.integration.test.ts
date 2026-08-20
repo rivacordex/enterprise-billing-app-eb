@@ -33,6 +33,9 @@ describe.skipIf(!databaseUrl || !bootstrapUrl)(
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
+      // The bootstrap connection also runs DROP/CREATE — guard it too so it
+      // can never point at a non-test database.
+      assertTestDatabaseUrl(bootstrapUrl as string);
       sql = postgres(databaseUrl as string, { max: 5 });
       await sql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');

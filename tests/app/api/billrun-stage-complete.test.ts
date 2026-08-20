@@ -82,16 +82,25 @@ describe("POST /api/billrun/[runId]/stage/[stage]/complete", () => {
     expect(mockHandleStageSignal).not.toHaveBeenCalled();
   });
 
-  it("422s on a body carrying an unknown/charge field (rejected, not silently dropped elsewhere)", async () => {
-    // Zod's default (non-strict) object schema drops unknown keys rather than
-    // erroring — asserting the schema stays free of any `amount`/charge field
-    // is covered structurally in bill-run-account-stage-schema tests; here we
-    // only assert the documented required shape is enforced.
-    const response = await POST(
+  it("422s on a body carrying an unknown/charge field (rejected, not silently dropped)", async () => {
+    // The strict schema rejects any undeclared key — a charge field like
+    // `amount` must never be silently accepted (code-standards §5.5).
+    const chargeField = await POST(
+      request({
+        ban_id: "BAN00000001",
+        attempt: 1,
+        status: "DONE",
+        amount: "42.00",
+      }),
+      ctx(),
+    );
+    expect(chargeField.status).toBe(422);
+
+    const badAttempt = await POST(
       request({ ban_id: "BAN00000001", attempt: 0, status: "DONE" }),
       ctx(),
     );
-    expect(response.status).toBe(422); // attempt must be >= 1
+    expect(badAttempt.status).toBe(422); // attempt must be >= 1
   });
 
   it("409s when the service rejects a signal on a non-PROCESSING run", async () => {

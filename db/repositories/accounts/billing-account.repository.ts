@@ -128,6 +128,7 @@ export const billingAccountRepository = {
           eq(billingAccount.refBillCycleId, refBillCycleId),
           eq(billingAccount.state, "active"),
         ),
-      );
+      )
+      .orderBy(billingAccount.billingAccountId);
   },
 };

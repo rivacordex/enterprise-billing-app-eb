@@ -76,8 +76,15 @@ export function advanceAccountStatus(
     return advanced;
   }
 
+  // The terminal stage only COMPLETES an account that was already in progress
+  // (a prior stage advanced it out of PENDING). A verification signal for a
+  // still-PENDING account — e.g. the engine skips validation/aggregation and
+  // signals only the terminal stage — must not mark it PROCESSED (that would
+  // report a "done" account that was never validated and has no bill); it just
+  // advances to PROCESSING.
   if (
     stage === TERMINAL_STAGE &&
+    current !== "PENDING" &&
     (effective.status === "DONE" || effective.status === "SKIPPED")
   ) {
     return "PROCESSED";
@@ -123,7 +130,9 @@ export async function handleStageSignal(
         stage: input.stage,
         attempt: input.attempt,
         status: effective.status,
-        startedAt: new Date(),
+        // A completion signal carries no real start time — record only the
+        // end. Fabricating startedAt = now implies a false zero duration.
+        startedAt: null,
         endedAt: new Date(),
         errorClass: effective.errorClass,
         errorCode: effective.errorCode,
@@ -145,16 +154,6 @@ export async function handleStageSignal(
       throw err;
     }
 
-    // bm05-spec §Design/§Implementation §4 — Aggregation's write is a side
-    // effect of a successful signal, not an override of the recorded stage
-    // outcome (unlike Validation/Collection above): a DONE aggregation
-    // signal for a scoped account writes the trial `customer_bill` inside
-    // this same transaction. A duplicate signal never reaches here — it is
-    // caught as a replay above, before any write.
-    if (input.stage === "aggregation" && effective.status === "DONE") {
-      await aggregateBill(tx, run, input.banId);
-    }
-
     const currentAccount = await billRunAccountRepository.findStatus(
       tx,
       input.runId,
@@ -166,15 +165,45 @@ export async function handleStageSignal(
       );
     }
 
+    // bm05-spec §Design/§Implementation §4 — Aggregation's write is a side
+    // effect of a successful signal, not an override of the recorded stage
+    // outcome (unlike Validation/Collection above): a DONE aggregation signal
+    // writes the trial `customer_bill` inside this same transaction. Guarded on
+    // the account being in progress (`PROCESSING`) — an `EXCLUDED` (scoped-out),
+    // still-`PENDING` (never validated), or already-terminal account never gets
+    // a bill, even though the M2M caller controls the stage/status body (the
+    // engine's stage ordering is not trusted here). A duplicate signal never
+    // reaches here — it is caught as a replay above, before any write.
+    if (
+      input.stage === "aggregation" &&
+      effective.status === "DONE" &&
+      currentAccount.status === "PROCESSING"
+    ) {
+      await aggregateBill(tx, run, input.banId);
+    }
+
     const newAccountStatus = advanceAccountStatus(
       currentAccount.status,
       input.stage,
       effective,
     );
+    // Stamp the account-level diagnostics from this signal UNLESS the account
+    // was already terminal before it (`PROCESSING_FAILED`/`EXCLUDED`): a stray
+    // later signal must not overwrite or wipe the diagnostics that explain why
+    // it failed. A non-terminal account records the signal's error (INFRA/SOFT
+    // transients included, so a stuck-in-PROCESSING account is not blank) and
+    // clears them to null on a clean advance.
+    const wasTerminal =
+      currentAccount.status === "PROCESSING_FAILED" ||
+      currentAccount.status === "EXCLUDED";
     await billRunAccountRepository.updateStatus(tx, input.runId, input.banId, {
       status: newAccountStatus,
-      errorCode: effective.errorCode,
-      errorDetail: effective.errorDetail,
+      ...(wasTerminal
+        ? {}
+        : {
+            errorCode: effective.errorCode,
+            errorDetail: effective.errorDetail,
+          }),
     });
 
     const statuses = await billRunAccountRepository.listStatusesForRun(

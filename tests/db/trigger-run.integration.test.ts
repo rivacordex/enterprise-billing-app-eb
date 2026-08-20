@@ -203,9 +203,9 @@ describe.skipIf(!databaseUrl)(
         .select()
         .from(billRunAccount)
         .where(eq(billRunAccount.refBillRunId, runId));
-      // Exactly the first trigger's snapshot — the rejected second call wrote
-      // nothing further.
-      expect(snapshotRows.length).toBeGreaterThan(0);
+      // Exactly the first trigger's one-account snapshot — the rejected second
+      // call wrote nothing further.
+      expect(snapshotRows).toHaveLength(1);
     });
 
     it("returns NO_ELIGIBLE_ACCOUNTS and writes no snapshot rows when the cycle has no active accounts", async () => {

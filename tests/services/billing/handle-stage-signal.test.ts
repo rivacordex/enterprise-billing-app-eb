@@ -183,6 +183,9 @@ describe("handleStageSignal — record-and-advance stages", () => {
         status: "DONE",
       }),
     );
+    // A non-terminal account records the signal's diagnostics — a clean DONE
+    // advance writes errorCode/errorDetail as null (only an already-terminal
+    // account preserves prior diagnostics).
     expect(mockUpdateStatus).toHaveBeenCalledWith(
       txStub,
       "BRN00000001",
@@ -223,7 +226,7 @@ describe("handleStageSignal — record-and-advance stages", () => {
     );
   });
 
-  it("an INFRA failure leaves the account non-terminal (retryable)", async () => {
+  it("an INFRA failure leaves the account non-terminal (retryable) and records its diagnostics on the account row", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
     mockListStatuses.mockResolvedValue([
@@ -237,9 +240,48 @@ describe("handleStageSignal — record-and-advance stages", () => {
       attempt: 1,
       status: "FAILED",
       errorClass: "INFRA",
+      errorCode: "ENGINE_TIMEOUT",
+      errorDetail: "task timed out",
     });
 
     expect(result.accountStatus).toBe("PROCESSING");
+    // A non-terminal (retryable) failure still stamps the account's error
+    // fields so a stuck-in-PROCESSING account is not diagnostically blank.
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      {
+        status: "PROCESSING",
+        errorCode: "ENGINE_TIMEOUT",
+        errorDetail: "task timed out",
+      },
+    );
+  });
+
+  it("preserves an already-terminal account's diagnostics on a later stray signal", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING_FAILED" });
+    mockListStatuses.mockResolvedValue([
+      { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
+    ]);
+
+    await handleStageSignal({
+      runId: "BRN00000001",
+      stage: "taxation",
+      banId: "BAN00000001",
+      attempt: 1,
+      status: "DONE",
+    });
+
+    // The account was terminal BEFORE this signal — updateStatus must not
+    // write errorCode/errorDetail (which would wipe the stored failure reason).
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      { status: "PROCESSING_FAILED" },
+    );
   });
 
   it("the terminal stage (verification) DONE moves the account to PROCESSED, and the run reaches PROCESSED once every account is terminal", async () => {
@@ -301,6 +343,17 @@ describe("handleStageSignal — the Validation stage's app-computed outcome", ()
         errorClass: "HARD",
         errorCode: "UNRESOLVABLE_PROFILE",
       }),
+    );
+    // A newly-failed account stamps its diagnostics on the account row.
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      {
+        status: "PROCESSING_FAILED",
+        errorCode: "UNRESOLVABLE_PROFILE",
+        errorDetail: "no currency",
+      },
     );
     expect(result.accountStatus).toBe("PROCESSING_FAILED");
   });
@@ -414,6 +467,45 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
 
     expect(mockAggregateBill).not.toHaveBeenCalled();
   });
+
+  it("does not write a bill for an EXCLUDED account (scoped out — never gets one)", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+    mockFindStatus.mockResolvedValue({ status: "EXCLUDED" });
+    mockListStatuses.mockResolvedValue([
+      { billingAccountId: "BAN00000001", status: "EXCLUDED" },
+    ]);
+
+    const result = await handleStageSignal({
+      runId: "BRN00000001",
+      stage: "aggregation",
+      banId: "BAN00000001",
+      attempt: 1,
+      status: "DONE",
+    });
+
+    expect(mockAggregateBill).not.toHaveBeenCalled();
+    expect(result.accountStatus).toBe("EXCLUDED");
+  });
+
+  it("does not write a bill for a still-PENDING (never-validated) account", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+    mockFindStatus.mockResolvedValue({ status: "PENDING" });
+    mockListStatuses.mockResolvedValue([
+      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+    ]);
+
+    await handleStageSignal({
+      runId: "BRN00000001",
+      stage: "aggregation",
+      banId: "BAN00000001",
+      attempt: 1,
+      status: "DONE",
+    });
+
+    // A PENDING account (aggregation arrived before any validation signal) is
+    // advanced to PROCESSING but must NOT receive a trial bill.
+    expect(mockAggregateBill).not.toHaveBeenCalled();
+  });
 });
 
 describe("advanceAccountStatus (pure)", () => {
@@ -430,5 +522,25 @@ describe("advanceAccountStatus (pure)", () => {
         errorClass: null,
       }),
     ).toBe("EXCLUDED");
+  });
+
+  it("completes a PROCESSING account on the terminal stage DONE/SKIPPED", () => {
+    expect(
+      advanceAccountStatus("PROCESSING", "verification", {
+        status: "DONE",
+        errorClass: null,
+      }),
+    ).toBe("PROCESSED");
+  });
+
+  it("does NOT mark a PENDING account PROCESSED from a lone terminal-stage signal", () => {
+    // The engine skips validation/aggregation and signals only verification —
+    // the account advances to PROCESSING, never to PROCESSED.
+    expect(
+      advanceAccountStatus("PENDING", "verification", {
+        status: "DONE",
+        errorClass: null,
+      }),
+    ).toBe("PROCESSING");
   });
 });
