@@ -24,7 +24,9 @@
       "Bash(git commit *)",
       "Bash(mkdir -p \"app/\\(app\\)/customers/manage/[id]\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/login)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(find \"/c/Users/DNBIT/AppData/Local/Temp/claude\" -iname \"b5cd9tvk3*\" 2>&1)",
+      "Read(//c/Users/DNBIT/AppData/Local/Temp/claude/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\DNBIT\\Projects\\enterprise-billing-app\\app\\(app)\\customers\\view",
