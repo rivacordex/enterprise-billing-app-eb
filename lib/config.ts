@@ -88,6 +88,12 @@ const envSchema = z.object({
   // Key Vault via Managed Identity, matching every other credential here.
   BILLRUN_ENGINE_URL: z.url().optional(),
   BILLRUN_ENGINE_AUTH: z.string().optional(),
+  // bm04-spec §Implementation §4. The inbound bearer service token the
+  // workflow engine (or a signed test caller) presents to `app/api/billrun/*`
+  // — Key Vault in prod, `.env` locally. Optional so most environments boot
+  // without it; absence means `requireServiceToken` rejects every M2M call
+  // with 401 (fail-closed), never a bypass.
+  BILLRUN_APP_TOKEN: z.string().min(32).optional(),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -113,6 +119,7 @@ function loadConfig(): Config {
     STUB_DATA_MODE: process.env.STUB_DATA_MODE,
     BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
     BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
+    BILLRUN_APP_TOKEN: process.env.BILLRUN_APP_TOKEN,
   });
 
   if (!parsed.success) {

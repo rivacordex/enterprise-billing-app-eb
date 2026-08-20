@@ -20,6 +20,7 @@ const ENV_KEYS = [
   "APP_TIMEZONE",
   "BILLRUN_ENGINE_URL",
   "BILLRUN_ENGINE_AUTH",
+  "BILLRUN_APP_TOKEN",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -367,6 +368,34 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BILLRUN_ENGINE_URL: "not-a-url",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("BILLRUN_APP_TOKEN (bm04)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is undefined when absent (fail-closed — every M2M call is rejected)", async () => {
+    const { config } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(config.BILLRUN_APP_TOKEN).toBeUndefined();
+  });
+
+  it("accepts a 32+ character token", async () => {
+    const { config } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_APP_TOKEN: "a".repeat(32),
+    });
+    expect(config.BILLRUN_APP_TOKEN).toBe("a".repeat(32));
+  });
+
+  it("fails loud when BILLRUN_APP_TOKEN is shorter than 32 characters", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_APP_TOKEN: "too-short",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
