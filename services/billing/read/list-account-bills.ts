@@ -11,13 +11,26 @@ import type {
 // Customers & Bills tab's read — one row per trial `customer_bill`, joined to
 // the account name/currency, each with its tax lines. Derived live, no cache
 // read (architecture Inv. #12 idiom).
+//
+// The bill totals and the tax items are read inside ONE `repeatable read`
+// transaction so both see a single, consistent database snapshot: taxation
+// commits a bill's `tax_total` and its tax-item rows atomically, and reading
+// them on two separate pooled connections could otherwise straddle that commit
+// (a summary `tax_total` of 0.00 next to a just-inserted tax line). One
+// snapshot removes the skew.
 export async function listAccountBills(
   billRunId: string,
 ): Promise<CustomerBillRow[]> {
-  const [rows, taxItems] = await Promise.all([
-    customerBillRepository.listForRun(db, billRunId),
-    customerBillTaxItemRepository.listForRun(db, billRunId),
-  ]);
+  const { rows, taxItems } = await db.transaction(
+    async (tx) => {
+      const [rows, taxItems] = await Promise.all([
+        customerBillRepository.listForRun(tx, billRunId),
+        customerBillTaxItemRepository.listForRun(tx, billRunId),
+      ]);
+      return { rows, taxItems };
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
 
   // Group the flat tax-item rows by their bill so each `CustomerBillRow` gets
   // its own lines. A bill with no tax item yet (taxation hasn't run) maps to an

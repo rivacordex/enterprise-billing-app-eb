@@ -49,6 +49,11 @@ describe("billing.customer_bill_tax_item", () => {
       "customer_bill_id",
       "period_partition",
     ]);
+    // ON DELETE CASCADE so bm05's rerun-safe trial re-derivation (deleteTrial,
+    // which removes the unposted bill) also drops its stale tax items instead
+    // of hitting a RESTRICT violation. Posted bills are never deleted, so their
+    // items are never cascade-removed.
+    expect(fk!.onDelete).toBe("cascade");
   });
 
   it("tax_rate is numeric(5,2) and tax_amount numeric(18,2), both required", () => {

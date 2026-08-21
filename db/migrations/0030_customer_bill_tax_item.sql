@@ -9,7 +9,7 @@ CREATE TABLE "billing"."customer_bill_tax_item" (
 	CONSTRAINT "customer_bill_tax_item_customer_bill_tax_item_id_period_partition_pk" PRIMARY KEY("customer_bill_tax_item_id","period_partition")
 ) PARTITION BY RANGE ("period_partition");
 --> statement-breakpoint
-ALTER TABLE "billing"."customer_bill_tax_item" ADD CONSTRAINT "customer_bill_tax_item_customer_bill_fk" FOREIGN KEY ("ref_customer_bill_id","period_partition") REFERENCES "billing"."customer_bill"("customer_bill_id","period_partition") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "billing"."customer_bill_tax_item" ADD CONSTRAINT "customer_bill_tax_item_customer_bill_fk" FOREIGN KEY ("ref_customer_bill_id","period_partition") REFERENCES "billing"."customer_bill"("customer_bill_id","period_partition") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "customer_bill_tax_item_ref_customer_bill_id_idx" ON "billing"."customer_bill_tax_item" USING btree ("ref_customer_bill_id");--> statement-breakpoint
 CREATE INDEX "customer_bill_tax_item_period_partition_idx" ON "billing"."customer_bill_tax_item" USING btree ("period_partition");--> statement-breakpoint
 

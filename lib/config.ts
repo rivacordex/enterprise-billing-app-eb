@@ -99,11 +99,29 @@ const envSchema = z.object({
   // with the rating engine); `bill_run.ref_tax_rate_version` is stamped once
   // per run from `BILLRUN_TAX_VERSION` for provenance. The rate parameterises a
   // SQL `numeric` expression (`round(subtotal * rate / 100, 2)`), never JS
-  // float arithmetic (code-standards §2.3). All three carry the Malaysian SST
-  // defaults so every environment boots without them.
-  BILLRUN_TAX_RATE: z.coerce.number().min(0).max(100).default(8),
-  BILLRUN_TAX_VERSION: z.string().default("SST-2026"),
-  BILLRUN_TAX_CATEGORY: z.string().default("SST"),
+  // float arithmetic (code-standards §2.3). All three carry the GST defaults so
+  // every environment boots without them.
+  // At most two decimal places — the rate is persisted/cast as `numeric(5,2)`
+  // (`customer_bill_tax_item.tax_rate`), so a higher-precision value would be
+  // silently rounded on store and no longer match what the amount was computed
+  // from. Reject at boot instead (fail-fast). An EMPTY value (`BILLRUN_TAX_RATE=`
+  // — the var present but blank) is treated as unset so the `8` default applies,
+  // NOT coerced to `0`: `z.coerce.number("")` is `0`, which would silently tax
+  // every bill at 0% instead of the intended default.
+  BILLRUN_TAX_RATE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce
+      .number()
+      .min(0)
+      .max(100)
+      .refine(
+        (n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-9,
+        "BILLRUN_TAX_RATE must have at most two decimal places.",
+      )
+      .default(8),
+  ),
+  BILLRUN_TAX_VERSION: z.string().default("GST-2026"),
+  BILLRUN_TAX_CATEGORY: z.string().default("GST"),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -187,7 +205,7 @@ export const isBillRunEngineConfigured: boolean =
   !!billRunEngineConfig.url && !!billRunEngineConfig.auth;
 
 // bm06-spec §Design/§Implementation §2-3. The v1 taxation parameters — a single
-// configured SST rate/version/category, no catalog table. `services/billing/
+// configured GST rate/version/category, no catalog table. `services/billing/
 // taxation.ts` reads this frozen accessor (never `process.env`); the rate is
 // applied inside a SQL `numeric` expression, so the parsed number only
 // parameterises the query.
