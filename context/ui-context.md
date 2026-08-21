@@ -112,6 +112,8 @@ This file is the **shared core** inherited by every module (User Management, Pro
 | `--action-ghost-hover`       | `#EEF0F4` (neutral-100) | Ghost/icon button hover |
 | `--action-disabled-bg`       | `#E0E4EB` (neutral-200) | Disabled control |
 
+**"Add new" / "Create" record buttons always use `--action-primary-bg`, never `--action-cta-bg`.** The magenta CTA token is reserved for the single featured/confirm action on a screen (e.g. Approve, Activate, Save on an edit form) — not for record-creation triggers ("Add new X", "New X", "Create X"). This applies across every module, not just Billing. Established when the accent was found bleeding onto every "Add new" button app-wide; the accounts/billing forms (GL Code, Bill Cycle, Mapping Rule, Reason Code) already followed this pattern and it was extended to Customers/Products in the same pass.
+
 ### 3.4 Status / Feedback
 
 Each status has a base (icon/border/button), a `-fg` for text-on-tint, and a `-bg` tint for banners/badges.
