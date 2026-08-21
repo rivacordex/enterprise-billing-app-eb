@@ -388,7 +388,7 @@ export function OnboardAccountsWizard({
               type="button"
               disabled={!canSubmit}
               onClick={() => void handleSubmit()}
-              className="bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90"
+              className="bg-[color:var(--action-primary-bg)] text-white hover:bg-[color:var(--action-primary-bg-hover)]"
             >
               {phase === "submitting"
                 ? "Setting up accounts…"

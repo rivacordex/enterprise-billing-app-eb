@@ -974,7 +974,7 @@ export function ContactManagerPanel({
             setEditingContactId(null);
             setShowAddForm(true);
           }}
-          className="bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90"
+          className="bg-[color:var(--action-primary-bg)] text-white hover:bg-[color:var(--action-primary-bg-hover)]"
         >
           Add contact
         </Button>
