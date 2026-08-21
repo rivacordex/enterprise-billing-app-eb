@@ -17,10 +17,12 @@ vi.mock("@/db/repositories/billing/customer-bill-tax-item.repository", () => ({
   customerBillTaxItemRepository: { listForRun: vi.fn() },
 }));
 
+import { db } from "@/db/client";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
 import { listAccountBills } from "@/services/billing/read/list-account-bills";
 
+const mockTransaction = vi.mocked(db.transaction);
 const mockListForRun = vi.mocked(customerBillRepository.listForRun);
 const mockListTaxItems = vi.mocked(customerBillTaxItemRepository.listForRun);
 
@@ -158,5 +160,13 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
     const billTx = mockListForRun.mock.calls[0]?.[0];
     const taxTx = mockListTaxItems.mock.calls[0]?.[0];
     expect(billTx).toBe(taxTx);
+
+    // ...and that snapshot is opened `repeatable read`, `read only` — the two
+    // isolation guarantees that make the shared handle a consistent, side-effect-
+    // free read (bm06 read-skew hardening).
+    expect(mockTransaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "repeatable read",
+      accessMode: "read only",
+    });
   });
 });

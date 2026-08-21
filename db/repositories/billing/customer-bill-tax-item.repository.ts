@@ -49,7 +49,12 @@ export const customerBillTaxItemRepository = {
         cb.period_partition,
         ${input.category},
         ${input.rate}::numeric(5, 2),
-        round(cb.subtotal * ${input.rate}::numeric / 100, 2)
+        -- Compute the amount from the SAME numeric(5,2) rate that is persisted
+        -- in tax_rate above, so the stored rate and the amount it produced can
+        -- never disagree (the config already rejects >2dp rates, so this is
+        -- defensive — a future caller passing a higher-precision rate stays
+        -- consistent). round(...,2) keeps the half-up two-decimal amount.
+        round(cb.subtotal * ${input.rate}::numeric(5, 2) / 100, 2)
       FROM billing.customer_bill AS cb
       WHERE cb.customer_bill_id = ${input.customerBillId}
         AND cb.period_partition = ${input.periodPartition}
