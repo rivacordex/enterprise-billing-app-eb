@@ -2,19 +2,25 @@
 // tab switcher — a plain `<Link ?tab=>` (view state in the URL), server
 // component (no interaction beyond navigation, so no 'use client' leaf is
 // needed here — mirrors `components/billing/bill-run-list.tsx`'s tab nav).
-// Workflow (bm04) and Customers & Bills (bm05) are populated; the rest stay
-// inert placeholders filled by bm06-07.
+// Workflow (bm04), Customers & Bills (bm05), and Uncharged/Errors/Audit
+// (bm07) are all populated.
 
 import Link from "next/link";
 
+import { AuditTable } from "@/components/billing/audit-table";
 import { CustomerBillTable } from "@/components/billing/customer-bill-table";
+import { ErrorsTable } from "@/components/billing/errors-table";
 import { StageTimeline } from "@/components/billing/stage-timeline";
+import { UnchargedTable } from "@/components/billing/uncharged-table";
+import type { AuditLogRow } from "@/types/audit-log";
 import type { RunDetailTab } from "@/validation/billing/run-detail.schema";
 import { RUN_DETAIL_TABS } from "@/validation/billing/run-detail.schema";
 import type {
   CustomerBillRow,
+  ErrorRow,
   StageTimelineRow,
   StageTimelineSummary,
+  UnchargedRow,
 } from "@/types/billing";
 
 const TAB_LABELS: Record<RunDetailTab, string> = {
@@ -26,20 +32,32 @@ const TAB_LABELS: Record<RunDetailTab, string> = {
 };
 
 export interface RunDetailTabsProps {
+  runId: string;
   activeTab: RunDetailTab;
   timeline: {
     rows: StageTimelineRow[];
     summary: StageTimelineSummary;
   };
   customerBills: CustomerBillRow[];
+  uncharged: UnchargedRow[];
+  errors: ErrorRow[];
+  audit: AuditLogRow[];
+  canRecover: boolean;
   locale: string;
+  timezone: string;
 }
 
 export function RunDetailTabs({
+  runId,
   activeTab,
   timeline,
   customerBills,
+  uncharged,
+  errors,
+  audit,
+  canRecover,
   locale,
+  timezone,
 }: RunDetailTabsProps): React.JSX.Element {
   return (
     <div className="space-y-4">
@@ -70,20 +88,17 @@ export function RunDetailTabs({
         <StageTimeline rows={timeline.rows} summary={timeline.summary} />
       ) : activeTab === "customers" ? (
         <CustomerBillTable rows={customerBills} locale={locale} />
+      ) : activeTab === "uncharged" ? (
+        <UnchargedTable
+          runId={runId}
+          rows={uncharged}
+          canRecover={canRecover}
+        />
+      ) : activeTab === "errors" ? (
+        <ErrorsTable rows={errors} />
       ) : (
-        <PlaceholderPanel label={TAB_LABELS[activeTab]} />
+        <AuditTable rows={audit} timezone={timezone} />
       )}
-    </div>
-  );
-}
-
-function PlaceholderPanel({ label }: { label: string }): React.JSX.Element {
-  return (
-    <div className="rounded-md border border-dashed border-border bg-[color:var(--surface-sunken)] p-10 text-center">
-      <p className="text-body font-medium text-foreground">{label}</p>
-      <p className="mt-1 text-body-sm text-muted-foreground">
-        This tab is not built yet — it ships in a later unit.
-      </p>
     </div>
   );
 }

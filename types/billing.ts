@@ -176,3 +176,34 @@ export interface CustomerBillRow {
   paymentDueDate: string;
   taxItems: CustomerBillTaxItemRow[];
 }
+
+// bm07-spec §Design/§2. The Uncharged tab's read model — one row per
+// deliberately-not-billed account (`bill_run_account.status = 'EXCLUDED'`, a
+// scoping-time partial-period exclusion). `reason` is the `error_code`
+// (`PARTIAL_PERIOD` in v1); the uncharged window is the run period;
+// `indicativeValue` has no source in v1 (no rating) — always `null`, rendered
+// as "—". `financialAccountId` carries the account context for the deep link to
+// Accounts → Transactions.
+export interface UnchargedRow {
+  billingAccountId: string;
+  financialAccountId: string;
+  accountName: string;
+  reason: string;
+  windowStart: string;
+  windowEnd: string;
+  indicativeValue: string | null;
+}
+
+// bm07-spec §Design/§2. The Errors tab's read model — one row per blocking
+// `bill_run_account.status = 'PROCESSING_FAILED'` account, joined to its
+// latest-attempt `HARD` `bill_run_account_stage` row. `errorClass` is always
+// `HARD` here (the blocking class); `stage`/`errorCode`/`errorDetail` come from
+// the failed stage row.
+export interface ErrorRow {
+  billingAccountId: string;
+  accountName: string;
+  stage: Stage;
+  errorClass: ErrorClass;
+  errorCode: string | null;
+  errorDetail: string | null;
+}

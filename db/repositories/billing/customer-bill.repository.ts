@@ -101,6 +101,34 @@ export const customerBillRepository = {
     `);
   },
 
+  // bm07-spec §Design/§Implementation §1 — Verification's backstop check reads
+  // the account's UNPOSTED bill total (`ref_inv_document_id IS NULL`, the
+  // finalization latch, architecture Inv. #4). `nonPositive` is computed in SQL
+  // `numeric` (`total_amount <= 0`) so the check never touches JS float
+  // (code-standards §2.3). No bill (aggregation hasn't run, or the account was
+  // excluded) ⇒ `null`, and Verification records a clean DONE.
+  async findUnpostedTotalForVerification(
+    tx: Database,
+    billRunId: string,
+    billingAccountId: string,
+  ): Promise<{ totalAmount: string; nonPositive: boolean } | null> {
+    const [row] = await tx
+      .select({
+        totalAmount: customerBill.totalAmount,
+        nonPositive: sql<boolean>`${customerBill.totalAmount} <= 0`,
+      })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(customerBill.refBillingAccountId, billingAccountId),
+          isNull(customerBill.refInvDocumentId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
   // bm05-spec §Visual — one row per trial bill, joined to the account name +
   // currency for money formatting (neither lives on `customer_bill`). No
   // `EXCLUDED`-account filter needed: those accounts never reach Aggregation

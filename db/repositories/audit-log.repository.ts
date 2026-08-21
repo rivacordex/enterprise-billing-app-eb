@@ -28,6 +28,51 @@ function buildWhereClause(filters: AuditLogFiltersInput) {
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
+// The single `AuditLogRow` projection shared by every audit-log read
+// (`findFiltered`, `findByTargetId`) — one column set + one row mapper, so the
+// platform audit-log page and the bill-run Audit tab can never drift apart.
+const AUDIT_ROW_COLUMNS = {
+  auditId: auditLog.auditId,
+  eventType: auditLog.eventType,
+  actorUserId: auditLog.actorUserId,
+  actorUserName: appuser.userName,
+  actorStatus: appuser.status,
+  targetEntity: auditLog.targetEntity,
+  targetId: auditLog.targetId,
+  beforeData: auditLog.beforeData,
+  afterData: auditLog.afterData,
+  createdDatetime: auditLog.createdDatetime,
+} as const;
+
+type AuditRowSelection = {
+  auditId: string;
+  eventType: string;
+  actorUserId: string | null;
+  actorUserName: string | null;
+  actorStatus: string | null;
+  targetEntity: string | null;
+  targetId: string | null;
+  beforeData: unknown;
+  afterData: unknown;
+  createdDatetime: Date;
+};
+
+function toAuditLogRow(row: AuditRowSelection): AuditLogRow {
+  return {
+    auditId: row.auditId,
+    eventType: row.eventType as AuditEventType,
+    category: AUDIT_EVENT_CATEGORY_MAP[row.eventType as AuditEventType],
+    actorUserId: row.actorUserId,
+    actorUserName: row.actorUserName,
+    actorDeleted: row.actorStatus === "DELETED",
+    targetEntity: row.targetEntity,
+    targetId: row.targetId,
+    beforeData: row.beforeData,
+    afterData: row.afterData,
+    createdDatetime: row.createdDatetime,
+  };
+}
+
 export const auditLogRepository = {
   // Backs the `/administration/audit-log` page (um24-spec §24.3). Runs the
   // count and the page-data select as two separate reads (not a
@@ -47,18 +92,7 @@ export const auditLogRepository = {
     const total = countRow?.total ?? 0;
 
     const rows = await db
-      .select({
-        auditId: auditLog.auditId,
-        eventType: auditLog.eventType,
-        actorUserId: auditLog.actorUserId,
-        actorUserName: appuser.userName,
-        actorStatus: appuser.status,
-        targetEntity: auditLog.targetEntity,
-        targetId: auditLog.targetId,
-        beforeData: auditLog.beforeData,
-        afterData: auditLog.afterData,
-        createdDatetime: auditLog.createdDatetime,
-      })
+      .select(AUDIT_ROW_COLUMNS)
       .from(auditLog)
       .leftJoin(appuser, eq(auditLog.actorUserId, appuser.id))
       .where(whereClause)
@@ -66,22 +100,23 @@ export const auditLogRepository = {
       .offset((page - 1) * pageSize)
       .limit(pageSize);
 
-    return {
-      total,
-      rows: rows.map((row) => ({
-        auditId: row.auditId,
-        eventType: row.eventType as AuditEventType,
-        category: AUDIT_EVENT_CATEGORY_MAP[row.eventType as AuditEventType],
-        actorUserId: row.actorUserId,
-        actorUserName: row.actorUserName,
-        actorDeleted: row.actorStatus === "DELETED",
-        targetEntity: row.targetEntity,
-        targetId: row.targetId,
-        beforeData: row.beforeData,
-        afterData: row.afterData,
-        createdDatetime: row.createdDatetime,
-      })),
-    };
+    return { total, rows: rows.map(toAuditLogRow) };
+  },
+
+  // bm07-spec §Design/§2 — the run-detail Audit tab read: every `AUDIT_LOG`
+  // event targeting this run (`target_id = runId`), newest first, joined to
+  // the actor's display name/tombstone state (same projection as
+  // `findFiltered`, via the shared `AUDIT_ROW_COLUMNS`/`toAuditLogRow`). No
+  // pagination — a single run's event trail is small.
+  async findByTargetId(db: Database, targetId: string): Promise<AuditLogRow[]> {
+    const rows = await db
+      .select(AUDIT_ROW_COLUMNS)
+      .from(auditLog)
+      .leftJoin(appuser, eq(auditLog.actorUserId, appuser.id))
+      .where(eq(auditLog.targetId, targetId))
+      .orderBy(desc(auditLog.createdDatetime));
+
+    return rows.map(toAuditLogRow);
   },
 
   // Populates the Actor filter dropdown (um24-spec §24.3) — every distinct
