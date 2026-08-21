@@ -1,22 +1,30 @@
 // bm07-spec §Visual — the Errors tab: the run's blocking `PROCESSING_FAILED`
 // accounts (fix-then-rerun). Destructive "blocking" treatment (never the
 // Uncharged neutral styling — code-standards §4.7). Per row: account, an
-// `ErrorClassBadge` (HARD), the failed stage + `error_code`/detail, and a
-// "Rerun these accounts" affordance (the rerun action lands in bm08, so the
-// control is inert here). Server component. Zero errors is a positive empty
-// state, not a blank tab.
+// `ErrorClassBadge` (HARD), the failed stage + `error_code`/detail. bm08 wires
+// the "Rerun these accounts" affordance to the live `RerunDialog` (the failed
+// accounts, gated on `billrun_operate`). Server component (the dialog is a
+// client island). Zero errors is a positive empty state, not a blank tab.
 
 import { CircleCheck } from "lucide-react";
 
 import { ErrorClassBadge } from "@/components/billing/error-class-badge";
-import { Button } from "@/components/ui/button";
+import { RerunDialog } from "@/components/billing/rerun-dialog";
 import type { ErrorRow } from "@/types/billing";
 
 export interface ErrorsTableProps {
+  runId: string;
   rows: ErrorRow[];
+  // Whether the viewer holds `billrun_operate` — show/hide the rerun control
+  // (the action re-checks server-side regardless, code-standards §8).
+  canOperate: boolean;
 }
 
-export function ErrorsTable({ rows }: ErrorsTableProps): React.JSX.Element {
+export function ErrorsTable({
+  runId,
+  rows,
+  canOperate,
+}: ErrorsTableProps): React.JSX.Element {
   if (rows.length === 0) {
     return (
       <div className="rounded-none bg-card p-10 text-center shadow-sm">
@@ -42,10 +50,12 @@ export function ErrorsTable({ rows }: ErrorsTableProps): React.JSX.Element {
           {rows.length} account{rows.length === 1 ? "" : "s"} blocked by a hard
           error — fix the underlying issue, then rerun.
         </p>
-        {/* Rerun lands in bm08; the affordance is present but inert here. */}
-        <Button variant="destructive" disabled>
-          Rerun these accounts
-        </Button>
+        {canOperate && (
+          <RerunDialog
+            billRunId={runId}
+            accountIds={rows.map((r) => r.billingAccountId)}
+          />
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-none border-l-2 border-[color:var(--color-danger-500)] bg-card shadow-sm">

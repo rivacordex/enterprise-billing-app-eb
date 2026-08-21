@@ -277,6 +277,41 @@ export const billRunRepository = {
       );
   },
 
+  // bm08-spec §Design/§Implementation §1 (step 2 + step 6) — the rerun loops the
+  // run back `PROCESSED`/`PROCESSING_FAILED` → `PROCESSING`: flips the status,
+  // bumps the heartbeat, refreshes the derived ban/rated/failed counter cache
+  // from the SAME counts the caller derived (stored == derived, architecture
+  // Inv. #12), and stores the new engine execution reference. Never stamps
+  // `processed_at` (the run is re-processing, not finishing) and never touches
+  // `gl_event_at` (fixed at the first trigger, architecture Inv. #13) or
+  // `triggered_by`.
+  async markRerunProcessing(
+    tx: Database,
+    billRunId: string,
+    data: {
+      banCount: number;
+      ratedCount: number;
+      failedCount: number;
+      workflowExecutionId: string;
+      workflowDefinitionId: string;
+      workflowDefinitionRevision: number;
+    },
+  ): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({
+        status: "PROCESSING",
+        lastProgressAt: sql`now()`,
+        banCount: data.banCount,
+        ratedCount: data.ratedCount,
+        failedCount: data.failedCount,
+        workflowExecutionId: data.workflowExecutionId,
+        workflowDefinitionId: data.workflowDefinitionId,
+        workflowDefinitionRevision: data.workflowDefinitionRevision,
+      })
+      .where(eq(billRun.billRunId, billRunId));
+  },
+
   // bm04-spec §Implementation §8. The status-push handler's execution-failure
   // write — bumps the heartbeat and flips the run to the rerunnable
   // PROCESSING_FAILED terminal state.

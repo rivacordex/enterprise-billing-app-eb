@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
+import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { StubDataBanner } from "@/components/billing/stub-data-banner";
@@ -107,6 +108,17 @@ export default async function BillRunDetailPage({
     LEVELS.READ,
   );
 
+  // bm08 — the operator affordances (the Errors-tab and run-level rerun) are
+  // shown only to a `billrun_operate` principal; the rerun action re-checks
+  // server-side regardless (code-standards §8). A run is rerunnable only while
+  // pre-approval (PROCESSED, or PROCESSING_FAILED to recover a failed run).
+  const canOperate = meetsLevel(
+    permissionMap[PERMISSIONS.BILLRUN_OPERATE],
+    LEVELS.EDIT,
+  );
+  const rerunnable =
+    detail.status === "PROCESSED" || detail.status === "PROCESSING_FAILED";
+
   return (
     <main className="space-y-6 p-6">
       <header className="space-y-2">
@@ -115,6 +127,16 @@ export default async function BillRunDetailPage({
             {detail.billRunId}
           </h1>
           <RunStatusBadge status={detail.status} />
+          {canOperate && rerunnable && (
+            <div className="ms-auto">
+              <RerunDialog
+                billRunId={detail.billRunId}
+                accountIds={[]}
+                triggerLabel="Rerun"
+                variant="neutral"
+              />
+            </div>
+          )}
         </div>
         <p className="text-body text-muted-foreground">
           {detail.cycleName} · Period {formatCalendarDate(detail.periodStart)} –{" "}
@@ -133,6 +155,7 @@ export default async function BillRunDetailPage({
         errors={errors}
         audit={audit}
         canRecover={canRecover}
+        canOperate={canOperate}
         locale={locale}
         timezone={timezone}
       />

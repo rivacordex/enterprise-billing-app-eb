@@ -80,6 +80,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   BILL_RUN_MATERIALIZED: "Additive",
   // bm03 — SCHEDULED → PROCESSING is a state transition, not a new entity.
   BILL_RUN_TRIGGERED: "Change",
+  // bm08 — a pre-approval rerun (PROCESSED/PROCESSING_FAILED → PROCESSING): a
+  // state transition carrying prior totals + the operator's reason.
+  BILL_RUN_RERUN: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the
