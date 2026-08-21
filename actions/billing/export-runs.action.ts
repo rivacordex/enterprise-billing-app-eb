@@ -2,7 +2,7 @@
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import { csvField } from "@/lib/csv";
+import { buildCsv } from "@/lib/csv";
 import { isRedirectError } from "@/lib/errors";
 import { listRuns } from "@/services/billing/read/list-runs";
 import type { RunListRow } from "@/types/billing";
@@ -28,25 +28,19 @@ const CSV_HEADER = [
   "Run Type",
 ] as const;
 
-function buildCsv(rows: RunListRow[]): string {
-  const lines = [CSV_HEADER.join(",")];
-  for (const row of rows) {
-    lines.push(
-      [
-        row.billRunId,
-        row.cycleName,
-        row.periodStart,
-        row.periodEnd,
-        row.scheduledRunDate,
-        row.status,
-        row.runType,
-      ]
-        .map(csvField)
-        .join(","),
-    );
-  }
-  // Trailing newline so the file ends cleanly.
-  return lines.join("\r\n") + "\r\n";
+function toCsv(rows: RunListRow[]): string {
+  return buildCsv(
+    CSV_HEADER,
+    rows.map((row) => [
+      row.billRunId,
+      row.cycleName,
+      row.periodStart,
+      row.periodEnd,
+      row.scheduledRunDate,
+      row.status,
+      row.runType,
+    ]),
+  );
 }
 
 export async function exportRunsAction(input: {
@@ -83,6 +77,6 @@ export async function exportRunsAction(input: {
   return {
     ok: true,
     filename: `bill-runs-${parsed.tab}.csv`,
-    csv: buildCsv(rows),
+    csv: toCsv(rows),
   };
 }

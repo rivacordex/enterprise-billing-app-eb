@@ -20,3 +20,19 @@ export function csvField(value: string): string {
   }
   return out;
 }
+
+// Assembles a CSV document from a header + pre-stringified data rows, escaping
+// every field through `csvField` and joining with RFC-4180 CRLF line endings
+// plus a trailing newline so the file ends cleanly. Shared by the CSV export
+// server actions (bill-runs, uncharged, …) so the wire format is identical
+// across exports and lives in one place.
+export function buildCsv(
+  header: readonly string[],
+  rows: readonly (readonly string[])[],
+): string {
+  const lines = [header.map(csvField).join(",")];
+  for (const row of rows) {
+    lines.push(row.map(csvField).join(","));
+  }
+  return lines.join("\r\n") + "\r\n";
+}

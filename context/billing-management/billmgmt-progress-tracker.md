@@ -8,15 +8,16 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01–bm06 delivered: the Billing nav section, RBAC scaffold, the
+- bm01–bm07 delivered: the Billing nav section, RBAC scaffold, the
   `billing.bill_run` header table, lazy materialization, the two-tab run list,
   the Trigger/Run path, the M2M stage-ingest path driving `bill_run_account`
   past `PENDING` to `PROCESSED`/`PROCESSING_FAILED` with the Workflow tab's live
   stage timeline, the trial `customer_bill` draft-bill generation
-  (Collection/Aggregation) with the Customers & Bills tab, and Taxation
-  (`customer_bill_tax_item`, SQL-computed GST `tax_total`/`total_amount`). Next:
-  bm07+ (Verification's real per-stage effect, the remaining run-detail tabs
-  Uncharged/Errors/Audit, Rerun/Approve/Post).
+  (Collection/Aggregation) with the Customers & Bills tab, Taxation
+  (`customer_bill_tax_item`, SQL-computed GST `tax_total`/`total_amount`), and
+  Verification's per-stage effect (`DONE` + a `SOFT` backstop finding) with the
+  remaining run-detail tabs Uncharged/Errors/Audit (no new table). Next: bm08+
+  (Rerun/Approve/Post).
 
 ## Completed
 
@@ -387,9 +388,63 @@ Update this file after every meaningful implementation change.
     terminate}-subscription*`, confirmed via `git status`/`git diff` that bm06
     touched none of them).
 
-## In Progress
-
-- None.
+- **bm07 — Verification, Uncharged & Errors (+ Audit) tabs**
+  (`specs/bm07-verification-uncharged-errors.md`). **No new table.**
+  - Verification (stage 6): `services/billing/verify.ts` (`verifyAccount(tx,
+    run, banId)`) — the last stage stops being bm04's record-and-advance
+    pass-through and becomes an app-computed override (like Validation/
+    Collection), wired into `handle-stage-signal.ts` as a fourth
+    stage-specific `effective` branch. v1 is minimal (no rating, no prior-
+    period baseline ⇒ variance/plausibility deferred): it **always records
+    `DONE`** (never fails/blocks the run) plus, only when the single cheap
+    backstop fails (the account's unposted bill `total_amount <= 0`, computed
+    in SQL `numeric` via the new
+    `customerBillRepository.findUnpostedTotalForVerification`), a **`SOFT`
+    finding on that same stage row** (`error_code = 'NON_POSITIVE_TOTAL'`) —
+    findings are `SOFT` stage rows, not a new table. A `SOFT` finding still
+    lets the account reach `PROCESSED` (`advanceAccountStatus` unchanged —
+    SOFT is neither HARD nor INFRA).
+  - Uncharged read/tab: `services/billing/read/list-uncharged.ts` →
+    `billRunAccountRepository.listExcludedForRun` (join `bill_run_account`
+    `status = 'EXCLUDED'` → `billing_account` name/`ref_financial_account_id`
+    + `bill_run` period). `UnchargedRow` (`types/billing.ts`) carries reason
+    (`error_code`, `PARTIAL_PERIOD`), the uncharged window (run period), and
+    `indicativeValue: null` (**no rating source in v1 → rendered "—"**).
+    `components/billing/uncharged-table.tsx` (`UnchargedTable`, server
+    component, info/neutral "revenue queue" treatment) deep-links each row to
+    `/accounts/transactions?fa=…&ban=…` ("Manual DBN/ADJ"); CSV via
+    `actions/billing/export-uncharged.action.ts`
+    (`billrun_view:READ`, unaudited, bm02 `csvField`/`Blob` pattern) +
+    `ExportUnchargedButton`.
+  - Errors read/tab: `list-errors.ts` →
+    `billRunAccountRepository.listErrorsForRun` (`DISTINCT ON (account)
+    ORDER BY attempt DESC` over `bill_run_account_stage` `error_class = 'HARD'`
+    inner-joined to the account `status = 'PROCESSING_FAILED'` + name).
+    `ErrorRow` (`types/billing.ts`); `errors-table.tsx` (`ErrorsTable`,
+    destructive "blocking" treatment, `ErrorClassBadge` + stage/code/detail +
+    an **inert "Rerun these accounts"** affordance — the action lands in bm08).
+  - Audit read/tab: `list-run-audit.ts` → new
+    `auditLogRepository.findByTargetId(db, runId)` (the platform `AUDIT_LOG`
+    read filtered to `target_id = runId`, newest first, same actor join as
+    `findFiltered`). `audit-table.tsx` (`AuditTable`) reuses the platform
+    `AuditLogTable`/`AuditLogRow` unchanged (code-standards §4.8 — never fork
+    a table); the run's `BILL_RUN_*` events (materialize/trigger, later
+    rerun/approve/cancel) all stamp `targetId = billRunId`.
+  - Wiring: `run-detail-tabs.tsx` renders the three previously-inert
+    placeholders (`PlaceholderPanel` removed); `[runId]/page.tsx` reads each
+    tab's data only for its own active `?tab=` (same idiom as bm05's
+    Customers & Bills) and threads `getAppTimezone()` for the Audit table.
+  - Tests: `verify.test.ts` (clean DONE with no bill / positive total; SOFT on
+    non-positive; keyed read), `list-uncharged.test.ts`, `list-errors.test.ts`,
+    `list-run-audit.test.ts`, `export-uncharged.action.test.ts` (route × level,
+    CSV header/rows, blank indicative value, malformed-runId reject),
+    `uncharged-table.test.tsx` (rows/reason/window, "—", the fa+ban deep link,
+    empty state), `errors-table.test.tsx` (rows, disabled rerun affordance,
+    empty state), `handle-stage-signal.test.ts` extended (verification uses
+    `verifyAccount`'s SOFT outcome and still reaches PROCESSED), and
+    `bill-run-detail-page.test.tsx` extended (each new read is fetched only for
+    its own tab). `typecheck`/`lint`/`format:check` clean; the affected billing/
+    audit suites pass (27 files / 183 tests in the bm07 slice).
 
 ## Post-review hardening (bm02)
 
@@ -601,13 +656,66 @@ Skipped (verified not still-valid or out of scope):
 
 `typecheck`/`lint`/`format:check` clean; the 5 bm06 test files pass (75 tests).
 
+## Post-review hardening (bm07)
+
+Fixes from a high-effort code review of the bm07 diff:
+
+- **Errors read is deterministic** — `billRunAccountRepository.listErrorsForRun`'s
+  `DISTINCT ON (account)` gained a `desc(bill_run_account_stage_id)` tiebreaker
+  after `desc(attempt)`: an account can carry HARD stage rows on two stages at
+  the same caller-supplied `attempt`, and the sequence-monotonic id now picks the
+  last-recorded failure instead of an arbitrary one (the Errors tab no longer
+  flips stage/code between identical reads).
+- **A SOFT verification finding no longer stamps a PROCESSED account** —
+  `handleStageSignal` now stamps `bill_run_account.error_code`/`error_detail`
+  only on a genuine FAILURE outcome (`effective.status === 'FAILED'` — HARD
+  terminal / INFRA transient); a DONE/SKIPPED outcome clears them. A
+  `verification` SOFT *finding* lives on the stage row (its intended surface), so
+  a successfully-`PROCESSED` account never carries a stale, contradictory
+  `NON_POSITIVE_TOTAL` code. (A caller-signalled `FAILED`+SOFT on a pass-through
+  stage still records its diagnostics, unchanged.)
+- **The Uncharged recovery link no longer dead-ends** — `/accounts/transactions`
+  is guarded by `accounts_transactions:READ`, which a `billrun_view`-only
+  principal (the Billing Viewer role) lacks. `BillRunDetailPage` now resolves
+  `canRecover = meetsLevel(permissionMap[accounts_transactions], READ)` and
+  threads it through `RunDetailTabs` → `UnchargedTable`; the "Manual DBN/ADJ"
+  affordance renders as a plain hint (not a `/no-access` link) when the viewer
+  can't reach Transactions (show/hide only — the route still re-checks
+  server-side).
+- **CSV export mechanics de-duplicated** — extracted `lib/csv.ts` `buildCsv(header,
+  rows)` (header + rows → `csvField`-escaped, CRLF, trailing newline), now used by
+  both `export-uncharged`/`export-runs` actions; and `lib/download.ts`
+  (`downloadCsv`/`triggerBlobDownload`) collapsing the hand-rolled Blob-download
+  dance previously copy-pasted across the two billing export buttons **and**
+  `components/accounts/journal-export-button.tsx`. The audit-log repository's
+  `findByTargetId` (bm07) and `findFiltered` now share one `AUDIT_ROW_COLUMNS`
+  projection + `toAuditLogRow` mapper (no drift between the platform audit page
+  and the run Audit tab).
+
+Skipped (verified not worth the churn):
+
+- **`verifyAccount`'s bill read runs before the idempotency-latch insert** — the
+  stage row's recorded status/error IS the app-computed outcome, so the effect
+  must be computed before the insert; deferring it would either violate the
+  insert-first latch (architecture Inv. #5) or require the pre-existence check
+  the invariant forbids. Matches the pre-existing `validateAccount` shape; the
+  wasted read only occurs on a replayed signal (one indexed SELECT).
+- **`listExcludedForRun` joins `bill_run` for the run-constant window** — a single
+  in-query join (not per-row I/O); the per-row window is spec-mandated (the
+  Uncharged read "returns the uncharged window (run period)") and keeps the read
+  self-contained for both the page and the export action call sites. Threading
+  the period from two callers to drop one cheap join is not a net simplification.
+
+`typecheck`/`lint`/`format:check` clean; the bm07 + touched audit/accounts test
+files pass (31 files / 217 tests in the slice).
+
 ## Next Up
 
-- **bm07+** — Verification (exceptions/findings) replaces bm04's
-  record-and-advance pass-through for the remaining stage. The remaining
-  run-detail tabs (Uncharged, Errors, Audit) land with the unit that gives
-  them real data; the Uncharged tab reading `EXCLUDED` rows lands in bm07 per
-  the original plan.
+- **bm08+** — Rerun (audit-first, invalidate later stages, re-derive the trial
+  bill) then Approve & Post (four-eyes money gate, per-account INV posting). The
+  Errors tab's "Rerun these accounts" affordance (inert in bm07) wires to the
+  bm08 rerun action; the Uncharged indicative value stays "—" until a rating
+  source exists.
 
 ## Open Questions
 
