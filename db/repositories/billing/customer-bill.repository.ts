@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
@@ -37,6 +37,68 @@ export const customerBillRepository = {
 
   async insertTrial(tx: Database, row: CustomerBillInsert): Promise<void> {
     await tx.insert(customerBill).values(row);
+  },
+
+  // bm06-spec §Design/§Implementation §3 — Taxation resolves the run's single
+  // UNPOSTED bill for an account (`ref_inv_document_id IS NULL`, the
+  // finalization latch, architecture Inv. #4). A posted bill is never
+  // returned, so the taxation service never re-taxes it. Returns the identity
+  // needed to key the tax-item write + the totals recompute.
+  async findUnpostedBill(
+    tx: Database,
+    billRunId: string,
+    billingAccountId: string,
+  ): Promise<{
+    customerBillId: string;
+    periodPartition: string;
+    subtotal: string;
+  } | null> {
+    const [row] = await tx
+      .select({
+        customerBillId: customerBill.customerBillId,
+        periodPartition: customerBill.periodPartition,
+        subtotal: customerBill.subtotal,
+      })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(customerBill.refBillingAccountId, billingAccountId),
+          isNull(customerBill.refInvDocumentId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm06-spec §Design/§Implementation §3 — after the bill's tax items are
+  // (re)written, recompute `tax_total` = the SQL SUM of its items and
+  // `total_amount` = `subtotal + tax_total`, ALL in SQL `numeric` (never JS
+  // float, code-standards §2.3). The subquery over `customer_bill_tax_item`
+  // and the `subtotal` addition happen inside Postgres, so the total equals the
+  // summed items to the cent by construction. Keyed on the full PK
+  // `(customer_bill_id, period_partition)`; the `ref_inv_document_id IS NULL`
+  // guard is retained even though `findUnpostedBill` already filtered it — a
+  // posted bill is never mutated (architecture Inv. #4).
+  async recomputeTotals(
+    tx: Database,
+    customerBillId: string,
+    periodPartition: string,
+  ): Promise<void> {
+    await tx.execute(sql`
+      UPDATE billing.customer_bill AS cb
+      SET tax_total = COALESCE(items.total, 0),
+          total_amount = cb.subtotal + COALESCE(items.total, 0)
+      FROM (
+        SELECT COALESCE(SUM(tax_amount), 0) AS total
+        FROM billing.customer_bill_tax_item
+        WHERE ref_customer_bill_id = ${customerBillId}
+          AND period_partition = ${periodPartition}
+      ) AS items
+      WHERE cb.customer_bill_id = ${customerBillId}
+        AND cb.period_partition = ${periodPartition}
+        AND cb.ref_inv_document_id IS NULL
+    `);
   },
 
   // bm05-spec §Visual — one row per trial bill, joined to the account name +

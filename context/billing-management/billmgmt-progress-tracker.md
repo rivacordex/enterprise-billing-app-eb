@@ -8,13 +8,15 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01 + bm02 + bm03 + bm04 delivered: the Billing nav section, RBAC
-  scaffold, the `billing.bill_run` header table, lazy materialization, the
-  two-tab run list, the Trigger/Run path, and the M2M stage-ingest path that
-  drives `bill_run_account` past `PENDING` to `PROCESSED`/`PROCESSING_FAILED`
-  with the run-detail Workflow tab's live stage timeline. Next: bm05+
-  (Collection/Aggregation/Taxation/Verification's real per-stage effects, the
-  remaining run-detail tabs, Rerun/Approve/Post).
+- bm01–bm06 delivered: the Billing nav section, RBAC scaffold, the
+  `billing.bill_run` header table, lazy materialization, the two-tab run list,
+  the Trigger/Run path, the M2M stage-ingest path driving `bill_run_account`
+  past `PENDING` to `PROCESSED`/`PROCESSING_FAILED` with the Workflow tab's live
+  stage timeline, the trial `customer_bill` draft-bill generation
+  (Collection/Aggregation) with the Customers & Bills tab, and Taxation
+  (`customer_bill_tax_item`, SQL-computed SST `tax_total`/`total_amount`). Next:
+  bm07+ (Verification's real per-stage effect, the remaining run-detail tabs
+  Uncharged/Errors/Audit, Rerun/Approve/Post).
 
 ## Completed
 
@@ -330,6 +332,61 @@ Update this file after every meaningful implementation change.
     resume,suspend,terminate}-subscription*`); confirmed via `git status`/
     `git diff` that bm05 touched none of those files.
 
+- **bm06 — Taxation** (`specs/bm06-taxation.md`).
+  - Schema: new partitioned `billing.customer_bill_tax_item` table (typing-only
+    Drizzle declaration, `db/schema/billing/customer-bill-tax-item.ts`; physical
+    DDL `db/migrations/0030_customer_bill_tax_item.sql`, hand-authored-partition
+    pattern — not drizzle-kit generated) — composite PK
+    `(customer_bill_tax_item_id, period_partition)`, the **first composite FK in
+    the module** to `customer_bill` on `(ref_customer_bill_id, period_partition)`
+    (matching the partitioned parent's full PK), `CBT` id default +
+    `customer_bill_tax_item_seq`, `tax_rate numeric(5,2)`/`tax_amount
+    numeric(18,2)`, **no JSONB** (financially significant, code-standards §6.12),
+    default partition. `db/bootstrap/billing-partman-setup.sql` extended with a
+    fourth `create_parent` registration (same monthly/7-year-detach shape; the
+    existing shared `run_maintenance_proc()` covers all four parents, no second
+    cron job). Exported via the billing schema index.
+  - Config: `BILLRUN_TAX_RATE` (`z.coerce.number().min(0).max(100).default(8)`),
+    `BILLRUN_TAX_VERSION` (`default("SST-2026")`), `BILLRUN_TAX_CATEGORY`
+    (`default("SST")`) added to `lib/config.ts` + `.env.example`, plus the frozen
+    `billRunTaxConfig` accessor. **No tax-rate catalog table** — v1's tax model is
+    this single configured rate (deferred with the rating engine). The rate only
+    parameterises a SQL `numeric` expression, never JS float.
+  - Taxation stage (stage 6): `services/billing/taxation.ts` (`taxBill(tx, run,
+    banId)`) — resolves the account's **unposted** trial bill
+    (`customerBillRepository.findUnpostedBill`, `ref_inv_document_id IS NULL`
+    latch; no bill ⇒ clean no-op), stamps `bill_run.ref_tax_rate_version` once via
+    the new `billRunRepository.stampTaxRateVersion` (`IS NULL`-guarded ⇒
+    idempotent, uniform per run), rerun-safely replaces the bill's tax items
+    (`customerBillTaxItemRepository.replaceForBill` — `DELETE` + `INSERT ...
+    SELECT` computing `tax_amount = round(subtotal * :rate / 100, 2)` **in SQL
+    `numeric`**, half-up, never JS float), then recomputes totals
+    (`customerBillRepository.recomputeTotals` — `tax_total` = the SQL `SUM` of the
+    items, `total_amount = subtotal + tax_total`, also in SQL). Wired into
+    `handle-stage-signal.ts` as a **side effect** (same shape as bm05's
+    Aggregation, not an outcome override): a `DONE` `taxation` signal for a
+    `PROCESSING` account triggers `taxBill` inside the same transaction; a
+    `FAILED`/replayed/other-stage signal never reaches it, and a posted bill is
+    never re-taxed (every write is latch-guarded).
+  - Customers & Bills tab: `CustomerBillRow` gains `taxItems[]`
+    (`CustomerBillTaxItemRow`); `services/billing/read/list-account-bills.ts`
+    joins the tax items (`customerBillTaxItemRepository.listForRun`) and groups
+    them per bill; `components/billing/customer-bill-table.tsx`'s `<details>`
+    expander gains a **Tax** section (each item as `{category} @ {rate}% →
+    {amount}`) and a tax-inclusive total.
+  - Tests: `customer-bill-tax-item-schema.test.ts` (structural incl. the
+    composite FK), `taxation.test.ts` (stamp/replace/recompute order, unposted-bill
+    no-op, posted-bill never-taxed, configured rate/category passthrough),
+    `handle-stage-signal.test.ts` extended with the Taxation side-effect (DONE
+    triggers it; FAILED/replay/PENDING/other-stages don't), `list-account-bills.test.ts`
+    extended for the tax-item grouping, `config.test.ts` extended (ENV_KEYS +
+    full-config `toEqual` + `billRunTaxConfig` defaults/override/out-of-range).
+    `typecheck`/`lint`/`format:check` clean; full DB-free vitest run passes
+    except the same pre-existing date-drift set (246/250 files, 2539/2553 tests;
+    4 files/14 tests failing — `tests/actions/{create-order,resume,suspend,
+    terminate}-subscription*`, confirmed via `git status`/`git diff` that bm06
+    touched none of them).
+
 ## In Progress
 
 - None.
@@ -454,12 +511,11 @@ inventory reads (single-param SELECTs, empty-input already guarded).
 
 ## Next Up
 
-- **bm06+** — Taxation (`customer_bill_tax_item`, real `tax_total`/
-  `total_amount`) and Verification (exceptions/findings) replace bm04's
-  record-and-advance pass-through for the remaining two stages. The
-  remaining run-detail tabs (Uncharged, Errors, Audit) land with the unit
-  that gives them real data; the Uncharged tab reading `EXCLUDED` rows lands
-  in bm07 per the original plan.
+- **bm07+** — Verification (exceptions/findings) replaces bm04's
+  record-and-advance pass-through for the remaining stage. The remaining
+  run-detail tabs (Uncharged, Errors, Audit) land with the unit that gives
+  them real data; the Uncharged tab reading `EXCLUDED` rows lands in bm07 per
+  the original plan.
 
 ## Open Questions
 

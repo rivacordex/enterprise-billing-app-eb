@@ -148,11 +148,22 @@ export type BillCategory = (typeof BILL_CATEGORIES)[number];
 export const BILL_STATES = ["new", "validated", "sent"] as const;
 export type BillState = (typeof BILL_STATES)[number];
 
-// bm05-spec §Implementation §2/§5. The Customers & Bills tab's read model —
-// one row per trial `customer_bill`, joined to the account name. Money
-// fields are `string` (code-standards §2.3); `subtotal` in v1 is a
-// deterministic synthetic stub (`services/billing/aggregate-bill.ts`), never
-// a sum over real charges (there is no `rating` table yet).
+// bm06-spec §Implementation §4. One tax line on a bill — the SST category, the
+// applied rate, and the SQL-computed amount (all `string`, code-standards
+// §2.3). v1 writes a single SST line per bill; the shape supports more.
+export interface CustomerBillTaxItemRow {
+  category: string;
+  rate: string;
+  amount: string;
+}
+
+// bm05-spec §Implementation §2/§5, extended by bm06 §Implementation §4. The
+// Customers & Bills tab's read model — one row per trial `customer_bill`,
+// joined to the account name and its tax items. Money fields are `string`
+// (code-standards §2.3); `subtotal` in v1 is a deterministic synthetic stub
+// (`services/billing/aggregate-bill.ts`), `taxTotal` is the SQL SUM of the tax
+// items (`services/billing/taxation.ts`), and `totalAmount = subtotal +
+// taxTotal`.
 export interface CustomerBillRow {
   customerBillId: string;
   billingAccountId: string;
@@ -163,4 +174,5 @@ export interface CustomerBillRow {
   taxTotal: string;
   totalAmount: string;
   paymentDueDate: string;
+  taxItems: CustomerBillTaxItemRow[];
 }
