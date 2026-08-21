@@ -8,13 +8,16 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01 + bm02 + bm03 + bm04 delivered: the Billing nav section, RBAC
-  scaffold, the `billing.bill_run` header table, lazy materialization, the
-  two-tab run list, the Trigger/Run path, and the M2M stage-ingest path that
-  drives `bill_run_account` past `PENDING` to `PROCESSED`/`PROCESSING_FAILED`
-  with the run-detail Workflow tab's live stage timeline. Next: bm05+
-  (Collection/Aggregation/Taxation/Verification's real per-stage effects, the
-  remaining run-detail tabs, Rerun/Approve/Post).
+- bm01–bm07 delivered: the Billing nav section, RBAC scaffold, the
+  `billing.bill_run` header table, lazy materialization, the two-tab run list,
+  the Trigger/Run path, the M2M stage-ingest path driving `bill_run_account`
+  past `PENDING` to `PROCESSED`/`PROCESSING_FAILED` with the Workflow tab's live
+  stage timeline, the trial `customer_bill` draft-bill generation
+  (Collection/Aggregation) with the Customers & Bills tab, Taxation
+  (`customer_bill_tax_item`, SQL-computed GST `tax_total`/`total_amount`), and
+  Verification's per-stage effect (`DONE` + a `SOFT` backstop finding) with the
+  remaining run-detail tabs Uncharged/Errors/Audit (no new table). Next: bm08+
+  (Rerun/Approve/Post).
 
 ## Completed
 
@@ -330,9 +333,118 @@ Update this file after every meaningful implementation change.
     resume,suspend,terminate}-subscription*`); confirmed via `git status`/
     `git diff` that bm05 touched none of those files.
 
-## In Progress
+- **bm06 — Taxation** (`specs/bm06-taxation.md`).
+  - Schema: new partitioned `billing.customer_bill_tax_item` table (typing-only
+    Drizzle declaration, `db/schema/billing/customer-bill-tax-item.ts`; physical
+    DDL `db/migrations/0030_customer_bill_tax_item.sql`, hand-authored-partition
+    pattern — not drizzle-kit generated) — composite PK
+    `(customer_bill_tax_item_id, period_partition)`, the **first composite FK in
+    the module** to `customer_bill` on `(ref_customer_bill_id, period_partition)`
+    (matching the partitioned parent's full PK), `CBT` id default +
+    `customer_bill_tax_item_seq`, `tax_rate numeric(5,2)`/`tax_amount
+    numeric(18,2)`, **no JSONB** (financially significant, code-standards §6.12),
+    default partition. `db/bootstrap/billing-partman-setup.sql` extended with a
+    fourth `create_parent` registration (same monthly/7-year-detach shape; the
+    existing shared `run_maintenance_proc()` covers all four parents, no second
+    cron job). Exported via the billing schema index.
+  - Config: `BILLRUN_TAX_RATE` (`z.coerce.number().min(0).max(100).default(8)`),
+    `BILLRUN_TAX_VERSION` (`default("GST-2026")`), `BILLRUN_TAX_CATEGORY`
+    (`default("GST")`) added to `lib/config.ts` + `.env.example`, plus the frozen
+    `billRunTaxConfig` accessor. **No tax-rate catalog table** — v1's tax model is
+    this single configured rate (deferred with the rating engine). The rate only
+    parameterises a SQL `numeric` expression, never JS float.
+  - Taxation stage (stage 6): `services/billing/taxation.ts` (`taxBill(tx, run,
+    banId)`) — resolves the account's **unposted** trial bill
+    (`customerBillRepository.findUnpostedBill`, `ref_inv_document_id IS NULL`
+    latch; no bill ⇒ clean no-op), stamps `bill_run.ref_tax_rate_version` once via
+    the new `billRunRepository.stampTaxRateVersion` (`IS NULL`-guarded ⇒
+    idempotent, uniform per run), rerun-safely replaces the bill's tax items
+    (`customerBillTaxItemRepository.replaceForBill` — `DELETE` + `INSERT ...
+    SELECT` computing `tax_amount = round(subtotal * :rate / 100, 2)` **in SQL
+    `numeric`**, half-up, never JS float), then recomputes totals
+    (`customerBillRepository.recomputeTotals` — `tax_total` = the SQL `SUM` of the
+    items, `total_amount = subtotal + tax_total`, also in SQL). Wired into
+    `handle-stage-signal.ts` as a **side effect** (same shape as bm05's
+    Aggregation, not an outcome override): a `DONE` `taxation` signal for a
+    `PROCESSING` account triggers `taxBill` inside the same transaction; a
+    `FAILED`/replayed/other-stage signal never reaches it, and a posted bill is
+    never re-taxed (every write is latch-guarded).
+  - Customers & Bills tab: `CustomerBillRow` gains `taxItems[]`
+    (`CustomerBillTaxItemRow`); `services/billing/read/list-account-bills.ts`
+    joins the tax items (`customerBillTaxItemRepository.listForRun`) and groups
+    them per bill; `components/billing/customer-bill-table.tsx`'s `<details>`
+    expander gains a **Tax** section (each item as `{category} @ {rate}% →
+    {amount}`) and a tax-inclusive total.
+  - Tests: `customer-bill-tax-item-schema.test.ts` (structural incl. the
+    composite FK), `taxation.test.ts` (stamp/replace/recompute order, unposted-bill
+    no-op, posted-bill never-taxed, configured rate/category passthrough),
+    `handle-stage-signal.test.ts` extended with the Taxation side-effect (DONE
+    triggers it; FAILED/replay/PENDING/other-stages don't), `list-account-bills.test.ts`
+    extended for the tax-item grouping, `config.test.ts` extended (ENV_KEYS +
+    full-config `toEqual` + `billRunTaxConfig` defaults/override/out-of-range).
+    `typecheck`/`lint`/`format:check` clean; full DB-free vitest run passes
+    except the same pre-existing date-drift set (246/250 files, 2539/2553 tests;
+    4 files/14 tests failing — `tests/actions/{create-order,resume,suspend,
+    terminate}-subscription*`, confirmed via `git status`/`git diff` that bm06
+    touched none of them).
 
-- None.
+- **bm07 — Verification, Uncharged & Errors (+ Audit) tabs**
+  (`specs/bm07-verification-uncharged-errors.md`). **No new table.**
+  - Verification (stage 6): `services/billing/verify.ts` (`verifyAccount(tx,
+    run, banId)`) — the last stage stops being bm04's record-and-advance
+    pass-through and becomes an app-computed override (like Validation/
+    Collection), wired into `handle-stage-signal.ts` as a fourth
+    stage-specific `effective` branch. v1 is minimal (no rating, no prior-
+    period baseline ⇒ variance/plausibility deferred): it **always records
+    `DONE`** (never fails/blocks the run) plus, only when the single cheap
+    backstop fails (the account's unposted bill `total_amount <= 0`, computed
+    in SQL `numeric` via the new
+    `customerBillRepository.findUnpostedTotalForVerification`), a **`SOFT`
+    finding on that same stage row** (`error_code = 'NON_POSITIVE_TOTAL'`) —
+    findings are `SOFT` stage rows, not a new table. A `SOFT` finding still
+    lets the account reach `PROCESSED` (`advanceAccountStatus` unchanged —
+    SOFT is neither HARD nor INFRA).
+  - Uncharged read/tab: `services/billing/read/list-uncharged.ts` →
+    `billRunAccountRepository.listExcludedForRun` (join `bill_run_account`
+    `status = 'EXCLUDED'` → `billing_account` name/`ref_financial_account_id`
+    + `bill_run` period). `UnchargedRow` (`types/billing.ts`) carries reason
+    (`error_code`, `PARTIAL_PERIOD`), the uncharged window (run period), and
+    `indicativeValue: null` (**no rating source in v1 → rendered "—"**).
+    `components/billing/uncharged-table.tsx` (`UnchargedTable`, server
+    component, info/neutral "revenue queue" treatment) deep-links each row to
+    `/accounts/transactions?fa=…&ban=…` ("Manual DBN/ADJ"); CSV via
+    `actions/billing/export-uncharged.action.ts`
+    (`billrun_view:READ`, unaudited, bm02 `csvField`/`Blob` pattern) +
+    `ExportUnchargedButton`.
+  - Errors read/tab: `list-errors.ts` →
+    `billRunAccountRepository.listErrorsForRun` (`DISTINCT ON (account)
+    ORDER BY attempt DESC` over `bill_run_account_stage` `error_class = 'HARD'`
+    inner-joined to the account `status = 'PROCESSING_FAILED'` + name).
+    `ErrorRow` (`types/billing.ts`); `errors-table.tsx` (`ErrorsTable`,
+    destructive "blocking" treatment, `ErrorClassBadge` + stage/code/detail +
+    an **inert "Rerun these accounts"** affordance — the action lands in bm08).
+  - Audit read/tab: `list-run-audit.ts` → new
+    `auditLogRepository.findByTargetId(db, runId)` (the platform `AUDIT_LOG`
+    read filtered to `target_id = runId`, newest first, same actor join as
+    `findFiltered`). `audit-table.tsx` (`AuditTable`) reuses the platform
+    `AuditLogTable`/`AuditLogRow` unchanged (code-standards §4.8 — never fork
+    a table); the run's `BILL_RUN_*` events (materialize/trigger, later
+    rerun/approve/cancel) all stamp `targetId = billRunId`.
+  - Wiring: `run-detail-tabs.tsx` renders the three previously-inert
+    placeholders (`PlaceholderPanel` removed); `[runId]/page.tsx` reads each
+    tab's data only for its own active `?tab=` (same idiom as bm05's
+    Customers & Bills) and threads `getAppTimezone()` for the Audit table.
+  - Tests: `verify.test.ts` (clean DONE with no bill / positive total; SOFT on
+    non-positive; keyed read), `list-uncharged.test.ts`, `list-errors.test.ts`,
+    `list-run-audit.test.ts`, `export-uncharged.action.test.ts` (route × level,
+    CSV header/rows, blank indicative value, malformed-runId reject),
+    `uncharged-table.test.tsx` (rows/reason/window, "—", the fa+ban deep link,
+    empty state), `errors-table.test.tsx` (rows, disabled rerun affordance,
+    empty state), `handle-stage-signal.test.ts` extended (verification uses
+    `verifyAccount`'s SOFT outcome and still reaches PROCESSED), and
+    `bill-run-detail-page.test.tsx` extended (each new read is fetched only for
+    its own tab). `typecheck`/`lint`/`format:check` clean; the affected billing/
+    audit suites pass (27 files / 183 tests in the bm07 slice).
 
 ## Post-review hardening (bm02)
 
@@ -452,14 +564,158 @@ inventory reads (single-param SELECTs, empty-input already guarded).
   unposted row and then collide on `insertTrial`. The delete keys exactly on the
   UNIQUE + the `ref_inv_document_id IS NULL` latch, matching the bm05 spec.
 
+## Post-review hardening (bm06)
+
+Fixes from a code review of the bm06 diff (only still-valid issues; each verified
+against current code):
+
+- **Tax-item FK is `ON DELETE CASCADE`, not `RESTRICT`** — bm05's rerun-safe
+  trial re-derivation (`customerBillRepository.deleteTrial`) deletes the whole
+  unposted `customer_bill`; once a taxation pass had written
+  `customer_bill_tax_item` rows, a `RESTRICT` FK would block that delete and break
+  the rerun. CASCADE drops the stale items with the bill. Posted bills are never
+  deleted (`deleteTrial`'s `ref_inv_document_id IS NULL` guard), so a finalized
+  bill's items are never cascade-removed (Inv. #4). Changed in both the schema
+  and `0030` (not yet applied anywhere — edited in place, not a new migration).
+- **Out-of-order taxation is rejected, not silently recorded** — a `DONE`
+  `taxation` signal that arrives before Aggregation created the bill used to
+  record the stage row DONE and no-op, leaving the account permanently "taxed"
+  with zero tax. `taxBill` now throws `CONFLICT` when no unposted bill exists, so
+  the whole ingest transaction rolls back (the stage row is never committed) and
+  the engine retries after Aggregation. Replay safety is unaffected (a duplicate
+  is still caught by the idempotency-latch unique violation before `taxBill`
+  runs). (bm11 posting will refine null-bill handling to distinguish an
+  already-posted bill's late signal — an idempotent no-op — from a missing one.)
+- **`BILLRUN_TAX_RATE` rejects >2 decimal places** — the rate is cast/stored as
+  `numeric(5,2)`, so a value like `8.125` would be silently rounded on store and
+  no longer match the amount it was computed from. The config schema now fails
+  fast at boot on higher precision (0–100 bounds unchanged).
+- **Customers & Bills read uses one snapshot** — the bill totals and the tax
+  items are now read inside a single `repeatable read`, `read only` transaction,
+  so they can't straddle a concurrent taxation commit (a summary `tax_total` of
+  0.00 next to a just-inserted tax line). The concurrent-commit regression is a
+  DB-gated integration test (not runnable here — no local Postgres); a unit test
+  asserts both reads share one tx handle.
+
+Skipped (verified not still-valid or out of scope):
+
+- **`formatCurrency` `Number()` precision** — it is the single mandated platform
+  money formatter (code-standards §4.4); the actual bm06 values (synthetic stub
+  subtotals in the low thousands) never approach `Number`'s precision limit, and
+  the flagged `999999999999999.99` is not a value this system produces. A
+  decimal-safe formatter would be a platform-wide change to `lib/formatters.ts`
+  with all call sites, out of bm06's scope; forking a billing-only formatter
+  would violate the one-formatter rule.
+- **`FOR UPDATE` on the taxation bill lookup** — redundant: `handleStageSignal`
+  already holds `SELECT … FOR UPDATE` on the parent `bill_run` row for the whole
+  transaction (`findByIdForUpdate`), and a `customer_bill` belongs to exactly one
+  run, so all mutations to the run's bills are already serialized.
+- **Persist rate/category on `bill_run` (not just version)** — the spec stamps
+  only `ref_tax_rate_version` for provenance (one version per run, already
+  uniform); adding rate/category columns is a schema change beyond bm06's spec,
+  and a rate change is expected to accompany a version bump (operator
+  discipline). Revisit when a real tax-rate catalog lands.
+- **contact-manager add-form Save button token** — out of bm06 scope; the Save is
+  a shared confirm control (CTA) used by both add and edit via one form
+  component, and the "add-new → primary" rule (commit c186385) applies to the
+  reveal trigger ("Add contact", already `--action-primary-bg`), not the in-form
+  Save. The requested add-vs-edit asymmetry has no design-doc basis.
+- **activate-offering CTA comment** — out of bm06 scope; the referenced
+  `ui-context-phase2` is stale, but the current `prodmgmt-ui-context.md` actually
+  reserves `--action-cta-bg` for "New offering" and marks Activate as quiet, so
+  merely rewording the comment while preserving its "accent reserved for this
+  confirm" claim would perpetuate a statement the current doc contradicts — a
+  product design decision, not a comment tweak.
+
+### Second round (high-effort recall review of the bm06 diff + GST rename)
+
+- **`replaceForBill`'s DELETE now carries the finalization latch too** — its
+  DELETE previously keyed only on `(ref_customer_bill_id, period_partition)`
+  while its INSERT and `recomputeTotals` both guarded `ref_inv_document_id IS
+  NULL`. Added an `EXISTS` guard on the parent bill so the DELETE cannot wipe a
+  posted bill's tax items either — the write is now self-protecting (enforces
+  Inv. #4 even if a future caller passes a posted bill's id), not reliant on the
+  caller having pre-filtered via `findUnpostedBill`.
+- **`customerBillTaxItemRepository.listForRun` joins on the full composite key**
+  — the `customer_bill_tax_item` → `customer_bill` join now matches
+  `(customer_bill_id, period_partition)`, not just the id, so Postgres can prune
+  both partitioned tables to the run's period instead of scanning all 84 monthly
+  partitions (correctness was already fine — ids are sequence-unique — this is
+  partition-pruning + composite-key consistency).
+- **Empty `BILLRUN_TAX_RATE` no longer silently means 0%** — `z.coerce.number("")`
+  is `0`, so a present-but-blank `BILLRUN_TAX_RATE=` would have taxed every bill
+  at 0% instead of applying the `8` default. Wrapped in `z.preprocess` mapping
+  `"" → undefined` so the default applies; a new config test locks it.
+- Verified-and-dropped (no change): the `Promise.all` of two reads inside the
+  `repeatable read` transaction is **safe** — the driver is postgres.js (not
+  node-postgres), whose reserved `begin` connection pipelines concurrent queries;
+  drizzle awaits `setTransaction` before the callback, so both reads share one
+  snapshot. The `z.coerce` 2-dp `refine` tolerance (`1e-9`) is safe (FP error for
+  0–100 two-decimal values is ~1e-13). The index-based React key on tax lines has
+  no observable effect (static server-rendered list, no per-item state).
+
+`typecheck`/`lint`/`format:check` clean; the 5 bm06 test files pass (75 tests).
+
+## Post-review hardening (bm07)
+
+Fixes from a high-effort code review of the bm07 diff:
+
+- **Errors read is deterministic** — `billRunAccountRepository.listErrorsForRun`'s
+  `DISTINCT ON (account)` gained a `desc(bill_run_account_stage_id)` tiebreaker
+  after `desc(attempt)`: an account can carry HARD stage rows on two stages at
+  the same caller-supplied `attempt`, and the sequence-monotonic id now picks the
+  last-recorded failure instead of an arbitrary one (the Errors tab no longer
+  flips stage/code between identical reads).
+- **A SOFT verification finding no longer stamps a PROCESSED account** —
+  `handleStageSignal` now stamps `bill_run_account.error_code`/`error_detail`
+  only on a genuine FAILURE outcome (`effective.status === 'FAILED'` — HARD
+  terminal / INFRA transient); a DONE/SKIPPED outcome clears them. A
+  `verification` SOFT *finding* lives on the stage row (its intended surface), so
+  a successfully-`PROCESSED` account never carries a stale, contradictory
+  `NON_POSITIVE_TOTAL` code. (A caller-signalled `FAILED`+SOFT on a pass-through
+  stage still records its diagnostics, unchanged.)
+- **The Uncharged recovery link no longer dead-ends** — `/accounts/transactions`
+  is guarded by `accounts_transactions:READ`, which a `billrun_view`-only
+  principal (the Billing Viewer role) lacks. `BillRunDetailPage` now resolves
+  `canRecover = meetsLevel(permissionMap[accounts_transactions], READ)` and
+  threads it through `RunDetailTabs` → `UnchargedTable`; the "Manual DBN/ADJ"
+  affordance renders as a plain hint (not a `/no-access` link) when the viewer
+  can't reach Transactions (show/hide only — the route still re-checks
+  server-side).
+- **CSV export mechanics de-duplicated** — extracted `lib/csv.ts` `buildCsv(header,
+  rows)` (header + rows → `csvField`-escaped, CRLF, trailing newline), now used by
+  both `export-uncharged`/`export-runs` actions; and `lib/download.ts`
+  (`downloadCsv`/`triggerBlobDownload`) collapsing the hand-rolled Blob-download
+  dance previously copy-pasted across the two billing export buttons **and**
+  `components/accounts/journal-export-button.tsx`. The audit-log repository's
+  `findByTargetId` (bm07) and `findFiltered` now share one `AUDIT_ROW_COLUMNS`
+  projection + `toAuditLogRow` mapper (no drift between the platform audit page
+  and the run Audit tab).
+
+Skipped (verified not worth the churn):
+
+- **`verifyAccount`'s bill read runs before the idempotency-latch insert** — the
+  stage row's recorded status/error IS the app-computed outcome, so the effect
+  must be computed before the insert; deferring it would either violate the
+  insert-first latch (architecture Inv. #5) or require the pre-existence check
+  the invariant forbids. Matches the pre-existing `validateAccount` shape; the
+  wasted read only occurs on a replayed signal (one indexed SELECT).
+- **`listExcludedForRun` joins `bill_run` for the run-constant window** — a single
+  in-query join (not per-row I/O); the per-row window is spec-mandated (the
+  Uncharged read "returns the uncharged window (run period)") and keeps the read
+  self-contained for both the page and the export action call sites. Threading
+  the period from two callers to drop one cheap join is not a net simplification.
+
+`typecheck`/`lint`/`format:check` clean; the bm07 + touched audit/accounts test
+files pass (31 files / 217 tests in the slice).
+
 ## Next Up
 
-- **bm06+** — Taxation (`customer_bill_tax_item`, real `tax_total`/
-  `total_amount`) and Verification (exceptions/findings) replace bm04's
-  record-and-advance pass-through for the remaining two stages. The
-  remaining run-detail tabs (Uncharged, Errors, Audit) land with the unit
-  that gives them real data; the Uncharged tab reading `EXCLUDED` rows lands
-  in bm07 per the original plan.
+- **bm08+** — Rerun (audit-first, invalidate later stages, re-derive the trial
+  bill) then Approve & Post (four-eyes money gate, per-account INV posting). The
+  Errors tab's "Rerun these accounts" affordance (inert in bm07) wires to the
+  bm08 rerun action; the Uncharged indicative value stays "—" until a rating
+  source exists.
 
 ## Open Questions
 

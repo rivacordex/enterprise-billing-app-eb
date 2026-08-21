@@ -45,7 +45,7 @@ export default async function ManageCustomerSearchPage({
         <div className="flex flex-col items-end gap-1">
           <Link
             href="/customers/manage/new"
-            className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-cta-bg)] px-3 py-2 text-body-sm font-semibold text-white"
+            className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-primary-bg)] px-3 py-2 text-body-sm font-semibold text-white hover:bg-[color:var(--action-primary-bg-hover)]"
           >
             <Plus size={16} aria-hidden />
             Add new customer

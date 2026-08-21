@@ -295,7 +295,7 @@ export function NewCustomerForm(): React.JSX.Element {
         type="submit"
         disabled={isSubmitting}
         className={cn(
-          "bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90",
+          "bg-[color:var(--action-primary-bg)] text-white hover:bg-[color:var(--action-primary-bg-hover)]",
           hasWarning &&
             "ring-2 ring-[color:var(--color-warning-500)] ring-offset-2",
         )}

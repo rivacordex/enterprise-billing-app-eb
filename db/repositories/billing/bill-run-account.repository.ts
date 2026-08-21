@@ -1,9 +1,12 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import type { BillRunAccountInsert } from "@/db/schema/billing/bill-run-account";
-import type { AccountStatus } from "@/types/billing";
+import { billRunAccountStage } from "@/db/schema/billing/bill-run-account-stage";
+import { billRun } from "@/db/schema/billing/bill-run";
+import { billingAccount } from "@/db/schema/billing/accounts";
+import type { AccountStatus, ErrorClass, Stage } from "@/types/billing";
 
 // bm03-spec §Design/§6/§7 — the scoping snapshot write: one INSERT of every
 // row (`PENDING` + `EXCLUDED`) built by `scopeAccounts`, inside the trigger
@@ -93,5 +96,116 @@ export const billRunAccountRepository = {
       .where(eq(billRunAccount.refBillRunId, billRunId))
       .orderBy(billRunAccount.refBillingAccountId);
     return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
+  },
+
+  // bm07-spec §Design/§2 — the Uncharged tab read: the run's deliberately-not-
+  // billed accounts (`status = 'EXCLUDED'`, a scoping-time partial-period
+  // exclusion), joined to the account name/financial-account (for the deep
+  // link) and the run period (the uncharged window). No money — the indicative
+  // value has no source in v1. Ordered by account name for a stable list.
+  async listExcludedForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<
+    {
+      billingAccountId: string;
+      financialAccountId: string;
+      accountName: string;
+      reason: string | null;
+      windowStart: string;
+      windowEnd: string;
+    }[]
+  > {
+    return db
+      .select({
+        billingAccountId: billRunAccount.refBillingAccountId,
+        financialAccountId: billingAccount.refFinancialAccountId,
+        accountName: billingAccount.name,
+        reason: billRunAccount.errorCode,
+        windowStart: billRun.periodStart,
+        windowEnd: billRun.periodEnd,
+      })
+      .from(billRunAccount)
+      .innerJoin(
+        billingAccount,
+        eq(billRunAccount.refBillingAccountId, billingAccount.billingAccountId),
+      )
+      .innerJoin(billRun, eq(billRunAccount.refBillRunId, billRun.billRunId))
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          eq(billRunAccount.status, "EXCLUDED"),
+        ),
+      )
+      .orderBy(billingAccount.name);
+  },
+
+  // bm07-spec §Design/§2 — the Errors tab read: the run's blocking failures
+  // (`status = 'PROCESSING_FAILED'`), each joined to its latest-attempt `HARD`
+  // `bill_run_account_stage` row (the stage/code/detail that blocked it).
+  // `DISTINCT ON (account) ORDER BY ... attempt DESC, stage_id DESC` picks the
+  // most recent HARD row Postgres-side — the `stage_id DESC` tiebreaker keeps
+  // the pick deterministic when an account has HARD rows on two stages at the
+  // same `attempt` number (the per-stage attempt counters can collide); the
+  // sequence-assigned `bill_run_account_stage_id` is monotonic, so the highest
+  // id is the last-recorded failure. The inner join to a HARD stage row keeps
+  // only genuinely-blocked accounts.
+  async listErrorsForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<
+    {
+      billingAccountId: string;
+      accountName: string;
+      stage: Stage;
+      errorClass: ErrorClass;
+      errorCode: string | null;
+      errorDetail: string | null;
+    }[]
+  > {
+    const rows = await db
+      .selectDistinctOn([billRunAccountStage.refBillingAccountId], {
+        billingAccountId: billRunAccountStage.refBillingAccountId,
+        accountName: billingAccount.name,
+        stage: billRunAccountStage.stage,
+        errorClass: billRunAccountStage.errorClass,
+        errorCode: billRunAccountStage.errorCode,
+        errorDetail: billRunAccountStage.errorDetail,
+      })
+      .from(billRunAccountStage)
+      .innerJoin(
+        billRunAccount,
+        and(
+          eq(billRunAccountStage.refBillRunId, billRunAccount.refBillRunId),
+          eq(
+            billRunAccountStage.refBillingAccountId,
+            billRunAccount.refBillingAccountId,
+          ),
+        ),
+      )
+      .innerJoin(
+        billingAccount,
+        eq(
+          billRunAccountStage.refBillingAccountId,
+          billingAccount.billingAccountId,
+        ),
+      )
+      .where(
+        and(
+          eq(billRunAccountStage.refBillRunId, billRunId),
+          eq(billRunAccountStage.errorClass, "HARD"),
+          eq(billRunAccount.status, "PROCESSING_FAILED"),
+        ),
+      )
+      .orderBy(
+        billRunAccountStage.refBillingAccountId,
+        desc(billRunAccountStage.attempt),
+        desc(billRunAccountStage.billRunAccountStageId),
+      );
+    return rows.map((r) => ({
+      ...r,
+      stage: r.stage as Stage,
+      errorClass: r.errorClass as ErrorClass,
+    }));
   },
 };

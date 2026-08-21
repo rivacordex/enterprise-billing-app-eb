@@ -6,6 +6,8 @@ import { isUniqueViolation } from "@/lib/db-errors";
 import { conflict, notFound } from "@/lib/errors";
 import { aggregateBill } from "@/services/billing/aggregate-bill";
 import { collectClaim } from "@/services/billing/collect-claim";
+import { taxBill } from "@/services/billing/taxation";
+import { verifyAccount } from "@/services/billing/verify";
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { validateAccount } from "@/services/billing/validate-account";
 import { computeRunStatus } from "@/services/billing/compute-run-status";
@@ -107,20 +109,24 @@ export async function handleStageSignal(
 
     // The Validation stage's outcome is computed by the app (§31); the
     // Collection/Claim stage is a v1 no-op that always records DONE (bm05-spec
-    // §Design §2 — there is no `rating` table to claim from). Every other
-    // stage records exactly what the caller signalled (record-and-advance
-    // pass-through; Taxation/Verification's real effects land in bm06-07).
+    // §Design §2 — there is no `rating` table to claim from); the Verification
+    // stage records DONE plus an optional SOFT backstop finding (bm07-spec
+    // §Design §1 — it never fails/blocks the run). Every other stage records
+    // exactly what the caller signalled (record-and-advance pass-through;
+    // Taxation's write side-effect lands below).
     const effective =
       input.stage === "validation"
         ? await validateAccount(tx, input.banId)
         : input.stage === "collection"
           ? collectClaim()
-          : {
-              status: input.status,
-              errorClass: input.errorClass ?? null,
-              errorCode: input.errorCode ?? null,
-              errorDetail: input.errorDetail ?? null,
-            };
+          : input.stage === "verification"
+            ? await verifyAccount(tx, run, input.banId)
+            : {
+                status: input.status,
+                errorClass: input.errorClass ?? null,
+                errorCode: input.errorCode ?? null,
+                errorDetail: input.errorDetail ?? null,
+              };
 
     try {
       await billRunAccountStageRepository.insertStageRow(tx, {
@@ -182,6 +188,22 @@ export async function handleStageSignal(
       await aggregateBill(tx, run, input.banId);
     }
 
+    // bm06-spec §Design/§Implementation §3 — Taxation is the same side-effect
+    // shape as Aggregation (not an outcome override): a DONE taxation signal
+    // taxes the account's trial bill inside this same transaction, guarded on
+    // the account being in progress. If the bill has not been aggregated yet
+    // (an out-of-order signal), `taxBill` throws a conflict so this whole
+    // transaction rolls back — the taxation stage row is never committed, and
+    // the engine retries after Aggregation rather than the account being left
+    // permanently "taxed" with a zero tax.
+    if (
+      input.stage === "taxation" &&
+      effective.status === "DONE" &&
+      currentAccount.status === "PROCESSING"
+    ) {
+      await taxBill(tx, run, input.banId);
+    }
+
     const newAccountStatus = advanceAccountStatus(
       currentAccount.status,
       input.stage,
@@ -190,19 +212,23 @@ export async function handleStageSignal(
     // Stamp the account-level diagnostics from this signal UNLESS the account
     // was already terminal before it (`PROCESSING_FAILED`/`EXCLUDED`): a stray
     // later signal must not overwrite or wipe the diagnostics that explain why
-    // it failed. A non-terminal account records the signal's error (INFRA/SOFT
-    // transients included, so a stuck-in-PROCESSING account is not blank) and
-    // clears them to null on a clean advance.
+    // it failed. For a non-terminal account, the account error mirrors a genuine
+    // FAILURE outcome only (a HARD terminal or an INFRA transient, so a
+    // stuck-in-PROCESSING account is not blank); a DONE/SKIPPED outcome clears
+    // the account error — including a `verification` SOFT *finding*, which lives
+    // on the stage row (bm07-spec §1), not on the account, so a successfully
+    // PROCESSED account never carries a stale, contradictory error code.
     const wasTerminal =
       currentAccount.status === "PROCESSING_FAILED" ||
       currentAccount.status === "EXCLUDED";
+    const isFailure = effective.status === "FAILED";
     await billRunAccountRepository.updateStatus(tx, input.runId, input.banId, {
       status: newAccountStatus,
       ...(wasTerminal
         ? {}
         : {
-            errorCode: effective.errorCode,
-            errorDetail: effective.errorDetail,
+            errorCode: isFailure ? effective.errorCode : null,
+            errorDetail: isFailure ? effective.errorDetail : null,
           }),
     });
 

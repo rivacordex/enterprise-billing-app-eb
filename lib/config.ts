@@ -94,6 +94,34 @@ const envSchema = z.object({
   // without it; absence means `requireServiceToken` rejects every M2M call
   // with 401 (fail-closed), never a bypass.
   BILLRUN_APP_TOKEN: z.string().min(32).optional(),
+  // bm06-spec §Design/§Implementation §2. The v1 taxation model is a single
+  // CONFIGURED rate — there is NO tax-rate catalog table in billing (deferred
+  // with the rating engine); `bill_run.ref_tax_rate_version` is stamped once
+  // per run from `BILLRUN_TAX_VERSION` for provenance. The rate parameterises a
+  // SQL `numeric` expression (`round(subtotal * rate / 100, 2)`), never JS
+  // float arithmetic (code-standards §2.3). All three carry the GST defaults so
+  // every environment boots without them.
+  // At most two decimal places — the rate is persisted/cast as `numeric(5,2)`
+  // (`customer_bill_tax_item.tax_rate`), so a higher-precision value would be
+  // silently rounded on store and no longer match what the amount was computed
+  // from. Reject at boot instead (fail-fast). An EMPTY value (`BILLRUN_TAX_RATE=`
+  // — the var present but blank) is treated as unset so the `8` default applies,
+  // NOT coerced to `0`: `z.coerce.number("")` is `0`, which would silently tax
+  // every bill at 0% instead of the intended default.
+  BILLRUN_TAX_RATE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce
+      .number()
+      .min(0)
+      .max(100)
+      .refine(
+        (n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-9,
+        "BILLRUN_TAX_RATE must have at most two decimal places.",
+      )
+      .default(8),
+  ),
+  BILLRUN_TAX_VERSION: z.string().default("GST-2026"),
+  BILLRUN_TAX_CATEGORY: z.string().default("GST"),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -120,6 +148,9 @@ function loadConfig(): Config {
     BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
     BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
     BILLRUN_APP_TOKEN: process.env.BILLRUN_APP_TOKEN,
+    BILLRUN_TAX_RATE: process.env.BILLRUN_TAX_RATE,
+    BILLRUN_TAX_VERSION: process.env.BILLRUN_TAX_VERSION,
+    BILLRUN_TAX_CATEGORY: process.env.BILLRUN_TAX_CATEGORY,
   });
 
   if (!parsed.success) {
@@ -172,6 +203,17 @@ export const billRunEngineConfig = {
 
 export const isBillRunEngineConfigured: boolean =
   !!billRunEngineConfig.url && !!billRunEngineConfig.auth;
+
+// bm06-spec §Design/§Implementation §2-3. The v1 taxation parameters — a single
+// configured GST rate/version/category, no catalog table. `services/billing/
+// taxation.ts` reads this frozen accessor (never `process.env`); the rate is
+// applied inside a SQL `numeric` expression, so the parsed number only
+// parameterises the query.
+export const billRunTaxConfig = {
+  rate: config.BILLRUN_TAX_RATE,
+  version: config.BILLRUN_TAX_VERSION,
+  category: config.BILLRUN_TAX_CATEGORY,
+} as const;
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

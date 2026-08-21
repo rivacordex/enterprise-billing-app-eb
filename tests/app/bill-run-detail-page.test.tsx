@@ -21,8 +21,18 @@ vi.mock("@/services/billing/read/get-stage-timeline", () => ({
 vi.mock("@/services/billing/read/list-account-bills", () => ({
   listAccountBills: vi.fn(),
 }));
+vi.mock("@/services/billing/read/list-uncharged", () => ({
+  listUncharged: vi.fn(),
+}));
+vi.mock("@/services/billing/read/list-errors", () => ({
+  listErrors: vi.fn(),
+}));
+vi.mock("@/services/billing/read/list-run-audit", () => ({
+  listRunAudit: vi.fn(),
+}));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn(),
+  getAppTimezone: vi.fn(),
 }));
 vi.mock("@/lib/config", () => ({
   get stubDataMode() {
@@ -42,13 +52,23 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
 import { listAccountBills } from "@/services/billing/read/list-account-bills";
-import { getAppLocale } from "@/services/system-config/app-config-read.service";
+import { listUncharged } from "@/services/billing/read/list-uncharged";
+import { listErrors } from "@/services/billing/read/list-errors";
+import { listRunAudit } from "@/services/billing/read/list-run-audit";
+import {
+  getAppLocale,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockGetRunDetail = vi.mocked(getRunDetail);
 const mockGetStageTimeline = vi.mocked(getStageTimeline);
 const mockListAccountBills = vi.mocked(listAccountBills);
+const mockListUncharged = vi.mocked(listUncharged);
+const mockListErrors = vi.mocked(listErrors);
+const mockListRunAudit = vi.mocked(listRunAudit);
 const mockGetAppLocale = vi.mocked(getAppLocale);
+const mockGetAppTimezone = vi.mocked(getAppTimezone);
 
 function redirectError(target: string): Error & { digest: string } {
   const error = new Error("NEXT_REDIRECT") as Error & { digest: string };
@@ -86,7 +106,11 @@ beforeEach(() => {
     summary: { total: 0, processed: 0, processingFailed: 0, excluded: 0 },
   });
   mockListAccountBills.mockResolvedValue([]);
+  mockListUncharged.mockResolvedValue([]);
+  mockListErrors.mockResolvedValue([]);
+  mockListRunAudit.mockResolvedValue([]);
   mockGetAppLocale.mockResolvedValue("en-MY");
+  mockGetAppTimezone.mockReturnValue("UTC");
 });
 
 describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
@@ -139,6 +163,30 @@ describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
 
     await BillRunDetailPage(props("BRN00000001", { tab: "customers" }));
     expect(mockListAccountBills).toHaveBeenCalledWith("BRN00000001");
+  });
+
+  it("only reads uncharged accounts for the uncharged tab (bm07)", async () => {
+    await BillRunDetailPage(props());
+    expect(mockListUncharged).not.toHaveBeenCalled();
+
+    await BillRunDetailPage(props("BRN00000001", { tab: "uncharged" }));
+    expect(mockListUncharged).toHaveBeenCalledWith("BRN00000001");
+  });
+
+  it("only reads errors for the errors tab (bm07)", async () => {
+    await BillRunDetailPage(props());
+    expect(mockListErrors).not.toHaveBeenCalled();
+
+    await BillRunDetailPage(props("BRN00000001", { tab: "errors" }));
+    expect(mockListErrors).toHaveBeenCalledWith("BRN00000001");
+  });
+
+  it("only reads the run audit trail for the audit tab (bm07)", async () => {
+    await BillRunDetailPage(props());
+    expect(mockListRunAudit).not.toHaveBeenCalled();
+
+    await BillRunDetailPage(props("BRN00000001", { tab: "audit" }));
+    expect(mockListRunAudit).toHaveBeenCalledWith("BRN00000001");
   });
 
   it("shows StubDataBanner when STUB_DATA_MODE is on", async () => {

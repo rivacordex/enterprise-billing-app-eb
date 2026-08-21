@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { triggerBlobDownload } from "@/lib/download";
+
 export interface JournalExportButtonProps {
   period: string;
   currency: string;
@@ -52,15 +54,7 @@ export function JournalExportButton({
       }
 
       const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `gl-journal-${period}-${currency}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      // Defer revocation so the browser can initiate the download first.
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      triggerBlobDownload(blob, `gl-journal-${period}-${currency}.csv`);
     } catch {
       setError("Export failed. Please try again.");
     } finally {

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { exportRunsAction } from "@/actions/billing/export-runs.action";
+import { downloadCsv } from "@/lib/download";
 
 // bm02-spec §6/§7. Client control that calls the CSV export Server Action for
 // the currently-filtered view and triggers a `Blob` download — no Route
@@ -37,18 +38,7 @@ export function ExportRunsButton({
         return;
       }
 
-      const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = result.filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      // Defer revocation so the browser can initiate the download first — a
-      // synchronous revoke can cancel a larger download (matches
-      // components/accounts/journal-export-button.tsx).
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      downloadCsv(result.csv, result.filename);
     } catch {
       toast.error(
         "Something went wrong exporting bill runs. Please try again.",

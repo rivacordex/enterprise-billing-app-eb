@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { csvField } from "@/lib/csv";
+import { buildCsv, csvField } from "@/lib/csv";
 
 // Shared CSV field escaping (RFC-4180 quoting + formula-injection prefix).
 describe("csvField", () => {
@@ -28,5 +28,28 @@ describe("csvField", () => {
   it("prefixes AND quotes a value starting with CR (a quote-trigger)", () => {
     // Formula-neutralized ('-prefixed) then RFC-4180 quoted for the \r.
     expect(csvField("\rx")).toBe(`"'\rx"`);
+  });
+});
+
+// Shared header + rows CSV assembler used by the export server actions.
+describe("buildCsv", () => {
+  it("joins header + rows with CRLF and a trailing newline", () => {
+    const csv = buildCsv(
+      ["A", "B"],
+      [
+        ["1", "2"],
+        ["3", "4"],
+      ],
+    );
+    expect(csv).toBe("A,B\r\n1,2\r\n3,4\r\n");
+  });
+
+  it("escapes every field through csvField (commas + formula triggers)", () => {
+    const csv = buildCsv(["Name", "Note"], [["a,b", "=CMD()"]]);
+    expect(csv).toBe(`Name,Note\r\n"a,b",'=CMD()\r\n`);
+  });
+
+  it("emits a header-only document (with trailing newline) for no rows", () => {
+    expect(buildCsv(["A", "B"], [])).toBe("A,B\r\n");
   });
 });

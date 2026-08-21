@@ -146,9 +146,8 @@ export function ActivateOfferingDialog({
           >
             Cancel
           </Button>
-          {/* ui-context-phase2's "Activate confirmation" section: accent-
-              filled — the one place besides "New offering" an accent button
-              may appear, since the two never render in the same view. */}
+          {/* ui-context-phase2's "Activate confirmation" section: the
+              featured-CTA accent is reserved for this one confirm action. */}
           <Button
             type="button"
             disabled={isSubmitting}
