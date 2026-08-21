@@ -43,6 +43,7 @@ export interface RunDetailTabsProps {
   errors: ErrorRow[];
   audit: AuditLogRow[];
   canRecover: boolean;
+  canOperate: boolean;
   locale: string;
   timezone: string;
 }
@@ -56,6 +57,7 @@ export function RunDetailTabs({
   errors,
   audit,
   canRecover,
+  canOperate,
   locale,
   timezone,
 }: RunDetailTabsProps): React.JSX.Element {
@@ -95,7 +97,7 @@ export function RunDetailTabs({
           canRecover={canRecover}
         />
       ) : activeTab === "errors" ? (
-        <ErrorsTable rows={errors} />
+        <ErrorsTable runId={runId} rows={errors} canOperate={canOperate} />
       ) : (
         <AuditTable rows={audit} timezone={timezone} />
       )}

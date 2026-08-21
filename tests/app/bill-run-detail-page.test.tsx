@@ -42,6 +42,11 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/billing/run-detail-tabs", () => ({
   RunDetailTabs: () => <div data-testid="run-detail-tabs" />,
 }));
+// bm08 — the header's run-level RerunDialog is a client island whose action
+// pulls the db/service graph; stub it so this page test stays framework-only.
+vi.mock("@/components/billing/rerun-dialog", () => ({
+  RerunDialog: () => <div data-testid="rerun-dialog" />,
+}));
 vi.mock("@/components/billing/stub-data-banner", () => ({
   StubDataBanner: () => <div data-testid="stub-banner" />,
 }));

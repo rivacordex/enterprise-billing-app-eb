@@ -23,3 +23,21 @@ export function computeRunStatus(
   );
   return allTerminal ? "PROCESSED" : null;
 }
+
+// The `ban_count`/`rated_count`/`failed_count` cache derivation (architecture
+// Inv. #12: any stored counter must equal the value derived from the account
+// grain). One helper so every write path — the stage-signal recompute
+// (`handle-stage-signal.ts`) and the rerun loop-back (`rerun-run.ts`) — derives
+// the cache identically; a new terminal `AccountStatus` is handled in one place.
+export function computeRunCounters(accountStatuses: readonly AccountStatus[]): {
+  banCount: number;
+  ratedCount: number;
+  failedCount: number;
+} {
+  return {
+    banCount: accountStatuses.length,
+    ratedCount: accountStatuses.filter((s) => s === "PROCESSED").length,
+    failedCount: accountStatuses.filter((s) => s === "PROCESSING_FAILED")
+      .length,
+  };
+}

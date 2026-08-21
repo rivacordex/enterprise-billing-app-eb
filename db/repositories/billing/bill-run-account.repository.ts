@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
@@ -96,6 +96,58 @@ export const billRunAccountRepository = {
       .where(eq(billRunAccount.refBillRunId, billRunId))
       .orderBy(billRunAccount.refBillingAccountId);
     return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
+  },
+
+  // bm08-spec §Design/§Implementation §1 — the rerun candidate read: every
+  // account scoped into the run with its current status and attempt counter, so
+  // the rerun service can resolve the eligible set (drop `EXCLUDED` and, via a
+  // separate posted-bill check, any finalized account) and compute the next
+  // attempt number. Ordered by account id for a stable, deterministic set.
+  async listForRerun(
+    tx: Database,
+    billRunId: string,
+  ): Promise<
+    { billingAccountId: string; status: AccountStatus; attemptCount: number }[]
+  > {
+    const rows = await tx
+      .select({
+        billingAccountId: billRunAccount.refBillingAccountId,
+        status: billRunAccount.status,
+        attemptCount: billRunAccount.attemptCount,
+      })
+      .from(billRunAccount)
+      .where(eq(billRunAccount.refBillRunId, billRunId))
+      .orderBy(billRunAccount.refBillingAccountId);
+    return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
+  },
+
+  // bm08-spec §Design/§Implementation §1 (step 2) — the rerun advance: bump
+  // `attempt_count` (so the attempt-keyed `bill_run_account_stage` latch makes
+  // every new-attempt signal land on a fresh row from the chosen stage onward,
+  // never colliding with the prior attempt's history) and drop the selected
+  // accounts back to `PROCESSING`, clearing any prior failure diagnostics.
+  // Scoped strictly to the passed account ids — no other account is touched.
+  async incrementAttemptForRerun(
+    tx: Database,
+    billRunId: string,
+    billingAccountIds: string[],
+  ): Promise<void> {
+    if (billingAccountIds.length === 0) return;
+    await tx
+      .update(billRunAccount)
+      .set({
+        attemptCount: sql`${billRunAccount.attemptCount} + 1`,
+        status: "PROCESSING",
+        errorCode: null,
+        errorDetail: null,
+        lastProcessedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          inArray(billRunAccount.refBillingAccountId, billingAccountIds),
+        ),
+      );
   },
 
   // bm07-spec §Design/§2 — the Uncharged tab read: the run's deliberately-not-
