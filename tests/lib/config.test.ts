@@ -21,6 +21,9 @@ const ENV_KEYS = [
   "BILLRUN_ENGINE_URL",
   "BILLRUN_ENGINE_AUTH",
   "BILLRUN_APP_TOKEN",
+  "BILLRUN_TAX_RATE",
+  "BILLRUN_TAX_VERSION",
+  "BILLRUN_TAX_CATEGORY",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -74,6 +77,9 @@ describe("config", () => {
       PASSWORD_SPECIAL_CHARS: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
       APP_TIMEZONE: "UTC",
       STUB_DATA_MODE: false,
+      BILLRUN_TAX_RATE: 8,
+      BILLRUN_TAX_VERSION: "SST-2026",
+      BILLRUN_TAX_CATEGORY: "SST",
     });
   });
 
@@ -396,6 +402,44 @@ describe("BILLRUN_APP_TOKEN (bm04)", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BILLRUN_APP_TOKEN: "too-short",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("billRunTaxConfig (bm06)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("applies the SST defaults when all three vars are absent", async () => {
+    const { billRunTaxConfig } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(billRunTaxConfig).toEqual({
+      rate: 8,
+      version: "SST-2026",
+      category: "SST",
+    });
+  });
+
+  it("reads a configured rate/version/category", async () => {
+    const { billRunTaxConfig } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_TAX_RATE: "6.00",
+      BILLRUN_TAX_VERSION: "SST-2027",
+      BILLRUN_TAX_CATEGORY: "GST",
+    });
+    expect(billRunTaxConfig).toEqual({
+      rate: 6,
+      version: "SST-2027",
+      category: "GST",
+    });
+  });
+
+  it("fails loud when BILLRUN_TAX_RATE is out of the 0–100 range", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_TAX_RATE: "150",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });

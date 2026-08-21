@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   inArray,
+  isNull,
   notInArray,
   sql,
 } from "drizzle-orm";
@@ -253,6 +254,27 @@ export const billRunRepository = {
         failedCount: data.failedCount,
       })
       .where(eq(billRun.billRunId, billRunId));
+  },
+
+  // bm06-spec §Design/§Implementation §2-3. Stamp the run's tax-rate version
+  // ONCE, for provenance (there is no tax-rate catalog table in v1). The
+  // `IS NULL` guard makes it idempotent and uniform across the run's bills:
+  // the first taxation signal writes it; every later one is a no-op, so a
+  // mid-run config change can never split a run across two versions.
+  async stampTaxRateVersion(
+    tx: Database,
+    billRunId: string,
+    version: string,
+  ): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({ refTaxRateVersion: version })
+      .where(
+        and(
+          eq(billRun.billRunId, billRunId),
+          isNull(billRun.refTaxRateVersion),
+        ),
+      );
   },
 
   // bm04-spec §Implementation §8. The status-push handler's execution-failure

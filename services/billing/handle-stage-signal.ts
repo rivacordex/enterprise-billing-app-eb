@@ -6,6 +6,7 @@ import { isUniqueViolation } from "@/lib/db-errors";
 import { conflict, notFound } from "@/lib/errors";
 import { aggregateBill } from "@/services/billing/aggregate-bill";
 import { collectClaim } from "@/services/billing/collect-claim";
+import { taxBill } from "@/services/billing/taxation";
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { validateAccount } from "@/services/billing/validate-account";
 import { computeRunStatus } from "@/services/billing/compute-run-status";
@@ -180,6 +181,20 @@ export async function handleStageSignal(
       currentAccount.status === "PROCESSING"
     ) {
       await aggregateBill(tx, run, input.banId);
+    }
+
+    // bm06-spec §Design/§Implementation §3 — Taxation is the same side-effect
+    // shape as Aggregation (not an outcome override): a DONE taxation signal
+    // taxes the account's trial bill inside this same transaction, guarded on
+    // the account being in progress. `taxBill` is itself a no-op when the
+    // account has no unposted bill (aggregation hasn't run), so an out-of-order
+    // taxation signal can never crash or tax a posted/absent bill.
+    if (
+      input.stage === "taxation" &&
+      effective.status === "DONE" &&
+      currentAccount.status === "PROCESSING"
+    ) {
+      await taxBill(tx, run, input.banId);
     }
 
     const newAccountStatus = advanceAccountStatus(

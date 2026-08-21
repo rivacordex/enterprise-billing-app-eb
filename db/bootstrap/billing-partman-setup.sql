@@ -97,8 +97,32 @@ SET retention            = '7 years',
 WHERE parent_table = 'billing.customer_bill';
 --> statement-breakpoint
 
+-- bm06-spec §Implementation §1. Fourth parent registration in this same
+-- bootstrap file: billing.customer_bill_tax_item (created by
+-- 0030_customer_bill_tax_item.sql). Same monthly/7-year-detach shape as the
+-- three parents above — a tax item is financially significant and shares its
+-- parent bill's retention window (the composite FK means both partitions must
+-- survive together within the statutory life).
+SELECT partman.create_parent(
+  p_parent_table  := 'billing.customer_bill_tax_item',
+  p_control       := 'period_partition',
+  p_interval      := '1 month',
+  p_type          := 'range',
+  p_premake       := 4,
+  p_default_table := false
+);
+--> statement-breakpoint
+
+UPDATE partman.part_config
+SET retention            = '7 years',
+    retention_keep_table = true,
+    premake              = 4,
+    infinite_time_partitions = true
+WHERE parent_table = 'billing.customer_bill_tax_item';
+--> statement-breakpoint
+
 -- Materialise premake/forward partitions immediately on a fresh install
--- (covers all three parents registered above).
+-- (covers all four parents registered above).
 CALL partman.run_maintenance_proc();
 
 -- No second cron job: the audit-log-partman-maintenance job
