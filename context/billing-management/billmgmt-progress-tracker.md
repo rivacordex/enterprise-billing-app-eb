@@ -418,8 +418,10 @@ Update this file after every meaningful implementation change.
     `ExportUnchargedButton`.
   - Errors read/tab: `list-errors.ts` →
     `billRunAccountRepository.listErrorsForRun` (`DISTINCT ON (account)
-    ORDER BY attempt DESC` over `bill_run_account_stage` `error_class = 'HARD'`
-    inner-joined to the account `status = 'PROCESSING_FAILED'` + name).
+    ORDER BY attempt DESC, bill_run_account_stage_id DESC` — the sequence-
+    monotonic id is the tiebreaker for HARD rows sharing a top attempt — over
+    `bill_run_account_stage` `error_class = 'HARD'` inner-joined to the account
+    `status = 'PROCESSING_FAILED'` + name).
     `ErrorRow` (`types/billing.ts`); `errors-table.tsx` (`ErrorsTable`,
     destructive "blocking" treatment, `ErrorClassBadge` + stage/code/detail +
     an **inert "Rerun these accounts"** affordance — the action lands in bm08).
