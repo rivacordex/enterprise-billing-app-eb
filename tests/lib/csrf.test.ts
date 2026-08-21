@@ -52,4 +52,14 @@ describe("csrfTokensMatch", () => {
     expect(csrfTokensMatch(generateCsrfToken(), null)).toBe(false);
     expect(csrfTokensMatch("abc", "abcd")).toBe(false);
   });
+
+  it("rejects an equal code-unit-length pair that differs in UTF-8 byte length, without throwing", () => {
+    // "é" (U+00E9) is a single UTF-16 code unit like "a", so a `String.length`
+    // guard would treat them as equal-length and reach `timingSafeEqual`, which
+    // throws a RangeError on the 2-byte vs 1-byte buffers (a 500). The
+    // byte-length guard must reject cleanly instead.
+    expect("é".length).toBe("a".length);
+    expect(() => csrfTokensMatch("é", "a")).not.toThrow();
+    expect(csrfTokensMatch("é", "a")).toBe(false);
+  });
 });

@@ -14,7 +14,7 @@ Update this file after every meaningful implementation change.
   past `PENDING` to `PROCESSED`/`PROCESSING_FAILED` with the Workflow tab's live
   stage timeline, the trial `customer_bill` draft-bill generation
   (Collection/Aggregation) with the Customers & Bills tab, and Taxation
-  (`customer_bill_tax_item`, SQL-computed SST `tax_total`/`total_amount`). Next:
+  (`customer_bill_tax_item`, SQL-computed GST `tax_total`/`total_amount`). Next:
   bm07+ (Verification's real per-stage effect, the remaining run-detail tabs
   Uncharged/Errors/Audit, Rerun/Approve/Post).
 
@@ -347,8 +347,8 @@ Update this file after every meaningful implementation change.
     existing shared `run_maintenance_proc()` covers all four parents, no second
     cron job). Exported via the billing schema index.
   - Config: `BILLRUN_TAX_RATE` (`z.coerce.number().min(0).max(100).default(8)`),
-    `BILLRUN_TAX_VERSION` (`default("SST-2026")`), `BILLRUN_TAX_CATEGORY`
-    (`default("SST")`) added to `lib/config.ts` + `.env.example`, plus the frozen
+    `BILLRUN_TAX_VERSION` (`default("GST-2026")`), `BILLRUN_TAX_CATEGORY`
+    (`default("GST")`) added to `lib/config.ts` + `.env.example`, plus the frozen
     `billRunTaxConfig` accessor. **No tax-rate catalog table** — v1's tax model is
     this single configured rate (deferred with the rating engine). The rate only
     parameterises a SQL `numeric` expression, never JS float.
@@ -508,6 +508,98 @@ inventory reads (single-param SELECTs, empty-input already guarded).
   per `(run, ban, period)` UNIQUE, filtering to `trial` would skip a non-trial
   unposted row and then collide on `insertTrial`. The delete keys exactly on the
   UNIQUE + the `ref_inv_document_id IS NULL` latch, matching the bm05 spec.
+
+## Post-review hardening (bm06)
+
+Fixes from a code review of the bm06 diff (only still-valid issues; each verified
+against current code):
+
+- **Tax-item FK is `ON DELETE CASCADE`, not `RESTRICT`** — bm05's rerun-safe
+  trial re-derivation (`customerBillRepository.deleteTrial`) deletes the whole
+  unposted `customer_bill`; once a taxation pass had written
+  `customer_bill_tax_item` rows, a `RESTRICT` FK would block that delete and break
+  the rerun. CASCADE drops the stale items with the bill. Posted bills are never
+  deleted (`deleteTrial`'s `ref_inv_document_id IS NULL` guard), so a finalized
+  bill's items are never cascade-removed (Inv. #4). Changed in both the schema
+  and `0030` (not yet applied anywhere — edited in place, not a new migration).
+- **Out-of-order taxation is rejected, not silently recorded** — a `DONE`
+  `taxation` signal that arrives before Aggregation created the bill used to
+  record the stage row DONE and no-op, leaving the account permanently "taxed"
+  with zero tax. `taxBill` now throws `CONFLICT` when no unposted bill exists, so
+  the whole ingest transaction rolls back (the stage row is never committed) and
+  the engine retries after Aggregation. Replay safety is unaffected (a duplicate
+  is still caught by the idempotency-latch unique violation before `taxBill`
+  runs). (bm11 posting will refine null-bill handling to distinguish an
+  already-posted bill's late signal — an idempotent no-op — from a missing one.)
+- **`BILLRUN_TAX_RATE` rejects >2 decimal places** — the rate is cast/stored as
+  `numeric(5,2)`, so a value like `8.125` would be silently rounded on store and
+  no longer match the amount it was computed from. The config schema now fails
+  fast at boot on higher precision (0–100 bounds unchanged).
+- **Customers & Bills read uses one snapshot** — the bill totals and the tax
+  items are now read inside a single `repeatable read`, `read only` transaction,
+  so they can't straddle a concurrent taxation commit (a summary `tax_total` of
+  0.00 next to a just-inserted tax line). The concurrent-commit regression is a
+  DB-gated integration test (not runnable here — no local Postgres); a unit test
+  asserts both reads share one tx handle.
+
+Skipped (verified not still-valid or out of scope):
+
+- **`formatCurrency` `Number()` precision** — it is the single mandated platform
+  money formatter (code-standards §4.4); the actual bm06 values (synthetic stub
+  subtotals in the low thousands) never approach `Number`'s precision limit, and
+  the flagged `999999999999999.99` is not a value this system produces. A
+  decimal-safe formatter would be a platform-wide change to `lib/formatters.ts`
+  with all call sites, out of bm06's scope; forking a billing-only formatter
+  would violate the one-formatter rule.
+- **`FOR UPDATE` on the taxation bill lookup** — redundant: `handleStageSignal`
+  already holds `SELECT … FOR UPDATE` on the parent `bill_run` row for the whole
+  transaction (`findByIdForUpdate`), and a `customer_bill` belongs to exactly one
+  run, so all mutations to the run's bills are already serialized.
+- **Persist rate/category on `bill_run` (not just version)** — the spec stamps
+  only `ref_tax_rate_version` for provenance (one version per run, already
+  uniform); adding rate/category columns is a schema change beyond bm06's spec,
+  and a rate change is expected to accompany a version bump (operator
+  discipline). Revisit when a real tax-rate catalog lands.
+- **contact-manager add-form Save button token** — out of bm06 scope; the Save is
+  a shared confirm control (CTA) used by both add and edit via one form
+  component, and the "add-new → primary" rule (commit c186385) applies to the
+  reveal trigger ("Add contact", already `--action-primary-bg`), not the in-form
+  Save. The requested add-vs-edit asymmetry has no design-doc basis.
+- **activate-offering CTA comment** — out of bm06 scope; the referenced
+  `ui-context-phase2` is stale, but the current `prodmgmt-ui-context.md` actually
+  reserves `--action-cta-bg` for "New offering" and marks Activate as quiet, so
+  merely rewording the comment while preserving its "accent reserved for this
+  confirm" claim would perpetuate a statement the current doc contradicts — a
+  product design decision, not a comment tweak.
+
+### Second round (high-effort recall review of the bm06 diff + GST rename)
+
+- **`replaceForBill`'s DELETE now carries the finalization latch too** — its
+  DELETE previously keyed only on `(ref_customer_bill_id, period_partition)`
+  while its INSERT and `recomputeTotals` both guarded `ref_inv_document_id IS
+  NULL`. Added an `EXISTS` guard on the parent bill so the DELETE cannot wipe a
+  posted bill's tax items either — the write is now self-protecting (enforces
+  Inv. #4 even if a future caller passes a posted bill's id), not reliant on the
+  caller having pre-filtered via `findUnpostedBill`.
+- **`customerBillTaxItemRepository.listForRun` joins on the full composite key**
+  — the `customer_bill_tax_item` → `customer_bill` join now matches
+  `(customer_bill_id, period_partition)`, not just the id, so Postgres can prune
+  both partitioned tables to the run's period instead of scanning all 84 monthly
+  partitions (correctness was already fine — ids are sequence-unique — this is
+  partition-pruning + composite-key consistency).
+- **Empty `BILLRUN_TAX_RATE` no longer silently means 0%** — `z.coerce.number("")`
+  is `0`, so a present-but-blank `BILLRUN_TAX_RATE=` would have taxed every bill
+  at 0% instead of applying the `8` default. Wrapped in `z.preprocess` mapping
+  `"" → undefined` so the default applies; a new config test locks it.
+- Verified-and-dropped (no change): the `Promise.all` of two reads inside the
+  `repeatable read` transaction is **safe** — the driver is postgres.js (not
+  node-postgres), whose reserved `begin` connection pipelines concurrent queries;
+  drizzle awaits `setTransaction` before the callback, so both reads share one
+  snapshot. The `z.coerce` 2-dp `refine` tolerance (`1e-9`) is safe (FP error for
+  0–100 two-decimal values is ~1e-13). The index-based React key on tax lines has
+  no observable effect (static server-rendered list, no per-item state).
+
+`typecheck`/`lint`/`format:check` clean; the 5 bm06 test files pass (75 tests).
 
 ## Next Up
 

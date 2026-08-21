@@ -21,7 +21,7 @@ import { customerBill } from "@/db/schema/billing/customer-bill";
 //
 // A first-class table, NEVER JSONB — tax is financially significant (code-
 // standards §6.12, plan §6.4). One row per (bill, tax category); v1 writes a
-// single SST row per bill, but the shape supports multiple categories, and the
+// single GST row per bill, but the shape supports multiple categories, and the
 // bill's `tax_total` is always the SQL SUM of its items, never a scalar
 // shortcut. The composite FK includes `period_partition` because the parent
 // `customer_bill` PK does (Postgres requires the partition key in every FK to a
@@ -61,7 +61,13 @@ export const customerBillTaxItem = billing.table(
     primaryKey({ columns: [t.customerBillTaxItemId, t.periodPartition] }),
     // Composite FK to the (also-partitioned) `customer_bill`, keyed on its full
     // PK `(customer_bill_id, period_partition)` — a tax item can never outlive
-    // or precede its bill.
+    // or precede its bill. ON DELETE CASCADE: bm05's rerun-safe trial
+    // re-derivation (`customerBillRepository.deleteTrial`, a conditional
+    // `DELETE ... WHERE ref_inv_document_id IS NULL` + re-INSERT) deletes the
+    // whole unposted bill, so its now-stale tax items must go with it —
+    // RESTRICT would block the re-derivation once a taxation pass had written
+    // items. Posted bills are never deleted (deleteTrial's `IS NULL` guard), so
+    // a finalized bill's tax items are never cascade-removed (Inv. #4).
     foreignKey({
       columns: [t.refCustomerBillId, t.periodPartition],
       foreignColumns: [
@@ -69,7 +75,7 @@ export const customerBillTaxItem = billing.table(
         customerBill.periodPartition,
       ],
       name: "customer_bill_tax_item_customer_bill_fk",
-    }).onDelete("restrict"),
+    }).onDelete("cascade"),
     index("customer_bill_tax_item_ref_customer_bill_id_idx").on(
       t.refCustomerBillId,
     ),

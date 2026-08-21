@@ -148,9 +148,9 @@ export type BillCategory = (typeof BILL_CATEGORIES)[number];
 export const BILL_STATES = ["new", "validated", "sent"] as const;
 export type BillState = (typeof BILL_STATES)[number];
 
-// bm06-spec §Implementation §4. One tax line on a bill — the SST category, the
+// bm06-spec §Implementation §4. One tax line on a bill — the GST category, the
 // applied rate, and the SQL-computed amount (all `string`, code-standards
-// §2.3). v1 writes a single SST line per bill; the shape supports more.
+// §2.3). v1 writes a single GST line per bill; the shape supports more.
 export interface CustomerBillTaxItemRow {
   category: string;
   rate: string;

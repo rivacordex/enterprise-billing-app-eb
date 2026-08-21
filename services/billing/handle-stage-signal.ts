@@ -186,9 +186,11 @@ export async function handleStageSignal(
     // bm06-spec §Design/§Implementation §3 — Taxation is the same side-effect
     // shape as Aggregation (not an outcome override): a DONE taxation signal
     // taxes the account's trial bill inside this same transaction, guarded on
-    // the account being in progress. `taxBill` is itself a no-op when the
-    // account has no unposted bill (aggregation hasn't run), so an out-of-order
-    // taxation signal can never crash or tax a posted/absent bill.
+    // the account being in progress. If the bill has not been aggregated yet
+    // (an out-of-order signal), `taxBill` throws a conflict so this whole
+    // transaction rolls back — the taxation stage row is never committed, and
+    // the engine retries after Aggregation rather than the account being left
+    // permanently "taxed" with a zero tax.
     if (
       input.stage === "taxation" &&
       effective.status === "DONE" &&

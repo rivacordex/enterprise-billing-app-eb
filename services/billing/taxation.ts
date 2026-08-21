@@ -3,9 +3,10 @@ import { billRunRepository } from "@/db/repositories/billing/bill-run.repository
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
 import { billRunTaxConfig } from "@/lib/config";
+import { conflict } from "@/lib/errors";
 
 // bm06-spec §Design/§Implementation §3. The Taxation stage (stage 6) applies
-// the run's tax-rate version — a single CONFIGURED SST rate in v1
+// the run's tax-rate version — a single CONFIGURED GST rate in v1
 // (`billRunTaxConfig`, no catalog table) — to an account's trial bill:
 //
 //   1. resolve the run's UNPOSTED bill for the account (the
@@ -38,10 +39,19 @@ export async function taxBill(
     run.billRunId,
     billingAccountId,
   );
-  // No unposted trial bill for this account — aggregation hasn't produced one
-  // (or the only bill is already posted). Nothing to tax; leave the run's
-  // version stamp untouched.
-  if (!bill) return;
+  // No unposted bill means Aggregation has not produced one yet — the taxation
+  // signal arrived out of order. Reject so the whole ingest transaction rolls
+  // back (the taxation stage row is NOT committed) and the engine retries after
+  // Aggregation, instead of permanently recording the stage DONE against a bill
+  // that would then never be taxed. In v1 there is no posting, so
+  // `findUnpostedBill` returns null ONLY when no bill exists; when posting lands
+  // (bm11), distinguish an already-posted bill — whose late taxation signal
+  // should be an idempotent no-op — from a genuinely missing one.
+  if (!bill) {
+    throw conflict(
+      "Taxation signalled before the account's bill was aggregated.",
+    );
+  }
 
   await billRunRepository.stampTaxRateVersion(
     tx,

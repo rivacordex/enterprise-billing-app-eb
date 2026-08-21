@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // bill's tax items (tax computed in SQL numeric), and recomputes the totals.
 
 vi.mock("@/lib/config", () => ({
-  billRunTaxConfig: { rate: 8, version: "SST-2026", category: "SST" },
+  billRunTaxConfig: { rate: 8, version: "GST-2026", category: "GST" },
 }));
 vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
   billRunRepository: { stampTaxRateVersion: vi.fn() },
@@ -54,12 +54,12 @@ describe("taxBill (bm06-spec §3)", () => {
     expect(mockStampVersion).toHaveBeenCalledWith(
       txStub,
       "BRN00000001",
-      "SST-2026",
+      "GST-2026",
     );
     expect(mockReplaceForBill).toHaveBeenCalledWith(txStub, {
       customerBillId: "CBL00000001",
       periodPartition: "2026-07-01",
-      category: "SST",
+      category: "GST",
       rate: 8,
     });
     expect(mockRecomputeTotals).toHaveBeenCalledWith(
@@ -73,24 +73,37 @@ describe("taxBill (bm06-spec §3)", () => {
     expect(replaceOrder).toBeLessThan(recomputeOrder as number);
   });
 
-  it("is a no-op when the account has no unposted bill (nothing to tax)", async () => {
+  it("rejects (rolls back) when the account has no unposted bill — out-of-order before Aggregation", async () => {
+    // Aggregation hasn't produced the bill yet: findUnpostedBill returns null.
+    // taxBill must throw (rolling back the ingest txn so the taxation stage row
+    // is never committed), NOT silently record a zero-tax completion.
     mockFindUnpostedBill.mockResolvedValue(null);
 
-    await taxBill(txStub, RUN, "BAN00000009");
-
+    await expect(taxBill(txStub, RUN, "BAN00000009")).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
     expect(mockStampVersion).not.toHaveBeenCalled();
     expect(mockReplaceForBill).not.toHaveBeenCalled();
     expect(mockRecomputeTotals).not.toHaveBeenCalled();
   });
 
-  it("never re-taxes a posted bill — the finalization latch lives in findUnpostedBill", async () => {
-    // A posted bill is filtered out by `findUnpostedBill` (ref_inv_document_id
-    // IS NULL), so it surfaces here as `null` → the no-op path above.
-    mockFindUnpostedBill.mockResolvedValue(null);
-
-    await taxBill(txStub, RUN, "BAN00000001");
-
+  it("sequence: taxation before Aggregation rejects, then succeeds once the bill exists", async () => {
+    // First signal — no bill yet → reject.
+    mockFindUnpostedBill.mockResolvedValueOnce(null);
+    await expect(taxBill(txStub, RUN, "BAN00000001")).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
     expect(mockReplaceForBill).not.toHaveBeenCalled();
+
+    // Retry after Aggregation created the bill → taxes it.
+    mockFindUnpostedBill.mockResolvedValueOnce({
+      customerBillId: "CBL00000001",
+      periodPartition: "2026-07-01",
+      subtotal: "107.50",
+    });
+    await taxBill(txStub, RUN, "BAN00000001");
+    expect(mockReplaceForBill).toHaveBeenCalledTimes(1);
+    expect(mockRecomputeTotals).toHaveBeenCalledTimes(1);
   });
 
   it("passes the configured rate/category through to the SQL write", async () => {
@@ -100,7 +113,7 @@ describe("taxBill (bm06-spec §3)", () => {
       unknown,
       { category: string; rate: number },
     ];
-    expect(args.category).toBe("SST");
+    expect(args.category).toBe("GST");
     expect(args.rate).toBe(8);
   });
 });
