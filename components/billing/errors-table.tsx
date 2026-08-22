@@ -15,15 +15,16 @@ import type { ErrorRow } from "@/types/billing";
 export interface ErrorsTableProps {
   runId: string;
   rows: ErrorRow[];
-  // Whether the viewer holds `billrun_operate` — show/hide the rerun control
-  // (the action re-checks server-side regardless, code-standards §8).
-  canOperate: boolean;
+  // Whether the viewer may rerun this run (`billrun_operate` AND the run is
+  // rerunnable) — show/hide the rerun control (the action re-checks server-side
+  // regardless, code-standards §8).
+  canRerun: boolean;
 }
 
 export function ErrorsTable({
   runId,
   rows,
-  canOperate,
+  canRerun,
 }: ErrorsTableProps): React.JSX.Element {
   if (rows.length === 0) {
     return (
@@ -50,7 +51,7 @@ export function ErrorsTable({
           {rows.length} account{rows.length === 1 ? "" : "s"} blocked by a hard
           error — fix the underlying issue, then rerun.
         </p>
-        {canOperate && (
+        {canRerun && (
           <RerunDialog
             billRunId={runId}
             accountIds={rows.map((r) => r.billingAccountId)}

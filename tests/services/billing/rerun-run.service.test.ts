@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm08-spec §Design/§Implementation §1/§5. The rerun transaction: AUDIT FIRST
-// (before re-trigger), attempt_count += 1 for the SELECTED accounts (back to
-// PROCESSING), later stages invalidated via the attempt-keyed latch, trial
+// (before re-trigger), attempt_count SET to one uniform new attempt for the
+// SELECTED accounts (back to PROCESSING), later stages invalidated via the
+// attempt-keyed latch, trial
 // bills re-derived under the ref_inv_document_id IS NULL guard, then the engine
 // re-triggered scoped to the rerun accounts. `db.transaction` runs its callback
 // with a stub tx (trigger-run.service.test.ts precedent).
@@ -22,7 +23,7 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
   billRunAccountRepository: {
     listForRerun: vi.fn(),
-    incrementAttemptForRerun: vi.fn(),
+    setAttemptForRerun: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
@@ -58,9 +59,7 @@ const mockMarkRerunProcessing = vi.mocked(
   billRunRepository.markRerunProcessing,
 );
 const mockListForRerun = vi.mocked(billRunAccountRepository.listForRerun);
-const mockIncrement = vi.mocked(
-  billRunAccountRepository.incrementAttemptForRerun,
-);
+const mockSetAttempt = vi.mocked(billRunAccountRepository.setAttemptForRerun);
 const mockListPosted = vi.mocked(customerBillRepository.listPostedAccountIds);
 const mockListUnposted = vi.mocked(
   customerBillRepository.listUnpostedBillAccountIds,
@@ -156,10 +155,13 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
   it("[CRITICAL] scopes the attempt bump to the selected accounts only — others and EXCLUDED are untouched", async () => {
     await rerunRun(params({ accountIds: ["BAN00000001"] }), "user-1");
 
-    // Only the explicitly-selected account is bumped/re-processed.
-    expect(mockIncrement).toHaveBeenCalledWith(txStub, "BRN00000001", [
-      "BAN00000001",
-    ]);
+    // Only the explicitly-selected account is bumped/re-processed, to attempt 2.
+    expect(mockSetAttempt).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001"],
+      2,
+    );
     // The engine re-trigger is scoped to exactly that account, new attempt.
     expect(startExecution).toHaveBeenCalledWith(
       expect.objectContaining({ ban_ids: ["BAN00000001"], attempt: 2 }),
@@ -173,9 +175,12 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     await rerunRun(params(), "user-1");
 
     // Only the non-excluded, non-posted account survives.
-    expect(mockIncrement).toHaveBeenCalledWith(txStub, "BRN00000001", [
-      "BAN00000001",
-    ]);
+    expect(mockSetAttempt).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001"],
+      2,
+    );
     expect(mockAggregateBill).toHaveBeenCalledTimes(1);
     expect(mockAggregateBill).toHaveBeenCalledWith(
       txStub,
@@ -187,10 +192,12 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
   it("bumps attempt_count and loops the run PROCESSED → PROCESSING (never processed_at)", async () => {
     const result = await rerunRun(params(), "user-1");
 
-    expect(mockIncrement).toHaveBeenCalledWith(txStub, "BRN00000001", [
-      "BAN00000001",
-      "BAN00000002",
-    ]);
+    expect(mockSetAttempt).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001", "BAN00000002"],
+      2,
+    );
     expect(mockMarkRerunProcessing).toHaveBeenCalledWith(
       txStub,
       "BRN00000001",
@@ -207,6 +214,43 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
       ok: true,
       value: { accountCount: 2, attempt: 2, fromStage: "validation" },
     });
+  });
+
+  it("reports one uniform attempt (max + 1) and sets every selected account to it, even when their attempts diverge", async () => {
+    // A prior partial rerun left the two accounts on DIFFERENT attempts (1 and
+    // 3). The reported/engine/audited attempt is max + 1 = 4, and both accounts
+    // are SET to 4 (not per-row incremented to 2 and 4) so the DB matches.
+    mockListForRerun.mockResolvedValue([
+      {
+        billingAccountId: "BAN00000001",
+        status: "PROCESSING_FAILED",
+        attemptCount: 1,
+      },
+      {
+        billingAccountId: "BAN00000002",
+        status: "PROCESSING_FAILED",
+        attemptCount: 3,
+      },
+    ] as never);
+
+    const result = await rerunRun(params(), "user-1");
+
+    expect(mockSetAttempt).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001", "BAN00000002"],
+      4,
+    );
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        afterData: expect.objectContaining({ attempt: 4 }),
+      }),
+    );
+    expect(startExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 4 }),
+    );
+    expect(result).toMatchObject({ ok: true, value: { attempt: 4 } });
   });
 
   it("re-derives Aggregation + Taxation for each rerun account from stage validation", async () => {
@@ -244,10 +288,12 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     await rerunRun(params({ fromStage: "validation" }), "user-1");
 
     // Both are still attempt-bumped (the engine re-validates them)…
-    expect(mockIncrement).toHaveBeenCalledWith(txStub, "BRN00000001", [
-      "BAN00000001",
-      "BAN00000002",
-    ]);
+    expect(mockSetAttempt).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001", "BAN00000002"],
+      2,
+    );
     // …but only the account with an existing bill is re-derived inline.
     expect(mockAggregateBill).toHaveBeenCalledTimes(1);
     expect(mockAggregateBill).toHaveBeenCalledWith(
@@ -290,7 +336,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
 
     expect(result).toEqual({ ok: false, code: "NOT_RERUNNABLE" });
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
-    expect(mockIncrement).not.toHaveBeenCalled();
+    expect(mockSetAttempt).not.toHaveBeenCalled();
     expect(startExecution).not.toHaveBeenCalled();
   });
 
@@ -311,7 +357,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
 
     expect(result).toEqual({ ok: false, code: "NO_ACCOUNTS_SELECTED" });
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
-    expect(mockIncrement).not.toHaveBeenCalled();
+    expect(mockSetAttempt).not.toHaveBeenCalled();
     expect(startExecution).not.toHaveBeenCalled();
   });
 
@@ -324,7 +370,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     // The audit + attempt bump ran inside the (rolled-back) txn; the run is
     // never marked PROCESSING because the engine failed first.
     expect(mockInsertAuditEvent).toHaveBeenCalled();
-    expect(mockIncrement).toHaveBeenCalled();
+    expect(mockSetAttempt).toHaveBeenCalled();
     expect(mockMarkRerunProcessing).not.toHaveBeenCalled();
   });
 

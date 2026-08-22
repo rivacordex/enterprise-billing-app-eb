@@ -37,7 +37,7 @@ function row(overrides: Partial<ErrorRow> = {}): ErrorRow {
 describe("ErrorsTable (bm07-spec §Visual, bm08 rerun wiring)", () => {
   it("renders each failed account with its stage, code, and detail", () => {
     const { container } = render(
-      <ErrorsTable runId="BRN00000001" rows={[row()]} canOperate={false} />,
+      <ErrorsTable runId="BRN00000001" rows={[row()]} canRerun={false} />,
     );
     expect(container.textContent).toContain("Acme Sdn Bhd");
     expect(container.textContent).toContain("BAN00000001");
@@ -53,7 +53,7 @@ describe("ErrorsTable (bm07-spec §Visual, bm08 rerun wiring)", () => {
       <ErrorsTable
         runId="BRN00000001"
         rows={[row(), row({ billingAccountId: "BAN00000002" })]}
-        canOperate={true}
+        canRerun={true}
       />,
     );
     const dialog = getByTestId("rerun-dialog");
@@ -65,14 +65,14 @@ describe("ErrorsTable (bm07-spec §Visual, bm08 rerun wiring)", () => {
 
   it("hides the Rerun affordance from a view-only (non-operator) principal", () => {
     const { queryByTestId } = render(
-      <ErrorsTable runId="BRN00000001" rows={[row()]} canOperate={false} />,
+      <ErrorsTable runId="BRN00000001" rows={[row()]} canRerun={false} />,
     );
     expect(queryByTestId("rerun-dialog")).toBeNull();
   });
 
   it("renders a positive empty state when no account failed", () => {
     const { container } = render(
-      <ErrorsTable runId="BRN00000001" rows={[]} canOperate={true} />,
+      <ErrorsTable runId="BRN00000001" rows={[]} canRerun={true} />,
     );
     expect(container.textContent).toContain("No blocking errors");
     expect(container.querySelector("table")).toBeNull();
