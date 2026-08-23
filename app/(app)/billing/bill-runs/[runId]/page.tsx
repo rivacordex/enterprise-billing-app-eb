@@ -108,16 +108,18 @@ export default async function BillRunDetailPage({
     LEVELS.READ,
   );
 
-  // bm08 — the operator affordances (the Errors-tab and run-level rerun) are
-  // shown only to a `billrun_operate` principal; the rerun action re-checks
-  // server-side regardless (code-standards §8). A run is rerunnable only while
-  // pre-approval (PROCESSED, or PROCESSING_FAILED to recover a failed run).
+  // bm08 — the rerun affordances (the Errors-tab and run-level rerun) are shown
+  // only to a `billrun_operate` principal AND only while the run is rerunnable
+  // (pre-approval: PROCESSED, or PROCESSING_FAILED to recover a failed run) —
+  // otherwise the control would always fail the service's `NOT_RERUNNABLE`
+  // guard. Show/hide only; the action re-checks server-side (code-standards §8).
   const canOperate = meetsLevel(
     permissionMap[PERMISSIONS.BILLRUN_OPERATE],
     LEVELS.EDIT,
   );
   const rerunnable =
     detail.status === "PROCESSED" || detail.status === "PROCESSING_FAILED";
+  const canRerun = canOperate && rerunnable;
 
   return (
     <main className="space-y-6 p-6">
@@ -127,7 +129,7 @@ export default async function BillRunDetailPage({
             {detail.billRunId}
           </h1>
           <RunStatusBadge status={detail.status} />
-          {canOperate && rerunnable && (
+          {canRerun && (
             <div className="ms-auto">
               <RerunDialog
                 billRunId={detail.billRunId}
@@ -155,7 +157,7 @@ export default async function BillRunDetailPage({
         errors={errors}
         audit={audit}
         canRecover={canRecover}
-        canOperate={canOperate}
+        canRerun={canRerun}
         locale={locale}
         timezone={timezone}
       />

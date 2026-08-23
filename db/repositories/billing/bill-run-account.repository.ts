@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
@@ -121,22 +121,27 @@ export const billRunAccountRepository = {
     return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
   },
 
-  // bm08-spec §Design/§Implementation §1 (step 2) — the rerun advance: bump
-  // `attempt_count` (so the attempt-keyed `bill_run_account_stage` latch makes
-  // every new-attempt signal land on a fresh row from the chosen stage onward,
-  // never colliding with the prior attempt's history) and drop the selected
+  // bm08-spec §Design/§Implementation §1 (step 2) — the rerun advance: set every
+  // selected account's `attempt_count` to the SAME new attempt (the run-level
+  // `attempt` sent to the engine and stamped in the audit), not a per-row
+  // increment — so a partial rerun of accounts sitting on divergent attempts
+  // ends them all on one uniform attempt that matches the engine's stage
+  // signals and the audited value. (The attempt-keyed `bill_run_account_stage`
+  // latch makes every new-attempt signal land on a fresh row from the chosen
+  // stage onward, never colliding with prior-attempt history.) Also drops the
   // accounts back to `PROCESSING`, clearing any prior failure diagnostics.
   // Scoped strictly to the passed account ids — no other account is touched.
-  async incrementAttemptForRerun(
+  async setAttemptForRerun(
     tx: Database,
     billRunId: string,
     billingAccountIds: string[],
+    attempt: number,
   ): Promise<void> {
     if (billingAccountIds.length === 0) return;
     await tx
       .update(billRunAccount)
       .set({
-        attemptCount: sql`${billRunAccount.attemptCount} + 1`,
+        attemptCount: attempt,
         status: "PROCESSING",
         errorCode: null,
         errorDetail: null,

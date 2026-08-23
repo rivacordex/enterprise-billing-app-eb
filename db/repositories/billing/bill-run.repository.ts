@@ -281,8 +281,10 @@ export const billRunRepository = {
   // run back `PROCESSED`/`PROCESSING_FAILED` → `PROCESSING`: flips the status,
   // bumps the heartbeat, refreshes the derived ban/rated/failed counter cache
   // from the SAME counts the caller derived (stored == derived, architecture
-  // Inv. #12), and stores the new engine execution reference. Never stamps
-  // `processed_at` (the run is re-processing, not finishing) and never touches
+  // Inv. #12), and stores the new engine execution reference. CLEARS
+  // `processed_at` — the run is re-processing, not finished, so the prior
+  // attempt's completion stamp must not linger on a PROCESSING run;
+  // `recomputeStatus` re-stamps it when the rerun completes. Never touches
   // `gl_event_at` (fixed at the first trigger, architecture Inv. #13) or
   // `triggered_by`.
   async markRerunProcessing(
@@ -301,6 +303,7 @@ export const billRunRepository = {
       .update(billRun)
       .set({
         status: "PROCESSING",
+        processedAt: null,
         lastProgressAt: sql`now()`,
         banCount: data.banCount,
         ratedCount: data.ratedCount,

@@ -666,9 +666,9 @@ Skipped (verified not still-valid or out of scope):
     re-trigger (`beforeData.priorTotals` = the SQL-summed current bill total of
     the rerun accounts via `customerBillRepository.sumTotalsForAccounts`;
     `afterData = { accounts, fromStage, attempt, reason }`); (2)
-    `attempt_count += 1` for the selected accounts back to `PROCESSING`
-    (`billRunAccountRepository.incrementAttemptForRerun`, clearing prior
-    diagnostics); (3) later stages invalidated **implicitly** via the
+    `attempt_count` set to one uniform new attempt (max + 1) for the selected
+    accounts back to `PROCESSING` (`billRunAccountRepository.setAttemptForRerun`,
+    clearing prior diagnostics); (3) later stages invalidated **implicitly** via the
     attempt-keyed `bill_run_account_stage` latch (no stage-row DELETE —
     prior-attempt rows stay as history); (4) trial bills re-derived from the
     chosen stage onward (`aggregateBill`/`taxBill`, bm05/bm06) under the
@@ -708,7 +708,7 @@ Skipped (verified not still-valid or out of scope):
     all eligible). `run-detail-tabs.tsx`/`[runId]/page.tsx` thread the new
     `canOperate` (`meetsLevel(permissionMap[BILLRUN_OPERATE], EDIT)`).
   - Repositories: `bill-run-account.repository.ts` (`listForRerun`,
-    `incrementAttemptForRerun`), `customer-bill.repository.ts`
+    `setAttemptForRerun`), `customer-bill.repository.ts`
     (`listPostedAccountIds`, `sumTotalsForAccounts`), `bill-run.repository.ts`
     (`markRerunProcessing`).
   - Tests: `rerun-run.service.test.ts` (audit-before-retrigger ordering; scoped
@@ -826,16 +826,32 @@ Postgres — migrations applied, the new repo SQL exercised directly; the new
   now render `components/ui/button.tsx` (`variant="destructive"`/`"outline"`)
   instead of hand-rolled `var(--color-danger-600)` utility strings, so they track
   the design-system destructive treatment (§4.7) like every other Button.
+- **Uniform rerun attempt.** `setAttemptForRerun` (renamed from
+  `incrementAttemptForRerun`) now SETs every selected account's `attempt_count`
+  to the same new attempt (`max(selected) + 1`) instead of a per-row `+ 1`, so a
+  partial rerun of accounts on divergent attempts ends them all on one attempt
+  that matches the audited value and the engine's stage signals.
+- **Errors-tab rerun gated on rerunnability.** The Errors-tab rerun control is
+  now gated on `canRerun = canOperate && rerunnable` (threaded as a `canRerun`
+  prop through `RunDetailTabs` → `ErrorsTable`), matching the run-level header
+  control — so the control is never shown on a non-rerunnable run where it would
+  always hit the service's `NOT_RERUNNABLE` guard.
+- **`markRerunProcessing` clears `processed_at`.** Looping the run back to
+  `PROCESSING` now nulls the prior attempt's `processed_at` (re-stamped by
+  `recomputeStatus` on completion) so a re-processing run carries no stale
+  completion timestamp.
+- **`RerunDialog` confirm panel role.** The inline confirm panel is `role="group"`
+  (a labelled control cluster), not `role="alertdialog"` — it is not modal and
+  traps no focus, so `alertdialog` overstated its semantics.
 - **Not changed (reviewed, intended):** the run-level "Rerun" control
   re-processing already-`PROCESSED` accounts is the spec's "rerun all" (permission
   + mandatory-reason + confirm gated) — verified as intended, not a footgun. The
-  single run-level engine `attempt` vs per-account `attempt_count` is a documented
-  v1 decision with no effect in v1 (the stage latch keys on the *signalled*
-  attempt, decoupled from the counter). The long per-account transaction on a
-  large run-level rerun (holding the `bill_run` lock, blocking concurrent M2M
-  signals) is a real scaling limit inherited from the bm05/bm06 per-account shape;
-  left as-is for v1 (stub engine, small demo runs) and flagged for a batched
-  re-derivation when a real engine + large cycles land.
+  long per-account transaction on a large run-level rerun (holding the `bill_run`
+  lock, blocking concurrent M2M signals) is a real scaling limit inherited from
+  the bm05/bm06 per-account shape; left as-is for v1 (stub engine, small demo
+  runs) and flagged for a batched re-derivation when a real engine + large cycles
+  land. `realEngineClient`'s timeout-then-`json()` window is pre-existing bm03
+  code, out of scope for the bm08 change set.
 
 `typecheck`/`lint`/`format:check` clean; the bm08 + touched billing/audit slice
 passes (29 files / 204 tests, plus the full DB-free suite green except the known
@@ -1038,12 +1054,12 @@ pre-existing hardcoded-date-drift action suites).
     result-code convention (`VALIDATION_ERROR`) for consistency; the spec's §5
     bullet describes the *behaviour* (empty reason rejected), not a binding code
     string. The reason is `z.string().trim().min(1)` — whitespace-only is empty.
-  - **Engine payload `attempt` = max(selected `attempt_count`) + 1.** The
-    per-account `attempt_count` is bumped individually, but the engine's
-    single run-level `attempt` field (bm03 `TriggerPayload`) takes the max new
-    attempt. In the common case all selected accounts share an attempt, so this
-    is uniform; the value has no behavioural effect on the v1 stub engine.
-    Revisit if a real engine needs per-account attempts.
+  - **Rerun uses one uniform attempt = max(selected `attempt_count`) + 1.**
+    `setAttemptForRerun` SETs every selected account to that single value (not a
+    per-row `+ 1`), so the per-account `attempt_count`, the audited `attempt`,
+    and the engine payload's run-level `attempt` all agree even when a partial
+    rerun mixes accounts on divergent attempts. (Superseded the initial
+    per-row-increment approach after review.)
   - **The rerun does not update `triggered_by`.** `markRerunProcessing` leaves
     `triggered_by`/`gl_event_at` untouched (Inv. #13 fixes `gl_event_at` at the
     first trigger). Whether a rerun should re-stamp the "final-attempt trigger

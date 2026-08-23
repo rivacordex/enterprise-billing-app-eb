@@ -128,7 +128,10 @@ export function RerunDialog({
 
   return (
     <div
-      role="alertdialog"
+      // An inline expansion, not a modal dialog — it neither traps focus nor
+      // blocks the background, so `group` (a labelled cluster of controls) is the
+      // honest role rather than `alertdialog` (which implies modal focus mgmt).
+      role="group"
       aria-label="Confirm rerun"
       className="w-full max-w-xl space-y-3 rounded-md border border-[color:var(--border-default)] bg-[color:var(--surface-card)] p-4"
     >

@@ -51,7 +51,7 @@ Add `BILL_RUN_RERUN` (category `"Change"`) + the map entry + the coverage test.
 - **[CRITICAL] Finalization guard** — a bill/row carrying `ref_inv_document_id` is never invalidated or deleted (asserted structurally + behaviorally).
 - `attempt_count` increments per rerun; the run loops `PROCESSED → PROCESSING → PROCESSED`.
 - Trial bills (+ tax) re-derive for the rerun accounts; deltas surface in the read model.
-- Reason is mandatory (empty → `VALIDATION_FAILED`); `billrun_operate` required (a `billrun_view` user → `FORBIDDEN`).
+- Reason is mandatory (empty → `VALIDATION_ERROR`, matching the sibling `triggerRunAction` result-code convention); `billrun_operate` required (a `billrun_view` user → `FORBIDDEN`).
 - Rerun on an `APPROVED`+ run is rejected.
 
 ---

@@ -130,12 +130,14 @@ export async function rerunRun(
         },
       });
 
-      // 2 + 3. Bump the attempt (invalidating later stages via the attempt-keyed
-      // latch) and drop the selected accounts back to PROCESSING.
-      await billRunAccountRepository.incrementAttemptForRerun(
+      // 2 + 3. Set every selected account to the uniform new attempt
+      // (invalidating later stages via the attempt-keyed latch) and drop them
+      // back to PROCESSING — one attempt matching the audited/engine value.
+      await billRunAccountRepository.setAttemptForRerun(
         tx,
         run.billRunId,
         banIds,
+        newAttempt,
       );
 
       // 4. Re-derive the trial bills from the chosen stage onward, ONLY for
