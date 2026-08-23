@@ -10,7 +10,10 @@ import { taxBill } from "@/services/billing/taxation";
 import { verifyAccount } from "@/services/billing/verify";
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { validateAccount } from "@/services/billing/validate-account";
-import { computeRunStatus } from "@/services/billing/compute-run-status";
+import {
+  computeRunCounters,
+  computeRunStatus,
+} from "@/services/billing/compute-run-status";
 import type {
   AccountStatus,
   ErrorClass,
@@ -241,10 +244,7 @@ export async function handleStageSignal(
 
     await billRunRepository.recomputeStatus(tx, input.runId, {
       newStatus: computed,
-      banCount: accountStatuses.length,
-      ratedCount: accountStatuses.filter((s) => s === "PROCESSED").length,
-      failedCount: accountStatuses.filter((s) => s === "PROCESSING_FAILED")
-        .length,
+      ...computeRunCounters(accountStatuses),
     });
 
     return {

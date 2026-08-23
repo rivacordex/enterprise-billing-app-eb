@@ -418,8 +418,10 @@ Update this file after every meaningful implementation change.
     `ExportUnchargedButton`.
   - Errors read/tab: `list-errors.ts` →
     `billRunAccountRepository.listErrorsForRun` (`DISTINCT ON (account)
-    ORDER BY attempt DESC` over `bill_run_account_stage` `error_class = 'HARD'`
-    inner-joined to the account `status = 'PROCESSING_FAILED'` + name).
+    ORDER BY attempt DESC, bill_run_account_stage_id DESC` — the sequence-
+    monotonic id is the tiebreaker for HARD rows sharing a top attempt — over
+    `bill_run_account_stage` `error_class = 'HARD'` inner-joined to the account
+    `status = 'PROCESSING_FAILED'` + name).
     `ErrorRow` (`types/billing.ts`); `errors-table.tsx` (`ErrorsTable`,
     destructive "blocking" treatment, `ErrorClassBadge` + stage/code/detail +
     an **inert "Rerun these accounts"** affordance — the action lands in bm08).
@@ -656,6 +658,76 @@ Skipped (verified not still-valid or out of scope):
 
 `typecheck`/`lint`/`format:check` clean; the 5 bm06 test files pass (75 tests).
 
+- **bm08 — Rerun (full & partial)** (`specs/bm08-rerun.md`). **No new table.**
+  - Rerun service: `services/billing/rerun-run.ts` (`rerunRun`) — one
+    `db.transaction`, pre-approval only (`findByIdForUpdate` row lock →
+    `PROCESSED`/`PROCESSING_FAILED` else typed `NOT_RERUNNABLE`): (1) **audit
+    first** — one `BILL_RUN_RERUN` audit row written **before** the engine
+    re-trigger (`beforeData.priorTotals` = the SQL-summed current bill total of
+    the rerun accounts via `customerBillRepository.sumTotalsForAccounts`;
+    `afterData = { accounts, fromStage, attempt, reason }`); (2)
+    `attempt_count` set to one uniform new attempt (max + 1) for the selected
+    accounts back to `PROCESSING` (`billRunAccountRepository.setAttemptForRerun`,
+    clearing prior diagnostics); (3) later stages invalidated **implicitly** via the
+    attempt-keyed `bill_run_account_stage` latch (no stage-row DELETE —
+    prior-attempt rows stay as history); (4) trial bills re-derived from the
+    chosen stage onward (`aggregateBill`/`taxBill`, bm05/bm06) under the
+    `ref_inv_document_id IS NULL` guard (rerun from `verification` re-derives
+    nothing; from `taxation` re-taxes only; from `aggregation`/`collection`/
+    `validation` rewrites then re-taxes — gated on the `STAGES` index); (5)
+    claim release/re-claim is a documented v1 no-op; (6) the engine (stub) is
+    re-triggered scoped to the rerun `ban_ids` + new attempt (in-txn, bm03
+    rollback pattern → `ENGINE_UNREACHABLE`), then the run loops back to
+    `PROCESSING` (`billRunRepository.markRerunProcessing` — refreshed derived
+    counters + new execution ref, never `processed_at`/`gl_event_at`/
+    `triggered_by`). Typed result union `ok | NOT_RERUNNABLE |
+    NO_ACCOUNTS_SELECTED | ENGINE_UNREACHABLE`.
+  - **Finalization guard is absolute** — `EXCLUDED` and posted
+    (`ref_inv_document_id` set, `customerBillRepository.listPostedAccountIds`,
+    always empty in v1) accounts are dropped from the eligible set, so nothing
+    finalized is ever invalidated or re-derived (architecture Inv. #4). The
+    conditional `DELETE … WHERE ref_inv_document_id IS NULL` in
+    `aggregateBill` is the belt-and-suspenders DB-side backstop.
+  - Action + validation: `actions/billing/rerun-run.action.ts` (`'use server'`,
+    `billrun_operate:EDIT` → parse → `rerunRun` → `revalidatePath` the run +
+    list pages on success) + `validation/billing/rerun-run.schema.ts`
+    (`{ billRunId, accountIds[] (BAN-format, defaults []), fromStage
+    (Validation→Verification), reason (trimmed, non-empty) }`; empty reason ⇒
+    `VALIDATION_ERROR`, matching the sibling `triggerRunAction` convention).
+  - Audit event: `BILL_RUN_RERUN` (category `"Change"`) added to
+    `AUDIT_EVENT_TYPES` (`types/audit.ts`) + `AUDIT_EVENT_CATEGORY_MAP`
+    (`types/audit-log.ts`) + explicit coverage assertion. Ripple:
+    `tests/components/audit-log-filters.test.tsx` option count 64 → 65.
+  - Components: `components/billing/rerun-dialog.tsx` (`RerunDialog`, client
+    inline-confirm leaf — preview + stage `<select>` + mandatory reason
+    `<textarea>` + submitting/error, `router.refresh()` on success, following
+    the `TriggerRunDialog` shape). Wired into the **Errors tab** (`ErrorsTable`
+    now takes `runId` + `canOperate`, replacing bm07's inert button with a
+    `RerunDialog` scoped to the failed accounts) and a **run-level control** on
+    the detail page header (`canOperate && rerunnable` — empty `accountIds` =
+    all eligible). `run-detail-tabs.tsx`/`[runId]/page.tsx` thread the new
+    `canOperate` (`meetsLevel(permissionMap[BILLRUN_OPERATE], EDIT)`).
+  - Repositories: `bill-run-account.repository.ts` (`listForRerun`,
+    `setAttemptForRerun`), `customer-bill.repository.ts`
+    (`listPostedAccountIds`, `sumTotalsForAccounts`), `bill-run.repository.ts`
+    (`markRerunProcessing`).
+  - Tests: `rerun-run.service.test.ts` (audit-before-retrigger ordering; scoped
+    attempt bump; finalization guard drops posted accounts; attempt increment +
+    run loop; per-stage re-derivation; `PROCESSING_FAILED` rerunnable;
+    `APPROVED`/unknown → `NOT_RERUNNABLE`; `NO_ACCOUNTS_SELECTED`;
+    `ENGINE_UNREACHABLE` rollback; unrelated-error passthrough),
+    `rerun-run.action.test.ts` (route × level, empty-reason `VALIDATION_ERROR`,
+    default `accountIds`, revalidate-on-success), `rerun-dialog.test.tsx`
+    (preview, Validation→Verification options, mandatory reason gate, submit +
+    success, typed-failure surface, run-level trigger), `errors-table.test.tsx`
+    rewritten (rerun affordance wired for an operator, hidden for view-only),
+    `bill-run-detail-page.test.tsx` extended (stubs the header `RerunDialog`),
+    `audit-log.test.ts` + `audit-log-filters.test.tsx` ripples.
+    `typecheck`/`lint`/`format:check` clean; the bm08 + touched
+    billing/audit/db slice passes (304 tests) except the same pre-existing
+    env-dependent `trigger-run.service.test.ts` failure noted below (it mocks
+    all repos and never touches `trigger-run.ts`, so bm08 cannot affect it).
+
 ## Post-review hardening (bm07)
 
 Fixes from a high-effort code review of the bm07 diff:
@@ -709,13 +781,86 @@ Skipped (verified not worth the churn):
 `typecheck`/`lint`/`format:check` clean; the bm07 + touched audit/accounts test
 files pass (31 files / 217 tests in the slice).
 
+## Post-review hardening (bm08)
+
+Fixes from a high-effort code review of the bm08 diff (run against a throwaway
+Postgres — migrations applied, the new repo SQL exercised directly; the new
+`::numeric(18,2)::text` sum returns `"0.00"` on an empty match):
+
+- **[CRITICAL] Inline re-derivation no longer throws an untyped error that rolls
+  back the whole rerun, and no longer bills an unvalidated account.** The loop
+  re-derived every selected account unconditionally: (a) a rerun from `taxation`
+  of an account with no trial bill made `taxBill` throw `CONFLICT` (an `AppError`,
+  not the `EngineUnreachableSignal` the outer catch handles), so the whole
+  transaction rolled back and `rerunRun` **rejected** instead of returning a typed
+  result — the Errors tab feeds exactly the `PROCESSING_FAILED` accounts, so this
+  was reachable; (b) a rerun from `validation` of an account that failed at
+  Validation called `aggregateBill` directly, **writing a trial `customer_bill`
+  for an account that never passed the app-computed Validation gate** (or throwing
+  `notFound` on an unresolvable profile). Fix: re-derive inline **only for
+  accounts that already have an unposted bill** (`customerBillRepository.listUnpostedBillAccountIds`)
+  — i.e. accounts that previously reached Aggregation. An account with no bill is
+  attempt-bumped and left for the re-triggered engine to re-validate and create
+  through the single validated `handle-stage-signal` path; `taxBill` is never
+  called with no bill to tax. This closes review findings #1 and #2 and mitigates
+  the double-derivation concern (#4) — inline re-derivation is now purely a
+  delta-refresh of existing bills, with the engine re-signal as the authoritative
+  create/validate path.
+- **Derived counter cache is a shared helper (Inv. #12).** Extracted
+  `computeRunCounters(accountStatuses)` into `services/billing/compute-run-status.ts`;
+  both `handle-stage-signal.ts` (the stage-signal recompute) and `rerun-run.ts`
+  (the loop-back) now call it instead of copy-pasting the
+  `filter(s === 'PROCESSED'/'PROCESSING_FAILED')` derivation — so a new terminal
+  `AccountStatus` is handled in one place and stored can never disagree with
+  derived on one path only.
+- **One fewer read; independent reads parallelised.** `rerun-run.ts` now issues
+  `listForRerun` + `listPostedAccountIds` + `listUnpostedBillAccountIds` together
+  (`Promise.all`, all keyed only on the run) and computes the post-bump counters
+  **in-memory** (selected accounts are now `PROCESSING`; every other account keeps
+  the status just read) — dropping the extra `listStatusesForRun` full-table
+  re-read it did late in the transaction while holding the row lock.
+- **`accountIds` is length-capped.** `rerun-run.schema.ts` adds `.max(5000)` so a
+  crafted action call cannot build an unbounded `IN (…)` from caller input
+  (duplicates already collapse in the service's Set-based filter).
+- **`RerunDialog` uses the shared `Button`.** The trigger/confirm/cancel buttons
+  now render `components/ui/button.tsx` (`variant="destructive"`/`"outline"`)
+  instead of hand-rolled `var(--color-danger-600)` utility strings, so they track
+  the design-system destructive treatment (§4.7) like every other Button.
+- **Uniform rerun attempt.** `setAttemptForRerun` (renamed from
+  `incrementAttemptForRerun`) now SETs every selected account's `attempt_count`
+  to the same new attempt (`max(selected) + 1`) instead of a per-row `+ 1`, so a
+  partial rerun of accounts on divergent attempts ends them all on one attempt
+  that matches the audited value and the engine's stage signals.
+- **Errors-tab rerun gated on rerunnability.** The Errors-tab rerun control is
+  now gated on `canRerun = canOperate && rerunnable` (threaded as a `canRerun`
+  prop through `RunDetailTabs` → `ErrorsTable`), matching the run-level header
+  control — so the control is never shown on a non-rerunnable run where it would
+  always hit the service's `NOT_RERUNNABLE` guard.
+- **`markRerunProcessing` clears `processed_at`.** Looping the run back to
+  `PROCESSING` now nulls the prior attempt's `processed_at` (re-stamped by
+  `recomputeStatus` on completion) so a re-processing run carries no stale
+  completion timestamp.
+- **`RerunDialog` confirm panel role.** The inline confirm panel is `role="group"`
+  (a labelled control cluster), not `role="alertdialog"` — it is not modal and
+  traps no focus, so `alertdialog` overstated its semantics.
+- **Not changed (reviewed, intended):** the run-level "Rerun" control
+  re-processing already-`PROCESSED` accounts is the spec's "rerun all" (permission
+  + mandatory-reason + confirm gated) — verified as intended, not a footgun. The
+  long per-account transaction on a large run-level rerun (holding the `bill_run`
+  lock, blocking concurrent M2M signals) is a real scaling limit inherited from
+  the bm05/bm06 per-account shape; left as-is for v1 (stub engine, small demo
+  runs) and flagged for a batched re-derivation when a real engine + large cycles
+  land. `realEngineClient`'s timeout-then-`json()` window is pre-existing bm03
+  code, out of scope for the bm08 change set.
+
+`typecheck`/`lint`/`format:check` clean; the bm08 + touched billing/audit slice
+passes (29 files / 204 tests, plus the full DB-free suite green except the known
+pre-existing hardcoded-date-drift action suites).
+
 ## Next Up
 
-- **bm08+** — Rerun (audit-first, invalidate later stages, re-derive the trial
-  bill) then Approve & Post (four-eyes money gate, per-account INV posting). The
-  Errors tab's "Rerun these accounts" affordance (inert in bm07) wires to the
-  bm08 rerun action; the Uncharged indicative value stays "—" until a rating
-  source exists.
+- **bm09+** — Approve & Post (four-eyes money gate, per-account INV posting).
+  The Uncharged indicative value stays "—" until a rating source exists.
 
 ## Open Questions
 
@@ -883,3 +1028,48 @@ files pass (31 files / 217 tests in the slice).
   exactly this reason — running `vitest run` in a shell that hasn't sourced
   a real `.env` will show this file as a 5th failure on top of the 4 known
   date-drift ones.
+- **bm08 resolved decisions** (recorded so they aren't re-litigated, per
+  ai-workflow-rules §5.8 — the spec left each underspecified):
+  - **Re-derivation is gated on the chosen stage.** Spec step 4 says
+    "Aggregation/Taxation re-run for the rerun accounts" without stating the
+    dependence on `fromStage`. Resolved: since "the new attempt re-runs from the
+    chosen stage" (step 3), re-derivation only fires for stages at/after
+    `fromStage` — `aggregateBill` when `fromStage <= aggregation`, `taxBill`
+    when `fromStage <= taxation` (both via the `STAGES` index). A rerun from
+    `verification` re-derives nothing; from `taxation` re-taxes the surviving
+    bill (bills are keyed by `(run, ban, period)`, not `attempt`, so they
+    persist across attempts); from `aggregation` or earlier rewrites then
+    re-taxes. The stub engine does not re-signal in v1, so the service performs
+    the re-derivation inline (also what makes the "trial bills re-derive" test
+    behavioural without a live engine).
+  - **`accountIds` empty ⇒ all eligible; the eligible set excludes `EXCLUDED`
+    and posted.** Supports both "all or selected" (goal) call sites: the Errors
+    tab passes the failed accounts; the run-level control passes `[]`. An empty
+    *resolved* set (e.g. only `EXCLUDED`/posted ids requested) is
+    `NO_ACCOUNTS_SELECTED`. Eligibility drops `EXCLUDED` (deliberately not
+    billed) and any posted bill (`ref_inv_document_id`, Inv. #4) — belt-and-
+    suspenders with `aggregateBill`'s conditional delete.
+  - **Empty reason returns `VALIDATION_ERROR`, not the spec's literal
+    `VALIDATION_FAILED`.** The action mirrors the sibling `triggerRunAction`'s
+    result-code convention (`VALIDATION_ERROR`) for consistency; the spec's §5
+    bullet describes the *behaviour* (empty reason rejected), not a binding code
+    string. The reason is `z.string().trim().min(1)` — whitespace-only is empty.
+  - **Rerun uses one uniform attempt = max(selected `attempt_count`) + 1.**
+    `setAttemptForRerun` SETs every selected account to that single value (not a
+    per-row `+ 1`), so the per-account `attempt_count`, the audited `attempt`,
+    and the engine payload's run-level `attempt` all agree even when a partial
+    rerun mixes accounts on divergent attempts. (Superseded the initial
+    per-row-increment approach after review.)
+  - **The rerun does not update `triggered_by`.** `markRerunProcessing` leaves
+    `triggered_by`/`gl_event_at` untouched (Inv. #13 fixes `gl_event_at` at the
+    first trigger). Whether a rerun should re-stamp the "final-attempt trigger
+    actor" for four-eyes is a bm09 (Approve) concern and out of bm08's scope;
+    the DB backstop `approved_by <> triggered_by` still holds against the
+    original trigger actor.
+  - **Old→new delta display deferred.** The Visual mentions Customers & Bills
+    showing old→new totals; with v1's deterministic stub subtotal the
+    re-derived total is identical (zero delta), and surfacing the prior total
+    would require threading the audit `beforeData` into the read model. bm08
+    records the prior total in the `BILL_RUN_RERUN` audit row (the hard
+    requirement) and leaves a richer delta column to a later unit once a real
+    rating source produces non-trivial deltas.

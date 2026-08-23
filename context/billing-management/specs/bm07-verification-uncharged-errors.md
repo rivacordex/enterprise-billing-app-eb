@@ -1,7 +1,7 @@
 # bm07 — Verification, Uncharged & Errors (+ Audit) tabs — Spec
 
 **Unit:** bm07 (`bm00-build-plan.md`). **Boundary:** `billing` services + detail read. **Depends on:** bm04 (stage ingest, detail tabs), bm03 (`EXCLUDED` accounts), bm05/bm06 (bills).
-**Grounded in** `F:/Projects/enterprise-billing-app/`: `components/audit-log/*` + the audit read (`getAuditLog`), `bill_run_account`/`bill_run_account_stage` (bm03/bm04), the bm02 CSV-export server-action pattern, the accounts deep-link idiom.
+**Grounded in** (repo-relative): `components/audit-log/*` + the audit read (`getAuditLog`), `bill_run_account`/`bill_run_account_stage` (bm03/bm04), the bm02 CSV-export server-action pattern, the accounts deep-link idiom.
 
 > **No new table.** Uncharged reads `bill_run_account` rows with `status = 'EXCLUDED'`; Errors reads `PROCESSING_FAILED` accounts + their `HARD` stage rows; Audit reuses the existing `AUDIT_LOG` read filtered to the run. **Verification (v1) is minimal** — with synthetic stub figures and no prior-period baseline, plausibility/variance checks are deferred; the stage records `DONE` and writes `SOFT` findings only where a cheap check applies.
 > **Note (indicative value):** the Uncharged tab's "indicative value" has **no source in v1** (no rating) — shown as "—/not available"; the uncharged window (the run period) and reason are shown. Confirm if you'd rather derive a synthetic indicative value.

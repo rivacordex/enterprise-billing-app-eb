@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
+import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { StubDataBanner } from "@/components/billing/stub-data-banner";
@@ -107,6 +108,19 @@ export default async function BillRunDetailPage({
     LEVELS.READ,
   );
 
+  // bm08 — the rerun affordances (the Errors-tab and run-level rerun) are shown
+  // only to a `billrun_operate` principal AND only while the run is rerunnable
+  // (pre-approval: PROCESSED, or PROCESSING_FAILED to recover a failed run) —
+  // otherwise the control would always fail the service's `NOT_RERUNNABLE`
+  // guard. Show/hide only; the action re-checks server-side (code-standards §8).
+  const canOperate = meetsLevel(
+    permissionMap[PERMISSIONS.BILLRUN_OPERATE],
+    LEVELS.EDIT,
+  );
+  const rerunnable =
+    detail.status === "PROCESSED" || detail.status === "PROCESSING_FAILED";
+  const canRerun = canOperate && rerunnable;
+
   return (
     <main className="space-y-6 p-6">
       <header className="space-y-2">
@@ -115,6 +129,16 @@ export default async function BillRunDetailPage({
             {detail.billRunId}
           </h1>
           <RunStatusBadge status={detail.status} />
+          {canRerun && (
+            <div className="ms-auto">
+              <RerunDialog
+                billRunId={detail.billRunId}
+                accountIds={[]}
+                triggerLabel="Rerun"
+                variant="neutral"
+              />
+            </div>
+          )}
         </div>
         <p className="text-body text-muted-foreground">
           {detail.cycleName} · Period {formatCalendarDate(detail.periodStart)} –{" "}
@@ -133,6 +157,7 @@ export default async function BillRunDetailPage({
         errors={errors}
         audit={audit}
         canRecover={canRecover}
+        canRerun={canRerun}
         locale={locale}
         timezone={timezone}
       />

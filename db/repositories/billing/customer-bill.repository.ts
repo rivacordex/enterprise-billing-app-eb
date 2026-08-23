@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
@@ -127,6 +127,78 @@ export const customerBillRepository = {
       )
       .limit(1);
     return row ?? null;
+  },
+
+  // bm08-spec §Design/§Implementation §1 — the rerun finalization guard's read:
+  // the account ids in this run whose bill is already POSTED
+  // (`ref_inv_document_id` set, the finalization latch, architecture Inv. #4).
+  // The rerun service drops these from the eligible set so it never invalidates,
+  // re-derives, or re-attempts a finalized account (belt-and-suspenders with the
+  // DB delete guard). In v1 nothing is posted yet, so this is always empty — the
+  // guard is proven here and enforced for real in bm11.
+  async listPostedAccountIds(
+    tx: Database,
+    billRunId: string,
+  ): Promise<string[]> {
+    const rows = await tx
+      .select({ billingAccountId: customerBill.refBillingAccountId })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          isNotNull(customerBill.refInvDocumentId),
+        ),
+      );
+    return rows.map((r) => r.billingAccountId);
+  },
+
+  // bm08 — the account ids in this run that already have an UNPOSTED trial bill
+  // (`ref_inv_document_id IS NULL`). The rerun service re-derives a bill inline
+  // ONLY for these accounts: re-deriving is a delta-display convenience for
+  // accounts that previously reached Aggregation, so an account with no bill yet
+  // (e.g. one that failed at Validation/Collection) is left for the re-triggered
+  // engine to (re-)validate and create through the single validated
+  // `handle-stage-signal` path — never billed inline for an unvalidated account,
+  // and `taxBill` is never called with no bill to tax (which would throw).
+  async listUnpostedBillAccountIds(
+    tx: Database,
+    billRunId: string,
+  ): Promise<string[]> {
+    const rows = await tx
+      .select({ billingAccountId: customerBill.refBillingAccountId })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          isNull(customerBill.refInvDocumentId),
+        ),
+      );
+    return rows.map((r) => r.billingAccountId);
+  },
+
+  // bm08-spec §Design/§Implementation §1 — the prior totals stamped into the
+  // `BILL_RUN_RERUN` audit event's `beforeData` (the run's current billed total
+  // across the rerun accounts, before re-derivation), summed in SQL `numeric`
+  // (never JS float, code-standards §2.3) so the audit trail records what the
+  // figures were before the rerun. No selected accounts ⇒ "0.00".
+  async sumTotalsForAccounts(
+    tx: Database,
+    billRunId: string,
+    billingAccountIds: string[],
+  ): Promise<string> {
+    if (billingAccountIds.length === 0) return "0.00";
+    const [row] = await tx
+      .select({
+        total: sql<string>`COALESCE(SUM(${customerBill.totalAmount}), 0)::numeric(18,2)::text`,
+      })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          inArray(customerBill.refBillingAccountId, billingAccountIds),
+        ),
+      );
+    return row?.total ?? "0.00";
   },
 
   // bm05-spec §Visual — one row per trial bill, joined to the account name +

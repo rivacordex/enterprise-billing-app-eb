@@ -58,5 +58,8 @@ describe("AUDIT_EVENT_CATEGORY_MAP", () => {
     expect(AUDIT_EVENT_CATEGORY_MAP.USER_UNLOCKED).toBe("Security");
     expect(AUDIT_EVENT_CATEGORY_MAP.USER_PASSWORD_RESET).toBe("Security");
     expect(AUDIT_EVENT_CATEGORY_MAP.USER_PASSWORD_CHANGED).toBe("Security");
+
+    // bm08 — the rerun event is a Change (a state transition).
+    expect(AUDIT_EVENT_CATEGORY_MAP.BILL_RUN_RERUN).toBe("Change");
   });
 });
