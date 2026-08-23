@@ -145,7 +145,9 @@ export function PostingProgressView({
           aria-live="polite"
           className="text-body-sm font-medium text-[color:var(--color-success-700)]"
         >
-          All accounts invoiced. Run completed.
+          {progress.postedCount > 0
+            ? "All accounts invoiced. Run completed."
+            : "Run completed. No invoices were posted."}
         </p>
       ) : canPost ? (
         <Button

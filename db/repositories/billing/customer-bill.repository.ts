@@ -362,6 +362,7 @@ export const customerBillRepository = {
     tx: Database,
     billRunId: string,
     billingAccountId: string,
+    periodPartition: string,
   ): Promise<{
     customerBillId: string;
     periodPartition: string;
@@ -378,6 +379,9 @@ export const customerBillRepository = {
     // Postgres rejects. Aliasing the locked table emits the bare alias in the
     // `OF` clause (`FOR UPDATE OF "cb"`), so only the bill row is locked — never
     // the shared `billing_account` / `bill_run_account` rows the join reads.
+    // `period_partition` (fixed per run — the 1st of the run's period month) is
+    // filtered on both partitioned tables so Postgres can prune to the one
+    // partition instead of scanning every month.
     const cb = alias(customerBill, "cb");
     const [row] = await tx
       .select({
@@ -397,6 +401,7 @@ export const customerBillRepository = {
         and(
           eq(billRunAccount.refBillRunId, cb.refBillRunId),
           eq(billRunAccount.refBillingAccountId, cb.refBillingAccountId),
+          eq(billRunAccount.periodPartition, cb.periodPartition),
         ),
       )
       .innerJoin(
@@ -407,6 +412,7 @@ export const customerBillRepository = {
         and(
           eq(cb.refBillRunId, billRunId),
           eq(cb.refBillingAccountId, billingAccountId),
+          eq(cb.periodPartition, periodPartition),
         ),
       )
       .for("update", { of: cb })

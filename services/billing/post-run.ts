@@ -8,6 +8,7 @@ import { customerBillRepository } from "@/db/repositories/billing/customer-bill.
 import { postDocument } from "@/services/accounts/post-document";
 import type { PostDocumentResult } from "@/services/accounts/post-document";
 import * as money from "@/services/accounts/money";
+import { firstOfMonth } from "@/services/billing/derive-periods";
 import { logger } from "@/lib/logger";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 
@@ -111,6 +112,7 @@ export async function postAccount(
         tx,
         run.billRunId,
         billingAccountId,
+        firstOfMonth(run.periodStart),
       );
       if (!bill) {
         throw new Error(
@@ -233,18 +235,41 @@ export async function postAccount(
     }
     // `expectedStatus: 'PROCESSED'` guards against clobbering an account a
     // concurrent poster has already committed as `INVOICED` (the row lock only
-    // serialized the bill, not this after-rollback write).
-    await billRunAccountRepository.updateStatus(
-      db,
-      run.billRunId,
-      billingAccountId,
-      {
-        status: "PROCESSED",
-        errorCode: code,
-        errorDetail: detail,
-        expectedStatus: "PROCESSED",
-      },
-    );
+    // serialized the bill, not this after-rollback write). Wrapped in its own
+    // try/catch so a transient failure of THIS write can never propagate out of
+    // `postAccount` and abort the whole `postRun` loop — the account is simply
+    // left `PROCESSED` and retried on the next `postRun` (Design "park +
+    // continue" / resumable).
+    try {
+      const parked = await billRunAccountRepository.updateStatus(
+        db,
+        run.billRunId,
+        billingAccountId,
+        {
+          status: "PROCESSED",
+          errorCode: code,
+          errorDetail: detail,
+          expectedStatus: "PROCESSED",
+        },
+      );
+      if (!parked) {
+        // The guarded write matched no row: the account is no longer
+        // `PROCESSED` — a concurrent poster committed it as `INVOICED` between
+        // our rollback and this park. There is nothing to park; report it as
+        // skipped (already posted) rather than falsely claiming a parked
+        // failure.
+        return { status: "skipped" } as const;
+      }
+    } catch (parkErr) {
+      // Could not record the failure. Log it, leave the account `PROCESSED`
+      // (the next `postRun` retries it), and still report the failure to the
+      // caller so the loop moves on to the next account instead of aborting.
+      logger.error("post-run: failed to park account after a posting failure", {
+        billRunId: run.billRunId,
+        billingAccountId,
+        error: parkErr instanceof Error ? parkErr.message : String(parkErr),
+      });
+    }
     return { status: "parked", code, detail } as const;
   }
 }

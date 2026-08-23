@@ -160,3 +160,110 @@ step in the file created the row and it isn't reset between cases).
 dates to the month's real last day (fixes 4a), and (2) fix the trigger test's
 per-case isolation (fixes 4b). Both are date/fixture issues, unrelated to the
 approve/post work.
+
+---
+
+## 5. ⚪ Approve-page & period-close query efficiency (deferred perf pass)
+
+Flagged by the bm09-11 review's efficiency finders. All are **per-render / per-
+close** waste (not a hot per-account loop) with **no correctness impact**, so
+they are deferred to a dedicated performance pass rather than reshaping the
+heavily-tested approval-check module now.
+
+**Technical.**
+- **Redundant reads on the Approve preview.** `getApprovePreview` (force-dynamic
+  RSC) calls `listPostableCurrencies` once, and `runPreApprovalChecks` re-runs
+  it inside both `checkPeriodOpen` and `checkGlMappingsResolvable` — **3× the
+  same `customer_bill ⋈ billing_account ⋈ bill_run_account` DISTINCT join per
+  render**. `listStatusesForRun` is likewise read twice (preview counts +
+  `checkAccountsTerminal`). Fix: compute currencies + statuses once and thread
+  them into `runPreApprovalChecks` (optional precomputed params).
+- **Wide audit fetch to pluck one actor.** `getApprovePreview` uses
+  `auditLogRepository.findByTargetId` (all rows, full `beforeData`/`afterData`
+  blobs) only to `.find()` the newest trigger/rerun actor. Fix: a targeted
+  `findLatestActorForEvents(db, runId, TRIGGER_EVENT_TYPES)` returning just the
+  name + timestamp.
+- **No partition pruning on approval reads.** `listPostableCurrencies` /
+  `countNonPositivePostable` / `sumPostableTotalForRun` join the two
+  `PARTITION BY RANGE(period_partition)` tables WITHOUT the `period_partition`
+  predicate `lockBillForPosting` now has, so they scan every monthly partition.
+  Fix: add the `firstOfMonth(run.periodStart)` predicate (a signature change to
+  those methods + callers).
+- **Non-sargable period-close guard.** `findActiveForPeriod` filters
+  `to_char(gl_event_at, 'YYYY-MM') = period` (seq-scans all of `bill_run`; no
+  index on `gl_event_at`). Fix: a sargable range predicate + a `gl_event_at`
+  index (migration).
+
+**ELI5.** Opening the Approve page runs a handful of the same database lookups
+several times, and closing a period scans the whole run history. Nothing is
+wrong — it's just slower than it needs to be, and it gets slower as more months
+of data pile up. Worth batching later; not urgent.
+
+**Recommendation.** One perf pass: dedup the approval reads (thread
+currencies/statuses), add the partition predicate to the three approval reads,
+add the `gl_event_at` index + sargable close guard, and a targeted latest-actor
+read.
+
+---
+
+## 6. 🟡 Four-eyes leans on the audit log for rerun-actor coverage (latent)
+
+`checkFourEyes` bars every actor in the `BILL_RUN_TRIGGERED`/`BILL_RUN_RERUN`
+audit trail (∪ `bill_run.triggered_by`) from approving — the intended, stronger
+segregation-of-duties rule ("Ops triggers/reruns, a Manager approves"). Two
+latent edge cases, **neither reachable in v1**:
+
+- **Lockout:** if a run were triggered with a **null** actor (a system/cron
+  path) leaving `triggered_by` null AND no audit rows, the barred set is empty
+  and the check fails closed → no one can approve. (v1 always triggers via a
+  user action that stamps `actorId`, so this can't happen; the old
+  `triggered_by`-only check had the same null-fail-closed behaviour.)
+- **Bypass:** if a rerun's `BILL_RUN_RERUN` audit row had a **null** actor
+  (dropped by the set), that rerunner wouldn't be barred. (v1 rerun always
+  stamps a user; audit rows for a run being approved are days old, far inside
+  the 7-year retention, so pruning is not a factor.)
+
+**ELI5.** We decide who's *not allowed* to approve by reading the run's history
+log. Today every trigger/rerun is stamped with a real person, so it works. If a
+robot ever triggered a run without a name, the rule could either lock everyone
+out or miss the robot — but no robot does that today.
+
+**Recommendation.** If a system/automation trigger path is ever added, make the
+barred-actor set authoritative in `bill_run` state (a dedicated `triggered_by` /
+`reran_by` actors column or a small `bill_run_actors` table written at
+trigger/rerun) rather than re-deriving it from the prunable audit log.
+
+---
+
+## 7. 🟡 Multi-currency total shown in the Approve preview (latent)
+
+Single-currency-per-cycle is a v1 invariant, and `approveRun` already **blocks**
+a multi-currency run with `MULTI_CURRENCY`. But `getApprovePreview` still
+displays `currency = currencies[0]` with `totalAmount =
+sumPostableTotalForRun` (a blind cross-currency SUM), so a (hypothetical)
+multi-currency run would show a meaningless single-currency figure until the
+operator clicks and hits the block.
+
+**ELI5.** If a run ever mixed dollars and euros (it can't today), the review
+screen would show one wrong combined number; you'd only find out it's blocked
+when you press Approve. Harmless now because runs are single-currency.
+
+**Recommendation.** When the preview computes currencies, surface `>1` up front
+(a `single_currency` pre-approval check or a preview flag) instead of only at
+the write path.
+
+---
+
+## 8. ⚪ Minor items (bm09-11 review, low severity)
+
+- **`INV_LEG_TEMPLATES` non-null aliases.** `charge: DBN_LEG_TEMPLATES.charge!`
+  uses the file's established `!` idiom (cf. `refund: PAY_LEG_TEMPLATES.refund!`);
+  if a DBN key were ever removed the INV template would silently be `undefined`
+  and fail at first post rather than at compile. Left as-is for idiom
+  consistency; a shared `requireLegTemplate()` load-time assert would close it.
+- **Stale four-eyes checklist on submit.** If a viewer becomes a barred actor
+  *between* page-load and submit, `ApproveAndPostPanel` shows the
+  `FOUR_EYES_VIOLATION` error text but doesn't refresh the checklist (only
+  `CHECKS_FAILED` calls `setChecks`), so `four_eyes` still renders green with the
+  button enabled. Cosmetic — the service still refuses. Refresh the checklist on
+  `FOUR_EYES_VIOLATION` to fix.

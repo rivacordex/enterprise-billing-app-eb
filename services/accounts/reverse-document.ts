@@ -12,6 +12,7 @@ import { documentRepository } from "@/db/repositories/accounts/document.reposito
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import * as money from "@/services/accounts/money";
+import { checkDocumentReversible } from "@/services/accounts/document-reversibility";
 import { submitDocument } from "@/services/accounts/document-state-machine";
 import type { SubmitDocumentResult } from "@/services/accounts/document-state-machine";
 import type { DocType, LineKind } from "@/types/accounts";
@@ -38,15 +39,8 @@ export async function reverseDocument(
     return { ok: false, code: "WRONG_FINANCIAL_ACCOUNT" };
   }
   if (doc.state !== "posted") return { ok: false, code: "DOC_STATE_INVALID" };
-  // bm11: an INV is posted by the bill-run flow, which stamps
-  // `customer_bill.ref_inv_document_id` as the finalization latch. Reversing an
-  // INV here would undo its ledger effect while leaving that latch set — the
-  // bill/account would still read as posted/finalized, a desync bm09-11 has no
-  // reconciliation path for. INV reversal is out of scope until that flow
-  // exists; a correction goes through a credit note instead.
-  if (doc.docType === "INV") {
-    return { ok: false, code: "INV_NOT_REVERSIBLE" };
-  }
+  const notReversible = checkDocumentReversible(doc);
+  if (notReversible) return notReversible;
 
   const allLines = await documentLineRepository.findByDocumentId(
     db,

@@ -48,11 +48,18 @@ export async function listTransactionDocuments(
 
   const enriched: TransactionDocumentRow[] = rows.map((row) => {
     // §2.3 — mirror of reverse-document.ts eligibility check (inv. #18).
+    // `INV` documents are never reversible (bm11 — billing owns their
+    // finalization latch; correct via a credit note). The reversal services
+    // backstop this with `INV_NOT_REVERSIBLE`; excluding INV here just hides the
+    // dead ↺ Reverse control (matching the drawer's `drawerReversible`).
     const partiallyReversed =
       row.state === "posted" &&
       row.unreversedLineCount > 0 &&
       row.unreversedLineCount < row.totalLineCount;
-    const reversible = row.state === "posted" && row.unreversedLineCount > 0;
+    const reversible =
+      row.state === "posted" &&
+      row.docType !== "INV" &&
+      row.unreversedLineCount > 0;
 
     return {
       ...row,

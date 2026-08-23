@@ -172,7 +172,7 @@ MANAGER-vs-USER approval routing is **not** a permission level — both hold `ac
 
 ## 9. Result Error Code Catalog — as-built
 
-Reconciled against shipped code 2026-08-06, updated 2026-08-23 (bm09 added `BILL_RUN_IN_PROGRESS`). This is the **complete** set of `{ ok: false, code }` strings returned by `services/accounts/**` and `actions/accounts/**` — **50 codes**, verified by diffing this table against every `code:` literal in those trees (zero undocumented, zero invented). It supersedes the seven-code list previously inlined in §2.4, which had fallen substantially behind the implementation.
+Reconciled against shipped code 2026-08-06, updated 2026-08-24 (bm09 added `BILL_RUN_IN_PROGRESS`; the bm11 review added `INV_NOT_REVERSIBLE` — INV documents are not reversible). This is the **complete** set of `{ ok: false, code }` strings returned by `services/accounts/**` and `actions/accounts/**` — **51 codes**, verified by diffing this table against every `code:` literal in those trees (zero undocumented, zero invented). It supersedes the seven-code list previously inlined in §2.4, which had fallen substantially behind the implementation.
 
 ### 9.1 Two error systems, deliberately separate
 

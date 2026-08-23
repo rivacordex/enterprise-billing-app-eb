@@ -4,6 +4,7 @@ import { billRunRepository } from "@/db/repositories/billing/bill-run.repository
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
+import { TRIGGER_EVENT_TYPES } from "@/types/billing";
 import type { ApprovePreview } from "@/types/billing";
 import type { RunStatus } from "@/types/billing";
 
@@ -16,12 +17,9 @@ import type { RunStatus } from "@/types/billing";
 // correctly even before they click Approve). Derives live, never cached
 // (architecture Inv. #12). The `ApprovePreview` contract lives in
 // `@/types/billing` so the client panel can import it without crossing the
-// `components → services` boundary.
-
-const TRIGGER_EVENT_TYPES: ReadonlySet<string> = new Set([
-  "BILL_RUN_TRIGGERED",
-  "BILL_RUN_RERUN",
-]);
+// `components → services` boundary. `TRIGGER_EVENT_TYPES` is shared with
+// `checkFourEyes` (same module) so the displayed actor and the barred set stay
+// in lockstep.
 
 export async function getApprovePreview(
   billRunId: string,
@@ -52,7 +50,7 @@ export async function getApprovePreview(
   // person who last shaped the run and one of the barred parties.
   // `findByTargetId` is newest-first, so the first match is the latest attempt.
   const triggerActor = auditRows.find((r) =>
-    TRIGGER_EVENT_TYPES.has(r.eventType),
+    (TRIGGER_EVENT_TYPES as readonly string[]).includes(r.eventType),
   );
 
   return {

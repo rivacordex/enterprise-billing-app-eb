@@ -574,11 +574,24 @@ describe("grep gate — inv. #16: BAN-scoped document queries admit FA-level doc
     /ref_billing_account_id\s*=(?!=)|eq\(\s*\w+\.refBillingAccountId\b/;
   const NULL_ADMISSION =
     /ref_billing_account_id\s+IS\s+NULL|isNull\(\s*\w+\.refBillingAccountId/i;
+  // inv. #16 is a `document`/`document_line`-table invariant. Scope the gate to
+  // files that actually query those tables — a file that narrows a DIFFERENT
+  // table (`customer_bill`, `bill_run_account`, …) by BAN under an FA constraint
+  // is not a document query and is not subject to this rule. Without this scope
+  // the bare column-name regexes false-positive on billing repositories that
+  // merely reference both column names. The primary, alias-proof signal is the
+  // schema import: any drizzle query against the document/document_line table
+  // MUST import it from `@/db/schema/billing/documents`, so an aliased
+  // (`alias(document, "d")`) or renamed usage is still caught. The from/join and
+  // raw `billing.document` alternatives are belt-and-suspenders for raw SQL.
+  const DOCUMENT_TABLE =
+    /schema\/billing\/documents\b|\b(?:from|innerJoin|leftJoin|rightJoin|fullJoin)\(\s*document(?:Line)?[\s,)]|billing\.document(?:_line)?\b/;
 
   it("no source narrows documents by BAN without admitting ref_billing_account_id IS NULL", () => {
     const offenders = ALL_SOURCE_FILES.filter(({ content }) => {
       const src = stripLineComments(content);
       return (
+        DOCUMENT_TABLE.test(src) &&
         FA_CONSTRAINT.test(src) &&
         BAN_NARROWING.test(src) &&
         !NULL_ADMISSION.test(src)
