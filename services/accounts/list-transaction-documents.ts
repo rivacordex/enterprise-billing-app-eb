@@ -19,6 +19,7 @@ const DOC_TYPE_BASE: Record<string, string> = {
   CRN: "Credit Note",
   DBN: "Debit Note",
   ADJ: "Adjustment",
+  INV: "Invoice",
 };
 
 function toActionLabel(docType: string, reasonCode: string): string {
