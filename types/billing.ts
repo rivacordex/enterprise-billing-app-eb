@@ -207,3 +207,33 @@ export interface ErrorRow {
   errorCode: string | null;
   errorDetail: string | null;
 }
+
+// bm11-spec §Visual. `PostingProgressView`'s read model — the DERIVED display
+// status (never a stored column, same idiom as `StallState`): `PROCESSED`
+// accounts carrying no `errorCode` are `pending`; `INVOICED` accounts are
+// `invoiced`; a parked `PROCESSED` account (a tolerated per-account posting
+// failure, Design "PERIOD_CLOSED handling") is `PERIOD_CLOSED` or `failed`
+// depending on its `errorCode`.
+export const POSTING_ACCOUNT_STATUSES = [
+  "pending",
+  "invoiced",
+  "PERIOD_CLOSED",
+  "failed",
+] as const;
+export type PostingAccountStatus = (typeof POSTING_ACCOUNT_STATUSES)[number];
+
+export interface PostingProgressRow {
+  billingAccountId: string;
+  accountName: string;
+  status: PostingAccountStatus;
+  invoiceId: string | null;
+  errorDetail: string | null;
+}
+
+export interface PostingProgress {
+  billRunId: string;
+  runStatus: RunStatus;
+  rows: PostingProgressRow[];
+  postedCount: number;
+  totalCount: number;
+}

@@ -134,6 +134,13 @@ export default async function BillRunDetailPage({
   );
   const approvable = detail.status === "PROCESSED";
 
+  // bm11 — the Post affordance shares the same `/approve` route (it
+  // branches server-side on the live run status, bm11-spec §Visual): once
+  // `APPROVED`, the route renders `PostingProgressView` instead of the
+  // approve checklist. Shown for `APPROVED` (not yet started) and `POSTING`
+  // (resumable — "Resume posting" reopens the same progress view).
+  const postable = detail.status === "APPROVED" || detail.status === "POSTING";
+
   return (
     <main className="space-y-6 p-6">
       <header className="space-y-2">
@@ -150,6 +157,15 @@ export default async function BillRunDetailPage({
               >
                 <ShieldCheck aria-hidden="true" />
                 Approve &amp; Post
+              </Link>
+            )}
+            {canApprove && postable && (
+              <Link
+                href={`/billing/bill-runs/${detail.billRunId}/approve`}
+                className={buttonVariants()}
+              >
+                <ShieldCheck aria-hidden="true" />
+                {detail.status === "APPROVED" ? "Post" : "Resume posting"}
               </Link>
             )}
             {canRerun && (

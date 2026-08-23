@@ -155,7 +155,7 @@ describe("AuditLogFilters", () => {
       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(66); // "All events" + 65 (bm10 added BILL_RUN_APPROVED)
+    expect(within(select).getAllByRole("option")).toHaveLength(67); // "All events" + 66 (bm11 added BILL_RUN_POSTED)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

@@ -362,6 +362,40 @@ export const billRunRepository = {
       .where(eq(billRun.billRunId, billRunId));
   },
 
+  // bm11-spec §Design/§Implementation §1 — the posting transaction's run-level
+  // flip: `APPROVED → POSTING`, stamping `posting_started_at` once. Guarded on
+  // the current status (not an `IS NULL` check) so calling this on an
+  // already-`POSTING` run (the resume path) is a safe no-op — `postRun`
+  // branches on status itself and only calls this from `APPROVED`.
+  async markPosting(tx: Database, billRunId: string): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({ status: "POSTING", postingStartedAt: sql`now()` })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "APPROVED")),
+      );
+  },
+
+  // bm11-spec §Design/§Implementation §1 — run completion: every non-skipped
+  // account reached `INVOICED` (the caller verified this first), so the run
+  // passes `INVOICED` → (no v1 distribution targets, ai-workflow-rules §3.4 —
+  // `DISTRIBUTING` is never entered) straight to `COMPLETED`, stamping both
+  // timeline columns in the one write. Guarded on `status = 'POSTING'` so a
+  // stray double-call is a no-op (architecture Inv. #12 — the caller already
+  // holds the row lock via `findByIdForUpdate`).
+  async completePosting(tx: Database, billRunId: string): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({
+        status: "COMPLETED",
+        invoicedAt: sql`now()`,
+        completedAt: sql`now()`,
+      })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "POSTING")),
+      );
+  },
+
   // bm09-spec §Design/§Implementation §4 — the period-close guard: runs
   // (joined to their customer_bills for currency, single-currency per cycle
   // in v1) whose gl_event_at falls in `period` and are not yet

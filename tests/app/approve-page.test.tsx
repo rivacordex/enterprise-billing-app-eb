@@ -16,6 +16,9 @@ vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/get-approve-preview", () => ({
   getApprovePreview: vi.fn(),
 }));
+vi.mock("@/services/billing/read/get-posting-progress", () => ({
+  getPostingProgress: vi.fn(),
+}));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn(),
   getAppTimezone: vi.fn(),
@@ -28,6 +31,9 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/billing/approve-and-post-panel", () => ({
   ApproveAndPostPanel: () => <div data-testid="approve-panel" />,
 }));
+vi.mock("@/components/billing/posting-progress-view", () => ({
+  PostingProgressView: () => <div data-testid="posting-progress-view" />,
+}));
 vi.mock("@/components/billing/stub-data-banner", () => ({
   StubDataBanner: () => <div data-testid="stub-banner" />,
 }));
@@ -36,6 +42,7 @@ import ApproveAndPostPage from "@/app/(app)/billing/bill-runs/[runId]/approve/pa
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { getApprovePreview } from "@/services/billing/read/get-approve-preview";
+import { getPostingProgress } from "@/services/billing/read/get-posting-progress";
 import {
   getAppLocale,
   getAppTimezone,
@@ -43,6 +50,7 @@ import {
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockGetApprovePreview = vi.mocked(getApprovePreview);
+const mockGetPostingProgress = vi.mocked(getPostingProgress);
 const mockGetAppLocale = vi.mocked(getAppLocale);
 const mockGetAppTimezone = vi.mocked(getAppTimezone);
 
@@ -86,6 +94,13 @@ beforeEach(() => {
     permissionMap: {} as never,
   });
   mockGetApprovePreview.mockResolvedValue(PREVIEW);
+  mockGetPostingProgress.mockResolvedValue({
+    billRunId: "BRN00000001",
+    runStatus: "APPROVED",
+    rows: [],
+    postedCount: 0,
+    totalCount: 0,
+  });
   mockGetAppLocale.mockResolvedValue("en-MY");
   mockGetAppTimezone.mockReturnValue("UTC");
 });
@@ -138,6 +153,27 @@ describe("ApproveAndPostPage (bm10-spec §Implementation §3)", () => {
   it("hides StubDataBanner when STUB_DATA_MODE is off", async () => {
     const { queryByTestId } = render(await ApproveAndPostPage(props()));
     expect(queryByTestId("stub-banner")).toBeNull();
+  });
+
+  it("renders PostingProgressView (not the approve panel) once the run is APPROVED", async () => {
+    mockGetApprovePreview.mockResolvedValue({ ...PREVIEW, status: "APPROVED" });
+
+    const { getByTestId, queryByTestId } = render(
+      await ApproveAndPostPage(props()),
+    );
+
+    expect(getByTestId("posting-progress-view")).toBeTruthy();
+    expect(queryByTestId("approve-panel")).toBeNull();
+    expect(mockGetPostingProgress).toHaveBeenCalledWith("BRN00000001");
+  });
+
+  it("resolves to notFound() when posting progress can't be read for a non-PROCESSED run", async () => {
+    mockGetApprovePreview.mockResolvedValue({ ...PREVIEW, status: "APPROVED" });
+    mockGetPostingProgress.mockResolvedValue(null);
+
+    await expect(ApproveAndPostPage(props())).rejects.toMatchObject({
+      digest: "NEXT_HTTP_ERROR_FALLBACK;404",
+    });
   });
 
   it("declares dynamic = 'force-dynamic' (authenticated, uncached)", () => {

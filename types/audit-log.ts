@@ -86,6 +86,10 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // bm10 — PROCESSED → APPROVED, the four-eyes money gate: a state
   // transition, not a new entity.
   BILL_RUN_APPROVED: "Change",
+  // bm11 — marks the run reaching the INVOICED milestone (money in the
+  // ledger): Additive, like BILL_RUN_MATERIALIZED — new INV documents now
+  // exist, not merely a status flip.
+  BILL_RUN_POSTED: "Additive",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the

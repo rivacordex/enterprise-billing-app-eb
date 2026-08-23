@@ -304,6 +304,114 @@ export const customerBillRepository = {
     return row?.total ?? "0.00";
   },
 
+  // bm11-spec §Design/§Implementation §1 — the posting transaction's resume
+  // check and the source row for the INV's two lines: the account's bill for
+  // this run, whatever its state. `refInvDocumentId` set means already
+  // posted (the caller returns `skipped`, Inv. #6); unset means `subtotal`/
+  // `taxTotal`/`totalAmount` are what `postAccount` builds the INV from.
+  async findByRunAndAccount(
+    tx: Database,
+    billRunId: string,
+    billingAccountId: string,
+  ): Promise<{
+    customerBillId: string;
+    periodPartition: string;
+    subtotal: string;
+    taxTotal: string;
+    totalAmount: string;
+    refInvDocumentId: string | null;
+  } | null> {
+    const [row] = await tx
+      .select({
+        customerBillId: customerBill.customerBillId,
+        periodPartition: customerBill.periodPartition,
+        subtotal: customerBill.subtotal,
+        taxTotal: customerBill.taxTotal,
+        totalAmount: customerBill.totalAmount,
+        refInvDocumentId: customerBill.refInvDocumentId,
+      })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(customerBill.refBillingAccountId, billingAccountId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm11-spec §Design/§Implementation §1-2 — the "Resolved" checksum formula,
+  // computed entirely in SQL over the stored strings (code-standards §2.4 —
+  // never re-derived/reformatted in TypeScript): `md5(subtotal || ':' ||
+  // the ordered tax items || ':' || total_amount)`. No tax items ⇒ the
+  // middle segment is empty (COALESCE), not NULL-poisoning the whole hash.
+  async computeChargeChecksum(
+    tx: Database,
+    customerBillId: string,
+    periodPartition: string,
+  ): Promise<string> {
+    const [row] = await tx.execute<{ checksum: string }>(sql`
+      SELECT md5(
+        cb.subtotal::text || ':' ||
+        COALESCE(
+          (SELECT string_agg(
+             cti.tax_category || '|' || cti.tax_rate::text || '|' || cti.tax_amount::text,
+             ',' ORDER BY cti.tax_category
+           )
+           FROM billing.customer_bill_tax_item cti
+           WHERE cti.ref_customer_bill_id = cb.customer_bill_id
+             AND cti.period_partition = cb.period_partition),
+          ''
+        ) || ':' ||
+        cb.total_amount::text
+      ) AS checksum
+      FROM billing.customer_bill cb
+      WHERE cb.customer_bill_id = ${customerBillId}
+        AND cb.period_partition = ${periodPartition}
+    `);
+    if (!row) {
+      throw new Error(
+        `computeChargeChecksum: no customer_bill ${customerBillId}/${periodPartition}`,
+      );
+    }
+    return row.checksum;
+  },
+
+  // bm11-spec §Design/§Implementation §1 step 5 — the posting stamp: sets the
+  // finalization latch (`ref_inv_document_id`, architecture Inv. #4) plus
+  // `posted_attempt`/`charge_checksum`/`category='normal'`, all in the same
+  // per-account transaction as the INV create + post (step 4's "no double-
+  // post" — everything commits or rolls back together). The `IS NULL` guard
+  // is self-protecting (same convention as `replaceForBill`): a posted bill
+  // is never re-stamped even if a future caller passes one in.
+  async stampPosted(
+    tx: Database,
+    customerBillId: string,
+    periodPartition: string,
+    data: {
+      refInvDocumentId: string;
+      postedAttempt: number;
+      chargeChecksum: string;
+    },
+  ): Promise<void> {
+    await tx
+      .update(customerBill)
+      .set({
+        refInvDocumentId: data.refInvDocumentId,
+        postedAttempt: data.postedAttempt,
+        chargeChecksum: data.chargeChecksum,
+        category: "normal",
+      })
+      .where(
+        and(
+          eq(customerBill.customerBillId, customerBillId),
+          eq(customerBill.periodPartition, periodPartition),
+          isNull(customerBill.refInvDocumentId),
+        ),
+      );
+  },
+
   // bm05-spec §Visual — one row per trial bill, joined to the account name +
   // currency for money formatting (neither lives on `customer_bill`). No
   // `EXCLUDED`-account filter needed: those accounts never reach Aggregation
