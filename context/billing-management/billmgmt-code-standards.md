@@ -242,6 +242,32 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   Accounts documents/postings/period-close are byte-identical (guardrail
   test) — the two CHECKs only *gained* `'INV'`, no existing row changed.
 
+- **bm10 (delivered):** **no new table.** The `/billing/bill-runs/[runId]/approve`
+  row is now real (`billrun_approve:EDIT`): `ApproveAndPostPage` →
+  `ApproveAndPostPanel` + `PreApprovalChecks`. `services/billing/pre-approval-checks.ts`
+  (`runPreApprovalChecks`, five pure-ish reads: accounting period open, GL
+  mappings resolvable via bm09's `gl_resolution_view` — `ledgerRepository
+  .resolveGlCodeByName` resolves `sys.revenue.{ccy}`/`sys.tax_payable.{ccy}`
+  for every currency among the run's postable bills —, no zero/negative
+  postable totals, approver ≠ `bill_run.triggered_by` (four-eyes, unchanged
+  by a rerun per bm08), and all accounts terminal) backs both the page's live
+  preview and the approve transaction's own re-check, so the two can never
+  disagree. `services/billing/approve-run.ts` (`approveRun`) — one
+  `db.transaction`: `findByIdForUpdate` → guard `PROCESSED` (else
+  `NOT_APPROVABLE`) → the five checks (a failing four-eyes check returns its
+  own `FOUR_EYES_VIOLATION`; any other failure(s) bucket under
+  `CHECKS_FAILED`) → stamp `approved_by`/`approved_at`/the immutable
+  `total_amount` (`customerBillRepository.sumPostableTotalForRun`, the SQL
+  sum over bills whose account is `PROCESSED`) → mark every
+  `PROCESSING_FAILED`/`EXCLUDED` account `SKIPPED`
+  (`billRunAccountRepository.markSkippedForRun`) → flip `PROCESSED → APPROVED`
+  → `insertAuditEvent(BILL_RUN_APPROVED)`. The DB `bill_run_approver_distinct_check`
+  CHECK (bm02) remains the backstop; the service is the primary enforcement.
+  Posting (`APPROVED → POSTING → INVOICED`) is bm11 — this unit stops at
+  `APPROVED`. The run detail page's header gains a `billrun_approve`-gated
+  "Approve & Post" link to the new route, shown only while the run is
+  `PROCESSED` (show/hide only; the page + action re-check server-side).
+
 ---
 
 ## 9. Module Guardrail Tests (CI gate, general §10.4)

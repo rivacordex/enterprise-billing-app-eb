@@ -420,6 +420,25 @@ export const ledgerRepository = {
     return rows.map((r) => r.name);
   },
 
+  // bm10-spec §Design/§1 — the pre-approval "GL mappings resolvable" check:
+  // does a named pgledger account (e.g. `sys.revenue.{ccy}`) resolve to a GL
+  // code via `gl_resolution_view`? Returns null both when the account doesn't
+  // exist yet and when it exists but is unmapped (`gl_code IS NULL`) — both
+  // read as "not resolvable" to the caller; it never distinguishes the two.
+  async resolveGlCodeByName(
+    db: Database,
+    name: string,
+  ): Promise<string | null> {
+    const [row] = await db.execute<{ gl_code: string | null }>(sql`
+      SELECT grv.gl_code
+      FROM billing.pgledger_accounts_view pav
+      JOIN billing.gl_resolution_view grv ON grv.pgledger_account_id = pav.id
+      WHERE pav.name = ${name}
+      LIMIT 1
+    `);
+    return row?.gl_code ?? null;
+  },
+
   // ac06-spec §2.4 — V1 surfaced permanently in the UI: Σ balance per
   // currency across every pgledger account.
   async zeroSumByCurrency(

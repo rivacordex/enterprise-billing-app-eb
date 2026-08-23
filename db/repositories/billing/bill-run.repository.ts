@@ -327,6 +327,41 @@ export const billRunRepository = {
       .where(eq(billRun.billRunId, billRunId));
   },
 
+  // bm10-spec §Design/§Implementation §1 — a plain (unlocked) full-row read
+  // for the Approve & Post page's preview: the four-eyes check needs
+  // `triggeredBy`, the period check needs `glEventAt`. Distinct from
+  // `findByIdForUpdate` (locking, transactional) and `findDetailById`
+  // (joined-but-partial) — this is the only place a caller reads the whole
+  // header row outside a transaction.
+  async findById(db: Database, billRunId: string): Promise<BillRun | null> {
+    const [row] = await db
+      .select()
+      .from(billRun)
+      .where(eq(billRun.billRunId, billRunId))
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm10-spec §Design/§Implementation §1 — the approve write: PROCESSED →
+  // APPROVED, stamping `approved_by`/`approved_at` and the immutable
+  // `total_amount` (the SQL-summed postable-bill total the caller already
+  // computed — never re-derived after this point, code-standards §6.7).
+  async approve(
+    tx: Database,
+    billRunId: string,
+    data: { approvedBy: string; totalAmount: string },
+  ): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({
+        status: "APPROVED",
+        approvedBy: data.approvedBy,
+        approvedAt: sql`now()`,
+        totalAmount: data.totalAmount,
+      })
+      .where(eq(billRun.billRunId, billRunId));
+  },
+
   // bm09-spec §Design/§Implementation §4 — the period-close guard: runs
   // (joined to their customer_bills for currency, single-currency per cycle
   // in v1) whose gl_event_at falls in `period` and are not yet
