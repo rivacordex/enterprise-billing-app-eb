@@ -96,7 +96,10 @@ export const reasonCode = billing.table(
   () => [
     check(
       "reason_code_doc_type_check",
-      sql`doc_type IN ('PAY','DEP','CRN','DBN','ADJ')`,
+      // 'INV' added by bm09 — physical DDL of record is
+      // db/migrations/0031_add_inv_document_type.sql (drop+add, the 0014
+      // alter idiom); this literal is kept in sync with it.
+      sql`doc_type IN ('PAY','DEP','CRN','DBN','ADJ','INV')`,
     ),
     check(
       "reason_code_posting_nature_check",

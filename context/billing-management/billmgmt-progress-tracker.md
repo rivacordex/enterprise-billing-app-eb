@@ -8,16 +8,20 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01–bm07 delivered: the Billing nav section, RBAC scaffold, the
+- bm01–bm09 delivered: the Billing nav section, RBAC scaffold, the
   `billing.bill_run` header table, lazy materialization, the two-tab run list,
   the Trigger/Run path, the M2M stage-ingest path driving `bill_run_account`
   past `PENDING` to `PROCESSED`/`PROCESSING_FAILED` with the Workflow tab's live
   stage timeline, the trial `customer_bill` draft-bill generation
   (Collection/Aggregation) with the Customers & Bills tab, Taxation
-  (`customer_bill_tax_item`, SQL-computed GST `tax_total`/`total_amount`), and
+  (`customer_bill_tax_item`, SQL-computed GST `tax_total`/`total_amount`),
   Verification's per-stage effect (`DONE` + a `SOFT` backstop finding) with the
-  remaining run-detail tabs Uncharged/Errors/Audit (no new table). Next: bm08+
-  (Rerun/Approve/Post).
+  remaining run-detail tabs Uncharged/Errors/Audit (no new table), Rerun
+  (full & partial, attempt-keyed re-derivation), and the cross-module
+  Accounts-side `INV` document type + posting enablement (sequence, widened
+  CHECKs, `STANDARD_INVOICE` auto-post, INV leg template, the period-close
+  `BILL_RUN_IN_PROGRESS` guard — additive only, no INV posting UI yet). Next:
+  bm10+ (Approve & Post).
 
 ## Completed
 
@@ -728,6 +732,90 @@ Skipped (verified not still-valid or out of scope):
     env-dependent `trigger-run.service.test.ts` failure noted below (it mocks
     all repos and never touches `trigger-run.ts`, so bm08 cannot affect it).
 
+- **bm09 — Accounts-side INV & posting enablement (cross-module)**
+  (`specs/bm09-accounts-inv-enablement.md`). Additive only — every write is a
+  new sequence/row/CHECK-membership; no existing `document`/`reason_code`/
+  `gl_mapping` row or Accounts posting/period-close behavior changed.
+  - Migration `0031_add_inv_document_type.sql` / `0032_validate_inv_document_
+    type_check.sql` (the `0014` NOT-VALID/VALIDATE idiom): `CREATE SEQUENCE
+    billing.document_inv_seq`; both `document_doc_type_check` and
+    `reason_code_doc_type_check` dropped and re-added to admit `'INV'`.
+    `db/schema/billing/documents.ts`/`catalogs.ts` updated to match (physical
+    DDL of record is the migration; the Drizzle declarations are typing-only
+    mirrors, same convention as every hand-authored migration in this module).
+  - `types/accounts.ts` `DOC_TYPES` gains `INV` (six members now);
+    `db/repositories/accounts/document.repository.ts` `DOC_SEQUENCE_NAME.INV
+    = "billing.document_inv_seq"`. `z.enum(DOC_TYPES)`
+    (`validation/accounts/reason-code.schema.ts`) and the Type filter/select
+    options (`components/accounts/documents-table.tsx`,
+    `reason-code-form.tsx`, both already iterating `DOC_TYPES`) pick up `INV`
+    automatically; `documentIdSchema`'s ID-format regex gained the `INV`
+    alternative explicitly (not array-driven).
+  - `db/seeds/accounts/seed-reason-codes.ts` — `STANDARD_INVOICE`
+    (`docType: 'INV'`, `postingNature: 'revenue'`,
+    `autoPostLimit: '999999999999.99'`) so `postDocument`'s
+    `totalAmount > auto_post_limit` gate never trips: an INV **auto-posts
+    from `draft`**, never routing to `pending_approval` — the run-level
+    four-eyes (bm10) is the sole second signature, and each INV's
+    `created_by` is the approver. No new GL mapping rows — the existing
+    `ledger_role/receivables`, `system_account/sys.revenue.{ccy}`, and
+    `system_account/sys.tax_payable.{ccy}` rows (already seeded for DBN)
+    resolve unchanged.
+  - `services/accounts/leg-templates.ts` — `INV_LEG_TEMPLATES`, structurally
+    identical to `DBN_LEG_TEMPLATES` (`charge` = A/R debit + revenue credit;
+    `release` reused as the tax line's disambiguating key = A/R debit + tax-
+    payable credit, the same `(doc_type, line_kind)`-reuse precedent DBN/DEP/
+    ADJ already established). `post-document.ts` needed **no change** — it
+    already resolves the sys account generically from the reason code's
+    `posting_nature` and dispatches legs via `resolveLegTemplate(docType,
+    lineKind)`. bm11 owns constructing the two `document_line`s per INV.
+  - Period-close guard: `bill-run.repository.ts` gains
+    `findActiveForPeriod(db, period, currency)` — `bill_run` joined to its
+    `customer_bill`s (for currency via `billing_account`, single-currency per
+    cycle in v1) where `to_char(gl_event_at, 'YYYY-MM') = period` and
+    `status NOT IN ('COMPLETED','CANCELLED')`. `services/accounts/period-
+    close.ts`'s `closePeriod` calls it **before** touching the accounting
+    period, inside the same transaction; a non-empty result returns a new
+    typed `{ ok: false, code: 'BILL_RUN_IN_PROGRESS', activeRunIds }` instead
+    of closing. `components/accounts/close-period-button.tsx`'s
+    `describeError` surfaces it as "N bill run(s) still posting into
+    {period}."
+  - Guardrail: `tests/accounts/bm09-inv-enablement.integration.test.ts`
+    (DB-gated, not run in this environment — no local Postgres reachable,
+    same constraint noted throughout this tracker) — an INV under
+    `STANDARD_INVOICE` auto-posts directly from draft
+    (`document_inv_seq` yields `INV00000001`), legs balance (A/R debit =
+    revenue credit + tax credit) via the existing mappings, a DBN under
+    `MANUAL_CHARGE` still posts unaffected (**[CRITICAL]** existing-Accounts-
+    unchanged), and the period-close guard blocks then allows closing once
+    the run reaches `COMPLETED`. Deliberately named `bm09-*`, not `vNN-*` —
+    that pattern is the closed, audited V1-V14 Accounts module-invariant
+    sequence (`tests/accounts/verification-audit.test.ts`'s "no orphan
+    V-test" gate); this cross-module billing unit isn't one of the 14
+    architecture.md §6 invariants it maps, and an earlier `v15-*` name
+    tripped that gate.
+  - Ripple (found via a full-codebase sweep for hardcoded "5 document types"
+    assumptions, since `types/accounts.ts DOC_TYPES` is Accounts' own source
+    of truth): `tests/accounts/grep-gates.test.ts`'s inv. #19 gate
+    (regex now expects six types), `tests/components/documents-table.test.tsx`
+    (filter option count 6→7), `tests/accounts/transactions-documents-
+    list.integration.test.ts` (`DOC_TYPES` length 5→6),
+    `tests/db/billing-schema.integration.test.ts` (the per-doc-type sequence
+    loop now covers `INV` too). `context/accounting-management/acctmgmt-
+    code-standards.md` §9's Result-code catalog gained `BILL_RUN_IN_PROGRESS`
+    (49→50 codes, `tests/accounts/grep-gates.test.ts`'s catalog-count gate
+    updated to match) since `period-close.ts` is under `services/accounts/**`.
+  - `typecheck`/`lint`/`format:check` clean; full DB-free `vitest run`
+    (2612 tests) passes except the same pre-existing failures already on
+    `dev1` before this unit — confirmed via `git stash`: the 4 hardcoded-
+    date-drift action-suite files (`create-order`/`resume`/`suspend`/
+    `terminate-subscription`), `tests/services/billing/
+    trigger-run.service.test.ts`'s env-var-dependent failure (documented in
+    this tracker's bm05 session notes), and `tests/accounts/grep-gates.test.ts`'s
+    one BAN-narrowing false positive on `db/repositories/billing/
+    bill-run-account.repository.ts` (a file this unit never touches). bm09
+    touches none of those files.
+
 ## Post-review hardening (bm07)
 
 Fixes from a high-effort code review of the bm07 diff:
@@ -859,7 +947,7 @@ pre-existing hardcoded-date-drift action suites).
 
 ## Next Up
 
-- **bm09+** — Approve & Post (four-eyes money gate, per-account INV posting).
+- **bm10+** — Approve & Post (four-eyes money gate, per-account INV posting).
   The Uncharged indicative value stays "—" until a rating source exists.
 
 ## Open Questions

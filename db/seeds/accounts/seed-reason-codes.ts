@@ -6,7 +6,7 @@ import { logger } from "@/lib/logger";
 
 interface ReasonCodeEntry {
   reasonCode: string;
-  docType: "PAY" | "DEP" | "CRN" | "DBN" | "ADJ";
+  docType: "PAY" | "DEP" | "CRN" | "DBN" | "ADJ" | "INV";
   postingNature:
     | "revenue"
     | "revenue_adj"
@@ -79,6 +79,16 @@ const REASON_CODE_ENTRIES: ReasonCodeEntry[] = [
     docType: "ADJ",
     postingNature: "rounding",
     autoPostLimit: "10.00",
+  },
+  // bm09-spec §Design — the standard bill-run invoice reason code. The
+  // effectively-unlimited auto_post_limit means postDocument's
+  // totalAmount > auto_post_limit gate never trips, so INV auto-posts from
+  // draft — the run-level four-eyes (bm10) is the sole second signature.
+  {
+    reasonCode: "STANDARD_INVOICE",
+    docType: "INV",
+    postingNature: "revenue",
+    autoPostLimit: "999999999999.99",
   },
 ];
 

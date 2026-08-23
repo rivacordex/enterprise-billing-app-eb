@@ -696,15 +696,16 @@ describe.skipIf(!databaseUrl)(
       }
     });
 
-    // ── inv. #19 — exactly five document types ────────────────────────────────
+    // ── inv. #19 — exactly six document types (bm09 added INV) ────────────────
 
-    it("inv. #19: DOC_TYPES has exactly 5 members (PAY/DEP/CRN/DBN/ADJ)", () => {
-      expect(DOC_TYPES).toHaveLength(5);
+    it("inv. #19: DOC_TYPES has exactly 6 members (PAY/DEP/CRN/DBN/ADJ/INV)", () => {
+      expect(DOC_TYPES).toHaveLength(6);
       expect(DOC_TYPES).toContain("PAY");
       expect(DOC_TYPES).toContain("DEP");
       expect(DOC_TYPES).toContain("CRN");
       expect(DOC_TYPES).toContain("DBN");
       expect(DOC_TYPES).toContain("ADJ");
+      expect(DOC_TYPES).toContain("INV");
     });
   },
 );

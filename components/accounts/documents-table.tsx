@@ -51,6 +51,7 @@ const DOC_TYPE_LABELS: Record<DocType, string> = {
   CRN: "CRN",
   DBN: "DBN",
   ADJ: "ADJ",
+  INV: "INV",
 };
 
 const DOC_STATE_LABELS: Record<DocState, string> = {

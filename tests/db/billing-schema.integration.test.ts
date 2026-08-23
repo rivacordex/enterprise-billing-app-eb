@@ -211,7 +211,14 @@ describe.skipIf(!databaseUrl)(
       const { partyRoleId } = await insertCustomerFixture("Doc Seq Org");
       const faId = await insertFinancialAccount(partyRoleId);
 
-      for (const docType of ["PAY", "DEP", "CRN", "DBN", "ADJ"] as const) {
+      for (const docType of [
+        "PAY",
+        "DEP",
+        "CRN",
+        "DBN",
+        "ADJ",
+        "INV",
+      ] as const) {
         const reasonCode = `TEST_${docType}`;
         await insertReasonCode(reasonCode, docType, "revenue");
         const documentId = await nextDocumentId(docType);

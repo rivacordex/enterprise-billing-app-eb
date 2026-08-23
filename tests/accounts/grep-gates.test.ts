@@ -671,20 +671,21 @@ describe("grep gate — inv. #18: reversal eligibility is derived once, never re
   });
 });
 
-describe("grep gate — inv. #19: the five document types are closed (no sixth type in a component)", () => {
+describe("grep gate — inv. #19: the document types are closed (no invented type in a component)", () => {
   // No filter option, badge, or label under components/accounts/** names a
-  // document *type* outside PAY/DEP/CRN/DBN/ADJ. The forbidden literals are
-  // matched only in a doc-type position (a line that also references
-  // `doc_type`/`docType`), so the action-bar's legitimate `write_off` *ActionKey*
-  // (a launcher id) and the drawer's `refund` *line-kind* label — neither a doc
-  // type — are not mis-flagged (architecture inv. #19).
+  // document *type* outside PAY/DEP/CRN/DBN/ADJ/INV (bm09 added INV as a real
+  // schema-level type, not a component-invented one). The forbidden literals
+  // are matched only in a doc-type position (a line that also references
+  // `doc_type`/`docType`), so the action-bar's legitimate `write_off`
+  // *ActionKey* (a launcher id) and the drawer's `refund` *line-kind* label —
+  // neither a doc type — are not mis-flagged (architecture inv. #19).
   const DOC_TYPE_LINE = /doc[_]?type/i;
   const FORBIDDEN_LITERAL = /["'](reversal|refund|write_off)["']/;
 
-  it("types/accounts.ts DOC_TYPES is exactly the five (source of truth, gate not vacuous)", () => {
+  it("types/accounts.ts DOC_TYPES is exactly the six (source of truth, gate not vacuous)", () => {
     const src = read("types/accounts.ts");
     expect(src).toMatch(
-      /DOC_TYPES\s*=\s*\[\s*"PAY",\s*"DEP",\s*"CRN",\s*"DBN",\s*"ADJ",?\s*\]/,
+      /DOC_TYPES\s*=\s*\[\s*"PAY",\s*"DEP",\s*"CRN",\s*"DBN",\s*"ADJ",\s*"INV",?\s*\]/,
     );
   });
 
@@ -760,8 +761,8 @@ describe("grep gate — code-standards §9: the Result-code catalog is current",
     expect(undocumented).toEqual([]);
   });
 
-  it("the shipped catalog is exactly 49 codes (§9 header — locks drift)", () => {
-    expect(sourceCodes.size).toBe(49);
+  it("the shipped catalog is exactly 50 codes (§9 header — locks drift)", () => {
+    expect(sourceCodes.size).toBe(50);
   });
 });
 

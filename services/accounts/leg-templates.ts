@@ -236,6 +236,47 @@ const ADJ_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
   },
 };
 
+// INV leg templates (bm09-spec §Design — "modeled on DBN's revenue leg plus
+// a tax leg"). Same shape as DBN_LEG_TEMPLATES: `charge` is the revenue line,
+// `release` is reused as the tax line's disambiguating map key (no dedicated
+// `document_line_line_kind_check` value for "tax" — the same reuse
+// precedent DBN/DEP/ADJ already established above). bm11 constructs the two
+// document_lines (a revenue `charge` line + the tax); this template maps
+// them to pgledger legs via the existing `resolveLegTemplate(docType,
+// lineKind)` path — no post-document.ts change needed.
+const INV_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // revenue line: sys.revenue.{ccy} → ban.{BAN}.receivables — A/R debit,
+  // revenue credit, same direction as (DBN, charge).
+  charge: (ctx) => {
+    if (!ctx.sysAccountId) {
+      throw new Error("INV charge leg requires a resolved sys.revenue account");
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("INV charge leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.sysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+  // tax line: sys.tax_payable.{ccy} → ban.{BAN}.receivables — A/R debit, tax
+  // payable credit, same direction as (DBN, release)'s tax leg.
+  release: (ctx) => {
+    if (!ctx.taxSysAccountId) {
+      throw new Error(
+        "INV tax leg requires a resolved sys.tax_payable account",
+      );
+    }
+    if (!ctx.billingAccountReceivablesId) {
+      throw new Error("INV tax leg requires a receivables account");
+    }
+    return {
+      fromAccountId: ctx.taxSysAccountId,
+      toAccountId: ctx.billingAccountReceivablesId,
+    };
+  },
+};
+
 const LEG_TEMPLATES: Partial<
   Record<DocType, Partial<Record<LineKind, LegTemplate>>>
 > = {
@@ -244,6 +285,7 @@ const LEG_TEMPLATES: Partial<
   DBN: DBN_LEG_TEMPLATES,
   CRN: CRN_LEG_TEMPLATES,
   ADJ: ADJ_LEG_TEMPLATES,
+  INV: INV_LEG_TEMPLATES,
 };
 
 export function resolveLegTemplate(

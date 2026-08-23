@@ -15,6 +15,7 @@ const DOC_SEQUENCE_NAME: Record<DocType, string> = {
   CRN: "billing.document_crn_seq",
   DBN: "billing.document_dbn_seq",
   ADJ: "billing.document_adj_seq",
+  INV: "billing.document_inv_seq",
 };
 
 export const documentRepository = {

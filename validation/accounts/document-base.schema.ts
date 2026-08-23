@@ -28,7 +28,7 @@ export const amountSchema = z
 
 export const documentIdSchema = z
   .string()
-  .regex(/^(PAY|DEP|CRN|DBN|ADJ)\d{8}$/, "Invalid document ID");
+  .regex(/^(PAY|DEP|CRN|DBN|ADJ|INV)\d{8}$/, "Invalid document ID");
 
 // Every state-transition action carries the document's optimistic lock
 // (code-standards §2.5) — same shape/convention as
