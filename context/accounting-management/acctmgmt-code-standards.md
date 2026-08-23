@@ -172,7 +172,7 @@ MANAGER-vs-USER approval routing is **not** a permission level — both hold `ac
 
 ## 9. Result Error Code Catalog — as-built
 
-Reconciled against shipped code 2026-08-06. This is the **complete** set of `{ ok: false, code }` strings returned by `services/accounts/**` and `actions/accounts/**` — **49 codes**, verified by diffing this table against every `code:` literal in those trees (zero undocumented, zero invented). It supersedes the seven-code list previously inlined in §2.4, which had fallen substantially behind the implementation.
+Reconciled against shipped code 2026-08-06, updated 2026-08-23 (bm09 added `BILL_RUN_IN_PROGRESS`). This is the **complete** set of `{ ok: false, code }` strings returned by `services/accounts/**` and `actions/accounts/**` — **50 codes**, verified by diffing this table against every `code:` literal in those trees (zero undocumented, zero invented). It supersedes the seven-code list previously inlined in §2.4, which had fallen substantially behind the implementation.
 
 ### 9.1 Two error systems, deliberately separate
 
@@ -251,6 +251,7 @@ Both are returned by services' callers, never by `services/accounts/**` itself (
 |---|---|---|
 | `CLOSURE_BLOCKED` | `close-billing-account`, `close-financial-account` | Non-zero balance blocks closure (Q11, module inv. #12) |
 | `ALREADY_CLOSED` | both closure services, `period-close` | Target already closed |
+| `BILL_RUN_IN_PROGRESS` | `period-close` | A `billing.bill_run` is still posting INVs into the period/currency being closed (bm09, cross-module) — carries `activeRunIds` |
 | `INVALID_TRANSITION` | `onboard-customer-accounts` | Customer status transition not permitted — **not** a document-state code |
 | `CYCLE_RETIRED` | `bill-cycle`, `onboard-customer-accounts` | Assignment attempted against a retired cycle (Q13, module inv. #11) |
 | `ALREADY_RETIRED` | `bill-cycle`, `gl-account`, `gl-mapping`, `reason-code` | Catalog row already retired |

@@ -14,6 +14,8 @@ import type { Database } from "@/db/client";
 import { billRun } from "@/db/schema/billing/bill-run";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 import { billCycle } from "@/db/schema/billing/catalogs";
+import { customerBill } from "@/db/schema/billing/customer-bill";
+import { billingAccount } from "@/db/schema/billing/accounts";
 import { TERMINAL_RUN_STATUSES } from "@/types/billing";
 import type { RunStatus } from "@/types/billing";
 
@@ -323,5 +325,34 @@ export const billRunRepository = {
       .update(billRun)
       .set({ status: "PROCESSING_FAILED", lastProgressAt: sql`now()` })
       .where(eq(billRun.billRunId, billRunId));
+  },
+
+  // bm09-spec §Design/§Implementation §4 — the period-close guard: runs
+  // (joined to their customer_bills for currency, single-currency per cycle
+  // in v1) whose gl_event_at falls in `period` and are not yet
+  // COMPLETED/CANCELLED. `services/accounts/period-close.ts` calls this
+  // before closing so a period can't close while bm11 is still posting INVs
+  // into it.
+  async findActiveForPeriod(
+    db: Database,
+    period: string,
+    currency: string,
+  ): Promise<string[]> {
+    const rows = await db
+      .selectDistinct({ billRunId: billRun.billRunId })
+      .from(billRun)
+      .innerJoin(customerBill, eq(customerBill.refBillRunId, billRun.billRunId))
+      .innerJoin(
+        billingAccount,
+        eq(billingAccount.billingAccountId, customerBill.refBillingAccountId),
+      )
+      .where(
+        and(
+          sql`to_char(${billRun.glEventAt}, 'YYYY-MM') = ${period}`,
+          eq(billingAccount.currency, currency),
+          notInArray(billRun.status, TERMINAL),
+        ),
+      );
+    return rows.map((r) => r.billRunId);
   },
 };

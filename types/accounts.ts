@@ -7,7 +7,10 @@ import type { Document, DocumentLine } from "@/db/schema";
 // Domain unions verbatim from acctmgmt-code-standards.md §2.1 — the module's
 // one source of truth; every CHECK constraint that guards one of these
 // columns lists the same members inline in its schema file (ac02-spec §2.1).
-export const DOC_TYPES = ["PAY", "DEP", "CRN", "DBN", "ADJ"] as const;
+// 'INV' added by bm09 (Accounts-side INV & posting enablement) — the sixth
+// document type, created and auto-posted only by bm11's per-account billing
+// posting; not offered by any operator-facing Accounts creation panel.
+export const DOC_TYPES = ["PAY", "DEP", "CRN", "DBN", "ADJ", "INV"] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 
 export const DOC_STATES = [
