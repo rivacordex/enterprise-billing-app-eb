@@ -1,4 +1,14 @@
-import { and, asc, count, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  lte,
+} from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { auditLog } from "@/db/schema/audit";
@@ -117,6 +127,30 @@ export const auditLogRepository = {
       .orderBy(desc(auditLog.createdDatetime));
 
     return rows.map(toAuditLogRow);
+  },
+
+  // bm10 four-eyes — the distinct set of actor ids that performed any of the
+  // given event types against a target (e.g. every `BILL_RUN_TRIGGERED`/
+  // `BILL_RUN_RERUN` on a run). The approve gate uses this to bar EVERY
+  // operator who triggered or reran the run from also approving it, not just
+  // the original trigger actor. Null actors (system writes) are dropped.
+  async listActorIdsForEvents(
+    db: Database,
+    targetId: string,
+    eventTypes: readonly string[],
+  ): Promise<string[]> {
+    if (eventTypes.length === 0) return [];
+    const rows = await db
+      .selectDistinct({ actorUserId: auditLog.actorUserId })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.targetId, targetId),
+          inArray(auditLog.eventType, [...eventTypes]),
+          isNotNull(auditLog.actorUserId),
+        ),
+      );
+    return rows.map((r) => r.actorUserId).filter((id): id is string => !!id);
   },
 
   // Populates the Actor filter dropdown (um24-spec §24.3) — every distinct

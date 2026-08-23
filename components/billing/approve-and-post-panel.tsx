@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { PreApprovalChecks } from "@/components/billing/pre-approval-checks";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { formatCalendarDate } from "@/lib/formatters";
-import type { ApprovePreview } from "@/services/billing/read/get-approve-preview";
+import type { ApprovePreview } from "@/types/billing";
 
 export interface ApproveAndPostPanelProps {
   preview: ApprovePreview;
@@ -60,14 +60,11 @@ export function ApproveAndPostPanel({
       const result = await approveRunAction({ billRunId: preview.billRunId });
       if (!result.ok) {
         if (result.code === "CHECKS_FAILED") {
-          // Merge the re-checked failures back into the displayed checklist
+          // Replace the displayed checklist with the COMPLETE re-check result
           // so a check that changed between page-load and submit (e.g. the
-          // period closed in the meantime) is reflected without a reload.
-          setChecks((prev) =>
-            prev.map(
-              (c) => result.checks.find((f) => f.check === c.check) ?? c,
-            ),
-          );
+          // period closed, or a previously-failing check that now passes) is
+          // reflected without a reload.
+          setChecks(result.checks);
         }
         setError(describeError(result.code));
         return;
@@ -103,7 +100,7 @@ export function ApproveAndPostPanel({
           – {formatCalendarDate(preview.periodEnd)}
         </p>
         <p className="text-body-sm text-muted-foreground">
-          Final trigger by{" "}
+          Triggered by{" "}
           <strong className="text-foreground">
             {preview.triggeredByName ?? "an unknown user"}
           </strong>{" "}
@@ -152,13 +149,13 @@ export function ApproveAndPostPanel({
           className="space-y-3 rounded-md border border-[color:var(--border-default)] bg-[color:var(--surface-card)] p-4"
         >
           <p className="text-body-sm text-foreground">
-            Post{" "}
+            Approve{" "}
             <strong>
               {`${preview.postableCount} invoice${preview.postableCount === 1 ? "" : "s"}`}
             </strong>{" "}
-            totalling <strong>{totalAmountDisplay}</strong>. This consumes
-            invoice numbers and cannot be undone; corrections require a manual
-            credit note.
+            totalling <strong>{totalAmountDisplay}</strong>. This stamps the
+            run&apos;s approved total and cannot be undone; posting the invoices
+            is a separate step.
           </p>
           {preview.skippedCount > 0 && (
             <p className="text-body-sm text-muted-foreground">
@@ -204,7 +201,9 @@ function describeError(code: string): string {
     case "NOT_APPROVABLE":
       return "This run can no longer be approved — it may already be approved or still processing.";
     case "FOUR_EYES_VIOLATION":
-      return "You triggered the final attempt on this run and cannot also approve it.";
+      return "You triggered or reran this run and cannot also approve it.";
+    case "MULTI_CURRENCY":
+      return "This run has bills in more than one currency and cannot be approved as a single total. Contact support.";
     case "CHECKS_FAILED":
       return "One or more pre-approval checks failed — see the checklist above.";
     case "FORBIDDEN":

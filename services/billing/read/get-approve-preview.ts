@@ -4,7 +4,7 @@ import { billRunRepository } from "@/db/repositories/billing/bill-run.repository
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
-import type { PreApprovalCheck } from "@/services/billing/pre-approval-checks";
+import type { ApprovePreview } from "@/types/billing";
 import type { RunStatus } from "@/types/billing";
 
 // bm10-spec §Design/§Visual. The Approve & Post page's read model — the run
@@ -14,22 +14,9 @@ import type { RunStatus } from "@/types/billing";
 // against), the postable/skipped preview counts, and the live pre-approval
 // checks evaluated for the CURRENT viewer (so the self-approval block shows
 // correctly even before they click Approve). Derives live, never cached
-// (architecture Inv. #12).
-
-export interface ApprovePreview {
-  billRunId: string;
-  cycleName: string;
-  status: RunStatus;
-  periodStart: string;
-  periodEnd: string;
-  triggeredByName: string | null;
-  triggeredAt: Date | null;
-  postableCount: number;
-  skippedCount: number;
-  currency: string | null;
-  totalAmount: string;
-  checks: PreApprovalCheck[];
-}
+// (architecture Inv. #12). The `ApprovePreview` contract lives in
+// `@/types/billing` so the client panel can import it without crossing the
+// `components → services` boundary.
 
 const TRIGGER_EVENT_TYPES: ReadonlySet<string> = new Set([
   "BILL_RUN_TRIGGERED",
@@ -60,9 +47,11 @@ export async function getApprovePreview(
     (s) => s.status === "PROCESSING_FAILED" || s.status === "EXCLUDED",
   ).length;
 
-  // `findByTargetId` orders newest-first, so the first matching row IS the
-  // final trigger/rerun attempt.
-  const lastTrigger = auditRows.find((r) =>
+  // Four-eyes now bars EVERY operator who triggered or reran the run (see
+  // `checkFourEyes`), so display the MOST RECENT trigger/rerun actor — the
+  // person who last shaped the run and one of the barred parties.
+  // `findByTargetId` is newest-first, so the first match is the latest attempt.
+  const triggerActor = auditRows.find((r) =>
     TRIGGER_EVENT_TYPES.has(r.eventType),
   );
 
@@ -72,8 +61,8 @@ export async function getApprovePreview(
     status: detail.status as RunStatus,
     periodStart: detail.periodStart,
     periodEnd: detail.periodEnd,
-    triggeredByName: lastTrigger?.actorUserName ?? null,
-    triggeredAt: lastTrigger?.createdDatetime ?? null,
+    triggeredByName: triggerActor?.actorUserName ?? null,
+    triggeredAt: triggerActor?.createdDatetime ?? null,
     postableCount,
     skippedCount,
     currency: currencies[0] ?? null,

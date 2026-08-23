@@ -80,7 +80,7 @@ function run(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockInsertStageRow.mockResolvedValue({} as never);
-  mockUpdateStatus.mockResolvedValue(undefined);
+  mockUpdateStatus.mockResolvedValue(true);
   mockRecomputeStatus.mockResolvedValue(undefined);
   mockCollectClaim.mockReturnValue({
     status: "DONE",

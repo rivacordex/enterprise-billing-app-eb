@@ -24,7 +24,10 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
   billRunAccountRepository: { markSkippedForRun: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
-  customerBillRepository: { sumPostableTotalForRun: vi.fn() },
+  customerBillRepository: {
+    sumPostableTotalForRun: vi.fn(),
+    listPostableCurrencies: vi.fn(),
+  },
 }));
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
@@ -45,6 +48,9 @@ const mockApprove = vi.mocked(billRunRepository.approve);
 const mockMarkSkipped = vi.mocked(billRunAccountRepository.markSkippedForRun);
 const mockSumPostableTotal = vi.mocked(
   customerBillRepository.sumPostableTotalForRun,
+);
+const mockListCurrencies = vi.mocked(
+  customerBillRepository.listPostableCurrencies,
 );
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockRunChecks = vi.mocked(runPreApprovalChecks);
@@ -71,7 +77,9 @@ beforeEach(() => {
   mockFindByIdForUpdate.mockResolvedValue(run());
   mockRunChecks.mockResolvedValue(ALL_PASS as never);
   mockSumPostableTotal.mockResolvedValue("315.00");
+  mockListCurrencies.mockResolvedValue(["MYR"]);
   mockMarkSkipped.mockResolvedValue(1);
+  mockApprove.mockResolvedValue(true);
 });
 
 describe("approveRun (bm10-spec §Design/§1)", () => {
@@ -151,21 +159,34 @@ describe("approveRun (bm10-spec §Design/§1)", () => {
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
-  it("returns CHECKS_FAILED with only the failing checks when a non-four-eyes check fails", async () => {
-    mockRunChecks.mockResolvedValue([
+  it("returns CHECKS_FAILED with the complete re-check result when a non-four-eyes check fails", async () => {
+    const failed = [
       { check: "period_open", pass: false, remediation: "Period closed." },
       ...ALL_PASS.slice(1),
-    ] as never);
+    ];
+    mockRunChecks.mockResolvedValue(failed as never);
 
     const result = await approveRun("BRN00000001", "user-approver");
 
+    // The whole checklist is returned (not just the failing subset) so the
+    // panel can replace its state wholesale — a previously-failing check that
+    // now passes is cleared rather than left stale.
     expect(result).toEqual({
       ok: false,
       code: "CHECKS_FAILED",
-      checks: [
-        { check: "period_open", pass: false, remediation: "Period closed." },
-      ],
+      checks: failed,
     });
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns MULTI_CURRENCY (no writes) when the run has more than one postable currency", async () => {
+    mockListCurrencies.mockResolvedValue(["MYR", "USD"]);
+
+    const result = await approveRun("BRN00000001", "user-approver");
+
+    expect(result).toEqual({ ok: false, code: "MULTI_CURRENCY" });
+    expect(mockMarkSkipped).not.toHaveBeenCalled();
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });

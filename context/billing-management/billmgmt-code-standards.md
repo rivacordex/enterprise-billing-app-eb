@@ -224,9 +224,12 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   `0032` add the sequence and drop+add both `doc_type` CHECKs (`document`,
   `reason_code`) to admit `'INV'` (the `0014` NOT-VALID/VALIDATE idiom). The
   seeded `STANDARD_INVOICE` reason code (`postingNature: 'revenue'`,
-  `autoPostLimit: '999999999999.99'`) makes `postDocument`'s
-  `totalAmount > auto_post_limit` gate never trip, so an `INV` document
-  **auto-posts from `draft`** — the run-level four-eyes (bm10) is the sole
+  `autoPostLimit: '999999999999.99'`) keeps `postDocument`'s
+  `totalAmount > auto_post_limit` gate from tripping for any invoice at or
+  below that seeded limit, so in practice an `INV` document **auto-posts from
+  `draft`** (a total exceeding the limit would still fall to `submitDocument`/
+  `postDocument`'s approval path like any other reason code) — the run-level
+  four-eyes (bm10) is the sole
   second signature, and each INV's `created_by` is the approver.
   `services/accounts/leg-templates.ts` gains `INV_LEG_TEMPLATES` (`charge` =
   A/R debit + revenue credit, `release` reused as the tax-line key = A/R
@@ -249,8 +252,11 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   mappings resolvable via bm09's `gl_resolution_view` — `ledgerRepository
   .resolveGlCodeByName` resolves `sys.revenue.{ccy}`/`sys.tax_payable.{ccy}`
   for every currency among the run's postable bills —, no zero/negative
-  postable totals, approver ≠ `bill_run.triggered_by` (four-eyes, unchanged
-  by a rerun per bm08), and all accounts terminal) backs both the page's live
+  postable subtotals/totals, four-eyes — approver ≠ **every** operator who
+  triggered OR reran the run (the `BILL_RUN_TRIGGERED`/`BILL_RUN_RERUN` audit
+  actors ∪ `bill_run.triggered_by`), so an Ops user who reran cannot approve
+  their own work; approval must come from a separate approver (e.g. a manager)
+  —, and all accounts terminal) backs both the page's live
   preview and the approve transaction's own re-check, so the two can never
   disagree. `services/billing/approve-run.ts` (`approveRun`) — one
   `db.transaction`: `findByIdForUpdate` → guard `PROCESSED` (else

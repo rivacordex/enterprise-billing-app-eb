@@ -1,6 +1,5 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
-import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
@@ -9,6 +8,7 @@ import { customerBillRepository } from "@/db/repositories/billing/customer-bill.
 import { postDocument } from "@/services/accounts/post-document";
 import type { PostDocumentResult } from "@/services/accounts/post-document";
 import * as money from "@/services/accounts/money";
+import { logger } from "@/lib/logger";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 
 // bm11-spec §Design/§Implementation. Approval drives posting: on `APPROVED`,
@@ -104,44 +104,29 @@ export async function postAccount(
 
   try {
     return await db.transaction(async (tx) => {
-      const bill = await customerBillRepository.findByRunAndAccount(
+      // One row-locked read: the trial bill + the account's attempt counter +
+      // the billing-account GL fields, in a single round-trip. `FOR UPDATE OF
+      // customer_bill` serializes concurrent posts of the same account.
+      const bill = await customerBillRepository.lockBillForPosting(
         tx,
         run.billRunId,
         billingAccountId,
       );
       if (!bill) {
         throw new Error(
-          `postAccount: no customer_bill for run ${run.billRunId} / account ${billingAccountId}`,
+          `postAccount: no postable customer_bill for run ${run.billRunId} / account ${billingAccountId}`,
         );
       }
       if (bill.refInvDocumentId) {
         return { status: "skipped" } as const;
       }
 
-      const attempt = await billRunAccountRepository.findAttempt(
-        tx,
-        run.billRunId,
-        billingAccountId,
-      );
-      if (attempt === null) {
-        throw new Error(
-          `postAccount: no bill_run_account for run ${run.billRunId} / account ${billingAccountId}`,
-        );
-      }
-
-      const ban = await billingAccountRepository.findById(tx, billingAccountId);
-      if (!ban) {
-        throw new Error(
-          `postAccount: billing_account ${billingAccountId} not found`,
-        );
-      }
-
       const doc = await documentRepository.insert(tx, "INV", {
         state: "draft",
-        refFinancialAccountId: ban.refFinancialAccountId,
-        refBillingAccountId: ban.billingAccountId,
+        refFinancialAccountId: bill.refFinancialAccountId,
+        refBillingAccountId: billingAccountId,
         reasonCode: "STANDARD_INVOICE",
-        currency: ban.currency,
+        currency: bill.currency,
         totalAmount: bill.totalAmount,
         paymentMode: null,
         modeRef: null,
@@ -160,7 +145,7 @@ export async function postAccount(
         refDocumentId: doc.documentId,
         lineNo: 1,
         lineKind: "charge",
-        refBillingAccountId: ban.billingAccountId,
+        refBillingAccountId: billingAccountId,
         refSettledDocumentId: null,
         amount: bill.subtotal,
         pgledgerTransferId: null,
@@ -174,7 +159,7 @@ export async function postAccount(
           refDocumentId: doc.documentId,
           lineNo: 2,
           lineKind: "release",
-          refBillingAccountId: ban.billingAccountId,
+          refBillingAccountId: billingAccountId,
           refSettledDocumentId: null,
           amount: bill.taxTotal,
           pgledgerTransferId: null,
@@ -196,16 +181,24 @@ export async function postAccount(
         bill.customerBillId,
         bill.periodPartition,
       );
-      await customerBillRepository.stampPosted(
+      const stamped = await customerBillRepository.stampPosted(
         tx,
         bill.customerBillId,
         bill.periodPartition,
         {
           refInvDocumentId: doc.documentId,
-          postedAttempt: attempt,
+          postedAttempt: bill.attemptCount,
           chargeChecksum,
         },
       );
+      if (!stamped) {
+        // The bill was posted concurrently (its `ref_inv_document_id` was set
+        // after our FOR UPDATE-guarded resume check). Throw so this INV create
+        // + post and the account `INVOICED` flip roll back — at most one INV.
+        throw new Error(
+          `postAccount: customer_bill ${bill.customerBillId} was concurrently posted`,
+        );
+      }
       await billRunAccountRepository.updateStatus(
         tx,
         run.billRunId,
@@ -219,15 +212,38 @@ export async function postAccount(
     // The transaction above already rolled back — no orphan INV/ledger write.
     // Park the account with a fresh, separate write so the failure is visible
     // and `postRun` can move on to the next account (Design "park + continue").
-    const code =
-      err instanceof PostAccountFailureSignal ? err.code : "POSTING_FAILED";
-    const detail =
-      err instanceof Error ? err.message : "Unknown posting failure";
+    let code: string;
+    let detail: string;
+    if (err instanceof PostAccountFailureSignal) {
+      // A tolerated, operator-facing posting failure — `message` is already a
+      // friendly `describePostFailure` string.
+      code = err.code;
+      detail = err.message;
+    } else {
+      // An unexpected error (an invariant breach — missing bill/account — or the
+      // concurrent-post guard). Log the real cause server-side, but never leak
+      // internal ids/messages into the operator-facing `errorDetail`.
+      logger.error("post-run: unexpected postAccount failure", {
+        billRunId: run.billRunId,
+        billingAccountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      code = "POSTING_FAILED";
+      detail = "An unexpected error occurred while posting this invoice.";
+    }
+    // `expectedStatus: 'PROCESSED'` guards against clobbering an account a
+    // concurrent poster has already committed as `INVOICED` (the row lock only
+    // serialized the bill, not this after-rollback write).
     await billRunAccountRepository.updateStatus(
       db,
       run.billRunId,
       billingAccountId,
-      { status: "PROCESSED", errorCode: code, errorDetail: detail },
+      {
+        status: "PROCESSED",
+        errorCode: code,
+        errorDetail: detail,
+        expectedStatus: "PROCESSED",
+      },
     );
     return { status: "parked", code, detail } as const;
   }
@@ -246,8 +262,10 @@ export async function postRun(
     const found = await billRunRepository.findByIdForUpdate(tx, billRunId);
     if (!found) return null;
     if (found.status === "APPROVED") {
-      await billRunRepository.markPosting(tx, billRunId);
-      return { ...found, status: "POSTING" };
+      // Guarded on `status = 'APPROVED'`; under the lock this always applies,
+      // but treat a 0-row result as not-postable rather than proceeding.
+      const flipped = await billRunRepository.markPosting(tx, billRunId);
+      return flipped ? { ...found, status: "POSTING" } : null;
     }
     if (found.status === "POSTING") return found;
     return null;
@@ -266,26 +284,32 @@ export async function postRun(
     results.push({ billingAccountId: account.billingAccountId, result });
   }
 
-  const finalStatuses = await billRunAccountRepository.listStatusesForRun(
-    db,
-    billRunId,
-  );
-  const completed = !finalStatuses.some((a) => a.status === "PROCESSED");
-  if (completed) {
-    await db.transaction(async (tx) => {
-      const locked = await billRunRepository.findByIdForUpdate(tx, billRunId);
-      if (!locked || locked.status !== "POSTING") return;
-      await billRunRepository.completePosting(tx, billRunId);
-      await insertAuditEvent(tx, {
-        eventType: "BILL_RUN_POSTED",
-        actorUserId: actorId,
-        targetEntity: "BILL_RUN",
-        targetId: billRunId,
-        beforeData: { status: locked.status },
-        afterData: { status: "COMPLETED" },
-      });
+  // Decide completion INSIDE the run's FOR UPDATE lock: read the account
+  // statuses and flip to COMPLETED atomically, so the "no account still
+  // PROCESSED" check and the write can't be computed from divergent snapshots
+  // (two concurrent resumes, or a park landing between an unlocked read and the
+  // flip). `completePosting`'s `status = 'POSTING'` guard makes a losing
+  // concurrent invocation a no-op that skips the audit.
+  const completed = await db.transaction(async (tx) => {
+    const locked = await billRunRepository.findByIdForUpdate(tx, billRunId);
+    if (!locked || locked.status !== "POSTING") return false;
+    const statuses = await billRunAccountRepository.listStatusesForRun(
+      tx,
+      billRunId,
+    );
+    if (statuses.some((a) => a.status === "PROCESSED")) return false;
+    const done = await billRunRepository.completePosting(tx, billRunId);
+    if (!done) return false;
+    await insertAuditEvent(tx, {
+      eventType: "BILL_RUN_POSTED",
+      actorUserId: actorId,
+      targetEntity: "BILL_RUN",
+      targetId: billRunId,
+      beforeData: { status: locked.status },
+      afterData: { status: "COMPLETED" },
     });
-  }
+    return true;
+  });
 
   return {
     ok: true,

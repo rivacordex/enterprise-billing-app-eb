@@ -6,10 +6,7 @@
 import { CheckCircle2, XCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import type {
-  PreApprovalCheck,
-  PreApprovalCheckKey,
-} from "@/services/billing/pre-approval-checks";
+import type { PreApprovalCheck, PreApprovalCheckKey } from "@/types/billing";
 
 const CHECK_LABELS: Record<PreApprovalCheckKey, string> = {
   period_open: "Accounting period open",

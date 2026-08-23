@@ -25,6 +25,7 @@ export type ReverseDocumentResult =
   | { ok: false; code: "WRONG_FINANCIAL_ACCOUNT" }
   | { ok: false; code: "DOC_STATE_INVALID" }
   | { ok: false; code: "ALREADY_REVERSED" }
+  | { ok: false; code: "INV_NOT_REVERSIBLE" }
   | { ok: false; code: "CONFLICT" };
 
 export async function reverseDocument(
@@ -37,6 +38,15 @@ export async function reverseDocument(
     return { ok: false, code: "WRONG_FINANCIAL_ACCOUNT" };
   }
   if (doc.state !== "posted") return { ok: false, code: "DOC_STATE_INVALID" };
+  // bm11: an INV is posted by the bill-run flow, which stamps
+  // `customer_bill.ref_inv_document_id` as the finalization latch. Reversing an
+  // INV here would undo its ledger effect while leaving that latch set — the
+  // bill/account would still read as posted/finalized, a desync bm09-11 has no
+  // reconciliation path for. INV reversal is out of scope until that flow
+  // exists; a correction goes through a credit note instead.
+  if (doc.docType === "INV") {
+    return { ok: false, code: "INV_NOT_REVERSIBLE" };
+  }
 
   const allLines = await documentLineRepository.findByDocumentId(
     db,

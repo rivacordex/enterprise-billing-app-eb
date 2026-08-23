@@ -237,3 +237,41 @@ export interface PostingProgress {
   postedCount: number;
   totalCount: number;
 }
+
+// bm10-spec §Design/§Visual. The public Approve & Post view contracts. They
+// live here (not in `services/**`) so the client components that render them
+// (`ApproveAndPostPanel`, `PreApprovalChecks`) can import them without crossing
+// the `components → services` boundary (eslint `boundaries/dependencies`); the
+// approve service + read model import the same shapes.
+export const PRE_APPROVAL_CHECKS = [
+  "period_open",
+  "gl_mappings",
+  "positive_totals",
+  "four_eyes",
+  "accounts_terminal",
+] as const;
+export type PreApprovalCheckKey = (typeof PRE_APPROVAL_CHECKS)[number];
+
+export interface PreApprovalCheck {
+  check: PreApprovalCheckKey;
+  pass: boolean;
+  remediation: string | null;
+}
+
+// The Approve & Post page's read model (`getApprovePreview`) — the run header,
+// the final trigger actor, the postable/skipped counts, and the live
+// pre-approval checks for the current viewer.
+export interface ApprovePreview {
+  billRunId: string;
+  cycleName: string;
+  status: RunStatus;
+  periodStart: string;
+  periodEnd: string;
+  triggeredByName: string | null;
+  triggeredAt: Date | null;
+  postableCount: number;
+  skippedCount: number;
+  currency: string | null;
+  totalAmount: string;
+  checks: PreApprovalCheck[];
+}

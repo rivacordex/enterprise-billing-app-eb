@@ -761,8 +761,8 @@ describe("grep gate — code-standards §9: the Result-code catalog is current",
     expect(undocumented).toEqual([]);
   });
 
-  it("the shipped catalog is exactly 50 codes (§9 header — locks drift)", () => {
-    expect(sourceCodes.size).toBe(50);
+  it("the shipped catalog is exactly 51 codes (§9 header — locks drift)", () => {
+    expect(sourceCodes.size).toBe(51);
   });
 });
 

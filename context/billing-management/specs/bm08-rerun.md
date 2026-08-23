@@ -7,7 +7,7 @@
 
 ## Goal
 
-While a run is `PROCESSED` and **not yet approved**, RevOps reruns **all or selected** accounts from a chosen stage with a **mandatory reason** — the audit event is written **before** re-trigger, the rerun accounts' `attempt_count` increments, their later-stage outputs are invalidated and their trial bills re-derived, and **nothing carrying `ref_inv_document_id` is ever touched**.
+While a run is `PROCESSED` and **not yet approved**, RevOps reruns **all or selected** accounts from a chosen stage with a **mandatory reason** — the audit event is written **before** re-trigger, every rerun account's `attempt_count` is set to **one uniform new attempt** (the maximum existing `attempt_count` among the selected accounts, plus one — so accounts previously on a lower value advance by more than one, keeping the whole rerun set on a single attempt number for the engine and the attempt-keyed stage latch), their later-stage outputs are invalidated and their trial bills re-derived, and **nothing carrying `ref_inv_document_id` is ever touched**.
 
 ---
 
@@ -17,7 +17,7 @@ While a run is `PROCESSED` and **not yet approved**, RevOps reruns **all or sele
 - **Precondition:** run `status = 'PROCESSED'` (rerun is pre-approval only; a `PROCESSING_FAILED` run is also rerunnable). Reject on `APPROVED`+ (409/typed result).
 - **Rerun service** `services/billing/rerun-run.ts`, one `db.transaction`:
   1. **Audit first** — `insertAuditEvent(tx, { eventType: 'BILL_RUN_RERUN', targetId: runId, beforeData: { priorTotals }, afterData: { accounts, fromStage, reason } })` **before** any re-trigger (architecture Inv.; overview).
-  2. **`attempt_count += 1`** for the selected `bill_run_account` rows; set them `PROCESSING`; run → `PROCESSED → PROCESSING`.
+  2. **Uniform new `attempt_count`** for the selected `bill_run_account` rows — all set to `max(selected attempt_count) + 1` (not an independent per-row `+= 1`, so a lower-valued account may advance by more than one); set them `PROCESSING`; run → `PROCESSED → PROCESSING`.
   3. **Invalidate later stages** — the new attempt re-runs from the chosen stage; because `bill_run_account_stage` is keyed by `attempt`, new-attempt signals create fresh rows from `fromStage` onward and never collide with the prior attempt (idempotency latch includes `attempt`). Prior-attempt rows remain as history.
   4. **Re-derive trial bills** — Aggregation/Taxation re-run for the rerun accounts via the **conditional `DELETE … WHERE ref_inv_document_id IS NULL` + INSERT** (bm05/bm06); a bill carrying `ref_inv_document_id` is never deleted (in bm08 none are posted yet — the guard is proven here and enforced for real in bm11).
   5. **Claim release/re-claim** — v1 **no-op** (no `rating` table); a marker documents where release-then-re-claim lands with the rating engine.
@@ -66,7 +66,7 @@ Add `BILL_RUN_RERUN` (category `"Change"`) + the map entry + the coverage test.
 
 - [ ] Typecheck/lint/format clean; `BILL_RUN_RERUN` added to `AUDIT_EVENT_TYPES` + `AUDIT_EVENT_CATEGORY_MAP` (+ coverage test); no new dependency.
 - [ ] Rerun writes its audit row (actor, accounts, prior totals, reason) **before** re-trigger; only on a `PROCESSED`/`*_FAILED` run.
-- [ ] Selected accounts get `attempt_count += 1`, drop to `PROCESSING`, and re-run from the chosen stage; invalidation is scoped to those accounts and stages `> fromStage`; the run loops back to `PROCESSED`.
+- [ ] Selected accounts all get the same new `attempt_count` = `max(selected attempt_count) + 1` (lower-valued accounts may jump by more than one), drop to `PROCESSING`, and re-run from the chosen stage; invalidation is scoped to those accounts and stages `> fromStage`; the run loops back to `PROCESSED`.
 - [ ] Trial `customer_bill` (+ tax) re-derive under the `ref_inv_document_id IS NULL` guard; **nothing with `ref_inv_document_id` is touched**.
 - [ ] Claim release/re-claim is a documented v1 no-op (no `rating` table).
 - [ ] `billrun_operate` enforced; mandatory reason; `RerunDialog` shows the preview + old→new deltas.
