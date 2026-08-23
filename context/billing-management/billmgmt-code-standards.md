@@ -268,6 +268,47 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   "Approve & Post" link to the new route, shown only while the run is
   `PROCESSED` (show/hide only; the page + action re-check server-side).
 
+- **bm11 (delivered):** **no new table** — every column posting stamps
+  (`bill_run.posting_started_at`/`invoiced_at`/`completed_at`,
+  `customer_bill.ref_inv_document_id`/`posted_attempt`/`charge_checksum`) was
+  already reserved by bm02/bm05, so this unit is additive-only writes, no
+  migration. `services/billing/post-run.ts` — `postAccount(run, banId,
+  actorId)` runs entirely inside one `db.transaction` (Inv. #6): skip if the
+  bill already carries `ref_inv_document_id` (resume) → read the trial bill +
+  the account's `attempt_count` → build one `INV` (`documentRepository.insert`,
+  `STANDARD_INVOICE`, `createdBy` = the run's stamped `approvedBy`) with a
+  `charge` line (`subtotal`) and, when `tax_total > 0`, a `release` tax line
+  (bm09's INV leg template) → `postDocument` (auto-posts under the unlimited
+  limit) → on success, stamp the bill (`customerBillRepository.stampPosted`,
+  `charge_checksum` from the new SQL `md5` formula in
+  `computeChargeChecksum`) and mark the account `INVOICED`; on any
+  `postDocument` failure the transaction throws so nothing commits (Inv. #7's
+  tolerated invoice-number gap), and a SEPARATE, non-transactional write parks
+  the account (`status` stays `PROCESSED`, `errorCode`/`errorDetail` set) so
+  `PERIOD_CLOSED` — and any other posting failure — is a tolerated, resumable
+  per-account error, never a run-level abort. `postRun(billRunId, actorId)`
+  flips `APPROVED → POSTING` once (idempotent resume), posts every
+  `PROCESSED` account in its own transaction via `postAccount`, then — once no
+  account remains `PROCESSED` — completes the run straight to `COMPLETED`
+  (`billRunRepository.completePosting`, stamping `invoiced_at`/`completed_at`
+  together; `DISTRIBUTING` is never entered, ai-workflow-rules §3.4) and
+  writes `BILL_RUN_POSTED` (`AUDIT_EVENT_TYPES`/`AUDIT_EVENT_CATEGORY_MAP`,
+  `"Additive"` — it marks new INV documents existing, not merely a status
+  flip). `actions/billing/post-run.action.ts` requires `billrun_approve:EDIT`
+  (the same money gate as approve) and is re-invocable (Retry-failed is
+  literally the same action). **No new route** — `/billing/bill-runs/[runId]/
+  approve` now branches server-side on the live `getApprovePreview` status:
+  `PROCESSED` renders the unchanged bm10 `ApproveAndPostPanel`; anything past
+  it renders the new `PostingProgressView` (`services/billing/read/
+  get-posting-progress.ts`'s `getPostingProgress`, a per-account DERIVED
+  display status — `pending`/`invoiced`/`PERIOD_CLOSED`/`failed`, never a
+  stored column) with an explicit Post/Retry-failed button (never auto-fired
+  on page load — posting is financially consequential, same explicit-confirm
+  discipline as every other operator mutation in this module). The run detail
+  page's header gains a second `billrun_approve`-gated link ("Post" when
+  `APPROVED`, "Resume posting" when `POSTING`) to the same `/approve` route,
+  alongside bm10's unchanged "Approve & Post" link.
+
 ---
 
 ## 9. Module Guardrail Tests (CI gate, general §10.4)

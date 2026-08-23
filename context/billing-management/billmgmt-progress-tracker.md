@@ -23,7 +23,10 @@ Update this file after every meaningful implementation change.
   `BILL_RUN_IN_PROGRESS` guard — additive only, no INV posting UI yet), and
   Approve (the four-eyes money gate: pre-approval checks, `approveRun`
   stamping the immutable total and marking failed/excluded accounts
-  `SKIPPED`, the `/approve` page). Next: bm11+ (Posting).
+  `SKIPPED`, the `/approve` page), and bm11 Posting (per-account INV posting
+  through the Accounts document engine, `APPROVED → POSTING → INVOICED →
+  COMPLETED`, resumable, checksum-stamped, the `PostingProgressView`). Next:
+  bm12+ (Stall + cancel).
 
 ## Completed
 
@@ -1038,11 +1041,125 @@ pre-existing hardcoded-date-drift action suites).
     `BETTER_AUTH_URL` in this shell; confirmed unrelated — the file imports
     nothing bm10 touched).
 
+- **bm11 — Post to the ledger** (`specs/bm11-post-to-ledger.md`). **No new
+  table** — every column posting stamps was already reserved by bm02/bm05
+  (`bill_run.posting_started_at`/`invoiced_at`/`completed_at`,
+  `customer_bill.ref_inv_document_id`/`posted_attempt`/`charge_checksum`), so
+  this unit is additive writes only, no migration.
+  - Posting service: `services/billing/post-run.ts`. `postAccount(run, banId,
+    actorId)` — the ENTIRE per-account write runs inside one `db.transaction`
+    (Inv. #6, code-standards §1.5): (1) skip if the bill already carries
+    `ref_inv_document_id` (idempotent resume); (2) read the trial bill +
+    the account's current `attempt_count`
+    (`customerBillRepository.findByRunAndAccount`,
+    `billRunAccountRepository.findAttempt`); (3) build one `INV`
+    (`documentRepository.insert`, `STANDARD_INVOICE`, `createdBy` = the run's
+    stamped `approvedBy` — bm09's resolved decision — `eventAt = gl_event_at`,
+    `entryDate = scheduled_run_date`) with a `charge` line (= `subtotal`) and,
+    only when `tax_total > 0`, a `release` tax line (bm09's `INV_LEG_TEMPLATES`,
+    the raise-debit-note precedent for the optional-tax-line shape); (4)
+    `postDocument(tx, invId, actorId)` — auto-posts under `STANDARD_INVOICE`'s
+    unlimited limit; (5) on success, compute `charge_checksum` in SQL
+    (`customerBillRepository.computeChargeChecksum` — the spec's resolved
+    `md5(subtotal || tax items ordered by category || total_amount)` formula,
+    entirely in Postgres, never re-derived in TypeScript) and stamp the bill
+    (`stampPosted`: `ref_inv_document_id`/`posted_attempt`/`charge_checksum`/
+    `category='normal'`) + mark the account `INVOICED`. **No double-post:** a
+    `postDocument` failure throws inside the transaction, so the INV create +
+    any partial ledger write roll back together (the non-transactional
+    `document_inv_seq` may leave a tolerated gap, Inv. #7); the account is then
+    parked by a SEPARATE, non-transactional write (`status` stays `PROCESSED`,
+    `errorCode`/`errorDetail` set to the failure) — `PERIOD_CLOSED` and every
+    other posting failure are tolerated, resumable per-account errors, never a
+    run-level abort. `postRun(billRunId, actorId)` — flips `APPROVED →
+    POSTING` once (`billRunRepository.markPosting`, idempotent — a resumed
+    call finds the run already `POSTING`), calls `postAccount` for every
+    `PROCESSED` account (never `SKIPPED`/`EXCLUDED` — no invoice number
+    consumed for them), then, once no account remains `PROCESSED`, completes
+    the run straight to `COMPLETED` (`completePosting` stamps `invoiced_at`/
+    `completed_at` together in one write — `DISTRIBUTING` is never entered,
+    ai-workflow-rules §3.4/code-standards §3, v1 has no distribution targets)
+    and writes `BILL_RUN_POSTED` marking the `INVOICED` milestone.
+  - Audit: `BILL_RUN_POSTED` added to `AUDIT_EVENT_TYPES` (`types/audit.ts`)
+    + `AUDIT_EVENT_CATEGORY_MAP` as `"Additive"` (`types/audit-log.ts`) — new
+    INV documents now exist, not merely a status flip (matches
+    `BILL_RUN_MATERIALIZED`'s precedent, not `BILL_RUN_APPROVED`'s `"Change"`).
+    Ripple: `audit-log-filters.test.tsx` option count 66 → 67.
+  - Action: `actions/billing/post-run.action.ts` — `'use server'`, requires
+    `billrun_approve:EDIT` (the same money gate as approve), Zod-parses
+    `{ billRunId }` (`validation/billing/post-run.schema.ts`), delegates to
+    `postRun`, revalidates the run/approve/list pages on success only.
+    Re-invocable — Retry-failed is literally the same action call.
+  - **No new route.** `/billing/bill-runs/[runId]/approve` (bm10) now branches
+    server-side on the live `getApprovePreview` status: `PROCESSED` renders
+    the unchanged bm10 `ApproveAndPostPanel`; anything past it renders the new
+    `PostingProgressView`. This is the "Reached from the Approve & Post
+    confirm (approve → post)" flow the spec's Visual section describes — a
+    successful Approve's `router.refresh()` re-renders this same route, which
+    now sees `status = 'APPROVED'` and shows posting progress.
+  - Read + component: `services/billing/read/get-posting-progress.ts`
+    (`getPostingProgress`) — a per-account read joined to `customer_bill` for
+    the invoice id, deriving a DISPLAY-ONLY status (`pending` / `invoiced` /
+    `PERIOD_CLOSED` / `failed`, never a stored column — same idiom as
+    `StallState`) from `bill_run_account.status` + `errorCode`. The read model
+    (`PostingAccountStatus`/`PostingProgressRow`/`PostingProgress`) lives in
+    `types/billing.ts`, not the service file (components → types/**, never
+    services/**, code-standards §2.7/§3 — caught by the boundaries/dependencies
+    ESLint rule on first pass). `components/billing/posting-progress-view.tsx`
+    (`PostingProgressView`) — the running "{n}/{N} posted" count, a per-account
+    status list, and an explicit Post/Retry-failed button. **Never auto-fired
+    on page load** — posting is financially consequential (irreversible,
+    consumes invoice numbers), so it follows the same explicit-confirm
+    discipline as every other operator mutation in this module (resolved
+    decision: the spec's "Not a global spinner" note argues against a silent
+    background poll, but auto-triggering a real posting call from a mere page
+    view — e.g. a back-navigation revisit — would be a dangerous side effect;
+    a click is required either way, same as `ApproveAndPostPanel`'s own
+    two-step confirm).
+  - Wiring: the run detail page's header (`[runId]/page.tsx`) gains a second
+    `billrun_approve`-gated link — "Post" while `APPROVED`, "Resume posting"
+    while `POSTING` — to the same `/approve` route, alongside bm10's unchanged
+    "Approve & Post" link (shown only while `PROCESSED`).
+  - Tests: `post-run.service.test.ts` (resume skips a posted bill;
+    **[CRITICAL] no double-post** — a `postDocument` failure never stamps the
+    bill or marks `INVOICED`, parks via a separate non-tx write instead;
+    `PERIOD_CLOSED` parks with the engine's `openPeriodHint` as the detail; an
+    unexpected error parks with a generic `POSTING_FAILED` code; charge/tax
+    line construction incl. the no-tax-line case; `SKIPPED`/`EXCLUDED`/already-
+    `INVOICED` accounts are never iterated; the `APPROVED → POSTING` flip is
+    idempotent; the run completes to `COMPLETED` + `BILL_RUN_POSTED` only once
+    no account remains `PROCESSED`), `post-run.action.test.ts` (route × level
+    matrix), `get-posting-progress.test.ts` (status derivation: `INVOICED` →
+    `invoiced` regardless of a stale `errorCode`; `PERIOD_CLOSED`/other codes
+    → `PERIOD_CLOSED`/`failed`; no code → `pending`), `approve-page.test.tsx`
+    extended (renders `PostingProgressView` once `APPROVED`, `notFound()` if
+    posting progress can't be read), `bill-run-detail-page.test.tsx` extended
+    (the Post/Resume posting link's show/hide across `APPROVED`/`POSTING`/
+    `INVOICED`). `charge_checksum` tamper-detection itself (the SQL `md5` over
+    real rows) is a DB-level guarantee — not re-verified by a JS unit test,
+    same as bm06's SQL-computed `tax_amount`; a DB-gated integration test is
+    **not added in this environment** (no local Postgres reachable, the same
+    constraint noted throughout this tracker for every DB-gated suite since
+    bm02). `typecheck`/`lint`/`format:check` clean; full DB-free `vitest run`
+    (2685 tests) passes except the same pre-existing baseline already on
+    `dev1` before this unit — confirmed via `git show HEAD:…` and isolated
+    reruns: the 4 hardcoded-date-drift action suites (`create-order`/`resume`/
+    `suspend`/`terminate-subscription`), `trigger-run.service.test.ts`'s
+    env-var-dependent failure (bm05 session notes), and
+    `grep-gates.test.ts`'s inv. #16 BAN-narrowing false positive on
+    `db/repositories/billing/bill-run-account.repository.ts` (present at
+    `HEAD` before this unit's edits — the bm09 tracker entry already
+    documents this exact false positive on this exact file).
+    `route-manifest.test.ts`'s one failure under the full parallel run was a
+    10s timeout from resource contention, not a real failure — it passes in
+    3/3 when run in isolation. bm11 touches none of these files.
+
 ## Next Up
 
-- **bm11+** — Posting (`APPROVED → POSTING → INVOICED`): per-account INV
-  posting through `postDocument`, resumable, checksum stamp.
-  The Uncharged indicative value stays "—" until a rating source exists.
+- **bm12+** — Stall + cancel (derived `STALLED`, Check-status reconcile,
+  Cancel-run release) and Stub-data mode + badge polish per the build plan's
+  remaining units. The Uncharged indicative value stays "—" until a rating
+  source exists.
 
 ## Open Questions
 
