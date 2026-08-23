@@ -5,6 +5,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import type { Database } from "@/db/client";
 import type { BillRun } from "@/db/schema/billing/bill-run";
+import { TRIGGER_EVENT_TYPES } from "@/types/billing";
 import type { PreApprovalCheck } from "@/types/billing";
 
 // bm10-spec §Design/§Implementation §1. The five pre-approval checks, each a
@@ -128,9 +129,9 @@ async function checkPositiveTotals(
 // approval must come from a separate authorized approver (e.g. a manager). The
 // `bill_run_approver_distinct_check` DB CHECK (`approved_by != triggered_by`)
 // remains a backstop covering the original-trigger subset; this service check
-// is the strictly-stronger primary enforcement (code-standards §1.6).
-const TRIGGER_EVENT_TYPES = ["BILL_RUN_TRIGGERED", "BILL_RUN_RERUN"] as const;
-
+// is the strictly-stronger primary enforcement (code-standards §1.6). The
+// `TRIGGER_EVENT_TYPES` set is shared with the Approve preview (`types/billing`)
+// so display and enforcement can't drift.
 async function checkFourEyes(
   dbOrTx: Database,
   run: BillRun,

@@ -258,6 +258,15 @@ export interface PreApprovalCheck {
   remediation: string | null;
 }
 
+// bm10 — the audit event types that record a run being (re)triggered. The
+// four-eyes gate (`checkFourEyes`) bars every actor in these events from
+// approving, and the Approve preview names the most-recent such actor — both
+// must read the SAME set, so it lives here as one source of truth.
+export const TRIGGER_EVENT_TYPES = [
+  "BILL_RUN_TRIGGERED",
+  "BILL_RUN_RERUN",
+] as const;
+
 // The Approve & Post page's read model (`getApprovePreview`) — the run header,
 // the final trigger actor, the postable/skipped counts, and the live
 // pre-approval checks for the current viewer.

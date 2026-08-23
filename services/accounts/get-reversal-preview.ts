@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
+import { checkDocumentReversible } from "@/services/accounts/document-reversibility";
 
 export type ReversalPreviewLine = {
   documentLineId: string;
@@ -41,6 +42,7 @@ export type GetReversalPreviewResult =
   | { ok: false; code: "DOCUMENT_NOT_FOUND" }
   | { ok: false; code: "WRONG_FINANCIAL_ACCOUNT" }
   | { ok: false; code: "DOC_STATE_INVALID" }
+  | { ok: false; code: "INV_NOT_REVERSIBLE" }
   | { ok: false; code: "TRANSFER_NOT_FOUND" };
 
 export async function getReversalPreview(
@@ -55,6 +57,8 @@ export async function getReversalPreview(
   if (doc.state !== "posted") {
     return { ok: false, code: "DOC_STATE_INVALID" };
   }
+  const notReversible = checkDocumentReversible(doc);
+  if (notReversible) return notReversible;
 
   const rawLines = await documentLineRepository.findByDocumentId(
     db,

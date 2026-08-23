@@ -136,6 +136,10 @@ beforeEach(() => {
   // `status`-guarded WHERE) — the default happy path always writes one.
   mockMarkPosting.mockResolvedValue(true);
   mockCompletePosting.mockResolvedValue(true);
+  // `updateStatus` returns whether a row was written; the park path checks it
+  // (a `false` return means the account was concurrently INVOICED). Default to
+  // a successful write so the normal park path reports `parked`.
+  mockUpdateStatus.mockResolvedValue(true);
 });
 
 describe("postRun (bm11-spec §Design/§Implementation)", () => {
@@ -310,17 +314,23 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
     expect(mockCompletePosting).not.toHaveBeenCalled();
   });
 
-  it("[CRITICAL] concurrent post — when stampPosted writes no row (bill posted concurrently), postAccount throws so the INV rolls back and the account is parked, never marked INVOICED", async () => {
+  it("[CRITICAL] concurrent post — when the bill was posted concurrently, postAccount rolls its INV back and reports skipped (not a false 'parked'), never a duplicate INVOICED", async () => {
+    // The concurrent poster set `ref_inv_document_id` (stampPosted → false, so
+    // postAccount throws and its INV rolls back) AND committed the account as
+    // INVOICED, so the status-guarded park write matches no row (→ false).
     mockStampPosted.mockResolvedValue(false);
+    mockUpdateStatus.mockResolvedValue(false);
 
     const result = await postRun("BRN00000001", "user-1");
 
+    // The rolled-back transaction never marks INVOICED itself...
     expect(mockUpdateStatus).not.toHaveBeenCalledWith(
       txStub,
       "BRN00000001",
       "BAN00000001",
       expect.objectContaining({ status: "INVOICED" }),
     );
+    // ...and the guarded park write is attempted but matches no row.
     expect(mockUpdateStatus).toHaveBeenCalledWith(
       db,
       "BRN00000001",
@@ -328,12 +338,15 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
       expect.objectContaining({
         status: "PROCESSED",
         errorCode: "POSTING_FAILED",
+        expectedStatus: "PROCESSED",
       }),
     );
+    // Park matched no row (account already INVOICED) → report skipped, not a
+    // misleading 'parked' failure.
     expect(result).toMatchObject({
       value: {
         results: [
-          { billingAccountId: "BAN00000001", result: { status: "parked" } },
+          { billingAccountId: "BAN00000001", result: { status: "skipped" } },
         ],
       },
     });
@@ -362,6 +375,42 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         ],
       },
     });
+  });
+
+  it("a failed park write does not abort the posting loop — postRun still completes for the other accounts", async () => {
+    // Two PROCESSED accounts; the first hits a posting failure AND its park
+    // write throws (transient). postAccount must swallow the park error so the
+    // loop continues and account #2 is still posted.
+    mockListStatusesForRun.mockResolvedValue([
+      { billingAccountId: "BAN00000001", status: "PROCESSED" },
+      { billingAccountId: "BAN00000002", status: "PROCESSED" },
+    ] as never);
+    mockPostDocument
+      .mockResolvedValueOnce({
+        ok: false,
+        code: "PERIOD_CLOSED",
+        openPeriodHint: "Period 2026-08 is closed for MYR.",
+      })
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          documentId: "INV00000002",
+          state: "posted",
+          postedAt: new Date("2026-08-01T00:00:00Z"),
+          lastModified: new Date("2026-08-01T00:00:00Z"),
+        },
+      });
+    // The park write for account #1 throws; the INVOICED write for account #2
+    // succeeds.
+    mockUpdateStatus
+      .mockRejectedValueOnce(new Error("transient park failure"))
+      .mockResolvedValue(true);
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    // Did not throw; account #2 still got its INV posted.
+    expect(mockDocInsert).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(true);
   });
 
   it("SKIPPED and EXCLUDED accounts consume no invoice number — never iterated", async () => {

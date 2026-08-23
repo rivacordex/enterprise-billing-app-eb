@@ -179,9 +179,13 @@ export default async function TransactionsPage({
   // derivation (inv. #18): posted with at least one unreversed line. Computed
   // here from the detail the page already loaded; the service re-validates on
   // submit. The drawer only renders when ctx.fa is set (docDetail requires it).
+  // `INV` documents are never reversible (bm11 — billing owns their
+  // finalization latch; correct via a credit note). The service backstops this
+  // with `INV_NOT_REVERSIBLE`; hiding the control here just avoids a dead button.
   const drawerReversible =
     docDetail?.ok === true &&
     docDetail.detail.document.state === "posted" &&
+    docDetail.detail.document.docType !== "INV" &&
     docDetail.detail.lines.some((l) => l.line.reversedByLineId === null);
 
   return (
