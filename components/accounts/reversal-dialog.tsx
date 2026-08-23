@@ -53,6 +53,8 @@ export function describeReversalError(code: string): string {
       return "Only posted documents can be reversed.";
     case "ALREADY_REVERSED":
       return "All lines of this document have already been reversed.";
+    case "INV_NOT_REVERSIBLE":
+      return "Invoices (INV) cannot be reversed here. Raise a credit note to correct an invoice.";
     case "LINE_NOT_FOUND":
       return "One or more selected lines were not found on this document.";
     case "BILLING_ACCOUNT_NOT_FOUND":

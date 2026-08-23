@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { approveRunAction } from "@/actions/billing/approve-run.action";
 import { ApproveAndPostPanel } from "@/components/billing/approve-and-post-panel";
-import type { ApprovePreview } from "@/services/billing/read/get-approve-preview";
+import type { ApprovePreview } from "@/types/billing";
 
 const mockAction = vi.mocked(approveRunAction);
 

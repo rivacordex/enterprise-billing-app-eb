@@ -51,6 +51,11 @@ export const billRunAccountRepository = {
   },
 
   // bm04-spec §Design/§Implementation §8 — the per-account advance write.
+  // Returns whether a row was actually updated. `expectedStatus` (bm11) adds a
+  // status precondition to the WHERE: the non-transactional posting park write
+  // passes `"PROCESSED"` so it can NEVER clobber an account another concurrent
+  // poster has already committed as `INVOICED` (the row lock only serializes
+  // the bill, not this after-rollback park write).
   async updateStatus(
     tx: Database,
     billRunId: string,
@@ -61,9 +66,10 @@ export const billRunAccountRepository = {
       // must not clear the error that explains a prior failure).
       errorCode?: string | null;
       errorDetail?: string | null;
+      expectedStatus?: AccountStatus;
     },
-  ): Promise<void> {
-    await tx
+  ): Promise<boolean> {
+    const rows = await tx
       .update(billRunAccount)
       .set({
         status: data.status,
@@ -77,8 +83,13 @@ export const billRunAccountRepository = {
         and(
           eq(billRunAccount.refBillRunId, billRunId),
           eq(billRunAccount.refBillingAccountId, billingAccountId),
+          ...(data.expectedStatus !== undefined
+            ? [eq(billRunAccount.status, data.expectedStatus)]
+            : []),
         ),
-      );
+      )
+      .returning({ billRunAccountId: billRunAccount.billRunAccountId });
+    return rows.length > 0;
   },
 
   // bm04-spec §Design/§Implementation §8 — every account status for the run,
@@ -174,29 +185,6 @@ export const billRunAccountRepository = {
       )
       .returning({ billRunAccountId: billRunAccount.billRunAccountId });
     return rows.length;
-  },
-
-  // bm11-spec §Design/§Implementation §1 step 2 — the posting transaction
-  // reads the account's current `attempt_count` and stamps it verbatim onto
-  // the bill as `posted_attempt` (Design "at `posted_attempt = attempt_count`").
-  // `null` means no `bill_run_account` row exists for this (run, ban), which
-  // should never happen for a `PROCESSED` account — the caller throws.
-  async findAttempt(
-    tx: Database,
-    billRunId: string,
-    billingAccountId: string,
-  ): Promise<number | null> {
-    const [row] = await tx
-      .select({ attemptCount: billRunAccount.attemptCount })
-      .from(billRunAccount)
-      .where(
-        and(
-          eq(billRunAccount.refBillRunId, billRunId),
-          eq(billRunAccount.refBillingAccountId, billingAccountId),
-        ),
-      )
-      .limit(1);
-    return row?.attemptCount ?? null;
   },
 
   // bm11-spec §Visual — the `PostingProgressView` read: every postable

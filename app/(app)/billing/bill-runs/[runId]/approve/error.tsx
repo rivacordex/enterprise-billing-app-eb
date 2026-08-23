@@ -22,8 +22,8 @@ export default function Error({
           Unable to load Approve &amp; Post
         </h2>
         <p className="mt-2 text-body text-muted-foreground">
-          Something went wrong loading this run's approval checklist. Please try
-          again.
+          Something went wrong loading this run&apos;s approval checklist.
+          Please try again.
         </p>
         <button
           type="button"

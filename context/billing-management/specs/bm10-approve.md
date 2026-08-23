@@ -33,7 +33,7 @@ A **different** approver (≠ the final trigger actor) opens **Approve & Post**,
 ## Implementation
 
 ### 1. Pre-approval checks + approve service
-`services/billing/pre-approval-checks.ts` (pure-ish reads returning a `{ check, pass, remediation }[]`), `services/billing/approve-run.ts` (the transaction; returns `ok` | `NOT_APPROVABLE` | `FOUR_EYES_VIOLATION` | `CHECKS_FAILED` (with the failing checks)).
+`services/billing/pre-approval-checks.ts` (pure-ish reads returning a `{ check, pass, remediation }[]`), `services/billing/approve-run.ts` (the transaction; returns `ok` | `NOT_APPROVABLE` | `FOUR_EYES_VIOLATION` | `CHECKS_FAILED` (with the complete re-check result, so the panel replaces its checklist wholesale)).
 
 ### 2. Action + audit — `actions/billing/approve-run.action.ts`
 `'use server'`: `requirePermission(PERMISSIONS.BILLRUN_APPROVE, LEVELS.EDIT)` → parse `{ billRunId }` → `approveRun` → `revalidatePath`. Add `BILL_RUN_APPROVED` (category `"Change"`) to `AUDIT_EVENT_TYPES` + `AUDIT_EVENT_CATEGORY_MAP` (+ coverage test).

@@ -24,8 +24,10 @@ Update this file after every meaningful implementation change.
   Approve (the four-eyes money gate: pre-approval checks, `approveRun`
   stamping the immutable total and marking failed/excluded accounts
   `SKIPPED`, the `/approve` page), and bm11 Posting (per-account INV posting
-  through the Accounts document engine, `APPROVED → POSTING → INVOICED →
-  COMPLETED`, resumable, checksum-stamped, the `PostingProgressView`). Next:
+  through the Accounts document engine, run `status` transitioning `APPROVED →
+  POSTING → COMPLETED` — `INVOICED` is the per-account milestone (not a run
+  status the run passes through) and `invoiced_at` is a run timestamp stamped
+  at completion — resumable, checksum-stamped, the `PostingProgressView`). Next:
   bm12+ (Stall + cancel).
 
 ## Completed
@@ -980,8 +982,10 @@ pre-existing hardcoded-date-drift action suites).
     (else `NOT_APPROVABLE`) → `runPreApprovalChecks` — a failing four-eyes
     check short-circuits to its own `FOUR_EYES_VIOLATION` result (checked
     first, ahead of the other four, since it is the money-gate's namesake
-    invariant); any other failing check(s) bucket under `CHECKS_FAILED` with
-    the failing subset → `customerBillRepository.sumPostableTotalForRun`
+    invariant); any other failing check(s) bucket under `CHECKS_FAILED`,
+    which carries the COMPLETE re-check result (so the panel replaces its
+    checklist wholesale and a now-passing check is cleared, not left stale) →
+    `customerBillRepository.sumPostableTotalForRun`
     (the immutable `total_amount` stamp, SQL `SUM`, never a JS reduce) →
     `billRunAccountRepository.markSkippedForRun` (every
     `PROCESSING_FAILED`/`EXCLUDED` account → `SKIPPED`) →
@@ -1025,8 +1029,8 @@ pre-existing hardcoded-date-drift action suites).
     absent-period-row-is-open and multi-currency GL-mapping cases),
     `approve-run.service.test.ts` (stamps + SKIPPED + APPROVED + audit;
     `NOT_APPROVABLE` on non-PROCESSED/unknown; `[CRITICAL]` four-eyes
-    rejects with no writes; `CHECKS_FAILED` carries only the failing
-    subset), `approve-run.action.test.ts` (route × level, incl. surfacing
+    rejects with no writes; `CHECKS_FAILED` carries the complete re-check
+    result), `approve-run.action.test.ts` (route × level, incl. surfacing
     `FOUR_EYES_VIOLATION` unchanged), `pre-approval-checks.test.tsx` +
     `approve-and-post-panel.test.tsx` (component-level: self-approval
     disables Approve with a visible reason, irreversibility framing,
@@ -1048,11 +1052,13 @@ pre-existing hardcoded-date-drift action suites).
   this unit is additive writes only, no migration.
   - Posting service: `services/billing/post-run.ts`. `postAccount(run, banId,
     actorId)` — the ENTIRE per-account write runs inside one `db.transaction`
-    (Inv. #6, code-standards §1.5): (1) skip if the bill already carries
-    `ref_inv_document_id` (idempotent resume); (2) read the trial bill +
-    the account's current `attempt_count`
-    (`customerBillRepository.findByRunAndAccount`,
-    `billRunAccountRepository.findAttempt`); (3) build one `INV`
+    (Inv. #6, code-standards §1.5): (1) ONE joined `FOR UPDATE OF customer_bill`
+    read (`customerBillRepository.lockBillForPosting`) returns the trial bill +
+    the account's `attempt_count` + the billing-account GL fields in a single
+    round-trip (replacing three sequential per-account reads) and serializes two
+    concurrent resume/post attempts on the same account on the bill row — then
+    skip if the bill already carries `ref_inv_document_id` (idempotent resume);
+    (2) build one `INV`
     (`documentRepository.insert`, `STANDARD_INVOICE`, `createdBy` = the run's
     stamped `approvedBy` — bm09's resolved decision — `eventAt = gl_event_at`,
     `entryDate = scheduled_run_date`) with a `charge` line (= `subtotal`) and,
@@ -1064,7 +1070,10 @@ pre-existing hardcoded-date-drift action suites).
     `md5(subtotal || tax items ordered by category || total_amount)` formula,
     entirely in Postgres, never re-derived in TypeScript) and stamp the bill
     (`stampPosted`: `ref_inv_document_id`/`posted_attempt`/`charge_checksum`/
-    `category='normal'`) + mark the account `INVOICED`. **No double-post:** a
+    `category='normal'`, `IS NULL`-guarded — it returns whether a row was
+    actually stamped, and `postAccount` throws when it wasn't so a bill posted
+    concurrently between the resume check and the stamp rolls this INV back) +
+    mark the account `INVOICED`. **No double-post:** a
     `postDocument` failure throws inside the transaction, so the INV create +
     any partial ledger write roll back together (the non-transactional
     `document_inv_seq` may leave a tolerated gap, Inv. #7); the account is then

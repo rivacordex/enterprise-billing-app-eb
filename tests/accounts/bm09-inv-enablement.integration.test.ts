@@ -248,7 +248,7 @@ describe.skipIf(!databaseUrl)(
       expect(await getPeriodState(GUARD_PERIOD, "MYR")).toBe("open");
     });
 
-    it("bm09-4 — closePeriod returns BILL_RUN_IN_PROGRESS while a bill_run's gl_event_at falls in the period and it isn't COMPLETED/CANCELLED", async () => {
+    it("bm09-4 — closePeriod returns BILL_RUN_IN_PROGRESS for a run scoped into the period but NOT yet aggregated (no customer_bill rows)", async () => {
       const [run] = await sql<{ id: string }[]>`
         INSERT INTO billing.bill_run
           (ref_bill_cycle_id, period_start, period_end, scheduled_run_date, status, run_type, gl_event_at)
@@ -258,11 +258,15 @@ describe.skipIf(!databaseUrl)(
       `;
       const billRunId = run!.id;
 
+      // A run scoped at trigger time has bill_run_account rows but, before
+      // Aggregation, NO customer_bill rows. The guard must still block the
+      // close — it derives currency from the scoped accounts, not from bills
+      // (there is no period reopen, so a missed active run is unrecoverable).
       await sql`
-        INSERT INTO billing.customer_bill
-          (ref_bill_run_id, ref_billing_account_id, period_partition, category, billing_period_start, billing_period_end, subtotal, tax_total, total_amount, payment_due_date)
+        INSERT INTO billing.bill_run_account
+          (ref_bill_run_id, ref_billing_account_id, period_partition, status)
         VALUES
-          (${billRunId}, ${billingAccountId}, '2026-05-01', 'trial', '2026-05-01', '2026-05-31', '100.00', '0.00', '100.00', '2026-06-15')
+          (${billRunId}, ${billingAccountId}, '2026-05-01', 'PROCESSING')
       `;
 
       const result = await closePeriod(GUARD_PERIOD, "MYR", actorId);

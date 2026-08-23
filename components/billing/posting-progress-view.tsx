@@ -64,8 +64,10 @@ export function PostingProgressView({
   const failedCount = progress.rows.filter(
     (r) => r.status === "PERIOD_CLOSED" || r.status === "failed",
   ).length;
-  const done =
-    progress.totalCount > 0 && progress.postedCount === progress.totalCount;
+  // Keyed on the run reaching COMPLETED (not a count match) so a run with zero
+  // postable accounts — every account SKIPPED — still renders the completion
+  // message once it completes, as well as runs with posted accounts.
+  const done = progress.runStatus === "COMPLETED";
   const canPost =
     !done &&
     (progress.runStatus === "APPROVED" || progress.runStatus === "POSTING");

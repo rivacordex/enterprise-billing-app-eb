@@ -12,18 +12,23 @@ vi.mock("@/db/repositories/accounts/accounting-period.repository", () => ({
 vi.mock("@/db/repositories/accounts/ledger.repository", () => ({
   ledgerRepository: { resolveGlCodeByName: vi.fn() },
 }));
+vi.mock("@/db/repositories/audit-log.repository", () => ({
+  auditLogRepository: { listActorIdsForEvents: vi.fn() },
+}));
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
   billRunAccountRepository: { listStatusesForRun: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {
     listPostableCurrencies: vi.fn(),
+    listPostableTaxCurrencies: vi.fn(),
     countNonPositivePostable: vi.fn(),
   },
 }));
 
 import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
+import { auditLogRepository } from "@/db/repositories/audit-log.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
@@ -36,8 +41,14 @@ const mockListStatuses = vi.mocked(billRunAccountRepository.listStatusesForRun);
 const mockListCurrencies = vi.mocked(
   customerBillRepository.listPostableCurrencies,
 );
+const mockListTaxCurrencies = vi.mocked(
+  customerBillRepository.listPostableTaxCurrencies,
+);
 const mockCountNonPositive = vi.mocked(
   customerBillRepository.countNonPositivePostable,
+);
+const mockListTriggerActors = vi.mocked(
+  auditLogRepository.listActorIdsForEvents,
 );
 
 const dbStub = {} as never;
@@ -62,6 +73,8 @@ function byKey(
 beforeEach(() => {
   vi.clearAllMocks();
   mockListCurrencies.mockResolvedValue(["MYR"]);
+  mockListTaxCurrencies.mockResolvedValue(["MYR"]); // taxed by default
+  mockListTriggerActors.mockResolvedValue([]); // no reruns by default
   mockFindPeriod.mockResolvedValue(null); // absent row = open
   mockResolveGlCode.mockResolvedValue("4000"); // resolved
   mockCountNonPositive.mockResolvedValue(0);
@@ -117,6 +130,7 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1)", () => {
 
   it("gl_mappings checks both sys.revenue and sys.tax_payable for every postable currency", async () => {
     mockListCurrencies.mockResolvedValue(["MYR", "USD"]);
+    mockListTaxCurrencies.mockResolvedValue(["MYR", "USD"]);
 
     await runPreApprovalChecks(dbStub, run(), "user-approver");
 
@@ -129,6 +143,25 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1)", () => {
     expect(mockResolveGlCode).toHaveBeenCalledWith(
       dbStub,
       "sys.tax_payable.USD",
+    );
+  });
+
+  it("gl_mappings does NOT require sys.tax_payable for a tax-free (zero-rated) currency", async () => {
+    // Currency has postable bills but none carry tax (tax_total = 0), so
+    // posting never builds a tax leg — the tax mapping must not be required.
+    mockListCurrencies.mockResolvedValue(["MYR"]);
+    mockListTaxCurrencies.mockResolvedValue([]);
+    mockResolveGlCode.mockImplementation(async (_db, name: string) =>
+      name.startsWith("sys.tax_payable") ? null : "4000",
+    );
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "gl_mappings")).toMatchObject({ pass: true });
+    expect(mockResolveGlCode).toHaveBeenCalledWith(dbStub, "sys.revenue.MYR");
+    expect(mockResolveGlCode).not.toHaveBeenCalledWith(
+      dbStub,
+      "sys.tax_payable.MYR",
     );
   });
 
@@ -161,6 +194,35 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1)", () => {
       dbStub,
       run({ triggeredBy: "user-trigger" }),
       "user-approver",
+    );
+
+    expect(byKey(checks, "four_eyes")).toMatchObject({ pass: true });
+  });
+
+  it("[CRITICAL] four_eyes fails when the approver RERAN the run (not just the original trigger)", async () => {
+    // Ops A triggered (triggered_by=A), Ops B reran — B must not approve their
+    // own rerun. The rerun actor comes from the trigger/rerun audit trail.
+    mockListTriggerActors.mockResolvedValue(["user-rerun"]);
+
+    const checks = await runPreApprovalChecks(
+      dbStub,
+      run({ triggeredBy: "user-trigger" }),
+      "user-rerun",
+    );
+
+    expect(byKey(checks, "four_eyes")).toMatchObject({
+      pass: false,
+      remediation: expect.stringContaining("reran"),
+    });
+  });
+
+  it("four_eyes passes for a manager who neither triggered nor reran the run", async () => {
+    mockListTriggerActors.mockResolvedValue(["user-trigger", "user-rerun"]);
+
+    const checks = await runPreApprovalChecks(
+      dbStub,
+      run({ triggeredBy: "user-trigger" }),
+      "manager-1",
     );
 
     expect(byKey(checks, "four_eyes")).toMatchObject({ pass: true });

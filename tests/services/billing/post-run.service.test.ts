@@ -24,19 +24,15 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
   billRunAccountRepository: {
     listStatusesForRun: vi.fn(),
-    findAttempt: vi.fn(),
     updateStatus: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {
-    findByRunAndAccount: vi.fn(),
+    lockBillForPosting: vi.fn(),
     computeChargeChecksum: vi.fn(),
     stampPosted: vi.fn(),
   },
-}));
-vi.mock("@/db/repositories/accounts/billing-account.repository", () => ({
-  billingAccountRepository: { findById: vi.fn() },
 }));
 vi.mock("@/db/repositories/accounts/document.repository", () => ({
   documentRepository: { insert: vi.fn() },
@@ -54,7 +50,6 @@ vi.mock("@/db/repositories/audit.repository", () => ({
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
-import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { postDocument } from "@/services/accounts/post-document";
@@ -68,16 +63,12 @@ const mockCompletePosting = vi.mocked(billRunRepository.completePosting);
 const mockListStatusesForRun = vi.mocked(
   billRunAccountRepository.listStatusesForRun,
 );
-const mockFindAttempt = vi.mocked(billRunAccountRepository.findAttempt);
 const mockUpdateStatus = vi.mocked(billRunAccountRepository.updateStatus);
-const mockFindByRunAndAccount = vi.mocked(
-  customerBillRepository.findByRunAndAccount,
-);
+const mockLockBill = vi.mocked(customerBillRepository.lockBillForPosting);
 const mockComputeChecksum = vi.mocked(
   customerBillRepository.computeChargeChecksum,
 );
 const mockStampPosted = vi.mocked(customerBillRepository.stampPosted);
-const mockFindBan = vi.mocked(billingAccountRepository.findById);
 const mockDocInsert = vi.mocked(documentRepository.insert);
 const mockLineInsert = vi.mocked(documentLineRepository.insert);
 const mockPostDocument = vi.mocked(postDocument);
@@ -97,6 +88,8 @@ function run(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
+// The single row `lockBillForPosting` returns: the trial bill + the account's
+// attempt counter + the billing-account GL fields, in one joined read.
 function bill(overrides: Record<string, unknown> = {}) {
   return {
     customerBillId: "CBL00000001",
@@ -105,13 +98,7 @@ function bill(overrides: Record<string, unknown> = {}) {
     taxTotal: "8.00",
     totalAmount: "108.00",
     refInvDocumentId: null,
-    ...overrides,
-  } as never;
-}
-
-function ban(overrides: Record<string, unknown> = {}) {
-  return {
-    billingAccountId: "BAN00000001",
+    attemptCount: 1,
     refFinancialAccountId: "FIN00000001",
     currency: "MYR",
     ...overrides,
@@ -129,9 +116,7 @@ beforeEach(() => {
   mockListStatusesForRun.mockResolvedValue([
     { billingAccountId: "BAN00000001", status: "PROCESSED" },
   ] as never);
-  mockFindByRunAndAccount.mockResolvedValue(bill());
-  mockFindAttempt.mockResolvedValue(1);
-  mockFindBan.mockResolvedValue(ban());
+  mockLockBill.mockResolvedValue(bill());
   mockDocInsert.mockResolvedValue({ documentId: "INV00000001" } as never);
   mockPostDocument.mockResolvedValue({
     ok: true,
@@ -143,6 +128,14 @@ beforeEach(() => {
     },
   });
   mockComputeChecksum.mockResolvedValue("abc123");
+  // `stampPosted` reports whether it actually wrote a row; the default success
+  // path stamps exactly one (a `false` return signals a concurrent post and
+  // makes `postAccount` throw — exercised by its own test below).
+  mockStampPosted.mockResolvedValue(true);
+  // The run-header writes now report whether a row was updated (their
+  // `status`-guarded WHERE) — the default happy path always writes one.
+  mockMarkPosting.mockResolvedValue(true);
+  mockCompletePosting.mockResolvedValue(true);
 });
 
 describe("postRun (bm11-spec §Design/§Implementation)", () => {
@@ -241,7 +234,7 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
   });
 
   it("writes no tax line when tax_total is zero", async () => {
-    mockFindByRunAndAccount.mockResolvedValue(
+    mockLockBill.mockResolvedValue(
       bill({ taxTotal: "0.00", totalAmount: "100.00" }),
     );
 
@@ -251,9 +244,7 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
   });
 
   it("[CRITICAL] resume — an account already carrying ref_inv_document_id is skipped (no second INV)", async () => {
-    mockFindByRunAndAccount.mockResolvedValue(
-      bill({ refInvDocumentId: "INV00000099" }),
-    );
+    mockLockBill.mockResolvedValue(bill({ refInvDocumentId: "INV00000099" }));
 
     const result = await postRun("BRN00000001", "user-1");
 
@@ -295,6 +286,7 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         status: "PROCESSED",
         errorCode: "PERIOD_CLOSED",
         errorDetail: "Period 2026-08 is closed for MYR.",
+        expectedStatus: "PROCESSED",
       },
     );
     expect(result).toMatchObject({
@@ -318,8 +310,39 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
     expect(mockCompletePosting).not.toHaveBeenCalled();
   });
 
+  it("[CRITICAL] concurrent post — when stampPosted writes no row (bill posted concurrently), postAccount throws so the INV rolls back and the account is parked, never marked INVOICED", async () => {
+    mockStampPosted.mockResolvedValue(false);
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    expect(mockUpdateStatus).not.toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({ status: "INVOICED" }),
+    );
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      db,
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({
+        status: "PROCESSED",
+        errorCode: "POSTING_FAILED",
+      }),
+    );
+    expect(result).toMatchObject({
+      value: {
+        results: [
+          { billingAccountId: "BAN00000001", result: { status: "parked" } },
+        ],
+      },
+    });
+  });
+
   it("parks with a generic POSTING_FAILED code when an unexpected error is thrown", async () => {
-    mockFindAttempt.mockResolvedValue(null);
+    // The joined read returns no row (a "should never happen" invariant breach)
+    // — postAccount throws a non-signal Error → generic park path.
+    mockLockBill.mockResolvedValue(null);
 
     const result = await postRun("BRN00000001", "user-1");
 

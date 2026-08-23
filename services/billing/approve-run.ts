@@ -4,7 +4,7 @@ import { billRunRepository } from "@/db/repositories/billing/bill-run.repository
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
-import type { PreApprovalCheck } from "@/services/billing/pre-approval-checks";
+import type { PreApprovalCheck } from "@/types/billing";
 
 // bm10-spec §Design/§Implementation §1. The approve transaction — the
 // four-eyes money gate. One `db.transaction`:
@@ -27,6 +27,7 @@ export type ApproveRunResult =
     }
   | { ok: false; code: "NOT_APPROVABLE" }
   | { ok: false; code: "FOUR_EYES_VIOLATION" }
+  | { ok: false; code: "MULTI_CURRENCY" }
   | { ok: false; code: "CHECKS_FAILED"; checks: PreApprovalCheck[] };
 
 export async function approveRun(
@@ -46,7 +47,22 @@ export async function approveRun(
     }
     const failing = checks.filter((c) => !c.pass);
     if (failing.length > 0) {
-      return { ok: false, code: "CHECKS_FAILED", checks: failing } as const;
+      // Return the COMPLETE re-check result (not just the failing subset) so the
+      // panel can replace its checklist wholesale — a check that was failing at
+      // page-load but now passes is cleared rather than left stale.
+      return { ok: false, code: "CHECKS_FAILED", checks } as const;
+    }
+
+    // Single-currency-per-cycle is a v1 invariant, but `sumPostableTotalForRun`
+    // adds bills across currencies blindly — refuse to stamp a meaningless
+    // cross-currency total (and its single-currency label) if the invariant is
+    // ever violated. Read-only, before any write, so returning here is safe.
+    const currencies = await customerBillRepository.listPostableCurrencies(
+      tx,
+      run.billRunId,
+    );
+    if (currencies.length > 1) {
+      return { ok: false, code: "MULTI_CURRENCY" } as const;
     }
 
     const totalAmount = await customerBillRepository.sumPostableTotalForRun(
@@ -57,10 +73,18 @@ export async function approveRun(
       tx,
       run.billRunId,
     );
-    await billRunRepository.approve(tx, run.billRunId, {
+    const approved = await billRunRepository.approve(tx, run.billRunId, {
       approvedBy: actorId,
       totalAmount,
     });
+    if (!approved) {
+      // The status precondition failed at write time despite the FOR UPDATE
+      // lock and the guard above — throw so the whole transaction (including
+      // `markSkippedForRun`) rolls back rather than auditing a no-op approval.
+      throw new Error(
+        `approveRun: bill_run ${run.billRunId} was not PROCESSED at write time`,
+      );
+    }
 
     await insertAuditEvent(tx, {
       eventType: "BILL_RUN_APPROVED",

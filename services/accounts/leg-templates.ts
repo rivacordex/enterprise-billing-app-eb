@@ -245,36 +245,14 @@ const ADJ_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
 // them to pgledger legs via the existing `resolveLegTemplate(docType,
 // lineKind)` path — no post-document.ts change needed.
 const INV_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
-  // revenue line: sys.revenue.{ccy} → ban.{BAN}.receivables — A/R debit,
-  // revenue credit, same direction as (DBN, charge).
-  charge: (ctx) => {
-    if (!ctx.sysAccountId) {
-      throw new Error("INV charge leg requires a resolved sys.revenue account");
-    }
-    if (!ctx.billingAccountReceivablesId) {
-      throw new Error("INV charge leg requires a receivables account");
-    }
-    return {
-      fromAccountId: ctx.sysAccountId,
-      toAccountId: ctx.billingAccountReceivablesId,
-    };
-  },
-  // tax line: sys.tax_payable.{ccy} → ban.{BAN}.receivables — A/R debit, tax
-  // payable credit, same direction as (DBN, release)'s tax leg.
-  release: (ctx) => {
-    if (!ctx.taxSysAccountId) {
-      throw new Error(
-        "INV tax leg requires a resolved sys.tax_payable account",
-      );
-    }
-    if (!ctx.billingAccountReceivablesId) {
-      throw new Error("INV tax leg requires a receivables account");
-    }
-    return {
-      fromAccountId: ctx.taxSysAccountId,
-      toAccountId: ctx.billingAccountReceivablesId,
-    };
-  },
+  // revenue line: sys.revenue.{ccy} → ban.{BAN}.receivables — IDENTICAL to
+  // (DBN, charge). tax line: sys.tax_payable.{ccy} → ban.{BAN}.receivables —
+  // IDENTICAL to (DBN, release)'s tax leg. ALIASED (not re-declared) so a
+  // future correction to the revenue/tax leg direction or guard can never
+  // silently diverge INV from DBN — the same reuse idiom as
+  // `refund: PAY_LEG_TEMPLATES.refund!` above.
+  charge: DBN_LEG_TEMPLATES.charge!,
+  release: DBN_LEG_TEMPLATES.release!,
 };
 
 const LEG_TEMPLATES: Partial<

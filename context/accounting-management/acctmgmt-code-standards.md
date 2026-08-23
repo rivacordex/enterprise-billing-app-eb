@@ -210,6 +210,7 @@ Both are returned by services' callers, never by `services/accounts/**` itself (
 | Code | Returned by | Meaning |
 |---|---|---|
 | `ALREADY_REVERSED` | `reverse-document`, `reverse-line` | Every targeted line already carries `reversed_by_line_id` |
+| `INV_NOT_REVERSIBLE` | `reverse-document` | Target is an `INV` document — billing owns its finalization latch (`customer_bill.ref_inv_document_id`), so INV reversal is out of scope (bm11); correct via a credit note |
 | `WRONG_FINANCIAL_ACCOUNT` | both + preview | Document does not belong to the FA in context |
 | `LINE_NOT_FOUND` | `reverse-line` | A selected line id is absent, duplicated, or not on this document |
 | `TRANSFER_NOT_FOUND` | `get-reversal-preview` | Posted line has no resolvable pgledger transfer |
