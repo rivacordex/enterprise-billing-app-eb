@@ -155,6 +155,26 @@ export const billRunAccountRepository = {
       );
   },
 
+  // bm10-spec §Design/§Implementation §1 — the approve write: every
+  // `PROCESSING_FAILED`/`EXCLUDED` account in the run is recorded `SKIPPED`
+  // (no charges, no bill, no invoice number consumed). Scoped strictly to the
+  // run; every other account (only `PROCESSED` remains, by the "all accounts
+  // terminal" precondition) is left untouched. Returns the count for the
+  // audit event / confirm-panel display.
+  async markSkippedForRun(tx: Database, billRunId: string): Promise<number> {
+    const rows = await tx
+      .update(billRunAccount)
+      .set({ status: "SKIPPED", lastProcessedAt: new Date() })
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          inArray(billRunAccount.status, ["PROCESSING_FAILED", "EXCLUDED"]),
+        ),
+      )
+      .returning({ billRunAccountId: billRunAccount.billRunAccountId });
+    return rows.length;
+  },
+
   // bm07-spec §Design/§2 — the Uncharged tab read: the run's deliberately-not-
   // billed accounts (`status = 'EXCLUDED'`, a scoping-time partial-period
   // exclusion), joined to the account name/financial-account (for the deep

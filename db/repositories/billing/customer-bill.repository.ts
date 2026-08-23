@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
+import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import type { CustomerBillInsert } from "@/db/schema/billing/customer-bill";
 
@@ -196,6 +197,108 @@ export const customerBillRepository = {
         and(
           eq(customerBill.refBillRunId, billRunId),
           inArray(customerBill.refBillingAccountId, billingAccountIds),
+        ),
+      );
+    return row?.total ?? "0.00";
+  },
+
+  // bm10-spec §Design/§Implementation §1 — the "postable" bill set: bills
+  // belonging to a `PROCESSED` account (the only status left besides
+  // `PROCESSING_FAILED`/`EXCLUDED`, which get marked `SKIPPED` at approval,
+  // never posted). The three reads below all join on this same condition —
+  // GL-mapping currencies, the zero/negative-total backstop, and the
+  // immutable `total_amount` stamp all need exactly this set.
+
+  // Distinct currencies among the run's postable bills — the pre-approval
+  // "GL mappings resolvable" check resolves `sys.revenue.{ccy}`/
+  // `sys.tax_payable.{ccy}` for each of these (single-currency per cycle in
+  // v1, architecture §"Cross-schema boundary"; not assumed here).
+  async listPostableCurrencies(
+    db: Database,
+    billRunId: string,
+  ): Promise<string[]> {
+    const rows = await db
+      .selectDistinct({ currency: billingAccount.currency })
+      .from(customerBill)
+      .innerJoin(
+        billingAccount,
+        eq(customerBill.refBillingAccountId, billingAccount.billingAccountId),
+      )
+      .innerJoin(
+        billRunAccount,
+        and(
+          eq(billRunAccount.refBillRunId, customerBill.refBillRunId),
+          eq(
+            billRunAccount.refBillingAccountId,
+            customerBill.refBillingAccountId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(billRunAccount.status, "PROCESSED"),
+        ),
+      );
+    return rows.map((r) => r.currency);
+  },
+
+  // The "no zero/negative totals" backstop's count — postable bills with
+  // `total_amount <= 0`, computed in SQL `numeric` (code-standards §2.3).
+  async countNonPositivePostable(
+    db: Database,
+    billRunId: string,
+  ): Promise<number> {
+    const [row] = await db
+      .select({ cnt: count() })
+      .from(customerBill)
+      .innerJoin(
+        billRunAccount,
+        and(
+          eq(billRunAccount.refBillRunId, customerBill.refBillRunId),
+          eq(
+            billRunAccount.refBillingAccountId,
+            customerBill.refBillingAccountId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(billRunAccount.status, "PROCESSED"),
+          sql`${customerBill.totalAmount} <= 0`,
+        ),
+      );
+    return row?.cnt ?? 0;
+  },
+
+  // The immutable `bill_run.total_amount` stamp — the SQL SUM of the
+  // postable bills (never a JS reduce, code-standards §2.3). Shared by the
+  // Approve preview and the approve write itself, so the confirm-panel figure
+  // and the stamped total can never drift.
+  async sumPostableTotalForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<string> {
+    const [row] = await db
+      .select({
+        total: sql<string>`COALESCE(SUM(${customerBill.totalAmount}), 0)::numeric(18,2)::text`,
+      })
+      .from(customerBill)
+      .innerJoin(
+        billRunAccount,
+        and(
+          eq(billRunAccount.refBillRunId, customerBill.refBillRunId),
+          eq(
+            billRunAccount.refBillingAccountId,
+            customerBill.refBillingAccountId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(billRunAccount.status, "PROCESSED"),
         ),
       );
     return row?.total ?? "0.00";

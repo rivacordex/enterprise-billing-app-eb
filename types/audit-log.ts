@@ -83,6 +83,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // bm08 — a pre-approval rerun (PROCESSED/PROCESSING_FAILED → PROCESSING): a
   // state transition carrying prior totals + the operator's reason.
   BILL_RUN_RERUN: "Change",
+  // bm10 — PROCESSED → APPROVED, the four-eyes money gate: a state
+  // transition, not a new entity.
+  BILL_RUN_APPROVED: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the
