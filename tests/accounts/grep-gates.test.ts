@@ -574,11 +574,24 @@ describe("grep gate — inv. #16: BAN-scoped document queries admit FA-level doc
     /ref_billing_account_id\s*=(?!=)|eq\(\s*\w+\.refBillingAccountId\b/;
   const NULL_ADMISSION =
     /ref_billing_account_id\s+IS\s+NULL|isNull\(\s*\w+\.refBillingAccountId/i;
+  // inv. #16 is a `document`/`document_line`-table invariant. Scope the gate to
+  // files that actually query those tables — a file that narrows a DIFFERENT
+  // table (`customer_bill`, `bill_run_account`, …) by BAN under an FA constraint
+  // is not a document query and is not subject to this rule. Without this scope
+  // the bare column-name regexes false-positive on billing repositories that
+  // merely reference both column names. The primary, alias-proof signal is the
+  // schema import: any drizzle query against the document/document_line table
+  // MUST import it from `@/db/schema/billing/documents`, so an aliased
+  // (`alias(document, "d")`) or renamed usage is still caught. The from/join and
+  // raw `billing.document` alternatives are belt-and-suspenders for raw SQL.
+  const DOCUMENT_TABLE =
+    /schema\/billing\/documents\b|\b(?:from|innerJoin|leftJoin|rightJoin|fullJoin)\(\s*document(?:Line)?[\s,)]|billing\.document(?:_line)?\b/;
 
   it("no source narrows documents by BAN without admitting ref_billing_account_id IS NULL", () => {
     const offenders = ALL_SOURCE_FILES.filter(({ content }) => {
       const src = stripLineComments(content);
       return (
+        DOCUMENT_TABLE.test(src) &&
         FA_CONSTRAINT.test(src) &&
         BAN_NARROWING.test(src) &&
         !NULL_ADMISSION.test(src)
@@ -671,20 +684,21 @@ describe("grep gate — inv. #18: reversal eligibility is derived once, never re
   });
 });
 
-describe("grep gate — inv. #19: the five document types are closed (no sixth type in a component)", () => {
+describe("grep gate — inv. #19: the document types are closed (no invented type in a component)", () => {
   // No filter option, badge, or label under components/accounts/** names a
-  // document *type* outside PAY/DEP/CRN/DBN/ADJ. The forbidden literals are
-  // matched only in a doc-type position (a line that also references
-  // `doc_type`/`docType`), so the action-bar's legitimate `write_off` *ActionKey*
-  // (a launcher id) and the drawer's `refund` *line-kind* label — neither a doc
-  // type — are not mis-flagged (architecture inv. #19).
+  // document *type* outside PAY/DEP/CRN/DBN/ADJ/INV (bm09 added INV as a real
+  // schema-level type, not a component-invented one). The forbidden literals
+  // are matched only in a doc-type position (a line that also references
+  // `doc_type`/`docType`), so the action-bar's legitimate `write_off`
+  // *ActionKey* (a launcher id) and the drawer's `refund` *line-kind* label —
+  // neither a doc type — are not mis-flagged (architecture inv. #19).
   const DOC_TYPE_LINE = /doc[_]?type/i;
   const FORBIDDEN_LITERAL = /["'](reversal|refund|write_off)["']/;
 
-  it("types/accounts.ts DOC_TYPES is exactly the five (source of truth, gate not vacuous)", () => {
+  it("types/accounts.ts DOC_TYPES is exactly the six (source of truth, gate not vacuous)", () => {
     const src = read("types/accounts.ts");
     expect(src).toMatch(
-      /DOC_TYPES\s*=\s*\[\s*"PAY",\s*"DEP",\s*"CRN",\s*"DBN",\s*"ADJ",?\s*\]/,
+      /DOC_TYPES\s*=\s*\[\s*"PAY",\s*"DEP",\s*"CRN",\s*"DBN",\s*"ADJ",\s*"INV",?\s*\]/,
     );
   });
 
@@ -760,8 +774,8 @@ describe("grep gate — code-standards §9: the Result-code catalog is current",
     expect(undocumented).toEqual([]);
   });
 
-  it("the shipped catalog is exactly 49 codes (§9 header — locks drift)", () => {
-    expect(sourceCodes.size).toBe(49);
+  it("the shipped catalog is exactly 51 codes (§9 header — locks drift)", () => {
+    expect(sourceCodes.size).toBe(51);
   });
 });
 

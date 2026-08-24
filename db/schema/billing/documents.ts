@@ -38,6 +38,12 @@ export const documentDbnSeq = billing.sequence("document_dbn_seq", {
 export const documentAdjSeq = billing.sequence("document_adj_seq", {
   startWith: 1,
 });
+// bm09-spec §Design/§Implementation §1 — the sixth per-type sequence, added
+// for the Accounts-side INV enablement that lets bm11 auto-post one invoice
+// per billed account. Additive only — every other sequence is unchanged.
+export const documentInvSeq = billing.sequence("document_inv_seq", {
+  startWith: 1,
+});
 export const documentLineSeq = billing.sequence("document_line_seq", {
   startWith: 1,
 });
@@ -126,7 +132,10 @@ export const document = billing.table(
   () => [
     check(
       "document_doc_type_check",
-      sql`doc_type IN ('PAY','DEP','CRN','DBN','ADJ')`,
+      // 'INV' added by bm09 — physical DDL of record is
+      // db/migrations/0031_add_inv_document_type.sql (drop+add, the 0014
+      // alter idiom); this literal is kept in sync with it.
+      sql`doc_type IN ('PAY','DEP','CRN','DBN','ADJ','INV')`,
     ),
     check(
       "document_state_check",

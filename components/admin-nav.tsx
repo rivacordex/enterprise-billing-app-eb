@@ -263,7 +263,7 @@ export function AdminNav({
               !collapsed && itemActive
                 ? "border-[color:var(--color-primary-200)] bg-[color:var(--surface-selected)] text-[color:var(--text-primary)]"
                 : !collapsed
-                  ? "border-transparent text-[color:var(--text-on-brand)] hover:bg-[color:var(--action-ghost-hover)]"
+                  ? "border-transparent text-[color:var(--text-on-brand)] hover:bg-[color:var(--color-primary-700)]"
                   : "border-transparent",
               // Belt-and-suspenders alongside `aria-disabled` and the
               // non-`<a>` element (cm03-spec §3.2) against inherited
@@ -276,7 +276,7 @@ export function AdminNav({
               collapsed &&
                 (itemActive
                   ? "size-9 rounded-sm bg-[color:var(--surface-selected)] text-[color:var(--text-primary)]"
-                  : "size-9 rounded-sm text-[color:var(--text-on-brand)] hover:bg-[color:var(--action-ghost-hover)]"),
+                  : "size-9 rounded-sm text-[color:var(--text-on-brand)] hover:bg-[color:var(--color-primary-700)]"),
             );
 
             const labelClassName = cn(

@@ -14,6 +14,8 @@ import type { Database } from "@/db/client";
 import { billRun } from "@/db/schema/billing/bill-run";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 import { billCycle } from "@/db/schema/billing/catalogs";
+import { billRunAccount } from "@/db/schema/billing/bill-run-account";
+import { billingAccount } from "@/db/schema/billing/accounts";
 import { TERMINAL_RUN_STATUSES } from "@/types/billing";
 import type { RunStatus } from "@/types/billing";
 
@@ -323,5 +325,122 @@ export const billRunRepository = {
       .update(billRun)
       .set({ status: "PROCESSING_FAILED", lastProgressAt: sql`now()` })
       .where(eq(billRun.billRunId, billRunId));
+  },
+
+  // bm10-spec §Design/§Implementation §1 — a plain (unlocked) full-row read
+  // for the Approve & Post page's preview: the four-eyes check needs
+  // `triggeredBy`, the period check needs `glEventAt`. Distinct from
+  // `findByIdForUpdate` (locking, transactional) and `findDetailById`
+  // (joined-but-partial) — this is the only place a caller reads the whole
+  // header row outside a transaction.
+  async findById(db: Database, billRunId: string): Promise<BillRun | null> {
+    const [row] = await db
+      .select()
+      .from(billRun)
+      .where(eq(billRun.billRunId, billRunId))
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm10-spec §Design/§Implementation §1 — the approve write: PROCESSED →
+  // APPROVED, stamping `approved_by`/`approved_at` and the immutable
+  // `total_amount` (the SQL-summed postable-bill total the caller already
+  // computed — never re-derived after this point, code-standards §6.7).
+  // Guarded on `status = 'PROCESSED'` (same convention as `markPosting`/
+  // `completePosting`) so the documented PROCESSED → APPROVED transition is
+  // enforced in SQL too — the caller already holds the row lock via
+  // `findByIdForUpdate` and checked the status, so this is defense-in-depth.
+  async approve(
+    tx: Database,
+    billRunId: string,
+    data: { approvedBy: string; totalAmount: string },
+  ): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({
+        status: "APPROVED",
+        approvedBy: data.approvedBy,
+        approvedAt: sql`now()`,
+        totalAmount: data.totalAmount,
+      })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "PROCESSED")),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm11-spec §Design/§Implementation §1 — the posting transaction's run-level
+  // flip: `APPROVED → POSTING`, stamping `posting_started_at` once. Guarded on
+  // the current status (not an `IS NULL` check) so calling this on an
+  // already-`POSTING` run (the resume path) is a safe no-op — `postRun`
+  // branches on status itself and only calls this from `APPROVED`.
+  async markPosting(tx: Database, billRunId: string): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({ status: "POSTING", postingStartedAt: sql`now()` })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "APPROVED")),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm11-spec §Design/§Implementation §1 — run completion: every non-skipped
+  // account reached `INVOICED` (the caller verified this first), so the run
+  // passes `INVOICED` → (no v1 distribution targets, ai-workflow-rules §3.4 —
+  // `DISTRIBUTING` is never entered) straight to `COMPLETED`, stamping both
+  // timeline columns in the one write. Guarded on `status = 'POSTING'` so a
+  // stray double-call is a no-op (architecture Inv. #12 — the caller already
+  // holds the row lock via `findByIdForUpdate`).
+  async completePosting(tx: Database, billRunId: string): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({
+        status: "COMPLETED",
+        invoicedAt: sql`now()`,
+        completedAt: sql`now()`,
+      })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "POSTING")),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm09-spec §Design/§Implementation §4 — the period-close guard: runs whose
+  // gl_event_at falls in `period` and are not yet COMPLETED/CANCELLED.
+  // `services/accounts/period-close.ts` calls this before closing so a period
+  // can't close while bm11 is still posting INVs into it. Currency is derived
+  // from the run's SCOPED ACCOUNTS (`bill_run_account`, written at trigger time
+  // — single-currency per cycle in v1) rather than `customer_bill`: bills only
+  // exist from Aggregation onward, so joining on them would let a run that is
+  // triggered-but-not-yet-aggregated (gl_event_at already stamped, no bills
+  // yet) escape the guard and later post INVs into a period this closed — and
+  // there is no period reopen.
+  async findActiveForPeriod(
+    db: Database,
+    period: string,
+    currency: string,
+  ): Promise<string[]> {
+    const rows = await db
+      .selectDistinct({ billRunId: billRun.billRunId })
+      .from(billRun)
+      .innerJoin(
+        billRunAccount,
+        eq(billRunAccount.refBillRunId, billRun.billRunId),
+      )
+      .innerJoin(
+        billingAccount,
+        eq(billingAccount.billingAccountId, billRunAccount.refBillingAccountId),
+      )
+      .where(
+        and(
+          sql`to_char(${billRun.glEventAt}, 'YYYY-MM') = ${period}`,
+          eq(billingAccount.currency, currency),
+          notInArray(billRun.status, TERMINAL),
+        ),
+      );
+    return rows.map((r) => r.billRunId);
   },
 };

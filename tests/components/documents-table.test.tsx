@@ -243,15 +243,15 @@ describe("DocumentsTable — ↺ Reverse row action (ac22 §3.2)", () => {
 // ── Filter bar ────────────────────────────────────────────────────────────────
 
 describe("DocumentsTable — filter bar options", () => {
-  it("Type select has exactly 5 doc-type options plus 'All types'", () => {
+  it("Type select has exactly 6 doc-type options plus 'All types'", () => {
     render(<DocumentsTable {...BASE_PROPS} />);
     const typeSelect = screen.getByLabelText(/^type$/i);
-    // 5 doc types + 1 "All types" option = 6 total.
+    // 6 doc types (bm09 added INV) + 1 "All types" option = 7 total.
     const options = Array.from(typeSelect.querySelectorAll("option"));
-    expect(options).toHaveLength(6);
+    expect(options).toHaveLength(7);
     const values = options.map((o) => o.value).filter(Boolean);
     expect(values).toEqual(
-      expect.arrayContaining(["PAY", "DEP", "CRN", "DBN", "ADJ"]),
+      expect.arrayContaining(["PAY", "DEP", "CRN", "DBN", "ADJ", "INV"]),
     );
   });
 });

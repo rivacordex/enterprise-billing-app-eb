@@ -217,6 +217,104 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 - **bm07 (delivered):** **no new table.** The **Verification** stage (stage 6) stops being bm04's record-and-advance pass-through and joins Validation/Collection as an app-computed override: `handleStageSignal` calls `verifyAccount` (`services/billing/verify.ts`) for a `verification` signal, whose recorded outcome — not the caller's body — lands on the stage row. v1 is deliberately minimal (no rating, no prior-period baseline ⇒ variance/plausibility deferred): it **always records `DONE`** (never fails/blocks the run) plus, only when a single cheap backstop fails (the account's unposted bill `total_amount <= 0`, computed in SQL `numeric`), a **`SOFT` finding on that same stage row** (`error_class = 'SOFT'`, `error_code = 'NON_POSITIVE_TOTAL'`) — findings are `SOFT` stage rows, **not a new findings table**. The three remaining run-detail tabs fill the bm04 placeholders, each read only for its own active `?tab=` (same fetch-per-tab idiom as bm05's Customers & Bills): **Uncharged** (`UnchargedTable`, `services/billing/read/list-uncharged.ts` → `billRunAccountRepository.listExcludedForRun`) lists the run's `EXCLUDED` accounts (info/neutral "revenue queue", §4.7) with reason (`error_code`, `PARTIAL_PERIOD`), the uncharged window (the run period), and an **indicative value of "—"** (no rating source in v1); it is CSV-exportable (`actions/billing/export-uncharged.action.ts` + `ExportUnchargedButton`, the bm02 Server-Action + `Blob` precedent, `billrun_view:READ`, unaudited) and **deep-links each row to `/accounts/transactions?fa=…&ban=…`** ("Manual DBN/ADJ"). **Errors** (`ErrorsTable`, `list-errors.ts` → `billRunAccountRepository.listErrorsForRun`) lists the run's `PROCESSING_FAILED` accounts joined to their latest-attempt `HARD` `bill_run_account_stage` row (destructive "blocking" treatment, §4.7, `ErrorClassBadge` + stage/code/detail + an inert "Rerun these accounts" affordance — the rerun action lands in bm08). **Audit** (`AuditTable`, `list-run-audit.ts` → `auditLogRepository.findByTargetId`) reuses the platform `AuditLogTable`/`AuditLogRow` unchanged (§4.8 — never fork a table), filtered to `target_id = runId`, newest first. Zero-exceptions on Uncharged/Errors is a positive empty state, not a blank tab.
 - **bm08 (delivered):** **no new table.** The **Trigger / Rerun / Cancel** row's `RerunDialog` + `actions/billing/rerun-run.action.ts` are now real (still `billrun_operate:EDIT`). `rerunRun` (`services/billing/rerun-run.ts`) is one `db.transaction`, **pre-approval only** (rejects unless the run is `PROCESSED`/`PROCESSING_FAILED`, a typed `NOT_RERUNNABLE`): (1) **AUDIT FIRST** — one `BILL_RUN_RERUN` `core.AUDIT_LOG` row (`beforeData.priorTotals` = the SQL-summed current bill total of the rerun accounts; `afterData` = `{ accounts, fromStage, attempt, reason }`) written **before** the engine is re-triggered (§1.10); (2) every selected account's `attempt_count` is set to one uniform new attempt (max + 1) (`billRunAccountRepository.setAttemptForRerun`), dropping them back to `PROCESSING` and clearing their prior diagnostics; (3) **later stages invalidated implicitly** — `bill_run_account_stage` is keyed by `attempt`, so the bumped attempt makes every new-attempt signal from the chosen stage onward land on a fresh row, prior-attempt rows staying as history (no stage-row DELETE); (4) **trial bills re-derived** from the chosen stage onward — `aggregateBill`/`taxBill` (bm05/bm06) under the rerun-safe `ref_inv_document_id IS NULL` guard (a rerun from `verification` re-derives nothing; from `taxation` re-taxes only; from `aggregation`/`collection`/`validation` rewrites then re-taxes); (5) **claim release/re-claim is a documented v1 no-op** (no `rating` table); (6) the engine (stub) is re-triggered scoped to the rerun accounts + new attempt, then the run loops back to `PROCESSING` (`markRerunProcessing` — refreshed counters + new execution ref, clears the prior `processed_at`, never touches `gl_event_at`/`triggered_by`). The **finalization guard is absolute** — `EXCLUDED` and posted (`ref_inv_document_id` set, `customerBillRepository.listPostedAccountIds`) accounts are dropped from the eligible set, so nothing finalized is ever invalidated or re-derived (Inv. #4). `accountIds` MAY be empty (the run-level "Rerun" control ⇒ all eligible; the Errors tab passes the failed accounts); an empty resolved set is a typed `NO_ACCOUNTS_SELECTED`; the mandatory `reason` (empty ⇒ `VALIDATION_ERROR`) and the in-txn engine failure (`ENGINE_UNREACHABLE`, whole rerun rolled back) round out the result union. The `RerunDialog` (Errors tab + a `billrun_operate`-gated run-level header control) previews the scope + `Validation`→`Verification` stage selector + reason and `router.refresh()`es on success; the bm07 inert affordance is replaced.
 
+- **bm09 (delivered, cross-module):** Accounts-side `INV` document type +
+  posting enablement, additive only. `types/accounts.ts` `DOC_TYPES` gains
+  `INV`; `db/repositories/accounts/document.repository.ts`
+  `DOC_SEQUENCE_NAME.INV = "billing.document_inv_seq"`; migrations `0031`/
+  `0032` add the sequence and drop+add both `doc_type` CHECKs (`document`,
+  `reason_code`) to admit `'INV'` (the `0014` NOT-VALID/VALIDATE idiom). The
+  seeded `STANDARD_INVOICE` reason code (`postingNature: 'revenue'`,
+  `autoPostLimit: '999999999999.99'`) keeps `postDocument`'s
+  `totalAmount > auto_post_limit` gate from tripping for any invoice at or
+  below that seeded limit, so in practice an `INV` document **auto-posts from
+  `draft`** (a total exceeding the limit would still fall to `submitDocument`/
+  `postDocument`'s approval path like any other reason code) — the run-level
+  four-eyes (bm10) is the sole
+  second signature, and each INV's `created_by` is the approver.
+  `services/accounts/leg-templates.ts` gains `INV_LEG_TEMPLATES` (`charge` =
+  A/R debit + revenue credit, `release` reused as the tax-line key = A/R
+  debit + tax-payable credit — the same shape as `DBN`, reusing the existing
+  seeded GL mappings, no new mapping rows). The **period-close guard**
+  (`billRunRepository.findActiveForPeriod`, called from
+  `services/accounts/period-close.ts`'s `closePeriod` before the accounting
+  period is touched) refuses to close a `(period, currency)` while any
+  `billing.bill_run` — joined to its `customer_bill`s for currency — has
+  `gl_event_at` in that period and `status NOT IN ('COMPLETED','CANCELLED')`,
+  returning a typed `BILL_RUN_IN_PROGRESS` with `activeRunIds`, surfaced by
+  `ClosePeriodButton` as "N bill run(s) still posting into {period}." Existing
+  Accounts documents/postings/period-close are byte-identical (guardrail
+  test) — the two CHECKs only *gained* `'INV'`, no existing row changed.
+
+- **bm10 (delivered):** **no new table.** The `/billing/bill-runs/[runId]/approve`
+  row is now real (`billrun_approve:EDIT`): `ApproveAndPostPage` →
+  `ApproveAndPostPanel` + `PreApprovalChecks`. `services/billing/pre-approval-checks.ts`
+  (`runPreApprovalChecks`, five pure-ish reads: accounting period open, GL
+  mappings resolvable via bm09's `gl_resolution_view` — `ledgerRepository
+  .resolveGlCodeByName` resolves `sys.revenue.{ccy}`/`sys.tax_payable.{ccy}`
+  for every currency among the run's postable bills —, no zero/negative
+  postable subtotals/totals, four-eyes — approver ≠ **every** operator who
+  triggered OR reran the run (the `BILL_RUN_TRIGGERED`/`BILL_RUN_RERUN` audit
+  actors ∪ `bill_run.triggered_by`), so an Ops user who reran cannot approve
+  their own work; approval must come from a separate approver (e.g. a manager)
+  —, and all accounts terminal) backs both the page's live
+  preview and the approve transaction's own re-check, so the two can never
+  disagree. `services/billing/approve-run.ts` (`approveRun`) — one
+  `db.transaction`: `findByIdForUpdate` → guard `PROCESSED` (else
+  `NOT_APPROVABLE`) → the five checks (a failing four-eyes check returns its
+  own `FOUR_EYES_VIOLATION`; any other failure(s) bucket under
+  `CHECKS_FAILED`) → stamp `approved_by`/`approved_at`/the immutable
+  `total_amount` (`customerBillRepository.sumPostableTotalForRun`, the SQL
+  sum over bills whose account is `PROCESSED`) → mark every
+  `PROCESSING_FAILED`/`EXCLUDED` account `SKIPPED`
+  (`billRunAccountRepository.markSkippedForRun`) → flip `PROCESSED → APPROVED`
+  → `insertAuditEvent(BILL_RUN_APPROVED)`. The DB `bill_run_approver_distinct_check`
+  CHECK (bm02) remains the backstop; the service is the primary enforcement.
+  Posting (`APPROVED → POSTING → INVOICED`) is bm11 — this unit stops at
+  `APPROVED`. The run detail page's header gains a `billrun_approve`-gated
+  "Approve & Post" link to the new route, shown only while the run is
+  `PROCESSED` (show/hide only; the page + action re-check server-side).
+
+- **bm11 (delivered):** **no new table** — every column posting stamps
+  (`bill_run.posting_started_at`/`invoiced_at`/`completed_at`,
+  `customer_bill.ref_inv_document_id`/`posted_attempt`/`charge_checksum`) was
+  already reserved by bm02/bm05, so this unit is additive-only writes, no
+  migration. `services/billing/post-run.ts` — `postAccount(run, banId,
+  actorId)` runs entirely inside one `db.transaction` (Inv. #6): skip if the
+  bill already carries `ref_inv_document_id` (resume) → read the trial bill +
+  the account's `attempt_count` → build one `INV` (`documentRepository.insert`,
+  `STANDARD_INVOICE`, `createdBy` = the run's stamped `approvedBy`) with a
+  `charge` line (`subtotal`) and, when `tax_total > 0`, a `release` tax line
+  (bm09's INV leg template) → `postDocument` (auto-posts under the unlimited
+  limit) → on success, stamp the bill (`customerBillRepository.stampPosted`,
+  `charge_checksum` from the new SQL `md5` formula in
+  `computeChargeChecksum`) and mark the account `INVOICED`; on any
+  `postDocument` failure the transaction throws so nothing commits (Inv. #7's
+  tolerated invoice-number gap), and a SEPARATE, non-transactional write parks
+  the account (`status` stays `PROCESSED`, `errorCode`/`errorDetail` set) so
+  `PERIOD_CLOSED` — and any other posting failure — is a tolerated, resumable
+  per-account error, never a run-level abort. `postRun(billRunId, actorId)`
+  flips `APPROVED → POSTING` once (idempotent resume), posts every
+  `PROCESSED` account in its own transaction via `postAccount`, then — once no
+  account remains `PROCESSED` — completes the run straight to `COMPLETED`
+  (`billRunRepository.completePosting`, stamping `invoiced_at`/`completed_at`
+  together; `DISTRIBUTING` is never entered, ai-workflow-rules §3.4) and
+  writes `BILL_RUN_POSTED` (`AUDIT_EVENT_TYPES`/`AUDIT_EVENT_CATEGORY_MAP`,
+  `"Additive"` — it marks new INV documents existing, not merely a status
+  flip). `actions/billing/post-run.action.ts` requires `billrun_approve:EDIT`
+  (the same money gate as approve) and is re-invocable (Retry-failed is
+  literally the same action). **No new route** — `/billing/bill-runs/[runId]/
+  approve` now branches server-side on the live `getApprovePreview` status:
+  `PROCESSED` renders the unchanged bm10 `ApproveAndPostPanel`; anything past
+  it renders the new `PostingProgressView` (`services/billing/read/
+  get-posting-progress.ts`'s `getPostingProgress`, a per-account DERIVED
+  display status — `pending`/`invoiced`/`PERIOD_CLOSED`/`failed`, never a
+  stored column) with an explicit Post/Retry-failed button (never auto-fired
+  on page load — posting is financially consequential, same explicit-confirm
+  discipline as every other operator mutation in this module). The run detail
+  page's header gains a second `billrun_approve`-gated link ("Post" when
+  `APPROVED`, "Resume posting" when `POSTING`) to the same `/approve` route,
+  alongside bm10's unchanged "Approve & Post" link.
+
 ---
 
 ## 9. Module Guardrail Tests (CI gate, general §10.4)

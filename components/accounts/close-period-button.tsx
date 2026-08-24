@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { closePeriodAction } from "@/actions/accounts/close-period.action";
+import type { ClosePeriodActionResult } from "@/actions/accounts/close-period.action";
 
 export interface ClosePeriodButtonProps {
   period: string;
@@ -35,7 +36,7 @@ export function ClosePeriodButton({
     try {
       const result = await closePeriodAction({ period, currency });
       if (!result.ok) {
-        setError(describeError(result.code));
+        setError(describeError(result, periodLabel));
         setConfirming(false);
         return;
       }
@@ -114,12 +115,19 @@ export function ClosePeriodButton({
   );
 }
 
-function describeError(code: string): string {
-  switch (code) {
+// bm09-spec §Implementation §4 — BILL_RUN_IN_PROGRESS surfaces the blocking
+// bill_run count against the period being closed.
+function describeError(
+  result: Exclude<ClosePeriodActionResult, { ok: true }>,
+  periodLabel: string,
+): string {
+  switch (result.code) {
     case "ALREADY_CLOSED":
       return "This period is already closed.";
     case "FORBIDDEN":
       return "You do not have permission to close periods.";
+    case "BILL_RUN_IN_PROGRESS":
+      return `${result.activeRunIds.length} bill run(s) still posting into ${periodLabel}.`;
     default:
       return "Something went wrong. Please try again.";
   }

@@ -19,6 +19,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   CRN: "CRN — Credit Note",
   DBN: "DBN — Debit Note",
   ADJ: "ADJ — Adjustment",
+  INV: "INV — Invoice",
 };
 
 const NATURE_LABELS: Record<string, string> = {

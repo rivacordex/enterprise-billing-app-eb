@@ -207,3 +207,80 @@ export interface ErrorRow {
   errorCode: string | null;
   errorDetail: string | null;
 }
+
+// bm11-spec §Visual. `PostingProgressView`'s read model — the DERIVED display
+// status (never a stored column, same idiom as `StallState`): `PROCESSED`
+// accounts carrying no `errorCode` are `pending`; `INVOICED` accounts are
+// `invoiced`; a parked `PROCESSED` account (a tolerated per-account posting
+// failure, Design "PERIOD_CLOSED handling") is `PERIOD_CLOSED` or `failed`
+// depending on its `errorCode`.
+export const POSTING_ACCOUNT_STATUSES = [
+  "pending",
+  "invoiced",
+  "PERIOD_CLOSED",
+  "failed",
+] as const;
+export type PostingAccountStatus = (typeof POSTING_ACCOUNT_STATUSES)[number];
+
+export interface PostingProgressRow {
+  billingAccountId: string;
+  accountName: string;
+  status: PostingAccountStatus;
+  invoiceId: string | null;
+  errorDetail: string | null;
+}
+
+export interface PostingProgress {
+  billRunId: string;
+  runStatus: RunStatus;
+  rows: PostingProgressRow[];
+  postedCount: number;
+  totalCount: number;
+}
+
+// bm10-spec §Design/§Visual. The public Approve & Post view contracts. They
+// live here (not in `services/**`) so the client components that render them
+// (`ApproveAndPostPanel`, `PreApprovalChecks`) can import them without crossing
+// the `components → services` boundary (eslint `boundaries/dependencies`); the
+// approve service + read model import the same shapes.
+export const PRE_APPROVAL_CHECKS = [
+  "period_open",
+  "gl_mappings",
+  "positive_totals",
+  "four_eyes",
+  "accounts_terminal",
+] as const;
+export type PreApprovalCheckKey = (typeof PRE_APPROVAL_CHECKS)[number];
+
+export interface PreApprovalCheck {
+  check: PreApprovalCheckKey;
+  pass: boolean;
+  remediation: string | null;
+}
+
+// bm10 — the audit event types that record a run being (re)triggered. The
+// four-eyes gate (`checkFourEyes`) bars every actor in these events from
+// approving, and the Approve preview names the most-recent such actor — both
+// must read the SAME set, so it lives here as one source of truth.
+export const TRIGGER_EVENT_TYPES = [
+  "BILL_RUN_TRIGGERED",
+  "BILL_RUN_RERUN",
+] as const;
+
+// The Approve & Post page's read model (`getApprovePreview`) — the run header,
+// the final trigger actor, the postable/skipped counts, and the live
+// pre-approval checks for the current viewer.
+export interface ApprovePreview {
+  billRunId: string;
+  cycleName: string;
+  status: RunStatus;
+  periodStart: string;
+  periodEnd: string;
+  triggeredByName: string | null;
+  triggeredAt: Date | null;
+  postableCount: number;
+  skippedCount: number;
+  currency: string | null;
+  totalAmount: string;
+  checks: PreApprovalCheck[];
+}

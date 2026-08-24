@@ -6,6 +6,7 @@ import type { BillRunAccountInsert } from "@/db/schema/billing/bill-run-account"
 import { billRunAccountStage } from "@/db/schema/billing/bill-run-account-stage";
 import { billRun } from "@/db/schema/billing/bill-run";
 import { billingAccount } from "@/db/schema/billing/accounts";
+import { customerBill } from "@/db/schema/billing/customer-bill";
 import type { AccountStatus, ErrorClass, Stage } from "@/types/billing";
 
 // bm03-spec §Design/§6/§7 — the scoping snapshot write: one INSERT of every
@@ -50,6 +51,11 @@ export const billRunAccountRepository = {
   },
 
   // bm04-spec §Design/§Implementation §8 — the per-account advance write.
+  // Returns whether a row was actually updated. `expectedStatus` (bm11) adds a
+  // status precondition to the WHERE: the non-transactional posting park write
+  // passes `"PROCESSED"` so it can NEVER clobber an account another concurrent
+  // poster has already committed as `INVOICED` (the row lock only serializes
+  // the bill, not this after-rollback park write).
   async updateStatus(
     tx: Database,
     billRunId: string,
@@ -60,9 +66,10 @@ export const billRunAccountRepository = {
       // must not clear the error that explains a prior failure).
       errorCode?: string | null;
       errorDetail?: string | null;
+      expectedStatus?: AccountStatus;
     },
-  ): Promise<void> {
-    await tx
+  ): Promise<boolean> {
+    const rows = await tx
       .update(billRunAccount)
       .set({
         status: data.status,
@@ -76,8 +83,13 @@ export const billRunAccountRepository = {
         and(
           eq(billRunAccount.refBillRunId, billRunId),
           eq(billRunAccount.refBillingAccountId, billingAccountId),
+          ...(data.expectedStatus !== undefined
+            ? [eq(billRunAccount.status, data.expectedStatus)]
+            : []),
         ),
-      );
+      )
+      .returning({ billRunAccountId: billRunAccount.billRunAccountId });
+    return rows.length > 0;
   },
 
   // bm04-spec §Design/§Implementation §8 — every account status for the run,
@@ -153,6 +165,80 @@ export const billRunAccountRepository = {
           inArray(billRunAccount.refBillingAccountId, billingAccountIds),
         ),
       );
+  },
+
+  // bm10-spec §Design/§Implementation §1 — the approve write: every
+  // `PROCESSING_FAILED`/`EXCLUDED` account in the run is recorded `SKIPPED`
+  // (no charges, no bill, no invoice number consumed). Scoped strictly to the
+  // run; every other account (only `PROCESSED` remains, by the "all accounts
+  // terminal" precondition) is left untouched. Returns the count for the
+  // audit event / confirm-panel display.
+  async markSkippedForRun(tx: Database, billRunId: string): Promise<number> {
+    const rows = await tx
+      .update(billRunAccount)
+      .set({ status: "SKIPPED", lastProcessedAt: new Date() })
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          inArray(billRunAccount.status, ["PROCESSING_FAILED", "EXCLUDED"]),
+        ),
+      )
+      .returning({ billRunAccountId: billRunAccount.billRunAccountId });
+    return rows.length;
+  },
+
+  // bm11-spec §Visual — the `PostingProgressView` read: every postable
+  // account (`PROCESSED` = pending/parked, `INVOICED` = done — `SKIPPED`/
+  // `EXCLUDED` never post, so they're excluded here), left-joined to its
+  // `customer_bill` for the invoice id once posted. The view derives the
+  // displayed status (pending / invoiced / PERIOD_CLOSED / failed) from
+  // `status` + `errorCode` — no new stored column, same read-derived
+  // convention as `StallBanner`/`overdue`.
+  async listPostingProgressForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<
+    {
+      billingAccountId: string;
+      accountName: string;
+      status: AccountStatus;
+      errorCode: string | null;
+      errorDetail: string | null;
+      invoiceId: string | null;
+    }[]
+  > {
+    const rows = await db
+      .select({
+        billingAccountId: billRunAccount.refBillingAccountId,
+        accountName: billingAccount.name,
+        status: billRunAccount.status,
+        errorCode: billRunAccount.errorCode,
+        errorDetail: billRunAccount.errorDetail,
+        invoiceId: customerBill.refInvDocumentId,
+      })
+      .from(billRunAccount)
+      .innerJoin(
+        billingAccount,
+        eq(billRunAccount.refBillingAccountId, billingAccount.billingAccountId),
+      )
+      .leftJoin(
+        customerBill,
+        and(
+          eq(customerBill.refBillRunId, billRunAccount.refBillRunId),
+          eq(
+            customerBill.refBillingAccountId,
+            billRunAccount.refBillingAccountId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          inArray(billRunAccount.status, ["PROCESSED", "INVOICED"]),
+        ),
+      )
+      .orderBy(billingAccount.name);
+    return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
   },
 
   // bm07-spec §Design/§2 — the Uncharged tab read: the run's deliberately-not-

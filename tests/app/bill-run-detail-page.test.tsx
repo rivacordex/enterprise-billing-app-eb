@@ -205,6 +205,94 @@ describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
     expect(queryByTestId("stub-banner")).toBeNull();
   });
 
+  it("shows the Approve & Post link for a billrun_approve:EDIT principal on a PROCESSED run", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "PROCESSED" });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_approve: "EDIT" } as never,
+    });
+
+    const { getByRole } = render(await BillRunDetailPage(props()));
+
+    expect(
+      getByRole("link", { name: /approve & post/i }).getAttribute("href"),
+    ).toBe("/billing/bill-runs/BRN00000001/approve");
+  });
+
+  it("hides the Approve & Post link without billrun_approve:EDIT even on a PROCESSED run", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "PROCESSED" });
+
+    const { queryByRole } = render(await BillRunDetailPage(props()));
+
+    expect(queryByRole("link", { name: /approve & post/i })).toBeNull();
+  });
+
+  it("hides the Approve & Post link for a billrun_approve:EDIT principal when the run isn't PROCESSED", async () => {
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_approve: "EDIT" } as never,
+    });
+
+    const { queryByRole } = render(await BillRunDetailPage(props()));
+
+    expect(queryByRole("link", { name: /approve & post/i })).toBeNull();
+  });
+
+  it("shows a Post link (billrun_approve:EDIT) once the run is APPROVED, sharing the /approve route", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "APPROVED" });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_approve: "EDIT" } as never,
+    });
+
+    const { getByRole, queryByRole } = render(await BillRunDetailPage(props()));
+
+    expect(getByRole("link", { name: "Post" }).getAttribute("href")).toBe(
+      "/billing/bill-runs/BRN00000001/approve",
+    );
+    expect(queryByRole("link", { name: /approve & post/i })).toBeNull();
+  });
+
+  it("shows a Resume posting link (billrun_approve:EDIT) while the run is POSTING", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "POSTING" });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_approve: "EDIT" } as never,
+    });
+
+    const { getByRole } = render(await BillRunDetailPage(props()));
+
+    expect(
+      getByRole("link", { name: "Resume posting" }).getAttribute("href"),
+    ).toBe("/billing/bill-runs/BRN00000001/approve");
+  });
+
+  it("hides the Post link without billrun_approve:EDIT even once APPROVED", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "APPROVED" });
+
+    const { queryByRole } = render(await BillRunDetailPage(props()));
+
+    expect(queryByRole("link", { name: "Post" })).toBeNull();
+  });
+
+  it("hides the Post/Resume posting link once the run is INVOICED", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "INVOICED" });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_approve: "EDIT" } as never,
+    });
+
+    const { queryByRole } = render(await BillRunDetailPage(props()));
+
+    expect(queryByRole("link", { name: "Post" })).toBeNull();
+    expect(queryByRole("link", { name: "Resume posting" })).toBeNull();
+  });
+
   it("declares dynamic = 'force-dynamic' (authenticated, uncached)", () => {
     const src = readFileSync(
       resolve(__dirname, "../../app/(app)/billing/bill-runs/[runId]/page.tsx"),

@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ShieldCheck } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
+import { buttonVariants } from "@/components/ui/button";
 import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
@@ -121,6 +124,23 @@ export default async function BillRunDetailPage({
     detail.status === "PROCESSED" || detail.status === "PROCESSING_FAILED";
   const canRerun = canOperate && rerunnable;
 
+  // bm10 — the four-eyes money gate lives on its own route
+  // (`/billing/bill-runs/[runId]/approve`, `billrun_approve:EDIT`). Shown
+  // only while the run is awaiting approval; show/hide only — the approve
+  // page and action re-check server-side.
+  const canApprove = meetsLevel(
+    permissionMap[PERMISSIONS.BILLRUN_APPROVE],
+    LEVELS.EDIT,
+  );
+  const approvable = detail.status === "PROCESSED";
+
+  // bm11 — the Post affordance shares the same `/approve` route (it
+  // branches server-side on the live run status, bm11-spec §Visual): once
+  // `APPROVED`, the route renders `PostingProgressView` instead of the
+  // approve checklist. Shown for `APPROVED` (not yet started) and `POSTING`
+  // (resumable — "Resume posting" reopens the same progress view).
+  const postable = detail.status === "APPROVED" || detail.status === "POSTING";
+
   return (
     <main className="space-y-6 p-6">
       <header className="space-y-2">
@@ -129,16 +149,34 @@ export default async function BillRunDetailPage({
             {detail.billRunId}
           </h1>
           <RunStatusBadge status={detail.status} />
-          {canRerun && (
-            <div className="ms-auto">
+          <div className="ms-auto flex items-center gap-2">
+            {canApprove && approvable && (
+              <Link
+                href={`/billing/bill-runs/${detail.billRunId}/approve`}
+                className={buttonVariants()}
+              >
+                <ShieldCheck aria-hidden="true" />
+                Approve &amp; Post
+              </Link>
+            )}
+            {canApprove && postable && (
+              <Link
+                href={`/billing/bill-runs/${detail.billRunId}/approve`}
+                className={buttonVariants()}
+              >
+                <ShieldCheck aria-hidden="true" />
+                {detail.status === "APPROVED" ? "Post" : "Resume posting"}
+              </Link>
+            )}
+            {canRerun && (
               <RerunDialog
                 billRunId={detail.billRunId}
                 accountIds={[]}
                 triggerLabel="Rerun"
                 variant="neutral"
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
         <p className="text-body text-muted-foreground">
           {detail.cycleName} · Period {formatCalendarDate(detail.periodStart)} –{" "}

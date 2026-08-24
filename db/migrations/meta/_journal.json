@@ -218,6 +218,20 @@
       "when": 1787504829614,
       "tag": "0030_customer_bill_tax_item",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1787591229614,
+      "tag": "0031_add_inv_document_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787591229615,
+      "tag": "0032_validate_inv_document_type_check",
+      "breakpoints": true
     }
   ]
 }

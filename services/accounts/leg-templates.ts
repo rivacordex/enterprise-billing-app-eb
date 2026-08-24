@@ -236,6 +236,25 @@ const ADJ_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
   },
 };
 
+// INV leg templates (bm09-spec §Design — "modeled on DBN's revenue leg plus
+// a tax leg"). Same shape as DBN_LEG_TEMPLATES: `charge` is the revenue line,
+// `release` is reused as the tax line's disambiguating map key (no dedicated
+// `document_line_line_kind_check` value for "tax" — the same reuse
+// precedent DBN/DEP/ADJ already established above). bm11 constructs the two
+// document_lines (a revenue `charge` line + the tax); this template maps
+// them to pgledger legs via the existing `resolveLegTemplate(docType,
+// lineKind)` path — no post-document.ts change needed.
+const INV_LEG_TEMPLATES: Partial<Record<LineKind, LegTemplate>> = {
+  // revenue line: sys.revenue.{ccy} → ban.{BAN}.receivables — IDENTICAL to
+  // (DBN, charge). tax line: sys.tax_payable.{ccy} → ban.{BAN}.receivables —
+  // IDENTICAL to (DBN, release)'s tax leg. ALIASED (not re-declared) so a
+  // future correction to the revenue/tax leg direction or guard can never
+  // silently diverge INV from DBN — the same reuse idiom as
+  // `refund: PAY_LEG_TEMPLATES.refund!` above.
+  charge: DBN_LEG_TEMPLATES.charge!,
+  release: DBN_LEG_TEMPLATES.release!,
+};
+
 const LEG_TEMPLATES: Partial<
   Record<DocType, Partial<Record<LineKind, LegTemplate>>>
 > = {
@@ -244,6 +263,7 @@ const LEG_TEMPLATES: Partial<
   DBN: DBN_LEG_TEMPLATES,
   CRN: CRN_LEG_TEMPLATES,
   ADJ: ADJ_LEG_TEMPLATES,
+  INV: INV_LEG_TEMPLATES,
 };
 
 export function resolveLegTemplate(

@@ -12,6 +12,7 @@ import { documentRepository } from "@/db/repositories/accounts/document.reposito
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import * as money from "@/services/accounts/money";
+import { checkDocumentReversible } from "@/services/accounts/document-reversibility";
 import { submitDocument } from "@/services/accounts/document-state-machine";
 import type { SubmitDocumentResult } from "@/services/accounts/document-state-machine";
 import type { DocType, LineKind } from "@/types/accounts";
@@ -25,6 +26,7 @@ export type ReverseDocumentResult =
   | { ok: false; code: "WRONG_FINANCIAL_ACCOUNT" }
   | { ok: false; code: "DOC_STATE_INVALID" }
   | { ok: false; code: "ALREADY_REVERSED" }
+  | { ok: false; code: "INV_NOT_REVERSIBLE" }
   | { ok: false; code: "CONFLICT" };
 
 export async function reverseDocument(
@@ -37,6 +39,8 @@ export async function reverseDocument(
     return { ok: false, code: "WRONG_FINANCIAL_ACCOUNT" };
   }
   if (doc.state !== "posted") return { ok: false, code: "DOC_STATE_INVALID" };
+  const notReversible = checkDocumentReversible(doc);
+  if (notReversible) return notReversible;
 
   const allLines = await documentLineRepository.findByDocumentId(
     db,
