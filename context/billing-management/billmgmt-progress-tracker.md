@@ -8,6 +8,15 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
+- **bm01–bm13 delivered — the build plan's final unit is done.** bm13 (End-to-
+  end journey & ship gate) aggregated/confirmed the route × level matrix
+  (three pages + two M2M handlers, incl. operate≠approve + four-eyes), the
+  code-standards §9 module guardrail tests (with the recorded v1 rating-
+  adaptation), added the one E2E happy-path journey integration test, added
+  a DB-level finalization-latch trigger the guardrail audit found missing,
+  confirmed SAST + OWASP ZAP DAST CI gates, and confirmed the permission map/
+  route manifest list exactly the three pages + two handlers. See the bm13
+  entry below for detail. No further units remain in `bm00-build-plan.md`.
 - bm01–bm12 delivered: the Billing nav section, RBAC scaffold, the
   `billing.bill_run` header table, lazy materialization, the two-tab run list,
   the Trigger/Run path, the M2M stage-ingest path driving `bill_run_account`
@@ -30,7 +39,13 @@ Update this file after every meaningful implementation change.
   at completion — resumable, checksum-stamped, the `PostingProgressView`), and
   bm12 Stall detection & recovery (derived `STALLED`, `StallBanner`'s Check
   status / Cancel run, the extended trigger guard making a cancelled run
-  re-triggerable). Next: bm13+ (Stub-data mode + badge polish).
+  re-triggerable). bm13 (End-to-end journey & ship gate) closes the build
+  plan: a tests/CI-boundary unit — no new page, permission, or feature; stub-
+  data mode + badging were already delivered in bm02, ahead of `ai-workflow-
+  rules.md` §2's original unit-12 reference placement — that aggregates/
+  confirms the route × level matrix and the code-standards §9 guardrails,
+  adds the one E2E happy-path integration test, and closes one real gap the
+  guardrail audit found (see the bm13 entry below).
 
 ## Completed
 
@@ -1280,11 +1295,140 @@ pre-existing hardcoded-date-drift action suites).
     hardcoded-date-drift action suites (`create-order`/`resume`/`suspend`/
     `terminate-subscription`, 14 tests) — bm12 touches none of those files.
 
+- **bm13 — End-to-end journey & ship gate** (`specs/bm13-e2e-ship-gate.md`,
+  the build plan's final unit, boundary tests/CI). Depends on bm01–bm12 (all
+  delivered).
+  - **Route × level matrix + code-standards §9 guardrails — audited, all
+    already existed.** An `Explore` audit against every §9 item and the
+    spec's verification checklist found the three pages' route × level
+    matrices (`tests/app/{bill-runs-page,bill-run-detail-page,approve-page}
+    .test.tsx`, direct guard-mocked calls, not navigation-only), the two M2M
+    handlers' auth/replay/409/charge-rejection matrices (`tests/app/api/
+    billrun-{stage-complete,status}.test.ts`, `handle-stage-signal.test.ts`),
+    the operate≠approve split and four-eyes (`approve-run.{service,action}
+    .test.ts`), partition/idempotency, the state machine, posting/GL
+    integrity, and stub isolation all already shipped with the unit that
+    introduced each behavior (ai-workflow-rules §4.7 — "land each guardrail
+    test with the unit that introduces the behavior"), exactly as designed.
+    Nothing here needed rebuilding — only confirming and, where a real gap
+    surfaced (below), closing it.
+  - **[CRITICAL] Finalization latch was service-layer-only, not DB-enforced —
+    closed.** Architecture Inv. #4 and code-standards §6.8 both document the
+    `ref_inv_document_id` finalization latch as DB-guarded ("trigger/
+    constraint"), but no such trigger existed — only the service layer's own
+    guarded writes (`aggregateBill`'s conditional `DELETE … WHERE
+    ref_inv_document_id IS NULL`) enforced it. A raw SQL statement bypassing
+    the repository layer could still have mutated or deleted a posted bill.
+    New forward-only migration `0033_customer_bill_finalization_guard.sql`
+    adds `billing.customer_bill_finalization_guard()` + a `BEFORE UPDATE OR
+    DELETE` row-level trigger on `billing.customer_bill` (fires on every
+    partition automatically — PostgreSQL 11+ row-level triggers on a
+    partitioned parent propagate to all partitions, including ones
+    `pg_partman` creates later) that raises when `OLD.ref_inv_document_id IS
+    NOT NULL`. This is schema DDL, not strictly "tests/CI", but it was the
+    only way to make the §9.4 "finalization latch" guardrail actually true
+    rather than merely believed true — proven end-to-end by the new E2E
+    test's direct `DELETE`/`UPDATE` attempts against a real posted bill,
+    both rejected. **Not yet applied** — no local Postgres reachable in this
+    environment (the constraint noted for every DB-gated migration since
+    bm02); `db:migrate` must run wherever the database lives.
+  - **"Claim correctness" / single rating writer — the v1 placeholder,
+    landed.** Per the spec's recorded v1 adaptation, this guardrail is
+    **inert** (no `rating` table exists yet). `tests/services/billing/
+    collect-claim.test.ts` gained two structural assertions: no export
+    anywhere in `db/schema` matches `/rating/i`, and `db/repositories/
+    billing/rating-claim.ts` (the single sanctioned future writer,
+    code-standards §7.1) does not exist. Both fail the moment a `rating`
+    table or writer lands without this guardrail being revisited
+    (architecture Inv. #2, pending the rating engine).
+  - **"No billing-side charge copy" — already fully enforced, no new test
+    needed.** Every `db/schema/billing/*` table already carries an exact-
+    column-set structural test (`tests/db/*-schema.test.ts`, the bm05
+    precedent) that would fail the moment a charge/amount-array column was
+    added to any of them — code-standards §9.5's structural half was already
+    complete; adding a redundant sweep would only duplicate existing
+    coverage.
+  - **The one new E2E happy-path journey**
+    (`tests/db/billing-e2e-happy-path.integration.test.ts`, DB-gated,
+    `describe.skipIf(!DATABASE_URL)`, the `trigger-run.integration.test.ts`/
+    `DROP SCHEMA CASCADE` + fresh-migrate pattern). Three billing accounts
+    carry the run's three distinct outcomes — BILLED (all six stages driven
+    through the actual signed M2M Route Handler, incl. a replay-returns-200
+    assertion, then a mid-run rerun of a subset from Taxation), FAILED (a
+    HARD aggregation failure via the pass-through M2M path → `PROCESSING_
+    FAILED`), EXCLUDED (force-set on the snapshot row after `triggerRun` to
+    prove the account's DOWNSTREAM behavior — never billed, `SKIPPED` at
+    approval, consumes no invoice number, listed on Uncharged — without
+    rebuilding a full order/offering/product-inventory fixture chain just to
+    re-earn a partial-period exclusion the Scoping unit's own suites
+    already prove; see the test's header comment). The Accounts GL fixture
+    stack (system accounts, chart of accounts, GL mappings, the
+    `STANDARD_INVOICE` INV reason code) is built by calling the app's own
+    production seed functions (`db/seeds/accounts/seed-{sys-accounts,coa,
+    gl-mappings,reason-codes}.ts`) directly, not hand-rolled SQL — this is
+    the first integration test in the repo to exercise `postDocument`/
+    `approveRun`'s live GL resolution against real fixtures. Journey:
+    materialize → trigger → M2M stage signals → PROCESSED → review
+    (`listAccountBills`/`listUncharged`/`listErrors`) → rerun a subset →
+    approve (a **different** four-eyes user) → post → `COMPLETED`, then
+    folds in the finalization-latch DB-trigger proof (above) against the
+    run's real posted bill, then materializes the next period and asserts it
+    is `operable`. **Not run in this environment** — no local Postgres
+    reachable (confirmed the file imports cleanly and skips loudly under
+    `vitest.integration.config.ts` with `DATABASE_URL` unset).
+  - **Route inventory for the M2M surface**
+    (`tests/app/api/billrun-route-inventory.test.ts`, DB-free) — closes the
+    one enumeration code-standards §5.1 documents in prose ("exactly two
+    handlers... no other verbs") but no test previously enforced:
+    `app/api/billrun/**` contains exactly the two documented `route.ts`
+    files, each declaring `POST` only.
+  - **"Next cycle operable at INVOICED, not COMPLETED" (success criterion
+    #10) — confirmed as designed, not a gap.** `billRunRepository
+    .completePosting` stamps `invoiced_at` and `completed_at` together in
+    the same `POSTING → COMPLETED` write (`bill_run.status` never rests at
+    the literal `'INVOICED'` value — `DISTRIBUTING` is never entered in v1,
+    per bm11). There is therefore no observable window where a run is
+    INVOICED but not yet COMPLETED for a test to distinguish; the E2E test's
+    final step (materialize the next period, assert it reads `operable`)
+    proves what the criterion cashes out to in this release. Recorded here
+    per ai-workflow-rules §5.8 so this isn't re-investigated as a bug later.
+  - **Permission map / route manifest — confirmed unchanged and accurate.**
+    bm13 added no page, permission, or mutation, so code-standards §8's
+    table and `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST`
+    needed no edit; both were read and confirmed to already list exactly the
+    three billing pages (the M2M handlers are Route Handlers, not pages, and
+    are correctly outside that page-only manifest — now covered instead by
+    the new route-inventory test above).
+  - **SAST + OWASP ZAP DAST — confirmed present, not modified.** `infra/
+    azure-pipelines.yml`'s "Test + SAST" stage (Semgrep, blocks on any
+    finding) and `infra/zap-scan-stage.yml` + `infra/zap/{zap-context.xml,
+    rules.tsv}` (OWASP ZAP DAST baseline) both already exist and already
+    cover the M2M endpoints via the general authz-sweep inventory (code-
+    standards §5.7) — no CI file changed. `BILLRUN_APP_TOKEN` was grepped
+    end-to-end: it is compared in `lib/service-token.ts` via
+    `timingSafeEqual` and never appears in any `logger.*` call.
+  - `typecheck`/`lint`/`format:check` clean. The touched/added DB-free files
+    (collect-claim.test.ts extended, the new route-inventory test) pass; a
+    scoped run of the billing/app/lib DB-free suite (36 files) passes in
+    full except the same pre-existing, environment-dependent
+    `trigger-run.service.test.ts` failure documented since bm05 (missing
+    `DATABASE_URL`/`BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` in this shell) —
+    confirmed unrelated; bm13 touches nothing that file imports. The new
+    `billing-e2e-happy-path.integration.test.ts` was confirmed to import
+    cleanly and skip loudly (not silently) under the integration config with
+    `DATABASE_URL` unset; it and migration `0033` must be exercised against
+    a real Postgres wherever the database lives before this ship gate can be
+    called genuinely green end-to-end.
+
 ## Next Up
 
-- **bm13+** — Stub-data mode + badge polish per the build plan's
-  remaining units. The Uncharged indicative value stays "—" until a rating
-  source exists.
+- **None — the build plan is complete (bm01–bm13).** The one outstanding
+  action item is environmental, not a build unit: run `db:migrate` (picks up
+  migration `0033`) and `npm run test` (both configs) against a real
+  Postgres to execute the DB-gated suites that could only be written and
+  statically verified in this environment, most importantly the new bm13 E2E
+  journey and the finalization-latch trigger it proves. The Uncharged
+  indicative value stays "—" until a rating source exists.
 
 ## Open Questions
 
