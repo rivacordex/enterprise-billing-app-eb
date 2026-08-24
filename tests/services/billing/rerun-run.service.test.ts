@@ -108,7 +108,11 @@ function params(overrides: Partial<RerunRunParams> = {}): RerunRunParams {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetEngineClient.mockReturnValue({ startExecution });
+  mockGetEngineClient.mockReturnValue({
+    startExecution,
+    getExecutionStatus: vi.fn(),
+    killExecution: vi.fn(),
+  } as never);
   startExecution.mockResolvedValue({
     executionId: "stub-exec-BRN00000001",
     definitionId: "billing.bill_run",

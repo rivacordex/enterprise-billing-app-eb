@@ -22,8 +22,25 @@ export interface ExecutionRef {
   definitionRevision: number;
 }
 
+// bm12-spec §Design/§Implementation §2. The engine's ground-truth execution
+// state, polled by "Check status" (`services/billing/reconcile-run.ts`) and
+// killed by "Cancel run" (`services/billing/cancel-run.ts`).
+export const EXECUTION_STATES = [
+  "RUNNING",
+  "SUCCESS",
+  "FAILED",
+  "KILLED",
+] as const;
+export type ExecutionState = (typeof EXECUTION_STATES)[number];
+
+export interface ExecutionStatus {
+  state: ExecutionState;
+}
+
 export interface EngineClient {
   startExecution(payload: TriggerPayload): Promise<ExecutionRef>;
+  getExecutionStatus(executionId: string): Promise<ExecutionStatus>;
+  killExecution(executionId: string): Promise<void>;
 }
 
 export class EngineError extends Error {
@@ -92,6 +109,97 @@ export const realEngineClient: EngineClient = {
       definitionRevision: body.definitionRevision ?? 0,
     };
   },
+
+  // bm12-spec §Design/§Implementation §2. FLAGGED: the status/kill endpoint
+  // paths below (`/executions/{id}` GET, `/executions/{id}/kill` DELETE) are
+  // this unit's best guess at Kestra's execution API — they must be verified
+  // against the deployed engine version before this real client is wired up
+  // (plan §13 open item).
+  async getExecutionStatus(executionId: string): Promise<ExecutionStatus> {
+    if (!billRunEngineConfig.url || !billRunEngineConfig.auth) {
+      throw new EngineError(
+        "realEngineClient invoked without BILLRUN_ENGINE_URL/BILLRUN_ENGINE_AUTH configured.",
+      );
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const url = `${billRunEngineConfig.url}/executions/${executionId}`;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
+        },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      throw new EngineError("Bill-run engine status request failed.", {
+        cause: err,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      throw new EngineError(
+        `Bill-run engine returned ${response.status} for execution ${executionId} status.`,
+      );
+    }
+
+    const body = (await response.json()) as { state?: string };
+    if (
+      body.state !== "RUNNING" &&
+      body.state !== "SUCCESS" &&
+      body.state !== "FAILED" &&
+      body.state !== "KILLED"
+    ) {
+      throw new EngineError(
+        `Bill-run engine returned an unrecognized state for execution ${executionId}.`,
+      );
+    }
+
+    return { state: body.state };
+  },
+
+  // bm12-spec §Design/§Implementation §2. Same "verify against the deployed
+  // engine" flag as `getExecutionStatus` above.
+  async killExecution(executionId: string): Promise<void> {
+    if (!billRunEngineConfig.url || !billRunEngineConfig.auth) {
+      throw new EngineError(
+        "realEngineClient invoked without BILLRUN_ENGINE_URL/BILLRUN_ENGINE_AUTH configured.",
+      );
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const url = `${billRunEngineConfig.url}/executions/${executionId}/kill`;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
+        },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      throw new EngineError("Bill-run engine kill request failed.", {
+        cause: err,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      throw new EngineError(
+        `Bill-run engine returned ${response.status} killing execution ${executionId}.`,
+      );
+    }
+  },
 };
 
 export const stubEngineClient: EngineClient = {
@@ -106,6 +214,19 @@ export const stubEngineClient: EngineClient = {
       definitionId: `${ENGINE_NAMESPACE}.${ENGINE_DEFINITION}`,
       definitionRevision: 0,
     };
+  },
+
+  // bm12-spec §Design/§Implementation §2. The stub returns a synthetic
+  // RUNNING status with no HTTP call — "Check status" against a stub-engine
+  // run always sees the execution as alive; a stalled stub run can only be
+  // resolved via Cancel.
+  async getExecutionStatus(executionId: string): Promise<ExecutionStatus> {
+    logger.info("bill-run engine: stub getExecutionStatus", { executionId });
+    return { state: "RUNNING" };
+  },
+
+  async killExecution(executionId: string): Promise<void> {
+    logger.info("bill-run engine: stub killExecution", { executionId });
   },
 };
 

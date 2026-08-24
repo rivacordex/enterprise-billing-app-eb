@@ -8,7 +8,7 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- bm01–bm09 delivered: the Billing nav section, RBAC scaffold, the
+- bm01–bm12 delivered: the Billing nav section, RBAC scaffold, the
   `billing.bill_run` header table, lazy materialization, the two-tab run list,
   the Trigger/Run path, the M2M stage-ingest path driving `bill_run_account`
   past `PENDING` to `PROCESSED`/`PROCESSING_FAILED` with the Workflow tab's live
@@ -27,8 +27,10 @@ Update this file after every meaningful implementation change.
   through the Accounts document engine, run `status` transitioning `APPROVED →
   POSTING → COMPLETED` — `INVOICED` is the per-account milestone (not a run
   status the run passes through) and `invoiced_at` is a run timestamp stamped
-  at completion — resumable, checksum-stamped, the `PostingProgressView`). Next:
-  bm12+ (Stall + cancel).
+  at completion — resumable, checksum-stamped, the `PostingProgressView`), and
+  bm12 Stall detection & recovery (derived `STALLED`, `StallBanner`'s Check
+  status / Cancel run, the extended trigger guard making a cancelled run
+  re-triggerable). Next: bm13+ (Stub-data mode + badge polish).
 
 ## Completed
 
@@ -1163,10 +1165,124 @@ pre-existing hardcoded-date-drift action suites).
     10s timeout from resource contention, not a real failure — it passes in
     3/3 when run in isolation. bm11 touches none of these files.
 
+- **bm12 — Stall detection & recovery** (`specs/bm12-stall-recovery.md`).
+  **No new table.**
+  - Stall helper: `services/billing/stall.ts`'s pure, total `isStalled(run,
+    now, thresholdMinutes)` — `status = 'PROCESSING'` AND `now() -
+    last_progress_at > thresholdMinutes` — never persisted (architecture Inv.
+    #10). Threshold is the new `BILLRUN_STALL_THRESHOLD_MINUTES` config
+    (`z.coerce.number().int().min(1).default(30)`, `lib/config.ts` +
+    `.env.example`), a **global** value per the spec's resolved default #1
+    (the plan floats a per-cycle threshold, but there is no cycle column for
+    it). `RunDetail` (`types/billing.ts`) and `findDetailById`
+    (`bill-run.repository.ts`)/`getRunDetail` gain `lastProgressAt`.
+  - Engine client: `services/billing/engine-client.ts`'s `EngineClient`
+    interface gains `getExecutionStatus(executionId): Promise<{ state:
+    'RUNNING'|'SUCCESS'|'FAILED'|'KILLED' }>` and `killExecution(executionId):
+    Promise<void>`. The stub returns synthetic `{ state: 'RUNNING' }`/a no-op
+    kill; the real impl's two new endpoint paths (`GET
+    /executions/{id}`, `DELETE /executions/{id}/kill`) are **flagged** —
+    "verify against the deployed engine version" per the spec's open item —
+    since no live Kestra instance exists to confirm the shape against.
+  - Check status: `services/billing/reconcile-run.ts`'s `reconcileRun`, one
+    row-locked `db.transaction` (`findByIdForUpdate`): `NOT_FOUND` /
+    `NO_EXECUTION` (no `workflow_execution_id` recorded) /
+    `ENGINE_UNREACHABLE` typed failures; otherwise branches on the engine's
+    reported state — `RUNNING` bumps `last_progress_at` only (resets the
+    stall clock for a slow-but-alive execution); `FAILED`/`KILLED` pushes the
+    run to `PROCESSING_FAILED` (`markProcessingFailed`, the bm04
+    `handle-status-push.ts` write reused here); `SUCCESS` re-derives the run
+    status from the account grain via the SAME pure `computeRunStatus` every
+    stage signal uses (`PROCESSED` if every account is now terminal — repairs
+    a lost final stage signal) or, if the account grain disagrees, bumps the
+    heartbeat and returns `mismatch: true` rather than forcing a status the
+    accounts don't support. Every branch writes one `BILL_RUN_RECONCILED`
+    audit row (the spec's optional "if you want the check audited" —
+    resolved yes, matching the module's audit-every-operator-mutation
+    discipline). Read-only to the ledger; no invoice numbers touched.
+  - Cancel run: `services/billing/cancel-run.ts`'s `cancelRun`, one
+    `db.transaction`: `findByIdForUpdate` → guard `status = 'PROCESSING'`
+    (`STALLED` is the same underlying status, just derived — Design's
+    "PROCESSING/STALLED-derived run" resolves to this one check) → best-effort
+    `killExecution` (a failed kill is logged via `logger.warn` but does not
+    block the cancel — the run row, not the engine, is the operability source
+    of truth) → `billRunAccountRepository.resetForCancel` (every scoped
+    account EXCEPT `EXCLUDED` → `PENDING`, diagnostics cleared — `EXCLUDED`
+    accounts are a deliberate scoping-time decision, never re-entered into the
+    pipeline, same drop-`EXCLUDED` convention as bm08's rerun eligibility) →
+    `billRunRepository.cancel` (`PROCESSING → CANCELLED`, nulls the three
+    workflow-execution-ref columns) → `insertAuditEvent(BILL_RUN_CANCELLED)`.
+    Consumes no invoice numbers (nothing posted this early in the lifecycle).
+  - Re-trigger extension (the Layer-3 escape, architecture §Design): 
+    `services/billing/trigger-run.ts`'s guard now accepts `SCHEDULED`
+    (unchanged, date-checked) OR `CANCELLED` (no date check — it was already
+    due). Re-triggering from `CANCELLED` computes a NEW attempt
+    (`billRunAccountRepository.maxAttemptForRun` + 1), clears the killed
+    execution's prior snapshot (`deleteForRun`), then re-scopes via
+    `scopeAccounts` and re-snapshots under that new attempt — so the
+    re-triggered engine's stage signals can never collide with
+    `bill_run_account_stage` history the killed execution left behind
+    (architecture Inv. #5 — the idempotency latch is keyed by attempt; a
+    collision would otherwise silently no-op-replay a genuine new signal). The
+    normal SCHEDULED first-trigger path is byte-identical to before it — no
+    extra queries, `attempt` stays the literal `1`, since a never-triggered
+    run has no prior snapshot to clash with. The `(cycle, period_start)`
+    UNIQUE on `bill_run` prevents a second row — "re-materialize the period
+    cleanly" is this same re-trigger of the one run row (spec's resolved
+    default #2).
+  - Audit: `BILL_RUN_CANCELLED` and `BILL_RUN_RECONCILED` added to
+    `AUDIT_EVENT_TYPES` (`types/audit.ts`) + `AUDIT_EVENT_CATEGORY_MAP` as
+    `"Change"` (`types/audit-log.ts`) — both are state-transition surfaces,
+    not new entities. Ripple: `audit-log-filters.test.tsx` option count 67 →
+    69.
+  - Actions: `actions/billing/check-status.action.ts` and
+    `cancel-run.action.ts`, both `'use server'`, requiring
+    `billrun_operate:EDIT` (Zod `{ billRunId }` via the new
+    `validation/billing/{check-status,cancel-run}.schema.ts`), delegating to
+    the services, revalidating the run page (cancel also revalidates the list
+    page — a cancelled run's list-page "Run" affordance changes).
+  - Components: `components/billing/stall-banner.tsx` (`StallBanner`, a
+    Warning-family banner — "No heartbeat since {formatDatetime(...)}" — with
+    a "Check status" primary button and, via `cancel-run-dialog.tsx`
+    (`CancelRunDialog`, the `RerunDialog`/`TriggerRunDialog` inline-confirm
+    shape), a "Cancel run" secondary trigger opening a spelled-out confirm
+    with the destructive-role Confirm inside it — never a bare row action).
+    Wired into `[runId]/page.tsx`'s header area (next to `StubDataBanner`),
+    gated `canOperate && isStalled(detail, new Date(),
+    billRunStallThresholdMinutes)` — same show/hide convention as
+    Rerun/Approve/Post: a `billrun_view`-only principal sees the run's normal
+    status but no stall affordance. Never a stored `STALLED` pill
+    (`RunStatusBadge` is unchanged — 11 members, `STALLED` was never one of
+    them).
+  - Tests: `stall.test.ts` (just-under/at/over the threshold, every
+    non-PROCESSING status never stalled, no-heartbeat-on-PROCESSING is not a
+    crash), `cancel-run.service.test.ts` (happy path, not-found/wrong-status
+    `NOT_CANCELLABLE`, a failed `killExecution` still cancels-and-logs, no
+    execution ref skips the kill call), `reconcile-run.service.test.ts`
+    (`NOT_FOUND`/`NO_EXECUTION`/`ENGINE_UNREACHABLE`, RUNNING/FAILED/KILLED/
+    SUCCESS-with-all-terminal/SUCCESS-with-a-mismatch, a non-PROCESSING run
+    just bumps+audits), `engine-client.test.ts` extended (stub
+    getExecutionStatus/killExecution no HTTP; real client's GET/DELETE
+    endpoints, non-2xx/network/unrecognized-state → `EngineError`),
+    `trigger-run.service.test.ts` extended (re-trigger from CANCELLED bumps
+    the attempt and clears-then-re-snapshots; attempt 1 when never
+    snapshotted; the SCHEDULED path never touches the two new repo calls),
+    the two action route×level tests, `stall-banner.test.tsx` +
+    `cancel-run-dialog.test.tsx` (component-level: banner content, Check
+    status success/failure/mismatch messaging, Cancel confirm→success/
+    failure/dismiss), `bill-run-detail-page.test.tsx` extended (StallBanner
+    shown only for an operator on a genuinely stalled run; hidden without the
+    permission or without staleness), `config.test.ts` extended
+    (`BILLRUN_STALL_THRESHOLD_MINUTES` default/override/below-minimum/
+    non-integer). `typecheck`/`lint`/`format:check` clean; the full DB-free
+    `vitest run` (2757 tests) passes except the same pre-existing baseline
+    already on `dev1` before this unit — confirmed via `git status`: the 4
+    hardcoded-date-drift action suites (`create-order`/`resume`/`suspend`/
+    `terminate-subscription`, 14 tests) — bm12 touches none of those files.
+
 ## Next Up
 
-- **bm12+** — Stall + cancel (derived `STALLED`, Check-status reconcile,
-  Cancel-run release) and Stub-data mode + badge polish per the build plan's
+- **bm13+** — Stub-data mode + badge polish per the build plan's
   remaining units. The Uncharged indicative value stays "—" until a rating
   source exists.
 
@@ -1381,3 +1497,50 @@ pre-existing hardcoded-date-drift action suites).
     records the prior total in the `BILL_RUN_RERUN` audit row (the hard
     requirement) and leaves a richer delta column to a later unit once a real
     rating source produces non-trivial deltas.
+- **bm12 resolved decisions** (recorded so they aren't re-litigated, per
+  ai-workflow-rules §5.8 — the spec left each underspecified beyond its own
+  two documented defaults):
+  - **Check status IS audited (`BILL_RUN_RECONCILED`).** The spec floats this
+    as optional ("if you want the check audited"). Resolved yes — every other
+    operator mutation in this module writes exactly one audit row
+    (code-standards §1.10), and Check status can itself change the run's
+    status (SUCCESS re-derive, FAILED/KILLED push), so treating it as
+    unaudited would be the one operator action in the module with no audit
+    trail. Category `"Change"`, same as `BILL_RUN_CANCELLED`.
+  - **Engine `KILLED` is treated the same as `FAILED` in reconcile.** The spec
+    defines the synthetic engine states but doesn't say how Check status
+    should treat `KILLED` specifically. Resolved: both push the run to
+    `PROCESSING_FAILED` — a `KILLED` execution the app didn't itself kill (no
+    local Cancel happened) can no longer progress either way, and
+    `PROCESSING_FAILED` is the module's one rerunnable-recovery terminal
+    state. Revisit only if a future unit wants `KILLED` to route straight to
+    `CANCELLED` instead (would need its own guard, since `cancel()`'s DB write
+    is currently keyed off the operator-initiated Cancel path, not a
+    reconcile finding).
+  - **A `SUCCESS`-but-not-all-terminal reconcile never forces a status.** The
+    Design says Check status should "push the run to the correct state (or
+    surface the mismatch)" — resolved as: re-derive via the SAME
+    `computeRunStatus` every stage signal uses, and ONLY write when it
+    actually returns a terminal status; otherwise return `mismatch: true` with
+    no write. Forcing `PROCESSED` when the account grain disagrees would
+    violate Inv. #12 (status is derived from `bill_run_account`, never
+    guessed) and could mark a run `PROCESSED` with accounts still `PENDING`/
+    `PROCESSING`.
+  - **Re-trigger from `CANCELLED` bumps the attempt sequence; it does not
+    reuse attempt 1.** The spec's parenthetical says re-trigger means
+    "re-snapshot fresh" without stating the attempt mechanics. Resolved:
+    reusing attempt 1 would let the re-triggered engine's stage signals
+    collide with `bill_run_account_stage` rows the killed execution already
+    wrote at attempt 1 (Inv. #5's idempotency latch would then silently
+    "replay" a genuine new signal as a no-op, permanently stalling that
+    account under the new execution). `maxAttemptForRun + 1` — the same
+    max-then-bump idiom bm08's rerun already established — sidesteps this by
+    construction; `deleteForRun` clears the old snapshot rows first so the
+    fresh `insertSnapshot` never hits the `(run, ban, period)` UNIQUE either.
+  - **`resetForCancel` excludes `EXCLUDED` accounts.** The spec says "reset
+    accounts to `PENDING`" without carving out `EXCLUDED`. Resolved: `EXCLUDED`
+    is a scoping-time, deliberate non-billing decision (bm03) that nothing
+    downstream ever re-enters — bm08's rerun already established the same
+    drop-`EXCLUDED` convention for its eligible set. Resetting an `EXCLUDED`
+    account to `PENDING` would have the re-triggered engine try to process an
+    account Scoping explicitly decided not to bill.

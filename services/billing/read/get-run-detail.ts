@@ -18,5 +18,6 @@ export async function getRunDetail(
     periodEnd: row.periodEnd,
     scheduledRunDate: row.scheduledRunDate,
     status: row.status as RunStatus,
+    lastProgressAt: row.lastProgressAt,
   };
 }

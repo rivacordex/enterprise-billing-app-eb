@@ -104,7 +104,10 @@ export const ERROR_CLASSES = ["HARD", "SOFT", "INFRA"] as const;
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
 
 // bm04-spec §Implementation §9. The run-detail header read model — the
-// Workflow tab (and the later tabs) compose around this.
+// Workflow tab (and the later tabs) compose around this. `lastProgressAt`
+// (bm12-spec §Implementation §3) feeds the derived `isStalled` check and the
+// `StallBanner`'s "no heartbeat since" display — never a stored `STALLED`
+// value (architecture Inv. #10).
 export interface RunDetail {
   billRunId: string;
   cycleName: string;
@@ -112,6 +115,7 @@ export interface RunDetail {
   periodEnd: string;
   scheduledRunDate: string;
   status: RunStatus;
+  lastProgressAt: Date | null;
 }
 
 // One stage cell in the `StageTimeline` grid — `null` status means no signal

@@ -11,6 +11,18 @@ import { scopeAccounts } from "@/services/billing/scope-accounts";
 // engine.startExecution (inside the txn, resolved decision #3) → store the
 // execution ref → BILL_RUN_TRIGGERED audit. A thrown engine failure rolls the
 // whole transaction back — the run stays SCHEDULED, no orphan snapshot.
+//
+// bm12-spec §Design/§Implementation §6. The guard's allowed-from set is
+// extended to `CANCELLED` — the Layer-3 escape's re-trigger path (a
+// cancelled run "re-materializes the period cleanly" by re-triggering the
+// SAME run row, since the `(cycle, period_start)` unique key prevents a
+// second one). Re-triggering from CANCELLED re-snapshots fresh under a NEW
+// attempt sequence (`maxAttemptForRun` + 1, never the SCHEDULED path's
+// hardcoded `1`) so the re-triggered engine's stage signals can never collide
+// with `bill_run_account_stage` history left by the killed execution
+// (architecture Inv. #5 — the idempotency latch is keyed by attempt). The
+// SCHEDULED (first-ever trigger) path is untouched: no prior snapshot exists,
+// so the extra queries are skipped and `attempt` stays the literal `1`.
 
 export type TriggerRunResult =
   | {
@@ -40,7 +52,14 @@ export async function triggerRun(
   try {
     return await db.transaction(async (tx) => {
       const run = await billRunRepository.findByIdForUpdate(tx, billRunId);
-      if (!run || run.status !== "SCHEDULED" || run.scheduledRunDate > today) {
+      if (!run) {
+        return { ok: false, code: "NOT_OPERABLE" } as const;
+      }
+      const startingFromCancelled = run.status === "CANCELLED";
+      const eligible =
+        (run.status === "SCHEDULED" && run.scheduledRunDate <= today) ||
+        startingFromCancelled;
+      if (!eligible) {
         return { ok: false, code: "NOT_OPERABLE" } as const;
       }
 
@@ -55,10 +74,26 @@ export async function triggerRun(
         return { ok: false, code: "NO_ELIGIBLE_ACCOUNTS" } as const;
       }
 
-      await billRunAccountRepository.insertSnapshot(tx, [
-        ...pending,
-        ...excluded,
-      ]);
+      // A cancelled-then-re-triggered run re-snapshots fresh under a new
+      // attempt sequence — clear the prior (killed) snapshot and bump past
+      // its highest recorded attempt so this execution's stage signals never
+      // collide with the killed execution's `bill_run_account_stage` history.
+      // The normal SCHEDULED path never has a prior snapshot, so `attempt`
+      // stays `1` and every row is inserted exactly as before (unchanged).
+      let attempt = 1;
+      let snapshotRows = [...pending, ...excluded];
+      if (startingFromCancelled) {
+        attempt =
+          (await billRunAccountRepository.maxAttemptForRun(tx, run.billRunId)) +
+          1;
+        await billRunAccountRepository.deleteForRun(tx, run.billRunId);
+        snapshotRows = snapshotRows.map((row) => ({
+          ...row,
+          attemptCount: attempt,
+        }));
+      }
+
+      await billRunAccountRepository.insertSnapshot(tx, snapshotRows);
 
       const banIds = pending.map((p) => p.refBillingAccountId);
       let executionRef;
@@ -68,7 +103,7 @@ export async function triggerRun(
           period_start: run.periodStart,
           period_end: run.periodEnd,
           ban_ids: banIds,
-          attempt: 1,
+          attempt,
           gl_event_at: run.scheduledRunDate,
         });
       } catch (err) {

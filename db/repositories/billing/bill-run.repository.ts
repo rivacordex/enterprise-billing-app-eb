@@ -209,6 +209,7 @@ export const billRunRepository = {
     periodEnd: string;
     scheduledRunDate: string;
     status: string;
+    lastProgressAt: Date | null;
   } | null> {
     const [row] = await db
       .select({
@@ -218,6 +219,7 @@ export const billRunRepository = {
         periodEnd: billRun.periodEnd,
         scheduledRunDate: billRun.scheduledRunDate,
         status: billRun.status,
+        lastProgressAt: billRun.lastProgressAt,
       })
       .from(billRun)
       .innerJoin(billCycle, eq(billRun.refBillCycleId, billCycle.billCycleId))
@@ -418,6 +420,41 @@ export const billRunRepository = {
   // triggered-but-not-yet-aggregated (gl_event_at already stamped, no bills
   // yet) escape the guard and later post INVs into a period this closed — and
   // there is no period reopen.
+  // bm12-spec §Design/§Implementation §3 — the "Check status" heartbeat bump.
+  // Bumped unconditionally on every reconcile call (a RUNNING/alive engine
+  // resets the stall clock; a mismatch or an already-resolved run still gets
+  // a fresh heartbeat so it isn't immediately re-flagged before the operator
+  // can act) — `recomputeStatus`/`markProcessingFailed` already bump it as
+  // part of their own write, so this is only called on the branches that
+  // don't otherwise touch the row.
+  async bumpHeartbeat(tx: Database, billRunId: string): Promise<void> {
+    await tx
+      .update(billRun)
+      .set({ lastProgressAt: sql`now()` })
+      .where(eq(billRun.billRunId, billRunId));
+  },
+
+  // bm12-spec §Design/§Implementation §3 — the cancel write: PROCESSING →
+  // CANCELLED, clearing the execution reference (Design "clear the execution
+  // reference"). Guarded on `status = 'PROCESSING'` — the caller already
+  // holds the row lock via `findByIdForUpdate` and checked the status, so
+  // this is defense-in-depth (same convention as `approve`/`markPosting`).
+  async cancel(tx: Database, billRunId: string): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({
+        status: "CANCELLED",
+        workflowExecutionId: null,
+        workflowDefinitionId: null,
+        workflowDefinitionRevision: null,
+      })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "PROCESSING")),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
   async findActiveForPeriod(
     db: Database,
     period: string,

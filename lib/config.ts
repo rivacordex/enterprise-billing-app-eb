@@ -122,6 +122,13 @@ const envSchema = z.object({
   ),
   BILLRUN_TAX_VERSION: z.string().default("GST-2026"),
   BILLRUN_TAX_CATEGORY: z.string().default("GST"),
+  // bm12-spec §Implementation §1. The stall threshold — a global config value
+  // (the plan floats a per-cycle threshold, but there is no cycle column for
+  // it, so v1 uses one config value, code-standards/architecture-supplement
+  // resolved-decision). A `PROCESSING` run past this many minutes without a
+  // heartbeat (`bill_run.last_progress_at`) DISPLAYS as stalled — derived on
+  // read (`services/billing/stall.ts`), never persisted.
+  BILLRUN_STALL_THRESHOLD_MINUTES: z.coerce.number().int().min(1).default(30),
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -151,6 +158,8 @@ function loadConfig(): Config {
     BILLRUN_TAX_RATE: process.env.BILLRUN_TAX_RATE,
     BILLRUN_TAX_VERSION: process.env.BILLRUN_TAX_VERSION,
     BILLRUN_TAX_CATEGORY: process.env.BILLRUN_TAX_CATEGORY,
+    BILLRUN_STALL_THRESHOLD_MINUTES:
+      process.env.BILLRUN_STALL_THRESHOLD_MINUTES,
   });
 
   if (!parsed.success) {
@@ -214,6 +223,12 @@ export const billRunTaxConfig = {
   version: config.BILLRUN_TAX_VERSION,
   category: config.BILLRUN_TAX_CATEGORY,
 } as const;
+
+// bm12-spec §Implementation §1. `services/billing/stall.ts`'s `isStalled`
+// takes this as an explicit parameter (frozen accessor, never re-reads
+// process.env), so the helper stays pure and testable.
+export const billRunStallThresholdMinutes: number =
+  config.BILLRUN_STALL_THRESHOLD_MINUTES;
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

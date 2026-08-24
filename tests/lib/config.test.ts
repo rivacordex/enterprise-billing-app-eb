@@ -24,6 +24,7 @@ const ENV_KEYS = [
   "BILLRUN_TAX_RATE",
   "BILLRUN_TAX_VERSION",
   "BILLRUN_TAX_CATEGORY",
+  "BILLRUN_STALL_THRESHOLD_MINUTES",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -80,6 +81,7 @@ describe("config", () => {
       BILLRUN_TAX_RATE: 8,
       BILLRUN_TAX_VERSION: "GST-2026",
       BILLRUN_TAX_CATEGORY: "GST",
+      BILLRUN_STALL_THRESHOLD_MINUTES: 30,
     });
   });
 
@@ -465,6 +467,44 @@ describe("billRunTaxConfig (bm06)", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BILLRUN_TAX_RATE: "8.125",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+describe("billRunStallThresholdMinutes (bm12)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 30 when absent", async () => {
+    const { billRunStallThresholdMinutes } =
+      await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(billRunStallThresholdMinutes).toBe(30);
+  });
+
+  it("reads a configured override", async () => {
+    const { billRunStallThresholdMinutes } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_STALL_THRESHOLD_MINUTES: "45",
+    });
+    expect(billRunStallThresholdMinutes).toBe(45);
+  });
+
+  it("fails loud when the value is below the 1-minute minimum", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_STALL_THRESHOLD_MINUTES: "0",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("fails loud when the value is not an integer", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_STALL_THRESHOLD_MINUTES: "30.5",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });

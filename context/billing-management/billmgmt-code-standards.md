@@ -135,6 +135,7 @@ actions/billing/
   materialize-runs.action.ts
   trigger-run.action.ts
   rerun-run.action.ts
+  check-status.action.ts
   cancel-run.action.ts
   approve-run.action.ts
   post-run.action.ts
@@ -162,7 +163,9 @@ services/billing/
   handle-stage-signal.ts       # ingest: insert stage row first, advance account, recompute (FOR UPDATE)
   handle-status-push.ts
   rerun-run.ts                 # audit-first, invalidate later stages, re-derive trial bill
-  cancel-run.ts
+  stall.ts                     # pure isStalled(run, now, thresholdMinutes) — never persisted
+  reconcile-run.ts             # "Check status" — engine reconcile, bumps last_progress_at
+  cancel-run.ts                # kill (best-effort) + reset accounts PENDING + CANCELLED + audit
   approve-run.ts               # four-eyes + pre-approval checks
   post-run.ts                  # per-account INV posting (per-txn, resumable)
   claim-udr.ts                 # the single rating UPDATE
@@ -177,6 +180,7 @@ db/migrations/…                # billing tables + partition_management rows + 
 validation/billing/
   stage-signal.schema.ts  status-push.schema.ts
   trigger-run.schema.ts  rerun-run.schema.ts  approve-run.schema.ts
+  check-status.schema.ts  cancel-run.schema.ts
   run-list.schema.ts      run-id.schema.ts
 tests/…                        # mirrors source; route × level matrix for the three pages + the two M2M handlers
 ```
@@ -198,7 +202,7 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 |---|---|---|---|---|
 | Bill Runs list (Current & Upcoming / Historical) + lazy materialize | `/billing/bill-runs` | `BillRunsPage` → `BillRunList`, `RunActionCard`, `RunStatusBadge` | `app/(app)/billing/bill-runs/` | `billrun_view` : **READ** |
 | Run detail — Workflow / Customers & Bills / Uncharged / Errors / Audit + posting-progress | `/billing/bill-runs/[runId]` | `BillRunDetailPage` → `StageTimeline`, `CustomerBillTable`, `UnchargedTable`, `ErrorsTable`, `AuditTable`, `PostingProgressView` | `app/(app)/billing/bill-runs/[runId]/` | `billrun_view` : **READ** |
-| Trigger / Rerun / Cancel a run | `/billing/bill-runs/[runId]` (dialogs) | `TriggerRunDialog`, `RerunDialog`, `CancelRunDialog` | `actions/billing/{trigger,rerun,cancel}-run.action.ts` | `billrun_operate` : **EDIT** |
+| Trigger / Rerun / Check status / Cancel a run | `/billing/bill-runs/[runId]` (dialogs + `StallBanner`) | `TriggerRunDialog`, `RerunDialog`, `StallBanner`, `CancelRunDialog` | `actions/billing/{trigger,rerun,check-status,cancel-run}.action.ts` | `billrun_operate` : **EDIT** |
 | Approve & Post (four-eyes money gate) | `/billing/bill-runs/[runId]/approve` | `ApproveAndPostPage` → `ApproveAndPostPanel`, `PreApprovalChecks` | `app/(app)/billing/bill-runs/[runId]/approve/`, `actions/billing/{approve,post}-run.action.ts` | `billrun_approve` : **EDIT** |
 | M2M — stage completion signal | `POST /api/billrun/[runId]/stage/[stage]/complete` | `route.ts` → `handleStageSignal` | `app/api/billrun/[runId]/stage/[stage]/complete/` | **Service token** (no RBAC) |
 | M2M — run-level status push | `POST /api/billrun/[runId]/status` | `route.ts` → `handleStatusPush` | `app/api/billrun/[runId]/status/` | **Service token** (no RBAC) |
@@ -314,6 +318,51 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   page's header gains a second `billrun_approve`-gated link ("Post" when
   `APPROVED`, "Resume posting" when `POSTING`) to the same `/approve` route,
   alongside bm10's unchanged "Approve & Post" link.
+
+- **bm12 (delivered):** **no new table.** `STALLED` is a derived display flag
+  (`services/billing/stall.ts`'s pure `isStalled(run, now, thresholdMinutes)`
+  — `status = 'PROCESSING'` and `now() - last_progress_at` past the new
+  `BILLRUN_STALL_THRESHOLD_MINUTES` config (default `30`, `lib/config.ts`) —
+  never written to `bill_run` (Inv. #10). The run detail page computes it live
+  and renders `StallBanner` only for a `billrun_operate:EDIT` principal (same
+  show/hide convention as Rerun/Approve/Post). **Check status**
+  (`services/billing/reconcile-run.ts`'s `reconcileRun`, one row-locked
+  `db.transaction`) polls the mockable engine client's two new methods
+  (`getExecutionStatus`/`killExecution`, `services/billing/engine-client.ts` —
+  the stub returns a synthetic `{ state: 'RUNNING' }`/no-op kill; the real
+  paths are flagged "verify against the deployed engine version" per the
+  spec's open item): `RUNNING` bumps `last_progress_at` only; `FAILED`/`KILLED`
+  pushes the run to `PROCESSING_FAILED`
+  (`billRunRepository.markProcessingFailed`); `SUCCESS` re-derives the run
+  status from the account grain via the same pure `computeRunStatus` every
+  stage signal uses — flips to `PROCESSED` if every account is now terminal,
+  else bumps the heartbeat and surfaces a `mismatch: true` (never forces a
+  status the account grain doesn't support). Every branch writes one
+  `BILL_RUN_RECONCILED` audit row. **Cancel run**
+  (`services/billing/cancel-run.ts`'s `cancelRun`, one `db.transaction`) is
+  guarded to `status = 'PROCESSING'` only (`STALLED` is the same underlying
+  status, just derived): best-effort `killExecution` (a failed kill is logged
+  but still lets cancel proceed) →
+  `billRunAccountRepository.resetForCancel` (every non-`EXCLUDED` scoped
+  account → `PENDING`, diagnostics cleared) →
+  `billRunRepository.cancel` (`CANCELLED`, execution ref columns nulled) →
+  one `BILL_RUN_CANCELLED` audit row. **Cancellation consumes no invoice
+  numbers** (pre-approval only, nothing posted) and the run is
+  **re-triggerable**: `services/billing/trigger-run.ts`'s guard now accepts
+  `SCHEDULED` (unchanged) or `CANCELLED` — re-triggering from `CANCELLED`
+  re-scopes fresh via `scopeAccounts` and re-snapshots under a **new attempt
+  sequence** (`billRunAccountRepository.maxAttemptForRun` + 1, after
+  `deleteForRun` clears the killed execution's prior snapshot), so the
+  re-triggered engine's stage signals can never collide with
+  `bill_run_account_stage` history the killed execution left behind
+  (architecture Inv. #5 — the idempotency latch is keyed by attempt); the
+  normal `SCHEDULED` first-trigger path is untouched (attempt stays the
+  literal `1`, no extra queries). Two new audit events —
+  `BILL_RUN_CANCELLED`/`BILL_RUN_RECONCILED`, both `"Change"` — join
+  `AUDIT_EVENT_TYPES`/`AUDIT_EVENT_CATEGORY_MAP`. `actions/billing/
+  {check-status,cancel-run}.action.ts` both require `billrun_operate:EDIT`
+  and revalidate the run page (cancel also revalidates the list page, since a
+  cancelled run's list-page affordance changes).
 
 ---
 
