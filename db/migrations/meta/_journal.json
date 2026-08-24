@@ -232,6 +232,13 @@
       "when": 1787591229615,
       "tag": "0032_validate_inv_document_type_check",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787677629615,
+      "tag": "0033_customer_bill_finalization_guard",
+      "breakpoints": true
     }
   ]
 }
