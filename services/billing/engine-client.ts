@@ -134,48 +134,54 @@ export const realEngineClient: EngineClient = {
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const url = `${billRunEngineConfig.url}/executions/${executionId}`;
 
-    let response: Response;
+    // Keep the abort timer live across the WHOLE exchange — the fetch, the
+    // status check, and the body read — so a response that streams its headers
+    // then stalls the body can't hang `response.json()` past the timeout.
+    // Cleared in the finally on every path (success and each throw below).
     try {
-      response = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
-        },
-        signal: controller.signal,
-      });
-    } catch (err) {
-      throw new EngineError("Bill-run engine status request failed.", {
-        cause: err,
-      });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
+          },
+          signal: controller.signal,
+        });
+      } catch (err) {
+        throw new EngineError("Bill-run engine status request failed.", {
+          cause: err,
+        });
+      }
+
+      if (!response.ok) {
+        throw new EngineError(
+          `Bill-run engine returned ${response.status} for execution ${executionId} status.`,
+        );
+      }
+
+      let body: { state?: string };
+      try {
+        body = (await response.json()) as { state?: string };
+      } catch (err) {
+        // A 2xx with a malformed body still breaks the client's contract — wrap
+        // it as an EngineError like every other failure rather than leaking a raw
+        // SyntaxError to the caller.
+        throw new EngineError(
+          `Bill-run engine returned an unparseable body for execution ${executionId} status.`,
+          { cause: err },
+        );
+      }
+      if (!isExecutionState(body.state)) {
+        throw new EngineError(
+          `Bill-run engine returned an unrecognized state for execution ${executionId}.`,
+        );
+      }
+
+      return { state: body.state };
     } finally {
       clearTimeout(timeout);
     }
-
-    if (!response.ok) {
-      throw new EngineError(
-        `Bill-run engine returned ${response.status} for execution ${executionId} status.`,
-      );
-    }
-
-    let body: { state?: string };
-    try {
-      body = (await response.json()) as { state?: string };
-    } catch (err) {
-      // A 2xx with a malformed body still breaks the client's contract — wrap
-      // it as an EngineError like every other failure rather than leaking a raw
-      // SyntaxError to the caller.
-      throw new EngineError(
-        `Bill-run engine returned an unparseable body for execution ${executionId} status.`,
-        { cause: err },
-      );
-    }
-    if (!isExecutionState(body.state)) {
-      throw new EngineError(
-        `Bill-run engine returned an unrecognized state for execution ${executionId}.`,
-      );
-    }
-
-    return { state: body.state };
   },
 
   // bm12-spec §Design/§Implementation §2. Same "verify against the deployed

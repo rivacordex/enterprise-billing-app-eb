@@ -63,6 +63,23 @@ describe("app/api/billrun/** route inventory (bm13 ship gate)", () => {
         "utf8",
       );
       expect(content).toMatch(/export async function POST\(/);
+
+      // Named/aliased re-exports: what registers a handler is the EXPORTED name,
+      // i.e. the alias TARGET — `export { handler as GET }` registers GET (reject),
+      // but `export { GET as helper }` (or `GET as POST`) re-exports a local GET
+      // under a different name and registers no GET handler (allow). Collect each
+      // clause's exported name: the identifier after `as`, else the bare one.
+      const reexportedNames = new Set<string>();
+      for (const block of content.matchAll(/export\s*\{([^}]*)\}/g)) {
+        for (const clause of block[1]!.split(",")) {
+          const trimmed = clause.trim();
+          if (!trimmed) continue;
+          const aliased = trimmed.match(/\bas\s+([A-Za-z_$][\w$]*)/);
+          const exportedName = aliased ? aliased[1] : trimmed.split(/\s+/)[0];
+          if (exportedName) reexportedNames.add(exportedName);
+        }
+      }
+
       for (const verb of FORBIDDEN_VERBS) {
         // Declaration: `export function GET` / `export async function GET`.
         expect(content).not.toMatch(
@@ -72,10 +89,8 @@ describe("app/api/billrun/** route inventory (bm13 ship gate)", () => {
         expect(content).not.toMatch(
           new RegExp(`export\\s+(?:const|let|var)\\s+${verb}\\b`),
         );
-        // Named/aliased re-export: `export { GET }` / `export { x as GET }`.
-        expect(content).not.toMatch(
-          new RegExp(`export\\s*\\{[^}]*\\b${verb}\\b[^}]*\\}`),
-        );
+        // Named/aliased re-export: matched on the exported (alias-target) name.
+        expect(reexportedNames.has(verb)).toBe(false);
       }
     }
   });
