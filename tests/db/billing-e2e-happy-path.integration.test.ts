@@ -252,6 +252,7 @@ describe.skipIf(!databaseUrl)(
           .select({
             billRunId: billRun.billRunId,
             status: billRun.status,
+            periodEnd: billRun.periodEnd,
             scheduledRunDate: billRun.scheduledRunDate,
           })
           .from(billRun)
@@ -263,6 +264,7 @@ describe.skipIf(!databaseUrl)(
           );
         expect(run).toBeDefined();
         expect(run?.status).toBe("SCHEDULED");
+        expect(run?.periodEnd).toBe("2026-06-30");
         expect(run?.scheduledRunDate).toBe("2026-07-01");
         const runId = run!.billRunId;
 
