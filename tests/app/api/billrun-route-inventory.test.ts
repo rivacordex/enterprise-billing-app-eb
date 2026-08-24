@@ -42,16 +42,39 @@ describe("app/api/billrun/** route inventory (bm13 ship gate)", () => {
     expect(found).toEqual([...EXPECTED_HANDLERS].sort());
   });
 
-  it("declares only POST — no GET or other verb — on either handler", () => {
+  // Every HTTP-method export Next.js recognises as a Route Handler, in ANY
+  // export syntax — a declaration (`export function GET`), a const/let/var
+  // (`export const GET = ...`), or a named/aliased re-export (`export { GET }`,
+  // `export { handler as GET }`). Only POST may appear (as an async function);
+  // adding any other verb needs an architecture decision (code-standards §5.1).
+  const FORBIDDEN_VERBS = [
+    "GET",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "HEAD",
+    "OPTIONS",
+  ] as const;
+
+  it("declares only POST — no other verb, in any export syntax — on either handler", () => {
     for (const relativePath of EXPECTED_HANDLERS) {
       const content = fs.readFileSync(
         path.join(BILLRUN_API_DIR, relativePath),
         "utf8",
       );
       expect(content).toMatch(/export async function POST\(/);
-      for (const verb of ["GET", "PUT", "PATCH", "DELETE"]) {
+      for (const verb of FORBIDDEN_VERBS) {
+        // Declaration: `export function GET` / `export async function GET`.
         expect(content).not.toMatch(
-          new RegExp(`export (async )?function ${verb}\\(`),
+          new RegExp(`export\\s+(?:async\\s+)?function\\s+${verb}\\b`),
+        );
+        // Binding: `export const GET =` / `export let GET` / `export var GET`.
+        expect(content).not.toMatch(
+          new RegExp(`export\\s+(?:const|let|var)\\s+${verb}\\b`),
+        );
+        // Named/aliased re-export: `export { GET }` / `export { x as GET }`.
+        expect(content).not.toMatch(
+          new RegExp(`export\\s*\\{[^}]*\\b${verb}\\b[^}]*\\}`),
         );
       }
     }

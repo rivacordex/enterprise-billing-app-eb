@@ -184,7 +184,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
     expect(mockBumpHeartbeat).not.toHaveBeenCalled();
   });
 
-  it("SUCCESS with an account still in progress: surfaces a mismatch, no status write", async () => {
+  it("SUCCESS with an account still in progress: surfaces a mismatch, no status write, and leaves the run flagged (no heartbeat bump)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     getExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
     mockListStatusesForRun.mockResolvedValue([
@@ -203,7 +203,10 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
       },
     });
     expect(mockRecomputeStatus).not.toHaveBeenCalled();
-    expect(mockBumpHeartbeat).toHaveBeenCalledWith(txStub, "BRN00000001");
+    // A genuine engine-vs-account mismatch must NOT reset the stall clock —
+    // bumping it would hide the StallBanner (and its Cancel affordance) on the
+    // operator's next refresh, on a run that is actually wedged.
+    expect(mockBumpHeartbeat).not.toHaveBeenCalled();
   });
 
   it("a run not currently PROCESSING just bumps the heartbeat and audits", async () => {

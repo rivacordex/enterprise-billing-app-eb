@@ -131,4 +131,28 @@ export const billingAccountRepository = {
       )
       .orderBy(billingAccount.billingAccountId);
   },
+
+  // bm12-spec §Design/§Implementation §6 — the re-trigger period-close guard
+  // needs the run's settlement currency, but `bill_run` stores none: a cycle is
+  // single-currency in v1 (the same invariant `findActiveForPeriod` relies on),
+  // so the first active account's currency is the run's currency. Returns null
+  // when the cycle has no active accounts (the re-trigger then falls through to
+  // the existing NO_ELIGIBLE_ACCOUNTS path).
+  async findCurrencyByCycleId(
+    db: Database,
+    refBillCycleId: string,
+  ): Promise<string | null> {
+    const [row] = await db
+      .select({ currency: billingAccount.currency })
+      .from(billingAccount)
+      .where(
+        and(
+          eq(billingAccount.refBillCycleId, refBillCycleId),
+          eq(billingAccount.state, "active"),
+        ),
+      )
+      .orderBy(billingAccount.billingAccountId)
+      .limit(1);
+    return row?.currency ?? null;
+  },
 };

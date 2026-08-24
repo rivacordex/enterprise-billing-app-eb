@@ -139,7 +139,7 @@ describe("handleStageSignal — idempotency (replay)", () => {
       constraint_name:
         "bill_run_account_stage_run_ban_stage_attempt_period_unique",
     });
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
 
     const result = await handleStageSignal({
       runId: "BRN00000001",
@@ -160,6 +160,7 @@ describe("handleStageSignal — idempotency (replay)", () => {
 
   it("re-throws an unrelated insert failure instead of treating it as a replay", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockInsertStageRow.mockRejectedValue(new Error("connection reset"));
 
     await expect(
@@ -174,10 +175,75 @@ describe("handleStageSignal — idempotency (replay)", () => {
   });
 });
 
+describe("handleStageSignal — stale-attempt rejection (superseded execution)", () => {
+  it("rejects a late signal whose attempt no longer matches the account — no stage row, no aggregation/taxation, no advance", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+    // The account was re-triggered onto attempt 2 (a cancel → re-trigger, or a
+    // rerun); a straggler signal from the killed attempt-1 execution arrives.
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 2 });
+
+    const result = await handleStageSignal({
+      runId: "BRN00000001",
+      stage: "aggregation",
+      banId: "BAN00000001",
+      attempt: 1,
+      status: "DONE",
+    });
+
+    // Accepted as a no-op (200) — never processed against the current attempt.
+    expect(result).toEqual({
+      replayed: true,
+      accountStatus: "PROCESSING",
+      runStatus: "PROCESSING",
+    });
+    expect(mockInsertStageRow).not.toHaveBeenCalled();
+    expect(mockAggregateBill).not.toHaveBeenCalled();
+    expect(mockTaxBill).not.toHaveBeenCalled();
+    expect(mockUpdateStatus).not.toHaveBeenCalled();
+    expect(mockRecomputeStatus).not.toHaveBeenCalled();
+  });
+
+  it("processes a signal whose attempt matches the account's current attempt", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 2 });
+    mockListStatuses.mockResolvedValue([
+      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+    ]);
+
+    const result = await handleStageSignal({
+      runId: "BRN00000001",
+      stage: "taxation",
+      banId: "BAN00000001",
+      attempt: 2,
+      status: "DONE",
+    });
+
+    expect(result.replayed).toBe(false);
+    expect(mockInsertStageRow).toHaveBeenCalled();
+    expect(mockTaxBill).toHaveBeenCalled();
+  });
+
+  it("throws NOT_FOUND when the account is not scoped into the run, before any write", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+    mockFindStatus.mockResolvedValue(null);
+
+    await expect(
+      handleStageSignal({
+        runId: "BRN00000001",
+        stage: "aggregation",
+        banId: "BAN00000099",
+        attempt: 1,
+        status: "DONE",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockInsertStageRow).not.toHaveBeenCalled();
+  });
+});
+
 describe("handleStageSignal — record-and-advance stages", () => {
   it("advances a PENDING account to PROCESSING on the first (non-terminal) stage signal", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PENDING" });
+    mockFindStatus.mockResolvedValue({ status: "PENDING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -219,7 +285,7 @@ describe("handleStageSignal — record-and-advance stages", () => {
 
   it("a HARD failure moves the account to PROCESSING_FAILED; the run continues", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
       { billingAccountId: "BAN00000002", status: "PROCESSING" },
@@ -246,7 +312,7 @@ describe("handleStageSignal — record-and-advance stages", () => {
 
   it("an INFRA failure leaves the account non-terminal (retryable) and records its diagnostics on the account row", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -279,7 +345,10 @@ describe("handleStageSignal — record-and-advance stages", () => {
 
   it("preserves an already-terminal account's diagnostics on a later stray signal", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING_FAILED" });
+    mockFindStatus.mockResolvedValue({
+      status: "PROCESSING_FAILED",
+      attemptCount: 1,
+    });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
     ]);
@@ -304,7 +373,7 @@ describe("handleStageSignal — record-and-advance stages", () => {
 
   it("the terminal stage (verification) DONE moves the account to PROCESSED, and the run reaches PROCESSED once every account is terminal", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSED" },
       { billingAccountId: "BAN00000002", status: "EXCLUDED" },
@@ -333,7 +402,7 @@ describe("handleStageSignal — record-and-advance stages", () => {
   // verifyAccount, not the caller's body.
   it("records verifyAccount's SOFT backstop finding on the stage row and still reaches PROCESSED (never blocks)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSED" },
     ]);
@@ -387,7 +456,7 @@ describe("handleStageSignal — record-and-advance stages", () => {
 describe("handleStageSignal — the Validation stage's app-computed outcome", () => {
   it("uses validateAccount's outcome, not the caller-supplied status/error fields", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PENDING" });
+    mockFindStatus.mockResolvedValue({ status: "PENDING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -435,7 +504,7 @@ describe("handleStageSignal — the Validation stage's app-computed outcome", ()
 describe("handleStageSignal — the Collection/Claim stage's app-computed outcome (bm05-spec §3)", () => {
   it("uses collectClaim's DONE outcome regardless of the caller's signalled status", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -464,7 +533,7 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
   it("calls aggregateBill with the locked run row and the account id on a DONE signal", async () => {
     const lockedRun = run();
     mockFindByIdForUpdate.mockResolvedValue(lockedRun);
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -486,7 +555,7 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
 
   it("does not call aggregateBill when the aggregation signal is FAILED", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
     ]);
@@ -510,7 +579,7 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
       constraint_name:
         "bill_run_account_stage_run_ban_stage_attempt_period_unique",
     });
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
 
     await handleStageSignal({
       runId: "BRN00000001",
@@ -525,7 +594,7 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
 
   it("does not call aggregateBill for any other stage", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -543,7 +612,7 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
 
   it("does not write a bill for an EXCLUDED account (scoped out — never gets one)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "EXCLUDED" });
+    mockFindStatus.mockResolvedValue({ status: "EXCLUDED", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "EXCLUDED" },
     ]);
@@ -562,7 +631,7 @@ describe("handleStageSignal — Aggregation writes the trial customer_bill (bm05
 
   it("does not write a bill for a still-PENDING (never-validated) account", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PENDING" });
+    mockFindStatus.mockResolvedValue({ status: "PENDING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -585,7 +654,7 @@ describe("handleStageSignal — Taxation taxes the trial bill (bm06-spec §3)", 
   it("calls taxBill with the locked run row and the account id on a DONE signal", async () => {
     const lockedRun = run();
     mockFindByIdForUpdate.mockResolvedValue(lockedRun);
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -603,7 +672,7 @@ describe("handleStageSignal — Taxation taxes the trial bill (bm06-spec §3)", 
 
   it("does not call taxBill when the taxation signal is FAILED", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
     ]);
@@ -627,7 +696,7 @@ describe("handleStageSignal — Taxation taxes the trial bill (bm06-spec §3)", 
       constraint_name:
         "bill_run_account_stage_run_ban_stage_attempt_period_unique",
     });
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
 
     await handleStageSignal({
       runId: "BRN00000001",
@@ -642,7 +711,7 @@ describe("handleStageSignal — Taxation taxes the trial bill (bm06-spec §3)", 
 
   it("does not call taxBill for a still-PENDING (never-validated) account", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PENDING" });
+    mockFindStatus.mockResolvedValue({ status: "PENDING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -660,7 +729,7 @@ describe("handleStageSignal — Taxation taxes the trial bill (bm06-spec §3)", 
 
   it("does not call taxBill for a non-taxation stage (aggregation)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    mockFindStatus.mockResolvedValue({ status: "PROCESSING" });
+    mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);

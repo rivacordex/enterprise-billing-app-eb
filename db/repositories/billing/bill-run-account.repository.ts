@@ -36,9 +36,12 @@ export const billRunAccountRepository = {
     tx: Database,
     billRunId: string,
     billingAccountId: string,
-  ): Promise<{ status: AccountStatus } | null> {
+  ): Promise<{ status: AccountStatus; attemptCount: number } | null> {
     const [row] = await tx
-      .select({ status: billRunAccount.status })
+      .select({
+        status: billRunAccount.status,
+        attemptCount: billRunAccount.attemptCount,
+      })
       .from(billRunAccount)
       .where(
         and(
@@ -47,7 +50,9 @@ export const billRunAccountRepository = {
         ),
       )
       .limit(1);
-    return row ? { status: row.status as AccountStatus } : null;
+    return row
+      ? { status: row.status as AccountStatus, attemptCount: row.attemptCount }
+      : null;
   },
 
   // bm04-spec §Design/§Implementation §8 — the per-account advance write.

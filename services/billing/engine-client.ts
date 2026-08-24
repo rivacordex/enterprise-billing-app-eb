@@ -33,6 +33,14 @@ export const EXECUTION_STATES = [
 ] as const;
 export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
+// Runtime narrowing over the SAME `EXECUTION_STATES` array that backs the type,
+// so the recognized-state set has one source of truth — a state added to the
+// array is accepted by the guard automatically (no parallel literal list to
+// keep in sync).
+function isExecutionState(value: string | undefined): value is ExecutionState {
+  return (EXECUTION_STATES as readonly string[]).includes(value ?? "");
+}
+
 export interface ExecutionStatus {
   state: ExecutionState;
 }
@@ -149,13 +157,19 @@ export const realEngineClient: EngineClient = {
       );
     }
 
-    const body = (await response.json()) as { state?: string };
-    if (
-      body.state !== "RUNNING" &&
-      body.state !== "SUCCESS" &&
-      body.state !== "FAILED" &&
-      body.state !== "KILLED"
-    ) {
+    let body: { state?: string };
+    try {
+      body = (await response.json()) as { state?: string };
+    } catch (err) {
+      // A 2xx with a malformed body still breaks the client's contract — wrap
+      // it as an EngineError like every other failure rather than leaking a raw
+      // SyntaxError to the caller.
+      throw new EngineError(
+        `Bill-run engine returned an unparseable body for execution ${executionId} status.`,
+        { cause: err },
+      );
+    }
+    if (!isExecutionState(body.state)) {
       throw new EngineError(
         `Bill-run engine returned an unrecognized state for execution ${executionId}.`,
       );

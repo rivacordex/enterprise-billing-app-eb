@@ -230,6 +230,21 @@ describe("realEngineClient (bm03-spec §5)", () => {
         realEngineClient.getExecutionStatus("exec-123"),
       ).rejects.toThrow(EngineError);
     });
+
+    it("throws EngineError when the 2xx body is not valid JSON", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.reject(new SyntaxError("Unexpected token")),
+        }),
+      );
+
+      await expect(
+        realEngineClient.getExecutionStatus("exec-123"),
+      ).rejects.toThrow(EngineError);
+    });
   });
 
   describe("killExecution", () => {

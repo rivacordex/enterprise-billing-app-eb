@@ -12,6 +12,7 @@ import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { StallBanner } from "@/components/billing/stall-banner";
 import { StubDataBanner } from "@/components/billing/stub-data-banner";
+import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
 import { billRunStallThresholdMinutes, stubDataMode } from "@/lib/config";
 import { formatCalendarDate } from "@/lib/formatters";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
@@ -126,6 +127,16 @@ export default async function BillRunDetailPage({
     detail.status === "PROCESSED" || detail.status === "PROCESSING_FAILED";
   const canRerun = canOperate && rerunnable;
 
+  // bm12 — a CANCELLED run re-materializes its period by re-triggering the SAME
+  // run row (trigger-run.ts's CANCELLED path; the `(cycle, period_start)` unique
+  // key prevents a second row). Since CANCELLED is terminal, the run never
+  // resurfaces on the Current tab's operable "Run" affordance — so the re-trigger
+  // control returns here on the detail header instead (spec §Visual — "the
+  // operable Run affordance returns"). Not the RerunDialog: `rerunRun` rejects a
+  // CANCELLED run (`NOT_RERUNNABLE`); a re-trigger is `triggerRun`. Show/hide
+  // only — the trigger action re-checks `billrun_operate:EDIT` server-side.
+  const canRetrigger = canOperate && detail.status === "CANCELLED";
+
   // bm10 — the four-eyes money gate lives on its own route
   // (`/billing/bill-runs/[runId]/approve`, `billrun_approve:EDIT`). Shown
   // only while the run is awaiting approval; show/hide only — the approve
@@ -183,6 +194,14 @@ export default async function BillRunDetailPage({
                 accountIds={[]}
                 triggerLabel="Rerun"
                 variant="neutral"
+              />
+            )}
+            {canRetrigger && (
+              <TriggerRunDialog
+                billRunId={detail.billRunId}
+                cycleName={detail.cycleName}
+                periodStart={detail.periodStart}
+                periodEnd={detail.periodEnd}
               />
             )}
           </div>

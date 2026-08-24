@@ -1,7 +1,10 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
+import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { getBusinessToday } from "@/services/billing/business-today";
 import { getEngineClient } from "@/services/billing/engine-client";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
@@ -36,6 +39,7 @@ export type TriggerRunResult =
     }
   | { ok: false; code: "NOT_OPERABLE" }
   | { ok: false; code: "NO_ELIGIBLE_ACCOUNTS" }
+  | { ok: false; code: "PERIOD_CLOSED" }
   | { ok: false; code: "ENGINE_UNREACHABLE" };
 
 // Internal-only signal thrown from inside `db.transaction` so the engine
@@ -63,6 +67,33 @@ export async function triggerRun(
         return { ok: false, code: "NOT_OPERABLE" } as const;
       }
 
+      // bm12 re-trigger guard: a run's accounting period may have closed while
+      // it sat CANCELLED — cancellation consumes no invoice numbers, so a
+      // CANCELLED (terminal) run no longer blocks period close
+      // (`findActiveForPeriod` excludes it). Re-triggering into a closed period
+      // would run the whole pipeline only to have every INV rejected
+      // PERIOD_CLOSED at post time, with no reopen path (architecture Inv. #7).
+      // Refuse up front, before any scoping/snapshot work. The normal SCHEDULED
+      // path materializes into the current (open) period, so it is not guarded.
+      if (startingFromCancelled) {
+        const currency = await billingAccountRepository.findCurrencyByCycleId(
+          tx,
+          run.refBillCycleId,
+        );
+        if (currency) {
+          const period = run.scheduledRunDate.slice(0, 7);
+          const periodRow =
+            await accountingPeriodRepository.findByPeriodAndCurrency(
+              tx,
+              period,
+              currency,
+            );
+          if (periodRow?.state === "closed") {
+            return { ok: false, code: "PERIOD_CLOSED" } as const;
+          }
+        }
+      }
+
       const { pending, excluded } = await scopeAccounts(tx, {
         billRunId: run.billRunId,
         refBillCycleId: run.refBillCycleId,
@@ -87,6 +118,10 @@ export async function triggerRun(
           (await billRunAccountRepository.maxAttemptForRun(tx, run.billRunId)) +
           1;
         await billRunAccountRepository.deleteForRun(tx, run.billRunId);
+        // Clear the killed attempt's UNPOSTED trial bills too — the snapshot is
+        // rebuilt below, but a bill for an account that re-scopes EXCLUDED/failed
+        // on the new attempt would otherwise be orphaned on the Bills tab.
+        await customerBillRepository.deleteUnpostedForRun(tx, run.billRunId);
         snapshotRows = snapshotRows.map((row) => ({
           ...row,
           attemptCount: attempt,
