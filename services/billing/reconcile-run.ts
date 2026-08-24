@@ -84,8 +84,15 @@ export async function reconcileRun(
           });
           runStatus = computed;
         } else {
+          // Engine says SUCCESS but the account grain disagrees (a lost signal
+          // left an account non-terminal) — a genuine, unresolved wedge. Do NOT
+          // bump the heartbeat here: unlike the RUNNING/alive branch below,
+          // there is no live execution to justify resetting the stall clock, and
+          // bumping it would flip `isStalled` false on the operator's very next
+          // refresh — unmounting the StallBanner (the sole host of Check status /
+          // Cancel run) for another full threshold window on a run that is
+          // actually stuck. Leave the run flagged so the operator can act.
           mismatch = true;
-          await billRunRepository.bumpHeartbeat(tx, billRunId);
         }
       } else {
         await billRunRepository.bumpHeartbeat(tx, billRunId);

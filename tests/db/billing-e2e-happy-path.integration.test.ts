@@ -242,17 +242,28 @@ describe.skipIf(!databaseUrl)(
         const banFailed = await newBillingAccount("Failed");
         const banExcluded = await newBillingAccount("Excluded");
 
+        // Materialize the due run rather than inserting it directly — this is
+        // the journey's first leg (spec §3: "materialize → trigger → …"). The
+        // test cycle is monthly with the default `cycle_day = 1`, so at business
+        // day 2026-07-01 the single due in-arrears period is June (period
+        // 2026-06-01 → 2026-06-30, run date 2026-07-01), created SCHEDULED.
+        await materializeDueRuns("2026-07-01");
         const [run] = await db
-          .insert(billRun)
-          .values({
-            refBillCycleId: cycleId,
-            periodStart: "2026-06-01",
-            periodEnd: "2026-06-30",
-            scheduledRunDate: "2026-07-01",
-            status: "SCHEDULED",
-            runType: "onCycle",
+          .select({
+            billRunId: billRun.billRunId,
+            status: billRun.status,
+            scheduledRunDate: billRun.scheduledRunDate,
           })
-          .returning({ billRunId: billRun.billRunId });
+          .from(billRun)
+          .where(
+            and(
+              eq(billRun.refBillCycleId, cycleId),
+              eq(billRun.periodStart, "2026-06-01"),
+            ),
+          );
+        expect(run).toBeDefined();
+        expect(run?.status).toBe("SCHEDULED");
+        expect(run?.scheduledRunDate).toBe("2026-07-01");
         const runId = run!.billRunId;
 
         // ---- Trigger: snapshot the cycle's three active accounts. --------

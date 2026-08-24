@@ -1420,6 +1420,123 @@ pre-existing hardcoded-date-drift action suites).
     a real Postgres wherever the database lives before this ship gate can be
     called genuinely green end-to-end.
 
+## Post-review hardening (bm12–bm13)
+
+Verified each inline review finding against current code; fixed the still-valid
+ones minimally, skipped the rest with a reason. `typecheck`/`lint` clean; the
+billing/app/action DB-free suites pass (437 tests) plus the touched files.
+
+- **CANCELLED runs now expose a re-trigger control on the run detail header**
+  (`app/(app)/billing/bill-runs/[runId]/page.tsx`). Since `CANCELLED` is a
+  terminal status it never resurfaces on the Current tab's operable "Run"
+  affordance, so a cancelled run previously had NO UI path to re-trigger even
+  though `trigger-run.ts` supports it — the spec's "the operable Run affordance
+  returns" was unreachable. Fix uses `TriggerRunDialog` (a re-trigger is
+  `triggerRun`), NOT `RerunDialog`: `rerunRun` rejects `CANCELLED` with
+  `NOT_RERUNNABLE`, so the finding's "rerun trigger" wording would have rendered
+  an always-failing control. Gated on `billrun_operate`; re-checked server-side.
+  Page coverage added (shows for operator on CANCELLED, hidden otherwise).
+- **`realEngineClient.getExecutionStatus` wraps a malformed 2xx body in
+  `EngineError`** (`services/billing/engine-client.ts`) — a raw `SyntaxError`
+  from `response.json()` was leaking past the client's typed-error contract.
+- **Stale-attempt stage signals are now rejected** (`handle-stage-signal.ts`).
+  The `bill_run_account_stage` idempotency latch is keyed by `attempt`, so it
+  only catches a duplicate of the SAME attempt — a straggler signal from a
+  superseded execution (a killed run's late push after cancel+re-trigger, or a
+  pre-rerun attempt) carried an OLD `attempt`, landed on a fresh stage row, and
+  would wrongly re-aggregate/re-tax and advance the current attempt's account.
+  Now the account's status + `attempt_count` are read once under the run lock
+  BEFORE any effect or stage-row write; a signal whose attempt no longer matches
+  is an accepted 200 no-op. `findStatus` extended to return `attemptCount`; the
+  two prior `findStatus` reads consolidated into that single up-front read.
+  Regression test added (cancel → retrigger → late attempt-1 signal is inert).
+- **Route-inventory verb lock hardened** (`tests/app/api/billrun-route-
+  inventory.test.ts`) — now forbids `HEAD`/`OPTIONS` too and catches every
+  export syntax (declaration, `const/let/var` binding, and named/aliased
+  re-export), not just `export function VERB`.
+- **E2E journey now materializes the initial run** (`billing-e2e-happy-path`)
+  instead of inserting it directly, so it actually covers the spec's
+  "materialize → trigger" first leg. The monthly test cycle's default
+  `cycle_day = 1` makes `materializeDueRuns("2026-07-01")` produce the exact
+  same June run (period 2026-06-01 → 2026-06-30, run date 2026-07-01) the
+  fixture hard-coded. (DB-gated; still requires a real Postgres to execute.)
+
+Skipped (verified, not still-valid):
+
+- **Retarget `realEngineClient` to Kestra's deployed tenant/version paths /
+  nested `state.current` / DELETE-without-`/kill`.** The real client is
+  explicitly not-yet-wired (stub is used unless `isBillRunEngineConfigured`)
+  and its endpoint paths are already FLAGGED in-code as an unverified best
+  guess pending the deployed engine version (plan §13 open item). Hardcoding a
+  specific tenant/version path now would swap one unverified guess for another
+  — and the finding's own specifics are speculative (Kestra's kill endpoint
+  actually IS `DELETE …/kill`). Best done when the real client is wired.
+- **Refactor `reconcile-run.ts` to call the engine BEFORE taking the run
+  lock.** Valid in principle (don't hold `FOR UPDATE` across network I/O), but
+  with the stub engine — the only client in play until the real one above is
+  wired — `getExecutionStatus` is synchronous with no network call, so there is
+  no lock-across-I/O to fix today. The refactor needs a new "preconditions
+  changed" outcome (the finding references a conflict code the result type
+  doesn't have) and a rewrite of a working, tested transaction — beyond a
+  minimal fix for a dormant path. Do it alongside wiring the real client.
+
+### Second round (multi-agent `/code-review` of the same scope)
+
+A max-effort recall review (9 finder angles → verify → sweep) of bm12+bm13 plus
+the first-round fixes surfaced 7 distinct issues (much of the raw list was the
+same reconcile-lock finding restated). Fixed the four live/important ones;
+deferred the two latent real-engine items and dismissed one by-design note.
+`typecheck`/`lint` clean; billing/app/action/component suites pass (473 tests).
+
+- **Re-trigger of a CANCELLED run now refuses a CLOSED accounting period**
+  (`trigger-run.ts`, new `PERIOD_CLOSED` result). Because CANCELLED is terminal
+  it no longer blocks period close (`findActiveForPeriod` excludes it — correct,
+  a cancelled run consumed no invoice numbers), so the period could close under
+  it; re-triggering then ran the whole pipeline only to fail every INV
+  `PERIOD_CLOSED` at post with no reopen path (Inv. #7). The guard mirrors
+  `post-document`'s check (period = `scheduled_run_date` month; currency via the
+  new `billingAccountRepository.findCurrencyByCycleId`, since `bill_run` stores
+  none and a cycle is single-currency in v1). Surfaced in `TriggerRunDialog`.
+  This gap was pre-existing in the bm12 service but only became UI-reachable via
+  the first-round CANCELLED re-trigger control — enabling it exposed it.
+- **Re-trigger now clears the killed attempt's UNPOSTED trial bills**
+  (`trigger-run.ts` + `customerBillRepository.deleteUnpostedForRun`). Cancel
+  never touched `customer_bill` and re-trigger's `deleteForRun` cleared only
+  `bill_run_account`, so a bill for an account re-scoped `EXCLUDED`/failed on the
+  new attempt (which never re-aggregates, so `deleteTrial` never runs for it)
+  lingered on the money-facing Customers & Bills tab. Keyed by the finalization
+  latch (`ref_inv_document_id IS NULL`) — a posted bill is never touched (a
+  cancellable PROCESSING-only run can't have one anyway).
+- **`reconcileRun` no longer bumps the heartbeat on the genuine-mismatch
+  branch** (`reconcile-run.ts`). Engine `SUCCESS` but an account still
+  non-terminal is a real wedge; bumping `last_progress_at` there reset the
+  derived stall clock, so the operator's very next `router.refresh()` flipped
+  `isStalled` false and unmounted the `StallBanner` — the sole host of Check
+  status / Cancel run — for another full threshold window on a stuck run. The
+  RUNNING/alive bump (a live execution) and the already-resolved bump are
+  unchanged; only the mismatch branch stops bumping so the run stays flagged.
+- **`engine-client.getExecutionStatus` validates via `EXECUTION_STATES`**
+  (one `isExecutionState` type guard) instead of a parallel four-literal list
+  that could silently diverge from the array that defines the type.
+
+Deferred (latent — gated on the not-yet-wired real engine; the stub is instant):
+
+- **`reconcile-run`/`cancel-run` hold the `bill_run` FOR UPDATE lock across the
+  engine HTTP call.** The top-ranked review finding, but the stub returns
+  synchronously (no network), so there is no lock-across-I/O today; the fix
+  (fetch/kill outside the txn, re-verify under the lock) belongs with wiring the
+  real client so it can be tested against real latency. Same call as the
+  first-round reconcile skip.
+- **`getExecutionStatus` recognizes only 4 of Kestra's execution states.** A
+  terminal `WARNING`/system-`CANCELLED` would be mislabeled `ENGINE_UNREACHABLE`
+  and never reconcile off PROCESSING — but the state contract is explicitly
+  FLAGGED unverified pending the deployed Kestra version (plan §13). Expanding
+  the set now would re-guess the same unverified contract; do it when wiring.
+
+Not a defect: the CANCELLED re-trigger living only on the detail header (not the
+list) is documented, spec-driven behavior — CANCELLED is terminal so it can't be
+the list's single operable run.
+
 ## Next Up
 
 - **None — the build plan is complete (bm01–bm13).** The one outstanding

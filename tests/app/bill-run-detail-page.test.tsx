@@ -57,6 +57,12 @@ vi.mock("@/components/billing/stub-data-banner", () => ({
 vi.mock("@/components/billing/stall-banner", () => ({
   StallBanner: () => <div data-testid="stall-banner" />,
 }));
+// bm12 — the CANCELLED re-trigger ("Run") affordance is a client island whose
+// action pulls the db/service graph; stub it so this page test stays
+// framework-only, same convention as RerunDialog/StallBanner above.
+vi.mock("@/components/billing/trigger-run-dialog", () => ({
+  TriggerRunDialog: () => <div data-testid="trigger-run-dialog" />,
+}));
 
 import BillRunDetailPage from "@/app/(app)/billing/bill-runs/[runId]/page";
 import { requirePermission } from "@/auth/guard";
@@ -257,6 +263,40 @@ describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
     const { queryByTestId } = render(await BillRunDetailPage(props()));
 
     expect(queryByTestId("stall-banner")).toBeNull();
+  });
+
+  it("shows the re-trigger (Run) control for a billrun_operate:EDIT principal on a CANCELLED run (bm12)", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "CANCELLED" });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_operate: "EDIT" } as never,
+    });
+
+    const { queryByTestId } = render(await BillRunDetailPage(props()));
+
+    expect(queryByTestId("trigger-run-dialog")).not.toBeNull();
+  });
+
+  it("hides the re-trigger control without billrun_operate:EDIT even on a CANCELLED run (bm12)", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "CANCELLED" });
+
+    const { queryByTestId } = render(await BillRunDetailPage(props()));
+
+    expect(queryByTestId("trigger-run-dialog")).toBeNull();
+  });
+
+  it("hides the re-trigger control for a billrun_operate:EDIT principal when the run isn't CANCELLED (bm12)", async () => {
+    mockGetRunDetail.mockResolvedValue({ ...DETAIL, status: "PROCESSING" });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_operate: "EDIT" } as never,
+    });
+
+    const { queryByTestId } = render(await BillRunDetailPage(props()));
+
+    expect(queryByTestId("trigger-run-dialog")).toBeNull();
   });
 
   it("shows the Approve & Post link for a billrun_approve:EDIT principal on a PROCESSED run", async () => {

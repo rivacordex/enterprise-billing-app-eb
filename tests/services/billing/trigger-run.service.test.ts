@@ -27,6 +27,21 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
     deleteForRun: vi.fn(),
   },
 }));
+vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
+  customerBillRepository: {
+    deleteUnpostedForRun: vi.fn(),
+  },
+}));
+vi.mock("@/db/repositories/accounts/billing-account.repository", () => ({
+  billingAccountRepository: {
+    findCurrencyByCycleId: vi.fn(),
+  },
+}));
+vi.mock("@/db/repositories/accounts/accounting-period.repository", () => ({
+  accountingPeriodRepository: {
+    findByPeriodAndCurrency: vi.fn(),
+  },
+}));
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
@@ -39,6 +54,9 @@ vi.mock("@/services/billing/engine-client", () => ({
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
+import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
 import { getEngineClient } from "@/services/billing/engine-client";
@@ -51,6 +69,15 @@ const mockMaxAttemptForRun = vi.mocked(
   billRunAccountRepository.maxAttemptForRun,
 );
 const mockDeleteForRun = vi.mocked(billRunAccountRepository.deleteForRun);
+const mockDeleteUnpostedForRun = vi.mocked(
+  customerBillRepository.deleteUnpostedForRun,
+);
+const mockFindCurrencyByCycleId = vi.mocked(
+  billingAccountRepository.findCurrencyByCycleId,
+);
+const mockFindByPeriodAndCurrency = vi.mocked(
+  accountingPeriodRepository.findByPeriodAndCurrency,
+);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockScopeAccounts = vi.mocked(scopeAccounts);
 const mockGetEngineClient = vi.mocked(getEngineClient);
@@ -102,6 +129,10 @@ beforeEach(() => {
     pending: [PENDING_ROW],
     excluded: [EXCLUDED_ROW],
   });
+  // Re-trigger period-close guard defaults: a resolvable currency and an OPEN
+  // period (absent accounting_period row) so the CANCELLED path proceeds.
+  mockFindCurrencyByCycleId.mockResolvedValue("MYR");
+  mockFindByPeriodAndCurrency.mockResolvedValue(null);
 });
 
 describe("triggerRun (bm03-spec §Design/§7)", () => {
@@ -267,6 +298,73 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
 
       expect(mockMaxAttemptForRun).not.toHaveBeenCalled();
       expect(mockDeleteForRun).not.toHaveBeenCalled();
+    });
+
+    // bm12 review fix — a run's period may have closed while it sat CANCELLED
+    // (cancellation consumes no invoice numbers, so a CANCELLED terminal run no
+    // longer blocks period close). Re-triggering into a closed period would run
+    // the whole pipeline only to fail every INV PERIOD_CLOSED at post, with no
+    // reopen path — so it is refused up front.
+    it("refuses re-trigger into a CLOSED accounting period, before any scoping/snapshot/engine work", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run({ status: "CANCELLED" }));
+      mockFindByPeriodAndCurrency.mockResolvedValue({
+        state: "closed",
+      } as never);
+
+      const result = await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(result).toEqual({ ok: false, code: "PERIOD_CLOSED" });
+      // The period key is derived from the run's scheduled_run_date month.
+      expect(mockFindByPeriodAndCurrency).toHaveBeenCalledWith(
+        txStub,
+        "2026-08",
+        "MYR",
+      );
+      expect(mockScopeAccounts).not.toHaveBeenCalled();
+      expect(mockDeleteForRun).not.toHaveBeenCalled();
+      expect(mockInsertSnapshot).not.toHaveBeenCalled();
+      expect(startExecution).not.toHaveBeenCalled();
+      expect(mockMarkProcessing).not.toHaveBeenCalled();
+    });
+
+    it("proceeds when the period is OPEN (absent accounting_period row)", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run({ status: "CANCELLED" }));
+      mockMaxAttemptForRun.mockResolvedValue(1);
+      mockFindByPeriodAndCurrency.mockResolvedValue(null);
+
+      const result = await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(result.ok).toBe(true);
+    });
+
+    // bm12 review fix — the killed attempt's UNPOSTED trial bills must be
+    // cleared alongside the bill_run_account snapshot, or a bill for an account
+    // re-scoped EXCLUDED/failed on the new attempt is orphaned on the Bills tab.
+    it("clears the prior attempt's unposted trial bills before re-snapshotting", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run({ status: "CANCELLED" }));
+      mockMaxAttemptForRun.mockResolvedValue(1);
+
+      await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(mockDeleteUnpostedForRun).toHaveBeenCalledWith(
+        txStub,
+        "BRN00000001",
+      );
+      // Cleared before the fresh snapshot is inserted.
+      const deleteBillsOrder =
+        mockDeleteUnpostedForRun.mock.invocationCallOrder[0] ?? -1;
+      const insertOrder = mockInsertSnapshot.mock.invocationCallOrder[0] ?? -1;
+      expect(deleteBillsOrder).toBeLessThan(insertOrder);
+    });
+
+    it("does not clear bills or check the period on the normal SCHEDULED path", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run());
+
+      await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(mockDeleteUnpostedForRun).not.toHaveBeenCalled();
+      expect(mockFindCurrencyByCycleId).not.toHaveBeenCalled();
+      expect(mockFindByPeriodAndCurrency).not.toHaveBeenCalled();
     });
   });
 });
