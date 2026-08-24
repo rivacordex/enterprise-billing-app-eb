@@ -38,6 +38,7 @@ vi.mock("@/lib/config", () => ({
   get stubDataMode() {
     return configState.stub;
   },
+  billRunStallThresholdMinutes: 30,
 }));
 vi.mock("@/components/billing/run-detail-tabs", () => ({
   RunDetailTabs: () => <div data-testid="run-detail-tabs" />,
@@ -49,6 +50,12 @@ vi.mock("@/components/billing/rerun-dialog", () => ({
 }));
 vi.mock("@/components/billing/stub-data-banner", () => ({
   StubDataBanner: () => <div data-testid="stub-banner" />,
+}));
+// bm12 — the StallBanner is a client island whose action pulls the db/service
+// graph; stub it so this page test stays framework-only, same convention as
+// RerunDialog/StubDataBanner above.
+vi.mock("@/components/billing/stall-banner", () => ({
+  StallBanner: () => <div data-testid="stall-banner" />,
 }));
 
 import BillRunDetailPage from "@/app/(app)/billing/bill-runs/[runId]/page";
@@ -95,6 +102,7 @@ const DETAIL = {
   periodEnd: "2026-07-31",
   scheduledRunDate: "2026-08-01",
   status: "PROCESSING" as const,
+  lastProgressAt: null as Date | null,
 };
 
 beforeEach(() => {
@@ -203,6 +211,52 @@ describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
   it("hides StubDataBanner when STUB_DATA_MODE is off", async () => {
     const { queryByTestId } = render(await BillRunDetailPage(props()));
     expect(queryByTestId("stub-banner")).toBeNull();
+  });
+
+  it("shows the StallBanner for a billrun_operate:EDIT principal on a stalled PROCESSING run (bm12)", async () => {
+    mockGetRunDetail.mockResolvedValue({
+      ...DETAIL,
+      status: "PROCESSING",
+      lastProgressAt: new Date(Date.now() - 60 * 60_000), // 60 min ago > 30 min default
+    });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_operate: "EDIT" } as never,
+    });
+
+    const { queryByTestId } = render(await BillRunDetailPage(props()));
+
+    expect(queryByTestId("stall-banner")).not.toBeNull();
+  });
+
+  it("hides the StallBanner without billrun_operate:EDIT even on a stalled run (bm12)", async () => {
+    mockGetRunDetail.mockResolvedValue({
+      ...DETAIL,
+      status: "PROCESSING",
+      lastProgressAt: new Date(Date.now() - 60 * 60_000),
+    });
+
+    const { queryByTestId } = render(await BillRunDetailPage(props()));
+
+    expect(queryByTestId("stall-banner")).toBeNull();
+  });
+
+  it("hides the StallBanner for a billrun_operate:EDIT principal on a run that isn't stalled (bm12)", async () => {
+    mockGetRunDetail.mockResolvedValue({
+      ...DETAIL,
+      status: "PROCESSING",
+      lastProgressAt: new Date(), // fresh heartbeat
+    });
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { billrun_operate: "EDIT" } as never,
+    });
+
+    const { queryByTestId } = render(await BillRunDetailPage(props()));
+
+    expect(queryByTestId("stall-banner")).toBeNull();
   });
 
   it("shows the Approve & Post link for a billrun_approve:EDIT principal on a PROCESSED run", async () => {

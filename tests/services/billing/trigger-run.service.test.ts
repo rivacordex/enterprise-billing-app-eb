@@ -21,7 +21,11 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
   },
 }));
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
-  billRunAccountRepository: { insertSnapshot: vi.fn() },
+  billRunAccountRepository: {
+    insertSnapshot: vi.fn(),
+    maxAttemptForRun: vi.fn(),
+    deleteForRun: vi.fn(),
+  },
 }));
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
@@ -43,6 +47,10 @@ import { triggerRun } from "@/services/billing/trigger-run";
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockMarkProcessing = vi.mocked(billRunRepository.markProcessing);
 const mockInsertSnapshot = vi.mocked(billRunAccountRepository.insertSnapshot);
+const mockMaxAttemptForRun = vi.mocked(
+  billRunAccountRepository.maxAttemptForRun,
+);
+const mockDeleteForRun = vi.mocked(billRunAccountRepository.deleteForRun);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockScopeAccounts = vi.mocked(scopeAccounts);
 const mockGetEngineClient = vi.mocked(getEngineClient);
@@ -80,7 +88,11 @@ const startExecution = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetEngineClient.mockReturnValue({ startExecution });
+  mockGetEngineClient.mockReturnValue({
+    startExecution,
+    getExecutionStatus: vi.fn(),
+    killExecution: vi.fn(),
+  } as never);
   startExecution.mockResolvedValue({
     executionId: "stub-exec-BRN00000001",
     definitionId: "billing.bill_run",
@@ -202,5 +214,59 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
     await expect(triggerRun("BRN00000001", "user-1", TODAY)).rejects.toThrow(
       "connection reset",
     );
+  });
+
+  // bm12-spec §Design/§Implementation §6. The trigger guard is extended to
+  // allow re-triggering a CANCELLED run — the Layer-3 escape hatch.
+  describe("re-trigger from CANCELLED (bm12-spec §6)", () => {
+    it("re-snapshots fresh under a new attempt (maxAttempt + 1), clearing the prior snapshot first", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run({ status: "CANCELLED" }));
+      mockMaxAttemptForRun.mockResolvedValue(1);
+
+      const result = await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          billRunId: "BRN00000001",
+          banCount: 1,
+          excludedCount: 1,
+          executionId: "stub-exec-BRN00000001",
+        },
+      });
+      expect(mockMaxAttemptForRun).toHaveBeenCalledWith(txStub, "BRN00000001");
+      expect(mockDeleteForRun).toHaveBeenCalledWith(txStub, "BRN00000001");
+      expect(mockInsertSnapshot).toHaveBeenCalledWith(txStub, [
+        { ...PENDING_ROW, attemptCount: 2 },
+        { ...EXCLUDED_ROW, attemptCount: 2 },
+      ]);
+      expect(startExecution).toHaveBeenCalledWith(
+        expect.objectContaining({ attempt: 2 }),
+      );
+      // Deleting happens before re-inserting, so no ordering collision.
+      const deleteOrder = mockDeleteForRun.mock.invocationCallOrder[0] ?? -1;
+      const insertOrder = mockInsertSnapshot.mock.invocationCallOrder[0] ?? -1;
+      expect(deleteOrder).toBeLessThan(insertOrder);
+    });
+
+    it("computes attempt 1 when the run has never been snapshotted (maxAttempt 0)", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run({ status: "CANCELLED" }));
+      mockMaxAttemptForRun.mockResolvedValue(0);
+
+      await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(startExecution).toHaveBeenCalledWith(
+        expect.objectContaining({ attempt: 1 }),
+      );
+    });
+
+    it("never queries/deletes the prior snapshot on the normal SCHEDULED path", async () => {
+      mockFindByIdForUpdate.mockResolvedValue(run());
+
+      await triggerRun("BRN00000001", "user-1", TODAY);
+
+      expect(mockMaxAttemptForRun).not.toHaveBeenCalled();
+      expect(mockDeleteForRun).not.toHaveBeenCalled();
+    });
   });
 });

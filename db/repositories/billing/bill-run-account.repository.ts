@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
@@ -239,6 +239,56 @@ export const billRunAccountRepository = {
       )
       .orderBy(billingAccount.name);
     return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
+  },
+
+  // bm12-spec §Design/§Implementation §3 — the cancel write: every scoped
+  // account except `EXCLUDED` (a deliberate, scoping-time decision — never
+  // reset back into the pipeline, same drop-`EXCLUDED` convention as bm08's
+  // rerun eligibility) resets to `PENDING`, clearing diagnostics. Returns the
+  // count for the audit event / confirm-panel display.
+  async resetForCancel(tx: Database, billRunId: string): Promise<number> {
+    const rows = await tx
+      .update(billRunAccount)
+      .set({
+        status: "PENDING",
+        errorCode: null,
+        errorDetail: null,
+        lastProcessedAt: null,
+      })
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          ne(billRunAccount.status, "EXCLUDED"),
+        ),
+      )
+      .returning({ billRunAccountId: billRunAccount.billRunAccountId });
+    return rows.length;
+  },
+
+  // bm12-spec §Design/§Implementation §6 — a cancelled-then-re-triggered run
+  // re-snapshots fresh under a NEW attempt sequence, so the re-triggered
+  // engine's stage signals never collide with any `bill_run_account_stage`
+  // history left by the killed execution (architecture Inv. #5 — the
+  // idempotency latch is keyed by attempt). `0` when the run has never been
+  // snapshotted (the first-ever SCHEDULED trigger), so `triggerRun` computing
+  // `maxAttempt + 1` yields the existing `1` for that path unchanged.
+  async maxAttemptForRun(tx: Database, billRunId: string): Promise<number> {
+    const [row] = await tx
+      .select({
+        maxAttempt: sql<number>`coalesce(max(${billRunAccount.attemptCount}), 0)`,
+      })
+      .from(billRunAccount)
+      .where(eq(billRunAccount.refBillRunId, billRunId));
+    return row?.maxAttempt ?? 0;
+  },
+
+  // bm12-spec §Design/§Implementation §6 — clears the prior (killed) snapshot
+  // before `triggerRun` re-scopes and re-inserts fresh rows for a cancelled
+  // run. A no-op for the normal SCHEDULED-trigger path (no rows exist yet).
+  async deleteForRun(tx: Database, billRunId: string): Promise<void> {
+    await tx
+      .delete(billRunAccount)
+      .where(eq(billRunAccount.refBillRunId, billRunId));
   },
 
   // bm07-spec §Design/§2 — the Uncharged tab read: the run's deliberately-not-

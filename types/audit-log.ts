@@ -90,6 +90,13 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // ledger): Additive, like BILL_RUN_MATERIALIZED — new INV documents now
   // exist, not merely a status flip.
   BILL_RUN_POSTED: "Additive",
+  // bm12 — Cancel run: PROCESSING → CANCELLED, a state transition (the
+  // Layer-3 escape hatch for a wedged execution).
+  BILL_RUN_CANCELLED: "Change",
+  // bm12 — Check status: the engine reconcile, which may bump the heartbeat
+  // only or also push the run to a corrected status — a state-change surface
+  // either way.
+  BILL_RUN_RECONCILED: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the
