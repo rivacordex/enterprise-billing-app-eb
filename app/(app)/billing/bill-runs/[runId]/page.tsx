@@ -10,8 +10,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
+import { StallBanner } from "@/components/billing/stall-banner";
 import { StubDataBanner } from "@/components/billing/stub-data-banner";
-import { stubDataMode } from "@/lib/config";
+import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
+import { billRunStallThresholdMinutes, stubDataMode } from "@/lib/config";
 import { formatCalendarDate } from "@/lib/formatters";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
@@ -19,6 +21,7 @@ import { listAccountBills } from "@/services/billing/read/list-account-bills";
 import { listUncharged } from "@/services/billing/read/list-uncharged";
 import { listErrors } from "@/services/billing/read/list-errors";
 import { listRunAudit } from "@/services/billing/read/list-run-audit";
+import { isStalled } from "@/services/billing/stall";
 import {
   getAppLocale,
   getAppTimezone,
@@ -124,6 +127,16 @@ export default async function BillRunDetailPage({
     detail.status === "PROCESSED" || detail.status === "PROCESSING_FAILED";
   const canRerun = canOperate && rerunnable;
 
+  // bm12 — a CANCELLED run re-materializes its period by re-triggering the SAME
+  // run row (trigger-run.ts's CANCELLED path; the `(cycle, period_start)` unique
+  // key prevents a second row). Since CANCELLED is terminal, the run never
+  // resurfaces on the Current tab's operable "Run" affordance — so the re-trigger
+  // control returns here on the detail header instead (spec §Visual — "the
+  // operable Run affordance returns"). Not the RerunDialog: `rerunRun` rejects a
+  // CANCELLED run (`NOT_RERUNNABLE`); a re-trigger is `triggerRun`. Show/hide
+  // only — the trigger action re-checks `billrun_operate:EDIT` server-side.
+  const canRetrigger = canOperate && detail.status === "CANCELLED";
+
   // bm10 — the four-eyes money gate lives on its own route
   // (`/billing/bill-runs/[runId]/approve`, `billrun_approve:EDIT`). Shown
   // only while the run is awaiting approval; show/hide only — the approve
@@ -140,6 +153,13 @@ export default async function BillRunDetailPage({
   // approve checklist. Shown for `APPROVED` (not yet started) and `POSTING`
   // (resumable — "Resume posting" reopens the same progress view).
   const postable = detail.status === "APPROVED" || detail.status === "POSTING";
+
+  // bm12 — the `StallBanner` (Check status / Cancel run) is a derived-state,
+  // operator-only affordance: shown only when the run is genuinely stalled
+  // AND the viewer holds `billrun_operate` (same show/hide convention as
+  // Rerun/Approve/Post above) — a `billrun_view`-only principal sees the run
+  // status normally but no action to check or cancel it.
+  const stalled = isStalled(detail, new Date(), billRunStallThresholdMinutes);
 
   return (
     <main className="space-y-6 p-6">
@@ -176,6 +196,14 @@ export default async function BillRunDetailPage({
                 variant="neutral"
               />
             )}
+            {canRetrigger && (
+              <TriggerRunDialog
+                billRunId={detail.billRunId}
+                cycleName={detail.cycleName}
+                periodStart={detail.periodStart}
+                periodEnd={detail.periodEnd}
+              />
+            )}
           </div>
         </div>
         <p className="text-body text-muted-foreground">
@@ -185,6 +213,15 @@ export default async function BillRunDetailPage({
       </header>
 
       {stubDataMode && <StubDataBanner />}
+
+      {canOperate && stalled && (
+        <StallBanner
+          billRunId={detail.billRunId}
+          lastProgressAt={detail.lastProgressAt}
+          locale={locale}
+          timezone={timezone}
+        />
+      )}
 
       <RunDetailTabs
         runId={detail.billRunId}

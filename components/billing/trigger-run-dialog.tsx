@@ -145,6 +145,8 @@ function describeError(code: string): string {
       return "This run can no longer be triggered — it may already be processing.";
     case "NO_ELIGIBLE_ACCOUNTS":
       return "No eligible accounts were found for this period.";
+    case "PERIOD_CLOSED":
+      return "The accounting period for this run has closed, so it can no longer be re-run.";
     case "ENGINE_UNREACHABLE":
       return "The processing engine could not be reached. The run was not started — you can retry.";
     case "FORBIDDEN":

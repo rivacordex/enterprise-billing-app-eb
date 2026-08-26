@@ -41,6 +41,25 @@ export const customerBillRepository = {
     await tx.insert(customerBill).values(row);
   },
 
+  // bm12-spec §Design/§Implementation §6 — a cancelled-then-re-triggered run
+  // re-snapshots `bill_run_account` fresh, so the killed attempt's UNPOSTED
+  // trial bills must be cleared in the same transaction; otherwise a bill for an
+  // account re-scoped EXCLUDED (or failed) on the new attempt — which never
+  // re-aggregates, so `deleteTrial` never runs for it — lingers on the money-
+  // facing Customers & Bills tab. Keyed by the finalization latch
+  // (`ref_inv_document_id IS NULL`): a posted bill is never touched (architecture
+  // Inv. #4) — a cancellable run (PROCESSING only) can never have one anyway.
+  async deleteUnpostedForRun(tx: Database, billRunId: string): Promise<void> {
+    await tx
+      .delete(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          isNull(customerBill.refInvDocumentId),
+        ),
+      );
+  },
+
   // bm06-spec §Design/§Implementation §3 — Taxation resolves the run's single
   // UNPOSTED bill for an account (`ref_inv_document_id IS NULL`, the
   // finalization latch, architecture Inv. #4). A posted bill is never

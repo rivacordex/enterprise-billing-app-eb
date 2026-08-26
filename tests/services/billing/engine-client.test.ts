@@ -66,6 +66,27 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  // bm12-spec §Design/§Implementation §2.
+  it("getExecutionStatus returns a synthetic RUNNING status with no HTTP call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const status = await stubEngineClient.getExecutionStatus("stub-exec-1");
+
+    expect(status).toEqual({ state: "RUNNING" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("killExecution is a no-op with no HTTP call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(
+      stubEngineClient.killExecution("stub-exec-1"),
+    ).resolves.toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("getEngineClient (bm03-spec §5)", () => {
@@ -153,5 +174,112 @@ describe("realEngineClient (bm03-spec §5)", () => {
     await expect(realEngineClient.startExecution(PAYLOAD)).rejects.toThrow(
       EngineError,
     );
+  });
+
+  // bm12-spec §Design/§Implementation §2.
+  describe("getExecutionStatus", () => {
+    it("GETs the execution and returns the parsed state", async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ state: "SUCCESS" }),
+      });
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const status = await realEngineClient.getExecutionStatus("exec-123");
+
+      expect(status).toEqual({ state: "SUCCESS" });
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("https://engine.example.com/executions/exec-123");
+      expect(init.method).toBe("GET");
+    });
+
+    it("throws EngineError on a non-2xx response", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: false, status: 404 }),
+      );
+
+      await expect(
+        realEngineClient.getExecutionStatus("exec-123"),
+      ).rejects.toThrow(EngineError);
+    });
+
+    it("throws EngineError on an unrecognized state value", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ state: "BOGUS" }),
+        }),
+      );
+
+      await expect(
+        realEngineClient.getExecutionStatus("exec-123"),
+      ).rejects.toThrow(EngineError);
+    });
+
+    it("throws EngineError when fetch itself rejects", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new Error("network down")),
+      );
+
+      await expect(
+        realEngineClient.getExecutionStatus("exec-123"),
+      ).rejects.toThrow(EngineError);
+    });
+
+    it("throws EngineError when the 2xx body is not valid JSON", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.reject(new SyntaxError("Unexpected token")),
+        }),
+      );
+
+      await expect(
+        realEngineClient.getExecutionStatus("exec-123"),
+      ).rejects.toThrow(EngineError);
+    });
+  });
+
+  describe("killExecution", () => {
+    it("DELETEs the execution's kill endpoint", async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+      vi.stubGlobal("fetch", fetchSpy);
+
+      await expect(
+        realEngineClient.killExecution("exec-123"),
+      ).resolves.toBeUndefined();
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("https://engine.example.com/executions/exec-123/kill");
+      expect(init.method).toBe("DELETE");
+    });
+
+    it("throws EngineError on a non-2xx response", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+      );
+
+      await expect(realEngineClient.killExecution("exec-123")).rejects.toThrow(
+        EngineError,
+      );
+    });
+
+    it("throws EngineError when fetch itself rejects", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new Error("network down")),
+      );
+
+      await expect(realEngineClient.killExecution("exec-123")).rejects.toThrow(
+        EngineError,
+      );
+    });
   });
 });

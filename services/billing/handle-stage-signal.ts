@@ -108,6 +108,33 @@ export async function handleStageSignal(
       throw conflict("Bill run is not PROCESSING.");
     }
 
+    // Read the account's current status AND attempt under the run row lock,
+    // BEFORE any stage-row write or app-side effect. The `bill_run_account_stage`
+    // idempotency latch is keyed by `attempt`, so it only catches a duplicate of
+    // the SAME attempt — a signal from a superseded execution (a killed run's
+    // late push after a cancel+re-trigger, or a pre-rerun attempt) carries an
+    // OLD `attempt` that would otherwise land on a fresh stage row and wrongly
+    // re-aggregate/re-tax and advance the current attempt's account. A signal
+    // whose attempt no longer matches the account is rejected here as an accepted
+    // no-op (200) before it can touch anything.
+    const currentAccount = await billRunAccountRepository.findStatus(
+      tx,
+      input.runId,
+      input.banId,
+    );
+    if (!currentAccount) {
+      throw notFound(
+        `Billing account ${input.banId} is not scoped into run ${input.runId}.`,
+      );
+    }
+    if (currentAccount.attemptCount !== input.attempt) {
+      return {
+        replayed: true,
+        accountStatus: currentAccount.status,
+        runStatus: run.status as RunStatus,
+      };
+    }
+
     const periodPartition = firstOfMonth(run.periodStart);
 
     // The Validation stage's outcome is computed by the app (§31); the
@@ -149,29 +176,15 @@ export async function handleStageSignal(
       });
     } catch (err) {
       if (isUniqueViolation(err, IDEMPOTENCY_CONSTRAINT)) {
-        const current = await billRunAccountRepository.findStatus(
-          tx,
-          input.runId,
-          input.banId,
-        );
+        // A duplicate of the current attempt — the account was read above under
+        // the same lock; nothing has moved it since, so reuse that snapshot.
         return {
           replayed: true,
-          accountStatus: current?.status ?? "PENDING",
+          accountStatus: currentAccount.status,
           runStatus: run.status as RunStatus,
         };
       }
       throw err;
-    }
-
-    const currentAccount = await billRunAccountRepository.findStatus(
-      tx,
-      input.runId,
-      input.banId,
-    );
-    if (!currentAccount) {
-      throw notFound(
-        `Billing account ${input.banId} is not scoped into run ${input.runId}.`,
-      );
     }
 
     // bm05-spec §Design/§Implementation §4 — Aggregation's write is a side

@@ -1,7 +1,10 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
+import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { getBusinessToday } from "@/services/billing/business-today";
 import { getEngineClient } from "@/services/billing/engine-client";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
@@ -11,6 +14,18 @@ import { scopeAccounts } from "@/services/billing/scope-accounts";
 // engine.startExecution (inside the txn, resolved decision #3) → store the
 // execution ref → BILL_RUN_TRIGGERED audit. A thrown engine failure rolls the
 // whole transaction back — the run stays SCHEDULED, no orphan snapshot.
+//
+// bm12-spec §Design/§Implementation §6. The guard's allowed-from set is
+// extended to `CANCELLED` — the Layer-3 escape's re-trigger path (a
+// cancelled run "re-materializes the period cleanly" by re-triggering the
+// SAME run row, since the `(cycle, period_start)` unique key prevents a
+// second one). Re-triggering from CANCELLED re-snapshots fresh under a NEW
+// attempt sequence (`maxAttemptForRun` + 1, never the SCHEDULED path's
+// hardcoded `1`) so the re-triggered engine's stage signals can never collide
+// with `bill_run_account_stage` history left by the killed execution
+// (architecture Inv. #5 — the idempotency latch is keyed by attempt). The
+// SCHEDULED (first-ever trigger) path is untouched: no prior snapshot exists,
+// so the extra queries are skipped and `attempt` stays the literal `1`.
 
 export type TriggerRunResult =
   | {
@@ -24,6 +39,7 @@ export type TriggerRunResult =
     }
   | { ok: false; code: "NOT_OPERABLE" }
   | { ok: false; code: "NO_ELIGIBLE_ACCOUNTS" }
+  | { ok: false; code: "PERIOD_CLOSED" }
   | { ok: false; code: "ENGINE_UNREACHABLE" };
 
 // Internal-only signal thrown from inside `db.transaction` so the engine
@@ -40,8 +56,42 @@ export async function triggerRun(
   try {
     return await db.transaction(async (tx) => {
       const run = await billRunRepository.findByIdForUpdate(tx, billRunId);
-      if (!run || run.status !== "SCHEDULED" || run.scheduledRunDate > today) {
+      if (!run) {
         return { ok: false, code: "NOT_OPERABLE" } as const;
+      }
+      const startingFromCancelled = run.status === "CANCELLED";
+      const eligible =
+        (run.status === "SCHEDULED" && run.scheduledRunDate <= today) ||
+        startingFromCancelled;
+      if (!eligible) {
+        return { ok: false, code: "NOT_OPERABLE" } as const;
+      }
+
+      // bm12 re-trigger guard: a run's accounting period may have closed while
+      // it sat CANCELLED — cancellation consumes no invoice numbers, so a
+      // CANCELLED (terminal) run no longer blocks period close
+      // (`findActiveForPeriod` excludes it). Re-triggering into a closed period
+      // would run the whole pipeline only to have every INV rejected
+      // PERIOD_CLOSED at post time, with no reopen path (architecture Inv. #7).
+      // Refuse up front, before any scoping/snapshot work. The normal SCHEDULED
+      // path materializes into the current (open) period, so it is not guarded.
+      if (startingFromCancelled) {
+        const currency = await billingAccountRepository.findCurrencyByCycleId(
+          tx,
+          run.refBillCycleId,
+        );
+        if (currency) {
+          const period = run.scheduledRunDate.slice(0, 7);
+          const periodRow =
+            await accountingPeriodRepository.findByPeriodAndCurrency(
+              tx,
+              period,
+              currency,
+            );
+          if (periodRow?.state === "closed") {
+            return { ok: false, code: "PERIOD_CLOSED" } as const;
+          }
+        }
       }
 
       const { pending, excluded } = await scopeAccounts(tx, {
@@ -55,10 +105,30 @@ export async function triggerRun(
         return { ok: false, code: "NO_ELIGIBLE_ACCOUNTS" } as const;
       }
 
-      await billRunAccountRepository.insertSnapshot(tx, [
-        ...pending,
-        ...excluded,
-      ]);
+      // A cancelled-then-re-triggered run re-snapshots fresh under a new
+      // attempt sequence — clear the prior (killed) snapshot and bump past
+      // its highest recorded attempt so this execution's stage signals never
+      // collide with the killed execution's `bill_run_account_stage` history.
+      // The normal SCHEDULED path never has a prior snapshot, so `attempt`
+      // stays `1` and every row is inserted exactly as before (unchanged).
+      let attempt = 1;
+      let snapshotRows = [...pending, ...excluded];
+      if (startingFromCancelled) {
+        attempt =
+          (await billRunAccountRepository.maxAttemptForRun(tx, run.billRunId)) +
+          1;
+        await billRunAccountRepository.deleteForRun(tx, run.billRunId);
+        // Clear the killed attempt's UNPOSTED trial bills too — the snapshot is
+        // rebuilt below, but a bill for an account that re-scopes EXCLUDED/failed
+        // on the new attempt would otherwise be orphaned on the Bills tab.
+        await customerBillRepository.deleteUnpostedForRun(tx, run.billRunId);
+        snapshotRows = snapshotRows.map((row) => ({
+          ...row,
+          attemptCount: attempt,
+        }));
+      }
+
+      await billRunAccountRepository.insertSnapshot(tx, snapshotRows);
 
       const banIds = pending.map((p) => p.refBillingAccountId);
       let executionRef;
@@ -68,7 +138,7 @@ export async function triggerRun(
           period_start: run.periodStart,
           period_end: run.periodEnd,
           ban_ids: banIds,
-          attempt: 1,
+          attempt,
           gl_event_at: run.scheduledRunDate,
         });
       } catch (err) {
