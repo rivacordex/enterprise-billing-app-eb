@@ -24,6 +24,21 @@ CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 --> statement-breakpoint
 
+-- Preflight: fail loudly rather than emit broken DDL if pg_partman is absent
+-- or pre-v5 (_risk-database-extension-version-drift.md §4.1; retrofitted here
+-- from rm01-spec §Implementation §6, which introduced this guard). The
+-- create_parent() calls below use pg_partman v5's named-parameter signature.
+DO $$
+DECLARE v text;
+BEGIN
+  SELECT extversion INTO v FROM pg_extension WHERE extname = 'pg_partman';
+  IF v IS NULL THEN RAISE EXCEPTION 'pg_partman is not installed on this server'; END IF;
+  IF split_part(v, '.', 1)::int < 5 THEN
+    RAISE EXCEPTION 'pg_partman % found; this script uses the v5 named-parameter create_parent() signature.', v;
+  END IF;
+END $$;
+--> statement-breakpoint
+
 -- Register the parent: monthly range partitions on period_partition.
 -- p_default_table := false: the migration (0027_bill_run_account.sql)
 -- already created and attached billing.bill_run_account_default as the

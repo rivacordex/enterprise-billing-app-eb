@@ -10,3 +10,4 @@ export * from "@/db/schema/customer";
 export * from "@/db/schema/billing";
 export * from "@/db/schema/ordering";
 export * from "@/db/schema/inventory";
+export * from "@/db/schema/rating";
