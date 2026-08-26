@@ -8,9 +8,18 @@ Update this file after every meaningful implementation change.
 
 ## Current Goal
 
-- rm02: seed `rating.event_catalog` so severity, X.733 event type, probable cause and clearing behaviour resolve from data at emit time (never hardcoded at a call site), for all sixteen `event_code`s the module can emit.
+- rm03: make the rating/billing separation a **database privilege** — create `rating_runtime`, grant the column-scoped surface (Inv #1/#2/#17a/#18) so a bug, a new dev or a hand-typed `psql` cannot cross the boundary. **Complete** (last unit of Phase A).
 
 ## Completed
+
+- rm03 — `rating_runtime` role, grants and the billing boundary (`specs/rm03-rating-runtime-role-grants.md`). Delivered:
+  - `db/bootstrap/rating-db-roles.sql` — new bootstrap script (NOT a Drizzle migration; needs `CREATEROLE`, D11). All eleven spec steps: role with `CONNECTION LIMIT 20` (idempotent, `ELSE ALTER` converges the limit), the D6 `REVOKE CONNECT … FROM PUBLIC` + explicit re-grant, schema `USAGE`, column-scoped `rating` table grants on the **parents only** (D3), the six-column `app_runtime` boundary (D1), the D8 sequence/function `EXECUTE`/`USAGE` grants, enumerated cross-schema `SELECT` (D9), the redundant-by-design `billing` write revoke (Inv #1), the D7 `REVOKE EXECUTE … FROM PUBLIC` on the four `SECURITY DEFINER` pgledger functions, `SELECT`-only default privileges (D5), and `app_migrate` schema ownership. Statement-breakpoint markers so the runner and `psql` can both apply it.
+  - `db/bootstrap/rating-db-roles.ts` — the `npm run db:bootstrap-rating-roles` runner (copy of `bootstrap-db-roles.ts`), reading `BOOTSTRAP_DATABASE_URL`. Registered in `package.json`.
+  - `infra/docs/db-role-verification.md` — extended the provisioning order with step 3 (`db:bootstrap-rating-roles`, after `db:bootstrap-roles`), a "Platform changes" note recording the two revokes (D6 `PUBLIC` `CONNECT`, D7 `PUBLIC` `EXECUTE` — escalations E1/E2) so an operator learns what changed database-wide, and the manual `ALTER ROLE rating_runtime PASSWORD` follow-up (never committed).
+  - `tests/rating/grants.integration.test.ts` — live-DB assertion suite, a **connection per role**, asserting both the ACL (`has_*_privilege`) and the real statement it governs. Covers the pg_attribute enumeration (exactly six `app_runtime`-updatable + only `status` for `rating_runtime`), both-direction column refusals, `is_live` (D4), partition-direct refusal + zero child ACLs (Inv #17a), the D8 insert prerequisites, the billing boundary incl. the D7 `permission denied for function` + the standing "no `PUBLIC`-executable `SECURITY DEFINER`" assertion, the CONNECT boundary (D6, no-grant probe refused / three roles admitted / `rolconnlimit = 20`), the D5 default-privilege posture incl. the column-scoped-`ALTER DEFAULT PRIVILEGES` rejection, and idempotency (re-run → identical enumeration, limit still 20).
+  - Verified: `tsc --noEmit`, ESLint, Prettier clean; the suite runs **31/31 green** against the disposable test Postgres (`docker-compose.test.yml`, port 5434), never the dev stack. Caught and fixed a self-inflicted bug during verification — a literal `--> statement-breakpoint` in the SQL header comment split the header mid-sentence (precedent avoids the arrow form in prose); reworded to match.
+
+
 
 - rm02 — `event_catalog` seed (`specs/rm02-event-catalog-seed.md`). Delivered:
   - `db/seeds/rating-event-catalog.data.ts` — the sixteen catalog rows, the `RATING_EVENT_CODES` typed constant + `RatingEventCode` type, and the reusable `seedEventCatalog(db)` upsert. Side-effect-free so the verification suite imports it without connecting (the seed-admin.ts / seed-admin.config.ts split precedent). Idempotent as `ON CONFLICT (event_code) DO UPDATE` — not `DO NOTHING` — so a re-run carries a severity re-tune (including back to NULL) to an existing environment; never `DELETE`s or deactivates a code absent from the list.
@@ -32,12 +41,13 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None — rm02 implementation complete and its integration suite verified green (20/20).
+- None — rm03 implementation complete and its integration suite verified green (31/31). Phase A (rm01–rm03) done.
 
 ## Next Up
 
 - Run `tests/rating/rm01-schema.integration.test.ts` (and re-run `tests/db/billing-partman-setup.integration.test.ts` / `tests/db/audit-*` integration suites, since their `.sql` files were retrofitted) against a disposable test Postgres — not the dev stack.
-- rm03 — `rating_runtime` role grants (the grant table in code-standards §9), and the O4 carry-forward into rm12's clearing logic (`CLEARED` is now the sixteenth seeded code).
+- rm03a — create the `kestra` database and `kestra_engine` role (same repo/boundary), which must be created **after** rm03's `REVOKE CONNECT … FROM PUBLIC`, plus the mirror-image revoke on the `kestra` database (Inv #18, both directions). See rm03 spec §Implementation Step 9a.
+- Phase B — begins the rating runtime/engine units (rm04+); carry E1 forward as a billing-module escalation (own the D7 `SECURITY DEFINER` `FROM PUBLIC` revoke where the pgledger functions live), and the O4 carry-forward into rm12's clearing logic (`CLEARED` is the sixteenth seeded code).
 
 ## Open Questions
 
@@ -45,6 +55,8 @@ Update this file after every meaningful implementation change.
 - rm02-spec §Implementation §2 says "define [`RATING_EVENT_CODES`] once, alongside the seed." Shipped it in a sibling `rating-event-catalog.data.ts` (imported by both the runner and the test) rather than in the runner script itself, because the runner ends in `void main().catch(...)` — importing it would connect and seed as a side effect. The data module keeps the constant, the rows and the upsert side-effect-free. Same directory, so "alongside" holds.
 - rm01-spec §Implementation §8 names the test file `tests/rating/rm01-schema.test.ts` (no `.integration.` infix). Every other live-DB suite in this repo uses `.integration.test.ts` so it lands in the separate `vitest.integration.config.ts` project (its `include` glob requires that suffix) rather than the DB-free default project. Shipped it as `rm01-schema.integration.test.ts` to match that mechanism; flagging in case the bare name was intentional and the convention should be revisited instead.
 - `rating.event_catalog.default_severity` is documented as "CHECK" in rm01-spec §Implementation §5's column notes, but no CHECK SQL is given (unlike every other CHECK in the spec, which is spelled out). Resolved: added `event_catalog_default_severity_check` in `0034_rating.sql` allowing `NULL` or the same six severity values `process_log_severity_check` accepts, honouring the spec's "CHECK" note while preserving the nullable column ("NULL means logged but never alarms").
+- rm03-spec §Implementation §4 names the test file `tests/rating/grants.test.ts` (no `.integration.` infix). Shipped it as `grants.integration.test.ts` for the same reason rm01/rm02 did: the DB-free default vitest project would grab a bare `.test.ts` and it would only ever `describe.skipIf` (no `DATABASE_URL`), while `vitest.integration.config.ts`'s include glob requires the `.integration.test.ts` suffix to run it against a live DB. Same standing convention question flagged for rm01.
+- rm03 escalation E1 (open): `PUBLIC` held `EXECUTE` on the four `billing` `SECURITY DEFINER` pgledger functions — any login role could post ledger transfers. rm03 closes it (Step 9) but the defect predates rating and lives in the billing module; it should be raised there so the revoke is owned where the functions live and the next `SECURITY DEFINER` function ships with a matching `FROM PUBLIC`. rm03's standing assertion (grants suite item 28) fails the build if a fifth is added without one.
 
 ## Architecture Decisions
 
