@@ -92,13 +92,44 @@ describe.skipIf(!databaseUrl)(
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 5 });
+      // max: 1 — the time-zone tests (10, 12) issue `SET TIME ZONE` and then
+      // rely on the following INSERT running under that same session. With a
+      // multi-connection pool those could land on different physical
+      // connections, so the tz would neither take effect for the insert nor be
+      // reset afterwards, leaking session state across tests. A single
+      // connection makes session state deterministic; the suite runs its
+      // queries sequentially, so it costs no real concurrency.
+      sql = postgres(databaseUrl as string, { max: 1 });
       await dropAll(sql);
       const db = drizzle(sql, { schema });
       await migrate(db, {
         migrationsFolder: "./db/migrations",
         migrationsSchema: "drizzle",
       });
+
+      // Provision pg_partman BEFORE any row-inserting test runs, so live rows
+      // route to their month partitions instead of the bootstrap *_default
+      // partitions (which test 23 requires to stay empty). Gated on
+      // BOOTSTRAP_DATABASE_URL: without it the partman tests are skipped and
+      // inserts harmlessly fall through to the default partition.
+      if (bootstrapUrl) {
+        assertTestDatabaseUrl(bootstrapUrl);
+        const bootstrapSql = postgres(bootstrapUrl, { max: 1 });
+        try {
+          for (const statement of readStatements(
+            "./db/bootstrap/audit-partman-setup.sql",
+          )) {
+            await bootstrapSql.unsafe(statement);
+          }
+          for (const statement of readStatements(
+            "./db/bootstrap/rating-partman-setup.sql",
+          )) {
+            await bootstrapSql.unsafe(statement);
+          }
+        } finally {
+          await bootstrapSql.end();
+        }
+      }
     }, 60_000);
 
     afterAll(async () => {
@@ -418,24 +449,8 @@ describe.skipIf(!databaseUrl)(
     describe.skipIf(!bootstrapUrl)(
       "partitioning and maintenance (requires BOOTSTRAP_DATABASE_URL)",
       () => {
-        beforeAll(async () => {
-          assertTestDatabaseUrl(bootstrapUrl as string);
-          const bootstrapSql = postgres(bootstrapUrl as string, { max: 1 });
-          try {
-            for (const statement of readStatements(
-              "./db/bootstrap/audit-partman-setup.sql",
-            )) {
-              await bootstrapSql.unsafe(statement);
-            }
-            for (const statement of readStatements(
-              "./db/bootstrap/rating-partman-setup.sql",
-            )) {
-              await bootstrapSql.unsafe(statement);
-            }
-          } finally {
-            await bootstrapSql.end();
-          }
-        }, 60_000);
+        // The pg_partman bootstrap runs in the outer beforeAll (before any
+        // inserting test) so live rows never touch the *_default partitions.
 
         it("20. partman.part_config holds both parents with the specified premake/retention", async () => {
           const rows = await sql<
@@ -502,18 +517,24 @@ describe.skipIf(!databaseUrl)(
           expect(logDefault?.n).toBe(0);
         });
 
-        it("24. the preflight assertion raises when pg_partman is below v5 (simulated)", async () => {
-          await expect(
-            sql.unsafe(`
-              DO $$
-              DECLARE v text := '4.7.1';
-              BEGIN
-                IF split_part(v, '.', 1)::int < 5 THEN
-                  RAISE EXCEPTION 'pg_partman % found; this script uses the v5 named-parameter create_parent() signature.', v;
-                END IF;
-              END $$;
-            `),
-          ).rejects.toThrow(/pg_partman/);
+        it("24. the shipped preflight guard raises when pg_partman is below v5", async () => {
+          // Exercise the guard that actually ships in rating-partman-setup.sql
+          // rather than a hand-copied duplicate that could silently drift.
+          const preflight = readStatements(
+            "./db/bootstrap/rating-partman-setup.sql",
+          ).find((s) => s.includes("split_part(v, '.', 1)::int < 5"));
+          expect(preflight).toBeDefined();
+
+          // Swap only the version source (live pg_extension → a simulated
+          // sub-v5 literal); the comparison logic under test stays exactly what
+          // ships. If the SELECT wording drifts the replace won't match and the
+          // block queries the real v5+ extension without raising, failing this
+          // assertion loudly.
+          const simulated = (preflight as string).replace(
+            /SELECT extversion INTO v FROM pg_extension WHERE extname = 'pg_partman';/,
+            "v := '4.7.1';",
+          );
+          await expect(sql.unsafe(simulated)).rejects.toThrow(/pg_partman/);
         });
       },
     );
