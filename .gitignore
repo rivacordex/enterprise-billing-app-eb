@@ -49,6 +49,10 @@ next-env.d.ts
 # personal local-dev compose override (machine-specific host paths)
 docker-compose.local.yml
 
+# disposable integration-test Postgres — local-only convenience stack
+# (docker-compose.test.yml + its .env.test are covered by the .env* rule above)
+docker-compose.test.yml
+
 
 # um30: ZAP context rendered with real FQDN + test credentials at CI time
 /infra/zap/zap-context.rendered.xml

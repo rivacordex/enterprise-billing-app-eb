@@ -1,10 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { collectClaim } from "@/services/billing/collect-claim";
-import * as schema from "@/db/schema";
 
 // bm05-spec §Design/§Implementation §3 — the v1 no-op: always DONE, no
 // error, no rating-schema write of any kind.
@@ -24,18 +23,22 @@ describe("collectClaim (bm05-spec §3)", () => {
 });
 
 // bm13-spec §Design/§Implementation §2 v1 adaptation — the "single rating
-// writer / claim correctness" guardrail (billmgmt-code-standards.md §9.3) is
-// INERT in v1: there is no `rating` table, so there is nothing to claim from
-// and no `rating.*` write can exist. This placeholder proves that emptiness
-// structurally rather than assuming it, so it starts failing the moment a
-// `rating` table, schema, or writer lands without this guardrail being
-// revisited (architecture Inv. #2, pending the rating engine).
-describe("no rating.* object exists or is written (bm13 v1 placeholder)", () => {
-  it("declares no `rating` table/schema anywhere in db/schema", () => {
-    const ratingExports = Object.keys(schema).filter((key) =>
-      /rating/i.test(key),
+// writer / claim correctness" guardrail (billmgmt-code-standards.md §9.3) was
+// INERT while there was no `rating` table: nothing to claim from, so no
+// `rating.*` write could exist. rm01 (context/rating-management) has since
+// shipped the `rating` schema for real, so the original "no rating export
+// anywhere in db/schema" assertion is now expected to be false — that guard
+// is retired. What still must hold on the *billing* side is unchanged:
+// collectClaim's v1 no-op touches nothing in `rating`, and there is still no
+// sanctioned writer — the bill run's claim path is a later billing unit
+// (ratemgmt-project-overview.md "The bill run's claim path").
+describe("no rating.* write exists on the billing side (bm13 v1 placeholder)", () => {
+  it("collect-claim.ts imports nothing from db/schema/rating", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "services/billing/collect-claim.ts"),
+      "utf8",
     );
-    expect(ratingExports).toEqual([]);
+    expect(source).not.toMatch(/db\/schema\/rating/);
   });
 
   it("has no sanctioned rating-schema writer file (db/repositories/billing/rating-claim.ts)", () => {
