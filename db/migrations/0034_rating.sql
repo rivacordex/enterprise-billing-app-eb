@@ -200,5 +200,6 @@ CREATE TABLE "rating"."event_catalog" (
 	"description" text NOT NULL,
 	"is_auto_clearing" boolean DEFAULT false NOT NULL,
 	"clear_event_code" text,
-	"is_active" boolean DEFAULT true NOT NULL
+	"is_active" boolean DEFAULT true NOT NULL,
+	CONSTRAINT "event_catalog_default_severity_check" CHECK (default_severity IS NULL OR default_severity IN ('CRITICAL','MAJOR','MINOR','WARNING','INDETERMINATE','CLEARED'))
 );
