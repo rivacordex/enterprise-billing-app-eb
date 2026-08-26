@@ -42,6 +42,7 @@ describe.skipIf(!databaseUrl || !bootstrapUrl)(
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "partman" CASCADE');
@@ -75,6 +76,7 @@ describe.skipIf(!databaseUrl || !bootstrapUrl)(
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "partman" CASCADE');

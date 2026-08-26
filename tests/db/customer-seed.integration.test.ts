@@ -42,6 +42,7 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await migrate(drizzle(sql), {
@@ -66,6 +67,7 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
+      await sql.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
       await sql.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
       await sql.end();
