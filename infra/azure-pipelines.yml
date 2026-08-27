@@ -196,7 +196,10 @@ stages:
   - stage: containerize_rating_engine
     displayName: Containerize (rating engine)
     dependsOn: test_scan
-    condition: eq(${{ parameters.buildRatingEngine }}, true)
+    # A custom condition replaces the implicit succeeded() gate on dependsOn,
+    # so and(succeeded(), ...) keeps test_scan a hard prerequisite — never
+    # build/push the worker image off a failed test_scan.
+    condition: and(succeeded(), eq(${{ parameters.buildRatingEngine }}, true))
     pool:
       vmImage: ubuntu-latest
     jobs:
@@ -205,24 +208,17 @@ stages:
         steps:
           - script: |
               set -euo pipefail
-              # Every non-comment, non-blank line in requirements.txt must
-              # carry a --hash=sha256:... pin (D3 — "everything is pinned by
-              # version + hash", the same reproducibility contract as the
-              # base image digest).
-              MISSING=0
-              while IFS= read -r line; do
-                case "$line" in
-                  ''|'#'*) continue ;;
-                esac
-                if ! echo "$line" | grep -q -- '--hash=sha256:'; then
-                  echo "Unhashed requirement: $line" >&2
-                  MISSING=1
-                fi
-              done < rating-engine/worker/requirements.txt
-              if [ "$MISSING" -eq 1 ]; then
-                echo "requirements.txt has unhashed entries — failing build." >&2
-                exit 1
-              fi
+              # requirements.txt is a uv-compiled lock (D3): each requirement is
+              # a `name==version \` line followed by one or more `--hash=sha256:`
+              # continuation lines. Assert every requirement block carries at
+              # least one hash. The Dockerfile's `uv pip install --require-hashes`
+              # is the authoritative gate; this fails fast before the build.
+              awk '
+                function flush() { if (pkg != "" && !seen) { print "Unhashed requirement: " pkg > "/dev/stderr"; bad=1 } }
+                /^[A-Za-z0-9._-]+[[:space:]]*==/ { flush(); pkg=$0; seen=0; next }
+                /--hash=sha256:/ { seen=1 }
+                END { flush(); if (bad) { print "requirements.txt has unhashed entries — failing build." > "/dev/stderr"; exit 1 } }
+              ' rating-engine/worker/requirements.txt
             displayName: Validate requirements.txt hashes
 
           - task: AzureCLI@2

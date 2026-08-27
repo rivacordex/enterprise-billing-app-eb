@@ -57,3 +57,7 @@ docker-compose.test.yml
 # um30: ZAP context rendered with real FQDN + test credentials at CI time
 /infra/zap/zap-context.rendered.xml
 
+
+# Python bytecode caches (rating-engine worker runtime)
+rating-engine/worker/**/__pycache__/
+*.pyc
