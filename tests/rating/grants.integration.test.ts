@@ -620,6 +620,39 @@ describe.skipIf(!databaseUrl)(
         expect(row?.rolconnlimit).toBe(20);
       });
 
+      it("37. re-running against an ELEVATED rating_runtime strips SUPERUSER/CREATEROLE/CREATEDB/REPLICATION/BYPASSRLS, keeping LOGIN + limit 20", async () => {
+        // Simulate a role that drifted (or was hand-created) with elevated
+        // attributes. A SUPERUSER rating_runtime would bypass every ACL this
+        // unit builds (D6: superusers bypass the ACL entirely), so the ELSE
+        // branch must CONVERGE the attribute set, not just the connection limit.
+        await sql.unsafe(
+          "ALTER ROLE rating_runtime WITH SUPERUSER CREATEROLE CREATEDB REPLICATION BYPASSRLS",
+        );
+        await runSqlFile(sql, RATING_ROLES_SQL);
+        const [row] = await sql<
+          {
+            rolsuper: boolean;
+            rolcreaterole: boolean;
+            rolcreatedb: boolean;
+            rolreplication: boolean;
+            rolbypassrls: boolean;
+            rolcanlogin: boolean;
+            rolconnlimit: number;
+          }[]
+        >`
+          SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication,
+                 rolbypassrls, rolcanlogin, rolconnlimit
+          FROM pg_roles WHERE rolname = 'rating_runtime'
+        `;
+        expect(row?.rolsuper).toBe(false);
+        expect(row?.rolcreaterole).toBe(false);
+        expect(row?.rolcreatedb).toBe(false);
+        expect(row?.rolreplication).toBe(false);
+        expect(row?.rolbypassrls).toBe(false);
+        expect(row?.rolcanlogin).toBe(true);
+        expect(row?.rolconnlimit).toBe(20);
+      });
+
       it("39. no core.permissions row, no page, no route for this module", async () => {
         const rows = await sql<{ permission_name: string }[]>`
           SELECT permission_name FROM core.permissions

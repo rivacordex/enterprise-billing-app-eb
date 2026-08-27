@@ -25,13 +25,25 @@
 -- they are SQL line comments, so running the whole file through `psql` works too.
 
 -- Step 1 — the role (idempotent). The ELSE branch matters: re-running must
--- converge the connection limit, not skip it (rm03-spec D10).
+-- CONVERGE the role, not skip it (rm03-spec D10). It converges both the
+-- connection limit AND the attribute set: LOGIN plus an explicit
+-- NOSUPERUSER/NOCREATEROLE/NOCREATEDB/NOREPLICATION/NOBYPASSRLS. These are the
+-- CREATE-time defaults (redundant on the IF branch, kept as a reviewer-visible
+-- declaration of intent, like Step 8's revoke) but LOAD-BEARING on the ELSE
+-- branch: a pre-existing rating_runtime that drifted to SUPERUSER would bypass
+-- every ACL this unit builds (D6: superusers and the owner bypass the ACL
+-- entirely), forging straight through Inv #1/#2. Re-running strips it back to
+-- least privilege.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rating_runtime') THEN
-    CREATE ROLE rating_runtime WITH LOGIN CONNECTION LIMIT 20;
+    CREATE ROLE rating_runtime WITH LOGIN
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+      CONNECTION LIMIT 20;
   ELSE
-    ALTER ROLE rating_runtime WITH LOGIN CONNECTION LIMIT 20;
+    ALTER ROLE rating_runtime WITH LOGIN
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
+      CONNECTION LIMIT 20;
   END IF;
 END
 $$;
