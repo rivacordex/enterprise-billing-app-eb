@@ -230,7 +230,13 @@ stages:
                 set -euo pipefail
                 az bicep build --file infra/bicep/modules/rating-engine-container-app.bicep
                 az bicep build --file infra/bicep/modules/rating-engine-storage.bicep
+                az bicep build --file infra/bicep/modules/easy-auth.bicep
                 az bicep build --file infra/bicep/main.bicep
+                # entra-signin-diagnostics.bicep is tenant-scoped (targetScope
+                # = 'tenant') and deliberately NOT referenced by main.bicep —
+                # see the file header and infra/docs/engine-access.md. Linted
+                # here on its own so it stays build-hygiene-clean too.
+                az bicep build --file infra/bicep/modules/entra-signin-diagnostics.bicep
             displayName: Lint rating-engine Bicep (az bicep build)
 
           - script: |
