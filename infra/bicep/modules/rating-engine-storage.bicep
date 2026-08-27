@@ -184,18 +184,14 @@ resource ratingEngineFileDataSmbContributor 'Microsoft.Authorization/roleAssignm
   }
 }
 
-// Consumed ONLY by rating-engine-container-app.bicep to provision the ACA
-// Environment's Azure Files storage definition (no MI mount option for
-// Files on Container Apps — see the account's allowBlobPublicAccess comment
-// above). Never surfaced to the engine itself or to application code. NOT
-// marked @secure(): main.bicep dereferences this module conditionally
-// (`ratingEngineStorage!.outputs...`, gated by deployRatingEngine), and
-// Bicep's secure-output rule (BCP426) only allows a DIRECT module
-// reference — the same restriction the rest of this codebase avoids simply
-// by not using @secure() outputs (e.g. main.bicep's Log Analytics key is
-// read inline via listKeys(), never passed across a module boundary).
-#disable-next-line outputs-should-not-contain-secrets
-output storageAccountKey string = storageAccount.listKeys().keys[0].value
+// The account key is NEVER exported across a module boundary. The ACA
+// Environment's Azure Files storage definition needs it (no MI mount option
+// for Files on Container Apps — see the account's allowBlobPublicAccess
+// comment above), but rating-engine-container-app.bicep resolves it there via
+// an `existing` reference + listKeys() — the same inline pattern the rest of
+// this codebase uses (e.g. main.bicep's Log Analytics key). Exposing the id
+// instead lets that consumer scope its `existing` reference precisely.
+output storageAccountId string = storageAccount.id
 output storageAccountName string = storageAccount.name
 output fileEndpoint string = storageAccount.properties.primaryEndpoints.file
 output blobEndpoint string = storageAccount.properties.primaryEndpoints.blob

@@ -134,7 +134,9 @@ module acr 'modules/acr.bicep' = {
     acrName: take(replace('${namePrefix}acr${uniqueSuffix}', '-', ''), 50)
     appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
     migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
-    ratingEngineManagedIdentityPrincipalId: ratingEngineManagedIdentity.properties.principalId
+    // Empty when the engine is not deployed — the module skips the AcrPull
+    // assignment on '' (least privilege: no unused grant on the shared ACR).
+    ratingEngineManagedIdentityPrincipalId: deployRatingEngine ? ratingEngineManagedIdentity.properties.principalId : ''
   }
 }
 
@@ -146,7 +148,9 @@ module keyVault 'modules/key-vault.bicep' = {
     appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
     migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
     pipelineServicePrincipalId: pipelineServicePrincipalId
-    ratingEngineManagedIdentityPrincipalId: ratingEngineManagedIdentity.properties.principalId
+    // Empty when the engine is not deployed — the module skips the Secrets
+    // User assignment on '' (least privilege: no unused grant on the shared KV).
+    ratingEngineManagedIdentityPrincipalId: deployRatingEngine ? ratingEngineManagedIdentity.properties.principalId : ''
   }
 }
 
@@ -228,7 +232,6 @@ module ratingEngineContainerApp 'modules/rating-engine-container-app.bicep' = if
     storageAccountName: ratingEngineStorage!.outputs.storageAccountName
     landingShareName: ratingEngineStorage!.outputs.landingShareName
     kestraInternalContainerName: ratingEngineStorage!.outputs.kestraInternalContainerName
-    storageAccountKey: ratingEngineStorage!.outputs.storageAccountKey
   }
 }
 

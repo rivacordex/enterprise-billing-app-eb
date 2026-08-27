@@ -51,7 +51,7 @@ services:
              node -e \"
                const postgres = require('postgres');
                const sql = postgres(process.env.BOOTSTRAP_DATABASE_URL, { max: 1 });
-               sql\`ALTER ROLE kestra_engine WITH PASSWORD '${KESTRA_ENGINE_DEV_PASSWORD}'\`
+               sql\`ALTER ROLE kestra_engine WITH PASSWORD '$${KESTRA_DATASOURCES_POSTGRES_PASSWORD}'\`
                  .then(() => sql.end())
                  .catch((e) => { console.error(e); process.exit(1); });
              \""
@@ -78,7 +78,10 @@ services:
     environment:
       KESTRA_DATASOURCES_POSTGRES_URL: jdbc:postgresql://db:5432/kestra
       KESTRA_DATASOURCES_POSTGRES_USERNAME: kestra_engine
-      KESTRA_DATASOURCES_POSTGRES_PASSWORD: ${KESTRA_ENGINE_DEV_PASSWORD:-kestra_dev_password}
+      # KESTRA_DATASOURCES_POSTGRES_PASSWORD comes from env_file (.env.example)
+      # — the SAME source kestra-setup uses to set the role password, so the
+      # two can never diverge. Deliberately NOT set here: an `environment:`
+      # entry would shadow the env_file value and reintroduce that split.
       # D6 — a local sentinel, never a real digest/tag.
       RATING_ENGINE_VERSION: dev-local
     volumes:
