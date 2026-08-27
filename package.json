@@ -22,6 +22,7 @@
     "db:migrate": "node --conditions=react-server --env-file=.env --import tsx db/migrate.ts",
     "db:bootstrap-roles": "node --env-file=.env --import tsx db/bootstrap/bootstrap-db-roles.ts",
     "db:bootstrap-rating-roles": "node --env-file=.env --import tsx db/bootstrap/rating-db-roles.ts",
+    "db:bootstrap-kestra-roles": "node --env-file=.env --import tsx db/bootstrap/kestra-db-roles.ts",
     "db:setup-partman": "node --env-file=.env --import tsx db/bootstrap/audit-partman-setup.ts",
     "db:setup-partman-billing": "node --env-file=.env --import tsx db/bootstrap/billing-partman-setup.ts",
     "db:setup-partman-rating": "node --env-file=.env --import tsx db/bootstrap/rating-partman-setup.ts",

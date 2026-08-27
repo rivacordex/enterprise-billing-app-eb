@@ -62,6 +62,22 @@ param appTimezone string = 'UTC'
 @description('Gates the Container App + migrate Job (phase-2 workloads). Deploy with false first so the Key Vault exists and its secret references can be populated + the ACR image pushed, then true.')
 param deployWorkloads bool = true
 
+// rm04-spec D0 — "do not build the rest of this unit until the process-
+// runner spike passes." The rating-engine module (storage + Container App)
+// is authored and ready, but the spike proving a custom Kestra image on
+// ACA's process runner actually works has NOT been run (no Azure access in
+// the session that authored this). Defaults to false so this module cannot
+// be deployed by accident; flip to true only after the spike (Open item 7)
+// passes and its result is recorded in ratemgmt-progress-tracker.md.
+@description('Gates the rating-engine Container App + storage (rm04). Leave false until the D0 process-runner spike has passed on a real environment.')
+param deployRatingEngine bool = false
+
+@description('rm04-spec D2 — the worker image, pinned by digest. Empty (default) resolves to a bootstrap placeholder on the shared ACR at the module call site below — a param default cannot reference another resource\'s output (BCP072), so this mirrors how containerApp/containerAppJob resolve their own placeholder imageName inline.')
+param ratingEngineImageName string = ''
+
+@description('rm04-spec D6 — stamped into udr_rated.rating_engine_version per row (Inv #12). The pipeline overwrites this with the real deployed digest/tag, mirroring the app image tag pattern.')
+param ratingEngineVersion string = 'bootstrap'
+
 var namePrefix = 'ebill-${environmentName}'
 // ACR and Key Vault names must be globally unique (DNS-resolvable). A prefix
 // alone risks collisions in shared tenants/clouds; mix in a deterministic
@@ -76,6 +92,16 @@ resource appManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@20
 
 resource migrateManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-migrate-mi'
+  location: location
+}
+
+// rm04-spec Implementation §3 — a dedicated identity for the rating engine
+// (D1: "not a namespace on the bill run's engine" — a dedicated Container
+// App gets a dedicated identity too). Created unconditionally like the two
+// above (identities are free); the resources that actually USE it are
+// gated by deployRatingEngine.
+resource ratingEngineManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-rating-engine-mi'
   location: location
 }
 
@@ -108,6 +134,7 @@ module acr 'modules/acr.bicep' = {
     acrName: take(replace('${namePrefix}acr${uniqueSuffix}', '-', ''), 50)
     appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
     migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
+    ratingEngineManagedIdentityPrincipalId: ratingEngineManagedIdentity.properties.principalId
   }
 }
 
@@ -119,6 +146,7 @@ module keyVault 'modules/key-vault.bicep' = {
     appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
     migrateManagedIdentityPrincipalId: migrateManagedIdentity.properties.principalId
     pipelineServicePrincipalId: pipelineServicePrincipalId
+    ratingEngineManagedIdentityPrincipalId: ratingEngineManagedIdentity.properties.principalId
   }
 }
 
@@ -165,8 +193,48 @@ module containerAppJob 'modules/container-app-job.bicep' = if (deployWorkloads) 
   }
 }
 
+// rm04-spec D4/Implementation §4 — the rating engine's four storage
+// locations. Created unconditionally alongside deployRatingEngine's other
+// resources is unnecessary risk before the D0 spike passes, so this is
+// gated the same way the Container App below is.
+module ratingEngineStorage 'modules/rating-engine-storage.bicep' = if (deployRatingEngine) {
+  name: 'ratingEngineStorage'
+  params: {
+    location: location
+    storageAccountName: take(replace('${namePrefix}ratingstg${uniqueSuffix}', '-', ''), 24)
+    ratingEngineManagedIdentityPrincipalId: ratingEngineManagedIdentity.properties.principalId
+  }
+}
+
+// rm04-spec Implementation §3 — the `rating-engine` Container App. Gated by
+// deployRatingEngine (D0 — not deployed until the process-runner spike
+// passes on a real environment; see the param comment above).
+module ratingEngineContainerApp 'modules/rating-engine-container-app.bicep' = if (deployRatingEngine) {
+  name: 'ratingEngineContainerApp'
+  params: {
+    location: location
+    containerAppName: '${namePrefix}-rating-engine'
+    containerAppsEnvironmentId: containerAppsEnvironment.id
+    acrLoginServer: acr.outputs.acrLoginServer
+    keyVaultUri: keyVault.outputs.keyVaultUri
+    ratingEngineManagedIdentityId: ratingEngineManagedIdentity.id
+    // Placeholder tag — the containerize_rating_engine pipeline stage's
+    // deploy step (once wired up alongside the app's own blue-green deploy
+    // stage) overwrites this with the real pushed digest/tag, mirroring
+    // containerApp/containerAppJob above.
+    imageName: empty(ratingEngineImageName) ? '${acr.outputs.acrLoginServer}/rating-engine:bootstrap' : ratingEngineImageName
+    ratingEngineVersion: ratingEngineVersion
+    postgresServerFqdn: postgres.outputs.postgresServerFqdn
+    storageAccountName: ratingEngineStorage!.outputs.storageAccountName
+    landingShareName: ratingEngineStorage!.outputs.landingShareName
+    kestraInternalContainerName: ratingEngineStorage!.outputs.kestraInternalContainerName
+    storageAccountKey: ratingEngineStorage!.outputs.storageAccountKey
+  }
+}
+
 output appFqdn string = deployWorkloads ? containerApp!.outputs.fqdn : ''
 output acrLoginServer string = acr.outputs.acrLoginServer
 output keyVaultName string = keyVault.outputs.keyVaultName
 output appManagedIdentityPrincipalId string = appManagedIdentity.properties.principalId
 output migrateManagedIdentityPrincipalId string = migrateManagedIdentity.properties.principalId
+output ratingEngineManagedIdentityPrincipalId string = ratingEngineManagedIdentity.properties.principalId

@@ -1,0 +1,73 @@
+# rm04-spec Implementation §6 / D7. Datasource -> the `kestra` DB as
+# `kestra_engine` (rm03a); storage -> Azure Blob (kestra-internal container,
+# D4); Basic Auth from the one shared credential (D5); default namespace
+# `rating` (D7). Startup migrations enabled (Kestra default — kestra_engine
+# holds CREATE on the `kestra` DB and no CONNECT on billing, so those
+# migrations structurally cannot reach revenue tables, Inv #18).
+#
+# D0 CAVEAT — the property names below follow Kestra OSS's documented
+# configuration schema for the pinned release, but have not been run against
+# a real engine (the D0 process-runner spike has not passed — see
+# ratemgmt-progress-tracker.md). Confirm every key here against the actual
+# `kestra --version` output before first deploy; Kestra's config schema has
+# changed across major versions.
+#
+# Every value is `${ENV_VAR}` interpolation, matching the env vars set on
+# the Container App (infra/bicep/modules/rating-engine-container-app.bicep)
+# and the local compose stack (rating-engine/dev/docker-compose.dev.yml) —
+# never a literal secret in this file.
+
+datasources:
+  postgres:
+    url: ${KESTRA_DATASOURCES_POSTGRES_URL}
+    driverClassName: org.postgresql.Driver
+    username: ${KESTRA_DATASOURCES_POSTGRES_USERNAME}
+    password: ${KESTRA_DATASOURCES_POSTGRES_PASSWORD}
+
+kestra:
+  server:
+    basicAuth:
+      enabled: true
+      username: ${KESTRA_SERVER_BASIC_AUTH_USERNAME}
+      password: ${KESTRA_SERVER_BASIC_AUTH_PASSWORD}
+
+  # OSS JDBC queue/repository — the datasource above IS the queue (rm00 rm04
+  # note: watch connection count, since the bill run's engine also lives on
+  # this Flexible Server).
+  repository:
+    type: postgres
+  queue:
+    type: postgres
+
+  storage:
+    type: ${KESTRA_STORAGE_TYPE}
+    azure:
+      endpoint: ${KESTRA_STORAGE_AZURE_ENDPOINT}
+      account-name: ${KESTRA_STORAGE_AZURE_ACCOUNT_NAME}
+      container: ${KESTRA_STORAGE_AZURE_CONTAINER}
+      # connection-string is UNSET in the deployed environment (empty env
+      # var -> Kestra ignores it) — D5 prefers a Managed Identity role
+      # assignment (Storage Blob Data Contributor, rating-engine-storage.bicep)
+      # over a Key Vault credential for the internal-storage credential.
+      # Local dev (D9) sets it to Azurite's well-known devstoreaccount1
+      # connection string (rating-engine/dev/.env.example) — Azurite does
+      # not support Managed Identity auth, so local parity needs this one
+      # deliberate deviation from the deployed auth path. CONFIRM the pinned
+      # Azure Blob storage plugin actually supports Managed Identity
+      # (DefaultAzureCredential) auth for the deployed path during the D0
+      # spike — if it does not, this becomes the primary auth method there
+      # too and D5's "four credentials" count becomes five.
+      connection-string: ${KESTRA_STORAGE_AZURE_CONNECTION_STRING:-}
+
+  tasks:
+    # Process runner (D0/D2) needs a writable working directory inside the
+    # container — ACA has no Docker daemon, so Kestra's Docker task runner
+    # is unavailable and every task (PRP/RP/RL Python tasks) runs here.
+    tmp-dir:
+      path: /tmp/kestra-wd/tmp
+
+  # namespace default for flow deploys (D7). Flow definitions themselves
+  # (flows/**) are a later unit (rm06+) — this only sets where an
+  # unqualified flow deploy lands.
+  webserver:
+    default-namespace: ${KESTRA_SERVER_DEFAULT_NAMESPACE}

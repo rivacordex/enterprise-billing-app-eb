@@ -166,6 +166,78 @@ stages:
             displayName: docker build + push to ACR (agent-side; ACR Tasks unavailable)
 
   # ---------------------------------------------------------------------
+  # rm04-spec Implementation §8 / verification item 25 — builds only the
+  # worker image and lints its inputs; does NOT apply Bicep or deploy (no
+  # stage in this pipeline applies main.bicep for the app either — that is
+  # a manual/out-of-band step per the existing convention, and
+  # deployRatingEngine defaults to false until the D0 process-runner spike
+  # passes — see ratemgmt-progress-tracker.md). Runs in parallel with
+  # `containerize`, not gated by it — the two images are independent.
+  - stage: containerize_rating_engine
+    displayName: Containerize (rating engine)
+    dependsOn: test_scan
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: lint_and_build
+        displayName: Lint Dockerfile/Bicep, validate requirements hashes, build + push
+        steps:
+          - script: |
+              set -euo pipefail
+              # Every non-comment, non-blank line in requirements.txt must
+              # carry a --hash=sha256:... pin (D3 — "everything is pinned by
+              # version + hash", the same reproducibility contract as the
+              # base image digest).
+              MISSING=0
+              while IFS= read -r line; do
+                case "$line" in
+                  ''|'#'*) continue ;;
+                esac
+                if ! echo "$line" | grep -q -- '--hash=sha256:'; then
+                  echo "Unhashed requirement: $line" >&2
+                  MISSING=1
+                fi
+              done < rating-engine/worker/requirements.txt
+              if [ "$MISSING" -eq 1 ]; then
+                echo "requirements.txt has unhashed entries — failing build." >&2
+                exit 1
+              fi
+            displayName: Validate requirements.txt hashes
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                az bicep build --file infra/bicep/modules/rating-engine-container-app.bicep
+                az bicep build --file infra/bicep/modules/rating-engine-storage.bicep
+                az bicep build --file infra/bicep/main.bicep
+            displayName: Lint rating-engine Bicep (az bicep build)
+
+          - script: |
+              SHORT_SHA=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+              TAG="$(Build.BuildId)-$SHORT_SHA"
+              echo "Rating engine image tag: $TAG"
+              echo "##vso[task.setvariable variable=ratingEngineImageTag;isOutput=true]$TAG"
+            name: setRatingEngineImageTag
+            displayName: Compute image tag (BuildId-gitSHA)
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                IMAGE="$(ACR_NAME).azurecr.io/rating-engine:$(setRatingEngineImageTag.ratingEngineImageTag)"
+                az acr login --name $(ACR_NAME)
+                docker build -t "$IMAGE" rating-engine/worker
+                docker push "$IMAGE"
+            displayName: docker build + push worker image to shared ACR
+
+  # ---------------------------------------------------------------------
   - stage: migrate
     displayName: Migrate (no traffic shift)
     dependsOn: containerize

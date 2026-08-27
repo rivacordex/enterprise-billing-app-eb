@@ -1,0 +1,25 @@
+# rm04-spec Implementation §2 / D3. Every entry pinned by version + hash
+# (`pip install --require-hashes --no-deps`, Dockerfile). Versions and the
+# listed hash are REAL, fetched from PyPI's JSON API on 2026-08-27 (latest
+# stable release + its manylinux2014/cp312 or py3-none-any wheel sha256 at
+# that date) — not fabricated placeholders.
+#
+# NOT YET pip-compile'd: `--require-hashes` requires a hash for EVERY
+# package pip installs, including every TRANSITIVE dependency (azure-identity
+# pulls in cryptography/msal/PyJWT/requests/... ; azure-storage-blob pulls in
+# azure-core/isodate/... ; psycopg[binary] and pyarrow/polars are close to
+# dependency-free by contrast). This file lists only the five top-level
+# pins Implementation §2 names — running it through `pip-compile
+# --generate-hashes` (or `pip download --require-hashes` against this list)
+# to resolve and hash the full transitive graph is a real step that needs a
+# working pip/pip-tools environment, which this session does not have. Do
+# that before the first `docker build` — an incomplete --require-hashes run
+# fails fast and loudly (pip refuses to proceed), so this is a build-time
+# gate, not a silent risk.
+psycopg[binary]==3.3.4        --hash=sha256:e7510c37550f91a187e3660a8cc50d4b760f8c3b8b2f89ebc5698cd2c7f2c85d
+polars==1.44.1                --hash=sha256:1fa62fc1c88fba77a68b28291b5aabdd69e5f38b34e59721a064ae3169b59bb5
+pyarrow==25.0.1                --hash=sha256:5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3
+azure-storage-blob==12.30.0    --hash=sha256:d415ac50b67a8da6b3ae7e9f1014b1b55cd7aafa0b8d4ca9b380568dc7360423
+azure-identity==1.25.3         --hash=sha256:f4d0b956a8146f30333e071374171f3cfa7bdb8073adb8c3814b65567aa7447c
+# orjson optional (JSON Lines throughput, D3); stdlib json is acceptable and
+# is what the runtime uses until a throughput need is measured.
