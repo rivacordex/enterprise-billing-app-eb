@@ -2,11 +2,18 @@
 // Soft-delete + purge protection enabled; RBAC authorization (no legacy
 // access policies). enabledForTemplateDeployment is left false — secrets
 // are never read into ARM/Bicep template outputs.
+// rm04-spec D5 — the rating engine's Managed Identity reads its four
+// credentials (Kestra Basic Auth, rating_runtime password, kestra_engine
+// password, and — where a KV secret is used rather than the preferred role
+// assignment — the internal-storage credential) from this SAME shared Key
+// Vault. Defaults to '' so this module stays backward-compatible; empty
+// skips the role assignment.
 param location string
 param keyVaultName string
 param appManagedIdentityPrincipalId string
 param migrateManagedIdentityPrincipalId string
 param pipelineServicePrincipalId string
+param ratingEngineManagedIdentityPrincipalId string = ''
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
@@ -65,6 +72,18 @@ resource pipelineRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
   properties: {
     roleDefinitionId: keyVaultSecretsOfficerRoleId
     principalId: pipelineServicePrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Rating engine Managed Identity — read-only (Secrets User), same as the app
+// and migrate identities above.
+resource ratingEngineMiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(ratingEngineManagedIdentityPrincipalId)) {
+  name: guid(keyVault.id, ratingEngineManagedIdentityPrincipalId, keyVaultSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleId
+    principalId: ratingEngineManagedIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
