@@ -83,8 +83,17 @@ def line(
     ):
         if not value:
             raise ValueError(f"correlation field {name!r} is required on every line (§7.6)")
+    if log_datetime is None:
+        stamp = datetime.now(timezone.utc)
+    elif log_datetime.tzinfo is None or log_datetime.utcoffset() is None:
+        raise ValueError(
+            "log_datetime must be timezone-aware; a naive datetime is ambiguous "
+            "and storage is UTC (§5.7). Pass an aware UTC datetime."
+        )
+    else:
+        stamp = log_datetime.astimezone(timezone.utc)
     return {
-        "log_datetime": (log_datetime or datetime.now(timezone.utc)).isoformat(),
+        "log_datetime": stamp.isoformat(),
         "component": component,
         "log_level": log_level,
         "perceived_severity": perceived_severity,

@@ -17,8 +17,31 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import polars as pl
+
+
+def _local_path(path: str | Path) -> Path:
+    """Resolve a local path or a ``file://`` URI to a filesystem ``Path``.
+
+    Tasks pass file URIs, not raw paths (§3.4). A ``Path`` or a plain string
+    path is returned as-is; a ``file://`` URI is decoded to its local path; any
+    other scheme (``kestra://``, ``https://``, ``abfss://``, …) is rejected —
+    remote / Kestra-internal storage is rm07/rm09's job, not this local helper's.
+    A single-letter scheme is treated as a Windows drive, not a URI.
+    """
+    if isinstance(path, Path):
+        return path
+    parsed = urlparse(path)
+    if not parsed.scheme or len(parsed.scheme) == 1:
+        return Path(path)
+    if parsed.scheme == "file":
+        return Path(unquote(parsed.path))
+    raise ValueError(
+        f"unsupported URI scheme {parsed.scheme!r} for {path!r}; storage handles "
+        "local paths and file:// URIs only (remote/internal storage is rm07/rm09)."
+    )
 
 # Default container paths, matching the volume mounts in
 # rating-engine/dev/docker-compose.dev.yml and the ACA Azure Files mount.
@@ -52,7 +75,7 @@ def read_frame(path: str | Path) -> pl.DataFrame:
     # for fixtures and intermediate chunks — it is NOT the production parser and
     # must not be treated as one.
     """
-    p = Path(path)
+    p = _local_path(path)
     suffix = p.suffix.lower()
     if suffix == ".parquet":
         return pl.read_parquet(p)
@@ -69,7 +92,7 @@ def read_frame(path: str | Path) -> pl.DataFrame:
 def write_parquet(frame: pl.DataFrame, path: str | Path) -> Path:
     """Write a frame to Parquet (the intermediate/chunk format), creating parent
     dirs. Parquet, not the feed format, is the internal task-to-task shape."""
-    p = Path(path)
+    p = _local_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     frame.write_parquet(p)
     return p
@@ -80,16 +103,20 @@ def move(src: str | Path, dest_dir: str | Path) -> Path:
 
     Uses ``shutil.move`` (copy+delete fallback) rather than ``os.rename`` so it
     survives crossing filesystems: landing is an SMB mount and the other
-    locations may be separate mounts, where a rename raises ``EXDEV``.
+    locations may be separate mounts, where a rename raises ``EXDEV``. Stages
+    into the destination dir first, then atomically ``os.replace``s onto the
+    target — an existing target is never deleted before the new file is safely
+    in place, so a failure leaves the previous archive/error file intact.
 
     # STUB: rm09 owns the real archive step — a cross-protocol Files->Blob copy
     # that is part of RL's atomic ordering (Inv, §; test #14). Do not mistake
     # this local move for the production archive move.
     """
-    dest = Path(dest_dir)
+    src_path = _local_path(src)
+    dest = _local_path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    target = dest / Path(src).name
-    if target.exists():
-        target.unlink()
-    shutil.move(str(src), str(target))
+    target = dest / src_path.name
+    staged = dest / f"{target.name}.incoming-{os.getpid()}"
+    shutil.move(str(src_path), str(staged))  # copy+delete: crosses filesystems
+    os.replace(str(staged), str(target))  # same dir: atomic swap, no delete gap
     return target

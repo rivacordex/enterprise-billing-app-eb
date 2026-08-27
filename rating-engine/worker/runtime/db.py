@@ -34,6 +34,14 @@ def _dsn() -> str:
     and the app's compose ``db`` service); the deployed engine overrides host /
     db via env. The DSN (which embeds the password) is never returned to a
     caller or logged.
+
+    TLS is a deployment decision, kept in env so local (a plaintext Postgres)
+    and Azure differ without code changes: set ``RATING_DB_SSLMODE=verify-full``
+    and point ``RATING_DB_SSLROOTCERT`` at the Azure PostgreSQL root CA in the
+    deployed Container App. Left unset here (rather than hardcoding a mode or
+    bundling an Azure-specific CA that rotates): unset falls back to libpq's
+    default, and libpq still honours the standard ``PGSSLMODE`` /
+    ``PGSSLROOTCERT`` env vars.
     """
     password = os.environ.get("SECRET_RATING_RUNTIME_PASSWORD")
     if not password:
@@ -41,13 +49,21 @@ def _dsn() -> str:
             "SECRET_RATING_RUNTIME_PASSWORD is not set. Kestra injects it from "
             "the rating_runtime secret (§3.8); refusing to connect without it."
         )
-    return psycopg.conninfo.make_conninfo(
-        host=os.environ.get("RATING_DB_HOST", "db"),
-        port=os.environ.get("RATING_DB_PORT", "5432"),
-        dbname=os.environ.get("RATING_DB_NAME", "enterprise_billing"),
-        user=os.environ.get("RATING_DB_USER", "rating_runtime"),
-        password=password,
-    )
+    params = {
+        "host": os.environ.get("RATING_DB_HOST", "db"),
+        "port": os.environ.get("RATING_DB_PORT", "5432"),
+        "dbname": os.environ.get("RATING_DB_NAME", "enterprise_billing"),
+        "user": os.environ.get("RATING_DB_USER", "rating_runtime"),
+        "password": password,
+    }
+    for env_name, conn_key in (
+        ("RATING_DB_SSLMODE", "sslmode"),
+        ("RATING_DB_SSLROOTCERT", "sslrootcert"),
+    ):
+        value = os.environ.get(env_name)
+        if value:
+            params[conn_key] = value
+    return psycopg.conninfo.make_conninfo(**params)
 
 
 def connect() -> psycopg.Connection:
