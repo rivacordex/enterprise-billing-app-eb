@@ -41,10 +41,6 @@ param landingShareName string
 @description('Blob container name for Kestra internal storage — rating-engine-storage.bicep output.')
 param kestraInternalContainerName string
 
-@description('Storage account key for the ACA environment Files mount ONLY (platform-level SMB auth — see rating-engine-storage.bicep; never exposed to the engine as an app-level credential).')
-@secure()
-param storageAccountKey string
-
 @description('true = ingress fully internal to the Container Apps Environment (no external DNS at all); false = disabled (D8 default until rm05).')
 param internalIngress bool = false
 
@@ -59,13 +55,23 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2023-05-01'
   name: last(split(containerAppsEnvironmentId, '/'))
 }
 
+// The rating-engine storage account (rating-engine-storage.bicep). Referenced,
+// not created — the implicit dependency on storageAccountName (a storage-module
+// output) guarantees it exists before this deploys. The account key is
+// resolved inline via listKeys() for the platform-level SMB Files mount ONLY
+// (no MI mount option for Files on Container Apps); it is never surfaced to the
+// engine as an app-level credential and never crosses a module output.
+resource ratingStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
+  name: storageAccountName
+}
+
 resource landingFileStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
   parent: containerAppsEnvironment
   name: 'rating-landing'
   properties: {
     azureFile: {
       accountName: storageAccountName
-      accountKey: storageAccountKey
+      accountKey: ratingStorageAccount.listKeys().keys[0].value
       shareName: landingShareName
       accessMode: 'ReadWrite'
     }
@@ -106,16 +112,24 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: ratingEngineManagedIdentityId
         }
         {
-          name: 'pg-connection-string-kestra-engine'
-          keyVaultUrl: '${keyVaultUri}secrets/pg-connection-string-kestra-engine'
+          // kestra.yml sets `datasources.postgres.password` from
+          // KESTRA_DATASOURCES_POSTGRES_PASSWORD — a bare password, since the
+          // URL and username are provided separately below. So this KV secret
+          // holds the dedicated kestra_engine password (the value set by the
+          // `ALTER ROLE kestra_engine WITH PASSWORD` step in
+          // infra/docs/db-role-verification.md), NOT a full connection string.
+          name: 'kestra-engine-db-password'
+          keyVaultUrl: '${keyVaultUri}secrets/kestra-engine-db-password'
           identity: ratingEngineManagedIdentityId
         }
       ]
       ingress: internalIngress
         ? {
+            // No `traffic` block — activeRevisionsMode 'Single' routes 100% to
+            // the single active revision implicitly; specifying weights is only
+            // valid in 'Multiple' mode.
             external: false
             targetPort: 8080
-            traffic: [{ latestRevision: true, weight: 100 }]
           }
         : null
     }
@@ -133,7 +147,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // (kestra_engine holds CREATE on this DB only — rm03a).
             { name: 'KESTRA_DATASOURCES_POSTGRES_URL', value: 'jdbc:postgresql://${postgresServerFqdn}:5432/kestra' }
             { name: 'KESTRA_DATASOURCES_POSTGRES_USERNAME', value: 'kestra_engine' }
-            { name: 'KESTRA_DATASOURCES_POSTGRES_PASSWORD', secretRef: 'pg-connection-string-kestra-engine' }
+            { name: 'KESTRA_DATASOURCES_POSTGRES_PASSWORD', secretRef: 'kestra-engine-db-password' }
 
             // D7 — storage.type: azure, internal storage → the
             // kestra-internal Blob container (NOT the container filesystem,
@@ -169,17 +183,25 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
               mountPath: '/data/landing'
             }
           ]
+          // Kestra serves /health on its Micronaut MANAGEMENT port (8081),
+          // NOT the webserver/UI port (8080) — probing 8080/health returns
+          // 404 and the revision never becomes Healthy. The management port
+          // is unauthenticated by default, so Basic Auth (on 8080) does not
+          // block these probes. D0 spike: confirm 8081 against the pinned
+          // Kestra release, and on Kestra >= 0.22 consider the split
+          // /health/liveness + /health/readiness endpoints so a transient DB
+          // outage fails readiness without triggering a liveness restart.
           probes: [
             {
               type: 'Liveness'
-              httpGet: { path: '/health', port: 8080 }
+              httpGet: { path: '/health', port: 8081 }
               initialDelaySeconds: 30
               periodSeconds: 10
               failureThreshold: 3
             }
             {
               type: 'Readiness'
-              httpGet: { path: '/health', port: 8080 }
+              httpGet: { path: '/health', port: 8081 }
               periodSeconds: 10
               successThreshold: 2
             }

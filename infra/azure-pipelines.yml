@@ -17,6 +17,19 @@
 #     (the client SECRET is a Key Vault reference, never a variable) — defined
 #     here, not in source control, so the concrete tenant/client IDs stay out
 #     of git; leave them empty in the group for an environment without SSO.
+parameters:
+  # rm04 D0 — the rating-engine worker image CANNOT be built until the D0
+  # process-runner spike has passed AND rating-engine/worker/Dockerfile's base
+  # digest + a fully hashed requirements.txt are filled in (both are
+  # placeholders today, so a build would fail). Defaults to false so automatic
+  # CI/PR runs skip the containerize_rating_engine stage entirely; queue the
+  # pipeline manually with this set to true once the spike passes. Mirrors
+  # main.bicep's deployRatingEngine gate.
+  - name: buildRatingEngine
+    displayName: Build the rm04 rating-engine worker image (D0 spike must have passed)
+    type: boolean
+    default: false
+
 trigger:
   branches:
     include:
@@ -173,9 +186,17 @@ stages:
   # deployRatingEngine defaults to false until the D0 process-runner spike
   # passes — see ratemgmt-progress-tracker.md). Runs in parallel with
   # `containerize`, not gated by it — the two images are independent.
+  #
+  # GATED by the buildRatingEngine parameter (default false): the Dockerfile
+  # base image is a placeholder digest and requirements.txt is not yet fully
+  # hashed, so `docker build` would fail. Automatic CI/PR runs therefore skip
+  # this stage; it only runs when the pipeline is queued with
+  # buildRatingEngine=true (after the D0 spike, once both placeholders are
+  # resolved).
   - stage: containerize_rating_engine
     displayName: Containerize (rating engine)
     dependsOn: test_scan
+    condition: eq(${{ parameters.buildRatingEngine }}, true)
     pool:
       vmImage: ubuntu-latest
     jobs:
