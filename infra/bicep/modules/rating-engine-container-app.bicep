@@ -44,8 +44,30 @@ param kestraInternalContainerName string
 @description('true = ingress fully internal to the Container Apps Environment (no external DNS at all); false = disabled (D8 default until rm05).')
 param internalIngress bool = false
 
+// rm05-spec D2 — rm05 is the ONE unit that turns on external ingress, and
+// only behind Easy Auth + the IP allow-list (D6). rm04 and rm05 must not
+// both write this block; this file owns it going forward, gated by this
+// param so an rm04-only deploy (enableEasyAuthIngress left false) still
+// gets the D8 internal-only/disabled default above.
+@description('rm05 D2 — flips ingress from internal-only/disabled (rm04 default) to external, restricted by corporateIpAllowList. Set true only alongside deploying easy-auth.bicep\'s authConfig in the same pass.')
+param enableEasyAuthIngress bool = false
+
+@description('rm05 D6 — corporate CIDR ranges allowed through ingress once external. Org-specific, supplied at deploy time, never committed as literals. Enforcement that this is non-empty when enableEasyAuthIngress is true lives in easy-auth.bicep (its own corporateIpAllowList param is required + @minLength(1)) — deployed in the same pass, so an empty list fails the overall deployment rather than silently exposing the UI (rm05 verification item 14).')
+param corporateIpAllowList array = []
+
 param minReplicas int = 1
 param maxReplicas int = 1
+
+// Extracted to a var — a for-expression can't sit inline inside a ternary
+// property value (BCP disallows it there even though it's allowed as a
+// property value directly).
+var corporateIpSecurityRestrictions = [
+  for (ip, i) in corporateIpAllowList: {
+    name: 'corporate-range-${i}'
+    action: 'Allow'
+    ipAddressRange: ip
+  }
+]
 
 // Azure Files storage definition at the Container Apps Environment level —
 // a sibling resource to the environment, referenced by name in the volume
@@ -97,41 +119,65 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: ratingEngineManagedIdentityId
         }
       ]
-      secrets: [
-        // D5 — three of the four credentials as Key Vault secret refs (the
-        // fourth, internal-storage, is Managed-Identity-only — see
-        // rating-engine-storage.bicep's role assignments, no KV secret here).
-        {
-          name: 'kestra-basic-auth-password'
-          keyVaultUrl: '${keyVaultUri}secrets/kestra-basic-auth-password'
-          identity: ratingEngineManagedIdentityId
-        }
-        {
-          name: 'pg-connection-string-rating-runtime'
-          keyVaultUrl: '${keyVaultUri}secrets/pg-connection-string-rating-runtime'
-          identity: ratingEngineManagedIdentityId
-        }
-        {
-          // kestra.yml sets `datasources.postgres.password` from
-          // KESTRA_DATASOURCES_POSTGRES_PASSWORD — a bare password, since the
-          // URL and username are provided separately below. So this KV secret
-          // holds the dedicated kestra_engine password (the value set by the
-          // `ALTER ROLE kestra_engine WITH PASSWORD` step in
-          // infra/docs/db-role-verification.md), NOT a full connection string.
-          name: 'kestra-engine-db-password'
-          keyVaultUrl: '${keyVaultUri}secrets/kestra-engine-db-password'
-          identity: ratingEngineManagedIdentityId
-        }
-      ]
-      ingress: internalIngress
-        ? {
-            // No `traffic` block — activeRevisionsMode 'Single' routes 100% to
-            // the single active revision implicitly; specifying weights is only
-            // valid in 'Multiple' mode.
-            external: false
-            targetPort: 8080
+      secrets: concat(
+        [
+          // D5 — three of the four credentials as Key Vault secret refs (the
+          // fourth, internal-storage, is Managed-Identity-only — see
+          // rating-engine-storage.bicep's role assignments, no KV secret here).
+          {
+            name: 'kestra-basic-auth-password'
+            keyVaultUrl: '${keyVaultUri}secrets/kestra-basic-auth-password'
+            identity: ratingEngineManagedIdentityId
           }
-        : null
+          {
+            name: 'pg-connection-string-rating-runtime'
+            keyVaultUrl: '${keyVaultUri}secrets/pg-connection-string-rating-runtime'
+            identity: ratingEngineManagedIdentityId
+          }
+          {
+            // kestra.yml sets `datasources.postgres.password` from
+            // KESTRA_DATASOURCES_POSTGRES_PASSWORD — a bare password, since the
+            // URL and username are provided separately below. So this KV secret
+            // holds the dedicated kestra_engine password (the value set by the
+            // `ALTER ROLE kestra_engine WITH PASSWORD` step in
+            // infra/docs/db-role-verification.md), NOT a full connection string.
+            name: 'kestra-engine-db-password'
+            keyVaultUrl: '${keyVaultUri}secrets/kestra-engine-db-password'
+            identity: ratingEngineManagedIdentityId
+          }
+        ],
+        enableEasyAuthIngress
+          ? [
+              // rm05 D8 — the rating-engine Entra registration's client
+              // secret; easy-auth.bicep's authConfig points
+              // clientSecretSettingName at this secret's NAME (not the KV
+              // reference directly, matching the app's established pattern).
+              {
+                name: 'rating-engine-client-secret'
+                keyVaultUrl: '${keyVaultUri}secrets/rating-engine-client-secret'
+                identity: ratingEngineManagedIdentityId
+              }
+            ]
+          : []
+      )
+      // No `traffic` block on either ingress branch — activeRevisionsMode
+      // 'Single' routes 100% to the single active revision implicitly;
+      // specifying weights is only valid in 'Multiple' mode.
+      ingress: enableEasyAuthIngress
+        ? {
+            // rm05 D2/D6/Implementation §4 — the only place external ingress
+            // is enabled, and only with a populated corporate allow-list
+            // (default-deny once any Allow rule is present).
+            external: true
+            targetPort: 8080
+            ipSecurityRestrictions: corporateIpSecurityRestrictions
+          }
+        : (internalIngress
+            ? {
+                external: false
+                targetPort: 8080
+              }
+            : null)
     }
     template: {
       containers: [

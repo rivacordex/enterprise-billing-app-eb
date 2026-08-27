@@ -78,6 +78,22 @@ param ratingEngineImageName string = ''
 @description('rm04-spec D6 — stamped into udr_rated.rating_engine_version per row (Inv #12). The pipeline overwrites this with the real deployed digest/tag, mirroring the app image tag pattern.')
 param ratingEngineVersion string = 'bootstrap'
 
+// rm05-spec D2 — the ONE unit that turns on external ingress on
+// rating-engine, and only behind Easy Auth. Independent of, and only
+// meaningful alongside, deployRatingEngine=true — deploying this true while
+// deployRatingEngine is false fails (easyAuth references
+// ratingEngineContainerApp's output, which doesn't exist when that module
+// is skipped), which is the correct fail-fast: rm05 depends on rm04
+// (spec header).
+@description('Gates rm05: external ingress on rating-engine + its Easy Auth authConfig + diagnostics. Leave false until the Entra app registration, Workflow.Admin role, Billing Ops group and assignment-required are provisioned (Implementation §1/§2) and the client secret is in Key Vault (D8).')
+param deployEasyAuth bool = false
+
+@description('rm05 D6 — corporate CIDR ranges allowed through rating-engine\'s ingress once deployEasyAuth is true. Org-specific — supplied at deploy time (e.g. `--parameters corporateIpAllowList=$(CORPORATE_CIDR_RANGES)`), never committed as literals. Left empty/unused while deployEasyAuth is false; required + non-empty (enforced in easy-auth.bicep) once it is true.')
+param corporateIpAllowList array = []
+
+@description('rm05 D3 — the separate `rating-engine` Entra app registration\'s client ID (Implementation §1, provisioning prerequisite). Same tenant as entraTenantId above, distinct app id from microsoftClientId.')
+param ratingEngineEntraClientId string = ''
+
 var namePrefix = 'ebill-${environmentName}'
 // ACR and Key Vault names must be globally unique (DNS-resolvable). A prefix
 // alone risks collisions in shared tenants/clouds; mix in a deterministic
@@ -232,6 +248,25 @@ module ratingEngineContainerApp 'modules/rating-engine-container-app.bicep' = if
     storageAccountName: ratingEngineStorage!.outputs.storageAccountName
     landingShareName: ratingEngineStorage!.outputs.landingShareName
     kestraInternalContainerName: ratingEngineStorage!.outputs.kestraInternalContainerName
+    enableEasyAuthIngress: deployEasyAuth
+    corporateIpAllowList: corporateIpAllowList
+  }
+}
+
+// rm05-spec — the Easy Auth authConfig + diagnostics on the rating-engine
+// Container App above (D2: rm05 depends on rm04, Implementation §3/§5).
+// Referencing ratingEngineContainerApp's output means this module cannot
+// deploy unless that one did — deployEasyAuth=true with
+// deployRatingEngine=false fails loudly rather than deploying nothing.
+module easyAuth 'modules/easy-auth.bicep' = if (deployEasyAuth) {
+  name: 'easyAuth'
+  params: {
+    containerAppName: ratingEngineContainerApp!.outputs.ratingEngineAppName
+    logAnalyticsWorkspaceId: logAnalytics.id
+    logAnalyticsWorkspaceName: logAnalytics.name
+    ratingEngineClientId: ratingEngineEntraClientId
+    entraTenantId: entraTenantId
+    corporateIpAllowList: corporateIpAllowList
   }
 }
 
