@@ -130,8 +130,17 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             identity: ratingEngineManagedIdentityId
           }
           {
-            name: 'pg-connection-string-rating-runtime'
-            keyVaultUrl: '${keyVaultUri}secrets/pg-connection-string-rating-runtime'
+            // rating-engine/worker/runtime/db.py's `_dsn()` reads
+            // SECRET_RATING_RUNTIME_PASSWORD as a bare password and builds
+            // the DSN itself from separate RATING_DB_HOST/PORT/NAME/USER env
+            // vars (never a full connection string) — so this KV secret
+            // holds the dedicated rating_runtime password (the value set by
+            // the `ALTER ROLE rating_runtime WITH PASSWORD` step in
+            // infra/docs/db-role-verification.md), NOT a full connection
+            // string. Named to match that, unlike the `pg-connection-string-app`/
+            // `-migrate` secrets which genuinely are full DATABASE_URL values.
+            name: 'rating-runtime-db-password'
+            keyVaultUrl: '${keyVaultUri}secrets/rating-runtime-db-password'
             identity: ratingEngineManagedIdentityId
           }
           {
@@ -221,7 +230,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // password via `{{ secret('RATING_RUNTIME_PASSWORD') }}`, never
             // an interpolated env var. Kestra's env-based secrets backend
             // reads `SECRET_<NAME>`.
-            { name: 'SECRET_RATING_RUNTIME_PASSWORD', secretRef: 'pg-connection-string-rating-runtime' }
+            { name: 'SECRET_RATING_RUNTIME_PASSWORD', secretRef: 'rating-runtime-db-password' }
           ]
           volumeMounts: [
             {
