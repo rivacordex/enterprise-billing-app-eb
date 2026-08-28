@@ -11,12 +11,16 @@ and the concrete usage-feed parser (the feed format is Open item 1 — still
 undecided) land with rm06-rm12; every `# STUB:` marker below names what
 replaces the placeholder and which spec owns it.
 
-The image itself does NOT yet COPY this package in — rm04's worker image bakes
-only the interpreter + libraries (see ../Dockerfile). The first flow unit
-(rm06/rm07) adds the COPY when it also adds the flows that import these
-modules.
+rm06 (rating-management/specs/rm06-flow-template-logging-sweep.md) is the
+first flow unit and adds two entry-point modules on top of the above:
+``log_sweep`` (the independent, idempotent sweep that loads ``logs/`` into
+``rating.process_log``, §7.2a) and ``emit_terminal_log`` (the flow-level
+``errors``/``finally`` terminal-outcome emitter, §3.9). rm06 also adds the
+Dockerfile ``COPY`` that bakes this whole package into the image (see
+../Dockerfile) — rm04 deliberately left that COPY for the first unit that
+needed it.
 """
 
-from . import db, logemit, storage, transform
+from . import db, emit_terminal_log, log_sweep, logemit, storage, transform
 
-__all__ = ["db", "logemit", "storage", "transform"]
+__all__ = ["db", "emit_terminal_log", "log_sweep", "logemit", "storage", "transform"]

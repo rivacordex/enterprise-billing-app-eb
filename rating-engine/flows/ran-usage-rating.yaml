@@ -1,0 +1,111 @@
+# rm06-spec Implementation §1 (D1, D3, D4, D5, D6, D7). The rating flow
+# TEMPLATE: three named, ordered, STUBBED prp/rp/rl sections. No rate maths,
+# no parsing, no file_key derivation, no guards — those replace the stubs
+# section by section in rm07 (prp), rm08 (rp) and rm09/rm10 (rl), per
+# ratemgmt-ai-workflow-rules.md §2.5. Never edit this flow in the Kestra UI —
+# every change is a commit here, deployed by the pipeline's flow-deploy stage
+# (infra/azure-pipelines.yml, deploy_rating_flows) via `kestra flow namespace
+# update` (D2, code-standards §3.1).
+#
+# Task `commands` below are ILLUSTRATIVE (rm06-spec line 120): the binding
+# rules are the # STUB: markers, the section order, the file-URI handoff
+# (D5), `concurrency: limit: 1` (D6), and the error+finally terminal-outcome
+# handlers (D7) — not the literal python invocation. `emit_terminal_log` is
+# invoked as `python3 -m runtime.emit_terminal_log` (module form), matching
+# how the runtime package is baked into the image (../worker/Dockerfile):
+# COPY'd to /app/runtime with PYTHONPATH=/app, so relative imports inside the
+# package (`from . import db, logemit`, ../worker/runtime/__init__.py) work —
+# invoking a script living INSIDE the package by its literal file path would
+# break those relative imports.
+id: ran-usage-rating
+namespace: rating
+
+concurrency:
+  limit: 1 # D6 — per udr_type. One of three layers (with the
+  # UNIQUE (file_key, batch_run_num) claim and the live-row constraint,
+  # code-standards §3.7); not a substitute for either.
+
+triggers:
+  - id: manual # D3 — manual/API trigger only. The landing/ file trigger
+    type: io.kestra.plugin.core.trigger.Webhook # is rm07's; building it here
+    # then rewriting it there is duplicated work (rm00 Unit rm06).
+
+tasks:
+  # D4 — three named, ordered sections. Never merged, reordered, or inlined
+  # (code-standards §3.5). D5 — sections hand off by file URI through Kestra
+  # internal storage (Blob), never a record payload (code-standards §3.4).
+  - id: prp
+    # STUB: rm07 owns PRP — claim (file_key derivation, batch claim),
+    # validate, reject. Consumes the triggering file's URI, emits a file URI
+    # for rp. No parsing, no file_key derivation happens here (D1).
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
+    commands:
+      - >
+        python3 -c "
+        # STUB: rm07 owns PRP (rating-management/specs/rm07-*.md).
+        # Claims the file (file_key + UNIQUE (file_key, batch_run_num)),
+        # validates it, rejects what it must, and emits a file URI for rp.
+        # No business logic in rm06's template.
+        print('{{ trigger.uri ?? \"n/a\" }}')
+        "
+    # emits {{ outputs.prp.uri }} (D5) — consumed by rp below.
+
+  - id: rp
+    # STUB: rm08 owns RP — price resolution and snapshot (ratemgmt-code-
+    # standards.md §6). Consumes prp's file URI, emits rp's own file URI.
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - >
+        python3 -c "
+        # STUB: rm08 owns RP (rating-management/specs/rm08-*.md).
+        # Resolves price as-of start_datetime and snapshots every resolved
+        # input (udr_usage_rate, udr_price_ref, ...). No rate maths here.
+        print('{{ outputs.prp.uri }}')
+        "
+
+  - id: rl
+    # STUB: rm09/rm10 own RL — guard (BILL_APPROVED refusal), supersede and
+    # insert in ONE transaction (Inv #8, code-standards §3.6). This is the
+    # named home for that transaction boundary; rm06 does not implement it.
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - >
+        python3 -c "
+        # STUB: rm09 owns RL's guard+supersede+insert
+        # (rating-management/specs/rm09-*.md), rm10 owns supersession scope
+        # (rating-management/specs/rm10-*.md). psycopg single transaction via
+        # runtime.db.transaction() — guard, supersede and insert compose into
+        # ONE atomic unit. No guard, no supersede, no insert happens here.
+        print('{{ outputs.rp.uri }}')
+        "
+
+# D7 — both handlers write a terminal-outcome log line via the emitter
+# (code-standards §3.9, §7.9). There is no app HTTP endpoint to POST to
+# (this module exposes none), and a crashed flow cannot insert its own
+# crash row, so the log line — later loaded by log-sweep.yaml — is the only
+# mechanism. `errors` fires only on failure; `finally` always runs, so a
+# killed execution still reports.
+errors:
+  - id: on-error
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component RL --outcome FAILED
+        --workflow-execution-id "{{ execution.id }}"
+
+finally:
+  - id: always
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component RL --outcome FINALIZED
+        --workflow-execution-id "{{ execution.id }}"
