@@ -42,6 +42,8 @@ Sections pass **file URIs** through Kestra internal storage (Blob, rm04), never 
 
 Declared on the flow (code-standards §3.7). One of three concurrency layers (with the `UNIQUE (file_key, batch_run_num)` claim and the live-row constraint); not a substitute for either, and present from the template on.
 
+**"Per `udr_type`" is achieved by one flow per type, not keyed concurrency inside one flow.** `ran-usage-rating` *is* the RAN-usage-type flow (code-standards §8.3 — flow names match their `udr_type`), so its flow-level `limit: 1` serializes every RAN-usage execution globally: that *is* the per-type isolation. Kestra OSS has no keyed/partitioned concurrency, and none is needed — a second `udr_type` ships as its own flow with its own `limit: 1`, so two types never serialize against each other.
+
 ### D7. Error **and** finally handlers write a terminal-outcome log line
 
 There is no app endpoint to POST to (rating exposes no HTTP surface), and a crashed flow cannot insert its own crash — so both handlers write a **log line** that the sweep (D9) later loads. The `errors` handler fires only on failure; the `finally` block always runs, so a killed execution still reports (code-standards §3.9).
@@ -150,13 +152,18 @@ INSERT INTO rating.process_log (partition_period, log_datetime, component, log_l
        perceived_severity, event_code, specific_problem, managed_object, alarm_key,
        source_file, batch_id, workflow_execution_id, additional_info)
 SELECT rating.period_of($log_datetime), $log_datetime, $component, $log_level,
-       ec.default_severity,            -- NULL when catalogued-non-alarming;
+       CASE WHEN ec.event_code IS NULL            -- no catalog row → INDETERMINATE
+            THEN 'INDETERMINATE'
+            ELSE ec.default_severity END,          -- row present    → its severity
+                                                   --   (NULL = catalogued-non-alarming)
        $event_code, $specific_problem, $managed_object, $alarm_key,
        $source_file, $batch_id, $workflow_execution_id, $additional_info
 FROM (SELECT 1) _
 LEFT JOIN rating.event_catalog ec ON ec.event_code = $event_code;
--- If ec.event_code IS NULL (no row) → perceived_severity resolves to INDETERMINATE
---   in the emitter mapping, NOT via COALESCE. Test asserts the three outcomes.
+-- Row presence is resolved IN-SQL by the CASE, NOT with COALESCE over
+-- default_severity (which would collapse the deliberate catalogued-NULL case
+-- into INDETERMINATE). This mirrors runtime/log_sweep.py's _INSERT_SQL exactly;
+-- there is no separate "emitter mapping" step. Test asserts the three outcomes.
 ```
 
 The `IS NULL` (no-row) case is mapped to `INDETERMINATE` explicitly in the sweep, never by `COALESCE` over `default_severity` (which would swallow the deliberate-NULL case).
@@ -164,6 +171,8 @@ The `IS NULL` (no-row) case is mapped to `INDETERMINATE` explicitly in the sweep
 ### 5. Idempotency + edge handling
 
 Rename-on-completion to `logs/swept/`; per-execution file naming; torn-last-line deferral; malformed-line quarantine to `logs/malformed/` + one `WARN`; the sweep's own terminal log line. All per D10.
+
+**Residual crash window (recorded, not silent).** The `process_log` inserts are one transaction, but the rename to `logs/swept/` is a separate filesystem step *after* that commit — the two cannot be made atomic without a durable processed-file marker, and the four-table `rating` schema has no home for one (§5.1). So a crash between commit and rename re-inserts on the next run. The guarantee is therefore: **idempotent for a re-run of an already-swept file** (item 13's normal case, and the common re-run), but **at-least-once across that narrow commit→rename window** — it errs toward a *duplicate*, never toward data loss (a swept-but-unloaded file is impossible), and `run_sweep`'s per-file isolation stops one such failure wedging the whole sweep. Closing the window fully is a schema decision (a processed-log-file identity table), escalated in `ratemgmt-progress-tracker.md` Open Questions; `code-standards.md` §7.10 remains the target, not a claim this unit already meets it under crash.
 
 ### 6. Flow deployment (D2 / Open item 5)
 
@@ -202,7 +211,7 @@ Live database + a running engine (real or local Azurite + local `kestra` DB). Du
 10. `partition_period` is computed by the sweep as `rating.period_of(log_datetime)` and is **absent** from the log line.
 11. `log_level` is the emitter's, passed through unchanged; `perceived_severity` is never set by the emitter.
 12. **A deliberately crashed flow still has its logs swept in** (the sweep is independent).
-13. **Sweeping the same file twice leaves the row count unchanged** (rename-on-completion idempotency).
+13. **Sweeping the same file twice leaves the row count unchanged** (rename-on-completion idempotency — for an already-swept file; a crash in the commit→rename window is at-least-once, see D10/§5).
 14. A **malformed** line is quarantined to `logs/malformed/` and does not fail the sweep; a **torn last line** is deferred to the next run.
 15. The `log_datetime`→`insert_datetime` lag is visible as a health metric.
 
