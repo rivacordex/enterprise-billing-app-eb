@@ -29,18 +29,13 @@ triggers:
   - id: manual # D3 — manual/API trigger only. The landing/ file trigger
     type: io.kestra.plugin.core.trigger.Webhook # is rm07's; building it here
     # then rewriting it there is duplicated work (rm00 Unit rm06).
-    key: "{{ secret('RATING_USAGE_WEBHOOK_KEY') }}" # REQUIRED by Kestra's
-    # Webhook trigger. This `key` is the SECRET TOKEN embedded in the webhook
-    # URL (.../executions/webhook/{namespace}/{flowId}/{key}) — per Kestra's
-    # own schema it is "the only security mechanism to protect your endpoint
-    # ... must be considered as a secret". It is NOT a rating domain key
-    # (file_key/udr_key are the "unique key from input columns" concept) and
-    # NOT the request payload — the uploaded data arrives as
-    # trigger.body/headers/parameters (rm07's real input). Without `key` the
-    # flow fails `kestra flow validate` (verification item 17). Referenced,
-    # never a literal (§3.8); the field is $dynamic, so the secret() expression
-    # is supported. Introduces a new Kestra secret to provision (like
-    # kestra-basic-auth-password).
+    key: "{{ secret('RATING_USAGE_WEBHOOK_KEY') }}" # REQUIRED. Kestra's Webhook
+    # `key` is the secret token embedded in the webhook URL — an auth token, NOT
+    # a rating domain key (file_key/udr_key) and NOT the payload (which arrives
+    # as trigger.body/headers/parameters, rm07's input). Referenced not a literal
+    # (§3.8); backed by SECRET_RATING_USAGE_WEBHOOK_KEY (base64 — Kestra OSS env
+    # secret backend), provisioned in rating-engine-container-app.bicep and
+    # dev/.env.example.
 
 tasks:
   # D4 — three named, ordered sections. Never merged, reordered, or inlined

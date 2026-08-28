@@ -154,6 +154,20 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             keyVaultUrl: '${keyVaultUri}secrets/kestra-engine-db-password'
             identity: ratingEngineManagedIdentityId
           }
+          {
+            // rm06 — backs ran-usage-rating.yaml's Webhook trigger
+            // `key: {{ secret('RATING_USAGE_WEBHOOK_KEY') }}` (the REQUIRED,
+            // URL-embedded webhook auth token, code-standards §3.8). Unlike the
+            // password secrets above (read RAW by the worker's db.py via
+            // os.environ), this is a genuine Kestra `secret()` lookup, so the
+            // Key Vault VALUE MUST BE BASE64-ENCODED — Kestra OSS's env-var
+            // secret backend base64-decodes `SECRET_<NAME>` (Kestra docs,
+            // "Environment variables as secrets (OSS)"). Confirm the backend
+            // behaviour against the pinned release at the D0 spike.
+            name: 'rating-usage-webhook-key'
+            keyVaultUrl: '${keyVaultUri}secrets/rating-usage-webhook-key'
+            identity: ratingEngineManagedIdentityId
+          }
         ],
         enableEasyAuthIngress
           ? [
@@ -226,11 +240,19 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // D7 — default namespace `rating`.
             { name: 'KESTRA_SERVER_DEFAULT_NAMESPACE', value: 'rating' }
 
-            // code-standards §3.8 — flow tasks resolve rating_runtime's
-            // password via `{{ secret('RATING_RUNTIME_PASSWORD') }}`, never
-            // an interpolated env var. Kestra's env-based secrets backend
-            // reads `SECRET_<NAME>`.
+            // code-standards §3.8 — the worker's db.py reads this bare
+            // password directly from os.environ (NOT via Kestra's `secret()`),
+            // so the value is stored/passed plain. The `SECRET_` prefix is a
+            // naming convention only here; it is not base64-decoded because no
+            // flow resolves it through `{{ secret('RATING_RUNTIME_PASSWORD') }}`.
             { name: 'SECRET_RATING_RUNTIME_PASSWORD', secretRef: 'rating-runtime-db-password' }
+
+            // rm06 §3.8 — ran-usage-rating.yaml's Webhook trigger resolves its
+            // required `key` via `{{ secret('RATING_USAGE_WEBHOOK_KEY') }}`.
+            // This IS a real Kestra `secret()` call, so Kestra's OSS env secret
+            // backend base64-DECODES this value — the KV secret must hold the
+            // BASE64-encoded key (see the rating-usage-webhook-key secret above).
+            { name: 'SECRET_RATING_USAGE_WEBHOOK_KEY', secretRef: 'rating-usage-webhook-key' }
           ]
           volumeMounts: [
             {
