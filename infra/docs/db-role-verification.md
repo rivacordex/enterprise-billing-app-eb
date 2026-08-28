@@ -37,6 +37,23 @@ app_migrate` so future tables `app_migrate` creates auto-grant to
    the `ELSE ALTER ROLE` branch converges the connection limit on a re-run.
    **This step makes two platform-wide changes** — read the note below before
    running it in a shared environment.
+3a. `npm run db:bootstrap-kestra-roles` — runs
+   `db/bootstrap/kestra-db-roles.ts`, which reads the same
+   `BOOTSTRAP_DATABASE_URL` and executes `db/bootstrap/kestra-db-roles.sql`:
+   creates the **`kestra` database** and the `kestra_engine` login role
+   (CONNECTION LIMIT 20 — placeholder, see `ratemgmt-progress-tracker.md`
+   Open Questions) that rm04's Kestra engine connects as, then revokes
+   `PUBLIC`'s default `CONNECT` on the new database and grants
+   `kestra_engine` `CONNECT` + `CREATE` explicitly (rm03-spec §Implementation
+   Step 9a; rm04-spec Depends-on, Inv #18's reverse direction — `kestra`
+   must be as unreachable from `rating_runtime`/`app_runtime`/`app_migrate`
+   as billing is from `kestra_engine`). Run it **after** step 3 — creating
+   `kestra_engine` before step 3's `REVOKE CONNECT ... FROM PUBLIC` on the
+   billing database would let it inherit billing access through `PUBLIC`
+   before the revoke ever runs. `CREATE DATABASE` cannot be made idempotent
+   in SQL (it cannot run inside a transaction block, so it cannot sit in an
+   `IF NOT EXISTS` guard); the runner instead catches Postgres error code
+   `42P04` (duplicate_database) and treats a second run as a no-op.
 4. Set passwords + store connection strings in Key Vault (steps below).
 
 After provisioning, every subsequent deploy's `migrate` Container Apps Job
@@ -89,6 +106,16 @@ generate a third strong random password and run it directly against `psql`,
 ALTER ROLE rating_runtime WITH PASSWORD '<generated>';
 ```
 
+`kestra-db-roles.sql` likewise contains **no password**. After
+`db:bootstrap-kestra-roles`, set one for `kestra_engine` the same way —
+generate a fourth strong random password and run it directly against `psql`,
+**never** in a source-controlled file. The value goes to Key Vault as the
+`kestra_engine` D5 credential (rm04):
+
+```sql
+ALTER ROLE kestra_engine WITH PASSWORD '<generated>';
+```
+
 ## 2. Store the connection strings in Key Vault
 
 Build the two `postgresql://` connection strings from those passwords and
@@ -131,3 +158,27 @@ Note the container connected as the `postgres` superuser, which is why role
 creation succeeded there; against a least-privilege database the bootstrap
 **must** run via step 1 above on a superuser/owner connection, never through
 the `app_migrate`-scoped `migrate` stage.
+
+## Verification SQL — the `kestra` database boundary (rm03a / rm04, Inv #18 reverse direction)
+
+Run after `db:bootstrap-kestra-roles` and the `kestra_engine` password step
+above, connecting to the **billing** database (database-level ACL checks work
+from any database in the cluster):
+
+```sql
+-- rating_runtime, app_runtime and app_migrate cannot reach kestra — none
+-- holds an explicit CONNECT and PUBLIC's default was revoked.
+SELECT has_database_privilege('rating_runtime', 'kestra', 'CONNECT'); -- false
+SELECT has_database_privilege('app_runtime', 'kestra', 'CONNECT');    -- false
+SELECT has_database_privilege('app_migrate', 'kestra', 'CONNECT');    -- false
+
+-- kestra_engine holds both CONNECT and CREATE on kestra (the latter for
+-- Kestra's own startup schema migrations, rm04-spec D7) but nothing on
+-- the billing database — the mirror image of Inv #18's stated direction.
+SELECT has_database_privilege('kestra_engine', 'kestra', 'CONNECT'); -- true
+SELECT has_database_privilege('kestra_engine', 'kestra', 'CREATE');  -- true
+SELECT has_database_privilege('kestra_engine', current_database(), 'CONNECT'); -- false
+```
+
+Not yet verified against a live cluster in this session — see
+`ratemgmt-progress-tracker.md`.

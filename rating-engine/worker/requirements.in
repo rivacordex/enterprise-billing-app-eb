@@ -1,0 +1,11 @@
+# rm04-spec Implementation §2 / D3 — top-level Python runtime pins for the
+# rating-engine worker. requirements.txt is the compiled, fully-hashed lock
+# generated FROM this file (see its header for the exact uv command). Edit the
+# pins here, then recompile — never hand-edit requirements.txt's hashes.
+psycopg[binary]==3.3.4
+polars==1.44.1
+pyarrow==25.0.1
+azure-storage-blob==12.30.0
+azure-identity==1.25.3
+# orjson optional (JSON Lines throughput, D3) — stdlib json is used until a
+# throughput need is measured; add here + recompile if that changes.

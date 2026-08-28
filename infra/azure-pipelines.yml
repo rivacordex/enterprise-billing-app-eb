@@ -17,6 +17,19 @@
 #     (the client SECRET is a Key Vault reference, never a variable) — defined
 #     here, not in source control, so the concrete tenant/client IDs stay out
 #     of git; leave them empty in the group for an environment without SSO.
+parameters:
+  # rm04 D0 — the rating-engine worker image CANNOT be built until the D0
+  # process-runner spike has passed AND rating-engine/worker/Dockerfile's base
+  # digest + a fully hashed requirements.txt are filled in (both are
+  # placeholders today, so a build would fail). Defaults to false so automatic
+  # CI/PR runs skip the containerize_rating_engine stage entirely; queue the
+  # pipeline manually with this set to true once the spike passes. Mirrors
+  # main.bicep's deployRatingEngine gate.
+  - name: buildRatingEngine
+    displayName: Build the rm04 rating-engine worker image (D0 spike must have passed)
+    type: boolean
+    default: false
+
 trigger:
   branches:
     include:
@@ -164,6 +177,88 @@ stages:
                   .
                 docker push "$IMAGE"
             displayName: docker build + push to ACR (agent-side; ACR Tasks unavailable)
+
+  # ---------------------------------------------------------------------
+  # rm04-spec Implementation §8 / verification item 25 — builds only the
+  # worker image and lints its inputs; does NOT apply Bicep or deploy (no
+  # stage in this pipeline applies main.bicep for the app either — that is
+  # a manual/out-of-band step per the existing convention, and
+  # deployRatingEngine defaults to false until the D0 process-runner spike
+  # passes — see ratemgmt-progress-tracker.md). Runs in parallel with
+  # `containerize`, not gated by it — the two images are independent.
+  #
+  # GATED by the buildRatingEngine parameter (default false): the Dockerfile
+  # base image is a placeholder digest and requirements.txt is not yet fully
+  # hashed, so `docker build` would fail. Automatic CI/PR runs therefore skip
+  # this stage; it only runs when the pipeline is queued with
+  # buildRatingEngine=true (after the D0 spike, once both placeholders are
+  # resolved).
+  - stage: containerize_rating_engine
+    displayName: Containerize (rating engine)
+    dependsOn: test_scan
+    # A custom condition replaces the implicit succeeded() gate on dependsOn,
+    # so and(succeeded(), ...) keeps test_scan a hard prerequisite — never
+    # build/push the worker image off a failed test_scan.
+    condition: and(succeeded(), eq(${{ parameters.buildRatingEngine }}, true))
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: lint_and_build
+        displayName: Lint Dockerfile/Bicep, validate requirements hashes, build + push
+        steps:
+          - script: |
+              set -euo pipefail
+              # requirements.txt is a uv-compiled lock (D3): each requirement is
+              # a `name==version \` line followed by one or more `--hash=sha256:`
+              # continuation lines. Assert every requirement block carries at
+              # least one hash. The Dockerfile's `uv pip install --require-hashes`
+              # is the authoritative gate; this fails fast before the build.
+              awk '
+                function flush() { if (pkg != "" && !seen) { print "Unhashed requirement: " pkg > "/dev/stderr"; bad=1 } }
+                /^[A-Za-z0-9._-]+[[:space:]]*==/ { flush(); pkg=$0; seen=0; next }
+                /--hash=sha256:/ { seen=1 }
+                END { flush(); if (bad) { print "requirements.txt has unhashed entries — failing build." > "/dev/stderr"; exit 1 } }
+              ' rating-engine/worker/requirements.txt
+            displayName: Validate requirements.txt hashes
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                az bicep build --file infra/bicep/modules/rating-engine-container-app.bicep
+                az bicep build --file infra/bicep/modules/rating-engine-storage.bicep
+                az bicep build --file infra/bicep/modules/easy-auth.bicep
+                az bicep build --file infra/bicep/main.bicep
+                # entra-signin-diagnostics.bicep is tenant-scoped (targetScope
+                # = 'tenant') and deliberately NOT referenced by main.bicep —
+                # see the file header and infra/docs/engine-access.md. Linted
+                # here on its own so it stays build-hygiene-clean too.
+                az bicep build --file infra/bicep/modules/entra-signin-diagnostics.bicep
+            displayName: Lint rating-engine Bicep (az bicep build)
+
+          - script: |
+              SHORT_SHA=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+              TAG="$(Build.BuildId)-$SHORT_SHA"
+              echo "Rating engine image tag: $TAG"
+              echo "##vso[task.setvariable variable=ratingEngineImageTag;isOutput=true]$TAG"
+            name: setRatingEngineImageTag
+            displayName: Compute image tag (BuildId-gitSHA)
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                IMAGE="$(ACR_NAME).azurecr.io/rating-engine:$(setRatingEngineImageTag.ratingEngineImageTag)"
+                az acr login --name $(ACR_NAME)
+                docker build -t "$IMAGE" rating-engine/worker
+                docker push "$IMAGE"
+            displayName: docker build + push worker image to shared ACR
 
   # ---------------------------------------------------------------------
   - stage: migrate

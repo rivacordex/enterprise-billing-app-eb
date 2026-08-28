@@ -1,0 +1,35 @@
+# rating-engine worker runtime
+
+Reusable, **format-agnostic plumbing** the rating flow components
+(`prp`/`rp`/`rl`, ratemgmt-code-standards §3.5) call from Kestra Python tasks.
+This is foundation, not business logic.
+
+| Module | Provides | Owning spec for the real logic |
+| --- | --- | --- |
+| `db.py` | psycopg connect as `rating_runtime`, `fetch` (as-of reads), `execute`, `transaction` (RL's one atomic unit, Inv #8), `copy_insert` (bulk, never per-record) | rm07/rm08/rm10 (column sets, rate math, supersession) |
+| `storage.py` | file I/O over `landing/archive/error/logs`, polars readers for fixture/chunk formats, `move` | rm07 (real usage-feed parser — **feed format is Open item 1, undecided**), rm09 (archive move) |
+| `transform.py` | polars `join` / `correlate` / `unmatched` (whole file or chunk, §3.2) | rm07+ (which correlations, reject policy) |
+| `logemit.py` | JSON-Lines log lines matching the `process_log` contract (§7.9) | rm06 (the sweep that inserts them and resolves severity from `event_catalog`) |
+
+## What this is NOT
+
+- **Not rating logic.** Nothing here computes a rate, applies a discount, or
+  decides a supersession — that would be in the wrong repository (§8.1). Each
+  spot that will hold such logic carries a `# STUB:` naming the owning unit.
+- **Not the usage-feed parser.** `storage.read_frame` handles generic
+  columnar/text formats for fixtures and intermediate chunks only. The
+  production feed format (CDR / ASN.1 / TAP vs a delimited format) is Open
+  item 1 and undecided; rm07's PRP owns the real parser.
+- **Not baked into the rm04 image yet.** rm04's worker image installs only the
+  interpreter + libraries (`../Dockerfile`). The `COPY` that bakes this package
+  in lands with the first flow unit (rm06/rm07), alongside the flows that
+  import it.
+
+## Conventions enforced here
+
+- Secrets are read from `SECRET_RATING_RUNTIME_PASSWORD` (Kestra's secret
+  backend, §3.8) and never logged (§7.8).
+- Money/rate columns stay `Decimal`/`str`, never `float` (§2.1, §5.9).
+- Reads use an as-of SQL predicate, never pull-all-then-filter (§6.4).
+- Writes stay inside `rating_runtime`'s grants (§9) — the database is the
+  guarantee; an out-of-boundary write fails as a permission error (§1.3).

@@ -1,0 +1,106 @@
+# rm04-spec Implementation §7 / D9 — local dev stack. Run TOGETHER with the
+# app's own dev stack, as a second -f file so both land in ONE Compose
+# project (same default network, same `db` service/container — the "SAME
+# postgres container provides the billing DB and the kestra DB" requirement;
+# the kestra database/role are rm03a's local provisioning, done by the
+# kestra-setup service below, not created here):
+#
+#   docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml up
+#
+# Because Compose resolves relative paths against the FIRST -f file's
+# directory (the repo root) when multiple files are combined, every
+# build/volume path below is written relative to the repo root, not to this
+# file's own directory.
+#
+# Azurite stands in for Azure Blob — ONLY for Kestra's own internal storage
+# (code-standards §3.4 forbids the container filesystem for that, with no
+# local carve-out). landing/archive/error/logs are plain bind-mounted host
+# directories in local dev (rm09 owns the real cross-protocol archive move;
+# rm04 only makes the four locations exist and D9 keeps local dev simple).
+#
+# The SAME worker image built from rating-engine/worker/Dockerfile runs here
+# as it does on ACA — the process runner (no Docker task runner available
+# there either, so this stack deliberately never gives it one). Never mount
+# the Docker socket: a local Docker runner would let a developer write flows
+# that cannot run on ACA, actively misleading them (D9).
+
+services:
+  # One-shot: creates the local `kestra` database + `kestra_engine` role
+  # (rm03a, mirroring the deployed provisioning order) and sets a LOCAL-ONLY
+  # dev password — never the pattern used in a real environment (see
+  # infra/docs/db-role-verification.md for the manual, never-committed
+  # production step).
+  kestra-setup:
+    image: node:22-alpine
+    working_dir: /app
+    environment:
+      # Local dev connects as the `postgres` superuser for every bootstrap
+      # step (mirrors the root stack's `setup` service) — role-scoped access
+      # is exercised only by the integration-test Postgres, never dev
+      # (repo memory: local-docker-dev-stack).
+      BOOTSTRAP_DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
+      NODE_OPTIONS: --conditions=react-server
+    env_file:
+      - ./rating-engine/dev/.env.example
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    command: >
+      sh -c "npm install &&
+             npm run db:bootstrap-kestra-roles &&
+             node -e \"
+               const postgres = require('postgres');
+               const sql = postgres(process.env.BOOTSTRAP_DATABASE_URL, { max: 1 });
+               sql\`ALTER ROLE kestra_engine WITH PASSWORD '$${KESTRA_DATASOURCES_POSTGRES_PASSWORD}'\`
+                 .then(() => sql.end())
+                 .catch((e) => { console.error(e); process.exit(1); });
+             \""
+    restart: "no"
+
+  # Blob emulator for Kestra's internal storage ONLY (kestra-internal
+  # container). devstoreaccount1 is Azurite's published well-known emulator
+  # account — not a secret, safe to commit (rating-engine/dev/.env.example).
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: "azurite-blob --blobHost 0.0.0.0 --blobPort 10000"
+    ports:
+      - "${AZURITE_BLOB_PORT:-10000}:10000"
+    volumes:
+      - azurite_data:/data
+
+  # The dedicated rating engine — same image, same process runner, same
+  # kestra.yml as the deployed Container App.
+  rating-engine:
+    build:
+      context: ./rating-engine/worker
+    env_file:
+      - ./rating-engine/dev/.env.example
+    environment:
+      KESTRA_DATASOURCES_POSTGRES_URL: jdbc:postgresql://db:5432/kestra
+      KESTRA_DATASOURCES_POSTGRES_USERNAME: kestra_engine
+      # KESTRA_DATASOURCES_POSTGRES_PASSWORD comes from env_file (.env.example)
+      # — the SAME source kestra-setup uses to set the role password, so the
+      # two can never diverge. Deliberately NOT set here: an `environment:`
+      # entry would shadow the env_file value and reintroduce that split.
+      # D6 — a local sentinel, never a real digest/tag.
+      RATING_ENGINE_VERSION: dev-local
+    volumes:
+      - ./rating-engine/kestra/kestra.yml:/app/kestra.yml:ro
+      - ./rating-engine/dev/landing:/data/landing
+      - ./rating-engine/dev/archive:/data/archive
+      - ./rating-engine/dev/error:/data/error
+      - ./rating-engine/dev/logs:/data/logs
+      # Deliberately NOT present: "- /var/run/docker.sock:/var/run/docker.sock" (D9).
+    ports:
+      - "${RATING_ENGINE_PORT:-8085}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      kestra-setup:
+        condition: service_completed_successfully
+      azurite:
+        condition: service_started
+    command: ["server", "standalone", "--config", "/app/kestra.yml"]
+
+volumes:
+  azurite_data:
