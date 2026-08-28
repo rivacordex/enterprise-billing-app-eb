@@ -1,0 +1,51 @@
+# rm06-spec Implementation §2 (D9, D10). The log sweep: scheduled,
+# INDEPENDENT of the rating flows above, so a crashed ran-usage-rating
+# execution still gets its terminal log line loaded — a task at the end of
+# that flow would never load that flow's own crash (D9). Parses logs/,
+# inserts into rating.process_log with severity resolved from
+# rating.event_catalog (three outcomes, D9), computes partition_period at
+# insert (D8), and is idempotent via rename-on-completion (D10).
+#
+# Never edit in the Kestra UI — deployed from git by the pipeline's
+# flow-deploy stage (D2).
+id: log-sweep
+namespace: rating
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    # Cadence is namespace-KV config (rm00-spec §Configuration), not a
+    # literal here in principle; Kestra's Schedule trigger requires a
+    # compile-time cron expression, so 5 minutes is the operating default —
+    # revisit if a config-driven cadence mechanism is added later.
+    cron: "*/5 * * * *"
+
+tasks:
+  - id: sweep
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.log_sweep --dir /data/logs --swept /data/logs/swept
+        --malformed /data/logs/malformed --workflow-execution-id "{{ execution.id }}"
+
+# D7/D9 — the sweep can no more sweep its own crash than a rating flow can
+# (rm06-spec D10), so it writes its OWN terminal log line; a stuck/failed
+# sweep is caught by the next scheduled run.
+errors:
+  - id: on-error
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component LOG_SWEEP --outcome FAILED
+        --workflow-execution-id "{{ execution.id }}"
+
+finally:
+  - id: always
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component LOG_SWEEP --outcome FINALIZED
+        --workflow-execution-id "{{ execution.id }}"

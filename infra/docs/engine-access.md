@@ -84,6 +84,48 @@ same lifecycle-rule pattern `rating-engine-storage.bicep` already uses for
 the `archive` container (rm04 D4). Not built in this pass; documented here
 per Implementation §5 as the alternative, not the default.
 
+## Flow deployment — git is the required process, not the UI (rm06 D2)
+
+Every flow change (`rating-engine/flows/**`) is a git commit, deployed by
+`infra/azure-pipelines.yml`'s `deploy_rating_flows` stage on merge to
+`main`, via the `kestra` CLI (the same pinned image as the worker,
+`kestra flow validate` then `kestra flow namespace update rating ./flows`,
+authenticated with the `kestra-basic-auth-password` Key Vault secret).
+Git-based deployment is the **required process**, not a restriction the
+engine enforces: Kestra OSS does **not** technically prevent editing a flow
+in the UI — it has no read-only tier and no per-user action history — so a
+UI edit would be an untracked change to how money is calculated, invisible
+to `git log` and to review (code-standards §3.1). Treating the UI as
+read-only is therefore a discipline held by process and by the
+accepted-risk mitigations below (sign-in logs correlated with git history),
+not by the engine itself. The Billing Ops UI access provisioned above
+(steps 1-4) is for **reading** execution state and logs, not for authoring
+flows.
+
+**Not yet resolved** (rm06, flagged rather than assumed — see the
+`deploy_rating_flows` stage's own header comment in `azure-pipelines.yml`
+and `ratemgmt-progress-tracker.md` Open Questions):
+
+- **Network reachability.** Every other stage in this pipeline reaches
+  Container Apps through the Azure Resource Manager control plane
+  (`az containerapp ...`), never the app's own HTTP endpoint, specifically
+  because the ingress may be internal-only (rm04 D8) or IP-allow-listed
+  (rm05 D6). `kestra flow namespace update` has no ARM-level equivalent —
+  it needs a direct HTTP path to the Kestra webserver from the hosted ADO
+  agent, which neither ingress mode obviously provides. Once this proxy is
+  deployed (Easy Auth, `unauthenticatedClientAction: RedirectToLoginPage`),
+  a non-interactive CLI call would also need to get past the Entra
+  redirect, which is not addressed anywhere in this doc or rm05's spec.
+- **`kestra` CLI flag names** (`--server`, `--user user:password`) are the
+  rm06 spec's literal text, unconfirmed against the pinned `v1.3.35`
+  release — the same class of caveat as `kestra.yml`'s D0 property-name
+  notes.
+- **Key Vault read access for the pipeline's own service principal.** Every
+  existing Key Vault role assignment in this repo's Bicep grants a
+  Container App's Managed Identity access; none grants the pipeline's
+  service connection principal `Key Vault Secrets User`, which
+  `deploy_rating_flows` needs to read `kestra-basic-auth-password` directly.
+
 ## Deviations from the spec's literal text (recorded, not silent)
 
 - **File location.** The spec names `infra/easy-auth.bicep`. This repo

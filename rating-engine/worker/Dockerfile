@@ -22,8 +22,16 @@ USER root
 COPY requirements.txt /tmp/requirements.txt
 RUN uv pip install --python /app/.venv/bin/python --require-hashes -r /tmp/requirements.txt
 
-# Rating runtime code (parsers, RL loader, log emitter) is copied in a later
-# unit; rm04 bakes only the interpreter + libraries so the image is stable
-# across rm07-rm12 (D2 — a Kestra version bump is the only thing that
-# rebuilds/revalidates it).
+# rm06-spec Implementation §6 — the rating runtime package (db/storage/
+# transform/logemit plumbing plus rm06's log_sweep + emit_terminal_log)
+# baked into the image, importable as `runtime` from any Kestra Python task
+# (ratemgmt-code-standards.md §3.2's process-runner tasks). PYTHONPATH=/app
+# puts the package's PARENT dir on the path so `import runtime` / `python3 -m
+# runtime.log_sweep` resolve regardless of the task's own working directory;
+# COPY'ing runtime/ directly to /app/runtime (not flattened) keeps its
+# internal relative imports (`from . import db, logemit`, runtime/__init__.py)
+# intact.
+COPY runtime/ /app/runtime/
+ENV PYTHONPATH=/app
+
 USER kestra
