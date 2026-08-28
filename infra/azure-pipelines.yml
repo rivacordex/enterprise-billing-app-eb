@@ -361,16 +361,35 @@ stages:
                 # Read live from Key Vault (D2's "authenticated with the
                 # Basic Auth credential from Key Vault") rather than a
                 # pipeline secret variable, so there is exactly one place
-                # this password is stored — never echoed to pipeline logs.
+                # this password is stored. NOTE: it is still passed to the CLI
+                # as a `--user user:password` argument below, which puts it on
+                # the container's argument vector (visible in a process listing
+                # on the agent) — weaker than an env var. `set -x` is not
+                # enabled, so it is not echoed to the pipeline log. Passing it
+                # via `docker run -e` + a kestra env var is the stronger form;
+                # confirm the CLI's env-var name during the D0 spike (same
+                # unconfirmed-flag caveat as below).
                 BASIC_AUTH_PASSWORD=$(az keyvault secret show \
                   --vault-name "$(KEYVAULT_NAME)" \
                   --name kestra-basic-auth-password \
                   --query value -o tsv)
 
+                # `--no-delete`: `flow namespace update` reconciles the whole
+                # namespace to the input directory and, by default, DELETES
+                # flows on the engine that are absent from /flows. A partial
+                # checkout, a sparse-checkout misconfig, or a future refactor
+                # that drops a file would then silently remove a live flow
+                # (e.g. log-sweep) from production with a green pipeline.
+                # `--no-delete` makes the deploy additive/upsert-only.
+                # UNCONFIRMED against v1.3.35 (same caveat class as the other
+                # kestra CLI flags — verify during the D0 spike); if the flag
+                # name differs, the intent is "never delete a server-side flow
+                # missing from the checkout".
                 docker run --rm \
                   -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
                   "$KESTRA_IMAGE" \
                   kestra flow namespace update rating /flows \
+                    --no-delete \
                     --server "https://${ENGINE_FQDN}" \
                     --user "rating-ops:${BASIC_AUTH_PASSWORD}"
             displayName: kestra flow validate + namespace update (D2)

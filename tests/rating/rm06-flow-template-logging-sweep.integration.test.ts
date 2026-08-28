@@ -565,6 +565,78 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(lag).toBeGreaterThanOrEqual(0);
     });
 
+    it("naive (offset-less) log_datetime is treated as malformed and quarantined, never inserted with an ambiguous instant", async () => {
+      const batchId = "UDRBAT-RM06-NAIVEDT";
+      const execId = "exec-naivedt";
+      const good = jsonLine({
+        log_datetime: "2026-08-14T10:00:00Z",
+        component: "RL",
+        log_level: "INFO",
+        event_code: "BATCH_COMPLETE",
+        source_file: "s.csv",
+        batch_id: batchId,
+        workflow_execution_id: execId,
+      });
+      // No 'Z', no offset — Postgres would localize it in the session tz.
+      const naive = jsonLine({
+        log_datetime: "2026-08-14T10:00:00",
+        component: "RL",
+        log_level: "INFO",
+        event_code: "BATCH_COMPLETE",
+        source_file: "s.csv",
+        batch_id: batchId,
+        workflow_execution_id: execId,
+      });
+      const fileName = `RL-${execId}.jsonl`;
+      writeLogFile(fileName, `${good}\n${naive}\n`);
+
+      expect(() => runSweep(execId)).not.toThrow();
+
+      // Only the tz-aware line loaded; the naive one is quarantined.
+      const loaded = (await rowsFor(batchId)).filter(
+        (r) => r.event_code === "BATCH_COMPLETE",
+      );
+      expect(loaded).toHaveLength(1);
+      const summary = (await rowsForExecution(execId)).find(
+        (r) => r.event_code === "MALFORMED_LOG_LINE",
+      );
+      expect(summary?.perceived_severity).toBe("INDETERMINATE");
+      const quarantined = readFileSync(join(malformedDir, fileName), "utf8");
+      expect(quarantined).toMatch(/2026-08-14T10:00:00"/); // the naive line, no Z
+    });
+
+    it("one poison/unreadable file does not wedge the sweep — files sorted after it still load", async () => {
+      const batchId = "UDRBAT-RM06-ISOLATION";
+      const execId = "exec-isolation";
+      // Invalid UTF-8 → read_text raises before any per-line handling. Sorted
+      // FIRST; without per-file isolation it would abort the run and starve
+      // every later file, every run forever (defeating D9).
+      writeFileSync(
+        join(logsDir, "00-poison.jsonl"),
+        Buffer.from([0xff, 0xff, 0xff, 0x0a]),
+      );
+      const good = jsonLine({
+        log_datetime: "2026-08-14T10:00:00Z",
+        component: "RL",
+        log_level: "INFO",
+        event_code: "BATCH_COMPLETE",
+        source_file: "s.csv",
+        batch_id: batchId,
+        workflow_execution_id: execId,
+      });
+      writeLogFile(`99-RL-${execId}.jsonl`, good + "\n");
+
+      expect(() => runSweep(execId)).not.toThrow();
+
+      // The good file (sorted AFTER the poison one) still loaded.
+      const rows = await rowsFor(batchId);
+      expect(rows).toHaveLength(1);
+      // The poison file is left in place for inspection, not moved to swept/.
+      expect(() =>
+        readFileSync(join(logsDir, "00-poison.jsonl")),
+      ).not.toThrow();
+    });
+
     it("11. every catalogued severity value round-trips (build hygiene: the seed itself is usable input)", () => {
       // A cheap sanity check that the fixture codes used above actually come
       // from the real catalog, not an invented one.
