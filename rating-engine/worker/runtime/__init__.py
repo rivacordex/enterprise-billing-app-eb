@@ -21,6 +21,12 @@ Dockerfile ``COPY`` that bakes this whole package into the image (see
 needed it.
 """
 
-from . import db, emit_terminal_log, log_sweep, logemit, storage, transform
+# Eager-import the library submodules only, so ``import runtime; runtime.db``
+# works for the reusable plumbing. ``log_sweep`` and ``emit_terminal_log`` are
+# executable entry points (run as ``python3 -m runtime.<module>``), not part of
+# the package API — importing them here would pull their module-level code (and
+# run it twice under ``-m``) into every ``import runtime``. Import them directly
+# (``from runtime import log_sweep`` / ``python3 -m runtime.log_sweep``) instead.
+from . import db, logemit, storage, transform
 
-__all__ = ["db", "emit_terminal_log", "log_sweep", "logemit", "storage", "transform"]
+__all__ = ["db", "logemit", "storage", "transform"]

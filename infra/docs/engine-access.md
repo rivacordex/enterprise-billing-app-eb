@@ -84,18 +84,23 @@ same lifecycle-rule pattern `rating-engine-storage.bicep` already uses for
 the `archive` container (rm04 D4). Not built in this pass; documented here
 per Implementation §5 as the alternative, not the default.
 
-## Flow deployment — the UI is read-only in practice (rm06 D2)
+## Flow deployment — git is the required process, not the UI (rm06 D2)
 
 Every flow change (`rating-engine/flows/**`) is a git commit, deployed by
 `infra/azure-pipelines.yml`'s `deploy_rating_flows` stage on merge to
 `main`, via the `kestra` CLI (the same pinned image as the worker,
 `kestra flow validate` then `kestra flow namespace update rating ./flows`,
-authenticated with the `kestra-basic-auth-password` Key Vault secret) —
-never a UI edit. Kestra OSS records no per-user action history, so a UI
-edit would be an untracked change to how money is calculated, invisible to
-`git log` and to review (code-standards §3.1). The Billing Ops UI access
-provisioned above (steps 1-4) is for **reading** execution state and logs,
-not for authoring flows.
+authenticated with the `kestra-basic-auth-password` Key Vault secret).
+Git-based deployment is the **required process**, not a restriction the
+engine enforces: Kestra OSS does **not** technically prevent editing a flow
+in the UI — it has no read-only tier and no per-user action history — so a
+UI edit would be an untracked change to how money is calculated, invisible
+to `git log` and to review (code-standards §3.1). Treating the UI as
+read-only is therefore a discipline held by process and by the
+accepted-risk mitigations below (sign-in logs correlated with git history),
+not by the engine itself. The Billing Ops UI access provisioned above
+(steps 1-4) is for **reading** execution state and logs, not for authoring
+flows.
 
 **Not yet resolved** (rm06, flagged rather than assumed — see the
 `deploy_rating_flows` stage's own header comment in `azure-pipelines.yml`

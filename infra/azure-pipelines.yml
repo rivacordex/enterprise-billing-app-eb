@@ -290,9 +290,13 @@ stages:
   #
   # GATED by deployRatingFlows (default false) AND merge-to-main only (D2 says
   # "on merge to main" — a PR validation run must never push flows). Depends
-  # on containerize_rating_engine only to reuse its Bicep-lint pass in the
-  # same run when both are requested; it does NOT depend on a fresh worker
-  # image build — flows deploy independently of the image.
+  # on test_scan, NOT containerize_rating_engine: flows deploy independently of
+  # the worker image (see below), and containerize_rating_engine is itself
+  # gated by buildRatingEngine (default false), so depending on it would make a
+  # normal deployRatingFlows run block on a skipped stage — succeeded() treats
+  # a skipped dependency as not-succeeded, so the deploy would never fire in
+  # any run that does not also rebuild the image. test_scan is the last stage
+  # common to every run; a skipped containerize_rating_engine is permitted.
   #
   # UNRESOLVED, flagged rather than assumed (mirrors the D0 caveat style used
   # throughout rm04/rm05): (1) exact `kestra` CLI flag names/auth flags below
@@ -314,7 +318,11 @@ stages:
   # ratemgmt-progress-tracker.md Open Questions.
   - stage: deploy_rating_flows
     displayName: Deploy rating flows (flows/**)
-    dependsOn: containerize_rating_engine
+    dependsOn: test_scan
+    # succeeded() here refers to test_scan (the sole dependency) — it must have
+    # passed. containerize_rating_engine is intentionally not a dependency, so a
+    # skipped worker-image build (buildRatingEngine=false) never blocks a flow
+    # deploy.
     condition: >
       and(
         succeeded(),
