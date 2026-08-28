@@ -27,11 +27,21 @@ would silently duplicate every line. Mechanism: rename-on-completion — a
 fully swept file moves to ``logs/swept/``; the sweep only ever reads
 unmarked files directly under ``--dir`` (never recursing into ``swept/`` or
 ``malformed/``). A file whose last line is torn (still open for writing, D10)
-is skipped WHOLESALE this run — not partially inserted — so a partial sweep
-can never leave a file half-loaded-and-not-renamed for a later run to
-duplicate: either an entire file's complete lines load and it moves to
-``swept/`` in one transaction, or nothing about it changes and the whole
-file is retried next run.
+is skipped WHOLESALE this run — not partially inserted — so a partial *read*
+can never leave a file half-loaded for a later run to duplicate.
+
+**Residual window, stated honestly (not the false "one transaction"):** the
+row inserts are one transaction, but the rename to ``swept/`` is a *separate*
+filesystem step *after* the commit — the two cannot be made atomic without a
+durable processed-file marker, and the four-table ``rating`` schema (§5.1)
+has no home for one. So a crash in the narrow commit→rename window (worker
+killed, mount error) leaves the file un-renamed with its rows already
+committed, and the next run re-inserts them. This errs deliberately toward a
+*duplicate* rather than *data loss*: a swept-but-unloaded file is never
+possible, and a single failing file no longer wedges the whole run
+(``run_sweep`` isolates per file). Closing the window entirely needs a schema
+decision (a processed-log-file identity table) and is escalated in
+``ratemgmt-progress-tracker.md`` Open Questions, not invented here (§5.1, §6).
 
 Run as ``python3 -m runtime.log_sweep`` (module form — see
 ``emit_terminal_log.py``'s docstring for why).
@@ -109,6 +119,14 @@ def _normalize(raw: Mapping[str, Any]) -> dict[str, Any]:
     # Python version's fromisoformat() supporting it.
     normalized = log_datetime[:-1] + "+00:00" if log_datetime.endswith("Z") else log_datetime
     parsed_datetime = datetime.fromisoformat(normalized)
+    if parsed_datetime.tzinfo is None or parsed_datetime.utcoffset() is None:
+        # Fail closed (§5.4): a naive (offset-less) log_datetime would be
+        # localized in the DB session timezone (not guaranteed UTC), silently
+        # shifting the stored time and mis-bucketing partition_period via
+        # rating.period_of. logemit.line() only ever writes tz-aware lines
+        # (§7.9), so anything naive on disk is treated as malformed here rather
+        # than inserted with an ambiguous instant.
+        raise ValueError("log_datetime must be timezone-aware; a naive value is ambiguous (storage is UTC)")
     additional_info = raw.get("additional_info")
     return {
         "log_datetime": parsed_datetime,
@@ -192,10 +210,11 @@ def sweep_file(
             )
             db.execute(conn, _INSERT_SQL, _normalize(summary))
             inserted += 1
-    # Only after the transaction commits: quarantine the bad raw lines and
-    # rename the source file away, so a crash between insert and rename
-    # simply gets retried (same file, same content, same idempotent path) —
-    # never a state where the file is gone but nothing was inserted.
+    # These run only AFTER the transaction commits. A crash in this
+    # commit→rename window re-inserts on the next run (the rows are committed
+    # but the file is not yet renamed away) — the deliberate never-lose-data
+    # trade-off documented in the module docstring, NOT silent idempotency.
+    # It never leaves the file gone with nothing inserted.
     if parsed.malformed_lines:
         malformed_dir.mkdir(parents=True, exist_ok=True)
         (malformed_dir / path.name).write_text(
@@ -215,15 +234,40 @@ def run_sweep(
     (never recursing into ``swept_dir``/``malformed_dir``). Returns the total
     row count inserted."""
     total = 0
+    failures = 0
     files = sorted(p for p in log_dir.glob("*.jsonl") if p.is_file())
     if not files:
         return 0
     with db.connect() as conn:
         for path in files:
-            parsed = parse_file(path)
-            if parsed is None:
-                continue  # torn last line — deferred to the next run
-            total += sweep_file(conn, path, parsed, swept_dir, malformed_dir, workflow_execution_id)
+            try:
+                parsed = parse_file(path)
+                if parsed is None:
+                    continue  # torn last line — deferred to the next run
+                total += sweep_file(
+                    conn, path, parsed, swept_dir, malformed_dir, workflow_execution_id
+                )
+            except Exception as exc:  # noqa: BLE001 — see below
+                # Per-file isolation: one poison file must NOT wedge the whole
+                # sweep. D9's entire purpose is that logs (including a crashed
+                # flow's terminal line) still load; a file that parses cleanly
+                # but fails at INSERT (e.g. a value rating.period_of rejects, a
+                # check-constraint violation, a transient DB error) would
+                # otherwise abort every file sorted after it, and — never being
+                # renamed — recur every run, silently starving process_log.
+                # db.transaction rolls the failed insert back (no partial rows)
+                # and leaves the connection usable for the next file; the poison
+                # file stays un-renamed for a later run / operator to inspect.
+                # Emitting a process_log row here is unsafe (the failure may BE
+                # the DB), so this surfaces on the task's stderr, which
+                # log-sweep.yaml's own errors/finally handler reports.
+                failures += 1
+                print(
+                    f"log-sweep: SKIPPED {path.name}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+    if failures:
+        print(f"log-sweep: {failures} file(s) skipped due to errors — see stderr", file=sys.stderr)
     return total
 
 
