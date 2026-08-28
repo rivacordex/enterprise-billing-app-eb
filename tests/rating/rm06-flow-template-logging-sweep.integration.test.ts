@@ -84,7 +84,7 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
   );
   const sweepFlow = readFileSync(join(flowsDir, "log-sweep.yaml"), "utf8");
 
-  it("2. prp/rp/rl are each a documented # STUB: naming their owning spec, in order, with no rate maths/parsing/guards", () => {
+  it("2. prp is now rm07's real processor; rp/rl remain documented # STUB:s naming their owning spec, in order, with no rate maths/parsing/guards", () => {
     const prpIdx = template.indexOf("id: prp");
     const rpIdx = template.indexOf("id: rp");
     const rlIdx = template.indexOf("id: rl");
@@ -92,7 +92,11 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     expect(rpIdx).toBeGreaterThan(prpIdx);
     expect(rlIdx).toBeGreaterThan(rpIdx);
 
-    expect(template).toMatch(/# STUB: rm07 owns PRP/);
+    // rm07 replaced the prp STUB with the real Pre-Rating Processor, invoked as
+    // the runtime module (module form, not a python3 -c placeholder); rp/rl are
+    // still STUBBED and owned by rm08/rm09.
+    expect(template).toMatch(/python3 -m runtime\.prp/);
+    expect(template).not.toMatch(/# STUB: rm07 owns PRP/);
     expect(template).toMatch(/# STUB: rm08 owns RP/);
     expect(template).toMatch(/# STUB: rm09 owns RL/);
 
@@ -100,15 +104,15 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     // section, never a TODO).
     expect(template).not.toMatch(/TODO/);
 
-    // No rate maths / parsing / file_key derivation / guard logic in the
-    // actual task bodies (D1) — the surrounding # comments legitimately NAME
-    // these concepts (they say what rm07-rm10 will replace the stub with),
-    // so the scan is scoped to the `python3 -c "..."` command bodies only,
-    // never the doc comments around them.
+    // No rate maths / parsing / guard logic in the REMAINING stub bodies (D1) —
+    // the surrounding # comments legitimately NAME these concepts (they say what
+    // rm08-rm10 will replace the stub with), so the scan is scoped to the
+    // `python3 -c "..."` command bodies only, never the doc comments around
+    // them. Now two bodies (rp, rl); prp is real code, not a placeholder.
     const commandBodies = [
       ...template.matchAll(/python3 -c "\n([\s\S]*?)\n\s*"/g),
     ].map((m) => m[1]);
-    expect(commandBodies).toHaveLength(3); // prp, rp, rl
+    expect(commandBodies).toHaveLength(2); // rp, rl (prp is real now)
     const forbidden = [/Decimal\(/, /udr_key\s*=/, /INSERT INTO/i, /round\(/];
     for (const body of commandBodies) {
       for (const pattern of forbidden) {
@@ -126,17 +130,17 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     expect(template).toMatch(/concurrency:\s*\n\s*limit:\s*1/);
   });
 
-  it("3 (D3). the trigger is manual (Webhook), not a landing/ file-watch trigger", () => {
+  it("3 (D3, replaced by rm07). the trigger is now the landing/ file trigger, not rm06's manual Webhook placeholder", () => {
     const triggersBlock = template.slice(
       template.indexOf("triggers:"),
       template.indexOf("tasks:"),
     );
-    expect(triggersBlock).toMatch(/io\.kestra\.plugin\.core\.trigger\.Webhook/);
-    // A file-watch trigger (rm07's) would be a core.trigger.fs.* or similar
-    // filesystem-watching plugin, never present in the manual-trigger template.
-    expect(triggersBlock).not.toMatch(/trigger\.fs\./);
+    // rm07 Implementation §1 replaced rm06's manual Webhook placeholder with the
+    // landing/ file trigger; the Webhook (and its secret) are gone.
+    expect(triggersBlock).toMatch(/id: landing-file/);
+    expect(triggersBlock).toMatch(/fs\.local\.Trigger/);
     expect(triggersBlock).not.toMatch(
-      /type:\s*io\.kestra\.plugin\.core\.trigger\.Schedule/,
+      /io\.kestra\.plugin\.core\.trigger\.Webhook/,
     );
   });
 
