@@ -93,6 +93,7 @@ concurrency:
 triggers:
   - id: manual                   # D3 — the landing/ file trigger is rm07's
     type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('RATING_USAGE_WEBHOOK_KEY') }}"  # required Webhook auth key (§3.8)
 tasks:
   - id: prp                      # STUB: rm07 — claim, validate, reject.
     type: io.kestra.plugin.scripts.python.Commands   # process runner (rm04)

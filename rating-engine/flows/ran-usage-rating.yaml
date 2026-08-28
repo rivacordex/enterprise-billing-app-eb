@@ -29,6 +29,11 @@ triggers:
   - id: manual # D3 — manual/API trigger only. The landing/ file trigger
     type: io.kestra.plugin.core.trigger.Webhook # is rm07's; building it here
     # then rewriting it there is duplicated work (rm00 Unit rm06).
+    key: "{{ secret('RATING_USAGE_WEBHOOK_KEY') }}" # Webhook's REQUIRED auth
+    # key — without it `kestra flow validate` fails (verification item 17).
+    # Referenced, never a literal (§3.8); introduces a new Kestra secret to
+    # provision (like kestra-basic-auth-password). The secret-expression form
+    # for a trigger key is unconfirmed against v1.3.35 — verify at the D0 spike.
 
 tasks:
   # D4 — three named, ordered sections. Never merged, reordered, or inlined
