@@ -102,6 +102,16 @@ not by the engine itself. The Billing Ops UI access provisioned above
 (steps 1-4) is for **reading** execution state and logs, not for authoring
 flows.
 
+**Secret prerequisite (rm06).** `ran-usage-rating.yaml`'s Webhook trigger
+resolves its required `key` via `{{ secret('RATING_USAGE_WEBHOOK_KEY') }}`.
+Provision a Key Vault secret **`rating-usage-webhook-key`** whose value is the
+**base64-encoded** webhook token (Kestra OSS's env secret backend
+base64-decodes `SECRET_<NAME>`) — wired to the engine as
+`SECRET_RATING_USAGE_WEBHOOK_KEY` in `rating-engine-container-app.bicep`. The
+decoded token is the last path segment of the webhook URL
+(`.../executions/webhook/rating/ran-usage-rating/<token>`); keep it secret.
+Local dev uses the committed base64 dummy in `rating-engine/dev/.env.example`.
+
 **Not yet resolved** (rm06, flagged rather than assumed — see the
 `deploy_rating_flows` stage's own header comment in `azure-pipelines.yml`
 and `ratemgmt-progress-tracker.md` Open Questions):

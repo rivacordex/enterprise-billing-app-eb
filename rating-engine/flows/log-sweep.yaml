@@ -12,13 +12,15 @@ id: log-sweep
 namespace: rating
 
 concurrency:
-  limit: 1 # Serialize overlapping runs. The 5-minute Schedule could fire a
-  # second sweep while a slow one is still reading logs/, and rename-on-
-  # completion (D10) does NOT guard two runs reading the same file before
-  # either renames it — concurrent sweeps would double-insert every line. A
-  # crashed sweep releases the slot, so the next scheduled run still recovers
-  # it (D10); only a truly-hung run holds the slot, which the stuck-sweep
-  # alarm (D10) covers.
+  limit: 1 # Backstop for catch-up runs. The Schedule trigger defaults to
+  # allowConcurrent:false, so Kestra already will NOT start a new scheduled
+  # sweep while the prior one is still RUNNING — normal 5-minute ticks cannot
+  # overlap. This limit covers what that serialization does not: a UI/API
+  # backfill or missed-schedule recovery (recoverMissedSchedules) firing
+  # overlapping catch-up runs, where rename-on-completion (D10) cannot guard two
+  # runs reading the same file before either renames it → double-insert. A
+  # crashed run reaches a terminal state and releases the slot; a truly-hung run
+  # is D10's stuck-sweep alarm's job.
 
 triggers:
   - id: schedule
