@@ -262,6 +262,7 @@ module easyAuth 'modules/easy-auth.bicep' = if (deployEasyAuth) {
   name: 'easyAuth'
   params: {
     containerAppName: ratingEngineContainerApp!.outputs.ratingEngineAppName
+    containerAppsEnvironmentId: containerAppsEnvironment.id
     logAnalyticsWorkspaceId: logAnalytics.id
     logAnalyticsWorkspaceName: logAnalytics.name
     ratingEngineClientId: ratingEngineEntraClientId

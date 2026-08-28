@@ -22,6 +22,9 @@ param containerAppName string
 param logAnalyticsWorkspaceId string
 param logAnalyticsWorkspaceName string
 
+@description('rm04 containerAppsEnvironment.id (main.bicep) — resolved to the environment name below so the log-category diagnostic setting (Container Apps only supports ContainerAppConsoleLogs/ContainerAppSystemLogs at the managedEnvironments scope, not on the containerApps resource itself) can target the environment.')
+param containerAppsEnvironmentId string
+
 @description('rm05 D3 — the separate `rating-engine` Entra app registration\'s client (application) ID. Same tenant as the app\'s own login registration, but a distinct app id (Implementation §1, provisioning prerequisite).')
 param ratingEngineClientId string
 
@@ -44,6 +47,10 @@ param corporateIpAllowList array
 
 resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' existing = {
   name: containerAppName
+}
+
+resource ratingEngineEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' existing = {
+  name: last(split(containerAppsEnvironmentId, '/'))
 }
 
 // rm05 Implementation §3 (D1/D3/D4/D5) — the auth config itself.
@@ -87,12 +94,34 @@ resource easyAuthConfig 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
   }
 }
 
-// rm05 D7/Implementation §5 — Container App ingress/console logs to the
-// shared Log Analytics workspace. Category names per Microsoft.App
-// diagnostic settings' documented category groups.
+// rm05 D7/Implementation §5 — app-scoped diagnostic setting. Container Apps
+// diagnostic settings only support the `AllMetrics` category at the
+// containerApps resource scope; the `--logs` (category) parameter is not
+// supported there (Microsoft Learn, Container Apps log-options: "When
+// creating diagnostic settings at the container app level, the `--logs`
+// parameter is not supported"). Log categories live on the environment
+// diagnostic setting below instead.
 resource containerAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01' = {
   name: 'rating-engine-diagnostics'
   scope: ratingEngineApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
+}
+
+// rm05 D7/Implementation §5 — ContainerAppConsoleLogs/ContainerAppSystemLogs
+// are only valid categories on the managedEnvironments diagnostic setting,
+// not on the containerApps resource above. Scoped to the shared environment
+// (all container apps' console/system logs), not just rating-engine's.
+resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01' = {
+  name: 'rating-engine-environment-diagnostics'
+  scope: ratingEngineEnvironment
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     logs: [
