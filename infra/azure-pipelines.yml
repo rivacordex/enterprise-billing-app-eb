@@ -13,10 +13,19 @@
 #     RESOURCE_GROUP, CONTAINERAPP_NAME, CONTAINERAPP_JOB_NAME,
 #     CONTAINER_APPS_ENV, KEYVAULT_NAME, APP_MI_RESOURCE_ID,
 #     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN, MICROSOFT_CLIENT_ID,
-#     ENTRA_TENANT_ID. The last two are non-secret Microsoft SSO identifiers
-#     (the client SECRET is a Key Vault reference, never a variable) — defined
-#     here, not in source control, so the concrete tenant/client IDs stay out
-#     of git; leave them empty in the group for an environment without SSO.
+#     ENTRA_TENANT_ID, RATING_ENGINE_CONTAINERAPP_NAME (rm06 — the
+#     deploy_rating_flows stage's Container App name; only read when
+#     deployRatingFlows=true). The SSO pair are non-secret Microsoft
+#     identifiers (the client SECRET is a Key Vault reference, never a
+#     variable) — defined here, not in source control, so the concrete
+#     tenant/client IDs stay out of git; leave them empty in the group for an
+#     environment without SSO.
+#   - The service connection's principal needs `Key Vault Secrets User` (or
+#     equivalent get-secret access) on KEYVAULT_NAME for deploy_rating_flows
+#     to read `kestra-basic-auth-password` — not yet confirmed granted
+#     anywhere in this repo's Bicep (every existing Key Vault role assignment
+#     here is to a Container App Managed Identity, not this pipeline's own
+#     service connection principal); flagged, not assumed.
 parameters:
   # rm04 D0 — the rating-engine worker image CANNOT be built until the D0
   # process-runner spike has passed AND rating-engine/worker/Dockerfile's base
@@ -27,6 +36,18 @@ parameters:
   # main.bicep's deployRatingEngine gate.
   - name: buildRatingEngine
     displayName: Build the rm04 rating-engine worker image (D0 spike must have passed)
+    type: boolean
+    default: false
+
+  # rm06-spec D2 — flows are deployed from git, never edited in the Kestra
+  # UI. Defaults to false for the same reason buildRatingEngine/
+  # deployRatingEngine do: the D0 process-runner spike has not passed, no
+  # engine is deployed yet (deployRatingEngine defaults false in main.bicep),
+  # and the flow-deploy stage below needs an FQDN + reachable engine to
+  # target. Queue the pipeline manually with this set to true once an engine
+  # exists to deploy flows to.
+  - name: deployRatingFlows
+    displayName: Deploy rm06+ rating flows (flows/**) to the Kestra engine (engine must be deployed first)
     type: boolean
     default: false
 
@@ -259,6 +280,119 @@ stages:
                 docker build -t "$IMAGE" rating-engine/worker
                 docker push "$IMAGE"
             displayName: docker build + push worker image to shared ACR
+
+  # ---------------------------------------------------------------------
+  # rm06-spec D2 / Implementation §6 — flows deployed from git via the
+  # `kestra` CLI, never edited in the Kestra UI (code-standards §3.1). Runs
+  # the SAME pinned Kestra image as the worker (rating-engine/worker/
+  # Dockerfile) so `flow validate`/`flow namespace update` always matches the
+  # deployed engine's version.
+  #
+  # GATED by deployRatingFlows (default false) AND merge-to-main only (D2 says
+  # "on merge to main" — a PR validation run must never push flows). Depends
+  # on test_scan, NOT containerize_rating_engine: flows deploy independently of
+  # the worker image (see below), and containerize_rating_engine is itself
+  # gated by buildRatingEngine (default false), so depending on it would make a
+  # normal deployRatingFlows run block on a skipped stage — succeeded() treats
+  # a skipped dependency as not-succeeded, so the deploy would never fire in
+  # any run that does not also rebuild the image. test_scan is the last stage
+  # common to every run; a skipped containerize_rating_engine is permitted.
+  #
+  # UNRESOLVED, flagged rather than assumed (mirrors the D0 caveat style used
+  # throughout rm04/rm05): (1) exact `kestra` CLI flag names/auth flags below
+  # are the spec's literal `kestra flow validate` / `kestra flow namespace
+  # update rating ./flows` (rm06-spec D2, Implementation §6) — NOT yet run
+  # against a real engine; confirm during the D0 spike alongside the other
+  # kestra.yml property-name caveats. (2) NETWORK REACHABILITY from this
+  # hosted ADO agent to the Kestra webserver is the open item every other
+  # stage in this pipeline avoids by going through the Azure Resource Manager
+  # control plane instead of the app's own HTTP endpoint (see the `deploy`
+  # stage's smoke-test comment on why it can't curl the app directly). The
+  # rating engine's ingress is internal-only by default (rm04 D8) or
+  # Easy-Auth-gated external (rm05, `unauthenticatedClientAction:
+  # RedirectToLoginPage`) once deployed — neither is obviously reachable by a
+  # non-interactive CLI call from a Microsoft-hosted agent. Resolving this
+  # (self-hosted agent inside the VNet, VNet-integrated hosted agent, or an
+  # Easy-Auth exception path for this one client) is infrastructure work
+  # outside rm06's boundary (flows/**) and is NOT solved here — see
+  # ratemgmt-progress-tracker.md Open Questions.
+  - stage: deploy_rating_flows
+    displayName: Deploy rating flows (flows/**)
+    dependsOn: test_scan
+    # succeeded() here refers to test_scan (the sole dependency) — it must have
+    # passed. containerize_rating_engine is intentionally not a dependency, so a
+    # skipped worker-image build (buildRatingEngine=false) never blocks a flow
+    # deploy.
+    condition: >
+      and(
+        succeeded(),
+        eq(${{ parameters.deployRatingFlows }}, true),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: deploy_flows
+        displayName: Validate + deploy flows/** via the kestra CLI
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                # Same pinned digest as rating-engine/worker/Dockerfile — the
+                # CLI that validates/deploys a flow should be the same
+                # release that runs it.
+                KESTRA_IMAGE="kestra/kestra:v1.3.35@sha256:0b880e20e403ef635a6bc7e9e72786c7a6dde143858723449dc57500830868e2"
+
+                docker run --rm \
+                  -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
+                  "$KESTRA_IMAGE" \
+                  kestra flow validate /flows
+
+                ENGINE_FQDN=$(az containerapp show \
+                  --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" \
+                  --resource-group "$(RESOURCE_GROUP)" \
+                  --query "properties.configuration.ingress.fqdn" -o tsv)
+
+                # Read live from Key Vault (D2's "authenticated with the
+                # Basic Auth credential from Key Vault") rather than a
+                # pipeline secret variable, so there is exactly one place
+                # this password is stored. NOTE: it is still passed to the CLI
+                # as a `--user user:password` argument below, which puts it on
+                # the container's argument vector (visible in a process listing
+                # on the agent) — weaker than an env var. `set -x` is not
+                # enabled, so it is not echoed to the pipeline log. Passing it
+                # via `docker run -e` + a kestra env var is the stronger form;
+                # confirm the CLI's env-var name during the D0 spike (same
+                # unconfirmed-flag caveat as below).
+                BASIC_AUTH_PASSWORD=$(az keyvault secret show \
+                  --vault-name "$(KEYVAULT_NAME)" \
+                  --name kestra-basic-auth-password \
+                  --query value -o tsv)
+
+                # `--no-delete`: `flow namespace update` reconciles the whole
+                # namespace to the input directory and, by default, DELETES
+                # flows on the engine that are absent from /flows. A partial
+                # checkout, a sparse-checkout misconfig, or a future refactor
+                # that drops a file would then silently remove a live flow
+                # (e.g. log-sweep) from production with a green pipeline.
+                # `--no-delete` makes the deploy additive/upsert-only.
+                # UNCONFIRMED against v1.3.35 (same caveat class as the other
+                # kestra CLI flags — verify during the D0 spike); if the flag
+                # name differs, the intent is "never delete a server-side flow
+                # missing from the checkout".
+                docker run --rm \
+                  -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
+                  "$KESTRA_IMAGE" \
+                  kestra flow namespace update rating /flows \
+                    --no-delete \
+                    --server "https://${ENGINE_FQDN}" \
+                    --user "rating-ops:${BASIC_AUTH_PASSWORD}"
+            displayName: kestra flow validate + namespace update (D2)
 
   # ---------------------------------------------------------------------
   - stage: migrate
