@@ -62,7 +62,7 @@ Valid rows carry forward; invalid rows go to a reject file (rm00 §3.1). Validat
 | --- | --- |
 | `MALFORMED_ROW` | wrong column count, unquotable/garbled row |
 | `BAD_DATETIME` | `DATETIME` unparseable or not a valid instant |
-| `BAD_USAGE` | `USAGE_MBPS` non-numeric, negative, or empty |
+| `BAD_USAGE` | `USAGE_MBPS` non-numeric, negative, empty, or **not representable in the `udr_usage_quantity` `numeric(20,6)` target** (more than 6 *significant* fractional digits, or a 15+-digit integer part) — PRP fails closed here rather than let RP silently round or overflow the measured quantity (§5.4/D8). Trailing zeros are not significance (`42.5000000` is accepted). |
 | `MISSING_KEY_FIELD` | empty `PUBLIC_KEY`, `COMMERCIAL_UNIT`, or `SITE` (a NULL key dimension cannot dedup) |
 | `UNKNOWN_SUBSCRIBER` | *(only when the profile maps a key column to a subscriber ref)* that reference does not resolve in `inventory.product_inventory` |
 | `OUT_OF_RANGE` | `DATETIME` in the future beyond a tolerance |
@@ -152,7 +152,7 @@ Live database + a running engine (real or local, rm04). The headline case is the
 
 **Validation and rejects (D6, Inv #11)**
 
-8. Each of `MALFORMED_ROW`, `BAD_DATETIME`, `BAD_USAGE`, `MISSING_KEY_FIELD`, `UNKNOWN_SUBSCRIBER`, `OUT_OF_RANGE`, `DUPLICATE_IN_FILE` lands in the reject file with the correct reason code.
+8. Each of `MALFORMED_ROW`, `BAD_DATETIME`, `BAD_USAGE`, `MISSING_KEY_FIELD`, `OUT_OF_RANGE`, `DUPLICATE_IN_FILE` lands in the reject file with the correct reason code. `UNKNOWN_SUBSCRIBER` applies **only when the profile declares a subscriber-ref mapping** (D6) — it is asserted against such a profile, not the `RAN_USAGE` sample (which declares none, so the code never fires there); `RAN_USAGE` behaviour is unchanged.
 9. Per-record rejects go to the **reject file**; the batch emits **one** summarised `BATCH_PARTIAL` row, independent of reject count (test #12).
 10. With threshold `= 0`, the first bad record refuses the whole file; below threshold, the file reaches `PARTIAL`.
 

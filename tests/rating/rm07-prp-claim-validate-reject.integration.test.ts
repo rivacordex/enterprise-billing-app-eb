@@ -462,6 +462,29 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(() => runPrp("", { execId: "exec-empty" })).toThrow();
     });
 
+    // Review-fix regression: usage precision is validated against the RP
+    // numeric(20,6) target — an exact trailing-zero value is CARRIED (not falsely
+    // rejected), while genuine >6-significant-fractional-digit or 15+-integer
+    // values are BAD_USAGE.
+    it("review-fix: usage precision — exact trailing zeros carried, over-precise/over-large rejected BAD_USAGE", async () => {
+      const rowsIn = [
+        "2026-08-14T10:00:00Z,PKa,CU0,SITE0,42.5000000", // exact → CARRIED (not rejected)
+        "2026-08-14T10:01:00Z,PKb,CU0,SITE0,1.1234567", // 7 significant dp → BAD_USAGE
+        "2026-08-14T10:02:00Z,PKc,CU0,SITE0,100000000000000", // 15 integer digits → BAD_USAGE
+      ];
+      const path = writeCsv("RAN_USAGE_20260906.csv", rowsIn);
+      runPrp(path, { execId: "exec-prec", threshold: 0.9 });
+      const rows = await sql`
+        SELECT parsed_count, rejected_count, reject_file_path
+          FROM rating.udr_batch WHERE file_key = 'RAN_USAGE_20260906'`;
+      expect(firstRow(rows).parsed_count).toBe(3);
+      expect(firstRow(rows).rejected_count).toBe(2); // the two out-of-range rows
+      const rejectText = readFileSync(firstRow(rows).reject_file_path, "utf8");
+      expect(rejectText).toContain("1.1234567");
+      expect(rejectText).toContain("100000000000000");
+      expect(rejectText).not.toContain("42.5000000"); // the exact value was carried
+    });
+
     it("threshold 0 refuses the whole file on the first bad record (PARSE_FAILURE, REFUSED)", async () => {
       const rowsIn = [...validRows(20, 900), "bad,PK,CU,SITE,x"];
       const path = writeCsv("RAN_USAGE_20260903.csv", rowsIn);

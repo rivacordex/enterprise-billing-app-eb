@@ -312,10 +312,22 @@ def _parse_instant(raw: str, profile: FeedProfile) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+# The RP target is udr_rated.udr_usage_quantity numeric(20,6) (rm01 §5): at most
+# 6 fractional digits and 14 integer digits (20 total). A value RP cannot
+# represent must fail CLOSED here (BAD_USAGE), not be silently rounded (excess
+# scale) or overflow RP's insert (excess integer digits) downstream (§5.4, D8).
+_USAGE_MAX_SCALE = 6
+_USAGE_INTEGER_LIMIT = Decimal(10) ** (20 - _USAGE_MAX_SCALE)  # 10**14
+
+
 def _parse_usage(raw: str) -> Decimal | None:
     """Parse the measured value as ``Decimal`` — never ``float`` (§5.9). Returns
-    ``None`` for empty / non-numeric / negative (all ``BAD_USAGE``, D6). A NaN or
-    infinity from ``Decimal`` is rejected too — it is not a valid quantity."""
+    ``None`` (all ``BAD_USAGE``, D6) for empty / non-numeric / negative /
+    non-finite input, and for a value outside the RP ``numeric(20,6)`` target:
+    more than 6 *significant* fractional digits (RP would silently round the
+    measured quantity) or a 15+-digit integer part (RP's insert would
+    overflow). Trailing zeros are not significance, so an exact value like
+    ``42.5000000`` is accepted."""
     text = raw.strip()
     if not text:
         return None
@@ -324,6 +336,16 @@ def _parse_usage(raw: str) -> Decimal | None:
     except InvalidOperation:
         return None
     if not value.is_finite() or value < 0:
+        return None
+    # numeric(20,6) bounds. Reject a 15+-digit integer part (RP's insert would
+    # overflow), and genuine significance beyond 6 fractional places (RP would
+    # silently round the measured quantity). Test the SCALE on the NORMALIZED
+    # value so trailing zeros — e.g. "1.0000000", "42.5000000", "0E-10", which
+    # RP pads/truncates losslessly, NOT rounds — are not falsely rejected;
+    # is_finite() above guarantees an integer exponent.
+    if abs(value) >= _USAGE_INTEGER_LIMIT:
+        return None
+    if value.normalize().as_tuple().exponent < -_USAGE_MAX_SCALE:
         return None
     return value
 
@@ -480,9 +502,13 @@ def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) ->
             [r.end_datetime for r in chunk], dtype=pl.Datetime("us", "UTC")
         ),
         "udr_key": pl.Series([r.udr_key for r in chunk], dtype=pl.Utf8),
-        # Exact Decimal string — RP (rm08) casts to numeric(20,6); never float.
+        # Exact PLAIN-decimal string — RP (rm08) casts to numeric(20,6); never
+        # float. `format(x, "f")` not `str(x)`: str() emits scientific notation
+        # for an E-notation input (e.g. "1E2" -> "1E+2"), which is not the exact
+        # decimal-literal handoff D8 specifies; format("f") always yields a plain
+        # decimal ("100", "1500", "0.000123").
         "udr_usage_quantity": pl.Series(
-            [str(r.usage) for r in chunk], dtype=pl.Utf8
+            [format(r.usage, "f") for r in chunk], dtype=pl.Utf8
         ),
         "udr_usage_unit": pl.Series([profile.usage_unit] * len(chunk), dtype=pl.Utf8),
     }
@@ -669,6 +695,12 @@ def process_file(
             log_level="ERROR",
             parsed=parsed,
             rejected=rejected,
+            # The whole file is refused, so nothing is rated: the survivors that
+            # were NOT rejected are DISCARDED, not carried. Count them so the
+            # reconciliation identity parsed = rated(0) + rejected + discarded
+            # still holds for a REFUSED batch (code-standards §10.10) instead of
+            # leaving parsed - rejected records unaccounted.
+            discarded=parsed - rejected,
             reject_file=reject_path if rejected else None,
             chunk_paths=[],
         )
