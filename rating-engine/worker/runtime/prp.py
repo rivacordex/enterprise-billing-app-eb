@@ -339,14 +339,26 @@ def _parse_usage(raw: str) -> Decimal | None:
         return None
     # numeric(20,6) bounds. Reject a 15+-digit integer part (RP's insert would
     # overflow), and genuine significance beyond 6 fractional places (RP would
-    # silently round the measured quantity). Test the SCALE on the NORMALIZED
-    # value so trailing zeros — e.g. "1.0000000", "42.5000000", "0E-10", which
-    # RP pads/truncates losslessly, NOT rounds — are not falsely rejected;
-    # is_finite() above guarantees an integer exponent.
+    # silently round the measured quantity).
     if abs(value) >= _USAGE_INTEGER_LIMIT:
         return None
-    if value.normalize().as_tuple().exponent < -_USAGE_MAX_SCALE:
-        return None
+    # Count SIGNIFICANT fractional digits straight off the Decimal tuple
+    # (sign, digits, exponent) — NOT via normalize(), which rounds under the
+    # active decimal context and could fail OPEN (a low context precision would
+    # round a >6-digit value down to <=6 and wrongly accept it). Trailing
+    # coefficient zeros are not significance, so a value like "42.5000000" that
+    # RP pads/truncates losslessly is accepted; a nonzero value with >6
+    # significant fractional digits is rejected. Zero (any exponent) is always
+    # representable. is_finite() above guarantees an integer exponent.
+    if value != 0:
+        _, digits, exponent = value.as_tuple()
+        trailing_zeros = 0
+        for digit in reversed(digits):
+            if digit != 0:
+                break
+            trailing_zeros += 1
+        if exponent + trailing_zeros < -_USAGE_MAX_SCALE:
+            return None
     return value
 
 
