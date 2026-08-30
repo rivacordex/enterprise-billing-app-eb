@@ -25,14 +25,21 @@ rm07 (rating-management/specs/rm07-prp-claim-validate-reject.md) adds ``prp``
 claim-before-parse from the filename, the config-driven feed profile, the
 canonical ``udr_key``, record-level validation to a reject file, the reject
 threshold, and the chunked Parquet handoff to RP.
+
+rm08 (rating-management/specs/rm08-rp-price-resolution-snapshot.md) adds ``rp``
+— the real Rating Processor entry point that replaces the ``rp`` flow stub:
+event-time (as-of) price resolution through the pinned ``product_offering``
+version with any override applied (one set-based SQL query per chunk),
+snapshot-on-first-rate, the ``FLAT`` calculation (raw + rounded), ``udr_currency``
+and the version stamps, and the rated Parquet handoff to RL.
 """
 
 # Eager-import the library submodules only, so ``import runtime; runtime.db``
-# works for the reusable plumbing. ``prp``, ``log_sweep`` and
+# works for the reusable plumbing. ``prp``, ``rp``, ``log_sweep`` and
 # ``emit_terminal_log`` are executable entry points (run as
 # ``python3 -m runtime.<module>``), not part of the package API — importing them
 # here would pull their module-level code (and run it twice under ``-m``) into
-# every ``import runtime``. Import them directly (``python3 -m runtime.prp``)
+# every ``import runtime``. Import them directly (``python3 -m runtime.rp``)
 # instead.
 from . import db, logemit, storage, transform
 
