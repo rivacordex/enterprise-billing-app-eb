@@ -598,6 +598,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
     it("5. udr_currency comes from the resolved price row", () => {
       const { rows } = rateFixture("20260816");
+      expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) expect(r.udr_currency).toBe(CURRENCY);
     });
 
@@ -611,6 +612,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(r2?.udr_rated_price_raw).toBe("0.0035");
       expect(r2?.udr_rated_price).toBe("0.00");
       // No float artifacts — exact decimal strings throughout (#8/#14).
+      expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) {
         expect(r.udr_rated_price_raw).toMatch(/^\d+\.\d+$/);
         expect(r.udr_rated_price).toMatch(/^\d+\.\d{2}$/);
@@ -653,6 +655,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // -----------------------------------------------------------------
     it("9/10/12. every rated row carries the full snapshot, the version stamps, and FLAT rate detail", () => {
       const { rows } = rateFixture("20260821");
+      expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) {
         // Snapshot columns (D4) populated on every rated row (#9).
         expect(r.udr_usage_rate).not.toBeNull();

@@ -99,6 +99,32 @@ def round_amount(amount: Decimal, mode: str) -> Decimal:
     return amount.quantize(_CENTS, rounding=rounding)
 
 
+# The raw charge (udr_usage_rate / udr_rated_price_raw) is stored numeric(18,6).
+# RP owns that boundary: a resolved amount with more than 6 SIGNIFICANT fractional
+# digits cannot be stored without a silent round at RL's numeric cast, so it fails
+# closed here (D8, "round once") instead of deferring the round to RL.
+_RAW_SCALE = 6
+
+
+def _exceeds_scale(value: Decimal, scale: int) -> bool:
+    """True if ``value`` has more than ``scale`` SIGNIFICANT fractional digits —
+    i.e. it cannot be stored in ``numeric(18, scale)`` without a silent round.
+    Counted off the ``Decimal`` tuple (never ``normalize()``, which rounds under
+    the active context and could fail OPEN), mirroring ``prp._parse_usage``.
+    Trailing zeros are not significance, so ``0.005000`` is a scale-3 value."""
+    if value == 0:
+        return False
+    _, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int) or exponent >= 0:
+        return False  # an integer — no fractional digits
+    trailing_zeros = 0
+    for digit in reversed(digits):
+        if digit != 0:
+            break
+        trailing_zeros += 1
+    return exponent + trailing_zeros < -scale
+
+
 # ---------------------------------------------------------------------------
 # udr_rate_detail (D6) — the FLAT variant, the Python mirror of the Zod
 # discriminated union in validation/rating/udr-rate-detail.schema.ts (which is
@@ -284,6 +310,20 @@ def rate_record(
     **once**, from the full-precision amount (D8)."""
     amount = resolution.effective_amount
     assert amount is not None  # caller guards LOOKUP_MISS on a missing amount
+    # RP owns the numeric(18,6) boundary for the raw charge (D8): a catalog /
+    # override amount with >6 significant fractional digits cannot be stored in
+    # udr_usage_rate / udr_rated_price_raw without a silent round at RL's numeric
+    # cast, which would violate "round once". Fail CLOSED here rather than defer
+    # that round to RL (mirrors prp._parse_usage's numeric(20,6) usage guard). A
+    # conforming (<=6 dp) amount is carried exact and stores losslessly, so the
+    # raw value matches the numeric(18,6) snapshot.
+    if _exceeds_scale(amount, _RAW_SCALE):
+        raise ValueError(
+            f"resolved amount {amount} for price {resolution.udr_price_ref} has "
+            f"more than {_RAW_SCALE} significant fractional digits and cannot be "
+            "stored in numeric(18,6) without a silent round — fix the catalog / "
+            "override amount (RP will not silently round a rate)."
+        )
     # FLAT (D5): the charge is the flat amount, quantity IGNORED — so the resolved
     # rate (udr_usage_rate, D4) and the full-precision raw charge
     # (udr_rated_price_raw) are the SAME value; format it ONCE so they cannot
