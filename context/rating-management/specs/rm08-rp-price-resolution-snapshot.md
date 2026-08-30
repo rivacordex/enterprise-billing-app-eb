@@ -23,7 +23,7 @@ Replace the `rp` stub with **event-time price resolution**: for each validated r
 
 Resolution is a **set-based SQL join** — one query per chunk, not the existing pull-all-and-filter-in-JS pattern (code-standards §5.3 forbids it at 50k records). The effective window is the `LEAD` derivation translated into a **WHERE predicate**, matching `isEffectiveNow`'s `[start, end)` semantics **exactly** (start inclusive, end exclusive):
 
-```
+```sql
 eff_from <= :event_time AND (:event_time < eff_to OR eff_to IS NULL)
 ```
 
@@ -33,7 +33,7 @@ A record whose `start_datetime` falls **exactly** on a price boundary resolves t
 
 From a subscription identity to the effective price + override:
 
-```
+```text
 inventory.product_inventory (product_inventory_id)
   → 1:1  ordering.product_order_item (product_order_item_id)
   → pin  product.product_offering (product_offering_id — the IMMUTABLE, grandfathered version)
