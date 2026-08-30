@@ -1,17 +1,20 @@
 # rm06-spec Implementation §1 (D1, D3-D7). The rating flow: three named,
-# ordered prp/rp/rl sections. rm07 has replaced the `prp` STUB with the real
-# Pre-Rating Processor (claim, validate, reject); `rp`/`rl` remain STUBBED and
-# are replaced by rm08 (rp) and rm09/rm10 (rl) per ratemgmt-ai-workflow-rules.md
-# §2.5. Never edit this flow in the Kestra UI — every change is a commit here,
-# deployed by the pipeline's flow-deploy stage (infra/azure-pipelines.yml,
-# deploy_rating_flows) via `kestra flow namespace update` (D2, code-standards §3.1).
+# ordered prp/rp/rl sections. rm07 replaced the `prp` STUB with the real
+# Pre-Rating Processor (claim, validate, reject); rm08 has now replaced the `rp`
+# STUB with the real Rating Processor (event-time price resolution + snapshot +
+# the FLAT calculation). `rl` remains STUBBED and is replaced by rm09/rm10 per
+# ratemgmt-ai-workflow-rules.md §2.5. Never edit this flow in the Kestra UI —
+# every change is a commit here, deployed by the pipeline's flow-deploy stage
+# (infra/azure-pipelines.yml, deploy_rating_flows) via `kestra flow namespace
+# update` (D2, code-standards §3.1).
 #
-# The `rp`/`rl` task `commands` remain ILLUSTRATIVE (rm06-spec line 120); the
-# `prp` command below is now REAL — it invokes `python3 -m runtime.prp` (module
-# form), matching how the runtime package is baked into the image
-# (../worker/Dockerfile): COPY'd to /app/runtime with PYTHONPATH=/app, so the
-# package's relative imports (`from . import db, logemit`) work — invoking a
-# script INSIDE the package by its literal file path would break them.
+# The `rl` task `commands` remain ILLUSTRATIVE (rm06-spec line 120); the `prp`
+# and `rp` commands below are now REAL — they invoke `python3 -m runtime.prp` /
+# `python3 -m runtime.rp` (module form), matching how the runtime package is
+# baked into the image (../worker/Dockerfile): COPY'd to /app/runtime with
+# PYTHONPATH=/app, so the package's relative imports (`from . import db,
+# logemit`) work — invoking a script INSIDE the package by its literal file path
+# would break them.
 id: ran-usage-rating
 namespace: rating
 
@@ -44,6 +47,25 @@ variables:
   # key columns are OPAQUE dimensions — not mapped to typed business columns,
   # and `subscriber_ref` is null (this sample has no subscriber semantic, D1).
   feed_profile: '{"header":["DATETIME","PUBLIC_KEY","COMMERCIAL_UNIT","SITE","USAGE_MBPS"],"event_time_column":"DATETIME","event_time_assumed_tz":"UTC","usage_column":"USAGE_MBPS","usage_unit":"MBPS","udr_key_columns":["PUBLIC_KEY","COMMERCIAL_UNIT","SITE"],"subscriber_ref":null,"interval_seconds":null,"future_tolerance_seconds":300}'
+  # rm08 (RP) config — BOTH output-affecting (architecture §3), so flow
+  # variables deployed from git that move with `rating_flow_revision`, not
+  # namespace KV.
+  # rounding_mode (D7/§5): the per-record rounding method, v1 ships ONE value as
+  # a single flow variable; still stamped per row (udr_rounding_mode) so the
+  # record stays self-describing. Must be one of udr_rated_rounding_mode_check's
+  # values: HALF_UP | HALF_EVEN | TRUNCATE.
+  rounding_mode: HALF_UP
+  # subscriber_ref_column (D3): which chunk column carries the value RP resolves
+  # the subscription from. The engine does NOT assume which key dimension is the
+  # subscriber — it is config. RP accepts a PRP key dimension name (carried in
+  # the chunk as `key__<NAME>`) or a verbatim chunk column.
+  # PLACEHOLDER / SHELL: rm08 resolves this value DIRECTLY to a
+  # product_inventory_id (a working shell, exercised by the sample test). The real
+  # design for this use case — PUBLIC_KEY -> customer party_role_specification,
+  # then a subscription lookup table keyed by the udr_key combination -> the
+  # offering to price — is deferred; see ratemgmt-progress-tracker.md Open
+  # Questions. A record that does not resolve → LOOKUP_MISS (MAJOR), not rated.
+  subscriber_ref_column: PUBLIC_KEY
 
 concurrency:
   limit: 1 # D6 — per udr_type. One of three layers (with the
@@ -115,19 +137,35 @@ tasks:
     # emits {{ outputs.prp.uri }} (D5) — the manifest URI consumed by rp below.
 
   - id: rp
-    # STUB: rm08 owns RP — price resolution and snapshot (ratemgmt-code-
-    # standards.md §6). Consumes prp's file URI, emits rp's own file URI.
+    # rm08 — the REAL Rating Processor (was rm06/rm07's # STUB:). Consumes PRP's
+    # manifest (outputs.prp.uri), resolves each validated record's price as-of
+    # start_datetime through the PINNED product_offering version (one set-based
+    # as-of query per chunk, never per record, Inv #10), applies any
+    # order_item_price_override, snapshots the resolved inputs onto the row
+    # (udr_usage_rate, udr_price_ref, udr_price_effective_date,
+    # udr_price_override_ref, udr_rounding_mode — D4, mandatory), computes the
+    # FLAT charge (raw numeric(18,6) + rounded numeric(18,2), quantity ignored,
+    # D5) in Decimal (never float), stamps udr_currency (D9) + the version
+    # columns (D10), and emits a rated Parquet manifest (outputs.rp.uri) for rl.
+    # RP writes nothing to rating.* — the insert is rl's one transaction (Inv #8).
+    # A record that does not resolve → LOOKUP_MISS (MAJOR), not rated (D3). A
+    # non-PROCESSING PRP manifest (DISCARDED redelivery / lost claim) is a no-op.
+    # runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* and
+    # RATING_ENGINE_VERSION (D10/Inv #12) from the container env (rm04).
     type: io.kestra.plugin.scripts.python.Commands
     taskRunner:
-      type: io.kestra.plugin.core.runner.Process
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
     commands:
       - >
-        python3 -c "
-        # STUB: rm08 owns RP (rating-management/specs/rm08-*.md).
-        # Resolves price as-of start_datetime and snapshots every resolved
-        # input (udr_usage_rate, udr_price_ref, ...). No rate maths here.
-        print('{{ outputs.prp.uri }}')
-        "
+        python3 -m runtime.rp
+        --manifest "{{ outputs.prp.uri }}"
+        --udr-type "{{ vars.udr_type }}"
+        --rounding-mode "{{ vars.rounding_mode }}"
+        --subscriber-ref-column "{{ vars.subscriber_ref_column }}"
+        --workflow-execution-id "{{ execution.id }}"
+        --flow-revision "{{ flow.revision }}"
+    # emits {{ outputs.rp.uri }} (D11) — the rated manifest URI consumed by rl.
 
   - id: rl
     # STUB: rm09/rm10 own RL — guard (BILL_APPROVED refusal), supersede and
@@ -141,9 +179,12 @@ tasks:
         python3 -c "
         # STUB: rm09 owns RL's guard+supersede+insert
         # (rating-management/specs/rm09-*.md), rm10 owns supersession scope
-        # (rating-management/specs/rm10-*.md). psycopg single transaction via
-        # runtime.db.transaction() — guard, supersede and insert compose into
-        # ONE atomic unit. No guard, no supersede, no insert happens here.
+        # (rating-management/specs/rm10-*.md). Consumes rm08's rated manifest
+        # (outputs.rp.uri) — and MUST no-op on a non-PROCESSING status (a
+        # DISCARDED redelivery / lost claim, rm07/rm08 forward contract). psycopg
+        # single transaction via runtime.db.transaction() — guard, supersede and
+        # insert compose into ONE atomic unit. No guard, no supersede, no insert
+        # happens here.
         print('{{ outputs.rp.uri }}')
         "
 
