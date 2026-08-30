@@ -1,24 +1,49 @@
-# rm06-spec Implementation §1 (D1, D3, D4, D5, D6, D7). The rating flow
-# TEMPLATE: three named, ordered, STUBBED prp/rp/rl sections. No rate maths,
-# no parsing, no file_key derivation, no guards — those replace the stubs
-# section by section in rm07 (prp), rm08 (rp) and rm09/rm10 (rl), per
-# ratemgmt-ai-workflow-rules.md §2.5. Never edit this flow in the Kestra UI —
-# every change is a commit here, deployed by the pipeline's flow-deploy stage
-# (infra/azure-pipelines.yml, deploy_rating_flows) via `kestra flow namespace
-# update` (D2, code-standards §3.1).
+# rm06-spec Implementation §1 (D1, D3-D7). The rating flow: three named,
+# ordered prp/rp/rl sections. rm07 has replaced the `prp` STUB with the real
+# Pre-Rating Processor (claim, validate, reject); `rp`/`rl` remain STUBBED and
+# are replaced by rm08 (rp) and rm09/rm10 (rl) per ratemgmt-ai-workflow-rules.md
+# §2.5. Never edit this flow in the Kestra UI — every change is a commit here,
+# deployed by the pipeline's flow-deploy stage (infra/azure-pipelines.yml,
+# deploy_rating_flows) via `kestra flow namespace update` (D2, code-standards §3.1).
 #
-# Task `commands` below are ILLUSTRATIVE (rm06-spec line 120): the binding
-# rules are the # STUB: markers, the section order, the file-URI handoff
-# (D5), `concurrency: limit: 1` (D6), and the error+finally terminal-outcome
-# handlers (D7) — not the literal python invocation. `emit_terminal_log` is
-# invoked as `python3 -m runtime.emit_terminal_log` (module form), matching
-# how the runtime package is baked into the image (../worker/Dockerfile):
-# COPY'd to /app/runtime with PYTHONPATH=/app, so relative imports inside the
-# package (`from . import db, logemit`, ../worker/runtime/__init__.py) work —
-# invoking a script living INSIDE the package by its literal file path would
-# break those relative imports.
+# The `rp`/`rl` task `commands` remain ILLUSTRATIVE (rm06-spec line 120); the
+# `prp` command below is now REAL — it invokes `python3 -m runtime.prp` (module
+# form), matching how the runtime package is baked into the image
+# (../worker/Dockerfile): COPY'd to /app/runtime with PYTHONPATH=/app, so the
+# package's relative imports (`from . import db, logemit`) work — invoking a
+# script INSIDE the package by its literal file path would break them.
 id: ran-usage-rating
 namespace: rating
+
+# rm07 config (per rm00 §Configuration / architecture §3): OUTPUT-AFFECTING
+# values — they change which records get grouped, billed, or how identity is
+# composed — live in flow `variables`, deployed from git so they move with
+# `rating_flow_revision`. Performance-only config (chunk size) lives in the
+# namespace KV store instead (referenced in the prp command below).
+variables:
+  udr_type: RAN_USAGE
+  # The landing mount the file trigger watches (rm04's Azure Files mount /
+  # dev bind mount, default /data/landing). Not output-affecting — a location,
+  # not a rated number — but kept here so the trigger and any reprocess share one
+  # source of truth.
+  landing_dir: /data/landing
+  # file_key derivation rule per udr_type (D3) — a regex with a named `file_key`
+  # group applied to the FILENAME. `RAN_USAGE_<YYYYMMDD>[_vN].csv` ->
+  # `RAN_USAGE_<YYYYMMDD>`, so `_v2` reissues resolve to one delivery and two
+  # content dates never collide. ASSUMED naming convention — confirm with
+  # upstream (D3); a name the rule cannot parse refuses with FILE_KEY_UNRESOLVED.
+  file_key_rule: '^(?P<file_key>RAN_USAGE_\d{8})(?:_v\d+)?\.csv$'
+  # reject threshold per udr_type (D6) — fraction of parsed rows; 0 = file-level
+  # all-or-nothing. Below it the batch carries survivors (BATCH_PARTIAL); above
+  # it the whole file is refused (PARSE_FAILURE).
+  reject_threshold: "0.05"
+  # feed profile per udr_type (D1) — the column mapping + the `udr_key` column
+  # list (Open item 1, resolved as {PUBLIC_KEY, COMMERCIAL_UNIT, SITE}). A new
+  # feed adds a profile, not code. Single-line JSON so it interpolates onto the
+  # command line intact regardless of the engine's Pebble filter set. The three
+  # key columns are OPAQUE dimensions — not mapped to typed business columns,
+  # and `subscriber_ref` is null (this sample has no subscriber semantic, D1).
+  feed_profile: '{"header":["DATETIME","PUBLIC_KEY","COMMERCIAL_UNIT","SITE","USAGE_MBPS"],"event_time_column":"DATETIME","event_time_assumed_tz":"UTC","usage_column":"USAGE_MBPS","usage_unit":"MBPS","udr_key_columns":["PUBLIC_KEY","COMMERCIAL_UNIT","SITE"],"subscriber_ref":null,"interval_seconds":null,"future_tolerance_seconds":300}'
 
 concurrency:
   limit: 1 # D6 — per udr_type. One of three layers (with the
@@ -26,39 +51,68 @@ concurrency:
   # code-standards §3.7); not a substitute for either.
 
 triggers:
-  - id: manual # D3 — manual/API trigger only. The landing/ file trigger
-    type: io.kestra.plugin.core.trigger.Webhook # is rm07's; building it here
-    # then rewriting it there is duplicated work (rm00 Unit rm06).
-    key: "{{ secret('RATING_USAGE_WEBHOOK_KEY') }}" # REQUIRED. Kestra's Webhook
-    # `key` is the secret token embedded in the webhook URL — an auth token, NOT
-    # a rating domain key (file_key/udr_key) and NOT the payload (which arrives
-    # as trigger.body/headers/parameters, rm07's input). Referenced not a literal
-    # (§3.8); backed by SECRET_RATING_USAGE_WEBHOOK_KEY (base64 — Kestra OSS env
-    # secret backend), provisioned in rating-engine-container-app.bicep and
-    # dev/.env.example.
+  - id: landing-file
+    # rm07 D3 / Implementation §1 — the landing/ file trigger, added here
+    # (rm06 used a manual Webhook placeholder). Fires per usage file arriving in
+    # the landing mount; `concurrency: limit: 1` (above) keeps one execution per
+    # udr_type in flight, and the DB claim (Inv #7) is the real once-only guard.
+    #
+    # CAVEAT — TWO things here are UNCONFIRMED against the pinned v1.3.35 engine
+    # and are the TOP D0-spike items (same class as rm04's kestra.yml property
+    # names and rm06's kestra-CLI flags); do NOT read them as verified:
+    #   (1) the plugin id `io.kestra.plugin.fs.local.Trigger` for a mounted
+    #       landing dir, and whether a Schedule-poll + list is needed instead;
+    #   (2) THE FILE BINDING the prp task consumes below — the trigger's output
+    #       variable is NOT confirmed. Candidate expressions to verify at the
+    #       spike: `{{ trigger.uri }}` (used below), `{{ trigger.files[0].path }}`,
+    #       or `{{ trigger.uris[0] }}`. If the trigger emits a LIST of files per
+    #       fire, the flow needs a per-file ForEach rather than a single prp call.
+    # This is now FAIL-SAFE, not fail-crash: if the binding renders empty, prp
+    # exits 1 with a clear "source-file resolved to an empty path" message
+    # (runtime/prp.py main step 0) rather than deriving a blank file_key or
+    # crashing its own error handler. The BINDING contract of rm07 is the prp
+    # task's claim/validate/reject behaviour, not this trigger's literal plugin id.
+    type: io.kestra.plugin.fs.local.Trigger
+    from: "{{ vars.landing_dir | default('/data/landing') }}"
+    interval: PT1M
+    # NONE — the trigger must never move or delete the file: claiming is a DB
+    # constraint, not a filesystem op (Inv #7), and archive-after-commit is
+    # rm09's (Inv #9), never the trigger's.
+    action: NONE
 
 tasks:
   # D4 — three named, ordered sections. Never merged, reordered, or inlined
   # (code-standards §3.5). D5 — sections hand off by file URI through Kestra
   # internal storage (Blob), never a record payload (code-standards §3.4).
   - id: prp
-    # STUB: rm07 owns PRP — claim (file_key derivation, batch claim),
-    # validate, reject. Consumes the triggering file's URI, emits a file URI
-    # for rp. No parsing, no file_key derivation happens here (D1).
+    # rm07 — the REAL Pre-Rating Processor (was rm06's # STUB:). Derives file_key
+    # from the filename, discards a byte-identical redelivery (DUPLICATE_BATCH),
+    # claims the batch (UNIQUE (file_key, batch_run_num)), parses + maps the CSV
+    # per the feed profile, computes the canonical udr_key, quarantines invalid
+    # rows to error/ against the reject threshold, stamps the counts, and emits a
+    # manifest file URI (outputs.prp.uri) listing the survivor Parquet chunks for
+    # rp. runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* from the
+    # container env (rm04's rating-engine-container-app.bicep); RATING_ENGINE_VERSION
+    # (D6/Inv #12) is likewise read from the container env by prp.
     type: io.kestra.plugin.scripts.python.Commands
     taskRunner:
       type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
       # daemon; every task runs in-process (rm04-spec Implementation §6).
     commands:
+      # Chunk size is namespace-KV config (D7, code-standards §3.3) — performance
+      # only, never a rated number, so it is NOT a flow variable. `{{ kv(...) }}`
+      # reads it at runtime; the default keeps a fresh namespace working.
       - >
-        python3 -c "
-        # STUB: rm07 owns PRP (rating-management/specs/rm07-*.md).
-        # Claims the file (file_key + UNIQUE (file_key, batch_run_num)),
-        # validates it, rejects what it must, and emits a file URI for rp.
-        # No business logic in rm06's template.
-        print('{{ trigger.uri ?? \"n/a\" }}')
-        "
-    # emits {{ outputs.prp.uri }} (D5) — consumed by rp below.
+        python3 -m runtime.prp
+        --source-file "{{ trigger.uri }}"
+        --udr-type "{{ vars.udr_type }}"
+        --profile '{{ vars.feed_profile }}'
+        --file-key-rule '{{ vars.file_key_rule }}'
+        --reject-threshold "{{ vars.reject_threshold }}"
+        --chunk-size "{{ kv('rating_ran_usage_chunk_size') ?? 10000 }}"
+        --workflow-execution-id "{{ execution.id }}"
+        --flow-revision "{{ flow.revision }}"
+    # emits {{ outputs.prp.uri }} (D5) — the manifest URI consumed by rp below.
 
   - id: rp
     # STUB: rm08 owns RP — price resolution and snapshot (ratemgmt-code-
