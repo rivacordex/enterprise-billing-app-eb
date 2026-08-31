@@ -111,11 +111,8 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     expect(template).not.toMatch(/TODO/);
 
     // All three components are real module invocations — no python3 -c
-    // placeholder bodies remain in the flow.
-    const commandBodies = [
-      ...template.matchAll(/python3 -c "\n([\s\S]*?)\n\s*"/g),
-    ].map((m) => m[1]);
-    expect(commandBodies).toHaveLength(0);
+    // placeholder bodies remain in the flow, in any quoting or line span.
+    expect(template).not.toMatch(/python3 -c/);
   });
 
   it("3. sections hand off by file URI (Kestra internal storage), never a record payload", () => {

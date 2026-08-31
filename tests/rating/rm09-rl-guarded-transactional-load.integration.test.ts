@@ -794,13 +794,16 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(readManifest(dupRpUri).status).toBe("DISCARDED");
 
       // RL consumes it and no-ops: exit 0, no rows, no archive, no RL log line.
+      const before = await db
+        .select({ n: dsql<number>`count(*)::int` })
+        .from(udrRated);
       runRl(dupRpUri, "rl-noop");
-      const rows = await db
+      const after = await db
         .select({ n: dsql<number>`count(*)::int` })
         .from(udrRated);
       // (No batch_id to filter on for a DISCARDED manifest; assert the DISCARDED
       // redelivery added nothing under its varied name in landing.)
-      expect(rows[0]!.n).toBeGreaterThanOrEqual(0);
+      expect(after[0]!.n).toBe(before[0]!.n);
       expect(logLinesFor("RL", "rl-noop")).toHaveLength(0);
     });
   },
