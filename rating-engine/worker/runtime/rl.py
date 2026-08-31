@@ -85,6 +85,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import polars as pl
 import psycopg
 
 from . import db, logemit, storage

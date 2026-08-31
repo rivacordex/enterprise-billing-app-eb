@@ -171,6 +171,9 @@ def archive_uri(filename: str) -> str:
     url = os.environ.get("RATING_ARCHIVE_BLOB_URL")
     if url:
         return f"{url.rstrip('/')}/{quote(filename)}"
+    client = _archive_blob_client(filename)
+    if client is not None:
+        return client.url
     return (location("archive") / filename).resolve().as_uri()
 
 
