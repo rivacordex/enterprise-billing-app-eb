@@ -84,7 +84,7 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
   );
   const sweepFlow = readFileSync(join(flowsDir, "log-sweep.yaml"), "utf8");
 
-  it("2. prp is now rm07's real processor; rp/rl remain documented # STUB:s naming their owning spec, in order, with no rate maths/parsing/guards", () => {
+  it("2. prp/rp/rl are all real runtime modules in order; the only remaining stub is the # STUB: rm10 supersede-hook", () => {
     const prpIdx = template.indexOf("id: prp");
     const rpIdx = template.indexOf("id: rp");
     const rlIdx = template.indexOf("id: rl");
@@ -92,33 +92,30 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     expect(rpIdx).toBeGreaterThan(prpIdx);
     expect(rlIdx).toBeGreaterThan(rpIdx);
 
-    // rm07 replaced the prp STUB with the real Pre-Rating Processor, invoked as
-    // the runtime module (module form, not a python3 -c placeholder); rp/rl are
-    // still STUBBED and owned by rm08/rm09.
+    // rm07/rm08/rm09 replaced the prp/rp/rl STUBs with the real processors, each
+    // invoked as a runtime module (module form, not a python3 -c placeholder).
+    // The only remaining stub is the # STUB: rm10 supersede-hook inside rl's
+    // transaction (updated here by rm09, per the cross-unit-test precedent, when
+    // rl became real).
     expect(template).toMatch(/python3 -m runtime\.prp/);
+    expect(template).toMatch(/python3 -m runtime\.rp/);
+    expect(template).toMatch(/python3 -m runtime\.rl/);
     expect(template).not.toMatch(/# STUB: rm07 owns PRP/);
-    expect(template).toMatch(/# STUB: rm08 owns RP/);
-    expect(template).toMatch(/# STUB: rm09 owns RL/);
+    expect(template).not.toMatch(/# STUB: rm08 owns RP/);
+    expect(template).not.toMatch(/# STUB: rm09 owns RL/);
+    // rm10 (supersession) is the last remaining stub, named in rl's doc comment.
+    expect(template).toMatch(/# STUB: rm10/);
 
     // No TODO anywhere (code-standards §1.5/§3.5 — a stub is a documented
     // section, never a TODO).
     expect(template).not.toMatch(/TODO/);
 
-    // No rate maths / parsing / guard logic in the REMAINING stub bodies (D1) —
-    // the surrounding # comments legitimately NAME these concepts (they say what
-    // rm08-rm10 will replace the stub with), so the scan is scoped to the
-    // `python3 -c "..."` command bodies only, never the doc comments around
-    // them. Now two bodies (rp, rl); prp is real code, not a placeholder.
+    // All three components are real module invocations — no python3 -c
+    // placeholder bodies remain in the flow.
     const commandBodies = [
       ...template.matchAll(/python3 -c "\n([\s\S]*?)\n\s*"/g),
     ].map((m) => m[1]);
-    expect(commandBodies).toHaveLength(2); // rp, rl (prp is real now)
-    const forbidden = [/Decimal\(/, /udr_key\s*=/, /INSERT INTO/i, /round\(/];
-    for (const body of commandBodies) {
-      for (const pattern of forbidden) {
-        expect(body).not.toMatch(pattern);
-      }
-    }
+    expect(commandBodies).toHaveLength(0);
   });
 
   it("3. sections hand off by file URI (Kestra internal storage), never a record payload", () => {

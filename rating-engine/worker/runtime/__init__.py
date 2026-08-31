@@ -32,14 +32,21 @@ event-time (as-of) price resolution through the pinned ``product_offering``
 version with any override applied (one set-based SQL query per chunk),
 snapshot-on-first-rate, the ``FLAT`` calculation (raw + rounded), ``udr_currency``
 and the version stamps, and the rated Parquet handoff to RL.
+
+rm09 (rating-management/specs/rm09-rl-guarded-transactional-load.md) adds ``rl``
+— the real Rating Loader entry point that replaces the ``rl`` flow stub: in ONE
+psycopg transaction the ``BILL_APPROVED`` guard, the ``CURRENCY_MISMATCH``
+assertion, the ``# STUB: rm10`` supersede-hook (a no-op in rm09) and the bulk
+``COPY`` insert at ``RATED``, then reconciliation, then — only after the
+transaction commits — the cross-boundary ``landing/`` → ``archive/`` archive.
 """
 
 # Eager-import the library submodules only, so ``import runtime; runtime.db``
-# works for the reusable plumbing. ``prp``, ``rp``, ``log_sweep`` and
+# works for the reusable plumbing. ``prp``, ``rp``, ``rl``, ``log_sweep`` and
 # ``emit_terminal_log`` are executable entry points (run as
 # ``python3 -m runtime.<module>``), not part of the package API — importing them
 # here would pull their module-level code (and run it twice under ``-m``) into
-# every ``import runtime``. Import them directly (``python3 -m runtime.rp``)
+# every ``import runtime``. Import them directly (``python3 -m runtime.rl``)
 # instead.
 from . import db, logemit, storage, transform
 
