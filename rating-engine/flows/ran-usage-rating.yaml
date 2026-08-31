@@ -1,20 +1,22 @@
 # rm06-spec Implementation §1 (D1, D3-D7). The rating flow: three named,
 # ordered prp/rp/rl sections. rm07 replaced the `prp` STUB with the real
-# Pre-Rating Processor (claim, validate, reject); rm08 has now replaced the `rp`
-# STUB with the real Rating Processor (event-time price resolution + snapshot +
-# the FLAT calculation). `rl` remains STUBBED and is replaced by rm09/rm10 per
+# Pre-Rating Processor (claim, validate, reject); rm08 replaced the `rp` STUB
+# with the real Rating Processor (event-time price resolution + snapshot + the
+# FLAT calculation); rm09 has now replaced the `rl` STUB with the real Rating
+# Loader (BILL_APPROVED guard + CURRENCY_MISMATCH assertion + supersede-hook +
+# COPY insert in ONE transaction, then archive-after-commit). The supersede-hook
+# inside rl's transaction is a `# STUB: rm10` no-op in rm09 per
 # ratemgmt-ai-workflow-rules.md §2.5. Never edit this flow in the Kestra UI —
 # every change is a commit here, deployed by the pipeline's flow-deploy stage
 # (infra/azure-pipelines.yml, deploy_rating_flows) via `kestra flow namespace
 # update` (D2, code-standards §3.1).
 #
-# The `rl` task `commands` remain ILLUSTRATIVE (rm06-spec line 120); the `prp`
-# and `rp` commands below are now REAL — they invoke `python3 -m runtime.prp` /
-# `python3 -m runtime.rp` (module form), matching how the runtime package is
-# baked into the image (../worker/Dockerfile): COPY'd to /app/runtime with
-# PYTHONPATH=/app, so the package's relative imports (`from . import db,
-# logemit`) work — invoking a script INSIDE the package by its literal file path
-# would break them.
+# The `prp`, `rp` and `rl` commands below are now all REAL — they invoke
+# `python3 -m runtime.prp` / `runtime.rp` / `runtime.rl` (module form), matching
+# how the runtime package is baked into the image (../worker/Dockerfile): COPY'd
+# to /app/runtime with PYTHONPATH=/app, so the package's relative imports
+# (`from . import db, logemit`) work — invoking a script INSIDE the package by
+# its literal file path would break them.
 id: ran-usage-rating
 namespace: rating
 
@@ -168,25 +170,33 @@ tasks:
     # emits {{ outputs.rp.uri }} (D11) — the rated manifest URI consumed by rl.
 
   - id: rl
-    # STUB: rm09/rm10 own RL — guard (BILL_APPROVED refusal), supersede and
-    # insert in ONE transaction (Inv #8, code-standards §3.6). This is the
-    # named home for that transaction boundary; rm06 does not implement it.
+    # rm09 — the REAL Rating Loader (was rm06/rm07/rm08's # STUB:). Consumes RP's
+    # rated manifest (outputs.rp.uri) and, in ONE psycopg transaction (Inv #8):
+    # runs the BILL_APPROVED guard (any live collision → refuse the whole batch,
+    # LOAD_BLOCKED_BILLED, REFUSED, zero rows, D2/Inv #6); asserts udr_currency ==
+    # billing_account.currency (mismatch → CURRENCY_MISMATCH, REFUSED, D3); runs
+    # the supersede-hook (a `# STUB: rm10` no-op here, D8); bulk-inserts the rated
+    # rows at RATED via COPY (never per-record, backstopped by the live-row unique
+    # constraint, D4/Inv #10/#3); and reconciles parsed = rated + rejected +
+    # discarded (imbalance → RECON_IMBALANCE CRITICAL, FAILED, D5). ONLY AFTER the
+    # transaction commits (Inv #9) does it archive the raw file landing/ ->
+    # archive/ (copy-then-delete, idempotent, archive_file_path set last, D6). A
+    # non-PROCESSING manifest (DISCARDED redelivery / lost claim) is a no-op
+    # (rm07/rm08 forward contract). runtime.db reads SECRET_RATING_RUNTIME_PASSWORD
+    # + RATING_DB_* from the container env (rm04). It writes nothing to billing.*
+    # (Inv #1, grant-enforced).
     type: io.kestra.plugin.scripts.python.Commands
     taskRunner:
-      type: io.kestra.plugin.core.runner.Process
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
     commands:
       - >
-        python3 -c "
-        # STUB: rm09 owns RL's guard+supersede+insert
-        # (rating-management/specs/rm09-*.md), rm10 owns supersession scope
-        # (rating-management/specs/rm10-*.md). Consumes rm08's rated manifest
-        # (outputs.rp.uri) — and MUST no-op on a non-PROCESSING status (a
-        # DISCARDED redelivery / lost claim, rm07/rm08 forward contract). psycopg
-        # single transaction via runtime.db.transaction() — guard, supersede and
-        # insert compose into ONE atomic unit. No guard, no supersede, no insert
-        # happens here.
-        print('{{ outputs.rp.uri }}')
-        "
+        python3 -m runtime.rl
+        --manifest "{{ outputs.rp.uri }}"
+        --udr-type "{{ vars.udr_type }}"
+        --landing-dir "{{ vars.landing_dir | default('/data/landing') }}"
+        --workflow-execution-id "{{ execution.id }}"
+        --flow-revision "{{ flow.revision }}"
 
 # D7 — both handlers write a terminal-outcome log line via the emitter
 # (code-standards §3.9, §7.9). There is no app HTTP endpoint to POST to
