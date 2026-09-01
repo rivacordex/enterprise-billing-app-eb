@@ -394,7 +394,7 @@ def supersede_batch(
     file_key: str,
     batch_run_num: int,
     parsed_count: int,
-    incoming_periods: dict[str, set[date]],
+    incoming_periods: set[tuple[str, date]],
 ) -> SupersedeResult:
     """rm10 D1-D4: mark every live row of a prior run of ``file_key`` SUPERSEDED
     (status-only, all partitions), stamp lineage once on the retired
@@ -412,7 +412,7 @@ def supersede_batch(
     cross_period_rows = [
         r
         for r in retired
-        if r["partition_period"] not in incoming_periods.get(r["udr_key"], set())
+        if (r["udr_key"], r["partition_period"]) not in incoming_periods
     ]
 
     # D1/D3 — lineage once on each retired udr_batch row (typically exactly the
@@ -651,7 +651,7 @@ class Counts:
 
 def scan_and_guard(
     conn: psycopg.Connection, chunk_uris: list[str]
-) -> dict[str, set[date]]:
+) -> set[tuple[str, date]]:
     """Pass 1 of the load transaction: the ``BILL_APPROVED`` guard (D2) and the
     ``CURRENCY_MISMATCH`` assertion (D3) over **every** chunk, BEFORE any insert.
     One set-based guard query **per chunk** (never per record, Inv #10), streaming
@@ -660,20 +660,20 @@ def scan_and_guard(
     ``BatchRefused`` on any collision or mismatch — the whole batch is refused,
     zero rows (nothing has been inserted yet).
 
-    Also collects ``incoming_periods`` — every ``udr_key`` → the set of
-    ``partition_period``s it lands in for THIS run — a side product of the same
+    Also collects ``incoming_periods`` — every ``(udr_key, partition_period)``
+    pair it lands in for THIS run — a side product of the same
     chunk pass, so rm10's cross-period supersede check needs no extra read of
     the chunks (Inv #10 applies to reads too, not only writes)."""
     subscriber_currency: set[tuple[str, str]] = set()
-    incoming_periods: dict[str, set[date]] = {}
+    incoming_periods: set[tuple[str, date]] = set()
     for chunk_uri in chunk_uris:
         frame = storage.read_frame(chunk_uri)
         if frame.height == 0:
             continue
         start_dts = [_as_utc(v) for v in frame["start_datetime"].to_list()]
         udr_keys = [str(v) for v in frame["udr_key"].to_list()]
-        for key, start_dt in zip(udr_keys, start_dts):
-            incoming_periods.setdefault(key, set()).add(period_of(start_dt))
+        for key, start_dt in zip(udr_keys, start_dts, strict=True):
+            incoming_periods.add((key, period_of(start_dt)))
         collisions = find_bill_approved_collisions(conn, start_dts, udr_keys)
         if collisions:
             raise BatchRefused(

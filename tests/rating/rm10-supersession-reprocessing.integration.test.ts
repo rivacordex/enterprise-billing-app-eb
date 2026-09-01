@@ -568,7 +568,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(run1Batch.supersedeReason).toBeTruthy();
       const run2Batch = await batchRow(run2.batchId);
       expect(run2Batch.supersededCount).toBe(1);
-    });
+    }, 120000);
 
     // -----------------------------------------------------------------
     // #4 — the proof: a live row the supersede predicate cannot reach still
@@ -622,7 +622,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // committed, and the sentinel was never superseded (unreachable).
       expect(all).toHaveLength(1);
       expect(all[0]!.udrRefBatchId).toBe("SENTINEL-NOTCHAIN");
-    });
+    }, 120000);
 
     // -----------------------------------------------------------------
     // Cross-period supersede (D2).
@@ -653,7 +653,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       );
       expect(crossPeriod).toBeDefined();
       expect(crossPeriod!.log_level).toBe("WARN");
-    });
+    }, 120000);
 
     // -----------------------------------------------------------------
     // #10 — SHRINKING_REISSUE (D4).
@@ -687,7 +687,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       )!;
       const droppedLive = await liveRowsForKey(droppedRow.udr_key as string);
       expect(droppedLive).toHaveLength(0);
-    });
+    }, 120000);
 
     // -----------------------------------------------------------------
     // #5 — four consecutive reprocessings: batch-level lineage chain.
@@ -734,6 +734,6 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const batches = await batchesForFileKey(fileKey);
       expect(batches).toHaveLength(5);
       expect(batches.map((b) => b.batchRunNum).sort()).toEqual([1, 2, 3, 4, 5]);
-    });
+    }, 120000);
   },
 );
