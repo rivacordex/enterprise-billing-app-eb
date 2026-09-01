@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import polars as pl
 
@@ -120,3 +120,106 @@ def move(src: str | Path, dest_dir: str | Path) -> Path:
     shutil.move(str(src_path), str(staged))  # copy+delete: crosses filesystems
     os.replace(str(staged), str(target))  # same dir: atomic swap, no delete gap
     return target
+
+
+# ---------------------------------------------------------------------------
+# Archive backend (rm09 D6) — the raw file's evidentiary home. Azure Blob when an
+# archive container is configured (RATING_ARCHIVE_BLOB_URL, the deployed engine),
+# else the local ``archive/`` filesystem location (dev / test). The landing ->
+# archive move is CROSS-PROTOCOL (SMB Files -> Blob) and non-atomic, so it is
+# copy-then-delete, never a rename (rm04 D4); these helpers do the copy/verify and
+# the existence probe, and the caller (rl.py) deletes landing only AFTER the DB
+# transaction commits (Inv #9). ``archive_file_path`` is the URI returned here — a
+# Blob URL in the deployed engine, a ``file://`` URI locally — and is deliberately
+# distinct from the bare ``source_file`` name (D4, "not comparable strings").
+# ---------------------------------------------------------------------------
+
+
+def _archive_blob_client(filename: str):
+    """A BlobClient for the configured archive container, or ``None`` when no Blob
+    archive is configured (the local filesystem backend is used instead).
+
+    ``azure-storage-blob`` / ``azure-identity`` are imported LAZILY so the runtime
+    package still imports where they are absent (the DB-free test env) as long as
+    no Blob archive is configured. In the deployed engine, auth is the worker's
+    Managed Identity via ``DefaultAzureCredential`` (rm04 D5); locally, an Azurite
+    connection string (``RATING_ARCHIVE_BLOB_CONNECTION_STRING``) may be used.
+    """
+    conn = os.environ.get("RATING_ARCHIVE_BLOB_CONNECTION_STRING")
+    url = os.environ.get("RATING_ARCHIVE_BLOB_URL")
+    if not conn and not url:
+        return None
+    if conn:
+        from azure.storage.blob import BlobClient  # lazy import (see docstring)
+
+        container = os.environ.get("RATING_ARCHIVE_BLOB_CONTAINER", "archive")
+        return BlobClient.from_connection_string(
+            conn, container_name=container, blob_name=filename
+        )
+    from azure.identity import DefaultAzureCredential  # lazy import
+    from azure.storage.blob import ContainerClient  # lazy import
+
+    container_client = ContainerClient.from_container_url(
+        url, credential=DefaultAzureCredential()
+    )
+    return container_client.get_blob_client(filename)
+
+
+def archive_uri(filename: str) -> str:
+    """The URI the archived file has (or will have): a Blob URL when a Blob archive
+    is configured, else a local ``file://`` URI under the ``archive/`` location."""
+    url = os.environ.get("RATING_ARCHIVE_BLOB_URL")
+    if url:
+        return f"{url.rstrip('/')}/{quote(filename)}"
+    client = _archive_blob_client(filename)
+    if client is not None:
+        return client.url
+    return (location("archive") / filename).resolve().as_uri()
+
+
+def archive_exists(filename: str) -> bool:
+    """True if the file is already present in archive — the idempotency probe for
+    rm09's archive-only recovery (a batch that committed but whose archive did not
+    finish re-attempts the archive; if it is already there, it is a no-op)."""
+    client = _archive_blob_client(filename)
+    if client is not None:
+        return client.exists()
+    return (location("archive") / filename).exists()
+
+
+def copy_to_archive(src: str | Path, filename: str) -> str:
+    """Copy/upload ``src`` into archive under ``filename``, verify by size, and
+    return the archive URI. Does **not** delete the source — rl.py deletes landing
+    only after the DB commit (Inv #9). Blob backend when configured, else a
+    stage-then-replace filesystem copy (verify BEFORE the atomic replace, so a
+    short/partial copy never becomes the visible archive)."""
+    src_path = _local_path(src)
+    src_size = src_path.stat().st_size
+    client = _archive_blob_client(filename)
+    if client is not None:
+        with src_path.open("rb") as data:
+            client.upload_blob(data, overwrite=True)  # cross-protocol copy half
+        uploaded = client.get_blob_properties().size
+        if uploaded != src_size:
+            raise OSError(
+                f"archive upload size {uploaded} != source {src_size} for "
+                f"{filename!r} — refusing to certify the archive."
+            )
+        return client.url
+    # Filesystem backend (dev / test).
+    dest = location("archive")
+    dest.mkdir(parents=True, exist_ok=True)
+    target = dest / filename
+    staged = dest / f"{filename}.incoming-{os.getpid()}"
+    shutil.copy2(src_path, staged)
+    staged_size = staged.stat().st_size
+    if staged_size != src_size:
+        # Verify BEFORE promoting, so a partial copy never overwrites a prior
+        # archive nor becomes the visible target.
+        staged.unlink(missing_ok=True)
+        raise OSError(
+            f"archive copy size {staged_size} != source {src_size} for "
+            f"{filename!r} — refusing to promote a partial copy."
+        )
+    os.replace(staged, target)  # same dir: atomic swap
+    return target.resolve().as_uri()
