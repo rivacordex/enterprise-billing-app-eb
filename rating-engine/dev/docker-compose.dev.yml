@@ -48,13 +48,7 @@ services:
     command: >
       sh -c "npm install &&
              npm run db:bootstrap-kestra-roles &&
-             node -e \"
-               const postgres = require('postgres');
-               const sql = postgres(process.env.BOOTSTRAP_DATABASE_URL, { max: 1 });
-               sql\`ALTER ROLE kestra_engine WITH PASSWORD '$${KESTRA_DATASOURCES_POSTGRES_PASSWORD}'\`
-                 .then(() => sql.end())
-                 .catch((e) => { console.error(e); process.exit(1); });
-             \""
+             node rating-engine/dev/set-kestra-role-password.mjs"
     restart: "no"
 
   # Blob emulator for Kestra's internal storage ONLY (kestra-internal

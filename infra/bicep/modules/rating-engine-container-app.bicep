@@ -226,8 +226,19 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // MI auth during the D0 spike; if it does not, this falls back
             // to a SAS/connection-string KV secret and D5's credential count
             // changes from three KV secrets to four.
+            //
+            // ACCOUNT_NAME is deliberately named RATING_ENGINE_AZURE_*, not
+            // KESTRA_STORAGE_AZURE_* (confirmed live, 2026-09-01, local dev):
+            // Micronaut auto-exposes EVERY container env var as a property by
+            // lowercasing + splitting on `_`, so KESTRA_STORAGE_AZURE_ACCOUNT_NAME
+            // also (independently of kestra.yml's ${...} substitution) creates
+            // kestra.storage.azure.account.name — a bogus NESTED "account" map
+            // sibling to the real `sharedKeyAccountName` field, which Kestra's
+            // plugin-config Jackson binding then rejects as an unrecognized
+            // property. ENDPOINT/CONTAINER are single-word suffixes (no
+            // internal `_`) so they don't collide and keep their names.
             { name: 'KESTRA_STORAGE_TYPE', value: 'azure' }
-            { name: 'KESTRA_STORAGE_AZURE_ACCOUNT_NAME', value: storageAccountName }
+            { name: 'RATING_ENGINE_AZURE_ACCOUNT_NAME', value: storageAccountName }
             { name: 'KESTRA_STORAGE_AZURE_CONTAINER', value: kestraInternalContainerName }
             { name: 'KESTRA_STORAGE_AZURE_ENDPOINT', value: 'https://${storageAccountName}.blob.${environment().suffixes.storage}' }
 

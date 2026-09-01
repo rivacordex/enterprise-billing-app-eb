@@ -36,9 +36,15 @@ and the version stamps, and the rated Parquet handoff to RL.
 rm09 (rating-management/specs/rm09-rl-guarded-transactional-load.md) adds ``rl``
 — the real Rating Loader entry point that replaces the ``rl`` flow stub: in ONE
 psycopg transaction the ``BILL_APPROVED`` guard, the ``CURRENCY_MISMATCH``
-assertion, the ``# STUB: rm10`` supersede-hook (a no-op in rm09) and the bulk
-``COPY`` insert at ``RATED``, then reconciliation, then — only after the
-transaction commits — the cross-boundary ``landing/`` → ``archive/`` archive.
+assertion, the supersede-hook (a no-op stub in rm09) and the bulk ``COPY``
+insert at ``RATED``, then reconciliation, then — only after the transaction
+commits — the cross-boundary ``landing/`` → ``archive/`` archive.
+
+rm10 (rating-management/specs/rm10-supersession-reprocessing.md) fills that
+supersede-hook inside ``rl``: batch-level supersession by ``file_key``, across
+all partitions, status-only, with lineage stamped once on the retired
+``udr_batch`` rows, a cross-period detection and a shrinking-reissue check —
+still inside RL's one transaction, immediately before the ``COPY``.
 """
 
 # Eager-import the library submodules only, so ``import runtime; runtime.db``

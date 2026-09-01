@@ -84,7 +84,7 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
   );
   const sweepFlow = readFileSync(join(flowsDir, "log-sweep.yaml"), "utf8");
 
-  it("2. prp/rp/rl are all real runtime modules in order; the only remaining stub is the # STUB: rm10 supersede-hook", () => {
+  it("2. prp/rp/rl are all real runtime modules in order, and no # STUB: markers remain in the template", () => {
     const prpIdx = template.indexOf("id: prp");
     const rpIdx = template.indexOf("id: rp");
     const rlIdx = template.indexOf("id: rl");
@@ -94,17 +94,15 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
 
     // rm07/rm08/rm09 replaced the prp/rp/rl STUBs with the real processors, each
     // invoked as a runtime module (module form, not a python3 -c placeholder).
-    // The only remaining stub is the # STUB: rm10 supersede-hook inside rl's
-    // transaction (updated here by rm09, per the cross-unit-test precedent, when
-    // rl became real).
+    // rm10 (cross-unit-test precedent) then filled the last remaining stub — the
+    // supersede-hook inside rl's transaction — so no # STUB: marker remains.
     expect(template).toMatch(/python3 -m runtime\.prp/);
     expect(template).toMatch(/python3 -m runtime\.rp/);
     expect(template).toMatch(/python3 -m runtime\.rl/);
     expect(template).not.toMatch(/# STUB: rm07 owns PRP/);
     expect(template).not.toMatch(/# STUB: rm08 owns RP/);
     expect(template).not.toMatch(/# STUB: rm09 owns RL/);
-    // rm10 (supersession) is the last remaining stub, named in rl's doc comment.
-    expect(template).toMatch(/# STUB: rm10/);
+    expect(template).not.toMatch(/# STUB: rm10/);
 
     // No TODO anywhere (code-standards §1.5/§3.5 — a stub is a documented
     // section, never a TODO).

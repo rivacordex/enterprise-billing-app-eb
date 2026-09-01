@@ -74,3 +74,22 @@ $$;
 REVOKE CONNECT ON DATABASE "kestra" FROM PUBLIC;
 --> statement-breakpoint
 GRANT CONNECT, CREATE ON DATABASE "kestra" TO kestra_engine;
+
+-- Step 4 — grant CREATE on the kestra database's OWN `public` schema. This is
+-- a SEPARATE connection to the `kestra` database itself (schemas are
+-- per-database, so — unlike Steps 1-3, which act on cluster-shared catalogs —
+-- this cannot run from the billing-database connection; see
+-- kestra-db-roles.ts, which opens a second connection after the marker line
+-- below).
+--
+-- Confirmed against a live v1.3.35 engine (2026-09-01, first real run of this
+-- script): without this grant, Kestra's own Flyway migrations — which create
+-- its tables directly in `public` — fail immediately with "permission denied
+-- for schema public". Since PostgreSQL 15, CREATE on the `public` schema is
+-- no longer granted to PUBLIC by default (a security-hardening change), so
+-- the DATABASE-level CREATE grant above is not enough: it lets kestra_engine
+-- create NEW schemas, but the pre-existing `public` schema (owned by the
+-- bootstrap superuser, not kestra_engine) still refuses it without this
+-- explicit schema-level grant. Idempotent (a re-run of GRANT is a no-op).
+--> statement-breakpoint-kestra-db
+GRANT CREATE ON SCHEMA public TO kestra_engine;

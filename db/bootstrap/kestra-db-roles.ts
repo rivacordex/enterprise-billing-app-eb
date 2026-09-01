@@ -28,11 +28,41 @@ const BOOTSTRAP_SQL_PATH = join(import.meta.dirname, "kestra-db-roles.sql");
 // Step 1's comment.
 const PG_DUPLICATE_DATABASE = "42P04";
 
-function readStatements(): string[] {
-  return readFileSync(BOOTSTRAP_SQL_PATH, "utf8")
+// Schemas are per-database, so a GRANT on the kestra database's OWN `public`
+// schema cannot run from the billing-database connection Steps 1-3 use — it
+// needs a connection to `kestra` itself. This marker, on its OWN line (after
+// Step 3 in kestra-db-roles.sql), is where the SQL file's statements switch
+// from "run against BOOTSTRAP_DATABASE_URL" to "run against the kestra
+// database". Anchored to a whole line (not a plain substring split) so a
+// comment that merely *mentions* the marker in prose elsewhere in the file
+// can't be mistaken for the real one.
+const KESTRA_DB_MARKER_LINE = /^--> statement-breakpoint-kestra-db$/m;
+
+function splitStatements(text: string): string[] {
+  return text
     .split("--> statement-breakpoint")
     .map((statement) => statement.trim())
     .filter((statement) => statement.length > 0);
+}
+
+function readStatementGroups(): { billing: string[]; kestra: string[] } {
+  const text = readFileSync(BOOTSTRAP_SQL_PATH, "utf8");
+  const match = KESTRA_DB_MARKER_LINE.exec(text);
+  const billingText = match ? text.slice(0, match.index) : text;
+  const kestraText = match ? text.slice(match.index + match[0].length) : "";
+  return {
+    billing: splitStatements(billingText),
+    kestra: splitStatements(kestraText),
+  };
+}
+
+// Swaps the database name in a connection string, so the kestra-scoped
+// statements run against `kestra` itself using the SAME superuser/owner
+// credentials as BOOTSTRAP_DATABASE_URL, not a second env var.
+function withDatabase(url: string, database: string): string {
+  const parsed = new URL(url);
+  parsed.pathname = `/${database}`;
+  return parsed.toString();
 }
 
 function isDuplicateDatabaseError(err: unknown): boolean {
@@ -53,10 +83,11 @@ async function main(): Promise<void> {
     );
   }
 
-  const statements = readStatements();
+  const { billing, kestra } = readStatementGroups();
+
   const sql = postgres(bootstrapUrl, { max: 1 });
   try {
-    for (const statement of statements) {
+    for (const statement of billing) {
       try {
         await sql.unsafe(statement);
       } catch (err) {
@@ -69,12 +100,29 @@ async function main(): Promise<void> {
         throw err;
       }
     }
-    logger.info("Kestra DB role bootstrap applied successfully.", {
-      statements: statements.length,
-    });
   } finally {
     await sql.end();
   }
+
+  if (kestra.length > 0) {
+    // A separate connection to the `kestra` database itself — GRANT ON
+    // SCHEMA public is per-database and cannot run from the billing
+    // connection above (see kestra-db-roles.sql Step 4).
+    const kestraSql = postgres(withDatabase(bootstrapUrl, "kestra"), {
+      max: 1,
+    });
+    try {
+      for (const statement of kestra) {
+        await kestraSql.unsafe(statement);
+      }
+    } finally {
+      await kestraSql.end();
+    }
+  }
+
+  logger.info("Kestra DB role bootstrap applied successfully.", {
+    statements: billing.length + kestra.length,
+  });
 }
 
 void main().catch((err: unknown) => {

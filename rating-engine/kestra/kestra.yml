@@ -42,22 +42,45 @@ kestra:
   storage:
     type: ${KESTRA_STORAGE_TYPE}
     azure:
+      # CONFIRMED against the pinned engine (io_kestra_storage__storage-azure__1_3_2,
+      # 2026-09-01): io.kestra.storage.azure.AzureStorage$AzureStorageBuilder's
+      # Lombok/Jackson builder binds these keys VERBATIM (camelCase, no kebab
+      # conversion) — `account-name`/`connection-string` (the D0-caveat's
+      # original guess) are both unrecognized; the real fields are
+      # `sharedKeyAccountName` and `connectionString` (there is no plain
+      # `accountName`). Confirmed the full field set via the plugin jar:
+      # endpoint, container, connectionString, sharedKeyAccountName,
+      # sharedKeyAccountAccessKey, sasToken, managedIdentityClientId/
+      # ResourceId, workloadIdentityClientId, additionallyAllowedTenants,
+      # blobContainerClient.
+      #
+      # sharedKeyAccountName/connectionString read from RATING_ENGINE_AZURE_*
+      # env vars, NOT KESTRA_STORAGE_AZURE_ACCOUNT_NAME/CONNECTION_STRING
+      # (also confirmed live, same session): Micronaut auto-exposes every
+      # container env var as a property by lowercasing + splitting on `_`,
+      # so a KESTRA_STORAGE_AZURE_ACCOUNT_NAME env var — independently of
+      # this file's ${...} substitution — ALSO creates
+      # kestra.storage.azure.account.name, a bogus nested "account" map
+      # sibling that Jackson then rejects as an unrecognized field (observed
+      # as "Unrecognized field \"connection\""/"...\"account\"" depending on
+      # iteration order). endpoint/container are single-word suffixes (no
+      # internal `_`) so they don't collide and keep the KESTRA_STORAGE_AZURE_
+      # names, matching infra/bicep/modules/rating-engine-container-app.bicep.
       endpoint: ${KESTRA_STORAGE_AZURE_ENDPOINT}
-      account-name: ${KESTRA_STORAGE_AZURE_ACCOUNT_NAME}
+      sharedKeyAccountName: ${RATING_ENGINE_AZURE_ACCOUNT_NAME}
       container: ${KESTRA_STORAGE_AZURE_CONTAINER}
-      # connection-string is UNSET in the deployed environment (empty env
-      # var -> Kestra ignores it) — D5 prefers a Managed Identity role
-      # assignment (Storage Blob Data Contributor, rating-engine-storage.bicep)
-      # over a Key Vault credential for the internal-storage credential.
-      # Local dev (D9) sets it to Azurite's well-known devstoreaccount1
-      # connection string (rating-engine/dev/.env.example) — Azurite does
-      # not support Managed Identity auth, so local parity needs this one
-      # deliberate deviation from the deployed auth path. CONFIRM the pinned
-      # Azure Blob storage plugin actually supports Managed Identity
-      # (DefaultAzureCredential) auth for the deployed path during the D0
-      # spike — if it does not, this becomes the primary auth method there
-      # too and D5's "four credentials" count becomes five.
-      connection-string: ${KESTRA_STORAGE_AZURE_CONNECTION_STRING:-}
+      # connectionString is UNSET in the deployed environment (empty env var
+      # -> Kestra ignores it) — D5 prefers a Managed Identity role assignment
+      # (Storage Blob Data Contributor, rating-engine-storage.bicep) over a
+      # Key Vault credential for the internal-storage credential. Local dev
+      # (D9) sets it to Azurite's well-known devstoreaccount1 connection
+      # string (rating-engine/dev/.env.example) — Azurite does not support
+      # Managed Identity auth, so local parity needs this one deliberate
+      # deviation from the deployed auth path. Managed Identity
+      # (DefaultAzureCredential) auth for the deployed path is still an
+      # UNCONFIRMED D0 item — this local run only exercises the
+      # connectionString path (Azurite), not MI.
+      connectionString: ${RATING_ENGINE_AZURE_CONNECTION_STRING:-}
 
   tasks:
     # Process runner (D0/D2) needs a writable working directory inside the
