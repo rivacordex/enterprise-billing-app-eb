@@ -22,7 +22,7 @@ import {
 //
 // Idempotent: ON CONFLICT DO UPDATE, so a re-run brings an existing environment
 // to the current catalog (including a severity re-tune) without a manual diff,
-// and running it twice leaves sixteen rows, not thirty-two.
+// and running it twice leaves seventeen rows, not thirty-four.
 async function main(): Promise<void> {
   const sql = postgres(config.DATABASE_URL, { max: 1 });
   const db = drizzle(sql, { schema });

@@ -22,6 +22,7 @@ export const RATING_EVENT_CODES = [
   "PARSE_FAILURE",
   "LOOKUP_MISS",
   "CURRENCY_MISMATCH",
+  "BATCH_STRANDED",
   "BATCH_PARTIAL",
   "TASK_RETRY_OK",
   "FILE_LATE",
@@ -43,8 +44,8 @@ export type RatingEventCode = (typeof RATING_EVENT_CODES)[number];
 //
 // Clearing follows the two shapes of rm02-spec D5: `is_auto_clearing = true`
 // carries a `clear_event_code` that exists in the catalog; `false` carries
-// NULL. Exactly seven rows name `BATCH_COMPLETE` as their clearer
-// (rm02-spec §Verification 11).
+// NULL. Exactly eight rows name `BATCH_COMPLETE` as their clearer
+// (rm02-spec §Verification 11 — rm11 added BATCH_STRANDED as the eighth).
 export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
   // CRITICAL — the pipeline cannot proceed, or financial integrity is at risk.
   {
@@ -155,6 +156,18 @@ export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
     isActive: true,
     description:
       "The currency on the resolved price does not match the billing account's currency.",
+  },
+  {
+    eventCode: "BATCH_STRANDED",
+    component: "SCHEDULER",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "abandonedClaim",
+    isAutoClearing: true,
+    clearEventCode: "BATCH_COMPLETE",
+    isActive: true,
+    description:
+      "A udr_batch row stuck at PROCESSING beyond the configured threshold — a worker was killed mid-load — was resolved (FAILED) by the stranded-batch reconcile, releasing the file's claim for reprocessing.",
   },
   // MINOR — degraded, but the unit completed.
   {

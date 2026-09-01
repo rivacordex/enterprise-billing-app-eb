@@ -1,0 +1,92 @@
+# rm11-spec Implementation §1 (D1-D9). Startup + scheduled recovery for
+# udr_batch rows stuck at PROCESSING by a killed worker (Container Apps
+# relocates containers, architecture §9.7) — resolves each (status = FAILED),
+# releasing the UNIQUE (file_key, batch_run_num) claim (rm07, Inv #7) so the
+# landing-file trigger's next fire claims and reprocesses the file cleanly
+# under batch_run_num = N+1. "Stranded" is safe to fail (D2): RL's guard +
+# supersede + insert are ONE transaction (rm09 D1, Inv #8), so a batch stuck
+# at PROCESSING beyond the threshold never committed — its rows rolled back
+# and the raw file is still in landing/ (rm09 D6/Inv #9).
+#
+# Never edit this flow in the Kestra UI — deployed from git by the pipeline's
+# flow-deploy stage (code-standards §3.1).
+id: stranded-batch-reconcile
+namespace: rating
+
+concurrency:
+  limit: 1 # Same backstop as log-sweep.yaml: the recurring Schedule tick
+  # cannot overlap a slow reconcile pass, and a startup catch-up firing
+  # alongside a scheduled tick cannot double-resolve the same strand (the
+  # resolve UPDATE is itself idempotent per-batch, D6 — this is belt and
+  # braces against two passes reading the same candidate list concurrently).
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    # Cadence is an operating default, not namespace-KV config — Kestra's
+    # Schedule trigger needs a compile-time cron (same deviation log-sweep.yaml
+    # already carries). Runs more often than the threshold's likely magnitude
+    # (minutes, not the hour-plus threshold itself) so a strand does not sit
+    # long once past it (D7 "does not wait for the next file to arrive").
+    cron: "*/5 * * * *"
+    # D7's "on flow start" half. CAVEAT — UNCONFIRMED against the pinned
+    # v1.3.35 engine (same D0-spike class as this repo's other Kestra
+    # trigger/property specifics, e.g. the landing file trigger's plugin id
+    # and output binding in ran-usage-rating.yaml): Kestra OSS has no distinct
+    # "run once when the engine/scheduler starts" trigger primitive. The
+    # documented mechanism this relies on instead is the Schedule trigger's
+    # own backfill/catch-up behaviour — when the Kestra Scheduler service
+    # (re)starts (e.g. after a worker relocation, the exact event this flow
+    # exists to recover from), it evaluates missed windows for a
+    # backfill-configured Schedule trigger and fires them immediately, rather
+    # than waiting for the next natural cron tick. `start` is fixed in the
+    # past (well before this flow could ever have been deployed) so every
+    # scheduler restart always has at least one "missed" window to catch up
+    # on immediately. Confirm the exact backfill/catch-up property names and
+    # defaults against v1.3.35 at the D0 spike; if Kestra's real behaviour
+    # differs, the 5-minute cadence above is still a bounded fallback — a
+    # strand is never stuck longer than one cron interval past the threshold.
+    backfill:
+      start: "2026-01-01T00:00:00Z"
+
+tasks:
+  - id: reconcile
+    # D3-D6: find udr_batch rows PROCESSING beyond the threshold, resolve each
+    # (FAILED, claim released), emit ONE BATCH_STRANDED line per resolved
+    # batch (MAJOR, component SCHEDULER — coordinated rm02 addition, D5).
+    # Idempotent (D6): an already-resolved batch is skipped, never
+    # double-logged; a genuinely-running batch within the threshold is
+    # untouched.
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
+    commands:
+      # Threshold is namespace-KV config (D4, code-standards §3.3) —
+      # operational, never output-affecting, so it is NOT a flow variable.
+      # 3600s (1 hour) default: long enough not to fail a genuinely-running
+      # large batch, short enough to recover promptly.
+      - >
+        python3 -m runtime.stranded_reconcile
+        --threshold-seconds "{{ kv('rating_stranded_batch_threshold_seconds') ?? 3600 }}"
+        --workflow-execution-id "{{ execution.id }}"
+
+# code-standards §3.9 — both handlers report the terminal outcome via the
+# shared emitter, same as every other flow in this namespace.
+errors:
+  - id: on-error
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component SCHEDULER --outcome FAILED
+        --workflow-execution-id "{{ execution.id }}"
+
+finally:
+  - id: always
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component SCHEDULER --outcome FINALIZED
+        --workflow-execution-id "{{ execution.id }}"

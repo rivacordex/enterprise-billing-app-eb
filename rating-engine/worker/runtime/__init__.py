@@ -45,15 +45,25 @@ supersede-hook inside ``rl``: batch-level supersession by ``file_key``, across
 all partitions, status-only, with lineage stamped once on the retired
 ``udr_batch`` rows, a cross-period detection and a shrinking-reissue check —
 still inside RL's one transaction, immediately before the ``COPY``.
+
+rm11 (rating-management/specs/rm11-stranded-batch-recovery.md) adds
+``stranded_reconcile`` — a new startup + scheduled flow
+(``flows/stranded-batch-reconcile.yaml``), not a filled-in stub. Finds
+``udr_batch`` rows stuck at ``PROCESSING`` beyond a namespace-KV threshold (a
+worker killed anywhere in the PRP -> RP -> RL chain, which shares no
+transaction across processes), fails each one to release its
+``UNIQUE (file_key, batch_run_num)`` claim so the file reprocesses, and emits
+the new ``BATCH_STRANDED`` code (``MAJOR``, coordinated into
+``rating.event_catalog`` in the same change set, rm02).
 """
 
 # Eager-import the library submodules only, so ``import runtime; runtime.db``
-# works for the reusable plumbing. ``prp``, ``rp``, ``rl``, ``log_sweep`` and
-# ``emit_terminal_log`` are executable entry points (run as
-# ``python3 -m runtime.<module>``), not part of the package API — importing them
-# here would pull their module-level code (and run it twice under ``-m``) into
-# every ``import runtime``. Import them directly (``python3 -m runtime.rl``)
-# instead.
+# works for the reusable plumbing. ``prp``, ``rp``, ``rl``, ``log_sweep``,
+# ``emit_terminal_log`` and ``stranded_reconcile`` are executable entry points
+# (run as ``python3 -m runtime.<module>``), not part of the package API —
+# importing them here would pull their module-level code (and run it twice
+# under ``-m``) into every ``import runtime``. Import them directly
+# (``python3 -m runtime.rl``) instead.
 from . import db, logemit, storage, transform
 
 __all__ = ["db", "logemit", "storage", "transform"]

@@ -211,9 +211,9 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("catalog completeness", () => {
-      it("3. all sixteen codes are present after the seed runs", async () => {
+      it("3. all seventeen codes are present after the seed runs", async () => {
         const rows = await allRows();
-        expect(rows).toHaveLength(16);
+        expect(rows).toHaveLength(17);
       });
 
       it("4. RATING_EVENT_CODES and the seeded rows are the same set in both directions", async () => {
@@ -289,13 +289,13 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      it("11. no clearer other than BATCH_COMPLETE; exactly seven rows name it; BATCH_COMPLETE and CLEARED are not auto-cleared", async () => {
+      it("11. no clearer other than BATCH_COMPLETE; exactly eight rows name it; BATCH_COMPLETE and CLEARED are not auto-cleared", async () => {
         const rows = await allRows();
         const clearers = rows
           .map((r) => r.clear_event_code)
           .filter((c): c is string => c !== null);
         expect(new Set(clearers)).toEqual(new Set(["BATCH_COMPLETE"]));
-        expect(clearers).toHaveLength(7);
+        expect(clearers).toHaveLength(8);
 
         const byCode = Object.fromEntries(rows.map((r) => [r.event_code, r]));
         expect(byCode.BATCH_COMPLETE?.is_auto_clearing).toBe(false);
@@ -378,10 +378,10 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("idempotency", () => {
-      it("17. running the seed twice leaves sixteen rows, not thirty-two", async () => {
+      it("17. running the seed twice leaves seventeen rows, not thirty-four", async () => {
         await seedEventCatalog(db);
         const rows = await allRows();
-        expect(rows).toHaveLength(16);
+        expect(rows).toHaveLength(17);
       });
 
       it("18. changing a severity and re-running the upsert updates the existing row (DO UPDATE, not DO NOTHING)", async () => {
