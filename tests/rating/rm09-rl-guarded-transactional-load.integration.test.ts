@@ -49,8 +49,9 @@ import { udrBatch } from "@/db/schema/rating/udr-batch";
 // the non-PROCESSING no-op forward contract.
 //
 // The static describe (no DATABASE_URL) checks the rl flow-YAML contract (the
-// real rl task invoking runtime.rl, the outputs.rp.uri handoff, the # STUB: rm10
-// supersede-hook marker) and that rl.py uses COPY, not per-record INSERT. The
+// real rl task invoking runtime.rl, the outputs.rp.uri handoff, and — since
+// rm10 — that the supersede hook is real, not the rm09 `# STUB: rm10` marker)
+// and that rl.py uses COPY, not per-record INSERT. The
 // DB-gated describe shells out to the REAL `python3 -m runtime.prp` -> runtime.rp
 // -> runtime.rl exactly as the flow's three tasks invoke them — a black-box test
 // of the actual loader, not a TS reimplementation. Requires `python3` on PATH
@@ -140,10 +141,13 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
     expect(rlBlock).not.toMatch(/python3 -c/);
   });
 
-  it("the supersede-hook is a named # STUB: rm10 inside RL's transaction (D8)", () => {
-    // The hook lives in the loader, in the one transaction, as a no-op stub.
-    expect(rlSource).toMatch(/# STUB: rm10/);
-    expect(rlSource).toMatch(/supersession by file_key/);
+  it("rm10 fills the supersede hook inside RL's one transaction (D8)", () => {
+    // rm09 shipped this as a named `# STUB: rm10` no-op; rm10 replaced it with
+    // the real batch-level supersession, still inside load_and_reconcile's
+    // single `with db.transaction(conn):` block, immediately before the COPY.
+    expect(rlSource).not.toMatch(/# STUB: rm10/);
+    expect(rlSource).toMatch(/supersede_batch/);
+    expect(rlSource).toMatch(/batch-level supersession/i);
   });
 
   it("RL bulk-inserts via COPY, never per-record INSERT (D4, Inv #10)", () => {

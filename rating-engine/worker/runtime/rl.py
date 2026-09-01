@@ -26,11 +26,20 @@ In order (rm09-spec D1-D9):
    two to agree, so this assertion is the only check (§5.15). A mismatch refuses
    the batch at ``MAJOR`` — fail-closed (billing in the wrong currency is worse
    than refusing a misconfigured file).
-4. **The supersede hook (D8).** A named ``# STUB: rm10`` inside the transaction,
-   immediately before the insert. rm09 is the first load (``batch_run_num = 1``)
-   so there is nothing to supersede — a no-op stub. rm10 fills it, in the SAME
-   transaction, keeping the transaction boundary owned by rm09 and supersession
-   owned by rm10.
+4. **Supersession (rm10, D8).** Immediately before the insert, inside the SAME
+   transaction: every **live** row of the same ``file_key`` from a prior
+   ``batch_run_num`` is marked ``SUPERSEDED`` — **by ``file_key``, never
+   ``source_file``**, and **across all partitions**, never the current period
+   (rm01 D11, architecture Inv #5). The update touches **only ``status``**; the
+   lineage (``superseded_by_batch_id``, ``supersede_reason``) is stamped once on
+   the **retired ``udr_batch`` rows** — a per-row successor pointer on
+   ``udr_rated`` is not populatable, since predecessors are marked before the
+   successors exist. A supersession whose predecessor row lands in a different
+   monthly partition than its run-N successor (a corrected timestamp crossing a
+   month boundary) emits ``CROSS_PERIOD_SUPERSEDE`` at ``WARNING``. A reissue
+   carrying fewer records than the run it retires emits ``SHRINKING_REISSUE`` at
+   ``MAJOR`` (rm09 is the first load, ``batch_run_num = 1``, so there is nothing
+   to supersede and no shrinking comparison — a true no-op).
 5. **Bulk insert at ``RATED`` via ``COPY`` (D4, Inv #10/#3).** Never row-by-row.
    The live-row unique constraint ``UNIQUE (partition_period, start_datetime,
    udr_key, is_live)`` is the final backstop: a double-live insert aborts the
@@ -58,9 +67,11 @@ In order (rm09-spec D1-D9):
    double-load impossible, and re-running RL after a committed load short-circuits
    to archive-only (step 8).
 
-Scope boundaries (ratemgmt-ai-workflow-rules.md §2.5, §3): RL does **not**
-supersede — the supersede hook is a ``# STUB: rm10`` no-op here (D8). It computes
-no rate (RP's, rm08), and it never writes ``billing.*`` (Inv #1, grant-enforced).
+Scope boundaries (ratemgmt-ai-workflow-rules.md §2.5, §3): supersession is
+batch-level bookkeeping (which rows stay live), never a rating decision — it
+computes no rate (RP's, rm08), and it never writes ``billing.*`` (Inv #1,
+grant-enforced).
+
 The archive backend is owned by ``storage`` (``copy_to_archive`` /
 ``archive_exists`` / ``archive_uri``): an **Azure Blob** upload via
 ``azure-storage-blob`` when an archive container is configured
@@ -344,6 +355,115 @@ def find_currency_mismatches(
 
 
 # ---------------------------------------------------------------------------
+# Batch-level supersession by file_key (rm10-spec D1-D4, rm01 D11, Inv #5).
+# Runs immediately before the insert, inside the SAME transaction. The predicate
+# keys on file_key, never source_file (Inv #5), and is scoped across ALL
+# partitions, never the current period — a corrected timestamp that moved a
+# record into a different partition would otherwise escape both the supersede
+# query and the unique constraint, which cannot see across partitions either.
+# `status` is the ONLY column touched; RETURNING carries back what the lineage
+# stamp and the cross-period check need. Superseding an already-superseded row
+# is a no-op for free: `is_live` is NULL once a row is SUPERSEDED, so the
+# `WHERE is_live` predicate already excludes it.
+# ---------------------------------------------------------------------------
+_SUPERSEDE_SQL = """
+UPDATE rating.udr_rated
+   SET status = 'SUPERSEDED'
+ WHERE is_live
+   AND udr_ref_batch_id IN (
+         SELECT batch_id FROM rating.udr_batch
+          WHERE file_key = %(file_key)s AND batch_run_num < %(batch_run_num)s)
+ RETURNING partition_period, udr_key, udr_ref_batch_id
+"""
+
+
+@dataclass
+class SupersedeResult:
+    superseded_count: int
+    cross_period_rows: list[dict[str, Any]]
+    shrinking: bool
+    prev_batch_id: str | None
+    prev_parsed_count: int | None
+    parsed_count: int
+
+
+def supersede_batch(
+    conn: psycopg.Connection,
+    *,
+    batch_id: str,
+    file_key: str,
+    batch_run_num: int,
+    parsed_count: int,
+    incoming_periods: dict[str, set[date]],
+) -> SupersedeResult:
+    """rm10 D1-D4: mark every live row of a prior run of ``file_key`` SUPERSEDED
+    (status-only, all partitions), stamp lineage once on the retired
+    ``udr_batch`` rows, and detect a cross-period supersede + a shrinking
+    reissue. ``batch_run_num = 1`` (rm09's first load) matches nothing — a true
+    no-op, since the ``batch_run_num < $N`` predicate is vacuous."""
+    retired = db.fetch(
+        conn, _SUPERSEDE_SQL, {"file_key": file_key, "batch_run_num": batch_run_num}
+    )
+
+    # D2 — a superseded row is cross-period when NONE of the run-N successor
+    # row(s) sharing its udr_key landed in the same partition as the row being
+    # retired (the corrected-timestamp case: the natural key's identity column
+    # is unchanged, but start_datetime moved it across a month boundary).
+    cross_period_rows = [
+        r
+        for r in retired
+        if r["partition_period"] not in incoming_periods.get(r["udr_key"], set())
+    ]
+
+    # D1/D3 — lineage once on each retired udr_batch row (typically exactly the
+    # immediately-preceding run: once a row is superseded, the NEXT reissue's
+    # `WHERE is_live` predicate no longer matches it, so each retired batch is
+    # stamped by whichever run actually retired its still-live row).
+    retired_batch_ids = sorted({r["udr_ref_batch_id"] for r in retired})
+    if retired_batch_ids:
+        db.execute(
+            conn,
+            """
+            UPDATE rating.udr_batch
+               SET superseded_by_batch_id = %(batch_id)s,
+                   supersede_reason = %(reason)s
+             WHERE batch_id = ANY(%(retired_ids)s::text[])
+            """,
+            {
+                "batch_id": batch_id,
+                "reason": (
+                    f"superseded by batch {batch_id} (file_key {file_key}, "
+                    f"run {batch_run_num})"
+                ),
+                "retired_ids": retired_batch_ids,
+            },
+        )
+
+    # D4 — shrinking reissue: run-N's parsed count vs the immediately-preceding
+    # run's, read from udr_batch (not re-derived), so a truncated/partial
+    # reissue is caught even though D3's UPDATE would otherwise supersede the
+    # missing records with nothing replacing them (silent revenue loss).
+    prev_rows = db.fetch(
+        conn,
+        "SELECT batch_id, parsed_count FROM rating.udr_batch "
+        "WHERE file_key = %(file_key)s AND batch_run_num = %(prev_run)s",
+        {"file_key": file_key, "prev_run": batch_run_num - 1},
+    )
+    prev = prev_rows[0] if prev_rows else None
+    prev_parsed = prev["parsed_count"] if prev else None
+    shrinking = prev_parsed is not None and parsed_count < prev_parsed
+
+    return SupersedeResult(
+        superseded_count=len(retired),
+        cross_period_rows=cross_period_rows,
+        shrinking=shrinking,
+        prev_batch_id=prev["batch_id"] if prev else None,
+        prev_parsed_count=prev_parsed,
+        parsed_count=parsed_count,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Terminal status stamping (D5/D7) and the batch-status probe (D6/D9 recovery).
 # ---------------------------------------------------------------------------
 
@@ -355,9 +475,12 @@ def stamp_terminal(
     status: str,
     rated_count: int,
     discarded_count: int,
+    superseded_count: int,
 ) -> None:
     """Stamp the terminal status + reconciled counts on ``udr_batch`` (D5/D7),
-    inside the load transaction. Every column here is in ``rating_runtime``'s
+    inside the load transaction. ``superseded_count`` (rm10 D4) is THIS batch's
+    own count of rows it retired — distinct from the lineage stamped on the
+    retired batches themselves. Every column here is in ``rating_runtime``'s
     UPDATE grant (lifecycle/count/outcome, §9) — never an identity column."""
     db.execute(
         conn,
@@ -366,6 +489,7 @@ def stamp_terminal(
            SET status = %(status)s,
                rated_count = %(rated)s,
                discarded_count = %(discarded)s,
+               superseded_count = %(superseded)s,
                completed_at = now()
          WHERE batch_id = %(batch_id)s
         """,
@@ -373,6 +497,7 @@ def stamp_terminal(
             "status": status,
             "rated": rated_count,
             "discarded": discarded_count,
+            "superseded": superseded_count,
             "batch_id": batch_id,
         },
     )
@@ -402,15 +527,17 @@ def set_batch_status(
 
 
 def get_batch_state(conn: psycopg.Connection, batch_id: str) -> dict[str, Any] | None:
-    """The current ``status``, ``archive_file_path`` and ``rated_count`` of the
-    batch, for the D6/D9 recovery decision (a re-run of an already-committed load
-    re-attempts the archive only, never re-loads). ``rated_count`` is the
-    authoritative committed count the recovery path reports in its terminal event
-    (never re-derived from the RP manifest)."""
+    """The current ``status``, ``archive_file_path``, ``rated_count``,
+    ``file_key`` and ``batch_run_num`` of the batch, for the D6/D9 recovery
+    decision (a re-run of an already-committed load re-attempts the archive
+    only, never re-loads) and for rm10's supersede predicate (``file_key`` +
+    ``batch_run_num`` are the DB's own authoritative values, not re-derived from
+    the RP manifest). ``rated_count`` is likewise the authoritative committed
+    count the recovery path reports in its terminal event."""
     rows = db.fetch(
         conn,
-        "SELECT status, archive_file_path, rated_count FROM rating.udr_batch "
-        "WHERE batch_id = %(batch_id)s",
+        "SELECT status, archive_file_path, rated_count, file_key, batch_run_num "
+        "FROM rating.udr_batch WHERE batch_id = %(batch_id)s",
         {"batch_id": batch_id},
     )
     return rows[0] if rows else None
@@ -522,21 +649,31 @@ class Counts:
         return self.prp_discarded + self.lookup_miss
 
 
-def scan_and_guard(conn: psycopg.Connection, chunk_uris: list[str]) -> None:
+def scan_and_guard(
+    conn: psycopg.Connection, chunk_uris: list[str]
+) -> dict[str, set[date]]:
     """Pass 1 of the load transaction: the ``BILL_APPROVED`` guard (D2) and the
     ``CURRENCY_MISMATCH`` assertion (D3) over **every** chunk, BEFORE any insert.
     One set-based guard query **per chunk** (never per record, Inv #10), streaming
     one chunk at a time so no whole-batch key list is held; the currency pairs are
     deduped across chunks into a small set and asserted once. Raises
     ``BatchRefused`` on any collision or mismatch — the whole batch is refused,
-    zero rows (nothing has been inserted yet)."""
+    zero rows (nothing has been inserted yet).
+
+    Also collects ``incoming_periods`` — every ``udr_key`` → the set of
+    ``partition_period``s it lands in for THIS run — a side product of the same
+    chunk pass, so rm10's cross-period supersede check needs no extra read of
+    the chunks (Inv #10 applies to reads too, not only writes)."""
     subscriber_currency: set[tuple[str, str]] = set()
+    incoming_periods: dict[str, set[date]] = {}
     for chunk_uri in chunk_uris:
         frame = storage.read_frame(chunk_uri)
         if frame.height == 0:
             continue
         start_dts = [_as_utc(v) for v in frame["start_datetime"].to_list()]
         udr_keys = [str(v) for v in frame["udr_key"].to_list()]
+        for key, start_dt in zip(udr_keys, start_dts):
+            incoming_periods.setdefault(key, set()).add(period_of(start_dt))
         collisions = find_bill_approved_collisions(conn, start_dts, udr_keys)
         if collisions:
             raise BatchRefused(
@@ -585,6 +722,8 @@ def scan_and_guard(conn: psycopg.Connection, chunk_uris: list[str]) -> None:
             },
         )
 
+    return incoming_periods
+
 
 def copy_chunks(conn: psycopg.Connection, chunk_uris: list[str]) -> int:
     """Pass 2 of the load transaction: ``COPY`` each rated chunk into
@@ -606,23 +745,35 @@ def load_and_reconcile(
     conn: psycopg.Connection,
     *,
     batch_id: str,
+    file_key: str,
+    batch_run_num: int,
     chunk_uris: list[str],
     counts: Counts,
-) -> tuple[str, int]:
-    """The one atomic unit (Inv #8): guard → currency → supersede-hook → COPY →
+) -> tuple[str, int, SupersedeResult]:
+    """The one atomic unit (Inv #8): guard → currency → supersede (rm10) → COPY →
     reconcile → terminal stamp, streaming chunks so peak memory is one chunk (not
-    the whole batch). Returns ``(terminal status, rated count)``. Raises
-    ``BatchRefused`` (D2/D3) or ``ReconImbalance`` (D5), which roll the whole
-    transaction back (zero rows)."""
+    the whole batch). Returns ``(terminal status, rated count, supersede result)``.
+    Raises ``BatchRefused`` (D2/D3) or ``ReconImbalance`` (D5), which roll the
+    whole transaction back (zero rows) — a batch-level refusal/failure means
+    nothing was superseded either, so the prior run's rows stay live."""
     with db.transaction(conn):
-        # D2/D3 — guard + currency over ALL chunks, BEFORE any insert.
-        scan_and_guard(conn, chunk_uris)
+        # D2/D3 — guard + currency over ALL chunks, BEFORE any insert. Also
+        # collects incoming_periods (rm10 D2's cross-period check).
+        incoming_periods = scan_and_guard(conn, chunk_uris)
 
-        # STUB: rm10 — batch-level supersession by file_key, across all
-        # partitions, in THIS transaction (rating-management/specs/rm10-*.md).
-        # No-op in rm09: batch_run_num = 1, so there is nothing to supersede. The
-        # live-row unique constraint (Inv #3) is the backstop if this stub is
-        # wrong/raced/skipped — a double-live insert below aborts the transaction.
+        # rm10 D1-D4 — batch-level supersession by file_key, across all
+        # partitions, in THIS transaction, immediately before the insert. The
+        # live-row unique constraint (Inv #3) is the backstop if this is
+        # wrong/raced/skipped — a double-live insert below aborts the
+        # transaction rather than silently double-billing.
+        supersede_result = supersede_batch(
+            conn,
+            batch_id=batch_id,
+            file_key=file_key,
+            batch_run_num=batch_run_num,
+            parsed_count=counts.parsed,
+            incoming_periods=incoming_periods,
+        )
 
         # D4 — bulk insert at RATED via COPY, one chunk at a time (never
         # row-by-row, Inv #10). `rated` is the actual count inserted.
@@ -654,8 +805,9 @@ def load_and_reconcile(
             status=terminal,
             rated_count=rated,
             discarded_count=counts.discarded,
+            superseded_count=supersede_result.superseded_count,
         )
-    return terminal, rated
+    return terminal, rated, supersede_result
 
 
 def _iso(value: Any) -> str:
@@ -675,6 +827,70 @@ def do_archive(
     stamp_archive_path(conn, batch_id=batch_id, archive_uri=archive_uri)
     conn.commit()
     return archive_uri
+
+
+def emit_supersede_events(
+    *,
+    result: SupersedeResult,
+    source_file: str,
+    batch_id: str,
+    file_key: str,
+    batch_run_num: int,
+    udr_type: str,
+    workflow_execution_id: str,
+) -> None:
+    """Emit rm10's two supersede-time alarms after a successful commit.
+    Neither gates the load — both are raised (or not) against a batch that has
+    already committed. ``CROSS_PERIOD_SUPERSEDE`` (WARNING, D2) is informational
+    and not auto-clearing, matching ``DUPLICATE_BATCH``'s posture (rm02).
+    ``SHRINKING_REISSUE`` (MAJOR, D4) follows the refusal-alarm shape
+    (``LOAD_BLOCKED_BILLED``/``CURRENCY_MISMATCH``) even though it does not
+    refuse — the load already succeeded when this fires."""
+    if result.cross_period_rows:
+        emit_event(
+            event_code="CROSS_PERIOD_SUPERSEDE",
+            log_level="WARN",
+            source_file=source_file,
+            batch_id=batch_id,
+            workflow_execution_id=workflow_execution_id,
+            specific_problem=(
+                f"{len(result.cross_period_rows)} superseded row(s) retired from a "
+                "different partition than their run-N successor — a corrected "
+                "timestamp crossed a month boundary"
+            ),
+            additional_info={
+                "file_key": file_key,
+                "cross_period_count": len(result.cross_period_rows),
+                "sample": [
+                    {"partition_period": str(r["partition_period"]), "udr_key": r["udr_key"]}
+                    for r in result.cross_period_rows[:20]
+                ],
+            },
+            alarm_key=None,  # informational, not auto-clearing (rm02 D5)
+            managed_object=file_key,
+        )
+    if result.shrinking:
+        emit_event(
+            event_code="SHRINKING_REISSUE",
+            log_level="ERROR",
+            source_file=source_file,
+            batch_id=batch_id,
+            workflow_execution_id=workflow_execution_id,
+            specific_problem=(
+                f"run {batch_run_num} carried {result.parsed_count} parsed record(s), "
+                f"fewer than run {batch_run_num - 1}'s {result.prev_parsed_count} — "
+                "records were retired with nothing replacing them"
+            ),
+            additional_info={
+                "file_key": file_key,
+                "parsed_count": result.parsed_count,
+                "prev_batch_id": result.prev_batch_id,
+                "prev_parsed_count": result.prev_parsed_count,
+                "superseded_count": result.superseded_count,
+            },
+            alarm_key=f"SHRINKING_REISSUE:{udr_type}:{file_key}",
+            managed_object=file_key,
+        )
 
 
 def emit_terminal_event(
@@ -856,12 +1072,20 @@ def main(argv: list[str] | None = None) -> int:
         # nothing to keep.
         conn.rollback()
 
-        # 2-6. The one atomic unit — guard/currency/supersede-hook/COPY/reconcile/
+        # 2-6. The one atomic unit — guard/currency/supersede(rm10)/COPY/reconcile/
         #      stamp, streaming the rated chunks (peak memory is one chunk).
+        # batch_run_num comes from the DB state probe (authoritative), not the
+        # manifest — neither PRP's nor RP's manifest carries it.
+        batch_run_num = state["batch_run_num"]
         chunk_uris = manifest.get("rated_chunk_uris", [])
         try:
-            terminal, rated = load_and_reconcile(
-                conn, batch_id=batch_id, chunk_uris=chunk_uris, counts=counts
+            terminal, rated, supersede_result = load_and_reconcile(
+                conn,
+                batch_id=batch_id,
+                file_key=file_key,
+                batch_run_num=batch_run_num,
+                chunk_uris=chunk_uris,
+                counts=counts,
             )
         except BatchRefused as refusal:
             # The (empty) insert is rolled back; write REFUSED in a fresh stmt.
@@ -915,8 +1139,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-        # 7-8. The load committed. ONLY NOW archive across the landing/archive
-        #      boundary (Inv #9), then emit the terminal event.
+        # 7. The load (incl. any rm10 supersession) committed — emit its alarms
+        #    now that they describe committed fact.
+        emit_supersede_events(
+            result=supersede_result,
+            source_file=source_file,
+            batch_id=batch_id,
+            file_key=file_key,
+            batch_run_num=batch_run_num,
+            udr_type=udr_type,
+            workflow_execution_id=args.workflow_execution_id,
+        )
+
+        # 8. ONLY NOW archive across the landing/archive boundary (Inv #9), then
+        #    emit the terminal event.
         archive_uri = do_archive(
             conn, batch_id=batch_id, source_file=source_file, landing_dir=landing_dir
         )

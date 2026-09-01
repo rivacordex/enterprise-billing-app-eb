@@ -145,14 +145,16 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
     expect(template).toMatch(/--flow-revision "\{\{ flow\.revision \}\}"/);
   });
 
-  it("the rl task consumes rp's URI, invokes runtime.rl, and documents the # STUB: rm10 supersede-hook + non-PROCESSING no-op", () => {
+  it("the rl task consumes rp's URI, invokes runtime.rl, and documents supersession + non-PROCESSING no-op", () => {
     // Updated by rm09 (cross-unit-test precedent): rl is now the REAL loader, not
     // a stub. It still consumes outputs.rp.uri and no-ops on a non-PROCESSING
-    // status; the remaining stub is the rm10 supersede-hook inside its transaction.
+    // status. Updated again by rm10 (same precedent): the supersede-hook inside
+    // its transaction is now real too — the `# STUB: rm10` marker is gone.
     const rlBlock = template.slice(template.indexOf("id: rl"));
     expect(rlBlock).toMatch(/outputs\.rp\.uri/);
     expect(rlBlock).toMatch(/python3 -m runtime\.rl/);
-    expect(rlBlock).toMatch(/# STUB: rm10/);
+    expect(rlBlock).not.toMatch(/# STUB: rm10/);
+    expect(rlBlock).toMatch(/supersede/i);
     expect(rlBlock).toMatch(/non-PROCESSING/);
   });
 });
