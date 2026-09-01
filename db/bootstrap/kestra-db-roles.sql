@@ -28,8 +28,13 @@
 -- infra/docs/db-role-verification.md for the manual
 -- `ALTER ROLE kestra_engine PASSWORD` follow-up (never committed). The
 -- statement-breakpoint marker lines let db/bootstrap/kestra-db-roles.ts split
--- the file into individual statements; they are SQL line comments, so running
--- the whole file through `psql` works too.
+-- the file into individual statements; they are SQL line comments, so a
+-- direct `psql` run works too — but ONLY for Steps 1-3 in one invocation
+-- against the billing-database bootstrap connection. Step 4 below runs
+-- against a SEPARATE connection to the `kestra` database itself (see its own
+-- comment), so a direct `psql` run of this whole file in one invocation
+-- against the bootstrap connection will fail on Step 4; run Steps 1-3 and
+-- Step 4 as two separate `psql` invocations, each against its own database.
 
 -- Step 1 — the kestra database. CREATE DATABASE cannot run inside a
 -- transaction block (a hard Postgres restriction — this is why it cannot be

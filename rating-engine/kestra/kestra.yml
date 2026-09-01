@@ -69,18 +69,22 @@ kestra:
       endpoint: ${KESTRA_STORAGE_AZURE_ENDPOINT}
       sharedKeyAccountName: ${RATING_ENGINE_AZURE_ACCOUNT_NAME}
       container: ${KESTRA_STORAGE_AZURE_CONTAINER}
-      # connectionString is UNSET in the deployed environment (empty env var
-      # -> Kestra ignores it) — D5 prefers a Managed Identity role assignment
-      # (Storage Blob Data Contributor, rating-engine-storage.bicep) over a
-      # Key Vault credential for the internal-storage credential. Local dev
-      # (D9) sets it to Azurite's well-known devstoreaccount1 connection
-      # string (rating-engine/dev/.env.example) — Azurite does not support
-      # Managed Identity auth, so local parity needs this one deliberate
-      # deviation from the deployed auth path. Managed Identity
-      # (DefaultAzureCredential) auth for the deployed path is still an
-      # UNCONFIRMED D0 item — this local run only exercises the
-      # connectionString path (Azurite), not MI.
-      connectionString: ${RATING_ENGINE_AZURE_CONNECTION_STRING:-}
+      # connectionString is deliberately ABSENT here, not defaulted empty:
+      # AzureClientFactory (the plugin's client builder) takes the
+      # connectionString branch on any non-null value, including "" — so a
+      # `${VAR:-}` shell-style placeholder would still pass an empty string
+      # through on this key and break client construction. D5 prefers a
+      # Managed Identity role assignment (Storage Blob Data Contributor,
+      # rating-engine-storage.bicep) over a Key Vault credential for the
+      # internal-storage credential in the deployed environment, so this key
+      # must be omitted here entirely. Local dev (D9) sets it via
+      # KESTRA_CONFIGURATION in rating-engine/dev/docker-compose.dev.yml,
+      # layered on top of this file — Azurite does not support Managed
+      # Identity auth, so local parity needs this one deliberate deviation
+      # from the deployed auth path. Managed Identity (DefaultAzureCredential)
+      # auth for the deployed path is still an UNCONFIRMED D0 item — the local
+      # run this session only exercised the connectionString path (Azurite),
+      # not MI.
 
   tasks:
     # Process runner (D0/D2) needs a writable working directory inside the

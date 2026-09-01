@@ -78,6 +78,22 @@ services:
       # entry would shadow the env_file value and reintroduce that split.
       # D6 — a local sentinel, never a real digest/tag.
       RATING_ENGINE_VERSION: dev-local
+      # kestra.yml is shared with the deployed Container App and deliberately
+      # omits storage.azure.connectionString there (Azurite-only credential;
+      # see kestra.yml's comment). KESTRA_CONFIGURATION is Kestra's documented
+      # Docker override env var — a YAML string layered on top of the
+      # `--config` file — used here to set connectionString for local dev
+      # ONLY, without touching the shared file. `$$` escapes Compose's own
+      # `${...}` interpolation so the literal placeholder reaches the
+      # container, where Micronaut resolves it against the SAME
+      # env_file-sourced RATING_ENGINE_AZURE_CONNECTION_STRING used elsewhere
+      # (never duplicated as a second literal, to avoid the split-source
+      # problem noted on kestra-setup above).
+      KESTRA_CONFIGURATION: |
+        kestra:
+          storage:
+            azure:
+              connectionString: $${RATING_ENGINE_AZURE_CONNECTION_STRING}
     volumes:
       - ./rating-engine/kestra/kestra.yml:/app/kestra.yml:ro
       - ./rating-engine/dev/landing:/data/landing
