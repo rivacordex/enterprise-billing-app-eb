@@ -28,8 +28,13 @@
 -- infra/docs/db-role-verification.md for the manual
 -- `ALTER ROLE kestra_engine PASSWORD` follow-up (never committed). The
 -- statement-breakpoint marker lines let db/bootstrap/kestra-db-roles.ts split
--- the file into individual statements; they are SQL line comments, so running
--- the whole file through `psql` works too.
+-- the file into individual statements; they are SQL line comments, so a
+-- direct `psql` run works too — but ONLY for Steps 1-3 in one invocation
+-- against the billing-database bootstrap connection. Step 4 below runs
+-- against a SEPARATE connection to the `kestra` database itself (see its own
+-- comment), so a direct `psql` run of this whole file in one invocation
+-- against the bootstrap connection will fail on Step 4; run Steps 1-3 and
+-- Step 4 as two separate `psql` invocations, each against its own database.
 
 -- Step 1 — the kestra database. CREATE DATABASE cannot run inside a
 -- transaction block (a hard Postgres restriction — this is why it cannot be
@@ -74,3 +79,22 @@ $$;
 REVOKE CONNECT ON DATABASE "kestra" FROM PUBLIC;
 --> statement-breakpoint
 GRANT CONNECT, CREATE ON DATABASE "kestra" TO kestra_engine;
+
+-- Step 4 — grant CREATE on the kestra database's OWN `public` schema. This is
+-- a SEPARATE connection to the `kestra` database itself (schemas are
+-- per-database, so — unlike Steps 1-3, which act on cluster-shared catalogs —
+-- this cannot run from the billing-database connection; see
+-- kestra-db-roles.ts, which opens a second connection after the marker line
+-- below).
+--
+-- Confirmed against a live v1.3.35 engine (2026-09-01, first real run of this
+-- script): without this grant, Kestra's own Flyway migrations — which create
+-- its tables directly in `public` — fail immediately with "permission denied
+-- for schema public". Since PostgreSQL 15, CREATE on the `public` schema is
+-- no longer granted to PUBLIC by default (a security-hardening change), so
+-- the DATABASE-level CREATE grant above is not enough: it lets kestra_engine
+-- create NEW schemas, but the pre-existing `public` schema (owned by the
+-- bootstrap superuser, not kestra_engine) still refuses it without this
+-- explicit schema-level grant. Idempotent (a re-run of GRANT is a no-op).
+--> statement-breakpoint-kestra-db
+GRANT CREATE ON SCHEMA public TO kestra_engine;

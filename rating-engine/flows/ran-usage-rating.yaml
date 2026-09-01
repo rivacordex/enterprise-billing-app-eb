@@ -4,9 +4,10 @@
 # with the real Rating Processor (event-time price resolution + snapshot + the
 # FLAT calculation); rm09 has now replaced the `rl` STUB with the real Rating
 # Loader (BILL_APPROVED guard + CURRENCY_MISMATCH assertion + supersede-hook +
-# COPY insert in ONE transaction, then archive-after-commit). The supersede-hook
-# inside rl's transaction is a `# STUB: rm10` no-op in rm09 per
-# ratemgmt-ai-workflow-rules.md §2.5. Never edit this flow in the Kestra UI —
+# COPY insert in ONE transaction, then archive-after-commit). rm09 shipped the
+# supersede-hook as a no-op stub; rm10 has now replaced it with the real
+# batch-level supersession by file_key, across all partitions, in the SAME
+# transaction. Never edit this flow in the Kestra UI —
 # every change is a commit here, deployed by the pipeline's flow-deploy stage
 # (infra/azure-pipelines.yml, deploy_rating_flows) via `kestra flow namespace
 # update` (D2, code-standards §3.1).
@@ -175,7 +176,9 @@ tasks:
     # runs the BILL_APPROVED guard (any live collision → refuse the whole batch,
     # LOAD_BLOCKED_BILLED, REFUSED, zero rows, D2/Inv #6); asserts udr_currency ==
     # billing_account.currency (mismatch → CURRENCY_MISMATCH, REFUSED, D3); runs
-    # the supersede-hook (a `# STUB: rm10` no-op here, D8); bulk-inserts the rated
+    # rm10's supersede-hook (batch-level supersession by file_key, across all
+    # partitions, status-only, D8) — CROSS_PERIOD_SUPERSEDE (WARNING) and
+    # SHRINKING_REISSUE (MAJOR) can fire here; bulk-inserts the rated
     # rows at RATED via COPY (never per-record, backstopped by the live-row unique
     # constraint, D4/Inv #10/#3); and reconciles parsed = rated + rejected +
     # discarded (imbalance → RECON_IMBALANCE CRITICAL, FAILED, D5). ONLY AFTER the

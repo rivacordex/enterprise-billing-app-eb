@@ -12,7 +12,7 @@ script path) — it lives inside the ``runtime`` package and uses the same
 relative imports as its siblings; invoking it by file path breaks those.
 
 Event-code choice (recorded, not guessed, ratemgmt-ai-workflow-rules.md
-§5.1): none of the sixteen catalogued codes (specs/rm02-event-catalog-seed.md)
+§5.1): none of the catalogued codes (specs/rm02-event-catalog-seed.md)
 generically mean "a flow execution failed/finalized" at the template level —
 they are all component/business-specific (``DB_WRITE_FAILURE``,
 ``BATCH_COMPLETE``, ...) and rm06 ships no business logic to justify picking
