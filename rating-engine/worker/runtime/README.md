@@ -15,6 +15,7 @@ This is foundation, not business logic.
 | `logemit.py` | JSON-Lines log lines matching the `process_log` contract (§7.9) | rm06 (the sweep that inserts them and resolves severity from `event_catalog`) |
 | `log_sweep.py` | The independent sweep (idempotent by rename-on-completion, with a documented residual commit→rename window — see the module docstring) — parses `logs/`, resolves severity via the three-outcome `event_catalog` LEFT JOIN, rename-on-completion to `logs/swept/`, quarantines malformed lines to `logs/malformed/`, and isolates a poison file per run | rm06 owns this outright; nothing later replaces it |
 | `emit_terminal_log.py` | The flow-level `errors`/`finally` terminal-outcome log line (§3.9) | rm06 owns the mechanism; rm07-rm12 may want real per-component failure event_codes as they replace the stubs — see its docstring |
+| `stranded_reconcile.py` | **rm11's stranded-batch recovery** (`python3 -m runtime.stranded_reconcile`), invoked by `../../flows/stranded-batch-reconcile.yaml`: finds `udr_batch` rows stuck at `PROCESSING` beyond a namespace-KV threshold, resolves each (`FAILED`, releasing the `UNIQUE (file_key, batch_run_num)` claim so the file reprocesses), and emits one `BATCH_STRANDED` (`MAJOR`) line per resolved batch | rm11 owns this outright — a new flow, not a filled-in stub |
 
 ## What this is NOT
 

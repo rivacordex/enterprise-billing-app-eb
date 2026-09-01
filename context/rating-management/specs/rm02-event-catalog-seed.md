@@ -8,6 +8,8 @@
 
 > **Revision note.** This spec replaces a first draft that had six defects: a citation to a non-existent §8.5 rubric, `is_auto_clearing = 'n/a'` on a `boolean NOT NULL` column, two rows contradicting its own D5, fifteen missing `NOT NULL` descriptions, `default_severity`/`is_active` absent from every row table, and no rule for when `perceived_severity` is NULL. All six are closed below; the sixth produced §A.
 
+> **rm11 amendment.** `rm11-stranded-batch-recovery.md` D5 adds a **seventeenth** code, `BATCH_STRANDED` (`MAJOR`, component `SCHEDULER`) — the stranded-batch reconcile's resolution of a `udr_batch` row stuck at `PROCESSING` beyond the configured threshold. Added to the `MAJOR` table, the locally-defined-cause table (D4), the `RATING_EVENT_CODES` constant and the seed in the same change set (ai-workflow-rules §7.3); the counts below (sixteen → seventeen rows, seven → eight `BATCH_COMPLETE`-clearers) are updated in place rather than narrated as a diff, matching how this spec already reads as current state.
+
 ---
 
 ## Goal
@@ -102,6 +104,7 @@ Forcing a business-rule refusal into `equipmentMalfunction` would be worse than 
 | `deliveryWindowMissed` | `FILE_LATE` | Arrived, but outside its expected window |
 | `duplicateDelivery` | `DUPLICATE_BATCH` | Byte-identical redelivery, discarded |
 | `incompleteRedelivery` | `SHRINKING_REISSUE` | A reissue carried fewer records than its predecessor |
+| `abandonedClaim` | `BATCH_STRANDED` | A batch's `PROCESSING` claim outlived the worker that held it (rm11) |
 | `billedRecordCollision` | `LOAD_BLOCKED_BILLED` | Incoming records collide with an approved invoice |
 | `crossPeriodCorrection` | `CROSS_PERIOD_SUPERSEDE` | Supersession crossed a partition boundary |
 | `retrySucceeded` | `TASK_RETRY_OK` | Recovered on a later attempt |
@@ -135,7 +138,7 @@ So `CLEARED` is the sixteenth catalogued code. It carries `default_severity = 'C
 
 ### D6. `clear_event_code` is a relationship, not a severity
 
-`BATCH_COMPLETE` carries `default_severity = NULL` — a clean run is not an alarm — while still serving as the `clear_event_code` for **seven** other codes.
+`BATCH_COMPLETE` carries `default_severity = NULL` — a clean run is not an alarm — while still serving as the `clear_event_code` for **eight** other codes (rm11 adds `BATCH_STRANDED` as the eighth: the reprocessed batch's own `BATCH_COMPLETE` is what a stranded-batch alarm is waiting for).
 
 These do not conflict. `default_severity` is the severity of the event **as a standalone occurrence**. Clearing is a **pairing**: when `BATCH_COMPLETE` occurs and an `alarm_key` raised earlier is still open, a row with `event_code = 'CLEARED'` is written against *that key* (D6a). Its severity comes from `CLEARED`'s own catalog row, not from `BATCH_COMPLETE`'s.
 
@@ -153,7 +156,7 @@ Seeds live in `db/seeds/`, are idempotent, and are re-runnable so an environment
 
 ### 1. The seed data — `db/seeds/rating-event-catalog.ts`
 
-Sixteen codes. Every column that the table declares appears here; `description` is `NOT NULL` and its text is given, not left to the implementer.
+Seventeen codes. Every column that the table declares appears here; `description` is `NOT NULL` and its text is given, not left to the implementer.
 
 `component` values are drawn from the same set `process_log_component_check` allows — `PRP`, `RP`, `RL`, `LOG_SWEEP`, `SCHEDULER` — or `NULL` for "any component".
 
@@ -175,6 +178,7 @@ Sixteen codes. Every column that the table declares appears here; `description` 
 | `PARSE_FAILURE` | `PRP` | `MAJOR` | `processingErrorAlarm` | `corruptData` | `true` | `BATCH_COMPLETE` | A usage file could not be parsed at all, or its reject count exceeded the configured threshold for its `udr_type`. |
 | `LOOKUP_MISS` | `RP` | `MAJOR` | `processingErrorAlarm` | `underlyingResourceUnavailable` | `true` | `BATCH_COMPLETE` | A price, offering, subscription or inventory lookup returned no row for a record that requires one. |
 | `CURRENCY_MISMATCH` | `RL` | `MAJOR` | `processingErrorAlarm` | `configurationOrCustomizationError` | `false` | `NULL` | The currency on the resolved price does not match the billing account's currency. |
+| `BATCH_STRANDED` | `SCHEDULER` | `MAJOR` | `processingErrorAlarm` | `abandonedClaim` | `true` | `BATCH_COMPLETE` | A `udr_batch` row stuck at `PROCESSING` beyond the configured threshold — a worker was killed mid-load — was resolved (`FAILED`) by the stranded-batch reconcile, releasing the file's claim for reprocessing. |
 
 **`MINOR` — degraded, but the unit completed**
 
@@ -203,7 +207,7 @@ Sixteen codes. Every column that the table declares appears here; `description` 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `CLEARED` | `NULL` | `CLEARED` | `processingErrorAlarm` | `normalCompletion` | `false` | `NULL` | A previously raised alarm condition on this `alarm_key` no longer holds. |
 
-All sixteen rows carry `is_active = true`.
+All seventeen rows carry `is_active = true`.
 
 Descriptions state **the condition**, never the remediation. Remediation belongs in `ratemgmt-ops-context.md`, which changes far more often than the catalog does; a runbook step embedded here would go stale inside a migration nobody thinks to write.
 
@@ -215,7 +219,7 @@ Descriptions state **the condition**, never the remediation. Remediation belongs
 export const RATING_EVENT_CODES = [
   "DB_WRITE_FAILURE", "RECON_IMBALANCE", "LOAD_BLOCKED_BILLED",
   "SHRINKING_REISSUE", "FILE_NOT_RECEIVED", "FILE_KEY_UNRESOLVED",
-  "PARSE_FAILURE", "LOOKUP_MISS", "CURRENCY_MISMATCH",
+  "PARSE_FAILURE", "LOOKUP_MISS", "CURRENCY_MISMATCH", "BATCH_STRANDED",
   "BATCH_PARTIAL", "TASK_RETRY_OK", "FILE_LATE",
   "DUPLICATE_BATCH", "CROSS_PERIOD_SUPERSEDE", "BATCH_COMPLETE",
   "CLEARED",
@@ -270,7 +274,7 @@ Add to whichever npm script the repo already uses for seeds (`db:seed` or equiva
 
 **Catalog completeness**
 
-3. All sixteen codes are present after the seed runs.
+3. All seventeen codes are present after the seed runs.
 4. `RATING_EVENT_CODES` and the seeded rows are the **same set**, asserted in both directions.
 5. Every row has a non-null `description`, `event_type`, `probable_cause` and `is_active`.
 6. Exactly one row — `BATCH_COMPLETE` — has `default_severity IS NULL`. `CLEARED` carries `'CLEARED'`, not NULL: a clear *is* an alarm-stream event.
@@ -281,7 +285,7 @@ Add to whichever npm script the repo already uses for seeds (`db:seed` or equiva
 8. **No row has `is_auto_clearing = true` with `clear_event_code IS NULL`, and none has `is_auto_clearing = false` with a non-null `clear_event_code`** — the two shapes in D5 are the only ones permitted.
 9. Every non-null `clear_event_code` names a code that **exists in the catalog** — asserted in the test, since there is deliberately no self-referencing FK.
 10. `RECON_IMBALANCE`, `SHRINKING_REISSUE`, `LOAD_BLOCKED_BILLED`, `FILE_KEY_UNRESOLVED`, `CURRENCY_MISMATCH`, `DUPLICATE_BATCH` and `CROSS_PERIOD_SUPERSEDE` are **not** auto-clearing.
-11. `BATCH_COMPLETE` and `CLEARED` are not themselves auto-cleared; no row names a clearer other than `BATCH_COMPLETE`; and **exactly seven** rows do name it — a count assertion, so adding a clearable code without revisiting D6 fails here.
+11. `BATCH_COMPLETE` and `CLEARED` are not themselves auto-cleared; no row names a clearer other than `BATCH_COMPLETE`; and **exactly eight** rows do name it (rm11 adds `BATCH_STRANDED`) — a count assertion, so adding a clearable code without revisiting D6 fails here.
 
 **Severity resolution (§A1 — the part that is easy to get backwards)**
 
@@ -293,7 +297,7 @@ Add to whichever npm script the repo already uses for seeds (`db:seed` or equiva
 
 **Idempotency**
 
-17. Running the seed twice leaves sixteen rows, not thirty-two.
+17. Running the seed twice leaves seventeen rows, not thirty-four.
 18. Changing a severity in the seed and re-running **updates** the existing row — proving `DO UPDATE`, not `DO NOTHING`.
 19. Changing a severity **to NULL** in the seed and re-running sets the stored value to NULL — a code can be downgraded out of the alarm stream, not only re-tuned within it.
 20. The seed does not delete or deactivate any code absent from its list — a code retired by a later migration stays retired.
