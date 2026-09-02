@@ -385,13 +385,19 @@ stages:
                 # kestra CLI flags — verify during the D0 spike); if the flag
                 # name differs, the intent is "never delete a server-side flow
                 # missing from the checkout".
+                # Username matches KESTRA_SERVER_BASIC_AUTH_USERNAME in
+                # rating-engine-container-app.bicep — CONFIRMED live (D0,
+                # 2026-09-02): Kestra 1.3.35 requires this to be a valid
+                # email address or it rejects the whole Basic Auth config at
+                # startup, leaving no credential active at all. Keep the two
+                # in lockstep.
                 docker run --rm \
                   -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
                   "$KESTRA_IMAGE" \
                   kestra flow namespace update rating /flows \
                     --no-delete \
                     --server "https://${ENGINE_FQDN}" \
-                    --user "rating-ops:${BASIC_AUTH_PASSWORD}"
+                    --user "rating-ops@example.invalid:${BASIC_AUTH_PASSWORD}"
             displayName: kestra flow validate + namespace update (D2)
 
   # ---------------------------------------------------------------------
