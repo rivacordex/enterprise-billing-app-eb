@@ -245,7 +245,21 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // D7 — Basic Auth from the one shared credential; D5's Kestra
             // Basic Auth entry. Username is non-secret (fixed operator
             // login name); only the password is a KV secret.
-            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'rating-ops' }
+            //
+            // CONFIRMED against the pinned engine (2026-09-02, live local
+            // login attempt — see rating-engine/dev/.env.example): Kestra
+            // 1.3.35's BasicAuthService validates this pair at startup and
+            // silently rejects the WHOLE configuration (no active credential
+            // at all, every login 401s) if the username is not a valid email
+            // address or the password fails an 8-char/upper/lower/digit
+            // policy — recorded in the `kestra` DB's `settings` table under
+            // `kestra.server.authentication-configuration-error` when it
+            // happens. The bare `rating-ops` literal here fails the email
+            // check. **The `kestra-basic-auth-password` Key Vault secret must
+            // also satisfy the password policy** — that value is not visible
+            // or settable from this file; confirm it separately before the
+            // next deploy that exercises this.
+            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'rating-ops@example.invalid' }
             { name: 'KESTRA_SERVER_BASIC_AUTH_PASSWORD', secretRef: 'kestra-basic-auth-password' }
 
             // D7 — default namespace `rating`.
