@@ -1,0 +1,79 @@
+# rm12-spec Implementation §1-§4 (D1-D6). Scheduled absence/lateness check:
+# compares rating.udr_batch against a per-udr_type expected-cadence config
+# (namespace KV, D2), raising a clearable FILE_NOT_RECEIVED (MAJOR) where an
+# expected delivery never arrived and FILE_LATE (WARNING) where it arrived
+# outside its window, clearing (CLEARED) once a later batch for that period
+# lands and completes (D4) — only for the two auto-clearing codes this flow
+# itself raises. Also surfaces superseded-never-replaced usage via the
+# rm01 orphan index (D5) in the task's own output.
+#
+# Never edit this flow in the Kestra UI — deployed from git by the pipeline's
+# flow-deploy stage (code-standards §3.1).
+id: completeness-check
+namespace: rating
+
+concurrency:
+  limit: 1 # Same backstop as log-sweep.yaml / stranded-batch-reconcile.yaml:
+  # a slow run cannot overlap the next scheduled tick.
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    # Hourly is plenty responsive for deadlines expressed at HH:MM
+    # granularity (D2/D3) — lighter than rm11's 5-minute cadence, since a
+    # missed/late file is a day-granularity concern, not a minute one.
+    cron: "0 * * * *"
+
+tasks:
+  - id: completeness-check
+    # D2-D5: for each configured udr_type + expected-by deadline, evaluate the
+    # lookback window's UTC calendar days, raise/clear FILE_NOT_RECEIVED /
+    # FILE_LATE against rating.udr_batch, and surface the superseded-never-
+    # replaced orphan query. Idempotent per alarm_key (D4/D6).
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
+    env:
+      # Expected-cadence config is namespace KV, per udr_type (D2) —
+      # operational/alarm-only, never output-affecting. Rendered into the
+      # task's OS environment here, NOT spliced into `commands:` text: a
+      # `commands:` entry is parsed as a shell string, so a KV payload
+      # embedded directly there (rating_completeness_config is free-form,
+      # unlike a pure-numeric KV) could break out of the surrounding quotes
+      # and inject shell syntax. `"$VAR"` expansion below does not re-parse
+      # the variable's contents, so this is safe regardless of what
+      # characters the KV value contains. Delimiter-based format
+      # ("UDR_TYPE:HH:MM,..."), not JSON, for the same reason every other KV
+      # value in this codebase is a plain scalar (rm11's threshold) — kept
+      # even though env-passing would now tolerate embedded quotes, since the
+      # parser (`parse_config`) still expects the delimiter form.
+      RATING_COMPLETENESS_CONFIG: "{{ kv('rating_completeness_config') ?? '' }}"
+      RATING_COMPLETENESS_LOOKBACK_DAYS: "{{ kv('rating_completeness_lookback_days') ?? 3 }}"
+    commands:
+      # Empty default (no udr_type configured) is a safe no-op, not a hang.
+      - >
+        python3 -m runtime.completeness_check
+        --config "$RATING_COMPLETENESS_CONFIG"
+        --lookback-days "$RATING_COMPLETENESS_LOOKBACK_DAYS"
+        --workflow-execution-id "{{ execution.id }}"
+
+# code-standards §3.9 — both handlers report the terminal outcome via the
+# shared emitter, same as every other flow in this namespace.
+errors:
+  - id: on-error
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component SCHEDULER --outcome FAILED
+        --workflow-execution-id "{{ execution.id }}"
+
+finally:
+  - id: always
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component SCHEDULER --outcome FINALIZED
+        --workflow-execution-id "{{ execution.id }}"
