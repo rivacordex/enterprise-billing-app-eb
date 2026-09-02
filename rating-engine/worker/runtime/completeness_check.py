@@ -98,11 +98,15 @@ def parse_config(raw: str) -> list[CadenceConfig]:
     environment does not block deployment. A malformed entry fails closed
     (raises), since a silently-dropped entry would mean absence for that
     ``udr_type`` goes undetected — the exact defect this unit exists to fix.
+    A repeated ``udr_type`` fails closed too: `alarm_key` (D3) is keyed on
+    ``udr_type`` alone, not on the deadline, so two entries for the same type
+    would silently name one alarm_key with two conflicting deadlines.
     """
     raw = raw.strip()
     if not raw:
         return []
     configs: list[CadenceConfig] = []
+    seen_udr_types: set[str] = set()
     for entry in raw.split(","):
         entry = entry.strip()
         if not entry:
@@ -119,6 +123,12 @@ def parse_config(raw: str) -> list[CadenceConfig]:
         udr_type = udr_type.strip()
         if not udr_type:
             raise ValueError(f"malformed completeness config entry {entry!r} — empty udr_type")
+        if udr_type in seen_udr_types:
+            raise ValueError(
+                f"malformed completeness config — duplicate udr_type {udr_type!r} "
+                "(each udr_type may appear at most once)"
+            )
+        seen_udr_types.add(udr_type)
         configs.append(CadenceConfig(udr_type=udr_type, expected_by_utc=deadline))
     return configs
 
