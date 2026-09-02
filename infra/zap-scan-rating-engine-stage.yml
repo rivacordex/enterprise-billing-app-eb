@@ -1,0 +1,97 @@
+# rm13-spec D5/Implementation §5 — the DAST half of the ship gate: an OWASP
+# ZAP baseline scan against the rating engine (behind Easy Auth, rm05), gated
+# on no high/critical finding. Stages template included by
+# infra/azure-pipelines.yml via `- template: zap-scan-rating-engine-stage.yml`
+# directly under the parent's `stages:` list (same mechanism as
+# zap-scan-stage.yml — see that file's header for the "must declare its own
+# top-level stages:" note).
+#
+# Unlike zap-scan-stage.yml (the app, scanned authenticated via a seeded test
+# user), the rating engine sits behind Entra Easy Auth
+# (unauthenticatedClientAction: RedirectToLoginPage, rm05 D3) — there is no
+# app-level login form to script, and provisioning a ZAP-drivable Entra
+# principal is out of this unit's scope (rm05's Entra admin steps are manual,
+# per engine-access.md). Per rm13-spec D5's own wording, "the baseline
+# authenticates or scans the login surface only, since the UI is gated" —
+# this scan is UNAUTHENTICATED: it hits the engine's FQDN, which Easy Auth
+# redirects to the Entra login page, and the baseline crawl + passive scan
+# assess exactly that surface (redirect/header hygiene, TLS, exposed
+# endpoints before authentication) rather than anything behind the login.
+#
+# GATED by the scanRatingEngineDast parameter (default false) — the rating
+# engine is itself gated behind deployRatingEngine/deployEasyAuth in
+# main.bicep (both default false, rm04/rm05) and is not deployed by any
+# stage in this pipeline (no stage here applies main.bicep — existing
+# convention, ratemgmt-progress-tracker.md). Queue manually with
+# scanRatingEngineDast=true once a real engine is deployed and reachable.
+stages:
+  - stage: zap_scan_rating_engine
+    displayName: OWASP ZAP DAST (rating engine)
+    dependsOn: test_scan
+    condition: and(succeeded(), eq(${{ parameters.scanRatingEngineDast }}, true))
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: zap_baseline_rating_engine
+        displayName: ZAP Baseline Scan (rating engine, unauthenticated)
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                ENGINE_FQDN=$(az containerapp show \
+                  --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" \
+                  --resource-group "$(RESOURCE_GROUP)" \
+                  --query "properties.configuration.ingress.fqdn" -o tsv)
+                echo "##vso[task.setvariable variable=engineFqdn;isOutput=true]$ENGINE_FQDN"
+            name: resolveEngineFqdn
+            displayName: Resolve the rating engine's FQDN (same lookup as deploy_rating_flows)
+
+          - script: |
+              mkdir -p $(System.DefaultWorkingDirectory)/zap-out-rating-engine
+              # ZAP runs as uid 1000 inside the container (see zap-scan-stage.yml's
+              # identical note) — make the mounted output dir world-writable.
+              chmod 777 $(System.DefaultWorkingDirectory)/zap-out-rating-engine
+              docker run --rm \
+                -v "$(System.DefaultWorkingDirectory)/zap-out-rating-engine:/zap/wrk/out" \
+                ghcr.io/zaproxy/zaproxy:stable \
+                zap-baseline.py \
+                  -t https://$(resolveEngineFqdn.engineFqdn) \
+                  -x out/zap-report.xml \
+                  -r out/zap-report.html \
+                  -I
+            displayName: Run ZAP baseline scan against $(resolveEngineFqdn.engineFqdn) (login surface only — Easy Auth gates everything else)
+
+          - script: |
+              REPORT="$(System.DefaultWorkingDirectory)/zap-out-rating-engine/zap-report.xml"
+              if [ ! -f "$REPORT" ]; then
+                echo "ZAP report not found at $REPORT — the scan produced no report. Failing the stage."
+                exit 1
+              fi
+              # riskcode 3 = High, 4 = Critical. Any match fails the stage (rm13-spec
+              # verification item 7 — "no high/critical finding").
+              if grep -E '<riskcode>(3|4)</riskcode>' "$REPORT" > /dev/null; then
+                echo "ZAP found one or more High/Critical findings against the rating engine — failing the stage."
+                exit 1
+              fi
+              echo "No High/Critical ZAP findings against the rating engine."
+            displayName: Gate on High/Critical findings
+
+          - task: CopyFiles@2
+            condition: succeededOrFailed()
+            inputs:
+              sourceFolder: $(System.DefaultWorkingDirectory)/zap-out-rating-engine
+              contents: "**"
+              targetFolder: $(Build.ArtifactStagingDirectory)/zap-rating-engine
+            displayName: Stage ZAP reports
+
+          - task: PublishBuildArtifacts@1
+            condition: succeededOrFailed()
+            continueOnError: true
+            inputs:
+              pathToPublish: $(Build.ArtifactStagingDirectory)/zap-rating-engine
+              artifactName: zap-reports-rating-engine
+            displayName: Publish ZAP HTML + XML reports
