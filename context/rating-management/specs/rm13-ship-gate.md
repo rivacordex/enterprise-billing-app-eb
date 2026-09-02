@@ -73,7 +73,7 @@ Confirm Semgrep covers the rating repo in the `test_scan` stage; add an OWASP ZA
 
 ### 6. The green gate
 
-The gate is green only when: all 16 guardrail tests pass, the e2e journey passes, the migration-boundary check passes, and SAST + DAST report no high/critical.
+The gate is green only when: all 15 release-blocking guardrail tests pass, test #15 runs and reports (non-blocking design guard, D2), the e2e journey passes, the migration-boundary check passes, and SAST + DAST report no high/critical.
 
 ---
 
@@ -89,10 +89,10 @@ The CI gate itself is the deliverable.
 
 1. The **complete operator journey** passes end to end — file lands → PRP `PARTIAL` → RP rates → RL loads + archives → reissue → supersession → completeness clean.
 2. **Every Invariant** has a test that **fails when the Invariant is deliberately violated** (spot-checked: skip-supersede aborts; widened grant fails; per-record log fails proportionality).
-3. All **16** guardrail tests run in the gate and are green.
+3. All **16** guardrail tests run in the gate; the 15 release-blocking tests are green (test #15 runs and reports as a non-blocking design guard, D2).
 4. **Test #15:** a 50,000-record run's task count is bounded by **chunk count**, not record count.
 5. The **migration-boundary** check fails a migration that writes `billing.*` and passes the real rating migrations.
 6. **SAST** (Semgrep) covers the rating repo with no high/critical finding.
 7. **DAST** (OWASP ZAP baseline) against the engine reports no high/critical finding.
 8. rm13 adds **no** new behavioral test tree in the rating repo; it changes only CI.
-9. The gate is **red** if any of: a guardrail test, the e2e journey, the migration check, SAST, or DAST fails.
+9. The gate is **red** if any of: a release-blocking guardrail test (any of the 15; test #15 is a non-blocking design guard, D2), the e2e journey, the migration check, SAST, or DAST fails.

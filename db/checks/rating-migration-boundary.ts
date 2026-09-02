@@ -23,8 +23,11 @@ const SQL_MIGRATION_FILE = /\.sql$/i;
 
 // A schema-qualified `billing.<identifier>` reference — the shape any real
 // DDL/DML against the billing schema takes (`INSERT INTO billing.foo`,
-// `FROM billing.bar`, a trigger/FK referencing `billing.baz`, ...).
-const BILLING_REFERENCE = /\bbilling\.\w+/i;
+// `FROM billing.bar`, a trigger/FK referencing `billing.baz`, ...). Covers
+// both quoted and unquoted forms on either side of the dot (`billing.foo`,
+// `"billing".foo`, `billing."foo"`, `"billing"."foo"`), and whitespace
+// permitted around the dot (`billing . foo`).
+const BILLING_REFERENCE = /(?:\bbilling\b|"billing")\s*\.\s*(?:\w+|"[^"]+")/i;
 
 export interface BillingBoundaryViolation {
   file: string;
