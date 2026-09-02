@@ -116,7 +116,20 @@ describe("no-per-record-fan-out bound (rm13-spec D2 — static)", () => {
 describe.skipIf(!liveEngineReady)(
   "no-per-record-fan-out (rm13-spec D2/Implementation §2, requires a live deployed Kestra engine)",
   () => {
+    function assertSecureKestraUrl(url: string): void {
+      const { protocol, hostname } = new URL(url);
+      const isLoopback = hostname === "localhost" || hostname === "127.0.0.1";
+      if (protocol !== "https:" && !isLoopback) {
+        throw new Error(
+          `Refusing to send Basic Auth credentials to "${url}" over a non-HTTPS, ` +
+            "non-loopback connection — set KESTRA_URL to an https:// origin " +
+            "(or localhost/127.0.0.1 for local dev) to avoid leaking credentials on the wire.",
+        );
+      }
+    }
+
     function authHeader(): string {
+      assertSecureKestraUrl(KESTRA_URL as string);
       return (
         "Basic " +
         Buffer.from(`${KESTRA_USER}:${KESTRA_PASSWORD}`).toString("base64")
@@ -160,7 +173,14 @@ describe.skipIf(!liveEngineReady)(
           state: { current: string };
           taskRunList?: { id: string }[];
         };
-        if (terminal.has(body.state.current)) return body;
+        if (terminal.has(body.state.current)) {
+          if (body.state.current !== "SUCCESS") {
+            throw new Error(
+              `execution ${executionId} ended in ${body.state.current}, not SUCCESS — task-run count is not meaningful for a non-successful run`,
+            );
+          }
+          return body;
+        }
         if (Date.now() > deadline) {
           throw new Error(
             `execution ${executionId} did not reach a terminal state within 5 minutes (last state: ${body.state.current})`,

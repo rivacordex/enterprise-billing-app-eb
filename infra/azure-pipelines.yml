@@ -196,17 +196,19 @@ stages:
           # silently skipping via their own `describe.skipIf(!pythonReady)`
           # guard (every prior rm06-rm12 authoring session lacked a
           # `python3`+deps environment — see ratemgmt-progress-tracker.md's
-          # repeated "not run this session" notes). `continueOnError: true`
-          # deliberately: an install failure here (a hash/platform mismatch
-          # against `requirements.txt`'s uv-compiled lock, unconfirmed on
-          # this exact hosted-agent image — same caveat class as every other
-          # D0-spike item) must never fail test_scan for unrelated app-repo
-          # work; it only means the guarded suites fall back to their
-          # existing skip behaviour, never a NEW failure mode.
+          # repeated "not run this session" notes). No `continueOnError`
+          # here: `requirements.txt` is now a fully `uv pip compile
+          # --generate-hashes`'d lock proven to install cleanly (see the
+          # `containerize_rating_engine` Docker build), so a failure here is
+          # a real regression, not expected noise — letting it continue
+          # would silently fall back to the DB-gated suites' own skip
+          # behaviour, making the "required" rm06-rm12 guardrails
+          # unenforceable in CI. If a genuine app-only test path (no rating
+          # changes) is ever needed, gate this step's `condition` on the
+          # changed paths rather than reintroducing `continueOnError`.
           - script: |
               python3 -m pip install --require-hashes -r rating-engine/worker/requirements.txt
             displayName: Install rating-engine Python runtime deps (rm13 — for real guardrail-suite runs)
-            continueOnError: true
 
           - script: npm run test
             displayName: Test (Vitest, incl. DB migration integration)
