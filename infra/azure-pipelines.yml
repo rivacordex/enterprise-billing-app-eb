@@ -26,6 +26,16 @@
 #     anywhere in this repo's Bicep (every existing Key Vault role assignment
 #     here is to a Container App Managed Identity, not this pipeline's own
 #     service connection principal); flagged, not assumed.
+#
+# rm13 (the rating module's ship gate) adds two OFF-BY-DEFAULT stages
+# branching off test_scan, neither of which is part of the mandatory five-
+# stage backbone above: rating_fanout_gate (test #15 against a disposable
+# LOCAL Kestra engine, runRatingFanoutGate param), zap_scan_rating_engine
+# (DAST against a DEPLOYED engine, scanRatingEngineDast param — see
+# zap-scan-rating-engine-stage.yml). test_scan itself also now installs the
+# rating-engine Python runtime (best-effort) so the existing rm06-rm12
+# DB-gated rating guardrail suites run for real instead of skipping, and
+# runs the rm13 migration-boundary check + Semgrep p/python.
 parameters:
   # rm04 D0 — the rating-engine worker image CANNOT be built until the D0
   # process-runner spike has passed AND rating-engine/worker/Dockerfile's base
@@ -48,6 +58,37 @@ parameters:
   # exists to deploy flows to.
   - name: deployRatingFlows
     displayName: Deploy rm06+ rating flows (flows/**) to the Kestra engine (engine must be deployed first)
+    type: boolean
+    default: false
+
+  # rm13-spec D2/§10.15 — test #15 (no-per-record-fan-out) is the one
+  # guardrail test that needs a REAL Kestra execution (every other rm07-rm12
+  # suite black-box-tests the runtime.* modules directly, bypassing Kestra
+  # entirely). Proving it means standing up the local dev stack (rm04 D9:
+  # Postgres + Kestra + Azurite via docker-compose.dev.yml) inside the CI
+  # agent, deploying flows/** to it, and running the 50,000-record fixture
+  # through the real landing/ file trigger. Defaults to false — same
+  # conservative-gate precedent as buildRatingEngine/deployRatingFlows,
+  # since it depends on the same unconfirmed-against-v1.3.35 D0-spike items
+  # (kestra.yml property names, the landing trigger's plugin id, the kestra
+  # CLI's flags) that gate those. rm13-spec D2 itself frames test #15 as "a
+  # design guard, not a release blocker" — this stage being off by default
+  # is that framing encoded as a gate, not a gap.
+  - name: runRatingFanoutGate
+    displayName: Run rm13 test #15 (50k-record no-per-record-fan-out) against a local Kestra engine (D0 spike must have passed)
+    type: boolean
+    default: false
+
+  # rm13-spec D5 — the DAST half of the ship gate, against the DEPLOYED
+  # rating engine (distinct from zap-scan-stage.yml, which scans the app).
+  # Defaults to false: the engine is itself gated behind
+  # deployRatingEngine/deployEasyAuth in main.bicep (both default false,
+  # rm04/rm05) and no stage in this pipeline deploys main.bicep at all
+  # (existing convention) — there is normally no engine FQDN for this scan
+  # to target. Queue manually with this set to true once a real engine is
+  # deployed and reachable.
+  - name: scanRatingEngineDast
+    displayName: Run the rm13 OWASP ZAP DAST baseline against the deployed rating engine (engine must be deployed first)
     type: boolean
     default: false
 
@@ -149,18 +190,46 @@ stages:
               exit 1
             displayName: Wait for Postgres service
 
+          # rm13-spec D1/Implementation §1 — makes the rm06-rm12 DB-gated
+          # rating guardrail suites (`tests/rating/*.integration.test.ts`)
+          # actually RUN against the live Postgres service above, instead of
+          # silently skipping via their own `describe.skipIf(!pythonReady)`
+          # guard (every prior rm06-rm12 authoring session lacked a
+          # `python3`+deps environment — see ratemgmt-progress-tracker.md's
+          # repeated "not run this session" notes). `continueOnError: true`
+          # deliberately: an install failure here (a hash/platform mismatch
+          # against `requirements.txt`'s uv-compiled lock, unconfirmed on
+          # this exact hosted-agent image — same caveat class as every other
+          # D0-spike item) must never fail test_scan for unrelated app-repo
+          # work; it only means the guarded suites fall back to their
+          # existing skip behaviour, never a NEW failure mode.
+          - script: |
+              python3 -m pip install --require-hashes -r rating-engine/worker/requirements.txt
+            displayName: Install rating-engine Python runtime deps (rm13 — for real guardrail-suite runs)
+            continueOnError: true
+
           - script: npm run test
             displayName: Test (Vitest, incl. DB migration integration)
 
+          # rm13-spec D4/Implementation §4 — the source-level half of "no
+          # rating migration touches billing" (Inv #17/#18). Scans
+          # db/migrations/*rating*.sql for a schema-qualified billing.*
+          # reference outside a comment; fails the build on any match.
+          - script: npm run check:rating-migration-boundary
+            displayName: Rating migration-boundary check (no rating migration writes billing.*)
+
           # SAST — fails (non-zero exit) and blocks containerize on any
           # high/critical finding. `--error` makes Semgrep exit 1 on findings.
+          # rm13-spec D5/Implementation §5 — `p/python` added so the scan
+          # actually covers rating-engine/worker/runtime/*.py, not just the
+          # TS/JS app surface the original four configs target.
           - script: |
               docker run --rm \
                 -v "$(System.DefaultWorkingDirectory):/src" \
                 returntocorp/semgrep \
                 semgrep scan --config p/typescript --config p/javascript --config p/nextjs \
-                  --config p/owasp-top-ten --config p/secrets --error /src
-            displayName: SAST (Semgrep)
+                  --config p/python --config p/owasp-top-ten --config p/secrets --error /src
+            displayName: SAST (Semgrep, incl. the rating engine's Python)
 
   # ---------------------------------------------------------------------
   - stage: containerize
@@ -401,6 +470,105 @@ stages:
             displayName: kestra flow validate + namespace update (D2)
 
   # ---------------------------------------------------------------------
+  # rm13-spec D2/Implementation §2 — test #15 (no-per-record-fan-out), the
+  # one guardrail test that needs a REAL Kestra execution rather than a
+  # direct `python3 -m runtime.*` shell-out. Stands up rm04 D9's local dev
+  # stack (Postgres + Kestra + Azurite via docker-compose.dev.yml) INSIDE
+  # this CI agent (a disposable, throwaway engine — never the deployed one),
+  # deploys flows/** to it, drops a 50,000-record fixture into the bind-
+  # mounted landing/ directory, and asserts the resulting execution's
+  # taskRunList count via the Kestra REST API
+  # (tests/rating/rm13-no-fan-out.integration.test.ts's live-engine describe).
+  #
+  # GATED by runRatingFanoutGate (default false) — same conservative-gate
+  # precedent as buildRatingEngine/deployRatingFlows: rm04 D0's process-
+  # runner spike has not passed, and every property/flag/plugin-id this
+  # stage exercises (kestra.yml's storage config, the landing file trigger,
+  # the kestra CLI's flags) is UNCONFIRMED against the pinned v1.3.35 image
+  # in an actual CI environment (only ever run once, locally, per the
+  # 2026-09-01 dated entry in ratemgmt-progress-tracker.md — never inside
+  # this pipeline). Queue manually once that spike passes.
+  - stage: rating_fanout_gate
+    displayName: Rating ship gate — no-per-record fan-out (rm13 test #15)
+    dependsOn: test_scan
+    condition: and(succeeded(), eq(${{ parameters.runRatingFanoutGate }}, true))
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: fanout_test
+        displayName: Local Kestra engine + the 50,000-record fixture
+        steps:
+          - task: UseNode@1
+            inputs:
+              version: "22.x"
+            displayName: Use Node 22
+
+          - script: npm ci
+            displayName: Install dependencies
+
+          - script: |
+              set -euo pipefail
+              cp rating-engine/dev/.env.example rating-engine/dev/.env
+              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml up -d
+            displayName: Start the local Postgres + Kestra dev stack (rm04 D9)
+
+          - script: |
+              set -euo pipefail
+              # Poll the webserver/API port (rm04's dev compose maps it to
+              # 8085 — the management port used for ACA health probes is
+              # NOT published to the host by the dev compose file). Any HTTP
+              # response (even 401) means the engine process is up; a
+              # connection failure means it is not.
+              for i in $(seq 1 60); do
+                if curl -sf -o /dev/null -w '%{http_code}' http://localhost:8085/api/v1/executions/search 2>/dev/null | grep -qE '^[0-9]+$'; then
+                  echo "Kestra engine is responding on :8085."
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "Kestra engine did not respond on :8085 within 5 minutes." >&2
+              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml logs kestra || true
+              exit 1
+            displayName: Wait for the local Kestra engine
+
+          - script: |
+              set -euo pipefail
+              # Same pinned digest + mechanism as the deploy_rating_flows
+              # stage above, targeting the disposable LOCAL engine instead
+              # of a deployed one.
+              KESTRA_IMAGE="kestra/kestra:v1.3.35@sha256:0b880e20e403ef635a6bc7e9e72786c7a6dde143858723449dc57500830868e2"
+              source rating-engine/dev/.env
+              docker run --rm --network host \
+                -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
+                "$KESTRA_IMAGE" \
+                kestra flow validate /flows
+              docker run --rm --network host \
+                -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
+                "$KESTRA_IMAGE" \
+                kestra flow namespace update rating /flows \
+                  --no-delete \
+                  --server "http://localhost:8085" \
+                  --user "${KESTRA_SERVER_BASIC_AUTH_USERNAME}:${KESTRA_SERVER_BASIC_AUTH_PASSWORD}"
+            displayName: Deploy flows/** to the local engine (rm06 D2 mechanism)
+
+          - script: |
+              set -euo pipefail
+              source rating-engine/dev/.env
+              export KESTRA_URL="http://localhost:8085"
+              export KESTRA_BASIC_AUTH_USER="$KESTRA_SERVER_BASIC_AUTH_USERNAME"
+              export KESTRA_BASIC_AUTH_PASSWORD="$KESTRA_SERVER_BASIC_AUTH_PASSWORD"
+              export RATING_LANDING_HOST_DIR="$(System.DefaultWorkingDirectory)/rating-engine/dev/landing"
+              export RATING_RAN_USAGE_CHUNK_SIZE="10000"
+              npx vitest run --config vitest.integration.config.ts \
+                tests/rating/rm13-no-fan-out.integration.test.ts
+            displayName: Run rm13 test #15 against the live local engine
+
+          - script: |
+              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml down -v
+            condition: always()
+            displayName: Tear down the local dev stack
+
+  # ---------------------------------------------------------------------
   - stage: migrate
     displayName: Migrate (no traffic shift)
     dependsOn: containerize
@@ -618,3 +786,10 @@ stages:
 
   # ---------------------------------------------------------------------
   - template: zap-scan-stage.yml
+
+  # ---------------------------------------------------------------------
+  # rm13-spec D5 — the DAST half of the ship gate, against the rating
+  # engine itself (distinct from the app-targeting template above). See
+  # zap-scan-rating-engine-stage.yml's header for the full gating rationale
+  # (scanRatingEngineDast, default false).
+  - template: zap-scan-rating-engine-stage.yml

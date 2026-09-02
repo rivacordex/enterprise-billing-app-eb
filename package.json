@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "validate:env": "node --conditions=react-server --env-file=.env.example --import tsx -e \"import('./lib/config.ts').then(() => console.log('Config schema OK'))\"",
+    "check:rating-migration-boundary": "node --import tsx db/checks/check-rating-migration-boundary.ts",
     "test": "vitest run && vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
