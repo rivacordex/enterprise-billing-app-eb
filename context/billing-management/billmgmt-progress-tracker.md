@@ -9,7 +9,12 @@ enumerations were trimmed to key facts + decisions. Full history:
 ## Current Phase
 
 - Phase 1 — Bill Run module build. **Complete.** bm01–bm13 (the entirety of
-  `bm00-build-plan.md`) are delivered. No further units remain.
+  `bm00-build-plan.md`) are delivered.
+- Phase 2 · Phase F — **bm14 (`billrun_runtime` role & the two-writer grant
+  boundary) — delivered.** See
+  `context/billing-management/specs/bm14-billrun-runtime-role.md`. Its
+  guardrail test is DB-gated and unexecuted in this environment — see
+  Outstanding, below.
 
 ## Outstanding (environmental only — not a build unit)
 
@@ -18,8 +23,9 @@ enumerations were trimmed to key facts + decisions. Full history:
   generated/reviewed but **not applied**.
 - No local Postgres has been reachable in this environment for the entire
   build — every DB-gated integration test (materialize/trigger/partman/stage-
-  ingest/E2E-happy-path/etc.) was written and statically verified (imports
-  cleanly, skips loudly under `DATABASE_URL` unset) but **never executed**.
+  ingest/E2E-happy-path/billrun-db-roles/etc.) was written and statically
+  verified (imports cleanly, skips loudly under `DATABASE_URL` unset) but
+  **never executed**.
 - Before calling the module genuinely ship-ready end-to-end: run `db:migrate`,
   then `db:setup-partman-billing`, then `npm run test` (both DB-free and
   integration configs) against a real Postgres.
@@ -180,6 +186,53 @@ enumerations were trimmed to key facts + decisions. Full history:
   - SAST (Semgrep) + OWASP ZAP DAST CI gates confirmed already covering the
     M2M endpoints; no CI file changed.
 
+- **bm14 — `billrun_runtime` role & the two-writer grant boundary (Phase 2 ·
+  Phase F).** Standalone bootstrap SQL (`db/bootstrap/billrun-db-roles.sql` +
+  `.ts` runner, `npm run db:bootstrap-billrun-roles`), **not** a Drizzle
+  migration (creating a role needs `CREATEROLE`, which `app_migrate` lacks) —
+  exact analogue of `rating-db-roles.sql`. Creates the least-privilege
+  `billrun_runtime` login (CONNECTION LIMIT 20) the workflow-management
+  component's bill-run processor/distributor connect as, making the phase-2
+  "two writers on `billing`" boundary a database privilege:
+  - `customer_bill` — column-scoped `SELECT`/`INSERT`/`UPDATE` on the trial
+    columns only, excluding the three posting stamps
+    (`ref_inv_document_id`/`posted_attempt`/`charge_checksum`) from **both**
+    `INSERT` and `UPDATE` — INSERT-exclusion closes a hole the
+    finalization-latch trigger (bm13/`0033`) doesn't cover (it blocks
+    UPDATE/DELETE of a finalized row, not an INSERT that pre-sets the latch).
+    No table-level `DELETE`; deletes go through the scoped `SECURITY DEFINER`
+    `billing.billrun_delete_trial_bill(run, ban)` (one account's non-finalized
+    bill in one run — a table grant can't be predicate-scoped).
+  - `customer_bill_tax_item` — fully worker-owned (`SELECT`/`INSERT`/
+    `UPDATE`/`DELETE`); `app_runtime`'s write grant is revoked (kept
+    `SELECT`) since phase 2 moves Taxation into the flow.
+  - `rating.udr_rated` — `SELECT` + `UPDATE` on the same six claim columns
+    `app_runtime` already holds (rating rm03), plus a **role-aware transition
+    trigger** (`rating.billrun_status_guard`, fires only when
+    `session_user = 'billrun_runtime'`) constraining it to the
+    `RATED → BILL_DRAFT` claim — the six-column grant alone can't stop it
+    writing `BILL_APPROVED`/`REJECTED`, since a column grant can't bind a
+    value to a role.
+  - `SELECT`-only on `bill_run`/`bill_run_account`/`billing_account`/
+    `bill_cycle`; explicit `REVOKE` of all writes on run-state tables +
+    `billing.document` + the four pgledger `SECURITY DEFINER` functions; no
+    grant of any kind on the `kestra` database.
+  - **Ordering is load-bearing (D15)**: a `DO` block (Step 0) fails loudly
+    with `ORDERING:` unless rating's `REVOKE CONNECT ... FROM PUBLIC` has
+    already run — provisioning order is `db:bootstrap-roles →
+    db:bootstrap-rating-roles → db:bootstrap-billrun-roles`
+    (`db:bootstrap-kestra-roles` is a parallel, unrelated branch).
+  - New DB-gated guardrail suite,
+    `tests/db/billrun-db-roles.integration.test.ts` (mirrors
+    `tests/rating/grants.integration.test.ts`), asserting every **can**/
+    **refused** boundary per column/table/function/database, the transition
+    trigger, the Step 0 ordering guard, and re-run idempotency/convergence —
+    written and statically verified (imports cleanly, skips loudly under
+    `DATABASE_URL` unset) but **never executed** (see Outstanding).
+    `.env.example` gains `BILLRUN_RUNTIME_DATABASE_URL` (dummy value);
+    `infra/docs/db-role-verification.md` gains the password/provisioning-order
+    steps and verification SQL.
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -328,6 +381,10 @@ file history).
 
 ## Next Up
 
-- **None — the build plan is complete (bm01–bm13).** The sole remaining
-  action item is environmental (see Outstanding, above): apply migration
-  `0033` and run the DB-gated suites against a real Postgres.
+- **bm01–bm14 are all delivered.** The sole remaining action item is
+  environmental (see Outstanding, above): apply migration `0033`, run
+  `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
+  `db:bootstrap-rating-roles`), and run the DB-gated suites against a real
+  Postgres.
+- The rest of Phase 2 · Phase F (units after bm14) is not yet specced in
+  this session.

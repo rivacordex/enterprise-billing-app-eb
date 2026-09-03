@@ -37,7 +37,24 @@ app_migrate` so future tables `app_migrate` creates auto-grant to
    the `ELSE ALTER ROLE` branch converges the connection limit on a re-run.
    **This step makes two platform-wide changes** — read the note below before
    running it in a shared environment.
-3a. `npm run db:bootstrap-kestra-roles` — runs
+3a. `npm run db:bootstrap-billrun-roles` — runs
+   `db/bootstrap/billrun-db-roles.ts`, which reads the same
+   `BOOTSTRAP_DATABASE_URL` and executes `db/bootstrap/billrun-db-roles.sql`:
+   creates the `billrun_runtime` login role (CONNECTION LIMIT 20) — the DB
+   identity the workflow-management component's bill run processor/
+   distributor connect as — and the column-scoped grant surface that makes
+   the phase-2 "two writers on `billing`" boundary a database privilege
+   (bm14-spec; `billmgmt-architecture.md` §4, D14/D15). Run it **after**
+   step 3 — its Step 0 fails loudly (`ORDERING: ...`) unless step 3's
+   `REVOKE CONNECT ... FROM PUBLIC` has already run, since a `billrun_runtime`
+   created before that revoke would inherit `CONNECT` via `PUBLIC` and the
+   isolation intent would be silently false from the moment it exists.
+   Idempotent; also revokes `app_runtime`'s `customer_bill_tax_item` write
+   grant (phase 2 moves Taxation into the flow — the worker becomes its sole
+   writer). This step has NO dependency on step 3b below — the bm14-spec's
+   provisioning order is `roles → rating-roles → billrun-roles`, and `kestra`
+   is not part of that chain at all.
+3b. `npm run db:bootstrap-kestra-roles` — runs
    `db/bootstrap/kestra-db-roles.ts`, which reads the same
    `BOOTSTRAP_DATABASE_URL` and executes `db/bootstrap/kestra-db-roles.sql`:
    creates the **`kestra` database** and the `kestra_engine` login role
@@ -106,9 +123,21 @@ generate a third strong random password and run it directly against `psql`,
 ALTER ROLE rating_runtime WITH PASSWORD '<generated>';
 ```
 
+`billrun-db-roles.sql` likewise contains **no password**. After
+`db:bootstrap-billrun-roles`, set one for `billrun_runtime` the same way —
+generate a fourth strong random password and run it directly against `psql`,
+**never** in a source-controlled file. This is the phase-2 credential's third
+member (after the app bearer token and the outbound engine Basic-Auth — see
+`billmgmt-architecture.md` §4 / plan §9). The value goes to Key Vault and is
+consumed as `BILLRUN_RUNTIME_DATABASE_URL` (bm14-spec):
+
+```sql
+ALTER ROLE billrun_runtime WITH PASSWORD '<generated>';
+```
+
 `kestra-db-roles.sql` likewise contains **no password**. After
 `db:bootstrap-kestra-roles`, set one for `kestra_engine` the same way —
-generate a fourth strong random password and run it directly against `psql`,
+generate a fifth strong random password and run it directly against `psql`,
 **never** in a source-controlled file. The value goes to Key Vault as the
 `kestra_engine` D5 credential (rm04):
 
@@ -179,6 +208,45 @@ SELECT has_database_privilege('kestra_engine', 'kestra', 'CONNECT'); -- true
 SELECT has_database_privilege('kestra_engine', 'kestra', 'CREATE');  -- true
 SELECT has_database_privilege('kestra_engine', current_database(), 'CONNECT'); -- false
 ```
+
+Not yet verified against a live cluster in this session — see
+`ratemgmt-progress-tracker.md`.
+
+## Verification SQL — the `billrun_runtime` two-writer boundary (bm14, D14/D15)
+
+Run after `db:bootstrap-billrun-roles` and the `billrun_runtime` password step
+above, connecting to the **billing** database:
+
+```sql
+-- billrun_runtime can write the customer_bill trial columns, but not the
+-- three posting stamps (column-scoped, Step 5).
+SELECT has_column_privilege('billrun_runtime', 'billing.customer_bill', 'state', 'UPDATE');               -- true
+SELECT has_column_privilege('billrun_runtime', 'billing.customer_bill', 'ref_inv_document_id', 'UPDATE'); -- false
+SELECT has_column_privilege('billrun_runtime', 'billing.customer_bill', 'posted_attempt', 'INSERT');      -- false
+
+-- billrun_runtime has no table-level DELETE on customer_bill (T10) — deletes
+-- go through the scoped SECURITY DEFINER function only.
+SELECT has_table_privilege('billrun_runtime', 'billing.customer_bill', 'DELETE'); -- false
+SELECT has_function_privilege('billrun_runtime', 'billing.billrun_delete_trial_bill(text, text)', 'EXECUTE'); -- true
+
+-- app_runtime lost its customer_bill_tax_item write grant (Step 6a) — SELECT
+-- only, billrun_runtime is now the sole writer.
+SELECT has_table_privilege('app_runtime', 'billing.customer_bill_tax_item', 'INSERT'); -- false
+SELECT has_table_privilege('app_runtime', 'billing.customer_bill_tax_item', 'SELECT'); -- true
+
+-- billrun_runtime holds no write on run-state or billing.document (Step 9).
+SELECT has_table_privilege('billrun_runtime', 'billing.bill_run', 'UPDATE');      -- false
+SELECT has_table_privilege('billrun_runtime', 'billing.document', 'INSERT');      -- false
+
+-- billrun_runtime cannot reach kestra, and holds billing CONNECT only via its
+-- explicit grant.
+SELECT has_database_privilege('billrun_runtime', 'kestra', 'CONNECT');                        -- false
+SELECT has_database_privilege('billrun_runtime', current_database(), 'CONNECT');              -- true
+SELECT rolconnlimit FROM pg_roles WHERE rolname = 'billrun_runtime';                           -- 20
+```
+
+Not yet verified against a live cluster in this session — see
+`billmgmt-progress-tracker.md`.
 
 Not yet verified against a live cluster in this session — see
 `ratemgmt-progress-tracker.md`.
