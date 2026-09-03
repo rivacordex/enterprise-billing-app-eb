@@ -594,6 +594,26 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
+      it("14b. claim columns cannot be rewritten once the row has left RATED (Step 7b)", async () => {
+        const { period, id } = await insertRatedRow({ status: "BILL_DRAFT" });
+        for (const assignment of [
+          "billrun_ref_id = 'BR-2'",
+          "billrun_ban_id = 'BAN-2'",
+          "billrun_attempt = 2",
+          "billrun_checksum = 'CHK2'",
+          "upsert_datetime = now()",
+        ]) {
+          await expect(
+            billrunRuntime.unsafe(
+              `UPDATE rating.udr_rated SET ${assignment} WHERE partition_period = $1 AND udr_id = $2`,
+              [period, id],
+            ),
+          ).rejects.toThrow(
+            /billrun_runtime may only change udr_rated claim columns while the row is RATED/,
+          );
+        }
+      });
+
       it("15. the trigger does not constrain app_runtime's own transitions", async () => {
         const { period, id } = await insertRatedRow({ status: "BILL_DRAFT" });
         await expect(

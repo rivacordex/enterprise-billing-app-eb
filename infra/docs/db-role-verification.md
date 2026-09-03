@@ -128,8 +128,17 @@ ALTER ROLE rating_runtime WITH PASSWORD '<generated>';
 generate a fourth strong random password and run it directly against `psql`,
 **never** in a source-controlled file. This is the phase-2 credential's third
 member (after the app bearer token and the outbound engine Basic-Auth — see
-`billmgmt-architecture.md` §4 / plan §9). The value goes to Key Vault and is
-consumed as `BILLRUN_RUNTIME_DATABASE_URL` (bm14-spec):
+`billmgmt-architecture.md` §4 / plan §9). The value is intended for Key Vault,
+consumed as `BILLRUN_RUNTIME_DATABASE_URL` (bm14-spec) — **not yet wired to a
+deployed consumer**: no Container App/Job currently reads this secret (the
+workflow-management bill run processor/distributor bicep hasn't shipped). Add
+its Key Vault secret name and consumer mapping to §2 below when it does.
+
+Generate the password from a **URI-safe alphabet only** (letters, digits, and
+`-._~`) or percent-encode it before building the connection string — an
+unescaped `@`, `:`, `/`, `?`, `#`, or `%` in the password corrupts the
+`postgresql://user:password@host/db` URL and can silently authenticate as, or
+connect to, the wrong thing:
 
 ```sql
 ALTER ROLE billrun_runtime WITH PASSWORD '<generated>';
@@ -147,13 +156,27 @@ ALTER ROLE kestra_engine WITH PASSWORD '<generated>';
 
 ## 2. Store the connection strings in Key Vault
 
-Build the two `postgresql://` connection strings from those passwords and
-store them as:
+Build the two `postgresql://` connection strings from those passwords —
+requiring authenticated TLS (`sslmode=verify-full`, or the client-side
+equivalent) so a client can never silently fall back to an unencrypted
+connection — and store them as:
 
 - `pg-connection-string-app` → consumed as `DATABASE_URL` by the running app
   (`app_runtime` role).
 - `pg-connection-string-migrate` → consumed as `DATABASE_URL` by the
   migration Container Apps Job only (`app_migrate` role).
+
+`rating_runtime` and `kestra_engine` are deployed differently: their
+connection details are split into separate `RATING_DB_HOST`/`PORT`/`NAME`/
+`USER` env vars plus a bare-password Key Vault secret (`rating-runtime-db-password`,
+`kestra-engine-db-password` — see `rating-engine-container-app.bicep`), not a
+full `postgresql://` URL.
+
+`billrun_runtime`'s `BILLRUN_RUNTIME_DATABASE_URL` has **no Key Vault secret
+name or consumer mapping defined yet** — no Container App/Job currently reads
+it. Define both here once the workflow-management bill run processor/
+distributor is deployed; until then, treat the `.env.example` entry as a
+local-dev-only placeholder.
 
 ## Verification SQL
 
@@ -239,14 +262,19 @@ SELECT has_table_privilege('billrun_runtime', 'billing.bill_run', 'UPDATE');    
 SELECT has_table_privilege('billrun_runtime', 'billing.document', 'INSERT');      -- false
 
 -- billrun_runtime cannot reach kestra, and holds billing CONNECT only via its
--- explicit grant.
+-- explicit grant — has_database_privilege alone can't distinguish "explicit
+-- grant" from "inherited through PUBLIC or role membership", so also check
+-- the ACL directly and confirm no inherited membership exists.
 SELECT has_database_privilege('billrun_runtime', 'kestra', 'CONNECT');                        -- false
 SELECT has_database_privilege('billrun_runtime', current_database(), 'CONNECT');              -- true
+SELECT datacl FROM pg_database WHERE datname = current_database();
+  -- expect an aclitem for billrun_runtime containing 'c', e.g. billrun_runtime=Cc/<owner>,
+  -- and no PUBLIC entry with 'c' (PUBLIC's default was revoked by rating-db-roles.sql)
+SELECT count(*) FROM pg_auth_members m
+  JOIN pg_roles r ON r.oid = m.member
+  WHERE r.rolname = 'billrun_runtime';                                                        -- 0 (no role membership to inherit through)
 SELECT rolconnlimit FROM pg_roles WHERE rolname = 'billrun_runtime';                           -- 20
 ```
 
 Not yet verified against a live cluster in this session — see
 `billmgmt-progress-tracker.md`.
-
-Not yet verified against a live cluster in this session — see
-`ratemgmt-progress-tracker.md`.
