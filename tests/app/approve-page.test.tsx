@@ -10,7 +10,7 @@ import { render } from "@testing-library/react";
 // merely hidden); an invalid or unknown run resolves to `notFound()`;
 // force-dynamic.
 
-const configState = { stub: false };
+const configState = { placeholder: false };
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/get-approve-preview", () => ({
@@ -24,8 +24,8 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppTimezone: vi.fn(),
 }));
 vi.mock("@/lib/config", () => ({
-  get stubDataMode() {
-    return configState.stub;
+  get isBillrunPlaceholderMode() {
+    return configState.placeholder;
   },
 }));
 vi.mock("@/components/billing/approve-and-post-panel", () => ({
@@ -34,8 +34,8 @@ vi.mock("@/components/billing/approve-and-post-panel", () => ({
 vi.mock("@/components/billing/posting-progress-view", () => ({
   PostingProgressView: () => <div data-testid="posting-progress-view" />,
 }));
-vi.mock("@/components/billing/stub-data-banner", () => ({
-  StubDataBanner: () => <div data-testid="stub-banner" />,
+vi.mock("@/components/billing/placeholder-banner", () => ({
+  PlaceholderBanner: () => <div data-testid="placeholder-banner" />,
 }));
 
 import ApproveAndPostPage from "@/app/(app)/billing/bill-runs/[runId]/approve/page";
@@ -87,7 +87,7 @@ const PREVIEW = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  configState.stub = false;
+  configState.placeholder = false;
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -144,15 +144,15 @@ describe("ApproveAndPostPage (bm10-spec §Implementation §3)", () => {
     await expect(ApproveAndPostPage(props())).rejects.toThrow("NEXT_REDIRECT");
   });
 
-  it("shows StubDataBanner when STUB_DATA_MODE is on", async () => {
-    configState.stub = true;
+  it("shows PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is on", async () => {
+    configState.placeholder = true;
     const { queryByTestId } = render(await ApproveAndPostPage(props()));
-    expect(queryByTestId("stub-banner")).not.toBeNull();
+    expect(queryByTestId("placeholder-banner")).not.toBeNull();
   });
 
-  it("hides StubDataBanner when STUB_DATA_MODE is off", async () => {
+  it("hides PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is off", async () => {
     const { queryByTestId } = render(await ApproveAndPostPage(props()));
-    expect(queryByTestId("stub-banner")).toBeNull();
+    expect(queryByTestId("placeholder-banner")).toBeNull();
   });
 
   it("renders PostingProgressView (not the approve panel) once the run is APPROVED", async () => {

@@ -119,7 +119,7 @@ The general doc §5 list applies in full. Module-specific detail and additions �
 Per the general doc §6, plus:
 
 1. **Permission map moves as one set.** A change to any bill-run page, its components, or a `billrun_*` permission ships with the matching rows in `billmgmt-architecture.md` §4 and `billmgmt-code-standards.md` §8 **and** the migration + typed constant (`PERMISSIONS.BILLRUN_VIEW`/`_OPERATE`/`_APPROVE`) in the same change set. No mapping, no merge.
-2. **Component names are binding.** Create the exact names in code-standards §7/§8 (`BillRunsPage`, `BillRunDetailPage`, `RunStatusBadge`, `StageTimeline`, `ApproveAndPostPanel`, `StubDataBanner`, …) or the page ↔ route ↔ component ↔ permission chain breaks.
+2. **Component names are binding.** Create the exact names in code-standards §7/§8 (`BillRunsPage`, `BillRunDetailPage`, `RunStatusBadge`, `StageTimeline`, `ApproveAndPostPanel`, `PlaceholderBanner`, …) or the page ↔ route ↔ component ↔ permission chain breaks.
 3. **Owning doc per fact:** run/flow behavior → overview; schema/Invariant/boundary → architecture; convention/component names → code-standards; workflow → this supplement. Reference, don't copy.
 4. **A change to an Invariant, `gl_event_at`, the claim boundary, or the permission model is a doc-first change** — update the architecture doc and get approval before the code, never the reverse.
 5. **Record resolved ambiguities** (§5.8) in the owning doc so they are not re-litigated.

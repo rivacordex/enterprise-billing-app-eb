@@ -64,16 +64,16 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 | `normal` (posted) | Success | `--color-success-500` `#1F9D57` | `--color-success-50` `#E6F6EC` |
 | `last` (closure/final bill — reserved, off-cycle) | Warning | `--color-warning-500` `#E08600` | `--color-warning-50` `#FEF4E6` |
 
-## 6. Stub-data mode (`StubDataBanner` / `StubBadge`)
+## 6. Placeholder mode (`PlaceholderBanner` / `PlaceholderBadge`)
 
-While the stub-data environment flag is set (Inv. #15), badge **every** run loudly — Warning family, never hidden:
+While `BILLRUN_PLACEHOLDER_MODE` is set (Inv. #15, renamed bm15-spec §Implementation §4), badge **every** run loudly — Warning family, never hidden:
 
 | Surface | Family | Tint bg / hex | Text / hex | Border / hex |
 |---|---|---|---|---|
-| `StubDataBanner` (persistent, every tab) | Warning | `--color-warning-50` `#FEF4E6` | `--color-warning-700` `#8A5200` | `--color-warning-500` `#E08600` |
-| `StubBadge` (list-row chip) | Warning (outline) | `--surface-card` `#FFFFFF` | `--color-warning-700` `#8A5200` | `--color-warning-500` `#E08600` |
+| `PlaceholderBanner` (persistent, every tab) | Warning | `--color-warning-50` `#FEF4E6` | `--color-warning-700` `#8A5200` | `--color-warning-500` `#E08600` |
+| `PlaceholderBadge` (list-row chip) | Warning (outline) | `--surface-card` `#FFFFFF` | `--color-warning-700` `#8A5200` | `--color-warning-500` `#E08600` |
 
-Copy: **"Stub data — figures are fixtures, not production charges."** Always paired with a warning icon.
+Copy (bm15 Phase-2 review fold D-T4 — names what's REAL, not just what isn't): **"Placeholder pipeline — the workflow engine runs the bill run, but the billing steps are placeholders and `udr_rated` is seeded `_SAMPLE_` test data. Approval, posting, invoice numbers, rendered PDFs and distribution are wired end-to-end and REAL."** Always paired with a warning icon.
 
 ## 7. Accent, CTA & destructive usage
 

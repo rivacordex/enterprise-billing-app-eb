@@ -8,11 +8,12 @@ import { render } from "@testing-library/react";
 // page materializes due runs then renders the list. Asserts: the guard runs
 // first with billrun_view:READ; materialization runs BEFORE the list read; a
 // granted principal renders the list; /no-access and /login redirects
-// propagate; force-dynamic; and StubDataBanner shows iff STUB_DATA_MODE.
+// propagate; force-dynamic; and PlaceholderBanner shows iff
+// BILLRUN_PLACEHOLDER_MODE.
 // Server components can't be pixel-rendered under the App Router runtime in
 // vitest, so we render the returned element tree with mocked leaves.
 
-const configState = { stub: false };
+const configState = { placeholder: false };
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/materialize-runs", () => ({
@@ -27,15 +28,15 @@ vi.mock("@/services/billing/business-today", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ reportError: vi.fn() }));
 vi.mock("@/lib/config", () => ({
-  get stubDataMode() {
-    return configState.stub;
+  get isBillrunPlaceholderMode() {
+    return configState.placeholder;
   },
 }));
 vi.mock("@/components/billing/bill-run-list", () => ({
   BillRunList: () => <div data-testid="bill-run-list" />,
 }));
-vi.mock("@/components/billing/stub-data-banner", () => ({
-  StubDataBanner: () => <div data-testid="stub-banner" />,
+vi.mock("@/components/billing/placeholder-banner", () => ({
+  PlaceholderBanner: () => <div data-testid="placeholder-banner" />,
 }));
 
 import BillRunsPage from "@/app/(app)/billing/bill-runs/page";
@@ -62,7 +63,7 @@ function props(search: Record<string, string> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  configState.stub = false;
+  configState.placeholder = false;
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -122,16 +123,16 @@ describe("BillRunsPage (bm02 — route × level matrix)", () => {
     await expect(BillRunsPage(props())).rejects.toThrow("NEXT_REDIRECT");
   });
 
-  it("shows StubDataBanner when STUB_DATA_MODE is on", async () => {
-    configState.stub = true;
+  it("shows PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is on", async () => {
+    configState.placeholder = true;
     const { queryByTestId } = render(await BillRunsPage(props()));
-    expect(queryByTestId("stub-banner")).not.toBeNull();
+    expect(queryByTestId("placeholder-banner")).not.toBeNull();
   });
 
-  it("hides StubDataBanner when STUB_DATA_MODE is off", async () => {
-    configState.stub = false;
+  it("hides PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is off", async () => {
+    configState.placeholder = false;
     const { queryByTestId } = render(await BillRunsPage(props()));
-    expect(queryByTestId("stub-banner")).toBeNull();
+    expect(queryByTestId("placeholder-banner")).toBeNull();
   });
 
   it("declares dynamic = 'force-dynamic' (authenticated, uncached — code-standards §3.6)", () => {
