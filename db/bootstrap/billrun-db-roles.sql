@@ -26,9 +26,10 @@ END
 $$;
 --> statement-breakpoint
 
--- Step 1 — the role (idempotent, convergent ELSE branch strips any drift back to
--- least privilege — a billrun_runtime that drifted to SUPERUSER would bypass
--- every ACL below).
+-- Step 1 — the role (idempotent, convergent ELSE branch strips attribute
+-- drift back to least privilege — a billrun_runtime that drifted to
+-- SUPERUSER would bypass every ACL below — and fails closed on membership/
+-- ownership drift, which ALTER ROLE cannot fix).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'billrun_runtime') THEN
@@ -36,6 +37,25 @@ BEGIN
       NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
       CONNECTION LIMIT 20;
   ELSE
+    -- Fail closed on drift ALTER ROLE cannot fix: membership in another role
+    -- or ownership of an object would both survive the attribute reset below
+    -- and could bypass every ACL this file grants. Reject rather than
+    -- silently re-provisioning over it.
+    IF EXISTS (
+      SELECT FROM pg_catalog.pg_auth_members m
+      JOIN pg_catalog.pg_roles r ON r.oid = m.member
+      WHERE r.rolname = 'billrun_runtime'
+    ) THEN
+      RAISE EXCEPTION 'DRIFT: billrun_runtime is a member of another role — reconcile membership drift before provisioning (D14/D15)';
+    END IF;
+    IF EXISTS (
+      SELECT FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
+      WHERE r.rolname = 'billrun_runtime'
+    ) THEN
+      RAISE EXCEPTION 'DRIFT: billrun_runtime owns one or more objects — reconcile ownership drift before provisioning (D14/D15)';
+    END IF;
+
     ALTER ROLE billrun_runtime WITH LOGIN
       NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS
       CONNECTION LIMIT 20;
@@ -137,17 +157,38 @@ GRANT UPDATE (
 
 -- Step 7b — role-aware transition guard (T4/D14). A column grant can't bind a
 -- value to a role, so the six-column UPDATE alone would let billrun_runtime write
--- status='BILL_APPROVED'/'REJECTED'. This trigger constrains ONLY billrun_runtime
--- (via session_user) to the RATED -> BILL_DRAFT claim; app_runtime's approve/
--- reject/release transitions are untouched. Created here in the billing bootstrap
--- so it ships with the role (no edit to rating's scripts — D15).
+-- status='BILL_APPROVED'/'REJECTED', or rewrite the other five claim columns on
+-- a row it no longer owns (e.g. an already-BILL_DRAFT/APPROVED row) since a
+-- column grant doesn't scope by state. This trigger constrains ONLY
+-- billrun_runtime (via session_user), via two independent checks: (1) status
+-- may only move RATED -> BILL_DRAFT; (2) the other five claim columns may only
+-- change while the row is still RATED (the worker claims a row across several
+-- statements before flipping status last, so the claim columns and the status
+-- flip are NOT required to change together in one statement — only the row's
+-- CURRENT status at the time of each write is constrained). app_runtime's
+-- approve/reject/release transitions are untouched. Fires on all six columns
+-- (not just status) so a claim-only write with status omitted from the SET
+-- list still invokes validation. Created here in the billing bootstrap so it
+-- ships with the role (no edit to rating's scripts — D15).
 CREATE OR REPLACE FUNCTION "rating".billrun_status_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF session_user = 'billrun_runtime'
-     AND NEW.status IS DISTINCT FROM OLD.status
-     AND NOT (OLD.status = 'RATED' AND NEW.status = 'BILL_DRAFT') THEN
-    RAISE EXCEPTION 'billrun_runtime may only transition udr_rated RATED -> BILL_DRAFT (got % -> %)', OLD.status, NEW.status;
+  IF session_user = 'billrun_runtime' THEN
+    IF NEW.status IS DISTINCT FROM OLD.status
+       AND NOT (OLD.status = 'RATED' AND NEW.status = 'BILL_DRAFT') THEN
+      RAISE EXCEPTION 'billrun_runtime may only transition udr_rated RATED -> BILL_DRAFT (got % -> %)', OLD.status, NEW.status;
+    END IF;
+
+    IF (
+         NEW.billrun_ref_id   IS DISTINCT FROM OLD.billrun_ref_id OR
+         NEW.billrun_ban_id   IS DISTINCT FROM OLD.billrun_ban_id OR
+         NEW.billrun_attempt  IS DISTINCT FROM OLD.billrun_attempt OR
+         NEW.billrun_checksum IS DISTINCT FROM OLD.billrun_checksum OR
+         NEW.upsert_datetime  IS DISTINCT FROM OLD.upsert_datetime
+       )
+       AND OLD.status IS DISTINCT FROM 'RATED' THEN
+      RAISE EXCEPTION 'billrun_runtime may only change udr_rated claim columns while the row is RATED (was %)', OLD.status;
+    END IF;
   END IF;
   RETURN NEW;
 END
@@ -156,7 +197,10 @@ $$;
 DROP TRIGGER IF EXISTS billrun_status_guard_trg ON "rating"."udr_rated";
 --> statement-breakpoint
 CREATE TRIGGER billrun_status_guard_trg
-  BEFORE UPDATE OF status ON "rating"."udr_rated"
+  BEFORE UPDATE OF
+    status, billrun_ref_id, billrun_ban_id,
+    billrun_attempt, billrun_checksum, upsert_datetime
+  ON "rating"."udr_rated"
   FOR EACH ROW EXECUTE FUNCTION "rating".billrun_status_guard();
 --> statement-breakpoint
 
@@ -183,7 +227,9 @@ FROM billrun_runtime;
 
 -- Step 10 — the pgledger SECURITY DEFINER REVOKE (Inv #1, mirroring rating
 -- rm03 Step 9). PUBLIC's EXECUTE was already stripped by rating; repeated FROM
--- billrun_runtime as intent so the worker can never post a ledger transfer
+-- PUBLIC here too (harmless no-op if already revoked) so this file's own
+-- REVOKE doesn't silently depend on rating's having run first, and FROM
+-- billrun_runtime as intent — the worker can never post a ledger transfer
 -- regardless of table grants. Signatures MUST match bootstrap-db-roles.sql /
 -- rating-db-roles.sql exactly or the REVOKE errors on an unknown function
 -- (the desired failure mode if signatures drift).
@@ -192,7 +238,7 @@ REVOKE EXECUTE ON FUNCTION
   "billing"."pgledger_create_transfer"(text, text, numeric, timestamptz, jsonb),
   "billing"."pgledger_create_transfers"("billing"."transfer_request"[]),
   "billing"."pgledger_create_transfers"("billing"."transfer_request"[], timestamptz, jsonb)
-FROM billrun_runtime;
+FROM billrun_runtime, PUBLIC;
 --> statement-breakpoint
 
 -- Step 11 — what this file deliberately does NOT do: it grants billrun_runtime
