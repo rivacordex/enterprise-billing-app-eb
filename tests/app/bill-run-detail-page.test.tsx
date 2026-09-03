@@ -9,7 +9,7 @@ import { render } from "@testing-library/react";
 // invalid or unknown run resolves to `notFound()`; a granted principal
 // renders the tabs; /no-access and /login redirects propagate; force-dynamic.
 
-const configState = { stub: false };
+const configState = { placeholder: false };
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/get-run-detail", () => ({
@@ -35,8 +35,8 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppTimezone: vi.fn(),
 }));
 vi.mock("@/lib/config", () => ({
-  get stubDataMode() {
-    return configState.stub;
+  get isBillrunPlaceholderMode() {
+    return configState.placeholder;
   },
   billRunStallThresholdMinutes: 30,
 }));
@@ -48,12 +48,12 @@ vi.mock("@/components/billing/run-detail-tabs", () => ({
 vi.mock("@/components/billing/rerun-dialog", () => ({
   RerunDialog: () => <div data-testid="rerun-dialog" />,
 }));
-vi.mock("@/components/billing/stub-data-banner", () => ({
-  StubDataBanner: () => <div data-testid="stub-banner" />,
+vi.mock("@/components/billing/placeholder-banner", () => ({
+  PlaceholderBanner: () => <div data-testid="placeholder-banner" />,
 }));
 // bm12 — the StallBanner is a client island whose action pulls the db/service
 // graph; stub it so this page test stays framework-only, same convention as
-// RerunDialog/StubDataBanner above.
+// RerunDialog/PlaceholderBanner above.
 vi.mock("@/components/billing/stall-banner", () => ({
   StallBanner: () => <div data-testid="stall-banner" />,
 }));
@@ -113,7 +113,7 @@ const DETAIL = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  configState.stub = false;
+  configState.placeholder = false;
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -208,15 +208,15 @@ describe("BillRunDetailPage (bm04-spec §9/§10)", () => {
     expect(mockListRunAudit).toHaveBeenCalledWith("BRN00000001");
   });
 
-  it("shows StubDataBanner when STUB_DATA_MODE is on", async () => {
-    configState.stub = true;
+  it("shows PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is on", async () => {
+    configState.placeholder = true;
     const { queryByTestId } = render(await BillRunDetailPage(props()));
-    expect(queryByTestId("stub-banner")).not.toBeNull();
+    expect(queryByTestId("placeholder-banner")).not.toBeNull();
   });
 
-  it("hides StubDataBanner when STUB_DATA_MODE is off", async () => {
+  it("hides PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is off", async () => {
     const { queryByTestId } = render(await BillRunDetailPage(props()));
-    expect(queryByTestId("stub-banner")).toBeNull();
+    expect(queryByTestId("placeholder-banner")).toBeNull();
   });
 
   it("shows the StallBanner for a billrun_operate:EDIT principal on a stalled PROCESSING run (bm12)", async () => {

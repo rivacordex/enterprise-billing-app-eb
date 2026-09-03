@@ -75,12 +75,14 @@ const envSchema = z.object({
   // posture to `PASSWORD_MIN_LENGTH=abc`. Read once at boot, never at runtime
   // (Inv. #17 — the zone defines billing-period boundaries).
   APP_TIMEZONE: z.enum(SUPPORTED_TIMEZONES).default(DEFAULT_TIMEZONE),
-  // bm02-spec §2 / architecture Inv. #15. While set, every bill run is loudly
-  // badged as fixture data (the always-on `StubDataBanner`) because the
-  // rating engine is a stub in v1. An environment flag, never a per-run
-  // column (code-standards §6.11). Defaults to `false` so production behavior
-  // is unchanged until a stub/UAT deployment opts in.
-  STUB_DATA_MODE: booleanEnvSchema("false"),
+  // bm02-spec §2 / architecture Inv. #15, renamed bm15-spec §Implementation §4.
+  // While set, every bill run is loudly badged (the always-on
+  // `PlaceholderBanner`) as running placeholder billing logic over seeded
+  // `_SAMPLE_*` data (billmgmt-architecture.md §3). An environment flag,
+  // never a per-run column (code-standards §6.11). Defaults to `false` so
+  // production behavior is unchanged until a placeholder/UAT deployment
+  // opts in.
+  BILLRUN_PLACEHOLDER_MODE: booleanEnvSchema("false"),
   // bm03-spec §Design/§4. The outbound workflow engine — treated as
   // not-yet-deployed. Both optional; absence selects the stub engine client
   // (`isBillRunEngineConfigured` below), so a bill run's trigger stays fully
@@ -151,7 +153,7 @@ function loadConfig(): Config {
     PASSWORD_REQUIRE_SPECIAL: process.env.PASSWORD_REQUIRE_SPECIAL,
     PASSWORD_SPECIAL_CHARS: process.env.PASSWORD_SPECIAL_CHARS,
     APP_TIMEZONE: process.env.APP_TIMEZONE,
-    STUB_DATA_MODE: process.env.STUB_DATA_MODE,
+    BILLRUN_PLACEHOLDER_MODE: process.env.BILLRUN_PLACEHOLDER_MODE,
     BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
     BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
     BILLRUN_APP_TOKEN: process.env.BILLRUN_APP_TOKEN,
@@ -198,10 +200,12 @@ export const isSsoConfigured: boolean =
   !!entraConfig.clientId &&
   !!entraConfig.clientSecret;
 
-// bm02-spec §2 / architecture Inv. #15. Frozen boolean accessor for the
-// stub-data flag, threaded server-side into the bill-run page as a prop and
-// on to `StubDataBanner`/`StubBadge` — never read from a client component.
-export const stubDataMode: boolean = config.STUB_DATA_MODE;
+// bm02-spec §2 / architecture Inv. #15, renamed bm15-spec §Implementation §4.
+// Frozen boolean accessor for the placeholder-mode flag, threaded
+// server-side into the bill-run page as a prop and on to
+// `PlaceholderBanner`/`PlaceholderBadge` — never read from a client component.
+export const isBillrunPlaceholderMode: boolean =
+  config.BILLRUN_PLACEHOLDER_MODE;
 
 // bm03-spec §Design/§4. The mockable engine client (services/billing/engine-client.ts)
 // selects its implementation from this flag — never re-reads process.env itself.

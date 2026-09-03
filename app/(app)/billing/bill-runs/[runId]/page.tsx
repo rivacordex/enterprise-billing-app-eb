@@ -11,9 +11,12 @@ import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { StallBanner } from "@/components/billing/stall-banner";
-import { StubDataBanner } from "@/components/billing/stub-data-banner";
+import { PlaceholderBanner } from "@/components/billing/placeholder-banner";
 import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
-import { billRunStallThresholdMinutes, stubDataMode } from "@/lib/config";
+import {
+  billRunStallThresholdMinutes,
+  isBillrunPlaceholderMode,
+} from "@/lib/config";
 import { formatCalendarDate } from "@/lib/formatters";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
@@ -212,7 +215,7 @@ export default async function BillRunDetailPage({
         </p>
       </header>
 
-      {stubDataMode && <StubDataBanner />}
+      {isBillrunPlaceholderMode && <PlaceholderBanner />}
 
       {canOperate && stalled && (
         <StallBanner

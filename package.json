@@ -36,6 +36,7 @@
     "db:seed-ordering": "node --conditions=react-server --env-file=.env --import tsx db/seeds/ordering-inventory.ts",
     "db:seed-billing": "node --conditions=react-server --env-file=.env --import tsx db/seeds/billing.ts",
     "db:seed-rating": "node --conditions=react-server --env-file=.env --import tsx db/seeds/rating-event-catalog.ts",
+    "db:seed-sample": "node --conditions=react-server --env-file=.env --import tsx db/seeds/sample/seed-billrun-sample.ts",
     "db:setup": "npm run db:migrate && npm run db:setup-partman && npm run db:setup-partman-billing && npm run db:setup-partman-rating && npm run db:seed && npm run db:seed-rbac && npm run db:seed-product && npm run db:seed-customer && npm run db:seed-accounts && npm run db:seed-ordering && npm run db:seed-billing && npm run db:seed-rating",
     "db:introspect": "drizzle-kit introspect"
   },

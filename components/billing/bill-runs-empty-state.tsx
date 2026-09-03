@@ -3,7 +3,7 @@ import { ReceiptText } from "lucide-react";
 // bm01-spec §5 (Design): the Bill Runs scaffold empty state — a centered card
 // on `--surface-app`, mirroring the card/typography pattern of
 // `app/(app)/no-access/page.tsx`. Server component (no interaction); the run
-// list, StubDataBanner, and Run CTA arrive in bm02/bm03.
+// list, PlaceholderBanner, and Run CTA arrive in bm02/bm03.
 export function BillRunsEmptyState(): React.JSX.Element {
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-[color:var(--surface-app)] px-4 py-16">

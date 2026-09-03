@@ -47,6 +47,14 @@ const BOUNDARIES_ELEMENTS = [
   // decision helper `auth-lockout`.
   { type: "auth-roles", mode: "full", pattern: "auth/roles.ts" },
   { type: "auth", mode: "full", pattern: "auth/**" },
+  // Carved out ahead of the general "db" pattern (bm15-spec §Design "Composed
+  // from real services, not hand-rolled inserts"): this one seed script
+  // deliberately drives the application's own createCustomer →
+  // onboardCustomerAccounts → createOrder service path so its `_SAMPLE_*`
+  // fixture can't drift out of shape with what the app actually produces —
+  // every other seed under `db/seeds/**` stays repository-only and is bound
+  // by the general "db" rule below.
+  { type: "db-seed-sample", mode: "full", pattern: "db/seeds/sample/**" },
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
   { type: "types", mode: "full", pattern: "types/**" },
@@ -232,6 +240,14 @@ const eslintConfig = defineConfig([
               // code-standards §1.7 — no unvalidated JSONB reaches the DB).
               from: { type: "db" },
               allow: { to: { type: ["db", "validation", "types", "lib"] } },
+            },
+            {
+              // bm15-spec §Design — the one seed script allowed to reach
+              // "services" (see the element carve-out comment above).
+              from: { type: "db-seed-sample" },
+              allow: {
+                to: { type: ["db-seed-sample", "db", "services", "validation", "types", "lib"] },
+              },
             },
             {
               // "validation" self-import added for um25's `validation/set-
