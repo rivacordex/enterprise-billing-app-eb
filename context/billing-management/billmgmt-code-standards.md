@@ -177,6 +177,9 @@ db/repositories/billing/
   bill-run.ts  bill-run-account.ts  bill-run-account-stage.ts
   customer-bill.ts  rating-claim.ts   # rating-claim.ts holds the ONLY rating.udr_rated UPDATE
 db/migrations/…                # billing tables + partition_management rows + billrun_* PERMISSIONS + Billing Viewer role + INV additions
+flows/billrun/
+  bill_run_processing.template.yml  # bm16 — template skeleton, NOT deployed (see file note 5 below)
+  README.md
 validation/billing/
   stage-signal.schema.ts  status-push.schema.ts
   trigger-run.schema.ts  rerun-run.schema.ts  approve-run.schema.ts
@@ -187,8 +190,9 @@ tests/…                        # mirrors source; route × level matrix for the
 
 1. **The single rating write is isolated in `db/repositories/billing/rating-claim.ts`** — the only file in the module that issues an `UPDATE rating.udr_rated`. No other repository writes the `rating` schema (Inv. #2), which makes the boundary greppable and testable.
 2. **`services/billing/**` is framework-agnostic** (no `next/*`), and the ingest handlers and Server Actions call the **same** service functions (§1.2) — never a duplicated code path.
-3. **The workflow-engine HTTP client lives in `lib/` (or `services/billing/engine-client.ts`), reads its Basic-Auth credential from Key Vault, and is called only by `trigger-run.ts`/`cancel-run.ts`.** No page, component, or Route Handler calls the engine directly.
+3. **The workflow-engine HTTP client (`services/billing/engine-client.ts`) is wrapped by `services/billing/engine-registry.ts`** (bm16), which resolves a logical engine name ("billrun") to a connection + a stable identity string sourced from Key Vault/config, and is the ONLY caller of the client's real/stub implementations. `trigger-run.ts`/`reconcile-run.ts`/`cancel-run.ts` call the registry, never the client directly, and no page/component/Route Handler calls either.
 4. **Do not fork the nav** — the Billing section is a `NAV_SECTIONS` entry, not a new nav component.
+5. **`flows/billrun/**` is a bm16 deliberate deviation from rating's "all flow YAML lives in a separate repo" convention** — this app repo carries template skeletons only (key sections + commented `# STUB:`-marked activities, no business logic), documenting the stage contract `handle-stage-signal.ts` records against. Not deployed from here; the real flow ships from a separate workflow-management repo built to this contract (`flows/billrun/README.md`). `flows/rating/` stays a reserved, untouched sibling — rating keeps ALL its flow YAML external, none in this repo.
 
 ---
 

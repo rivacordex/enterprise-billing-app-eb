@@ -175,7 +175,7 @@ describe.skipIf(!databaseUrl)(
       expect(updated?.status).toBe("PROCESSING");
       expect(updated?.glEventAt).toBe("2026-07-01");
       expect(updated?.triggeredBy).toBe(actorId);
-      expect(updated?.workflowExecutionId).toBe(`stub-exec-${runId}`);
+      expect(updated?.processingExecutionId).toBe(`stub-exec-${runId}`);
 
       const snapshotRows = await db
         .select()

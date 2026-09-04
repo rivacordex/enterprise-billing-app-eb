@@ -6,7 +6,7 @@ import {
   computeRunCounters,
   computeRunStatus,
 } from "@/services/billing/compute-run-status";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import type { ExecutionState } from "@/services/billing/engine-client";
 import type { RunStatus } from "@/types/billing";
 
@@ -50,14 +50,15 @@ export async function reconcileRun(
   return db.transaction(async (tx) => {
     const run = await billRunRepository.findByIdForUpdate(tx, billRunId);
     if (!run) return { ok: false, code: "NOT_FOUND" } as const;
-    if (!run.workflowExecutionId) {
+    if (!run.processingExecutionId) {
       return { ok: false, code: "NO_EXECUTION" } as const;
     }
 
     let execStatus;
     try {
-      execStatus = await getEngineClient().getExecutionStatus(
-        run.workflowExecutionId,
+      execStatus = await engineRegistry.getExecutionStatus(
+        "billrun",
+        run.processingExecutionId,
       );
     } catch {
       return { ok: false, code: "ENGINE_UNREACHABLE" } as const;

@@ -3,15 +3,13 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
-import { aggregateBill } from "@/services/billing/aggregate-bill";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
-import { getEngineClient } from "@/services/billing/engine-client";
-import { taxBill } from "@/services/billing/taxation";
-import { STAGES } from "@/types/billing";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import type { AccountStatus } from "@/types/billing";
 import type { RerunStage } from "@/validation/billing/rerun-run.schema";
 
-// bm08-spec §Design/§Implementation §1. The rerun transaction — pre-approval
+// bm08-spec §Design/§Implementation §1, revised bm16-spec §Design "Fork B —
+// Phase-1 app-side compute retired". The rerun transaction — pre-approval
 // only. In one `db.transaction`, in this order:
 //   1. AUDIT FIRST — write the `BILL_RUN_RERUN` row (prior totals + reason)
 //      BEFORE any re-trigger (architecture Inv.; code-standards §1.10).
@@ -19,18 +17,18 @@ import type { RerunStage } from "@/validation/billing/rerun-run.schema";
 //   3. Invalidate later stages — implicit: `bill_run_account_stage` is keyed by
 //      `attempt`, so the bumped attempt makes every new signal from the chosen
 //      stage onward land on a fresh row; prior-attempt rows stay as history.
-//   4. Re-derive the trial bills (Aggregation/Taxation) for the rerun accounts
-//      that ALREADY HAVE an unposted bill (i.e. previously reached Aggregation),
-//      via the conditional `DELETE … WHERE ref_inv_document_id IS NULL` + INSERT
-//      (bm05/bm06) — from the chosen stage onward only. An account with no bill
-//      yet (e.g. failed at Validation) is NOT billed inline — the re-triggered
-//      engine re-validates and creates it through the single validated
-//      `handle-stage-signal` path. A posted bill is never touched (Inv. #4).
-//   5. Claim release/re-claim — v1 no-op (no `rating` table).
-//   6. Re-trigger the engine (stub) scoped to the rerun accounts + new attempt.
+//   4. Claim release/re-claim — the processor's concern (T6, bm16-spec review
+//      folds): the re-triggered `bill_run_processing` execution is the SOLE
+//      re-claimer, re-claiming `RATED`/`REJECTED` → `BILL_DRAFT` and
+//      re-stamping `billrun_attempt` to the new attempt itself — this service
+//      no longer re-derives a trial bill inline (bm08's `aggregateBill`/
+//      `taxBill` delta-refresh is retired: phase 2 moves that write into the
+//      processor, as `billrun_runtime` — a second app-side writer would
+//      violate the two-writer boundary, architecture Inv. #2).
+//   5. Re-trigger the engine scoped to the rerun accounts + new attempt.
 // The engine call is inside the txn (bm03 pattern): a failure rolls the whole
-// rerun back — the audit row, the attempt bump, and the re-derivation all
-// vanish, and the run stays as it was.
+// rerun back — the audit row and the attempt bump both vanish, and the run
+// stays as it was.
 
 export type RerunRunResult =
   | {
@@ -86,16 +84,14 @@ export async function rerunRun(
       // Resolve the eligible rerun set: every scoped account, minus the
       // deliberately-not-billed (`EXCLUDED`) and the finalized (posted bill,
       // Inv. #4), intersected with the caller's selection (empty ⇒ all). The
-      // three reads are all keyed only on the run and independent — issue them
+      // two reads are both keyed only on the run and independent — issue them
       // together. `accounts` (all accounts, incl. `EXCLUDED`) also feeds the
       // in-memory counter recompute below, so no second status read is needed.
-      const [accounts, postedIds, unpostedBillIds] = await Promise.all([
+      const [accounts, postedIds] = await Promise.all([
         billRunAccountRepository.listForRerun(tx, run.billRunId),
         customerBillRepository.listPostedAccountIds(tx, run.billRunId),
-        customerBillRepository.listUnpostedBillAccountIds(tx, run.billRunId),
       ]);
       const posted = new Set(postedIds);
-      const hasUnpostedBill = new Set(unpostedBillIds);
       const requested = new Set(params.accountIds);
       const eligible = accounts.filter(
         (a) =>
@@ -140,34 +136,16 @@ export async function rerunRun(
         newAttempt,
       );
 
-      // 4. Re-derive the trial bills from the chosen stage onward, ONLY for
-      // accounts that already have an unposted bill (they previously reached
-      // Aggregation). Aggregation rewrites the bill; Taxation re-taxes it — both
-      // rerun-safe (`ref_inv_document_id IS NULL` guard). Gating on an existing
-      // bill keeps this from (a) writing a trial bill for an account that never
-      // passed Validation — the re-triggered engine re-validates and creates it
-      // through `handle-stage-signal`, the single validated path — and (b)
-      // calling `taxBill` with no bill to tax, which throws and would roll the
-      // whole rerun back. A rerun from `verification` re-derives nothing; from
-      // `taxation` re-taxes; from `aggregation`/`collection`/`validation` rewrites
-      // then re-taxes.
-      const from = STAGES.indexOf(params.fromStage);
-      const reAggregate = from <= STAGES.indexOf("aggregation");
-      const reTax = from <= STAGES.indexOf("taxation");
-      for (const banId of banIds) {
-        if (!hasUnpostedBill.has(banId)) continue;
-        if (reAggregate) await aggregateBill(tx, run, banId);
-        if (reTax) await taxBill(tx, run, banId);
-      }
+      // 4. Claim release/re-claim + trial-bill re-derivation are the
+      // re-triggered processor's concern now (bm16-spec Fork B / T6) — the
+      // re-triggered execution re-claims RATED/REJECTED → BILL_DRAFT under the
+      // new attempt and re-aggregates/re-taxes as it re-validates each account
+      // through the single `handle-stage-signal` path. Nothing to do here.
 
-      // 5. Claim release/re-claim — v1 no-op.
-      // deferred: with the rating engine this releases the prior attempt's UDR
-      // claim and re-claims under the new attempt (Inv. #2).
-
-      // 6. Re-trigger the engine (stub) scoped to the rerun accounts + attempt.
+      // 5. Re-trigger the engine scoped to the rerun accounts + new attempt.
       let executionRef;
       try {
-        executionRef = await getEngineClient().startExecution({
+        executionRef = await engineRegistry.trigger("billrun", {
           bill_run_id: run.billRunId,
           period_start: run.periodStart,
           period_end: run.periodEnd,
@@ -192,9 +170,10 @@ export async function rerunRun(
       );
       await billRunRepository.markRerunProcessing(tx, run.billRunId, {
         ...computeRunCounters(postBumpStatuses),
-        workflowExecutionId: executionRef.executionId,
-        workflowDefinitionId: executionRef.definitionId,
-        workflowDefinitionRevision: executionRef.definitionRevision,
+        processingExecutionId: executionRef.executionId,
+        processingFlowId: executionRef.definitionId,
+        processingFlowRevision: executionRef.definitionRevision,
+        processingEngineRef: executionRef.engineRef,
       });
 
       return {

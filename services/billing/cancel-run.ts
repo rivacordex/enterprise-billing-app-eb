@@ -3,7 +3,7 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { logger } from "@/lib/logger";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 
 // bm12-spec §Design/§Implementation §3. The cancel transaction — the Layer-3
 // escape hatch for a wedged execution (architecture §Design "Layer-3
@@ -34,15 +34,18 @@ export async function cancelRun(
       return { ok: false, code: "NOT_CANCELLABLE" } as const;
     }
 
-    if (run.workflowExecutionId) {
+    if (run.processingExecutionId) {
       try {
-        await getEngineClient().killExecution(run.workflowExecutionId);
+        await engineRegistry.killExecution(
+          "billrun",
+          run.processingExecutionId,
+        );
       } catch (err) {
         logger.warn(
           "bill-run cancel: killExecution failed, proceeding with cancel",
           {
             billRunId,
-            executionId: run.workflowExecutionId,
+            executionId: run.processingExecutionId,
             error: err instanceof Error ? err.message : String(err),
           },
         );
@@ -62,7 +65,7 @@ export async function cancelRun(
       targetId: billRunId,
       beforeData: {
         status: run.status,
-        workflowExecutionId: run.workflowExecutionId,
+        processingExecutionId: run.processingExecutionId,
       },
       afterData: { status: "CANCELLED", accountsReset },
     });

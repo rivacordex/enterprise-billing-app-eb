@@ -5,42 +5,16 @@ import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { customerBill } from "@/db/schema/billing/customer-bill";
-import type { CustomerBillInsert } from "@/db/schema/billing/customer-bill";
 
-// bm05-spec §Design/§Implementation §4-5. `deleteTrial` + `insertTrial` are
-// the Aggregation service's rerun-safe write: a conditional
-// `DELETE ... WHERE ref_inv_document_id IS NULL` (the finalization latch,
-// architecture Inv. #4) followed by the INSERT — both issued inside the
-// caller's stage-signal transaction. `listForRun` backs the Customers &
-// Bills tab read.
+// bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
+// `listForRun` backs the Customers & Bills tab read. The trial-bill write
+// (`deleteTrial`/`insertTrial`) and the taxation reads/writes
+// (`findUnpostedBill`/`recomputeTotals`/`findUnpostedTotalForVerification`)
+// were retired with `aggregate-bill.ts`/`taxation.ts`/`verify.ts` — phase 2
+// moves that write into the bill run processor, as `billrun_runtime` (a
+// second app-side writer would violate the two-writer boundary, architecture
+// Inv. #2).
 export const customerBillRepository = {
-  async deleteTrial(
-    tx: Database,
-    billRunId: string,
-    billingAccountId: string,
-  ): Promise<void> {
-    // Keyed exactly on the `(run, ban, period)` UNIQUE plus the finalization
-    // latch: delete the single UNPOSTED row so the re-derived trial can be
-    // inserted without colliding on the unique key. A posted row
-    // (`ref_inv_document_id` set) is never touched (architecture Inv. #4). A
-    // `category` predicate is deliberately NOT added — with at most one row per
-    // key, filtering to `trial` would skip a non-trial unposted row and then
-    // collide on `insertTrial`.
-    await tx
-      .delete(customerBill)
-      .where(
-        and(
-          eq(customerBill.refBillRunId, billRunId),
-          eq(customerBill.refBillingAccountId, billingAccountId),
-          isNull(customerBill.refInvDocumentId),
-        ),
-      );
-  },
-
-  async insertTrial(tx: Database, row: CustomerBillInsert): Promise<void> {
-    await tx.insert(customerBill).values(row);
-  },
-
   // bm12-spec §Design/§Implementation §6 — a cancelled-then-re-triggered run
   // re-snapshots `bill_run_account` fresh, so the killed attempt's UNPOSTED
   // trial bills must be cleared in the same transaction; otherwise a bill for an
@@ -58,96 +32,6 @@ export const customerBillRepository = {
           isNull(customerBill.refInvDocumentId),
         ),
       );
-  },
-
-  // bm06-spec §Design/§Implementation §3 — Taxation resolves the run's single
-  // UNPOSTED bill for an account (`ref_inv_document_id IS NULL`, the
-  // finalization latch, architecture Inv. #4). A posted bill is never
-  // returned, so the taxation service never re-taxes it. Returns the identity
-  // needed to key the tax-item write + the totals recompute.
-  async findUnpostedBill(
-    tx: Database,
-    billRunId: string,
-    billingAccountId: string,
-  ): Promise<{
-    customerBillId: string;
-    periodPartition: string;
-    subtotal: string;
-  } | null> {
-    const [row] = await tx
-      .select({
-        customerBillId: customerBill.customerBillId,
-        periodPartition: customerBill.periodPartition,
-        subtotal: customerBill.subtotal,
-      })
-      .from(customerBill)
-      .where(
-        and(
-          eq(customerBill.refBillRunId, billRunId),
-          eq(customerBill.refBillingAccountId, billingAccountId),
-          isNull(customerBill.refInvDocumentId),
-        ),
-      )
-      .limit(1);
-    return row ?? null;
-  },
-
-  // bm06-spec §Design/§Implementation §3 — after the bill's tax items are
-  // (re)written, recompute `tax_total` = the SQL SUM of its items and
-  // `total_amount` = `subtotal + tax_total`, ALL in SQL `numeric` (never JS
-  // float, code-standards §2.3). The subquery over `customer_bill_tax_item`
-  // and the `subtotal` addition happen inside Postgres, so the total equals the
-  // summed items to the cent by construction. Keyed on the full PK
-  // `(customer_bill_id, period_partition)`; the `ref_inv_document_id IS NULL`
-  // guard is retained even though `findUnpostedBill` already filtered it — a
-  // posted bill is never mutated (architecture Inv. #4).
-  async recomputeTotals(
-    tx: Database,
-    customerBillId: string,
-    periodPartition: string,
-  ): Promise<void> {
-    await tx.execute(sql`
-      UPDATE billing.customer_bill AS cb
-      SET tax_total = COALESCE(items.total, 0),
-          total_amount = cb.subtotal + COALESCE(items.total, 0)
-      FROM (
-        SELECT COALESCE(SUM(tax_amount), 0) AS total
-        FROM billing.customer_bill_tax_item
-        WHERE ref_customer_bill_id = ${customerBillId}
-          AND period_partition = ${periodPartition}
-      ) AS items
-      WHERE cb.customer_bill_id = ${customerBillId}
-        AND cb.period_partition = ${periodPartition}
-        AND cb.ref_inv_document_id IS NULL
-    `);
-  },
-
-  // bm07-spec §Design/§Implementation §1 — Verification's backstop check reads
-  // the account's UNPOSTED bill total (`ref_inv_document_id IS NULL`, the
-  // finalization latch, architecture Inv. #4). `nonPositive` is computed in SQL
-  // `numeric` (`total_amount <= 0`) so the check never touches JS float
-  // (code-standards §2.3). No bill (aggregation hasn't run, or the account was
-  // excluded) ⇒ `null`, and Verification records a clean DONE.
-  async findUnpostedTotalForVerification(
-    tx: Database,
-    billRunId: string,
-    billingAccountId: string,
-  ): Promise<{ totalAmount: string; nonPositive: boolean } | null> {
-    const [row] = await tx
-      .select({
-        totalAmount: customerBill.totalAmount,
-        nonPositive: sql<boolean>`${customerBill.totalAmount} <= 0`,
-      })
-      .from(customerBill)
-      .where(
-        and(
-          eq(customerBill.refBillRunId, billRunId),
-          eq(customerBill.refBillingAccountId, billingAccountId),
-          isNull(customerBill.refInvDocumentId),
-        ),
-      )
-      .limit(1);
-    return row ?? null;
   },
 
   // bm08-spec §Design/§Implementation §1 — the rerun finalization guard's read:
@@ -168,30 +52,6 @@ export const customerBillRepository = {
         and(
           eq(customerBill.refBillRunId, billRunId),
           isNotNull(customerBill.refInvDocumentId),
-        ),
-      );
-    return rows.map((r) => r.billingAccountId);
-  },
-
-  // bm08 — the account ids in this run that already have an UNPOSTED trial bill
-  // (`ref_inv_document_id IS NULL`). The rerun service re-derives a bill inline
-  // ONLY for these accounts: re-deriving is a delta-display convenience for
-  // accounts that previously reached Aggregation, so an account with no bill yet
-  // (e.g. one that failed at Validation/Collection) is left for the re-triggered
-  // engine to (re-)validate and create through the single validated
-  // `handle-stage-signal` path — never billed inline for an unvalidated account,
-  // and `taxBill` is never called with no bill to tax (which would throw).
-  async listUnpostedBillAccountIds(
-    tx: Database,
-    billRunId: string,
-  ): Promise<string[]> {
-    const rows = await tx
-      .select({ billingAccountId: customerBill.refBillingAccountId })
-      .from(customerBill)
-      .where(
-        and(
-          eq(customerBill.refBillRunId, billRunId),
-          isNull(customerBill.refInvDocumentId),
         ),
       );
     return rows.map((r) => r.billingAccountId);

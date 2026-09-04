@@ -48,9 +48,21 @@ export const billRun = billing.table(
     status: text("status").notNull().default("SCHEDULED"),
     runType: text("run_type").notNull().default("onCycle"),
     // --- populated by later units (nullable now) ---
-    workflowExecutionId: text("workflow_execution_id"),
-    workflowDefinitionId: text("workflow_definition_id"),
-    workflowDefinitionRevision: integer("workflow_definition_revision"),
+    // bm16-spec §Design "Two executions, named columns (D23)" — Phase 1's
+    // singular `workflow_*` columns are renamed to the `processing_*` set,
+    // joined by a `distribution_*` set (bm20 populates; this unit only
+    // creates them) — a run can no longer be reconstructed from one id.
+    processingExecutionId: text("processing_execution_id"),
+    processingFlowId: text("processing_flow_id"),
+    processingFlowRevision: integer("processing_flow_revision"),
+    // The resolved engine identity (`engine-registry.ts`, D25e), stamped per
+    // execution so a later topology change never orphans reconcile/cancel of
+    // a historical execution.
+    processingEngineRef: text("processing_engine_ref"),
+    distributionExecutionId: text("distribution_execution_id"),
+    distributionFlowId: text("distribution_flow_id"),
+    distributionFlowRevision: integer("distribution_flow_revision"),
+    distributionEngineRef: text("distribution_engine_ref"),
     lastProgressAt: timestamp("last_progress_at", {
       withTimezone: true,
       precision: 3,

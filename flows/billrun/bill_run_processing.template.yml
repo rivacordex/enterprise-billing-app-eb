@@ -1,0 +1,52 @@
+# TEMPLATE ONLY — no business logic. The real bill_run_processing flow lives in
+# the separate workflow-management repo and is deployed to the `billrun` engine.
+# This skeleton documents (a) the stage contract the app records against and
+# (b) the key activities each stage must perform. Every real activity is a
+# `# STUB:` marker naming what replaces it. See flows/billrun/README.md.
+id: bill_run_processing
+namespace: billrun
+inputs:
+  - { id: bill_run_id, type: STRING }
+  - { id: period_start, type: STRING } # YYYY-MM-DD
+  - { id: period_end, type: STRING }
+  - { id: ban_ids, type: JSON } # accounts scoped app-side at trigger (bm03)
+  - { id: attempt, type: INT } # app-assigned; the idempotency key component
+  - { id: gl_event_at, type: STRING }
+tasks:
+  - id: per_account
+    type: io.kestra.plugin.core.flow.ForEach # fan-out per account (Inv: per account, per stage)
+    values: "{{ inputs.ban_ids }}"
+    tasks:
+      # --- validation ---
+      - id: validation
+        # STUB: confirm the account's claimable udr_rated is consistent (currency,
+        #       coverage in window); zero-claimable => zero-charge exception, not error.
+        #       Placeholder: pass. On done: POST the stage-complete signal (§4).
+      # --- collection / claim (writes rating.udr_rated as billrun_runtime) ---
+      - id: collection
+        # STUB: claim the account's in-scope udr_rated: UPDATE status
+        #       (status IN ('RATED','REJECTED')) -> BILL_DRAFT + stamp the six claim
+        #       cols (billrun_ref_id/ban_id/checksum/upsert_datetime), RE-STAMPING
+        #       billrun_attempt to inputs.attempt so posting's (run,ban,posted_attempt)
+        #       read matches (T6). The flow is the SOLE re-claimer — the app NEVER
+        #       claims — it only sets BILL_APPROVED/REJECTED/RATED-release (bm17).
+      # --- aggregation (writes billing.customer_bill as billrun_runtime) ---
+      - id: aggregation
+        # STUB: sum the account's BILL_DRAFT udr_rated into ONE customer_bill row
+        #       (category=trial, subtotal=SUM(amount), period from inputs). Placeholder
+        #       aggregation only — REAL: correlation, discounts, bundles, adjustments.
+        #       Rerun-safe: re-derive via billing.billrun_delete_trial_bill(run,ban)
+        #       (scoped SECURITY DEFINER — bm14 T10) + INSERT; never a direct DELETE.
+      # --- taxation (writes billing.customer_bill_tax_item as billrun_runtime) ---
+      - id: taxation
+        # STUB: write one tax line (configured single rate) + recompute
+        #       tax_total/total_amount IN SQL. REAL: jurisdiction/category tax rules.
+      # --- verification ---
+      - id: verification
+        # STUB: sanity checks (e.g. non-negative total => SOFT finding). Placeholder: pass.
+errors:
+  - id: on_error
+    # STUB: POST a terminal per-account/run failure to the app status endpoint.
+finally:
+  - id: on_finally
+    # STUB: always POST a terminal status so a killed/partial run still reports (Inv #1 obligation).

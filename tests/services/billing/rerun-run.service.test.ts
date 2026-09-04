@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm08-spec §Design/§Implementation §1/§5. The rerun transaction: AUDIT FIRST
-// (before re-trigger), attempt_count SET to one uniform new attempt for the
-// SELECTED accounts (back to PROCESSING), later stages invalidated via the
-// attempt-keyed latch, trial
-// bills re-derived under the ref_inv_document_id IS NULL guard, then the engine
-// re-triggered scoped to the rerun accounts. `db.transaction` runs its callback
-// with a stub tx (trigger-run.service.test.ts precedent).
+// bm08-spec §Design/§Implementation §1/§5, revised bm16-spec §Design "Fork B".
+// The rerun transaction: AUDIT FIRST (before re-trigger), attempt_count SET
+// to one uniform new attempt for the SELECTED accounts (back to PROCESSING),
+// later stages invalidated via the attempt-keyed latch, then the engine
+// re-triggered scoped to the rerun accounts. Trial-bill re-derivation is now
+// the re-triggered processor's concern (bm16 Fork B) — this service no
+// longer calls `aggregateBill`/`taxBill` inline. `db.transaction` runs its
+// callback with a stub tx (trigger-run.service.test.ts precedent).
 
 const txStub = {};
 vi.mock("@/db/client", () => ({
@@ -29,28 +30,21 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {
     listPostedAccountIds: vi.fn(),
-    listUnpostedBillAccountIds: vi.fn(),
     sumTotalsForAccounts: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
-vi.mock("@/services/billing/engine-client", () => ({
-  getEngineClient: vi.fn(),
+vi.mock("@/services/billing/engine-registry", () => ({
+  engineRegistry: { trigger: vi.fn() },
 }));
-vi.mock("@/services/billing/aggregate-bill", () => ({
-  aggregateBill: vi.fn(),
-}));
-vi.mock("@/services/billing/taxation", () => ({ taxBill: vi.fn() }));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
-import { getEngineClient } from "@/services/billing/engine-client";
-import { aggregateBill } from "@/services/billing/aggregate-bill";
-import { taxBill } from "@/services/billing/taxation";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import { rerunRun } from "@/services/billing/rerun-run";
 import type { RerunRunParams } from "@/services/billing/rerun-run";
 
@@ -61,16 +55,9 @@ const mockMarkRerunProcessing = vi.mocked(
 const mockListForRerun = vi.mocked(billRunAccountRepository.listForRerun);
 const mockSetAttempt = vi.mocked(billRunAccountRepository.setAttemptForRerun);
 const mockListPosted = vi.mocked(customerBillRepository.listPostedAccountIds);
-const mockListUnposted = vi.mocked(
-  customerBillRepository.listUnpostedBillAccountIds,
-);
 const mockSumTotals = vi.mocked(customerBillRepository.sumTotalsForAccounts);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
-const mockGetEngineClient = vi.mocked(getEngineClient);
-const mockAggregateBill = vi.mocked(aggregateBill);
-const mockTaxBill = vi.mocked(taxBill);
-
-const startExecution = vi.fn();
+const mockTrigger = vi.mocked(engineRegistry.trigger);
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -108,25 +95,16 @@ function params(overrides: Partial<RerunRunParams> = {}): RerunRunParams {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetEngineClient.mockReturnValue({
-    startExecution,
-    getExecutionStatus: vi.fn(),
-    killExecution: vi.fn(),
-  } as never);
-  startExecution.mockResolvedValue({
+  mockTrigger.mockResolvedValue({
     executionId: "stub-exec-BRN00000001",
-    definitionId: "billing.bill_run",
+    definitionId: "billrun.bill_run_processing",
     definitionRevision: 0,
+    engineRef: "billrun@stub/billrun",
   });
   mockFindByIdForUpdate.mockResolvedValue(run());
   mockListForRerun.mockResolvedValue(ACCOUNTS);
   mockListPosted.mockResolvedValue([]);
-  // Both rerunnable accounts already have an unposted trial bill (they reached
-  // Aggregation before) — so both are re-derivable inline by default.
-  mockListUnposted.mockResolvedValue(["BAN00000001", "BAN00000002"]);
   mockSumTotals.mockResolvedValue("215.00");
-  mockAggregateBill.mockResolvedValue(undefined);
-  mockTaxBill.mockResolvedValue(undefined);
 });
 
 describe("rerunRun (bm08-spec §Design/§1)", () => {
@@ -152,7 +130,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     );
 
     const auditOrder = mockInsertAuditEvent.mock.invocationCallOrder[0];
-    const engineOrder = startExecution.mock.invocationCallOrder[0];
+    const engineOrder = mockTrigger.mock.invocationCallOrder[0];
     expect(auditOrder).toBeLessThan(engineOrder as number);
   });
 
@@ -167,7 +145,8 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
       2,
     );
     // The engine re-trigger is scoped to exactly that account, new attempt.
-    expect(startExecution).toHaveBeenCalledWith(
+    expect(mockTrigger).toHaveBeenCalledWith(
+      "billrun",
       expect.objectContaining({ ban_ids: ["BAN00000001"], attempt: 2 }),
     );
   });
@@ -184,12 +163,6 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
       "BRN00000001",
       ["BAN00000001"],
       2,
-    );
-    expect(mockAggregateBill).toHaveBeenCalledTimes(1);
-    expect(mockAggregateBill).toHaveBeenCalledWith(
-      txStub,
-      run(),
-      "BAN00000001",
     );
   });
 
@@ -209,9 +182,10 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
         banCount: 3,
         ratedCount: 0,
         failedCount: 0,
-        workflowExecutionId: "stub-exec-BRN00000001",
-        workflowDefinitionId: "billing.bill_run",
-        workflowDefinitionRevision: 0,
+        processingExecutionId: "stub-exec-BRN00000001",
+        processingFlowId: "billrun.bill_run_processing",
+        processingFlowRevision: 0,
+        processingEngineRef: "billrun@stub/billrun",
       },
     );
     expect(result).toMatchObject({
@@ -251,76 +225,11 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
         afterData: expect.objectContaining({ attempt: 4 }),
       }),
     );
-    expect(startExecution).toHaveBeenCalledWith(
+    expect(mockTrigger).toHaveBeenCalledWith(
+      "billrun",
       expect.objectContaining({ attempt: 4 }),
     );
     expect(result).toMatchObject({ ok: true, value: { attempt: 4 } });
-  });
-
-  it("re-derives Aggregation + Taxation for each rerun account from stage validation", async () => {
-    await rerunRun(params({ fromStage: "validation" }), "user-1");
-
-    expect(mockAggregateBill).toHaveBeenCalledTimes(2);
-    expect(mockTaxBill).toHaveBeenCalledTimes(2);
-    for (const banId of ["BAN00000001", "BAN00000002"]) {
-      expect(mockAggregateBill).toHaveBeenCalledWith(txStub, run(), banId);
-      expect(mockTaxBill).toHaveBeenCalledWith(txStub, run(), banId);
-    }
-  });
-
-  it("re-taxes only (no re-aggregation) when rerun starts at taxation", async () => {
-    await rerunRun(params({ fromStage: "taxation" }), "user-1");
-
-    expect(mockAggregateBill).not.toHaveBeenCalled();
-    expect(mockTaxBill).toHaveBeenCalledTimes(2);
-  });
-
-  it("re-derives nothing when rerun starts at verification (downstream of both)", async () => {
-    await rerunRun(params({ fromStage: "verification" }), "user-1");
-
-    expect(mockAggregateBill).not.toHaveBeenCalled();
-    expect(mockTaxBill).not.toHaveBeenCalled();
-  });
-
-  it("does NOT bill a selected account that has no trial bill inline (left for the re-validated engine path)", async () => {
-    // BAN00000001 (PROCESSING_FAILED, e.g. failed at Validation) has no bill;
-    // only BAN00000002 has one. Rerun from validation must re-derive ONLY the
-    // account that already has a bill — never create a bill inline for an
-    // unvalidated account.
-    mockListUnposted.mockResolvedValue(["BAN00000002"]);
-
-    await rerunRun(params({ fromStage: "validation" }), "user-1");
-
-    // Both are still attempt-bumped (the engine re-validates them)…
-    expect(mockSetAttempt).toHaveBeenCalledWith(
-      txStub,
-      "BRN00000001",
-      ["BAN00000001", "BAN00000002"],
-      2,
-    );
-    // …but only the account with an existing bill is re-derived inline.
-    expect(mockAggregateBill).toHaveBeenCalledTimes(1);
-    expect(mockAggregateBill).toHaveBeenCalledWith(
-      txStub,
-      run(),
-      "BAN00000002",
-    );
-    expect(mockTaxBill).toHaveBeenCalledTimes(1);
-    expect(mockTaxBill).toHaveBeenCalledWith(txStub, run(), "BAN00000002");
-  });
-
-  it("rerun from taxation with a bill-less account does not call taxBill for it (no CONFLICT rollback) and still succeeds", async () => {
-    // Regression: previously taxBill was called for every selected account, so a
-    // bill-less account made taxBill throw CONFLICT, rolling back the WHOLE
-    // rerun (all-or-nothing) with a non-typed error.
-    mockListUnposted.mockResolvedValue(["BAN00000002"]);
-
-    const result = await rerunRun(params({ fromStage: "taxation" }), "user-1");
-
-    expect(result.ok).toBe(true);
-    expect(mockAggregateBill).not.toHaveBeenCalled();
-    expect(mockTaxBill).toHaveBeenCalledTimes(1);
-    expect(mockTaxBill).toHaveBeenCalledWith(txStub, run(), "BAN00000002");
   });
 
   it("is rerunnable on a PROCESSING_FAILED run (recover a failed run)", async () => {
@@ -341,7 +250,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     expect(result).toEqual({ ok: false, code: "NOT_RERUNNABLE" });
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
     expect(mockSetAttempt).not.toHaveBeenCalled();
-    expect(startExecution).not.toHaveBeenCalled();
+    expect(mockTrigger).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown run as NOT_RERUNNABLE", async () => {
@@ -362,11 +271,11 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     expect(result).toEqual({ ok: false, code: "NO_ACCOUNTS_SELECTED" });
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
     expect(mockSetAttempt).not.toHaveBeenCalled();
-    expect(startExecution).not.toHaveBeenCalled();
+    expect(mockTrigger).not.toHaveBeenCalled();
   });
 
   it("returns ENGINE_UNREACHABLE and never loops the run back when the engine throws", async () => {
-    startExecution.mockRejectedValue(new Error("engine down"));
+    mockTrigger.mockRejectedValue(new Error("engine down"));
 
     const result = await rerunRun(params(), "user-1");
 
