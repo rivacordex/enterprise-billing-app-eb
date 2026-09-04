@@ -4,12 +4,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { conflict, notFound } from "@/lib/errors";
-import { aggregateBill } from "@/services/billing/aggregate-bill";
-import { collectClaim } from "@/services/billing/collect-claim";
-import { taxBill } from "@/services/billing/taxation";
-import { verifyAccount } from "@/services/billing/verify";
 import { firstOfMonth } from "@/services/billing/derive-periods";
-import { validateAccount } from "@/services/billing/validate-account";
 import {
   computeRunCounters,
   computeRunStatus,
@@ -22,12 +17,18 @@ import type {
   StageStatus,
 } from "@/types/billing";
 
-// bm04-spec §Design/§Implementation §8. The stage-complete ingest
-// transaction: insert the stage row FIRST (the idempotency latch,
-// architecture Inv. #5) → apply the stage's app-side effect → advance the
-// account → recompute the run under the `bill_run` row lock already held by
-// `findByIdForUpdate` (Inv. #12) → bump the heartbeat. No `AUDIT_LOG` write —
-// the appended stage row is the audit surface (code-standards §1.10).
+// bm04-spec §Design/§Implementation §8, revised bm16-spec §Design "The M2M
+// handler becomes record-only (D5)" / §Implementation §4. Phase 2: the bill
+// run processor computes every stage's outcome AND writes the bill-data
+// itself (as `billrun_runtime`, write-then-signal — D6); this handler
+// RECORDS what it reports and computes nothing — Phase 1's Validation
+// override (`validate-account.ts`) and the Aggregation/Taxation write side
+// effects (`aggregate-bill.ts`/`taxation.ts`) are retired (Fork B). The
+// stage-complete ingest transaction: insert the stage row FIRST (the
+// idempotency latch, architecture Inv. #5) → advance the account → recompute
+// `bill_run.status` under the row lock already held by `findByIdForUpdate`
+// (Inv. #12). No `AUDIT_LOG` write — the appended stage row is the audit
+// surface (code-standards §1.10).
 
 export interface StageSignalInput {
   runId: string;
@@ -49,10 +50,11 @@ export interface StageSignalResult {
 const IDEMPOTENCY_CONSTRAINT =
   "bill_run_account_stage_run_ban_stage_attempt_period_unique";
 
-// The last of the six stages this release implements (Stage union order,
-// types/billing.ts) — reaching it DONE/SKIPPED is what flips the ACCOUNT to
-// PROCESSED in v1 (posting/rendering/distribution are modelled but never
-// reached this release, overview "Features/Stage tracking").
+// bm04-spec §Design/§1 resolved ambiguity — unchanged by bm16 (spec
+// §Implementation §4: "verification remains the terminal processing stage
+// until distribution stages land in bm20"). The last of the six stages this
+// release implements — reaching it DONE/SKIPPED is what flips the ACCOUNT to
+// PROCESSED.
 const TERMINAL_STAGE: Stage = "verification";
 
 // Pure — exported for direct unit testing. `current` is the account's status
@@ -83,10 +85,10 @@ export function advanceAccountStatus(
 
   // The terminal stage only COMPLETES an account that was already in progress
   // (a prior stage advanced it out of PENDING). A verification signal for a
-  // still-PENDING account — e.g. the engine skips validation/aggregation and
-  // signals only the terminal stage — must not mark it PROCESSED (that would
-  // report a "done" account that was never validated and has no bill); it just
-  // advances to PROCESSING.
+  // still-PENDING account — e.g. the processor skips validation/aggregation
+  // and signals only the terminal stage — must not mark it PROCESSED (that
+  // would report a "done" account that was never validated and has no bill);
+  // it just advances to PROCESSING.
   if (
     stage === TERMINAL_STAGE &&
     current !== "PENDING" &&
@@ -109,14 +111,16 @@ export async function handleStageSignal(
     }
 
     // Read the account's current status AND attempt under the run row lock,
-    // BEFORE any stage-row write or app-side effect. The `bill_run_account_stage`
-    // idempotency latch is keyed by `attempt`, so it only catches a duplicate of
-    // the SAME attempt — a signal from a superseded execution (a killed run's
-    // late push after a cancel+re-trigger, or a pre-rerun attempt) carries an
-    // OLD `attempt` that would otherwise land on a fresh stage row and wrongly
-    // re-aggregate/re-tax and advance the current attempt's account. A signal
-    // whose attempt no longer matches the account is rejected here as an accepted
-    // no-op (200) before it can touch anything.
+    // BEFORE any stage-row write (T14, bm16-spec review folds — the
+    // signal's attempt must equal the account's CURRENT attempt). The
+    // `bill_run_account_stage` idempotency latch is keyed by `attempt`, so it
+    // only catches a duplicate of the SAME attempt — a signal from a
+    // superseded execution (a killed run's late push after a cancel +
+    // re-trigger, a pre-rerun attempt, or a Kestra replay that stamps a stale
+    // attempt) carries an OLD `attempt` that would otherwise land on a fresh
+    // stage row and wrongly re-advance the current attempt's account. A
+    // signal whose attempt no longer matches the account is rejected here as
+    // an accepted no-op (200) before it can touch anything.
     const currentAccount = await billRunAccountRepository.findStatus(
       tx,
       input.runId,
@@ -137,26 +141,19 @@ export async function handleStageSignal(
 
     const periodPartition = firstOfMonth(run.periodStart);
 
-    // The Validation stage's outcome is computed by the app (§31); the
-    // Collection/Claim stage is a v1 no-op that always records DONE (bm05-spec
-    // §Design §2 — there is no `rating` table to claim from); the Verification
-    // stage records DONE plus an optional SOFT backstop finding (bm07-spec
-    // §Design §1 — it never fails/blocks the run). Every other stage records
-    // exactly what the caller signalled (record-and-advance pass-through;
-    // Taxation's write side-effect lands below).
-    const effective =
-      input.stage === "validation"
-        ? await validateAccount(tx, input.banId)
-        : input.stage === "collection"
-          ? collectClaim()
-          : input.stage === "verification"
-            ? await verifyAccount(tx, run, input.banId)
-            : {
-                status: input.status,
-                errorClass: input.errorClass ?? null,
-                errorCode: input.errorCode ?? null,
-                errorDetail: input.errorDetail ?? null,
-              };
+    // bm16-spec §Design "record-only (D5)" — every stage is recorded exactly
+    // as the processor signalled it. The app neither computes nor overrides
+    // an outcome and never triggers a write side effect: the processor
+    // already wrote the stage's bill-data itself, as `billrun_runtime`,
+    // before signalling (write-then-signal, D6). The signal carries no
+    // charge payload (validated by `stageSignalBodySchema`'s `strictObject`,
+    // Inv. #16).
+    const effective = {
+      status: input.status,
+      errorClass: input.errorClass ?? null,
+      errorCode: input.errorCode ?? null,
+      errorDetail: input.errorDetail ?? null,
+    };
 
     try {
       await billRunAccountStageRepository.insertStageRow(tx, {
@@ -185,39 +182,6 @@ export async function handleStageSignal(
         };
       }
       throw err;
-    }
-
-    // bm05-spec §Design/§Implementation §4 — Aggregation's write is a side
-    // effect of a successful signal, not an override of the recorded stage
-    // outcome (unlike Validation/Collection above): a DONE aggregation signal
-    // writes the trial `customer_bill` inside this same transaction. Guarded on
-    // the account being in progress (`PROCESSING`) — an `EXCLUDED` (scoped-out),
-    // still-`PENDING` (never validated), or already-terminal account never gets
-    // a bill, even though the M2M caller controls the stage/status body (the
-    // engine's stage ordering is not trusted here). A duplicate signal never
-    // reaches here — it is caught as a replay above, before any write.
-    if (
-      input.stage === "aggregation" &&
-      effective.status === "DONE" &&
-      currentAccount.status === "PROCESSING"
-    ) {
-      await aggregateBill(tx, run, input.banId);
-    }
-
-    // bm06-spec §Design/§Implementation §3 — Taxation is the same side-effect
-    // shape as Aggregation (not an outcome override): a DONE taxation signal
-    // taxes the account's trial bill inside this same transaction, guarded on
-    // the account being in progress. If the bill has not been aggregated yet
-    // (an out-of-order signal), `taxBill` throws a conflict so this whole
-    // transaction rolls back — the taxation stage row is never committed, and
-    // the engine retries after Aggregation rather than the account being left
-    // permanently "taxed" with a zero tax.
-    if (
-      input.stage === "taxation" &&
-      effective.status === "DONE" &&
-      currentAccount.status === "PROCESSING"
-    ) {
-      await taxBill(tx, run, input.banId);
     }
 
     const newAccountStatus = advanceAccountStatus(

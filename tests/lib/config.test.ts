@@ -20,6 +20,7 @@ const ENV_KEYS = [
   "APP_TIMEZONE",
   "BILLRUN_ENGINE_URL",
   "BILLRUN_ENGINE_AUTH",
+  "BILLRUN_ENGINE_NAMESPACE",
   "BILLRUN_APP_TOKEN",
   "BILLRUN_TAX_RATE",
   "BILLRUN_TAX_VERSION",
@@ -78,6 +79,7 @@ describe("config", () => {
       PASSWORD_SPECIAL_CHARS: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
       APP_TIMEZONE: "UTC",
       BILLRUN_PLACEHOLDER_MODE: false,
+      BILLRUN_ENGINE_NAMESPACE: "billrun",
       BILLRUN_TAX_RATE: 8,
       BILLRUN_TAX_VERSION: "GST-2026",
       BILLRUN_TAX_CATEGORY: "GST",
@@ -347,6 +349,18 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
     expect(isBillRunEngineConfigured).toBe(false);
     expect(billRunEngineConfig.url).toBeNull();
     expect(billRunEngineConfig.auth).toBeNull();
+    // bm16-spec §Implementation §1 — the namespace has its own default
+    // (`billrun`), independent of whether URL/AUTH are configured.
+    expect(billRunEngineConfig.namespace).toBe("billrun");
+  });
+
+  it("BILLRUN_ENGINE_NAMESPACE can be overridden", async () => {
+    const { billRunEngineConfig } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_ENGINE_NAMESPACE: "billrun-uat",
+    });
+
+    expect(billRunEngineConfig.namespace).toBe("billrun-uat");
   });
 
   it("is unconfigured when only one of the two vars is present", async () => {

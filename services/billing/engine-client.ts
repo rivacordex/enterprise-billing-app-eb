@@ -1,11 +1,23 @@
-import { billRunEngineConfig, isBillRunEngineConfigured } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
-// bm03-spec §Design/Implementation §5. The outbound workflow engine is
-// **treated as not-yet-deployed** (project decision) — a mockable client so
-// the trigger transaction is fully testable with no live engine. Framework-
-// agnostic (no `next/*`), imported only by `services/billing/trigger-run.ts`
-// (code-standards §1.3).
+// bm03-spec §Design/Implementation §5, revised bm16-spec §Implementation §1
+// (D24). The outbound workflow engine is **treated as not-yet-deployed**
+// (project decision) — a mockable client so the trigger transaction is fully
+// testable with no live engine. Framework-agnostic (no `next/*`), reads NO
+// config of its own: `startExecution`/`getExecutionStatus`/`killExecution`
+// take a resolved `EngineConnection`, never a hard-coded URL. The sole caller
+// is `services/billing/engine-registry.ts`, which resolves a logical engine
+// name ("billrun") to a connection + a stable identity string and selects the
+// real vs. stub implementation.
+
+// The bare connection details for one physical engine instance — resolved by
+// `engine-registry.ts` from config/Key Vault, never read from `process.env`
+// here.
+export interface EngineConnection {
+  baseUrl: string;
+  basicAuth: string;
+  namespace: string;
+}
 
 export interface TriggerPayload {
   bill_run_id: string;
@@ -46,9 +58,15 @@ export interface ExecutionStatus {
 }
 
 export interface EngineClient {
-  startExecution(payload: TriggerPayload): Promise<ExecutionRef>;
-  getExecutionStatus(executionId: string): Promise<ExecutionStatus>;
-  killExecution(executionId: string): Promise<void>;
+  startExecution(
+    connection: EngineConnection,
+    payload: TriggerPayload,
+  ): Promise<ExecutionRef>;
+  getExecutionStatus(
+    connection: EngineConnection,
+    executionId: string,
+  ): Promise<ExecutionStatus>;
+  killExecution(connection: EngineConnection, executionId: string): Promise<void>;
 }
 
 export class EngineError extends Error {
@@ -58,8 +76,10 @@ export class EngineError extends Error {
   }
 }
 
-const ENGINE_NAMESPACE = "billing";
-const ENGINE_DEFINITION = "bill_run";
+// bm16-spec §Implementation §3. The deployed (placeholder) flow's id — the
+// template contract's `id: bill_run_processing` — under the resolved engine's
+// namespace.
+const ENGINE_FLOW_ID = "bill_run_processing";
 const REQUEST_TIMEOUT_MS = 15_000;
 
 interface RawExecutionResponse {
@@ -68,24 +88,25 @@ interface RawExecutionResponse {
   definitionRevision?: number;
 }
 
-export const realEngineClient: EngineClient = {
-  async startExecution(payload: TriggerPayload): Promise<ExecutionRef> {
-    if (!billRunEngineConfig.url || !billRunEngineConfig.auth) {
-      throw new EngineError(
-        "realEngineClient invoked without BILLRUN_ENGINE_URL/BILLRUN_ENGINE_AUTH configured.",
-      );
-    }
+function authHeader(basicAuth: string): string {
+  return `Basic ${Buffer.from(basicAuth).toString("base64")}`;
+}
 
+export const realEngineClient: EngineClient = {
+  async startExecution(
+    connection: EngineConnection,
+    payload: TriggerPayload,
+  ): Promise<ExecutionRef> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    const url = `${billRunEngineConfig.url}/executions/${ENGINE_NAMESPACE}/${ENGINE_DEFINITION}`;
+    const url = `${connection.baseUrl}/executions/${connection.namespace}/${ENGINE_FLOW_ID}`;
 
     let response: Response;
     try {
       response = await fetch(url, {
         method: "POST",
         headers: {
-          Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
+          Authorization: authHeader(connection.basicAuth),
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
@@ -113,7 +134,7 @@ export const realEngineClient: EngineClient = {
     return {
       executionId: body.executionId,
       definitionId:
-        body.definitionId ?? `${ENGINE_NAMESPACE}.${ENGINE_DEFINITION}`,
+        body.definitionId ?? `${connection.namespace}.${ENGINE_FLOW_ID}`,
       definitionRevision: body.definitionRevision ?? 0,
     };
   },
@@ -123,16 +144,13 @@ export const realEngineClient: EngineClient = {
   // this unit's best guess at Kestra's execution API — they must be verified
   // against the deployed engine version before this real client is wired up
   // (plan §13 open item).
-  async getExecutionStatus(executionId: string): Promise<ExecutionStatus> {
-    if (!billRunEngineConfig.url || !billRunEngineConfig.auth) {
-      throw new EngineError(
-        "realEngineClient invoked without BILLRUN_ENGINE_URL/BILLRUN_ENGINE_AUTH configured.",
-      );
-    }
-
+  async getExecutionStatus(
+    connection: EngineConnection,
+    executionId: string,
+  ): Promise<ExecutionStatus> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    const url = `${billRunEngineConfig.url}/executions/${executionId}`;
+    const url = `${connection.baseUrl}/executions/${executionId}`;
 
     // Keep the abort timer live across the WHOLE exchange — the fetch, the
     // status check, and the body read — so a response that streams its headers
@@ -143,9 +161,7 @@ export const realEngineClient: EngineClient = {
       try {
         response = await fetch(url, {
           method: "GET",
-          headers: {
-            Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
-          },
+          headers: { Authorization: authHeader(connection.basicAuth) },
           signal: controller.signal,
         });
       } catch (err) {
@@ -185,25 +201,20 @@ export const realEngineClient: EngineClient = {
   },
 
   // bm12-spec §Design/§Implementation §2. Same "verify against the deployed
-  // engine" flag as `getExecutionStatus` above.
-  async killExecution(executionId: string): Promise<void> {
-    if (!billRunEngineConfig.url || !billRunEngineConfig.auth) {
-      throw new EngineError(
-        "realEngineClient invoked without BILLRUN_ENGINE_URL/BILLRUN_ENGINE_AUTH configured.",
-      );
-    }
-
+  // engine version" flag as `getExecutionStatus` above.
+  async killExecution(
+    connection: EngineConnection,
+    executionId: string,
+  ): Promise<void> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    const url = `${billRunEngineConfig.url}/executions/${executionId}/kill`;
+    const url = `${connection.baseUrl}/executions/${executionId}/kill`;
 
     let response: Response;
     try {
       response = await fetch(url, {
         method: "DELETE",
-        headers: {
-          Authorization: `Basic ${Buffer.from(billRunEngineConfig.auth).toString("base64")}`,
-        },
+        headers: { Authorization: authHeader(connection.basicAuth) },
         signal: controller.signal,
       });
     } catch (err) {
@@ -223,7 +234,10 @@ export const realEngineClient: EngineClient = {
 };
 
 export const stubEngineClient: EngineClient = {
-  async startExecution(payload: TriggerPayload): Promise<ExecutionRef> {
+  async startExecution(
+    _connection: EngineConnection,
+    payload: TriggerPayload,
+  ): Promise<ExecutionRef> {
     logger.info("bill-run engine: stub startExecution", {
       billRunId: payload.bill_run_id,
       banCount: payload.ban_ids.length,
@@ -231,7 +245,7 @@ export const stubEngineClient: EngineClient = {
     });
     return {
       executionId: `stub-exec-${payload.bill_run_id}`,
-      definitionId: `${ENGINE_NAMESPACE}.${ENGINE_DEFINITION}`,
+      definitionId: `${_connection.namespace}.${ENGINE_FLOW_ID}`,
       definitionRevision: 0,
     };
   },
@@ -240,16 +254,18 @@ export const stubEngineClient: EngineClient = {
   // RUNNING status with no HTTP call — "Check status" against a stub-engine
   // run always sees the execution as alive; a stalled stub run can only be
   // resolved via Cancel.
-  async getExecutionStatus(executionId: string): Promise<ExecutionStatus> {
+  async getExecutionStatus(
+    _connection: EngineConnection,
+    executionId: string,
+  ): Promise<ExecutionStatus> {
     logger.info("bill-run engine: stub getExecutionStatus", { executionId });
     return { state: "RUNNING" };
   },
 
-  async killExecution(executionId: string): Promise<void> {
+  async killExecution(
+    _connection: EngineConnection,
+    executionId: string,
+  ): Promise<void> {
     logger.info("bill-run engine: stub killExecution", { executionId });
   },
 };
-
-export function getEngineClient(): EngineClient {
-  return isBillRunEngineConfigured ? realEngineClient : stubEngineClient;
-}
