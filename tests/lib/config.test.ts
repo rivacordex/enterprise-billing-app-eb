@@ -77,7 +77,7 @@ describe("config", () => {
       PASSWORD_REQUIRE_SPECIAL: true,
       PASSWORD_SPECIAL_CHARS: `!@#$%^&*()_+-=[]{}|;':\\",./<>?`,
       APP_TIMEZONE: "UTC",
-      STUB_DATA_MODE: false,
+      BILLRUN_PLACEHOLDER_MODE: false,
       BILLRUN_TAX_RATE: 8,
       BILLRUN_TAX_VERSION: "GST-2026",
       BILLRUN_TAX_CATEGORY: "GST",

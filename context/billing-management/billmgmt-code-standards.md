@@ -68,7 +68,7 @@
    - `StageStatusBadge` — `PENDING/RUNNING/DONE/FAILED/SKIPPED`.
    - `ErrorClassBadge` — `HARD` (destructive) / `SOFT` (warning) / `INFRA` (neutral).
    - `BillCategoryBadge` — `trial` (muted/outline) / `normal` / `last`.
-2. **`StubDataBanner` is unmissable and always-on while the stub flag is set** (Inv. #15): a persistent full-width banner on every bill-run tab plus a `StubBadge` list-row chip, using warning tokens. Copy: "Stub data — figures are fixtures, not production charges." Never conditionally hidden by a per-run field (there is no `udr_mode` column); it reads the environment/config stub flag threaded server-side as a prop.
+2. **`PlaceholderBanner` is unmissable and always-on while `BILLRUN_PLACEHOLDER_MODE` is set** (Inv. #15, renamed bm15-spec §Implementation §4): a persistent full-width banner on every bill-run tab plus a `PlaceholderBadge` list-row chip, using warning tokens. Copy: "Placeholder pipeline — the workflow engine runs the bill run, but the billing steps are placeholders and `udr_rated` is seeded `_SAMPLE_` test data. Approval, posting, invoice numbers, rendered PDFs and distribution are wired end-to-end and REAL." Never conditionally hidden by a per-run field (there is no `udr_mode` column); it reads the environment/config placeholder-mode flag threaded server-side as a prop.
 3. **The `StallBanner` is a derived-state banner, not a status pill.** Shown when a run is `PROCESSING` past its stall threshold; offers **Check status** (primary) and **Cancel run** (secondary, danger, inside a spelled-out confirm dialog). Never rendered from a stored `STALLED` value.
 4. **Money renders through one `lib/` formatter** — `formatCurrency(amount, currency, locale)` — for every bill total, tax line, and run total. No inline `toFixed`, no hardcoded currency symbol, no client-side sum (totals arrive pre-computed from the service).
 5. **Dates render through the platform `formatDatetime(date, locale, timezone, …)`** with timezone threaded as a prop (general §2.13); `<time dateTime>` stays ISO-8601 UTC. GL/period/invoice **dates** (`gl_event_at`, `period_*`, `payment_due_date`) render as calendar dates in the business zone.
@@ -154,7 +154,7 @@ components/billing/
   audit-table.tsx              # AuditTable
   posting-progress-view.tsx    # PostingProgressView
   approve-and-post-panel.tsx   # ApproveAndPostPanel + PreApprovalChecks
-  stub-data-banner.tsx         # StubDataBanner + StubBadge
+  placeholder-banner.tsx       # PlaceholderBanner + PlaceholderBadge (renamed bm15)
   stall-banner.tsx             # StallBanner
   trigger-run-dialog.tsx  rerun-dialog.tsx  cancel-run-dialog.tsx
 services/billing/

@@ -37,7 +37,24 @@ app_migrate` so future tables `app_migrate` creates auto-grant to
    the `ELSE ALTER ROLE` branch converges the connection limit on a re-run.
    **This step makes two platform-wide changes** — read the note below before
    running it in a shared environment.
-3a. `npm run db:bootstrap-kestra-roles` — runs
+3a. `npm run db:bootstrap-billrun-roles` — runs
+   `db/bootstrap/billrun-db-roles.ts`, which reads the same
+   `BOOTSTRAP_DATABASE_URL` and executes `db/bootstrap/billrun-db-roles.sql`:
+   creates the `billrun_runtime` login role (CONNECTION LIMIT 20) — the DB
+   identity the workflow-management component's bill run processor/
+   distributor connect as — and the column-scoped grant surface that makes
+   the phase-2 "two writers on `billing`" boundary a database privilege
+   (bm14-spec; `billmgmt-architecture.md` §4, D14/D15). Run it **after**
+   step 3 — its Step 0 fails loudly (`ORDERING: ...`) unless step 3's
+   `REVOKE CONNECT ... FROM PUBLIC` has already run, since a `billrun_runtime`
+   created before that revoke would inherit `CONNECT` via `PUBLIC` and the
+   isolation intent would be silently false from the moment it exists.
+   Idempotent; also revokes `app_runtime`'s `customer_bill_tax_item` write
+   grant (phase 2 moves Taxation into the flow — the worker becomes its sole
+   writer). This step has NO dependency on step 3b below — the bm14-spec's
+   provisioning order is `roles → rating-roles → billrun-roles`, and `kestra`
+   is not part of that chain at all.
+3b. `npm run db:bootstrap-kestra-roles` — runs
    `db/bootstrap/kestra-db-roles.ts`, which reads the same
    `BOOTSTRAP_DATABASE_URL` and executes `db/bootstrap/kestra-db-roles.sql`:
    creates the **`kestra` database** and the `kestra_engine` login role
@@ -106,9 +123,30 @@ generate a third strong random password and run it directly against `psql`,
 ALTER ROLE rating_runtime WITH PASSWORD '<generated>';
 ```
 
+`billrun-db-roles.sql` likewise contains **no password**. After
+`db:bootstrap-billrun-roles`, set one for `billrun_runtime` the same way —
+generate a fourth strong random password and run it directly against `psql`,
+**never** in a source-controlled file. This is the phase-2 credential's third
+member (after the app bearer token and the outbound engine Basic-Auth — see
+`billmgmt-architecture.md` §4 / plan §9). The value is intended for Key Vault,
+consumed as `BILLRUN_RUNTIME_DATABASE_URL` (bm14-spec) — **not yet wired to a
+deployed consumer**: no Container App/Job currently reads this secret (the
+workflow-management bill run processor/distributor bicep hasn't shipped). Add
+its Key Vault secret name and consumer mapping to §2 below when it does.
+
+Generate the password from a **URI-safe alphabet only** (letters, digits, and
+`-._~`) or percent-encode it before building the connection string — an
+unescaped `@`, `:`, `/`, `?`, `#`, or `%` in the password corrupts the
+`postgresql://user:password@host/db` URL and can silently authenticate as, or
+connect to, the wrong thing:
+
+```sql
+ALTER ROLE billrun_runtime WITH PASSWORD '<generated>';
+```
+
 `kestra-db-roles.sql` likewise contains **no password**. After
 `db:bootstrap-kestra-roles`, set one for `kestra_engine` the same way —
-generate a fourth strong random password and run it directly against `psql`,
+generate a fifth strong random password and run it directly against `psql`,
 **never** in a source-controlled file. The value goes to Key Vault as the
 `kestra_engine` D5 credential (rm04):
 
@@ -118,13 +156,27 @@ ALTER ROLE kestra_engine WITH PASSWORD '<generated>';
 
 ## 2. Store the connection strings in Key Vault
 
-Build the two `postgresql://` connection strings from those passwords and
-store them as:
+Build the two `postgresql://` connection strings from those passwords —
+requiring authenticated TLS (`sslmode=verify-full`, or the client-side
+equivalent) so a client can never silently fall back to an unencrypted
+connection — and store them as:
 
 - `pg-connection-string-app` → consumed as `DATABASE_URL` by the running app
   (`app_runtime` role).
 - `pg-connection-string-migrate` → consumed as `DATABASE_URL` by the
   migration Container Apps Job only (`app_migrate` role).
+
+`rating_runtime` and `kestra_engine` are deployed differently: their
+connection details are split into separate `RATING_DB_HOST`/`PORT`/`NAME`/
+`USER` env vars plus a bare-password Key Vault secret (`rating-runtime-db-password`,
+`kestra-engine-db-password` — see `rating-engine-container-app.bicep`), not a
+full `postgresql://` URL.
+
+`billrun_runtime`'s `BILLRUN_RUNTIME_DATABASE_URL` has **no Key Vault secret
+name or consumer mapping defined yet** — no Container App/Job currently reads
+it. Define both here once the workflow-management bill run processor/
+distributor is deployed; until then, treat the `.env.example` entry as a
+local-dev-only placeholder.
 
 ## Verification SQL
 
@@ -182,3 +234,47 @@ SELECT has_database_privilege('kestra_engine', current_database(), 'CONNECT'); -
 
 Not yet verified against a live cluster in this session — see
 `ratemgmt-progress-tracker.md`.
+
+## Verification SQL — the `billrun_runtime` two-writer boundary (bm14, D14/D15)
+
+Run after `db:bootstrap-billrun-roles` and the `billrun_runtime` password step
+above, connecting to the **billing** database:
+
+```sql
+-- billrun_runtime can write the customer_bill trial columns, but not the
+-- three posting stamps (column-scoped, Step 5).
+SELECT has_column_privilege('billrun_runtime', 'billing.customer_bill', 'state', 'UPDATE');               -- true
+SELECT has_column_privilege('billrun_runtime', 'billing.customer_bill', 'ref_inv_document_id', 'UPDATE'); -- false
+SELECT has_column_privilege('billrun_runtime', 'billing.customer_bill', 'posted_attempt', 'INSERT');      -- false
+
+-- billrun_runtime has no table-level DELETE on customer_bill (T10) — deletes
+-- go through the scoped SECURITY DEFINER function only.
+SELECT has_table_privilege('billrun_runtime', 'billing.customer_bill', 'DELETE'); -- false
+SELECT has_function_privilege('billrun_runtime', 'billing.billrun_delete_trial_bill(text, text)', 'EXECUTE'); -- true
+
+-- app_runtime lost its customer_bill_tax_item write grant (Step 6a) — SELECT
+-- only, billrun_runtime is now the sole writer.
+SELECT has_table_privilege('app_runtime', 'billing.customer_bill_tax_item', 'INSERT'); -- false
+SELECT has_table_privilege('app_runtime', 'billing.customer_bill_tax_item', 'SELECT'); -- true
+
+-- billrun_runtime holds no write on run-state or billing.document (Step 9).
+SELECT has_table_privilege('billrun_runtime', 'billing.bill_run', 'UPDATE');      -- false
+SELECT has_table_privilege('billrun_runtime', 'billing.document', 'INSERT');      -- false
+
+-- billrun_runtime cannot reach kestra, and holds billing CONNECT only via its
+-- explicit grant — has_database_privilege alone can't distinguish "explicit
+-- grant" from "inherited through PUBLIC or role membership", so also check
+-- the ACL directly and confirm no inherited membership exists.
+SELECT has_database_privilege('billrun_runtime', 'kestra', 'CONNECT');                        -- false
+SELECT has_database_privilege('billrun_runtime', current_database(), 'CONNECT');              -- true
+SELECT datacl FROM pg_database WHERE datname = current_database();
+  -- expect an aclitem for billrun_runtime containing 'c', e.g. billrun_runtime=Cc/<owner>,
+  -- and no PUBLIC entry with 'c' (PUBLIC's default was revoked by rating-db-roles.sql)
+SELECT count(*) FROM pg_auth_members m
+  JOIN pg_roles r ON r.oid = m.member
+  WHERE r.rolname = 'billrun_runtime';                                                        -- 0 (no role membership to inherit through)
+SELECT rolconnlimit FROM pg_roles WHERE rolname = 'billrun_runtime';                           -- 20
+```
+
+Not yet verified against a live cluster in this session — see
+`billmgmt-progress-tracker.md`.

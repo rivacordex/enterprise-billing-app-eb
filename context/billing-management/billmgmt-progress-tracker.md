@@ -9,7 +9,19 @@ enumerations were trimmed to key facts + decisions. Full history:
 ## Current Phase
 
 - Phase 1 — Bill Run module build. **Complete.** bm01–bm13 (the entirety of
-  `bm00-build-plan.md`) are delivered. No further units remain.
+  `bm00-build-plan.md`) are delivered.
+- Phase 2 · Phase F — **bm14 (`billrun_runtime` role & the two-writer grant
+  boundary) — delivered.** See
+  `context/billing-management/specs/bm14-billrun-runtime-role.md`. Its
+  guardrail test is DB-gated and unexecuted in this environment — see
+  Outstanding, below.
+- Phase 2 · Phase F — **bm15 (`_SAMPLE_*` scenario seed & placeholder-mode
+  rename) — delivered.** See
+  `context/billing-management/specs/bm15-sample-seed-placeholder-mode.md`. The
+  seed itself is written and statically verified (imports cleanly, guard/purge
+  logic reviewed) but **never executed against a real Postgres** — same
+  environmental gap as every other DB-gated unit in this module (see
+  Outstanding, below).
 
 ## Outstanding (environmental only — not a build unit)
 
@@ -18,13 +30,18 @@ enumerations were trimmed to key facts + decisions. Full history:
   generated/reviewed but **not applied**.
 - No local Postgres has been reachable in this environment for the entire
   build — every DB-gated integration test (materialize/trigger/partman/stage-
-  ingest/E2E-happy-path/etc.) was written and statically verified (imports
-  cleanly, skips loudly under `DATABASE_URL` unset) but **never executed**.
+  ingest/E2E-happy-path/billrun-db-roles/etc.) was written and statically
+  verified (imports cleanly, skips loudly under `DATABASE_URL` unset) but
+  **never executed**.
 - Before calling the module genuinely ship-ready end-to-end: run `db:migrate`,
   then `db:setup-partman-billing`, then `npm run test` (both DB-free and
   integration configs) against a real Postgres.
 - Uncharged tab's indicative value stays `"—"` until a rating source exists
   (deferred with the rating engine, see bm05/bm13 below).
+- `npm run db:seed-sample` (bm15) has never been run end-to-end against a real
+  DB either — verify the full checklist (idempotent re-run, prod-guard trip,
+  the seeded `udr_rated` CHECK/UNIQUE pass, a real bill run against the
+  seeded scenario) once Postgres is reachable.
 
 ## Delivered Units (bm01–bm13)
 
@@ -180,6 +197,112 @@ enumerations were trimmed to key facts + decisions. Full history:
   - SAST (Semgrep) + OWASP ZAP DAST CI gates confirmed already covering the
     M2M endpoints; no CI file changed.
 
+- **bm14 — `billrun_runtime` role & the two-writer grant boundary (Phase 2 ·
+  Phase F).** Standalone bootstrap SQL (`db/bootstrap/billrun-db-roles.sql` +
+  `.ts` runner, `npm run db:bootstrap-billrun-roles`), **not** a Drizzle
+  migration (creating a role needs `CREATEROLE`, which `app_migrate` lacks) —
+  exact analogue of `rating-db-roles.sql`. Creates the least-privilege
+  `billrun_runtime` login (CONNECTION LIMIT 20) the workflow-management
+  component's bill-run processor/distributor connect as, making the phase-2
+  "two writers on `billing`" boundary a database privilege:
+  - `customer_bill` — column-scoped `SELECT`/`INSERT`/`UPDATE` on the trial
+    columns only, excluding the three posting stamps
+    (`ref_inv_document_id`/`posted_attempt`/`charge_checksum`) from **both**
+    `INSERT` and `UPDATE` — INSERT-exclusion closes a hole the
+    finalization-latch trigger (bm13/`0033`) doesn't cover (it blocks
+    UPDATE/DELETE of a finalized row, not an INSERT that pre-sets the latch).
+    No table-level `DELETE`; deletes go through the scoped `SECURITY DEFINER`
+    `billing.billrun_delete_trial_bill(run, ban)` (one account's non-finalized
+    bill in one run — a table grant can't be predicate-scoped).
+  - `customer_bill_tax_item` — fully worker-owned (`SELECT`/`INSERT`/
+    `UPDATE`/`DELETE`); `app_runtime`'s write grant is revoked (kept
+    `SELECT`) since phase 2 moves Taxation into the flow.
+  - `rating.udr_rated` — `SELECT` + `UPDATE` on the same six claim columns
+    `app_runtime` already holds (rating rm03), plus a **role-aware transition
+    trigger** (`rating.billrun_status_guard`, fires only when
+    `session_user = 'billrun_runtime'`) constraining it to the
+    `RATED → BILL_DRAFT` claim — the six-column grant alone can't stop it
+    writing `BILL_APPROVED`/`REJECTED`, since a column grant can't bind a
+    value to a role.
+  - `SELECT`-only on `bill_run`/`bill_run_account`/`billing_account`/
+    `bill_cycle`; explicit `REVOKE` of all writes on run-state tables +
+    `billing.document` + the four pgledger `SECURITY DEFINER` functions; no
+    grant of any kind on the `kestra` database.
+  - **Ordering is load-bearing (D15)**: a `DO` block (Step 0) fails loudly
+    with `ORDERING:` unless rating's `REVOKE CONNECT ... FROM PUBLIC` has
+    already run — provisioning order is `db:bootstrap-roles →
+    db:bootstrap-rating-roles → db:bootstrap-billrun-roles`
+    (`db:bootstrap-kestra-roles` is a parallel, unrelated branch).
+  - New DB-gated guardrail suite,
+    `tests/db/billrun-db-roles.integration.test.ts` (mirrors
+    `tests/rating/grants.integration.test.ts`), asserting every **can**/
+    **refused** boundary per column/table/function/database, the transition
+    trigger, the Step 0 ordering guard, and re-run idempotency/convergence —
+    written and statically verified (imports cleanly, skips loudly under
+    `DATABASE_URL` unset) but **never executed** (see Outstanding).
+    `.env.example` gains `BILLRUN_RUNTIME_DATABASE_URL` (dummy value);
+    `infra/docs/db-role-verification.md` gains the password/provisioning-order
+    steps and verification SQL.
+
+- **bm15 — `_SAMPLE_*` scenario seed & placeholder-mode rename (Phase 2 ·
+  Phase F).** Two independent halves in one unit:
+  - **`npm run db:seed-sample`** (`db/seeds/sample/seed-billrun-sample.ts` +
+    `udr-rated-sample.ts` + `get-or-create-appuser.ts`) — opt-in, prod-guarded
+    (`DATABASE_URL` host allow-list + `NODE_ENV`, override via
+    `ALLOW_SAMPLE_SEED=true`), **never added to `db:setup`** (a new
+    `tests/guardrails/billing-sample-seed-boundary.test.ts` grep-gate fails
+    the build if it ever is). Builds one `_SAMPLE_` customer → 3 billing
+    accounts (2 full-period + 1 mid-period-start partial) → active
+    subscriptions against a dedicated `_SAMPLE_` product offering (the
+    catalog's own `db:seed-product` offerings are all `billingOnly: false`,
+    which fails `createOrder`'s ORDERABLE precondition) → unclaimed
+    `rating.udr_rated` charges (`status='RATED'`, plus a `BILL_NOTUSED` pair
+    on one account) for the two full-period accounts, via the D28 stand-in
+    factory `buildSampleUdrRatedRow` (computes `partition_period` by calling
+    rating's own `rating.period_of()` SQL helper, never re-derived in JS, so
+    the table's CHECK can never drift from it). Idempotent: keyed on the
+    customer's registration number (`_SAMPLE_-BILLRUN-0001`), a re-run purges
+    the prior graph (FK-safe order) and rebuilds.
+    - **New architectural carve-out**: this is the first seed to call the
+      app's own services (`createCustomer` → `onboardCustomerAccounts` →
+      `transitionCustomerStatus` → `createOrder`, which self-invokes
+      `instantiateOrder`) rather than hand-rolling repository inserts, so the
+      fixture can't drift from what the app actually produces. That crosses
+      `eslint.config.mjs`'s deny-by-default `db → services` boundary; resolved
+      with a narrowly-scoped `db-seed-sample` element (`db/seeds/sample/**`
+      only) carved out ahead of the general `db` rule, mirroring the file's
+      existing `auth-roles`/`root-page`-style carve-outs.
+    - **Resolved ambiguity**: `onboardCustomerAccounts` hardcodes its FA/BAN
+      names (`"Financial Account"`/`"Master Billing Account"`) and can't be
+      parametrized, so BAN #1's names are fixed up with a plain `UPDATE`
+      immediately after the real onboarding call (not re-deriving the
+      pgledger wiring it already did correctly). BAN #2/#3 have no owning
+      service at all (no "add another billing account to an existing FA"
+      service exists yet) — self-provisioned the same way
+      `db/seeds/ordering-inventory.ts` does for its own story, reusing FA #1's
+      `unapplied_cash`/`deposits` bindings and adding their own `receivables`
+      binding.
+    - **Resolved ambiguity**: the spec's precedent doc
+      `_assessment-seed-files-strategy.md` does not exist anywhere in this
+      repository (confirmed via repo-wide search) — its §3/§5 "Sample" seed
+      class addition was skipped rather than fabricated; only
+      `billmgmt-progress-tracker.md` (this entry) documents the decision.
+  - **`STUB_DATA_MODE` → `BILLRUN_PLACEHOLDER_MODE` rename**, mechanical
+    through `lib/config.ts` (accessor `stubDataMode` →
+    `isBillrunPlaceholderMode`), `.env.example`, every consumer (the three
+    bill-run pages, `bill-run-list.tsx`'s/`run-action-card.tsx`'s
+    `stubDataMode` prop → `placeholderMode`), and their tests.
+    `components/billing/stub-data-banner.tsx` renamed to
+    `placeholder-banner.tsx` (`StubDataBanner`/`StubBadge` →
+    `PlaceholderBanner`/`PlaceholderBadge`), copy replaced with the Phase-2
+    review fold **D-T4** two-part message (names what's REAL — approval,
+    posting, invoice numbers, rendered PDFs, distribution — not just what
+    isn't). `billmgmt-ui-context.md` §6 and the two component-name references
+    in `billmgmt-code-standards.md`/`billmgmt-ai-workflow-rules.md` updated to
+    match. Grep-clean: no `STUB_DATA_MODE`/`StubDataBanner`/`stubDataMode`
+    reference remains outside historical spec docs (bm01–bm13, left as
+    written history) and this tracker.
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -302,7 +425,8 @@ file history).
   files (`tests/actions/{create-order,resume,suspend,terminate}-
   subscription*`) fail on a clean baseline — dates now >3 days in the past
   vs. today. Confirmed via `git stash`/`git status` at every unit that this
-  module never touches those files.
+  module never touches those files — reconfirmed at bm15 (same 14 failures,
+  byte-identical, on both the pre-bm15 baseline and the bm15 working tree).
 - `tests/services/billing/trigger-run.service.test.ts` needs `DATABASE_URL`/
   `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` set in the shell (its import graph
   eagerly validates the full env schema on load) — fails with a `ZodError`
@@ -328,6 +452,10 @@ file history).
 
 ## Next Up
 
-- **None — the build plan is complete (bm01–bm13).** The sole remaining
-  action item is environmental (see Outstanding, above): apply migration
-  `0033` and run the DB-gated suites against a real Postgres.
+- **bm01–bm15 are all delivered.** The sole remaining action item is
+  environmental (see Outstanding, above): apply migration `0033`, run
+  `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
+  `db:bootstrap-rating-roles`), run the DB-gated suites against a real
+  Postgres, and run `db:seed-sample` there to verify bm15's checklist.
+- The rest of Phase 2 · Phase F (units after bm15) is not yet specced in
+  this session.

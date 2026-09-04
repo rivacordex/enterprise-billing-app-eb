@@ -6,19 +6,19 @@
 // §Visual).
 
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
-import { StubBadge } from "@/components/billing/stub-data-banner";
+import { PlaceholderBadge } from "@/components/billing/placeholder-banner";
 import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
 import { formatCalendarDate } from "@/lib/formatters";
 import type { RunListRow } from "@/types/billing";
 
 export interface RunActionCardProps {
   run: RunListRow;
-  stubDataMode: boolean;
+  placeholderMode: boolean;
 }
 
 export function RunActionCard({
   run,
-  stubDataMode,
+  placeholderMode,
 }: RunActionCardProps): React.JSX.Element {
   return (
     <div className="rounded-md border border-[color:var(--color-primary-200)] bg-card p-4 shadow-sm">
@@ -29,7 +29,7 @@ export function RunActionCard({
               {run.billRunId}
             </span>
             <RunStatusBadge status={run.status} />
-            {stubDataMode && <StubBadge />}
+            {placeholderMode && <PlaceholderBadge />}
           </div>
           <div className="text-body-sm text-muted-foreground">
             Period{" "}
