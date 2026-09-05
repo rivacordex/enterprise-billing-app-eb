@@ -39,6 +39,7 @@ export async function cancelRun(
         await engineRegistry.killExecution(
           "billrun",
           run.processingExecutionId,
+          run.processingEngineRef,
         );
       } catch (err) {
         logger.warn(

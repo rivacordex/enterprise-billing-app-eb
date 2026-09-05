@@ -31,7 +31,18 @@ describe("billing-side rating.* write boundary (bm16-spec §Implementation §5)"
       // Any UPDATE/INSERT/DELETE targeting the rating schema, or a raw
       // reference to its tables, would be a write surface this repository
       // must not carry (Collection/claim moved to the processor, D5/T6).
-      if (/rating\.udr_rated|"rating"\."udr_rated"|FROM\s+rating\./i.test(source)) {
+      // An ORM-based write is an equally sanctioned surface — a file that
+      // imports a rating table from db/schema/rating and then calls
+      // .insert(/.update(/.delete( never emits the raw-SQL patterns above,
+      // so it must be caught separately.
+      const hasRawWrite =
+        /rating\.udr_rated|"rating"\."udr_rated"|FROM\s+rating\./i.test(
+          source,
+        );
+      const hasOrmWrite =
+        /from\s+["']@\/db\/schema\/rating/.test(source) &&
+        /\.(insert|update|delete)\(/.test(source);
+      if (hasRawWrite || hasOrmWrite) {
         offenders.push(file);
       }
     }

@@ -49,6 +49,7 @@ function run(overrides: Record<string, unknown> = {}) {
     billRunId: "BRN00000001",
     status: "PROCESSING",
     processingExecutionId: "stub-exec-BRN00000001",
+    processingEngineRef: "billrun@stub/billrun",
     ...overrides,
   } as never;
 }
@@ -70,7 +71,11 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
       ok: true,
       value: { billRunId: "BRN00000001", accountsReset: 5 },
     });
-    expect(mockKillExecution).toHaveBeenCalledWith("billrun", "stub-exec-BRN00000001");
+    expect(mockKillExecution).toHaveBeenCalledWith(
+      "billrun",
+      "stub-exec-BRN00000001",
+      "billrun@stub/billrun",
+    );
     expect(mockResetForCancel).toHaveBeenCalledWith(txStub, "BRN00000001");
     expect(mockCancel).toHaveBeenCalledWith(txStub, "BRN00000001");
     expect(mockInsertAuditEvent).toHaveBeenCalledWith(
