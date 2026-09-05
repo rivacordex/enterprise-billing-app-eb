@@ -173,4 +173,38 @@ describe("engineRegistry.getExecutionStatus / killExecution (bm16-spec §1)", ()
     );
     expect(status).toEqual({ state: "SUCCESS" });
   });
+
+  // D25e — the run's persisted `processingEngineRef` is the identity of the
+  // engine the execution actually started against. A redeploy that repoints
+  // `billrun` at a different physical instance must never let reconcile/
+  // cancel silently query or kill an unrelated executionId on the new one.
+  it("throws when the current engine no longer matches the execution's persisted engineRef", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(
+      engineRegistry.getExecutionStatus(
+        "billrun",
+        "exec-123",
+        "billrun@old-engine.example.com/billrun",
+      ),
+    ).rejects.toThrow(/topology mismatch/i);
+    await expect(
+      engineRegistry.killExecution(
+        "billrun",
+        "exec-123",
+        "billrun@old-engine.example.com/billrun",
+      ),
+    ).rejects.toThrow(/topology mismatch/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("proceeds when the persisted engineRef matches the currently resolved engine", async () => {
+    const status = await engineRegistry.getExecutionStatus(
+      "billrun",
+      "stub-exec-1",
+      "billrun@stub/billrun",
+    );
+    expect(status).toEqual({ state: "RUNNING" });
+  });
 });

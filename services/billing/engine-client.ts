@@ -111,6 +111,12 @@ export const realEngineClient: EngineClient = {
         },
         body: JSON.stringify(payload),
         signal: controller.signal,
+        // Never auto-follow a redirect — the engine URL is required to be
+        // HTTPS (lib/config.ts), and a followed redirect could downgrade to
+        // plain HTTP and resend the Basic-Auth header in the clear. A 3xx
+        // response surfaces here as a non-ok "opaqueredirect" and is rejected
+        // by the `!response.ok` check below like any other failure.
+        redirect: "manual",
       });
     } catch (err) {
       throw new EngineError("Bill-run engine request failed.", { cause: err });
@@ -163,6 +169,7 @@ export const realEngineClient: EngineClient = {
           method: "GET",
           headers: { Authorization: authHeader(connection.basicAuth) },
           signal: controller.signal,
+          redirect: "manual",
         });
       } catch (err) {
         throw new EngineError("Bill-run engine status request failed.", {
@@ -216,6 +223,7 @@ export const realEngineClient: EngineClient = {
         method: "DELETE",
         headers: { Authorization: authHeader(connection.basicAuth) },
         signal: controller.signal,
+        redirect: "manual",
       });
     } catch (err) {
       throw new EngineError("Bill-run engine kill request failed.", {
