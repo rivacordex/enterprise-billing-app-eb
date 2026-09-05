@@ -92,7 +92,12 @@ const envSchema = z.object({
   // NAMESPACE defaults to the logical engine name — the template flow
   // (`flows/billrun/bill_run_processing.template.yml`) is deployed to the
   // `billrun` Kestra namespace.
-  BILLRUN_ENGINE_URL: z.url().optional(),
+  BILLRUN_ENGINE_URL: z
+    .url()
+    .refine((v) => v.startsWith("https://"), {
+      message: "BILLRUN_ENGINE_URL must be an HTTPS URL.",
+    })
+    .optional(),
   BILLRUN_ENGINE_AUTH: z.string().optional(),
   BILLRUN_ENGINE_NAMESPACE: z.string().min(1).default("billrun"),
   // bm04-spec §Implementation §4. The inbound bearer service token the
@@ -136,6 +141,22 @@ const envSchema = z.object({
   // heartbeat (`bill_run.last_progress_at`) DISPLAYS as stalled — derived on
   // read (`services/billing/stall.ts`), never persisted.
   BILLRUN_STALL_THRESHOLD_MINUTES: z.coerce.number().int().min(1).default(30),
+}).superRefine((data, ctx) => {
+  // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
+  // the other absent) is never a valid state: `engine-registry.ts`'s
+  // `configured` check (`!!url && !!auth`) would silently fall back to the
+  // stub client, so a misconfigured deployment looks like a working
+  // placeholder instead of failing loud at boot.
+  const hasUrl = data.BILLRUN_ENGINE_URL !== undefined;
+  const hasAuth = data.BILLRUN_ENGINE_AUTH !== undefined;
+  if (hasUrl !== hasAuth) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "BILLRUN_ENGINE_URL and BILLRUN_ENGINE_AUTH must either both be set or both be absent.",
+      path: [hasUrl ? "BILLRUN_ENGINE_AUTH" : "BILLRUN_ENGINE_URL"],
+    });
+  }
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;

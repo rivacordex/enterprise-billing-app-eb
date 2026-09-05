@@ -363,13 +363,22 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
     expect(billRunEngineConfig.namespace).toBe("billrun-uat");
   });
 
-  it("is unconfigured when only one of the two vars is present", async () => {
-    const { isBillRunEngineConfigured } = await loadConfigWithEnv({
-      ...VALID_REQUIRED_ENV,
-      BILLRUN_ENGINE_URL: "https://engine.example.com",
-    });
+  it("fails loud when only BILLRUN_ENGINE_URL is present (no silent stub fallback)", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_URL: "https://engine.example.com",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
 
-    expect(isBillRunEngineConfigured).toBe(false);
+  it("fails loud when only BILLRUN_ENGINE_AUTH is present (no silent stub fallback)", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_AUTH: "user:pass",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
 
   it("is configured when both engine vars are present", async () => {
@@ -390,6 +399,17 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BILLRUN_ENGINE_URL: "not-a-url",
+        BILLRUN_ENGINE_AUTH: "user:pass",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("fails loud when BILLRUN_ENGINE_URL is not HTTPS", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_URL: "http://engine.example.com",
+        BILLRUN_ENGINE_AUTH: "user:pass",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });

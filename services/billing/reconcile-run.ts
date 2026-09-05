@@ -59,6 +59,7 @@ export async function reconcileRun(
       execStatus = await engineRegistry.getExecutionStatus(
         "billrun",
         run.processingExecutionId,
+        run.processingEngineRef,
       );
     } catch {
       return { ok: false, code: "ENGINE_UNREACHABLE" } as const;

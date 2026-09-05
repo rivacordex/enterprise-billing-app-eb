@@ -1,5 +1,6 @@
 import { billRunEngineConfig } from "@/lib/config";
 import {
+  EngineError,
   realEngineClient,
   stubEngineClient,
 } from "@/services/billing/engine-client";
@@ -110,19 +111,44 @@ export const engineRegistry = {
     return { ...ref, engineRef: resolved.engineRef };
   },
 
+  // `expectedEngineRef` is the run's persisted `processingEngineRef` (D25e) —
+  // the identity of the engine the execution actually started against. A
+  // topology change (redeploy pointing `billrun` at a different physical
+  // instance) would otherwise make `resolveEngine` silently return today's
+  // connection and query/kill an unrelated executionId there. Passing it
+  // fails loud (ENGINE_UNREACHABLE / logged-and-skipped, per caller) instead
+  // of misattributing status or killing the wrong engine's execution.
   async getExecutionStatus(
     name: EngineName,
     executionId: string,
+    expectedEngineRef?: string | null,
   ): Promise<ExecutionStatus> {
     const resolved = resolveEngine(name);
+    assertEngineRefMatch(resolved, expectedEngineRef);
     return clientFor(resolved).getExecutionStatus(
       resolved.connection,
       executionId,
     );
   },
 
-  async killExecution(name: EngineName, executionId: string): Promise<void> {
+  async killExecution(
+    name: EngineName,
+    executionId: string,
+    expectedEngineRef?: string | null,
+  ): Promise<void> {
     const resolved = resolveEngine(name);
+    assertEngineRefMatch(resolved, expectedEngineRef);
     await clientFor(resolved).killExecution(resolved.connection, executionId);
   },
 };
+
+function assertEngineRefMatch(
+  resolved: ResolvedEngine,
+  expectedEngineRef?: string | null,
+): void {
+  if (expectedEngineRef && expectedEngineRef !== resolved.engineRef) {
+    throw new EngineError(
+      `Bill-run engine topology mismatch: execution was started against "${expectedEngineRef}" but "${resolved.name}" now resolves to "${resolved.engineRef}".`,
+    );
+  }
+}
