@@ -26,14 +26,14 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
-vi.mock("@/services/billing/engine-client", () => ({
-  getEngineClient: vi.fn(),
+vi.mock("@/services/billing/engine-registry", () => ({
+  engineRegistry: { getExecutionStatus: vi.fn() },
 }));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import { reconcileRun } from "@/services/billing/reconcile-run";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
@@ -46,26 +46,19 @@ const mockListStatusesForRun = vi.mocked(
   billRunAccountRepository.listStatusesForRun,
 );
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
-const mockGetEngineClient = vi.mocked(getEngineClient);
-
-const getExecutionStatus = vi.fn();
+const mockGetExecutionStatus = vi.mocked(engineRegistry.getExecutionStatus);
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
     billRunId: "BRN00000001",
     status: "PROCESSING",
-    workflowExecutionId: "stub-exec-BRN00000001",
+    processingExecutionId: "stub-exec-BRN00000001",
     ...overrides,
   } as never;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetEngineClient.mockReturnValue({
-    startExecution: vi.fn(),
-    getExecutionStatus,
-    killExecution: vi.fn(),
-  } as never);
 });
 
 describe("reconcileRun (bm12-spec §Design/§3)", () => {
@@ -75,21 +68,21 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
     const result = await reconcileRun("BRN00000099", "user-1");
 
     expect(result).toEqual({ ok: false, code: "NOT_FOUND" });
-    expect(getExecutionStatus).not.toHaveBeenCalled();
+    expect(mockGetExecutionStatus).not.toHaveBeenCalled();
   });
 
   it("returns NO_EXECUTION when the run has no recorded execution ref", async () => {
-    mockFindByIdForUpdate.mockResolvedValue(run({ workflowExecutionId: null }));
+    mockFindByIdForUpdate.mockResolvedValue(run({ processingExecutionId: null }));
 
     const result = await reconcileRun("BRN00000001", "user-1");
 
     expect(result).toEqual({ ok: false, code: "NO_EXECUTION" });
-    expect(getExecutionStatus).not.toHaveBeenCalled();
+    expect(mockGetExecutionStatus).not.toHaveBeenCalled();
   });
 
   it("returns ENGINE_UNREACHABLE when the engine call throws", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    getExecutionStatus.mockRejectedValue(new Error("engine down"));
+    mockGetExecutionStatus.mockRejectedValue(new Error("engine down"));
 
     const result = await reconcileRun("BRN00000001", "user-1");
 
@@ -99,7 +92,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
 
   it("RUNNING: bumps the heartbeat only, run stays PROCESSING", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    getExecutionStatus.mockResolvedValue({ state: "RUNNING" });
+    mockGetExecutionStatus.mockResolvedValue({ state: "RUNNING" });
 
     const result = await reconcileRun("BRN00000001", "user-1");
 
@@ -123,7 +116,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
 
   it("FAILED: pushes the run to PROCESSING_FAILED", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    getExecutionStatus.mockResolvedValue({ state: "FAILED" });
+    mockGetExecutionStatus.mockResolvedValue({ state: "FAILED" });
 
     const result = await reconcileRun("BRN00000001", "user-1");
 
@@ -145,7 +138,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
 
   it("KILLED: pushes the run to PROCESSING_FAILED", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    getExecutionStatus.mockResolvedValue({ state: "KILLED" });
+    mockGetExecutionStatus.mockResolvedValue({ state: "KILLED" });
 
     const result = await reconcileRun("BRN00000001", "user-1");
 
@@ -159,7 +152,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
 
   it("SUCCESS with every account terminal: re-derives and flips to PROCESSED", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    getExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
+    mockGetExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
     mockListStatusesForRun.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSED" },
       { billingAccountId: "BAN00000002", status: "PROCESSING_FAILED" },
@@ -186,7 +179,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
 
   it("SUCCESS with an account still in progress: surfaces a mismatch, no status write, and leaves the run flagged (no heartbeat bump)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    getExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
+    mockGetExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
     mockListStatusesForRun.mockResolvedValue([
       { billingAccountId: "BAN00000001", status: "PROCESSING" },
     ]);
@@ -213,7 +206,7 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
     mockFindByIdForUpdate.mockResolvedValue(
       run({ status: "PROCESSING_FAILED" }),
     );
-    getExecutionStatus.mockResolvedValue({ state: "FAILED" });
+    mockGetExecutionStatus.mockResolvedValue({ state: "FAILED" });
 
     const result = await reconcileRun("BRN00000001", "user-1");
 

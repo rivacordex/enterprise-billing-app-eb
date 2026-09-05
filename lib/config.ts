@@ -83,13 +83,23 @@ const envSchema = z.object({
   // production behavior is unchanged until a placeholder/UAT deployment
   // opts in.
   BILLRUN_PLACEHOLDER_MODE: booleanEnvSchema("false"),
-  // bm03-spec §Design/§4. The outbound workflow engine — treated as
-  // not-yet-deployed. Both optional; absence selects the stub engine client
-  // (`isBillRunEngineConfigured` below), so a bill run's trigger stays fully
-  // testable with no live Kestra. Production sources BILLRUN_ENGINE_AUTH from
-  // Key Vault via Managed Identity, matching every other credential here.
-  BILLRUN_ENGINE_URL: z.url().optional(),
+  // bm03-spec §Design/§4, extended bm16-spec §Implementation §1. The outbound
+  // workflow engine — treated as not-yet-deployed. URL/AUTH are both optional;
+  // absence selects the stub engine client (`isEngineConfigured`,
+  // `services/billing/engine-registry.ts`), so a bill run's trigger stays
+  // fully testable with no live Kestra. Production sources BILLRUN_ENGINE_AUTH
+  // from Key Vault via Managed Identity, matching every other credential here.
+  // NAMESPACE defaults to the logical engine name — the template flow
+  // (`flows/billrun/bill_run_processing.template.yml`) is deployed to the
+  // `billrun` Kestra namespace.
+  BILLRUN_ENGINE_URL: z
+    .url()
+    .refine((v) => v.startsWith("https://"), {
+      message: "BILLRUN_ENGINE_URL must be an HTTPS URL.",
+    })
+    .optional(),
   BILLRUN_ENGINE_AUTH: z.string().optional(),
+  BILLRUN_ENGINE_NAMESPACE: z.string().min(1).default("billrun"),
   // bm04-spec §Implementation §4. The inbound bearer service token the
   // workflow engine (or a signed test caller) presents to `app/api/billrun/*`
   // — Key Vault in prod, `.env` locally. Optional so most environments boot
@@ -131,6 +141,22 @@ const envSchema = z.object({
   // heartbeat (`bill_run.last_progress_at`) DISPLAYS as stalled — derived on
   // read (`services/billing/stall.ts`), never persisted.
   BILLRUN_STALL_THRESHOLD_MINUTES: z.coerce.number().int().min(1).default(30),
+}).superRefine((data, ctx) => {
+  // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
+  // the other absent) is never a valid state: `engine-registry.ts`'s
+  // `configured` check (`!!url && !!auth`) would silently fall back to the
+  // stub client, so a misconfigured deployment looks like a working
+  // placeholder instead of failing loud at boot.
+  const hasUrl = data.BILLRUN_ENGINE_URL !== undefined;
+  const hasAuth = data.BILLRUN_ENGINE_AUTH !== undefined;
+  if (hasUrl !== hasAuth) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "BILLRUN_ENGINE_URL and BILLRUN_ENGINE_AUTH must either both be set or both be absent.",
+      path: [hasUrl ? "BILLRUN_ENGINE_AUTH" : "BILLRUN_ENGINE_URL"],
+    });
+  }
 });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
@@ -156,6 +182,7 @@ function loadConfig(): Config {
     BILLRUN_PLACEHOLDER_MODE: process.env.BILLRUN_PLACEHOLDER_MODE,
     BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
     BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
+    BILLRUN_ENGINE_NAMESPACE: process.env.BILLRUN_ENGINE_NAMESPACE,
     BILLRUN_APP_TOKEN: process.env.BILLRUN_APP_TOKEN,
     BILLRUN_TAX_RATE: process.env.BILLRUN_TAX_RATE,
     BILLRUN_TAX_VERSION: process.env.BILLRUN_TAX_VERSION,
@@ -207,11 +234,16 @@ export const isSsoConfigured: boolean =
 export const isBillrunPlaceholderMode: boolean =
   config.BILLRUN_PLACEHOLDER_MODE;
 
-// bm03-spec §Design/§4. The mockable engine client (services/billing/engine-client.ts)
-// selects its implementation from this flag — never re-reads process.env itself.
+// bm03-spec §Design/§4, extended bm16-spec §Implementation §1. Raw connection
+// values for the `billrun` logical engine — read ONLY by
+// `services/billing/engine-registry.ts`, which resolves them into a
+// `ResolvedEngine` (connection + stable identity string) and is itself the
+// sole caller of `services/billing/engine-client.ts`. Never read directly by
+// `trigger-run.ts`/`reconcile-run.ts`/`cancel-run.ts` (code-standards §7).
 export const billRunEngineConfig = {
   url: config.BILLRUN_ENGINE_URL ?? null,
   auth: config.BILLRUN_ENGINE_AUTH ?? null,
+  namespace: config.BILLRUN_ENGINE_NAMESPACE,
 } as const;
 
 export const isBillRunEngineConfigured: boolean =

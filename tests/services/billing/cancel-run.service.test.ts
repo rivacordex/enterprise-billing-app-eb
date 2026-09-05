@@ -23,8 +23,8 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
-vi.mock("@/services/billing/engine-client", () => ({
-  getEngineClient: vi.fn(),
+vi.mock("@/services/billing/engine-registry", () => ({
+  engineRegistry: { killExecution: vi.fn() },
 }));
 vi.mock("@/lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -33,7 +33,7 @@ vi.mock("@/lib/logger", () => ({
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import { logger } from "@/lib/logger";
 import { cancelRun } from "@/services/billing/cancel-run";
 
@@ -41,28 +41,22 @@ const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockCancel = vi.mocked(billRunRepository.cancel);
 const mockResetForCancel = vi.mocked(billRunAccountRepository.resetForCancel);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
-const mockGetEngineClient = vi.mocked(getEngineClient);
+const mockKillExecution = vi.mocked(engineRegistry.killExecution);
 const mockLoggerWarn = vi.mocked(logger.warn);
-
-const killExecution = vi.fn();
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
     billRunId: "BRN00000001",
     status: "PROCESSING",
-    workflowExecutionId: "stub-exec-BRN00000001",
+    processingExecutionId: "stub-exec-BRN00000001",
+    processingEngineRef: "billrun@stub/billrun",
     ...overrides,
   } as never;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetEngineClient.mockReturnValue({
-    startExecution: vi.fn(),
-    getExecutionStatus: vi.fn(),
-    killExecution,
-  } as never);
-  killExecution.mockResolvedValue(undefined);
+  mockKillExecution.mockResolvedValue(undefined);
   mockResetForCancel.mockResolvedValue(5);
   mockCancel.mockResolvedValue(true);
 });
@@ -77,7 +71,11 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
       ok: true,
       value: { billRunId: "BRN00000001", accountsReset: 5 },
     });
-    expect(killExecution).toHaveBeenCalledWith("stub-exec-BRN00000001");
+    expect(mockKillExecution).toHaveBeenCalledWith(
+      "billrun",
+      "stub-exec-BRN00000001",
+      "billrun@stub/billrun",
+    );
     expect(mockResetForCancel).toHaveBeenCalledWith(txStub, "BRN00000001");
     expect(mockCancel).toHaveBeenCalledWith(txStub, "BRN00000001");
     expect(mockInsertAuditEvent).toHaveBeenCalledWith(
@@ -98,7 +96,7 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
     const result = await cancelRun("BRN00000099", "user-1");
 
     expect(result).toEqual({ ok: false, code: "NOT_CANCELLABLE" });
-    expect(killExecution).not.toHaveBeenCalled();
+    expect(mockKillExecution).not.toHaveBeenCalled();
     expect(mockResetForCancel).not.toHaveBeenCalled();
   });
 
@@ -115,7 +113,7 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
 
   it("a failed killExecution still lets cancel proceed (logged)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    killExecution.mockRejectedValue(new Error("engine down"));
+    mockKillExecution.mockRejectedValue(new Error("engine down"));
 
     const result = await cancelRun("BRN00000001", "user-1");
 
@@ -129,11 +127,11 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
   });
 
   it("skips killExecution when the run has no recorded execution ref", async () => {
-    mockFindByIdForUpdate.mockResolvedValue(run({ workflowExecutionId: null }));
+    mockFindByIdForUpdate.mockResolvedValue(run({ processingExecutionId: null }));
 
     const result = await cancelRun("BRN00000001", "user-1");
 
     expect(result.ok).toBe(true);
-    expect(killExecution).not.toHaveBeenCalled();
+    expect(mockKillExecution).not.toHaveBeenCalled();
   });
 });

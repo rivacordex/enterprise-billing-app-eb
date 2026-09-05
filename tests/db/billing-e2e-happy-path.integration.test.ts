@@ -12,6 +12,7 @@ import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
+import { customerBillTaxItem } from "@/db/schema/billing/customer-bill-tax-item";
 import { document } from "@/db/schema/billing/documents";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { seedSysAccounts } from "@/db/seeds/accounts/seed-sys-accounts";
@@ -38,6 +39,16 @@ import type { POST as StageCompletePost } from "@/app/api/billrun/[runId]/stage/
 // bm13-spec §2 "Finalization latch" guardrail — proven against this same
 // run's real posted bill rather than rebuilding the fixture a second time —
 // and the "next cycle operable at INVOICED" success criterion #10.
+//
+// bm16-spec §Design "The M2M handler becomes record-only (D5)" — Phase 2
+// moves Aggregation/Taxation's bill-data WRITE off the app and onto the bill
+// run processor (`billrun_runtime`, write-then-signal D6); this journey has
+// no live engine in this environment, so `simulateProcessorAggregation`/
+// `simulateProcessorTaxation` below stand in for that processor write,
+// issued immediately BEFORE the corresponding stage signal — exactly the
+// write-then-signal order the real processor follows. The M2M endpoint
+// itself only records the signal; it computes and writes nothing (proven by
+// `tests/services/billing/handle-stage-signal.test.ts`).
 //
 // Three accounts carry the run's three distinct outcomes: BILLED (the full
 // six-stage pipeline, incl. a mid-run rerun of a later stage), FAILED (a HARD
@@ -130,6 +141,63 @@ describe.skipIf(!databaseUrl)(
         })
         .returning({ billingAccountId: billingAccount.billingAccountId });
       return ban!.billingAccountId;
+    }
+
+    // bm16-spec §Design "Write-then-signal (D6)" — stands in for the bill run
+    // processor's own write, issued immediately before the matching stage
+    // signal below (no live engine in this environment; see file header).
+    // Synthetic fixed figures, mirroring the retired `deriveStubSubtotal`
+    // shape — the exact numbers are not asserted, only that a bill/tax item
+    // exists for the review + approve/post legs of the journey.
+    async function simulateProcessorAggregation(input: {
+      runId: string;
+      banId: string;
+      periodStart: string;
+      periodEnd: string;
+      paymentDueDate: string;
+    }): Promise<{ customerBillId: string; periodPartition: string }> {
+      const [row] = await db
+        .insert(customerBill)
+        .values({
+          refBillRunId: input.runId,
+          refBillingAccountId: input.banId,
+          periodPartition: input.periodStart,
+          category: "trial",
+          state: "new",
+          billingPeriodStart: input.periodStart,
+          billingPeriodEnd: input.periodEnd,
+          subtotal: "100.00",
+          taxTotal: "0.00",
+          totalAmount: "100.00",
+          paymentDueDate: input.paymentDueDate,
+        })
+        .returning({
+          customerBillId: customerBill.customerBillId,
+          periodPartition: customerBill.periodPartition,
+        });
+      return row!;
+    }
+
+    async function simulateProcessorTaxation(
+      customerBillId: string,
+      periodPartition: string,
+    ): Promise<void> {
+      await db.insert(customerBillTaxItem).values({
+        refCustomerBillId: customerBillId,
+        periodPartition,
+        taxCategory: "GST",
+        taxRate: "8.00",
+        taxAmount: "8.00",
+      });
+      await db
+        .update(customerBill)
+        .set({ taxTotal: "8.00", totalAmount: "108.00" })
+        .where(
+          and(
+            eq(customerBill.customerBillId, customerBillId),
+            eq(customerBill.periodPartition, periodPartition),
+          ),
+        );
     }
 
     // Drives the signed M2M stage-completion endpoint itself (the actual
@@ -287,12 +355,7 @@ describe.skipIf(!databaseUrl)(
         });
 
         // ---- Drive the BILLED account through all six stages, attempt 1. -
-        for (const stage of [
-          "validation",
-          "collection",
-          "aggregation",
-          "taxation",
-        ]) {
+        for (const stage of ["validation", "collection"]) {
           const { status, data } = await stageSignal(runId, stage, {
             ban_id: banBilled,
             attempt: 1,
@@ -303,6 +366,42 @@ describe.skipIf(!databaseUrl)(
             false,
           );
         }
+
+        // Write-then-signal (bm16-spec D6): the processor's aggregation write,
+        // simulated, immediately before the matching signal.
+        const { customerBillId, periodPartition } =
+          await simulateProcessorAggregation({
+            runId,
+            banId: banBilled,
+            periodStart: "2026-06-01",
+            periodEnd: "2026-06-30",
+            paymentDueDate: "2026-08-01",
+          });
+        {
+          const { status, data } = await stageSignal(runId, "aggregation", {
+            ban_id: banBilled,
+            attempt: 1,
+            status: "DONE",
+          });
+          expect(status).toBe(200);
+          expect(
+            (data as { data: { replayed: boolean } }).data.replayed,
+          ).toBe(false);
+        }
+
+        await simulateProcessorTaxation(customerBillId, periodPartition);
+        {
+          const { status, data } = await stageSignal(runId, "taxation", {
+            ban_id: banBilled,
+            attempt: 1,
+            status: "DONE",
+          });
+          expect(status).toBe(200);
+          expect(
+            (data as { data: { replayed: boolean } }).data.replayed,
+          ).toBe(false);
+        }
+
         const verify1 = await stageSignal(runId, "verification", {
           ban_id: banBilled,
           attempt: 1,

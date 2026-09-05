@@ -5,7 +5,6 @@ import {
   desc,
   eq,
   inArray,
-  isNull,
   notInArray,
   sql,
 } from "drizzle-orm";
@@ -167,19 +166,21 @@ export const billRunRepository = {
     return row ?? null;
   },
 
-  // bm03-spec §Design/§7 — the trigger write: SCHEDULED → PROCESSING, resolves
-  // `gl_event_at = scheduled_run_date` (never recomputed after, code-standards
-  // §2.5), stamps `triggered_by`/`last_progress_at`, and stores the (stub or
-  // real) engine execution reference.
+  // bm03-spec §Design/§7, extended bm16-spec §Implementation §6 — the trigger
+  // write: SCHEDULED → PROCESSING, resolves `gl_event_at = scheduled_run_date`
+  // (never recomputed after, code-standards §2.5), stamps `triggered_by`/
+  // `last_progress_at`, and stores the (stub or real) engine's processing
+  // execution reference PLUS the resolved engine identity (D25e).
   async markProcessing(
     tx: Database,
     billRunId: string,
     data: {
       glEventAt: string;
       triggeredBy: string;
-      workflowExecutionId: string;
-      workflowDefinitionId: string;
-      workflowDefinitionRevision: number;
+      processingExecutionId: string;
+      processingFlowId: string;
+      processingFlowRevision: number;
+      processingEngineRef: string;
     },
   ): Promise<void> {
     await tx
@@ -189,9 +190,10 @@ export const billRunRepository = {
         glEventAt: data.glEventAt,
         triggeredBy: data.triggeredBy,
         lastProgressAt: sql`now()`,
-        workflowExecutionId: data.workflowExecutionId,
-        workflowDefinitionId: data.workflowDefinitionId,
-        workflowDefinitionRevision: data.workflowDefinitionRevision,
+        processingExecutionId: data.processingExecutionId,
+        processingFlowId: data.processingFlowId,
+        processingFlowRevision: data.processingFlowRevision,
+        processingEngineRef: data.processingEngineRef,
       })
       .where(eq(billRun.billRunId, billRunId));
   },
@@ -260,27 +262,6 @@ export const billRunRepository = {
       .where(eq(billRun.billRunId, billRunId));
   },
 
-  // bm06-spec §Design/§Implementation §2-3. Stamp the run's tax-rate version
-  // ONCE, for provenance (there is no tax-rate catalog table in v1). The
-  // `IS NULL` guard makes it idempotent and uniform across the run's bills:
-  // the first taxation signal writes it; every later one is a no-op, so a
-  // mid-run config change can never split a run across two versions.
-  async stampTaxRateVersion(
-    tx: Database,
-    billRunId: string,
-    version: string,
-  ): Promise<void> {
-    await tx
-      .update(billRun)
-      .set({ refTaxRateVersion: version })
-      .where(
-        and(
-          eq(billRun.billRunId, billRunId),
-          isNull(billRun.refTaxRateVersion),
-        ),
-      );
-  },
-
   // bm08-spec §Design/§Implementation §1 (step 2 + step 6) — the rerun loops the
   // run back `PROCESSED`/`PROCESSING_FAILED` → `PROCESSING`: flips the status,
   // bumps the heartbeat, refreshes the derived ban/rated/failed counter cache
@@ -298,9 +279,10 @@ export const billRunRepository = {
       banCount: number;
       ratedCount: number;
       failedCount: number;
-      workflowExecutionId: string;
-      workflowDefinitionId: string;
-      workflowDefinitionRevision: number;
+      processingExecutionId: string;
+      processingFlowId: string;
+      processingFlowRevision: number;
+      processingEngineRef: string;
     },
   ): Promise<void> {
     await tx
@@ -312,9 +294,10 @@ export const billRunRepository = {
         banCount: data.banCount,
         ratedCount: data.ratedCount,
         failedCount: data.failedCount,
-        workflowExecutionId: data.workflowExecutionId,
-        workflowDefinitionId: data.workflowDefinitionId,
-        workflowDefinitionRevision: data.workflowDefinitionRevision,
+        processingExecutionId: data.processingExecutionId,
+        processingFlowId: data.processingFlowId,
+        processingFlowRevision: data.processingFlowRevision,
+        processingEngineRef: data.processingEngineRef,
       })
       .where(eq(billRun.billRunId, billRunId));
   },
@@ -444,9 +427,10 @@ export const billRunRepository = {
       .update(billRun)
       .set({
         status: "CANCELLED",
-        workflowExecutionId: null,
-        workflowDefinitionId: null,
-        workflowDefinitionRevision: null,
+        processingExecutionId: null,
+        processingFlowId: null,
+        processingFlowRevision: null,
+        processingEngineRef: null,
       })
       .where(
         and(eq(billRun.billRunId, billRunId), eq(billRun.status, "PROCESSING")),
