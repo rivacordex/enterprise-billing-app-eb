@@ -3,6 +3,7 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
 import type { PreApprovalCheck } from "@/types/billing";
 
@@ -85,6 +86,11 @@ export async function approveRun(
         `approveRun: bill_run ${run.billRunId} was not PROCESSED at write time`,
       );
     }
+
+    // bm17-spec §Implementation §3 — the app's own claim flip: the run's
+    // claimed rows go BILL_DRAFT → BILL_APPROVED inside this same
+    // transaction, so a rollback leaves them BILL_DRAFT.
+    await udrStatusRepository.markApproved(tx, run.billRunId);
 
     await insertAuditEvent(tx, {
       eventType: "BILL_RUN_APPROVED",

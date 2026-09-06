@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import { PreApprovalChecks } from "@/components/billing/pre-approval-checks";
 
-describe("PreApprovalChecks (bm10-spec §Visual)", () => {
-  it("renders all five checks with their labels", () => {
+describe("PreApprovalChecks (bm10-spec §Visual, bm17 adds a 6th)", () => {
+  it("renders all six checks with their labels", () => {
     render(
       <PreApprovalChecks
         checks={[
@@ -17,6 +17,7 @@ describe("PreApprovalChecks (bm10-spec §Visual)", () => {
           { check: "positive_totals", pass: true, remediation: null },
           { check: "four_eyes", pass: true, remediation: null },
           { check: "accounts_terminal", pass: true, remediation: null },
+          { check: "no_rejected_pending", pass: true, remediation: null },
         ]}
       />,
     );
@@ -28,6 +29,9 @@ describe("PreApprovalChecks (bm10-spec §Visual)", () => {
       screen.getByText("Approver differs from the trigger actor"),
     ).toBeTruthy();
     expect(screen.getByText("All accounts terminal")).toBeTruthy();
+    expect(
+      screen.getByText("No accounts pending reject-reprocess"),
+    ).toBeTruthy();
   });
 
   it("shows a remediation line only for a failing check", () => {
@@ -43,6 +47,7 @@ describe("PreApprovalChecks (bm10-spec §Visual)", () => {
           { check: "positive_totals", pass: true, remediation: null },
           { check: "four_eyes", pass: true, remediation: null },
           { check: "accounts_terminal", pass: true, remediation: null },
+          { check: "no_rejected_pending", pass: true, remediation: null },
         ]}
       />,
     );

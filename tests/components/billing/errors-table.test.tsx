@@ -20,7 +20,7 @@ vi.mock("@/components/billing/rerun-dialog", () => ({
 }));
 
 import { ErrorsTable } from "@/components/billing/errors-table";
-import type { ErrorRow } from "@/types/billing";
+import type { ErrorRow, RejectedPendingRow } from "@/types/billing";
 
 function row(overrides: Partial<ErrorRow> = {}): ErrorRow {
   return {
@@ -70,11 +70,69 @@ describe("ErrorsTable (bm07-spec §Visual, bm08 rerun wiring)", () => {
     expect(queryByTestId("rerun-dialog")).toBeNull();
   });
 
-  it("renders a positive empty state when no account failed", () => {
+  it("renders a positive empty state when no account failed and nothing is rejected-pending", () => {
     const { container } = render(
       <ErrorsTable runId="BRN00000001" rows={[]} canRerun={true} />,
     );
     expect(container.textContent).toContain("No blocking errors");
     expect(container.querySelector("table")).toBeNull();
+  });
+});
+
+describe("ErrorsTable — rejected-pending surface (bm17-spec §Implementation §5)", () => {
+  function rejectedRow(
+    overrides: Partial<RejectedPendingRow> = {},
+  ): RejectedPendingRow {
+    return {
+      billingAccountId: "BAN00000009",
+      accountName: "Beta Sdn Bhd",
+      errorDetail: "bad rate card",
+      ...overrides,
+    };
+  }
+
+  it("renders the rejected-pending accounts even when there are no HARD errors", () => {
+    const { container } = render(
+      <ErrorsTable
+        runId="BRN00000001"
+        rows={[]}
+        canRerun={false}
+        rejectedPending={[rejectedRow()]}
+      />,
+    );
+    expect(container.textContent).toContain("Beta Sdn Bhd");
+    expect(container.textContent).toContain("BAN00000009");
+    expect(container.textContent).toContain("bad rate card");
+    expect(container.textContent).not.toContain("No blocking errors");
+  });
+
+  it("wires 'Rerun to reprocess' to exactly the rejected accounts for an operator", () => {
+    const { getByTestId } = render(
+      <ErrorsTable
+        runId="BRN00000001"
+        rows={[]}
+        canRerun={true}
+        rejectedPending={[rejectedRow(), rejectedRow({ billingAccountId: "BAN00000010" })]}
+      />,
+    );
+    const dialog = getByTestId("rerun-dialog");
+    expect(dialog.getAttribute("data-accounts")).toBe(
+      "BAN00000009,BAN00000010",
+    );
+  });
+
+  it("shows a plain hint (no Rerun affordance) for a billrun_view-only viewer", () => {
+    const { queryByTestId, container } = render(
+      <ErrorsTable
+        runId="BRN00000001"
+        rows={[]}
+        canRerun={false}
+        rejectedPending={[rejectedRow()]}
+      />,
+    );
+    expect(queryByTestId("rerun-dialog")).toBeNull();
+    expect(container.textContent).toContain(
+      "An operator must rerun these accounts before this run can be approved.",
+    );
   });
 });

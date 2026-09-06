@@ -18,6 +18,9 @@ vi.mock("@/db/repositories/audit-log.repository", () => ({
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
   billRunAccountRepository: { listStatusesForRun: vi.fn() },
 }));
+vi.mock("@/db/repositories/billing/bill-run-account-stage.repository", () => ({
+  billRunAccountStageRepository: { listRejectedPendingForRun: vi.fn() },
+}));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {
     listPostableCurrencies: vi.fn(),
@@ -30,6 +33,7 @@ import { accountingPeriodRepository } from "@/db/repositories/accounts/accountin
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { auditLogRepository } from "@/db/repositories/audit-log.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
 
@@ -49,6 +53,9 @@ const mockCountNonPositive = vi.mocked(
 );
 const mockListTriggerActors = vi.mocked(
   auditLogRepository.listActorIdsForEvents,
+);
+const mockListRejectedPending = vi.mocked(
+  billRunAccountStageRepository.listRejectedPendingForRun,
 );
 
 const dbStub = {} as never;
@@ -83,13 +90,14 @@ beforeEach(() => {
     { billingAccountId: "BAN00000002", status: "PROCESSING_FAILED" },
     { billingAccountId: "BAN00000003", status: "EXCLUDED" },
   ] as never);
+  mockListRejectedPending.mockResolvedValue([]); // no rejected accounts by default
 });
 
-describe("runPreApprovalChecks (bm10-spec §Design/§1)", () => {
-  it("returns all five checks passing on a clean run", async () => {
+describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th)", () => {
+  it("returns all six checks passing on a clean run", async () => {
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
-    expect(checks).toHaveLength(5);
+    expect(checks).toHaveLength(6);
     for (const c of checks) {
       expect(c.pass).toBe(true);
       expect(c.remediation).toBeNull();
@@ -239,5 +247,26 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1)", () => {
       pass: false,
       remediation: expect.stringContaining("1 account"),
     });
+  });
+
+  it("[CRITICAL] no_rejected_pending fails while a rejected account is pending reprocess", async () => {
+    mockListRejectedPending.mockResolvedValue([
+      { billingAccountId: "BAN00000001", accountName: "Acme", errorDetail: "bad rate" },
+    ] as never);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "no_rejected_pending")).toMatchObject({
+      pass: false,
+      remediation: expect.stringContaining("Rerun"),
+    });
+  });
+
+  it("no_rejected_pending passes when no account carries the marker", async () => {
+    mockListRejectedPending.mockResolvedValue([]);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "no_rejected_pending")).toMatchObject({ pass: true });
   });
 });

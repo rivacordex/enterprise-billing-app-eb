@@ -7,6 +7,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
 import { buttonVariants } from "@/components/ui/button";
+import { RejectDialog } from "@/components/billing/reject-dialog";
 import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
@@ -23,6 +24,7 @@ import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
 import { listAccountBills } from "@/services/billing/read/list-account-bills";
 import { listUncharged } from "@/services/billing/read/list-uncharged";
 import { listErrors } from "@/services/billing/read/list-errors";
+import { listRejectedPending } from "@/services/billing/read/list-rejected-pending";
 import { listRunAudit } from "@/services/billing/read/list-run-audit";
 import { isStalled } from "@/services/billing/stall";
 import {
@@ -101,6 +103,11 @@ export default async function BillRunDetailPage({
   const errors =
     parsedSearch.tab === "errors" ? await listErrors(detail.billRunId) : [];
 
+  const rejectedPending =
+    parsedSearch.tab === "errors"
+      ? await listRejectedPending(detail.billRunId)
+      : [];
+
   const audit =
     parsedSearch.tab === "audit" ? await listRunAudit(detail.billRunId) : [];
 
@@ -150,6 +157,12 @@ export default async function BillRunDetailPage({
   );
   const approvable = detail.status === "PROCESSED";
 
+  // bm17 — Reject shares the Approve gate (`billrun_approve`, and only while
+  // the run is pre-approval/`PROCESSED`) — never a bare row action (spec
+  // "Never a bare row action for either"). Show/hide only; the action
+  // re-checks server-side.
+  const canReject = canApprove && approvable;
+
   // bm11 — the Post affordance shares the same `/approve` route (it
   // branches server-side on the live run status, bm11-spec §Visual): once
   // `APPROVED`, the route renders `PostingProgressView` instead of the
@@ -190,6 +203,13 @@ export default async function BillRunDetailPage({
                 <ShieldCheck aria-hidden="true" />
                 {detail.status === "APPROVED" ? "Post" : "Resume posting"}
               </Link>
+            )}
+            {canReject && (
+              <RejectDialog
+                billRunId={detail.billRunId}
+                accountIds={[]}
+                variant="neutral"
+              />
             )}
             {canRerun && (
               <RerunDialog
@@ -233,6 +253,7 @@ export default async function BillRunDetailPage({
         customerBills={customerBills}
         uncharged={uncharged}
         errors={errors}
+        rejectedPending={rejectedPending}
         audit={audit}
         canRecover={canRecover}
         canRerun={canRerun}

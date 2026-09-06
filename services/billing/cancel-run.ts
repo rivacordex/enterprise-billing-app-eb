@@ -2,6 +2,7 @@ import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { logger } from "@/lib/logger";
 import { engineRegistry } from "@/services/billing/engine-registry";
 
@@ -57,6 +58,11 @@ export async function cancelRun(
       tx,
       billRunId,
     );
+    // bm17-spec §Implementation §4 — release the run's claimed rows back to
+    // RATED (abort, D11), distinct from reject's REJECTED. The
+    // `status = 'BILL_DRAFT'` predicate means this never touches a
+    // `BILL_APPROVED`/posted row.
+    await udrStatusRepository.release(tx, billRunId);
     await billRunRepository.cancel(tx, billRunId);
 
     await insertAuditEvent(tx, {

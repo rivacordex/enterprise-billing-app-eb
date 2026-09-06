@@ -141,6 +141,14 @@ export async function rerunRun(
       // re-triggered execution re-claims RATED/REJECTED → BILL_DRAFT under the
       // new attempt and re-aggregates/re-taxes as it re-validates each account
       // through the single `handle-stage-signal` path. Nothing to do here.
+      //
+      // bm17-spec §Implementation §4 / Phase-2 review fold T6 — a rejected
+      // account's `REJECTED_PENDING_REPROCESS` marker (bm17) also needs no
+      // explicit clear: it lives on the OLD attempt's stage row, and the
+      // `no_rejected_pending` check only matches a marker on the account's
+      // CURRENT attempt (`bill_run_account_stage_repository
+      // .listRejectedPendingForRun`'s attempt-keyed join). The attempt bump
+      // above already makes the marked row stale the moment it's written.
 
       // 5. Re-trigger the engine scoped to the rerun accounts + new attempt.
       let executionRef;
