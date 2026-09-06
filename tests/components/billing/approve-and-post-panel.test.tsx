@@ -10,6 +10,12 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/actions/billing/approve-run.action", () => ({
   approveRunAction: vi.fn(),
 }));
+// bm17 — ApproveAndPostPanel now also renders a RejectDialog next to Approve
+// & Post; mocked here so its action module (and the db/service graph behind
+// it) never loads in this DB-free unit test.
+vi.mock("@/actions/billing/reject-run.action", () => ({
+  rejectRunAction: vi.fn(),
+}));
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

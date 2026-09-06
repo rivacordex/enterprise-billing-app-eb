@@ -23,6 +23,9 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
+vi.mock("@/db/repositories/billing/udr-status.repository", () => ({
+  udrStatusRepository: { release: vi.fn() },
+}));
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { killExecution: vi.fn() },
 }));
@@ -32,6 +35,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { logger } from "@/lib/logger";
@@ -40,6 +44,7 @@ import { cancelRun } from "@/services/billing/cancel-run";
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockCancel = vi.mocked(billRunRepository.cancel);
 const mockResetForCancel = vi.mocked(billRunAccountRepository.resetForCancel);
+const mockRelease = vi.mocked(udrStatusRepository.release);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockKillExecution = vi.mocked(engineRegistry.killExecution);
 const mockLoggerWarn = vi.mocked(logger.warn);
@@ -77,6 +82,7 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
       "billrun@stub/billrun",
     );
     expect(mockResetForCancel).toHaveBeenCalledWith(txStub, "BRN00000001");
+    expect(mockRelease).toHaveBeenCalledWith(txStub, "BRN00000001");
     expect(mockCancel).toHaveBeenCalledWith(txStub, "BRN00000001");
     expect(mockInsertAuditEvent).toHaveBeenCalledWith(
       txStub,

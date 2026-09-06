@@ -32,6 +32,9 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
+vi.mock("@/db/repositories/billing/udr-status.repository", () => ({
+  udrStatusRepository: { markApproved: vi.fn() },
+}));
 vi.mock("@/services/billing/pre-approval-checks", () => ({
   runPreApprovalChecks: vi.fn(),
 }));
@@ -39,6 +42,7 @@ vi.mock("@/services/billing/pre-approval-checks", () => ({
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
 import { approveRun } from "@/services/billing/approve-run";
@@ -54,6 +58,7 @@ const mockListCurrencies = vi.mocked(
 );
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockRunChecks = vi.mocked(runPreApprovalChecks);
+const mockMarkApproved = vi.mocked(udrStatusRepository.markApproved);
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -99,6 +104,12 @@ describe("approveRun (bm10-spec §Design/§1)", () => {
       approvedBy: "user-approver",
       totalAmount: "315.00",
     });
+  });
+
+  it("[CRITICAL] flips the run's claimed rows BILL_DRAFT -> BILL_APPROVED inside the approve transaction", async () => {
+    await approveRun("BRN00000001", "user-approver");
+
+    expect(mockMarkApproved).toHaveBeenCalledWith(txStub, "BRN00000001");
   });
 
   it("[CRITICAL] writes BILL_RUN_APPROVED with the actor, totals, and skipped count", async () => {

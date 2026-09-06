@@ -27,6 +27,10 @@ enumerations were trimmed to key facts + decisions. Full history:
   See `context/billing-management/specs/bm16-processing-flow-engine-registry.md`
   and the Delivered Units entry below. Migration `0035` is generated/reviewed
   but **not applied** — see Outstanding.
+- Phase 2 · Phase G — **bm17 (`udr_rated` Approve/Reject/Release Lifecycle +
+  Reject Action) — delivered.** See
+  `context/billing-management/specs/bm17-udr-lifecycle-reject.md` and the
+  Delivered Units entry below.
 
 ## Outstanding (environmental only — not a build unit)
 
@@ -399,6 +403,72 @@ enumerations were trimmed to key facts + decisions. Full history:
     app-side writes describe Phase 1 only and are superseded by this unit —
     left as written history rather than rewritten in place.
 
+- **bm17 — `udr_rated` Approve/Reject/Release Lifecycle + Reject Action
+  (Phase 2 · Phase G).** See
+  `context/billing-management/specs/bm17-udr-lifecycle-reject.md`. Lands the
+  app's own half of the `udr_rated` lifecycle — the processor (bm14/bm16)
+  owns only the `RATED`/`REJECTED → BILL_DRAFT` claim; the app owns the three
+  human-gate transitions:
+  - **`db/repositories/billing/udr-status.repository.ts`** (new) — the app's
+    only `UPDATE rating.udr_rated`, the phase-2 flip of the bm13/bm16
+    guardrail (`tests/guardrails/billing-rating-write-boundary.test.ts`, now
+    asserting this is the app's SOLE sanctioned writer, column-scoped to the
+    six claim columns). Three functions, each run inside the caller's txn:
+    `markApproved` (`BILL_DRAFT → BILL_APPROVED`, run-scoped), `markRejected`
+    (`BILL_DRAFT → REJECTED`, account-scoped), `release` (`BILL_DRAFT →
+    RATED` + clears the claim columns, run- or account-scoped) — the
+    `status = 'BILL_DRAFT'` predicate on every write is what guarantees none
+    ever touches a `BILL_APPROVED`/posted row.
+  - **Reject — model (b), operator reruns, run stays `PROCESSED`.**
+    `services/billing/reject-run.ts` (`reject-run.schema.ts` validates
+    `{billRunId, scope: 'all'|'selected', banIds[], reason}`, empty reason ⇒
+    `VALIDATION_ERROR`) — one txn: guard `PROCESSED` → resolve the eligible
+    set (only `PROCESSED`/postable accounts, minus any posted — a
+    `PROCESSING_FAILED`/`EXCLUDED` account has no trial bill and is already
+    headed for `SKIPPED` at approval, not "sent back to reprocess") → AUDIT
+    FIRST (`BILL_RUN_REJECTED`, prior totals + reason, same discipline as
+    rerun/bm08) → `udr-status.markRejected` → delete the rejected accounts'
+    unposted trial `customer_bill` rows (new `customerBillRepository
+    .deleteUnpostedForAccounts`, tax items cascade) → stamp the
+    `REJECTED_PENDING_REPROCESS` marker (new `types/billing.ts` constant) on
+    each account's latest CURRENT-ATTEMPT stage row (new
+    `billRunAccountStageRepository.findLatestForAccount`/`stampMarker`).
+    `bill_run_account.status` is left UNTOUCHED (still `PROCESSED` — no new
+    `AccountStatus` member); the run never leaves `PROCESSED`.
+  - **`no_rejected_pending`** — the 6th pre-approval check
+    (`PRE_APPROVAL_CHECKS`/`PreApprovalChecksProps` extended), backed by new
+    `billRunAccountStageRepository.listRejectedPendingForRun`: joins the
+    marker to the account's CURRENT `attempt_count` — this attempt-keyed join
+    is what makes a rerun's attempt bump implicitly clear the marker (no
+    explicit "clear" write exists anywhere; Phase-2 review fold T6). Fails
+    approval with remediation "Rerun the rejected accounts, then approve.";
+    enforced server-side regardless of UI state.
+  - **Approve** (`services/billing/approve-run.ts`) calls
+    `udrStatusRepository.markApproved` inside the existing approve txn, right
+    after the immutable `total_amount` stamp. **Cancel**
+    (`services/billing/cancel-run.ts`) calls `udrStatusRepository.release`
+    (whole-run scope) alongside the existing `resetForCancel` write — distinct
+    from Reject's `REJECTED`.
+  - **UI** — `components/billing/reject-dialog.tsx` (new `RejectDialog`):
+    mirrors `RerunDialog`'s inline-confirmation shape AND its `accountIds`
+    convention (empty ⇒ whole run, non-empty ⇒ explicit selection) rather than
+    a separate scope radio control — a resolved ambiguity reading the spec's
+    "reuse the RerunDialog selection pattern" literally. Mandatory reason,
+    danger-role "Confirm Reject", spelled-out consequence copy. Wired next to
+    "Approve & Post" on both the run-detail header and the
+    `ApproveAndPostPanel` (Approve's own modal/self-approval-block behavior is
+    unchanged — it already had a confirmation gate from bm10). The Errors tab
+    (`errors-table.tsx`) gained a "Rejected — pending reprocess" section (new
+    `RejectedPendingRow`/`listRejectedPending` read) above the HARD-error
+    table, with its own "Rerun to reprocess" `RerunDialog` for a
+    `billrun_operate` viewer or a plain hint for `billrun_view`-only.
+  - **Audit** — new `BILL_RUN_REJECTED` event type (`Change` category, mirrors
+    `BILL_RUN_RERUN`); deliberately NOT added to `TRIGGER_EVENT_TYPES` — reject
+    is an approver action and does not bar the rejecter from a later approval.
+  - No migration: `rating.udr_rated`'s `status` CHECK already admits
+    `REJECTED` (rm01), and `error_code`/`error_detail` are unconstrained text
+    columns — the marker is just a string value, no schema change.
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -548,17 +618,17 @@ file history).
 
 ## Next Up
 
-- **bm01–bm16 are all delivered.** The remaining action items are
+- **bm01–bm17 are all delivered.** The remaining action items are
   environmental (see Outstanding, above): apply migrations `0033`/`0035`, run
   `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
   `db:bootstrap-rating-roles`), run the DB-gated suites (incl. the updated
-  `billing-e2e-happy-path.integration.test.ts`) against a real Postgres, and
-  run `db:seed-sample` there to verify bm15's checklist.
+  `billing-e2e-happy-path.integration.test.ts`, which does not yet exercise
+  Reject end-to-end — bm17's reject → rerun → re-approve journey has only
+  unit-test coverage in this session) against a real Postgres, and run
+  `db:seed-sample` there to verify bm15's checklist.
 - **bm16's live-Kestra smoke gate is unmet** — no deployed `billrun` engine or
   real `bill_run_processing` flow exists yet; the separate workflow-management
   repo/owner/deploy step are `TBD` in `flows/billrun/README.md`. Register the
   smoke run as a phase-2 exit criterion when bm21 (not yet specced) lands.
-- Phase 2 · Phase G continues past bm16 (units after it, incl. bm17's
-  `udr-status.repository.ts` — the app's own RATED-release/BILL_APPROVED/
-  REJECTED transitions — and bm20's distribution execution columns) — not yet
-  specced in this session.
+- Phase 2 · Phase G continues past bm17 (bm20's distribution execution
+  columns, and any units between) — not yet specced in this session.

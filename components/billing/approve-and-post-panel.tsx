@@ -15,6 +15,7 @@ import { ShieldCheck } from "lucide-react";
 import { approveRunAction } from "@/actions/billing/approve-run.action";
 import { Button } from "@/components/ui/button";
 import { PreApprovalChecks } from "@/components/billing/pre-approval-checks";
+import { RejectDialog } from "@/components/billing/reject-dialog";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { formatCalendarDate } from "@/lib/formatters";
 import type { ApprovePreview } from "@/types/billing";
@@ -127,15 +128,24 @@ export function ApproveAndPostPanel({
         </p>
       ) : !confirming ? (
         <div className="space-y-2">
-          <Button
-            ref={approveButtonRef}
-            type="button"
-            disabled={notApprovable || selfApproveBlocked}
-            onClick={() => setConfirming(true)}
-          >
-            <ShieldCheck aria-hidden="true" />
-            Approve &amp; Post
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              ref={approveButtonRef}
+              type="button"
+              disabled={notApprovable || selfApproveBlocked}
+              onClick={() => setConfirming(true)}
+            >
+              <ShieldCheck aria-hidden="true" />
+              Approve &amp; Post
+            </Button>
+            {!notApprovable && (
+              <RejectDialog
+                billRunId={preview.billRunId}
+                accountIds={[]}
+                variant="neutral"
+              />
+            )}
+          </div>
           {selfApproveBlocked && (
             <p className="text-body-sm text-destructive">
               {fourEyes?.remediation}

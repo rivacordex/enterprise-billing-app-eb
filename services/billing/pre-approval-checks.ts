@@ -2,6 +2,7 @@ import { accountingPeriodRepository } from "@/db/repositories/accounts/accountin
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { auditLogRepository } from "@/db/repositories/audit-log.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import type { Database } from "@/db/client";
 import type { BillRun } from "@/db/schema/billing/bill-run";
@@ -180,19 +181,58 @@ async function checkAccountsTerminal(
   return { check: "accounts_terminal", pass: true, remediation: null };
 }
 
+// bm17-spec §Design "no_rejected_pending" pre-approval check. A backstop
+// closing the reject → approve gap: fails while any account carries the
+// `REJECTED_PENDING_REPROCESS` marker on its current-attempt latest stage row
+// (`REJECTED_PENDING_REPROCESS` shared from `@/types/billing` so the reject
+// write and this check can never drift on the literal string). The rerun's
+// attempt bump clears the marker implicitly (Phase-2 review fold T6) — no
+// explicit "clear" write exists anywhere.
+async function checkNoRejectedPending(
+  dbOrTx: Database,
+  run: BillRun,
+): Promise<PreApprovalCheck> {
+  const rejected = await billRunAccountStageRepository.listRejectedPendingForRun(
+    dbOrTx,
+    run.billRunId,
+  );
+  if (rejected.length > 0) {
+    return {
+      check: "no_rejected_pending",
+      pass: false,
+      remediation: "Rerun the rejected accounts, then approve.",
+    };
+  }
+  return { check: "no_rejected_pending", pass: true, remediation: null };
+}
+
 export async function runPreApprovalChecks(
   dbOrTx: Database,
   run: BillRun,
   approverId: string,
 ): Promise<PreApprovalCheck[]> {
-  const [periodOpen, glMappings, positiveTotals, fourEyes, accountsTerminal] =
-    await Promise.all([
-      checkPeriodOpen(dbOrTx, run),
-      checkGlMappingsResolvable(dbOrTx, run),
-      checkPositiveTotals(dbOrTx, run),
-      checkFourEyes(dbOrTx, run, approverId),
-      checkAccountsTerminal(dbOrTx, run),
-    ]);
+  const [
+    periodOpen,
+    glMappings,
+    positiveTotals,
+    fourEyes,
+    accountsTerminal,
+    noRejectedPending,
+  ] = await Promise.all([
+    checkPeriodOpen(dbOrTx, run),
+    checkGlMappingsResolvable(dbOrTx, run),
+    checkPositiveTotals(dbOrTx, run),
+    checkFourEyes(dbOrTx, run, approverId),
+    checkAccountsTerminal(dbOrTx, run),
+    checkNoRejectedPending(dbOrTx, run),
+  ]);
 
-  return [periodOpen, glMappings, positiveTotals, fourEyes, accountsTerminal];
+  return [
+    periodOpen,
+    glMappings,
+    positiveTotals,
+    fourEyes,
+    accountsTerminal,
+    noRejectedPending,
+  ];
 }

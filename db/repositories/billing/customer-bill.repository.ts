@@ -34,6 +34,28 @@ export const customerBillRepository = {
       );
   },
 
+  // bm17-spec §Design/§Implementation §2 — reject's per-account unposted-
+  // trial delete (tax items cascade via `ON DELETE CASCADE`, bm06). Scoped to
+  // exactly the rejected accounts, never the whole run (unlike
+  // `deleteUnpostedForRun`'s cancel-time sweep) — the finalization latch
+  // (`ref_inv_document_id IS NULL`) still protects any posted row.
+  async deleteUnpostedForAccounts(
+    tx: Database,
+    billRunId: string,
+    billingAccountIds: string[],
+  ): Promise<void> {
+    if (billingAccountIds.length === 0) return;
+    await tx
+      .delete(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          inArray(customerBill.refBillingAccountId, billingAccountIds),
+          isNull(customerBill.refInvDocumentId),
+        ),
+      );
+  },
+
   // bm08-spec §Design/§Implementation §1 — the rerun finalization guard's read:
   // the account ids in this run whose bill is already POSTED
   // (`ref_inv_document_id` set, the finalization latch, architecture Inv. #4).
