@@ -71,10 +71,13 @@ stages:
                 echo "ZAP report not found at $REPORT — the scan produced no report. Failing the stage."
                 exit 1
               fi
-              # riskcode 3 = High, 4 = Critical. Any match fails the stage (rm13-spec
-              # verification item 7 — "no high/critical finding").
+              # ZAP riskcode scale: 0=Informational, 1=Low, 2=Medium, 3=High.
+              # 3 is the MAXIMUM ZAP emits — there is no Critical=4 tier — so
+              # matching riskcode 3 is what "no high/critical finding" means
+              # here (rm13-spec verification item 7). The `4` is kept only as a
+              # harmless forward-guard in case a future ZAP adds a higher tier.
               if grep -E '<riskcode>(3|4)</riskcode>' "$REPORT" > /dev/null; then
-                echo "ZAP found one or more High/Critical findings against the rating engine — failing the stage."
+                echo "ZAP found one or more High findings against the rating engine — failing the stage."
                 exit 1
               fi
               echo "No High/Critical ZAP findings against the rating engine."
