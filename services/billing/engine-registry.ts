@@ -59,9 +59,14 @@ export interface ResolvedEngine {
   configured: boolean;
 }
 
+// Host PLUS path — a bare host would collapse two distinct engine routes
+// mounted on the same host (e.g. "/api/v1" vs "/api/v2") into one identity,
+// defeating D25e's topology-change detection.
 function hostOf(baseUrl: string): string {
   try {
-    return new URL(baseUrl).host;
+    const url = new URL(baseUrl);
+    const path = url.pathname.replace(/\/+$/, "");
+    return path ? `${url.host}${path}` : url.host;
   } catch {
     return baseUrl;
   }

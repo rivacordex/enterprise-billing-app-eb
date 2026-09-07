@@ -119,7 +119,10 @@ export function RejectDialog({
 
   return (
     <div
-      role="alertdialog"
+      // An inline expansion, not a modal dialog — it neither traps focus nor
+      // blocks the background, so `group` (a labelled cluster of controls) is the
+      // honest role rather than `alertdialog` (which implies modal focus mgmt).
+      role="group"
       aria-label="Confirm reject"
       className="w-full max-w-xl space-y-3 rounded-md border border-[color:var(--border-default)] bg-[color:var(--surface-card)] p-4"
     >
@@ -142,6 +145,7 @@ export function RejectDialog({
           rows={2}
           required
           aria-required="true"
+          maxLength={2000}
           placeholder="Why is this being rejected?"
           className="block w-full rounded-sm border border-[color:var(--border-default)] bg-[color:var(--surface-card)] px-3 py-1.5 text-body-sm text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
         />
@@ -188,7 +192,7 @@ function describeError(code: string): string {
     case "FORBIDDEN":
       return "You do not have permission to reject bill runs.";
     case "VALIDATION_ERROR":
-      return "A reason is required to reject.";
+      return "Enter a valid reason (1–2,000 characters).";
     default:
       return "Something went wrong. Please try again.";
   }
