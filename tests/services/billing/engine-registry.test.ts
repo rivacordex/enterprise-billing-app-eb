@@ -91,6 +91,26 @@ describe("resolveEngine / isEngineConfigured (bm16-spec §1)", () => {
       "billrun@engine.example.com/billrun-uat",
     );
   });
+
+  it("the identity string distinguishes identical hosts on different base paths", () => {
+    configState.billRunEngineConfig = {
+      url: "https://engine.example.com/api/v1",
+      auth: "user:pass",
+      namespace: "billrun",
+    };
+    const v1 = resolveEngine("billrun").engineRef;
+
+    configState.billRunEngineConfig = {
+      url: "https://engine.example.com/api/v2",
+      auth: "user:pass",
+      namespace: "billrun",
+    };
+    const v2 = resolveEngine("billrun").engineRef;
+
+    expect(v1).toBe("billrun@engine.example.com/api/v1/billrun");
+    expect(v2).toBe("billrun@engine.example.com/api/v2/billrun");
+    expect(v1).not.toBe(v2);
+  });
 });
 
 describe("engineRegistry.trigger (bm16-spec §1)", () => {

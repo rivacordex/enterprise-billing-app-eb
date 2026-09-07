@@ -108,14 +108,25 @@ export async function rejectRun(
           account.billingAccountId,
           account.attemptCount,
         );
-      if (stageRow) {
-        await billRunAccountStageRepository.stampMarker(
-          tx,
-          stageRow.billRunAccountStageId,
-          stageRow.periodPartition,
-          params.reason,
+      // A PROCESSED account always has a stage row for its current attempt
+      // (the verification-stage signal that advances it to PROCESSED inserts
+      // one first) — a missing row here is an invariant violation, not a
+      // normal case. The `no_rejected_pending` approval gate (bm17-spec)
+      // reads ONLY this marker, not `udr_status`; silently skipping it would
+      // let a "rejected" account (claim released, trial bill deleted) slip
+      // past approval with nothing to flag it for rerun. Fail the whole
+      // reject rather than leave that gap.
+      if (!stageRow) {
+        throw new Error(
+          `Bill-run reject: no stage row found for account ${account.billingAccountId} at attempt ${account.attemptCount} (run ${run.billRunId}).`,
         );
       }
+      await billRunAccountStageRepository.stampMarker(
+        tx,
+        stageRow.billRunAccountStageId,
+        stageRow.periodPartition,
+        params.reason,
+      );
     }
 
     return {

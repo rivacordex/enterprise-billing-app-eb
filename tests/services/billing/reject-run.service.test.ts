@@ -199,12 +199,11 @@ describe("rejectRun (bm17-spec §Design/§2)", () => {
     );
   });
 
-  it("skips stamping when an account has no stage row yet (defensive — should not happen for a PROCESSED account)", async () => {
+  it("[CRITICAL] fails the whole reject when an account has no stage row (defensive — should not happen for a PROCESSED account, but the no_rejected_pending approval gate reads only this marker, so a silent skip would leave a rejected account unblocked from approval)", async () => {
     mockFindLatestForAccount.mockResolvedValue(null);
 
-    const result = await rejectRun(params(), "user-approver");
+    await expect(rejectRun(params(), "user-approver")).rejects.toThrow();
 
-    expect(result.ok).toBe(true);
     expect(mockStampMarker).not.toHaveBeenCalled();
   });
 
