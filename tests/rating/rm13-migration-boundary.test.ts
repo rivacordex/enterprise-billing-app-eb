@@ -95,6 +95,70 @@ describe("rm13 migration-boundary check (rm13-spec D4)", () => {
     expect(checkFileForBillingWrites(path)).toEqual([]);
   });
 
+  it("flags billing.* written inside a dollar-quoted function body (kept visible)", () => {
+    // A $$…$$ body that INSERTs into billing.* is a real cross-schema write —
+    // it must be flagged. Dollar-quoted contents are kept visible, unlike
+    // single-quoted string literals (which are blanked).
+    const dir = mkdtempSync(join(tmpdir(), "rm13-migration-boundary-"));
+    const path = join(dir, "0099_rating_dollar_body.sql");
+    writeFileSync(
+      path,
+      [
+        "CREATE FUNCTION rating.sync() RETURNS void AS $$",
+        "BEGIN",
+        "  INSERT INTO billing.billing_account (name) VALUES ('leaked');",
+        "END",
+        "$$ LANGUAGE plpgsql;",
+      ].join("\n"),
+      "utf8",
+    );
+    const violations = checkFileForBillingWrites(path);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.text).toBe("billing.billing_account");
+    expect(violations[0]!.line).toBe(3);
+  });
+
+  it("handles a tagged dollar literal and does not let its apostrophe swallow a later billing.* write", () => {
+    // Regression: $$O'Brien$$ (or a tagged $tag$…$tag$) contains a legal, un-
+    // escaped apostrophe. Without dollar-quote recognition the single-quote
+    // branch treats that ' as a string opener and blanks everything after it —
+    // including the real billing.* write on the next line (a false negative).
+    const dir = mkdtempSync(join(tmpdir(), "rm13-migration-boundary-"));
+    const path = join(dir, "0099_rating_dollar_apostrophe.sql");
+    writeFileSync(
+      path,
+      [
+        "INSERT INTO rating.note (body) VALUES ($tag$O'Brien & Sons$tag$);",
+        "UPDATE billing.billing_account SET status = 'x';",
+      ].join("\n"),
+      "utf8",
+    );
+    const violations = checkFileForBillingWrites(path);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.text).toBe("billing.billing_account");
+    expect(violations[0]!.line).toBe(2);
+  });
+
+  it("does not flag billing.* that appears only after -- inside a dollar-quoted body", () => {
+    // Inner `--` line comments inside a body are still comments in the body's
+    // own SQL, so a billing.* mentioned only there is not a real write.
+    const dir = mkdtempSync(join(tmpdir(), "rm13-migration-boundary-"));
+    const path = join(dir, "0099_rating_dollar_comment.sql");
+    writeFileSync(
+      path,
+      [
+        "CREATE FUNCTION rating.f() RETURNS void AS $body$",
+        "BEGIN",
+        "  -- reconciled later against billing.billing_account",
+        "  PERFORM 1;",
+        "END",
+        "$body$ LANGUAGE plpgsql;",
+      ].join("\n"),
+      "utf8",
+    );
+    expect(checkFileForBillingWrites(path)).toEqual([]);
+  });
+
   it("flags a billing.* reference split across a newline", () => {
     const dir = mkdtempSync(join(tmpdir(), "rm13-migration-boundary-"));
     const path = join(dir, "0099_rating_split.sql");

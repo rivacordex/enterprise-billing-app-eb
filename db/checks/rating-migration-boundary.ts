@@ -35,18 +35,40 @@ export interface BillingBoundaryViolation {
   text: string;
 }
 
-// Blanks out SQL comments AND string-literal contents (both replaced by
-// spaces, newlines preserved so line numbers of any later match stay
-// accurate). A naive `.replace(/--.*$/gm, "")` is unsafe: a `--` INSIDE a
+// PostgreSQL dollar-quoted string tag opener at position `i` (`sql[i] === "$"`):
+// `$$` or `$tag$`, where `tag` follows unquoted-identifier rules — so `$1` (a
+// positional parameter) and `$5` (money-looking text) are NOT tags. Returns the
+// full delimiter (e.g. `$$`, `$body$`) or null.
+function matchDollarTag(sql: string, i: number): string | null {
+  let j = i + 1;
+  while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j] as string)) j += 1;
+  if (sql[j] !== "$") return null;
+  const tag = sql.slice(i + 1, j);
+  if (tag !== "" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(tag)) return null;
+  return sql.slice(i, j + 1);
+}
+
+// Blanks out SQL comments AND single-quoted string-literal contents (both
+// replaced by spaces, newlines preserved so line numbers of any later match
+// stay accurate). A naive `.replace(/--.*$/gm, "")` is unsafe: a `--` INSIDE a
 // string literal (`'a--b'`) is not a comment, but the naive strip would treat
 // it as one and blank the rest of the line — silently erasing any real
 // `billing.<ident>` reference that follows it on the SAME line (a false
 // negative, the dangerous direction for a boundary gate). This is a small
 // state machine that only treats `--`/`/* */` as comments when NOT inside a
-// string, and blanks string CONTENTS so a `billing.*` merely mentioned inside
-// a literal (e.g. an error-message string) is neither a false negative source
-// nor a false positive. Real code references to `billing.<ident>` are left
-// intact and matched.
+// string, and blanks single-quoted string CONTENTS so a `billing.*` merely
+// mentioned inside a literal (e.g. an error-message string) is neither a false
+// negative source nor a false positive.
+//
+// Dollar-quoted literals (`$$…$$`, `$tag$…$tag$`) are recognised too, but their
+// CONTENTS are kept VISIBLE, not blanked: they are almost always function /
+// trigger BODIES, and a body that does `INSERT INTO billing.*` is a real write
+// that must be flagged (fail closed). Recognising them also stops an apostrophe
+// inside a body (`$$O'Brien$$`, legal because dollar-quoting avoids escaping)
+// from being mis-parsed as a single-quote that swallows the following statement
+// — the false negative this branch closes. Inner `--` line comments inside a
+// body are still stripped (they are comments in the body's own SQL). Real code
+// references to `billing.<ident>` are left intact and matched.
 function stripSqlComments(sql: string): string {
   const out: string[] = [];
   const n = sql.length;
@@ -100,6 +122,35 @@ function stripSqlComments(sql: string): string {
         i += 1;
       }
       continue;
+    }
+
+    // Dollar-quoted literal: $$…$$ or $tag$…$tag$ (PostgreSQL). Contents are
+    // kept VISIBLE (a body that writes `billing.*` is a real write — flag it),
+    // except inner `--` line comments are still stripped. Checked AFTER the
+    // single-quote branch, so a `$$` inside a '…' string is consumed as string
+    // content, never treated as a dollar-quote opener.
+    if (c === "$") {
+      const open = matchDollarTag(sql, i);
+      if (open) {
+        out.push(open);
+        i += open.length;
+        while (i < n && !sql.startsWith(open, i)) {
+          if (sql[i] === "-" && sql[i + 1] === "-") {
+            while (i < n && sql[i] !== "\n") {
+              out.push(" ");
+              i += 1;
+            }
+            continue;
+          }
+          out.push(sql[i] as string);
+          i += 1;
+        }
+        if (i < n) {
+          out.push(open);
+          i += open.length;
+        }
+        continue;
+      }
     }
 
     out.push(c);
