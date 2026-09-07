@@ -40,9 +40,11 @@ because it is the only component that knows the expected schedule at all.
    ``alarm_is_open`` gates a clear ("is there a raise with no later CLEARED
    yet?") separately. Sharing one query between the two would let a cleared
    alarm re-open every run; see the two functions' docstrings.
-5. **Superseded-never-replaced (D5).** ``find_superseded_never_replaced`` runs
-   the spec's literal orphan-index query and is surfaced via the task's own
-   output (stdout, captured by Kestra) as a bounded summary — never a new
+5. **Superseded-never-replaced (D5).** ``count_superseded_never_replaced`` runs
+   the spec's literal orphan-index query (a ``COUNT(*)`` plus a ``LIMIT``ed
+   sample — never the full unbounded key list in memory, since this set grows
+   with every rm10 reprocess and the check runs hourly) and is surfaced via the
+   task's own output (stdout, captured by Kestra) as a bounded summary — never a new
    process_log event_code, since none is catalogued for this condition and
    inventing one is exactly the never-guess item ai-workflow-rules §5.1 lists
    ("an event_code's default severity, or whether it is self-clearing").
@@ -231,7 +233,13 @@ def alarm_is_open(conn: psycopg.Connection, *, alarm_key: str, event_code: str) 
 
 # ---------------------------------------------------------------------------
 # D5 — superseded-never-replaced: the spec's literal orphan-index query
-# (rating.udr_rated_orphan_idx, rm01), verbatim.
+# (rating.udr_rated_orphan_idx, rm01), verbatim as the base predicate. This set
+# grows without bound over the system's lifetime (every rm10 reprocess retires
+# rows into it), and this check runs hourly — so the FULL key list is NEVER
+# materialised into Python. The count comes from a COUNT(*) wrapper and only a
+# bounded sample of keys is fetched for the task's summary output (D5 calls it a
+# "bounded summary"). A LIMIT on a diagnostic sample changes no rated number and
+# is not a semantic change to the spec's predicate.
 # ---------------------------------------------------------------------------
 
 _SUPERSEDED_NEVER_REPLACED_SQL = """
@@ -244,13 +252,28 @@ WHERE  o.is_live IS NULL
             AND l.is_live)
 """
 
+_SUPERSEDED_NEVER_REPLACED_COUNT_SQL = (
+    f"SELECT count(*) AS n FROM ({_SUPERSEDED_NEVER_REPLACED_SQL}) t"
+)
+_SUPERSEDED_NEVER_REPLACED_SAMPLE_SQL = (
+    f"{_SUPERSEDED_NEVER_REPLACED_SQL}ORDER BY o.udr_key\nLIMIT %(limit)s\n"
+)
 
-def find_superseded_never_replaced(conn: psycopg.Connection) -> list[str]:
+
+def count_superseded_never_replaced(
+    conn: psycopg.Connection, *, sample_limit: int = 10
+) -> tuple[int, list[str]]:
     """Keys retired and never re-rated (D5) — queryable, not a new alarm code
     (no catalogued event_code exists for this condition; inventing one is a
-    never-guess item, ai-workflow-rules §5.1)."""
-    rows = db.fetch(conn, _SUPERSEDED_NEVER_REPLACED_SQL)
-    return [row["udr_key"] for row in rows]
+    never-guess item, ai-workflow-rules §5.1). Returns ``(total_count,
+    bounded_sample)``: the count is a COUNT(*) over the orphan predicate and the
+    sample is at most ``sample_limit`` keys, so a large superseded backlog can
+    never load an unbounded result set into memory."""
+    total = int(db.fetch(conn, _SUPERSEDED_NEVER_REPLACED_COUNT_SQL)[0]["n"])
+    sample = db.fetch(
+        conn, _SUPERSEDED_NEVER_REPLACED_SAMPLE_SQL, {"limit": sample_limit}
+    )
+    return total, [row["udr_key"] for row in sample]
 
 
 # ---------------------------------------------------------------------------
@@ -388,23 +411,47 @@ def run_check(
     log_path: Path,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
+    errors = 0
     for cfg in configs:
         for period in candidate_periods(now, cfg.expected_by_utc, lookback_days):
-            codes = evaluate_period(
-                conn,
-                udr_type=cfg.udr_type,
-                period=period,
-                deadline=cfg.expected_by_utc,
-                workflow_execution_id=workflow_execution_id,
-                log_path=log_path,
-            )
-            # Nothing here writes to the database (raises/clears are files,
-            # loaded later by the independent sweep, §7.9) — commit just ends
-            # each period's implicit read transaction rather than holding one
-            # open across the whole run.
-            conn.commit()
+            # Isolate each (udr_type, period): a transient DB error in a guard
+            # query or an I/O error in an emit for ONE period must not abort the
+            # whole run and starve every remaining period + later udr_type of
+            # its absence check. Roll back that period's read transaction and
+            # carry on — the next scheduled run re-evaluates the whole lookback
+            # window anyway (candidate_periods is self-healing). Mirrors
+            # stranded_reconcile's deliberate per-candidate isolation.
+            try:
+                codes = evaluate_period(
+                    conn,
+                    udr_type=cfg.udr_type,
+                    period=period,
+                    deadline=cfg.expected_by_utc,
+                    workflow_execution_id=workflow_execution_id,
+                    log_path=log_path,
+                )
+                # Nothing here writes to the database (raises/clears are files,
+                # loaded later by the independent sweep, §7.9) — commit just ends
+                # each period's implicit read transaction rather than holding one
+                # open across the whole run.
+                conn.commit()
+            except Exception as exc:  # noqa: BLE001 — one bad period must not starve the rest
+                conn.rollback()
+                errors += 1
+                print(
+                    f"completeness-check: ERROR evaluating {cfg.udr_type} "
+                    f"{period.isoformat()}: {exc!r} — skipped, continuing.",
+                    file=sys.stderr,
+                )
+                continue
             for code in codes:
                 counts[code] = counts.get(code, 0) + 1
+    if errors:
+        print(
+            f"completeness-check: {errors} period(s) skipped on error "
+            "(see stderr) — the next run re-evaluates the lookback window.",
+            file=sys.stderr,
+        )
     return counts
 
 
@@ -452,10 +499,10 @@ def main(argv: list[str] | None = None) -> int:
             total = sum(counts.values())
             print(f"completeness-check: {total} event(s) emitted ({counts}).")
 
-        orphans = find_superseded_never_replaced(conn)
+        orphan_count, orphan_sample = count_superseded_never_replaced(conn)
         print(
-            f"completeness-check: {len(orphans)} superseded-never-replaced key(s) "
-            f"(D5, sample: {orphans[:10]})."
+            f"completeness-check: {orphan_count} superseded-never-replaced key(s) "
+            f"(D5, sample: {orphan_sample})."
         )
     return 0
 

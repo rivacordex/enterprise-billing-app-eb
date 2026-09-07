@@ -28,7 +28,9 @@ RL's guard + supersede + insert are **one transaction** (rm09 D1). So a batch st
 
 ### D3. Find and resolve
 
-The reconcile finds `udr_batch` rows where `status = 'PROCESSING'` and the age (now − `started_at`) exceeds the threshold, and resolves each: set `status = 'FAILED'`, releasing the file so a subsequent run (`batch_run_num = N+1`, rm07) can claim and reprocess it. The raw file is already in `landing/`; the next file-trigger or manual run picks it up. Supersession (rm10) then retires nothing (the failed run loaded nothing) and the reprocess loads cleanly.
+The reconcile finds `udr_batch` rows in a **non-terminal** status — `RECEIVED` **or** `PROCESSING` — whose age exceeds the threshold, and resolves each: set `status = 'FAILED'`, releasing the file so a subsequent run (`batch_run_num = N+1`, rm07) can claim and reprocess it. The raw file is already in `landing/`; the next file-trigger or manual run picks it up. Supersession (rm10) then retires nothing (the failed run loaded nothing) and the reprocess loads cleanly.
+
+**Both non-terminal states are stranded (corrects an earlier PROCESSING-only reading).** rm07's PRP commits the claim as `RECEIVED` **before** it parses (`prp.claim_batch`: "the claim is durable BEFORE parsing … a parse crash leaves this RECEIVED row for stranded-batch reconciliation (rm11)"), then stamps `PROCESSING` + `started_at` with the parse counts. So a worker killed mid-parse strands the row at `RECEIVED` (with `started_at` still NULL), and one killed in RP/RL strands it at `PROCESSING`. A `PROCESSING`-only find would leave `RECEIVED` strands permanently claimed — exactly the D1 failure this unit exists to prevent. Age is therefore measured from `COALESCE(started_at, received_at)` (`received_at`, the NOT-NULL claim time, is the floor while `started_at` is unstamped). The threshold (D4) must accordingly exceed worst-case **parse** time as well as RP/RL time; if it is ever set below a live parse and a genuinely-running `RECEIVED` batch is failed, the reprocess is still correct (rm10 supersedes the earlier run) but wasteful.
 
 ### D4. Threshold config — operational, KV store
 
@@ -36,7 +38,9 @@ The `PROCESSING`-age threshold is **namespace KV** config (operational, not outp
 
 ### D5. Logged and alarmed — the new `BATCH_STRANDED` code
 
-Resolving a stranded batch emits **`BATCH_STRANDED`** at `MAJOR` (`component = SCHEDULER`), `alarm_key` tied to the `file_key` + run, **auto-clearing** by the reprocessed batch's `BATCH_COMPLETE`. This code is **not** in rm02's sixteen; rm11 adds it in a coordinated change: the seed row in `rm02`, its entry in `ratemgmt-code-standards.md` §7, and the emitting code — per ai-workflow-rules §7.3. *(Confirm the code + severity, or say "reuse `TASK_RETRY_OK`".)*
+Resolving a stranded batch emits **`BATCH_STRANDED`** at `MAJOR` (`component = SCHEDULER`), on the **run-independent delivery `alarm_key` `<udr_type>:<file_key>`**, **auto-clearing** by the reprocessed batch's `BATCH_COMPLETE`. This code is **not** in rm02's sixteen; rm11 adds it in a coordinated change: the seed row in `rm02`, its entry in `ratemgmt-code-standards.md` §7, and the emitting code — per ai-workflow-rules §7.3.
+
+**The `alarm_key` MUST be the delivery key, not a run-scoped one (corrects this spec's own earlier example).** Alarms pair a raise to its clearer by matching `alarm_key`, and `BATCH_COMPLETE` is stamped with `<udr_type>:<file_key>` (`rl.emit_terminal_event`). An earlier draft here suggested `BATCH_STRANDED:<file_key>:<run>`, but the reprocess runs under `batch_run_num = N+1` and emits its `BATCH_COMPLETE` on the delivery key — so a run-scoped, prefixed `alarm_key` could **never** be matched by its clearer, and the `MAJOR` alarm would never clear (violating verification item 6). Using `<udr_type>:<file_key>` is what makes D5's own "auto-clearing by the reprocessed batch's `BATCH_COMPLETE`" and verification item 6 true. The alarm is also emitted **before** the `FAILED` commit (at-least-once: a crash in the window duplicates on the same delivery key rather than silently reaping a strand with no alarm).
 
 ### D6. Idempotent and safe
 
@@ -57,15 +61,16 @@ A flow with a **schedule** trigger and an **on-start** hook; calls `stranded_rec
 ### 2. The find query (`stranded_reconcile.py`)
 
 ```sql
-SELECT batch_id, file_key, batch_run_num, started_at
+SELECT batch_id, file_key, batch_run_num, source_file, udr_type,
+       started_at, received_at
 FROM   rating.udr_batch
-WHERE  status = 'PROCESSING'
-  AND  now() - started_at > $threshold;
+WHERE  status IN ('RECEIVED', 'PROCESSING')
+  AND  now() - COALESCE(started_at, received_at) > $threshold;
 ```
 
 ### 3. Resolve + log
 
-For each: `UPDATE rating.udr_batch SET status = 'FAILED' WHERE batch_id = $id`; emit `BATCH_STRANDED` (`MAJOR`, `alarm_key = BATCH_STRANDED:<file_key>:<run>`). The file remains in `landing/` for reprocessing.
+For each: `UPDATE rating.udr_batch SET status = 'FAILED' WHERE batch_id = $id AND status IN ('RECEIVED','PROCESSING')` (guarded so an already-resolved or self-finalized row is a no-op); emit `BATCH_STRANDED` (`MAJOR`, `alarm_key = <udr_type>:<file_key>` — the delivery key, so the reprocessed batch's `BATCH_COMPLETE` clears it) **before** committing the resolve. The file remains in `landing/` for reprocessing.
 
 ### 4. Threshold config
 

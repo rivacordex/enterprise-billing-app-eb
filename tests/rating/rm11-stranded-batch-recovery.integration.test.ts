@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -120,15 +121,23 @@ describe("stranded-batch reconcile (rm11-spec D1-D9 — static)", () => {
     "utf8",
   );
 
-  it("finds PROCESSING batches beyond the threshold (D3)", () => {
-    expect(source).toMatch(/WHERE\s+status = 'PROCESSING'/);
-    expect(source).toMatch(/now\(\) - started_at > %\(threshold\)s/);
+  it("finds non-terminal (RECEIVED/PROCESSING) batches beyond the threshold (D3)", () => {
+    // Both non-terminal states are stranded: PRP commits the claim as RECEIVED
+    // before parsing, then stamps PROCESSING + started_at with the counts, so a
+    // worker killed mid-parse strands at RECEIVED (started_at still NULL) and
+    // one killed in RP/RL strands at PROCESSING. Age is measured from
+    // COALESCE(started_at, received_at) so the RECEIVED case (NULL started_at)
+    // is aged from its NOT-NULL claim time.
+    expect(source).toMatch(/WHERE\s+status IN \('RECEIVED', 'PROCESSING'\)/);
+    expect(source).toMatch(
+      /now\(\) - COALESCE\(started_at, received_at\) > %\(threshold\)s/,
+    );
   });
 
-  it("resolves by setting status = 'FAILED', guarded on the row still being PROCESSING (D3/D6)", () => {
+  it("resolves by setting status = 'FAILED', guarded on the row still being non-terminal (D3/D6)", () => {
     expect(source).toMatch(/SET status = 'FAILED'/);
     expect(source).toMatch(
-      /WHERE batch_id = %\(batch_id\)s AND status = 'PROCESSING'/,
+      /WHERE batch_id = %\(batch_id\)s AND status IN \('RECEIVED', 'PROCESSING'\)/,
     );
     // Never touches file_key/batch_run_num/source_file — a status-lifecycle
     // write only, matching rating_runtime's udr_batch grant (code-standards §9).
@@ -238,7 +247,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     });
 
     function uriToPath(uri: string): string {
-      return decodeURIComponent(uri.replace(/^file:\/\//, ""));
+      // fileURLToPath handles both POSIX (file:///home/…) and Windows
+      // (file:///C:/…) URIs that prp emits via Path.resolve().as_uri(); a bare
+      // `replace(/^file:\/\//,"")` leaves a leading slash before the drive
+      // letter on Windows (`/C:/…`), which then resolves against the wrong
+      // drive root.
+      return fileURLToPath(uri.trim());
     }
 
     function runPrp(
@@ -344,7 +358,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(lines).toHaveLength(1);
       expect(lines[0].event_code).toBe("BATCH_STRANDED");
       expect(lines[0].component).toBe("SCHEDULER");
-      expect(lines[0].alarm_key).toBe(`BATCH_STRANDED:${fileKey}:1`);
+      // The run-independent DELIVERY alarm_key — identical to the key RL stamps
+      // on BATCH_COMPLETE (`{udr_type}:{file_key}`), so the reprocessed run's
+      // BATCH_COMPLETE auto-clears this MAJOR alarm (rm11 verification item 6).
+      // NOT the run-scoped `BATCH_STRANDED:<file_key>:<run>` form, which a later
+      // run's clearer could never match.
+      expect(lines[0].alarm_key).toBe(`RAN_USAGE:${fileKey}`);
       expect(lines[0].batch_id).toBe(batchId);
 
       // Idempotent (item 5): running it again finds nothing to resolve.
@@ -386,6 +405,43 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
       const row = await batchRow(batchId);
       expect(row?.status).toBe("PROCESSING");
+    });
+
+    it("1 (RECEIVED variant). resolves a batch stranded at RECEIVED (worker killed before parse finished), aged from received_at", async () => {
+      // PRP commits the claim as RECEIVED *before* it parses (prp.claim_batch),
+      // then stamps PROCESSING + started_at with the parse counts. A worker
+      // killed mid-parse therefore strands the row at RECEIVED with started_at
+      // still NULL — the reconcile must reap it too (else its UNIQUE (file_key,
+      // batch_run_num) claim blocks the file forever, D1), aged from the
+      // NOT-NULL received_at via COALESCE(started_at, received_at). This class
+      // was previously never matched by the PROCESSING-only find query.
+      const [inserted] = await sql<{ batch_id: string; file_key: string }[]>`
+        INSERT INTO rating.udr_batch
+          (file_key, source_file, file_key_rule, udr_type, status, received_at)
+        VALUES
+          ('RAN_USAGE_20260603', 'RAN_USAGE_20260603.csv', ${FILE_KEY_RULE},
+           'RAN_USAGE', 'RECEIVED', now() - interval '2 hours')
+        RETURNING batch_id, file_key
+      `;
+      const batchId = inserted!.batch_id;
+
+      const out = runReconcile(3600, "rm11-exec-received");
+      expect(out).toMatch(/1 batch\(es\) resolved/);
+
+      const row = await batchRow(batchId);
+      expect(row?.status).toBe("FAILED"); // reaped — claim released
+      expect(row?.error_summary).toMatch(/BATCH_STRANDED/);
+
+      const lines = readFileSync(
+        join(logsDir, "SCHEDULER-rm11-exec-received.jsonl"),
+        "utf8",
+      )
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(lines).toHaveLength(1);
+      expect(lines[0].event_code).toBe("BATCH_STRANDED");
+      expect(lines[0].alarm_key).toBe(`RAN_USAGE:${inserted!.file_key}`);
     });
 
     it("6-7. BATCH_STRANDED resolves to MAJOR via event_catalog, and the INDETERMINATE count stays zero", async () => {
