@@ -6,7 +6,7 @@ import { billRunRepository } from "@/db/repositories/billing/bill-run.repository
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { getBusinessToday } from "@/services/billing/business-today";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
 
 // bm03-spec §Design/§7. The trigger transaction: row-locked double-trigger
@@ -133,7 +133,7 @@ export async function triggerRun(
       const banIds = pending.map((p) => p.refBillingAccountId);
       let executionRef;
       try {
-        executionRef = await getEngineClient().startExecution({
+        executionRef = await engineRegistry.trigger("billrun", {
           bill_run_id: run.billRunId,
           period_start: run.periodStart,
           period_end: run.periodEnd,
@@ -150,9 +150,10 @@ export async function triggerRun(
       await billRunRepository.markProcessing(tx, run.billRunId, {
         glEventAt: run.scheduledRunDate,
         triggeredBy: actorId,
-        workflowExecutionId: executionRef.executionId,
-        workflowDefinitionId: executionRef.definitionId,
-        workflowDefinitionRevision: executionRef.definitionRevision,
+        processingExecutionId: executionRef.executionId,
+        processingFlowId: executionRef.definitionId,
+        processingFlowRevision: executionRef.definitionRevision,
+        processingEngineRef: executionRef.engineRef,
       });
 
       await insertAuditEvent(tx, {

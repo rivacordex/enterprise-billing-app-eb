@@ -18,6 +18,7 @@ import { RUN_DETAIL_TABS } from "@/validation/billing/run-detail.schema";
 import type {
   CustomerBillRow,
   ErrorRow,
+  RejectedPendingRow,
   StageTimelineRow,
   StageTimelineSummary,
   UnchargedRow,
@@ -41,6 +42,7 @@ export interface RunDetailTabsProps {
   customerBills: CustomerBillRow[];
   uncharged: UnchargedRow[];
   errors: ErrorRow[];
+  rejectedPending: RejectedPendingRow[];
   audit: AuditLogRow[];
   canRecover: boolean;
   canRerun: boolean;
@@ -55,6 +57,7 @@ export function RunDetailTabs({
   customerBills,
   uncharged,
   errors,
+  rejectedPending,
   audit,
   canRecover,
   canRerun,
@@ -97,7 +100,12 @@ export function RunDetailTabs({
           canRecover={canRecover}
         />
       ) : activeTab === "errors" ? (
-        <ErrorsTable runId={runId} rows={errors} canRerun={canRerun} />
+        <ErrorsTable
+          runId={runId}
+          rows={errors}
+          canRerun={canRerun}
+          rejectedPending={rejectedPending}
+        />
       ) : (
         <AuditTable rows={audit} timezone={timezone} />
       )}

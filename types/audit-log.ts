@@ -86,6 +86,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // bm10 — PROCESSED → APPROVED, the four-eyes money gate: a state
   // transition, not a new entity.
   BILL_RUN_APPROVED: "Change",
+  // bm17 — a pre-approval decline (BILL_DRAFT → REJECTED on the claimed
+  // rows): a state transition, mirroring BILL_RUN_RERUN's classification.
+  BILL_RUN_REJECTED: "Change",
   // bm11 — marks the run reaching the INVOICED milestone (money in the
   // ledger): Additive, like BILL_RUN_MATERIALIZED — new INV documents now
   // exist, not merely a status flip.

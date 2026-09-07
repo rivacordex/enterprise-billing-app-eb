@@ -61,5 +61,7 @@ describe("AUDIT_EVENT_CATEGORY_MAP", () => {
 
     // bm08 — the rerun event is a Change (a state transition).
     expect(AUDIT_EVENT_CATEGORY_MAP.BILL_RUN_RERUN).toBe("Change");
+    // bm17 — reject (BILL_DRAFT → REJECTED) is a Change (a state transition).
+    expect(AUDIT_EVENT_CATEGORY_MAP.BILL_RUN_REJECTED).toBe("Change");
   });
 });

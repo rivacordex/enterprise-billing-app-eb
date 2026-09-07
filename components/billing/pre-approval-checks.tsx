@@ -14,6 +14,7 @@ const CHECK_LABELS: Record<PreApprovalCheckKey, string> = {
   positive_totals: "No zero or negative totals",
   four_eyes: "Approver differs from the trigger actor",
   accounts_terminal: "All accounts terminal",
+  no_rejected_pending: "No accounts pending reject-reprocess",
 };
 
 export interface PreApprovalChecksProps {

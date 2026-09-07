@@ -10,7 +10,7 @@ import { CircleCheck } from "lucide-react";
 
 import { ErrorClassBadge } from "@/components/billing/error-class-badge";
 import { RerunDialog } from "@/components/billing/rerun-dialog";
-import type { ErrorRow } from "@/types/billing";
+import type { ErrorRow, RejectedPendingRow } from "@/types/billing";
 
 export interface ErrorsTableProps {
   runId: string;
@@ -19,14 +19,21 @@ export interface ErrorsTableProps {
   // rerunnable) — show/hide the rerun control (the action re-checks server-side
   // regardless, code-standards §8).
   canRerun: boolean;
+  // bm17-spec §Implementation §5 — accounts currently carrying the
+  // REJECTED_PENDING_REPROCESS marker (parked by Reject, cleared implicitly
+  // by a rerun's attempt bump). Rendered as its own "Rejected" surface,
+  // distinct from the HARD-error table below — a rejected account is not a
+  // processing failure.
+  rejectedPending?: RejectedPendingRow[];
 }
 
 export function ErrorsTable({
   runId,
   rows,
   canRerun,
+  rejectedPending = [],
 }: ErrorsTableProps): React.JSX.Element {
-  if (rows.length === 0) {
+  if (rows.length === 0 && rejectedPending.length === 0) {
     return (
       <div className="rounded-none bg-card p-10 text-center shadow-sm">
         <CircleCheck
@@ -45,73 +52,134 @@ export function ErrorsTable({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-body-sm text-muted-foreground">
-          {rows.length} account{rows.length === 1 ? "" : "s"} blocked by a hard
-          error — fix the underlying issue, then rerun.
-        </p>
-        {canRerun && (
-          <RerunDialog
-            billRunId={runId}
-            accountIds={rows.map((r) => r.billingAccountId)}
-          />
-        )}
-      </div>
+    <div className="space-y-6">
+      {rejectedPending.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-body-sm text-muted-foreground">
+            {rejectedPending.length} account
+            {rejectedPending.length === 1 ? "" : "s"} rejected — sent back to
+            reprocess. This run cannot be approved until every rejected
+            account is rerun.
+          </p>
+          <div className="overflow-x-auto rounded-none border-l-2 border-[color:var(--color-warning-500)] bg-card shadow-sm">
+            <table className="w-full border-collapse text-body-sm">
+              <thead>
+                <tr className="border-b border-border bg-[color:var(--surface-sunken)]">
+                  <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                    Account
+                  </th>
+                  <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                    Reason
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rejectedPending.map((row) => (
+                  <tr
+                    key={row.billingAccountId}
+                    className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]"
+                  >
+                    <td className="px-4 py-3 align-top">
+                      <div className="font-medium text-foreground">
+                        {row.accountName}
+                      </div>
+                      <div className="font-mono text-mono text-muted-foreground">
+                        {row.billingAccountId}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-top text-muted-foreground">
+                      {row.errorDetail ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {canRerun ? (
+            <RerunDialog
+              billRunId={runId}
+              accountIds={rejectedPending.map((r) => r.billingAccountId)}
+              triggerLabel="Rerun to reprocess"
+            />
+          ) : (
+            <p className="text-body-sm text-muted-foreground">
+              An operator must rerun these accounts before this run can be
+              approved.
+            </p>
+          )}
+        </div>
+      )}
 
-      <div className="overflow-x-auto rounded-none border-l-2 border-[color:var(--color-danger-500)] bg-card shadow-sm">
-        <table className="w-full border-collapse text-body-sm">
-          <thead>
-            <tr className="border-b border-border bg-[color:var(--surface-sunken)]">
-              <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-                Account
-              </th>
-              <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-                Class
-              </th>
-              <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-                Stage
-              </th>
-              <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-                Error
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr
-                key={row.billingAccountId}
-                className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]"
-              >
-                <td className="px-4 py-3 align-top">
-                  <div className="font-medium text-foreground">
-                    {row.accountName}
-                  </div>
-                  <div className="font-mono text-mono text-muted-foreground">
-                    {row.billingAccountId}
-                  </div>
-                </td>
-                <td className="px-4 py-3 align-top">
-                  <ErrorClassBadge errorClass={row.errorClass} />
-                </td>
-                <td className="px-4 py-3 align-top whitespace-nowrap text-foreground">
-                  {row.stage}
-                </td>
-                <td className="px-4 py-3 align-top">
-                  <div className="font-mono text-mono text-[color:var(--color-danger-700)]">
-                    {row.errorCode ?? "—"}
-                  </div>
-                  {row.errorDetail !== null && (
-                    <div className="mt-0.5 text-body-sm text-muted-foreground">
-                      {row.errorDetail}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {rows.length === 0 ? null : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-body-sm text-muted-foreground">
+              {rows.length} account{rows.length === 1 ? "" : "s"} blocked by a
+              hard error — fix the underlying issue, then rerun.
+            </p>
+            {canRerun && (
+              <RerunDialog
+                billRunId={runId}
+                accountIds={rows.map((r) => r.billingAccountId)}
+              />
+            )}
+          </div>
+
+          <div className="overflow-x-auto rounded-none border-l-2 border-[color:var(--color-danger-500)] bg-card shadow-sm">
+            <table className="w-full border-collapse text-body-sm">
+              <thead>
+                <tr className="border-b border-border bg-[color:var(--surface-sunken)]">
+                  <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                    Account
+                  </th>
+                  <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                    Class
+                  </th>
+                  <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                    Stage
+                  </th>
+                  <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+                    Error
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.billingAccountId}
+                    className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]"
+                  >
+                    <td className="px-4 py-3 align-top">
+                      <div className="font-medium text-foreground">
+                        {row.accountName}
+                      </div>
+                      <div className="font-mono text-mono text-muted-foreground">
+                        {row.billingAccountId}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      <ErrorClassBadge errorClass={row.errorClass} />
+                    </td>
+                    <td className="px-4 py-3 align-top whitespace-nowrap text-foreground">
+                      {row.stage}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      <div className="font-mono text-mono text-[color:var(--color-danger-700)]">
+                        {row.errorCode ?? "—"}
+                      </div>
+                      {row.errorDetail !== null && (
+                        <div className="mt-0.5 text-body-sm text-muted-foreground">
+                          {row.errorDetail}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

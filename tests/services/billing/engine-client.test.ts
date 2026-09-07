@@ -1,37 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm03-spec §Design/§Implementation §5. The mockable engine client: the stub
-// returns a synthetic execution id with no HTTP; the real client posts to
-// `${url}/executions/{namespace}/{definition}` with Basic auth and maps a
-// non-2xx/network failure to a typed `EngineError`. `getEngineClient` selects
-// by `isBillRunEngineConfigured`.
+// bm03-spec §Design/§Implementation §5, revised bm16-spec §Implementation §1.
+// The mockable engine client: the stub returns a synthetic execution id with
+// no HTTP; the real client posts to `${baseUrl}/executions/{namespace}/
+// bill_run_processing` with Basic auth and maps a non-2xx/network failure to
+// a typed `EngineError`. Both take an explicit `EngineConnection` — no
+// internal config lookup (that's `engine-registry.ts`'s job).
 
-const configState: {
-  billRunEngineConfig: { url: string | null; auth: string | null };
-  isBillRunEngineConfigured: boolean;
-} = {
-  billRunEngineConfig: { url: null, auth: null },
-  isBillRunEngineConfigured: false,
-};
-
-vi.mock("@/lib/config", () => ({
-  get billRunEngineConfig() {
-    return configState.billRunEngineConfig;
-  },
-  get isBillRunEngineConfigured() {
-    return configState.isBillRunEngineConfigured;
-  },
-}));
 vi.mock("@/lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import {
   EngineError,
-  getEngineClient,
   realEngineClient,
   stubEngineClient,
 } from "@/services/billing/engine-client";
+
+const CONNECTION = {
+  baseUrl: "https://engine.example.com",
+  basicAuth: "user:pass",
+  namespace: "billrun",
+};
 
 const PAYLOAD = {
   bill_run_id: "BRN00000001",
@@ -43,8 +33,6 @@ const PAYLOAD = {
 };
 
 beforeEach(() => {
-  configState.billRunEngineConfig = { url: null, auth: null };
-  configState.isBillRunEngineConfigured = false;
   vi.unstubAllGlobals();
 });
 
@@ -57,11 +45,11 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await stubEngineClient.startExecution(PAYLOAD);
+    const ref = await stubEngineClient.startExecution(CONNECTION, PAYLOAD);
 
     expect(ref).toEqual({
       executionId: "stub-exec-BRN00000001",
-      definitionId: "billing.bill_run",
+      definitionId: "billrun.bill_run_processing",
       definitionRevision: 0,
     });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -72,7 +60,10 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const status = await stubEngineClient.getExecutionStatus("stub-exec-1");
+    const status = await stubEngineClient.getExecutionStatus(
+      CONNECTION,
+      "stub-exec-1",
+    );
 
     expect(status).toEqual({ state: "RUNNING" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -83,54 +74,37 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     await expect(
-      stubEngineClient.killExecution("stub-exec-1"),
+      stubEngineClient.killExecution(CONNECTION, "stub-exec-1"),
     ).resolves.toBeUndefined();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
-describe("getEngineClient (bm03-spec §5)", () => {
-  it("selects the stub client when unconfigured", () => {
-    configState.isBillRunEngineConfigured = false;
-    expect(getEngineClient()).toBe(stubEngineClient);
-  });
-
-  it("selects the real client when configured", () => {
-    configState.isBillRunEngineConfigured = true;
-    expect(getEngineClient()).toBe(realEngineClient);
-  });
-});
-
 describe("realEngineClient (bm03-spec §5)", () => {
-  beforeEach(() => {
-    configState.billRunEngineConfig = {
-      url: "https://engine.example.com",
-      auth: "user:pass",
-    };
-  });
-
-  it("POSTs to the executions endpoint with Basic auth and maps the response", async () => {
+  it("POSTs to the namespace/bill_run_processing endpoint with Basic auth and maps the response", async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: () =>
         Promise.resolve({
           executionId: "exec-123",
-          definitionId: "billing.bill_run",
+          definitionId: "billrun.bill_run_processing",
           definitionRevision: 2,
         }),
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await realEngineClient.startExecution(PAYLOAD);
+    const ref = await realEngineClient.startExecution(CONNECTION, PAYLOAD);
 
     expect(ref).toEqual({
       executionId: "exec-123",
-      definitionId: "billing.bill_run",
+      definitionId: "billrun.bill_run_processing",
       definitionRevision: 2,
     });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://engine.example.com/executions/billing/bill_run");
+    expect(url).toBe(
+      "https://engine.example.com/executions/billrun/bill_run_processing",
+    );
     expect(init.method).toBe("POST");
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe(
@@ -145,9 +119,9 @@ describe("realEngineClient (bm03-spec §5)", () => {
       vi.fn().mockResolvedValue({ ok: false, status: 503 }),
     );
 
-    await expect(realEngineClient.startExecution(PAYLOAD)).rejects.toThrow(
-      EngineError,
-    );
+    await expect(
+      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+    ).rejects.toThrow(EngineError);
   });
 
   it("throws EngineError when fetch itself rejects (network failure)", async () => {
@@ -156,9 +130,9 @@ describe("realEngineClient (bm03-spec §5)", () => {
       vi.fn().mockRejectedValue(new Error("network down")),
     );
 
-    await expect(realEngineClient.startExecution(PAYLOAD)).rejects.toThrow(
-      EngineError,
-    );
+    await expect(
+      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+    ).rejects.toThrow(EngineError);
   });
 
   it("throws EngineError when the response body is missing executionId", async () => {
@@ -171,9 +145,9 @@ describe("realEngineClient (bm03-spec §5)", () => {
       }),
     );
 
-    await expect(realEngineClient.startExecution(PAYLOAD)).rejects.toThrow(
-      EngineError,
-    );
+    await expect(
+      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+    ).rejects.toThrow(EngineError);
   });
 
   // bm12-spec §Design/§Implementation §2.
@@ -186,7 +160,10 @@ describe("realEngineClient (bm03-spec §5)", () => {
       });
       vi.stubGlobal("fetch", fetchSpy);
 
-      const status = await realEngineClient.getExecutionStatus("exec-123");
+      const status = await realEngineClient.getExecutionStatus(
+        CONNECTION,
+        "exec-123",
+      );
 
       expect(status).toEqual({ state: "SUCCESS" });
       const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
@@ -201,7 +178,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
       );
 
       await expect(
-        realEngineClient.getExecutionStatus("exec-123"),
+        realEngineClient.getExecutionStatus(CONNECTION, "exec-123"),
       ).rejects.toThrow(EngineError);
     });
 
@@ -216,7 +193,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
       );
 
       await expect(
-        realEngineClient.getExecutionStatus("exec-123"),
+        realEngineClient.getExecutionStatus(CONNECTION, "exec-123"),
       ).rejects.toThrow(EngineError);
     });
 
@@ -227,7 +204,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
       );
 
       await expect(
-        realEngineClient.getExecutionStatus("exec-123"),
+        realEngineClient.getExecutionStatus(CONNECTION, "exec-123"),
       ).rejects.toThrow(EngineError);
     });
 
@@ -242,7 +219,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
       );
 
       await expect(
-        realEngineClient.getExecutionStatus("exec-123"),
+        realEngineClient.getExecutionStatus(CONNECTION, "exec-123"),
       ).rejects.toThrow(EngineError);
     });
   });
@@ -253,7 +230,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
       vi.stubGlobal("fetch", fetchSpy);
 
       await expect(
-        realEngineClient.killExecution("exec-123"),
+        realEngineClient.killExecution(CONNECTION, "exec-123"),
       ).resolves.toBeUndefined();
       const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
       expect(url).toBe("https://engine.example.com/executions/exec-123/kill");
@@ -266,9 +243,9 @@ describe("realEngineClient (bm03-spec §5)", () => {
         vi.fn().mockResolvedValue({ ok: false, status: 500 }),
       );
 
-      await expect(realEngineClient.killExecution("exec-123")).rejects.toThrow(
-        EngineError,
-      );
+      await expect(
+        realEngineClient.killExecution(CONNECTION, "exec-123"),
+      ).rejects.toThrow(EngineError);
     });
 
     it("throws EngineError when fetch itself rejects", async () => {
@@ -277,9 +254,9 @@ describe("realEngineClient (bm03-spec §5)", () => {
         vi.fn().mockRejectedValue(new Error("network down")),
       );
 
-      await expect(realEngineClient.killExecution("exec-123")).rejects.toThrow(
-        EngineError,
-      );
+      await expect(
+        realEngineClient.killExecution(CONNECTION, "exec-123"),
+      ).rejects.toThrow(EngineError);
     });
   });
 });

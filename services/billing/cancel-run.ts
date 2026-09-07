@@ -2,8 +2,9 @@ import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { logger } from "@/lib/logger";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 
 // bm12-spec §Design/§Implementation §3. The cancel transaction — the Layer-3
 // escape hatch for a wedged execution (architecture §Design "Layer-3
@@ -34,15 +35,19 @@ export async function cancelRun(
       return { ok: false, code: "NOT_CANCELLABLE" } as const;
     }
 
-    if (run.workflowExecutionId) {
+    if (run.processingExecutionId) {
       try {
-        await getEngineClient().killExecution(run.workflowExecutionId);
+        await engineRegistry.killExecution(
+          "billrun",
+          run.processingExecutionId,
+          run.processingEngineRef,
+        );
       } catch (err) {
         logger.warn(
           "bill-run cancel: killExecution failed, proceeding with cancel",
           {
             billRunId,
-            executionId: run.workflowExecutionId,
+            executionId: run.processingExecutionId,
             error: err instanceof Error ? err.message : String(err),
           },
         );
@@ -53,6 +58,11 @@ export async function cancelRun(
       tx,
       billRunId,
     );
+    // bm17-spec §Implementation §4 — release the run's claimed rows back to
+    // RATED (abort, D11), distinct from reject's REJECTED. The
+    // `status = 'BILL_DRAFT'` predicate means this never touches a
+    // `BILL_APPROVED`/posted row.
+    await udrStatusRepository.release(tx, billRunId);
     await billRunRepository.cancel(tx, billRunId);
 
     await insertAuditEvent(tx, {
@@ -62,7 +72,7 @@ export async function cancelRun(
       targetId: billRunId,
       beforeData: {
         status: run.status,
-        workflowExecutionId: run.workflowExecutionId,
+        processingExecutionId: run.processingExecutionId,
       },
       afterData: { status: "CANCELLED", accountsReset },
     });

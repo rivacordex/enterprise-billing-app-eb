@@ -253,6 +253,7 @@ export const PRE_APPROVAL_CHECKS = [
   "positive_totals",
   "four_eyes",
   "accounts_terminal",
+  "no_rejected_pending",
 ] as const;
 export type PreApprovalCheckKey = (typeof PRE_APPROVAL_CHECKS)[number];
 
@@ -287,4 +288,21 @@ export interface ApprovePreview {
   currency: string | null;
   totalAmount: string;
   checks: PreApprovalCheck[];
+}
+
+// bm17-spec §Design "Reject model (b)". The marker stamped on a rejected
+// account's latest (current-attempt) `bill_run_account_stage.error_code` —
+// the account stays `PROCESSED` (no new `AccountStatus` member), so this is
+// the only signal that it is not currently approvable. Shared by the reject
+// service (the write), the `no_rejected_pending` pre-approval check, and the
+// Errors tab's "Rejected — pending reprocess" read, so all three can never
+// drift on the literal string.
+export const REJECTED_PENDING_REPROCESS = "REJECTED_PENDING_REPROCESS";
+
+// bm17-spec §Implementation §5. The Errors tab's "Rejected — pending
+// reprocess" read model — one row per account currently carrying the marker.
+export interface RejectedPendingRow {
+  billingAccountId: string;
+  accountName: string;
+  errorDetail: string | null;
 }

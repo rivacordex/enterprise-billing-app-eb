@@ -48,8 +48,8 @@ vi.mock("@/db/repositories/audit.repository", () => ({
 vi.mock("@/services/billing/scope-accounts", () => ({
   scopeAccounts: vi.fn(),
 }));
-vi.mock("@/services/billing/engine-client", () => ({
-  getEngineClient: vi.fn(),
+vi.mock("@/services/billing/engine-registry", () => ({
+  engineRegistry: { trigger: vi.fn() },
 }));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
@@ -59,7 +59,7 @@ import { billingAccountRepository } from "@/db/repositories/accounts/billing-acc
 import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
-import { getEngineClient } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import { triggerRun } from "@/services/billing/trigger-run";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
@@ -80,7 +80,7 @@ const mockFindByPeriodAndCurrency = vi.mocked(
 );
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockScopeAccounts = vi.mocked(scopeAccounts);
-const mockGetEngineClient = vi.mocked(getEngineClient);
+const mockTrigger = vi.mocked(engineRegistry.trigger);
 
 const TODAY = "2026-08-19";
 
@@ -111,19 +111,13 @@ const EXCLUDED_ROW = {
   errorCode: "PARTIAL_PERIOD",
 };
 
-const startExecution = vi.fn();
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetEngineClient.mockReturnValue({
-    startExecution,
-    getExecutionStatus: vi.fn(),
-    killExecution: vi.fn(),
-  } as never);
-  startExecution.mockResolvedValue({
+  mockTrigger.mockResolvedValue({
     executionId: "stub-exec-BRN00000001",
-    definitionId: "billing.bill_run",
+    definitionId: "billrun.bill_run_processing",
     definitionRevision: 0,
+    engineRef: "billrun@stub/billrun",
   });
   mockScopeAccounts.mockResolvedValue({
     pending: [PENDING_ROW],
@@ -154,7 +148,7 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       PENDING_ROW,
       EXCLUDED_ROW,
     ]);
-    expect(startExecution).toHaveBeenCalledWith({
+    expect(mockTrigger).toHaveBeenCalledWith("billrun", {
       bill_run_id: "BRN00000001",
       period_start: "2026-07-01",
       period_end: "2026-07-31",
@@ -165,9 +159,10 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
     expect(mockMarkProcessing).toHaveBeenCalledWith(txStub, "BRN00000001", {
       glEventAt: "2026-08-01",
       triggeredBy: "user-1",
-      workflowExecutionId: "stub-exec-BRN00000001",
-      workflowDefinitionId: "billing.bill_run",
-      workflowDefinitionRevision: 0,
+      processingExecutionId: "stub-exec-BRN00000001",
+      processingFlowId: "billrun.bill_run_processing",
+      processingFlowRevision: 0,
+      processingEngineRef: "billrun@stub/billrun",
     });
     expect(mockInsertAuditEvent).toHaveBeenCalledWith(
       txStub,
@@ -222,14 +217,14 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
 
     expect(result).toEqual({ ok: false, code: "NO_ELIGIBLE_ACCOUNTS" });
     expect(mockInsertSnapshot).not.toHaveBeenCalled();
-    expect(startExecution).not.toHaveBeenCalled();
+    expect(mockTrigger).not.toHaveBeenCalled();
     expect(mockMarkProcessing).not.toHaveBeenCalled();
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
   it("returns ENGINE_UNREACHABLE and never marks PROCESSING/audits when the engine throws", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
-    startExecution.mockRejectedValue(new Error("engine down"));
+    mockTrigger.mockRejectedValue(new Error("engine down"));
 
     const result = await triggerRun("BRN00000001", "user-1", TODAY);
 
@@ -271,7 +266,8 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
         { ...PENDING_ROW, attemptCount: 2 },
         { ...EXCLUDED_ROW, attemptCount: 2 },
       ]);
-      expect(startExecution).toHaveBeenCalledWith(
+      expect(mockTrigger).toHaveBeenCalledWith(
+        "billrun",
         expect.objectContaining({ attempt: 2 }),
       );
       // Deleting happens before re-inserting, so no ordering collision.
@@ -286,7 +282,8 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
 
       await triggerRun("BRN00000001", "user-1", TODAY);
 
-      expect(startExecution).toHaveBeenCalledWith(
+      expect(mockTrigger).toHaveBeenCalledWith(
+        "billrun",
         expect.objectContaining({ attempt: 1 }),
       );
     });
@@ -323,7 +320,7 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       expect(mockScopeAccounts).not.toHaveBeenCalled();
       expect(mockDeleteForRun).not.toHaveBeenCalled();
       expect(mockInsertSnapshot).not.toHaveBeenCalled();
-      expect(startExecution).not.toHaveBeenCalled();
+      expect(mockTrigger).not.toHaveBeenCalled();
       expect(mockMarkProcessing).not.toHaveBeenCalled();
     });
 

@@ -22,12 +22,23 @@ enumerations were trimmed to key facts + decisions. Full history:
   logic reviewed) but **never executed against a real Postgres** — same
   environmental gap as every other DB-gated unit in this module (see
   Outstanding, below).
+- Phase 2 · Phase G — **bm16 (Engine Registry · Two-Execution Columns ·
+  `bill_run_processing` Flow (Placeholder) · M2M Record-Only) — delivered.**
+  See `context/billing-management/specs/bm16-processing-flow-engine-registry.md`
+  and the Delivered Units entry below. Migration `0035` is generated/reviewed
+  but **not applied** — see Outstanding.
+- Phase 2 · Phase G — **bm17 (`udr_rated` Approve/Reject/Release Lifecycle +
+  Reject Action) — delivered.** See
+  `context/billing-management/specs/bm17-udr-lifecycle-reject.md` and the
+  Delivered Units entry below.
 
 ## Outstanding (environmental only — not a build unit)
 
-- Migration `0033_customer_bill_finalization_guard.sql` (bm13 — DB trigger
-  enforcing the `ref_inv_document_id` finalization latch at the DB layer) is
-  generated/reviewed but **not applied**.
+- Migrations `0033_customer_bill_finalization_guard.sql` (bm13 — DB trigger
+  enforcing the `ref_inv_document_id` finalization latch) and
+  `0035_bill_run_two_executions.sql` (bm16 — the `workflow_*` → `processing_*`
+  rename + `distribution_*`/`*_engine_ref` columns) are generated/reviewed but
+  **not applied**.
 - No local Postgres has been reachable in this environment for the entire
   build — every DB-gated integration test (materialize/trigger/partman/stage-
   ingest/E2E-happy-path/billrun-db-roles/etc.) was written and statically
@@ -42,6 +53,18 @@ enumerations were trimmed to key facts + decisions. Full history:
   DB either — verify the full checklist (idempotent re-run, prod-guard trip,
   the seeded `udr_rated` CHECK/UNIQUE pass, a real bill run against the
   seeded scenario) once Postgres is reachable.
+- **bm16's live-Kestra smoke gate is unmet** (spec review fold T3): no deployed
+  `billrun` engine or real `bill_run_processing` flow exists anywhere yet — the
+  separate workflow-management repo, its owning team, and its deploy step are
+  named as `TBD` in `flows/billrun/README.md`. The checklist's "end-to-end
+  against the deployed placeholder flow" item is unproven; register the
+  live-Kestra smoke run as a phase-2 exit criterion when bm21 is specced.
+- `bill_run.ref_tax_rate_version`'s only writer (`stampTaxRateVersion`,
+  `services/billing/taxation.ts`) was retired with bm16 Fork B — no app or
+  processor writer is specced for it yet (`billrun_runtime` holds no
+  `bill_run` write grant, bm14 Step 9). The column stays reserved/unpopulated;
+  not addressed by bm16 — revisit if a future unit needs run-level tax-version
+  provenance.
 
 ## Delivered Units (bm01–bm13)
 
@@ -303,6 +326,149 @@ enumerations were trimmed to key facts + decisions. Full history:
     reference remains outside historical spec docs (bm01–bm13, left as
     written history) and this tracker.
 
+- **bm16 — Engine Registry · Two-Execution Columns · `bill_run_processing`
+  Flow (Placeholder) · M2M Record-Only (Phase 2 · Phase G, the centerpiece).**
+  See `context/billing-management/specs/bm16-processing-flow-engine-registry.md`.
+  Moves the processing pipeline off the app and onto the bill run processor:
+  - **`services/billing/engine-registry.ts`** (new) — resolves the logical
+    `billrun` engine by name to a connection + a stable identity string
+    (`"billrun@<host>/<namespace>"`, or `"billrun@stub/<namespace>"`
+    unconfigured), sourced from `lib/config.ts`'s extended
+    `billRunEngineConfig` (`BILLRUN_ENGINE_URL`/`_AUTH`/`_NAMESPACE`, the last
+    defaulting to `"billrun"`). `services/billing/engine-client.ts` is trimmed
+    to a pure HTTP client — `startExecution`/`getExecutionStatus`/
+    `killExecution` now take an explicit `EngineConnection`, reading no config
+    of their own; `getEngineClient()` is gone. `trigger-run.ts`/
+    `reconcile-run.ts`/`cancel-run.ts`/`rerun-run.ts` call `engineRegistry`,
+    never the client directly.
+  - **Migration `0035_bill_run_two_executions.sql`** (hand-authored, plain
+    `ALTER TABLE` — `bill_run` isn't partitioned) — renames
+    `workflow_execution_id/_definition_id/_definition_revision` to
+    `processing_execution_id/_flow_id/_flow_revision` and adds
+    `processing_engine_ref` + the four nullable `distribution_*` columns
+    (bm20 populates them). `db/schema/billing/bill-run.ts` and every consumer
+    (`bill-run.repository.ts`'s `markProcessing`/`markRerunProcessing`/
+    `cancel`, `trigger-run.ts`, `reconcile-run.ts`, `cancel-run.ts`,
+    `rerun-run.ts`) updated; `tsc`/lint green.
+  - **`flows/billrun/bill_run_processing.template.yml` + `README.md`** (new) —
+    a commented, undeployed Kestra skeleton documenting the six-stage
+    per-account contract, each real activity a `# STUB:` marker. The real
+    flow ships from a separate workflow-management repo — its name, owning
+    team, and deploy step are `TBD` in the README (spec review fold T3; see
+    Outstanding) pending that repo's existence. `billmgmt-architecture.md` §2
+    and `billmgmt-code-standards.md` §7 record this as a deliberate deviation
+    from rating's "all flow YAML lives externally" convention — `flows/rating/`
+    stays untouched.
+  - **`services/billing/handle-stage-signal.ts` — record-only (D5).** Every
+    stage is now recorded exactly as signalled, none computed: the Phase-1
+    Validation override (`validate-account.ts`) and the Aggregation/Taxation
+    write side effects (`aggregate-bill.ts`/`taxation.ts`) are gone — the
+    processor already wrote the stage's bill-data itself, as
+    `billrun_runtime`, before signalling (write-then-signal, D6). The
+    idempotency latch, the run-PROCESSING guard, and the stale-attempt no-op
+    (T14 — the signal's attempt is asserted against the account's current
+    attempt, satisfied by the pre-existing bm12 hardening) are unchanged.
+    `verification` stays the terminal stage (unchanged resolved ambiguity,
+    revisited when distribution stages land in bm20).
+  - **Fork B — Phase-1 app-side compute retired.**
+    `services/billing/{validate-account,aggregate-bill,taxation,verify,
+    collect-claim}.ts` and their tests are deleted. `rerun-run.ts`'s inline
+    Aggregation/Taxation re-derivation (bm08) is retired with them — the
+    re-triggered processor re-claims and re-derives through the single
+    `handle-stage-signal` path now, so rerun no longer touches
+    `customer_bill`/`customer_bill_tax_item` itself. The now-orphaned
+    repository writes (`customerBillRepository.{deleteTrial,insertTrial,
+    findUnpostedBill,recomputeTotals,findUnpostedTotalForVerification,
+    listUnpostedBillAccountIds}`, `customerBillTaxItemRepository
+    .replaceForBill`, `billRunRepository.stampTaxRateVersion`) are removed
+    too — zero callers remained after the five service files were deleted.
+    Two new guardrail tests replace the old `collect-claim.test.ts` structural
+    assertion: `tests/guardrails/billing-rating-write-boundary.test.ts` (no
+    `db/repositories/billing/*.ts` writes `rating.*` — the claim is
+    exclusively the processor's until `udr-status.repository.ts` lands, bm17)
+    and `tests/guardrails/billing-trial-bill-compute-boundary.test.ts` (the
+    five services are gone; the trial-bill/tax-item repository writes are
+    gone; the only remaining app-side `customer_bill` write is
+    `post-run.ts`'s posting-stamp `stampPosted` call, which `app_runtime`
+    keeps per bm14).
+  - **`tests/db/billing-e2e-happy-path.integration.test.ts`** (bm13's ship-gate
+    journey) updated for record-only stages: two new helpers
+    (`simulateProcessorAggregation`/`simulateProcessorTaxation`) stand in for
+    the processor's write-then-signal, issued immediately before the matching
+    stage signal — there is no live engine in this environment to produce the
+    real write. DB-gated, statically verified only (see Outstanding).
+  - **Resolved ambiguity (supersedes bm04/bm05/bm06/bm07 entries below):**
+    the "Resolved Spec Ambiguities" bullets describing Validation/Collection/
+    Verification as app-computed overrides and Aggregation/Taxation as
+    app-side writes describe Phase 1 only and are superseded by this unit —
+    left as written history rather than rewritten in place.
+
+- **bm17 — `udr_rated` Approve/Reject/Release Lifecycle + Reject Action
+  (Phase 2 · Phase G).** See
+  `context/billing-management/specs/bm17-udr-lifecycle-reject.md`. Lands the
+  app's own half of the `udr_rated` lifecycle — the processor (bm14/bm16)
+  owns only the `RATED`/`REJECTED → BILL_DRAFT` claim; the app owns the three
+  human-gate transitions:
+  - **`db/repositories/billing/udr-status.repository.ts`** (new) — the app's
+    only `UPDATE rating.udr_rated`, the phase-2 flip of the bm13/bm16
+    guardrail (`tests/guardrails/billing-rating-write-boundary.test.ts`, now
+    asserting this is the app's SOLE sanctioned writer, column-scoped to the
+    six claim columns). Three functions, each run inside the caller's txn:
+    `markApproved` (`BILL_DRAFT → BILL_APPROVED`, run-scoped), `markRejected`
+    (`BILL_DRAFT → REJECTED`, account-scoped), `release` (`BILL_DRAFT →
+    RATED` + clears the claim columns, run- or account-scoped) — the
+    `status = 'BILL_DRAFT'` predicate on every write is what guarantees none
+    ever touches a `BILL_APPROVED`/posted row.
+  - **Reject — model (b), operator reruns, run stays `PROCESSED`.**
+    `services/billing/reject-run.ts` (`reject-run.schema.ts` validates
+    `{billRunId, scope: 'all'|'selected', banIds[], reason}`, empty reason ⇒
+    `VALIDATION_ERROR`) — one txn: guard `PROCESSED` → resolve the eligible
+    set (only `PROCESSED`/postable accounts, minus any posted — a
+    `PROCESSING_FAILED`/`EXCLUDED` account has no trial bill and is already
+    headed for `SKIPPED` at approval, not "sent back to reprocess") → AUDIT
+    FIRST (`BILL_RUN_REJECTED`, prior totals + reason, same discipline as
+    rerun/bm08) → `udr-status.markRejected` → delete the rejected accounts'
+    unposted trial `customer_bill` rows (new `customerBillRepository
+    .deleteUnpostedForAccounts`, tax items cascade) → stamp the
+    `REJECTED_PENDING_REPROCESS` marker (new `types/billing.ts` constant) on
+    each account's latest CURRENT-ATTEMPT stage row (new
+    `billRunAccountStageRepository.findLatestForAccount`/`stampMarker`).
+    `bill_run_account.status` is left UNTOUCHED (still `PROCESSED` — no new
+    `AccountStatus` member); the run never leaves `PROCESSED`.
+  - **`no_rejected_pending`** — the 6th pre-approval check
+    (`PRE_APPROVAL_CHECKS`/`PreApprovalChecksProps` extended), backed by new
+    `billRunAccountStageRepository.listRejectedPendingForRun`: joins the
+    marker to the account's CURRENT `attempt_count` — this attempt-keyed join
+    is what makes a rerun's attempt bump implicitly clear the marker (no
+    explicit "clear" write exists anywhere; Phase-2 review fold T6). Fails
+    approval with remediation "Rerun the rejected accounts, then approve.";
+    enforced server-side regardless of UI state.
+  - **Approve** (`services/billing/approve-run.ts`) calls
+    `udrStatusRepository.markApproved` inside the existing approve txn, right
+    after the immutable `total_amount` stamp. **Cancel**
+    (`services/billing/cancel-run.ts`) calls `udrStatusRepository.release`
+    (whole-run scope) alongside the existing `resetForCancel` write — distinct
+    from Reject's `REJECTED`.
+  - **UI** — `components/billing/reject-dialog.tsx` (new `RejectDialog`):
+    mirrors `RerunDialog`'s inline-confirmation shape AND its `accountIds`
+    convention (empty ⇒ whole run, non-empty ⇒ explicit selection) rather than
+    a separate scope radio control — a resolved ambiguity reading the spec's
+    "reuse the RerunDialog selection pattern" literally. Mandatory reason,
+    danger-role "Confirm Reject", spelled-out consequence copy. Wired next to
+    "Approve & Post" on both the run-detail header and the
+    `ApproveAndPostPanel` (Approve's own modal/self-approval-block behavior is
+    unchanged — it already had a confirmation gate from bm10). The Errors tab
+    (`errors-table.tsx`) gained a "Rejected — pending reprocess" section (new
+    `RejectedPendingRow`/`listRejectedPending` read) above the HARD-error
+    table, with its own "Rerun to reprocess" `RerunDialog` for a
+    `billrun_operate` viewer or a plain hint for `billrun_view`-only.
+  - **Audit** — new `BILL_RUN_REJECTED` event type (`Change` category, mirrors
+    `BILL_RUN_RERUN`); deliberately NOT added to `TRIGGER_EVENT_TYPES` — reject
+    is an approver action and does not bar the rejecter from a later approval.
+  - No migration: `rating.udr_rated`'s `status` CHECK already admits
+    `REJECTED` (rm01), and `error_code`/`error_detail` are unconstrained text
+    columns — the marker is just a string value, no schema change.
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -452,10 +618,17 @@ file history).
 
 ## Next Up
 
-- **bm01–bm15 are all delivered.** The sole remaining action item is
-  environmental (see Outstanding, above): apply migration `0033`, run
+- **bm01–bm17 are all delivered.** The remaining action items are
+  environmental (see Outstanding, above): apply migrations `0033`/`0035`, run
   `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
-  `db:bootstrap-rating-roles`), run the DB-gated suites against a real
-  Postgres, and run `db:seed-sample` there to verify bm15's checklist.
-- The rest of Phase 2 · Phase F (units after bm15) is not yet specced in
-  this session.
+  `db:bootstrap-rating-roles`), run the DB-gated suites (incl. the updated
+  `billing-e2e-happy-path.integration.test.ts`, which does not yet exercise
+  Reject end-to-end — bm17's reject → rerun → re-approve journey has only
+  unit-test coverage in this session) against a real Postgres, and run
+  `db:seed-sample` there to verify bm15's checklist.
+- **bm16's live-Kestra smoke gate is unmet** — no deployed `billrun` engine or
+  real `bill_run_processing` flow exists yet; the separate workflow-management
+  repo/owner/deploy step are `TBD` in `flows/billrun/README.md`. Register the
+  smoke run as a phase-2 exit criterion when bm21 (not yet specced) lands.
+- Phase 2 · Phase G continues past bm17 (bm20's distribution execution
+  columns, and any units between) — not yet specced in this session.
