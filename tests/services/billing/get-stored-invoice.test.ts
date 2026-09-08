@@ -16,6 +16,7 @@ vi.mock("@/services/billing/blob-store", () => ({
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import { blobStore } from "@/services/billing/blob-store";
 import {
+  StoredInvoiceChecksumMismatchError,
   StoredInvoiceNotFoundError,
   getStoredInvoice,
 } from "@/services/billing/read/get-stored-invoice";
@@ -29,7 +30,9 @@ const STORED = {
   billRunInvoiceId: "BRI00000001",
   refInvDocumentId: "INV00000001",
   blobRef: "invoices/2026-07/INV00000001.pdf",
-  checksum: "abc123",
+  // md5("PDF-BYTES") — must match the mocked blob bytes below, since
+  // getStoredInvoice now verifies the download against this checksum.
+  checksum: "5cb3d06635eacf45e7946275cd49e3f2",
   renderedAt: new Date("2026-08-01T00:00:00Z"),
 };
 
@@ -59,7 +62,18 @@ describe("getStoredInvoice", () => {
       pdf: Buffer.from("PDF-BYTES"),
       invoiceNumber: "INV00000001",
       blobRef: "invoices/2026-07/INV00000001.pdf",
-      checksum: "abc123",
+      checksum: "5cb3d06635eacf45e7946275cd49e3f2",
     });
+  });
+
+  it("throws (fails closed) when the downloaded bytes do not match the stored checksum", async () => {
+    mockFindByRunAndAccount.mockResolvedValue({
+      ...STORED,
+      checksum: "0".repeat(32), // a checksum the "PDF-BYTES" blob won't match
+    });
+
+    await expect(
+      getStoredInvoice("BRN00000042", "BAN00000001"),
+    ).rejects.toBeInstanceOf(StoredInvoiceChecksumMismatchError);
   });
 });

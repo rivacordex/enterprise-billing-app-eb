@@ -51,6 +51,10 @@ export function InvoicePreviewModal({
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  // The in-flight render's controller. It's the single source of truth for
+  // "which render is current": close, unmount, and Retry all abort through it,
+  // and a settling request that no longer holds it treats itself as stale.
+  const controllerRef = useRef<AbortController | null>(null);
 
   function revokeObjectUrl(): void {
     if (objectUrlRef.current) {
@@ -59,16 +63,31 @@ export function InvoicePreviewModal({
     }
   }
 
+  function abortActiveRender(): void {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+  }
+
   // The actual fetch — assumes the caller has already reset state to
   // "loading" (react-hooks/set-state-in-effect: an async function whose
   // synchronous prefix calls setState is treated the same as calling setState
   // directly in an effect body, so that reset lives in `startRender` below,
   // never here).
   async function runRender(): Promise<void> {
+    // Supersede any in-flight render (Retry, or a rapid close/reopen) so its
+    // late completion can't overwrite this generation's state or leak an
+    // object URL.
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    // Stale once this render no longer owns the ref: superseded above, or
+    // cleared by close/unmount. A timeout abort (below) leaves the ref intact,
+    // so it is NOT stale and still surfaces the error state.
+    const isStale = (): boolean => controllerRef.current !== controller;
+
     const queuedTimer = setTimeout(() => {
       setState((current) => (current === "loading" ? "queued" : current));
     }, QUEUED_HINT_DELAY_MS);
-    const controller = new AbortController();
     const timeoutTimer = setTimeout(
       () => controller.abort(),
       RENDER_TIMEOUT_MS,
@@ -79,18 +98,24 @@ export function InvoicePreviewModal({
         `/billing/bill-runs/${billRunId}/draft-invoice/${billingAccountId}`,
         { signal: controller.signal },
       );
+      if (isStale()) return;
       if (!response.ok) {
         setErrorMessage(describeRenderError(response.status));
         setState("error");
         return;
       }
       const blob = await response.blob();
+      if (isStale()) return;
       revokeObjectUrl();
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
       setPdfUrl(url);
       setState("ready");
     } catch {
+      // A superseded/closed/unmounted render aborts expectedly — it no longer
+      // owns the UI, so surface nothing. A genuine network failure or the
+      // RENDER_TIMEOUT abort (ref still intact) falls through to "error".
+      if (isStale()) return;
       setErrorMessage(
         "The draft invoice took too long to render. Please try again.",
       );
@@ -98,6 +123,9 @@ export function InvoicePreviewModal({
     } finally {
       clearTimeout(queuedTimer);
       clearTimeout(timeoutTimer);
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
     }
   }
 
@@ -120,6 +148,7 @@ export function InvoicePreviewModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       startRender();
     } else {
+      abortActiveRender();
       revokeObjectUrl();
       setPdfUrl(null);
     }
@@ -130,7 +159,10 @@ export function InvoicePreviewModal({
   }, [open]);
 
   useEffect(() => {
-    return () => revokeObjectUrl();
+    return () => {
+      abortActiveRender();
+      revokeObjectUrl();
+    };
   }, []);
 
   return (
@@ -145,8 +177,8 @@ export function InvoicePreviewModal({
         <DialogHeader>
           <DialogTitle>Draft invoice preview — {accountName}</DialogTitle>
           <DialogDescription>
-            On-demand preview, never stored. Rendered fresh every time you
-            open it.
+            On-demand preview, never stored. Rendered fresh every time you open
+            it.
           </DialogDescription>
         </DialogHeader>
 
@@ -237,6 +269,11 @@ export interface StoredInvoiceModalProps {
 
 type StoredInvoiceState = "loading" | "ready" | "error";
 
+// The stored artifact is served (not re-rendered), so this is a plain blob
+// download — but a hung download must still never leave a frozen frame
+// indefinitely (D-T2), so it is bounded the same way the draft render is.
+const STORED_FETCH_TIMEOUT_MS = 25_000;
+
 export function StoredInvoiceModal({
   billRunId,
   billingAccountId,
@@ -250,6 +287,11 @@ export function StoredInvoiceModal({
   const [checksum, setChecksum] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  // Mirrors InvoicePreviewModal: the in-flight fetch's controller is the
+  // single source of truth for "which fetch is current" — close, unmount, and
+  // Retry all abort through it, and a settling request that no longer holds it
+  // treats itself as stale.
+  const controllerRef = useRef<AbortController | null>(null);
 
   function revokeObjectUrl(): void {
     if (objectUrlRef.current) {
@@ -258,17 +300,40 @@ export function StoredInvoiceModal({
     }
   }
 
+  function abortActiveRender(): void {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+  }
+
   async function runFetch(): Promise<void> {
+    // Supersede any in-flight fetch (Retry, or a rapid close/reopen) so its
+    // late completion can't overwrite this generation's state or leak an
+    // object URL.
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    // Stale once this fetch no longer owns the ref: superseded above, or
+    // cleared by close/unmount. A timeout abort (below) leaves the ref intact,
+    // so it is NOT stale and still surfaces the error/retry state.
+    const isStale = (): boolean => controllerRef.current !== controller;
+    const timeoutTimer = setTimeout(
+      () => controller.abort(),
+      STORED_FETCH_TIMEOUT_MS,
+    );
+
     try {
       const response = await fetch(
         `/billing/bill-runs/${billRunId}/stored-invoice/${billingAccountId}`,
+        { signal: controller.signal },
       );
+      if (isStale()) return;
       if (!response.ok) {
         setErrorMessage(describeStoredInvoiceError(response.status));
         setState("error");
         return;
       }
       const blob = await response.blob();
+      if (isStale()) return;
       revokeObjectUrl();
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
@@ -278,10 +343,19 @@ export function StoredInvoiceModal({
       setChecksum(response.headers.get("X-Checksum"));
       setState("ready");
     } catch {
+      // A superseded/closed/unmounted fetch aborts expectedly — it no longer
+      // owns the UI, so surface nothing. A genuine network failure or the
+      // timeout abort (ref still intact) falls through to the error/retry.
+      if (isStale()) return;
       setErrorMessage(
         "Could not retrieve the stored invoice. Please try again.",
       );
       setState("error");
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
     }
   }
 
@@ -300,6 +374,7 @@ export function StoredInvoiceModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       startFetch();
     } else {
+      abortActiveRender();
       revokeObjectUrl();
       setPdfUrl(null);
     }
@@ -307,15 +382,17 @@ export function StoredInvoiceModal({
   }, [open]);
 
   useEffect(() => {
-    return () => revokeObjectUrl();
+    return () => {
+      abortActiveRender();
+      revokeObjectUrl();
+    };
   }, []);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button type="button" variant="ghost" size="sm">
-          <FileCheck aria-hidden="true" />
-          ⬇ Stored invoice
+          <FileCheck aria-hidden="true" />⬇ Stored invoice
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-3xl sm:max-w-3xl">
@@ -380,7 +457,10 @@ export function StoredInvoiceModal({
 
         {state === "ready" && pdfUrl && (
           <Button asChild variant="default">
-            <a href={pdfUrl} download={`${invoiceNumber ?? billingAccountId}.pdf`}>
+            <a
+              href={pdfUrl}
+              download={`${invoiceNumber ?? billingAccountId}.pdf`}
+            >
               <Download aria-hidden="true" />
               Download
             </a>

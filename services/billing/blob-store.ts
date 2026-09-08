@@ -64,6 +64,18 @@ function blobPath(period: string, invoiceNo: string): string {
   return `${yearMonth}/${invoiceNo}.pdf`;
 }
 
+// Azure answers an `if-none-match: *` upload that lost the write-once race
+// with HTTP 412 (the blob already exists). Duck-typed rather than importing
+// `RestError` so the check survives across `@azure/*` package internals.
+function isBlobAlreadyExists(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "statusCode" in err &&
+    (err as { statusCode?: unknown }).statusCode === 412
+  );
+}
+
 export interface PutInvoiceResult {
   blobRef: string;
   checksum: string;
@@ -83,13 +95,35 @@ export const blobStore = {
     const path = blobPath(period, invoiceNo);
     const container = await getContainerClient();
     const blockBlobClient = container.getBlockBlobClient(path);
-    await blockBlobClient.uploadData(bytes, {
-      blobHTTPHeaders: { blobContentType: "application/pdf" },
-    });
-    return {
-      blobRef: `${CONTAINER_NAME}/${path}`,
-      checksum: createHash("md5").update(bytes).digest("hex"),
-    };
+    const blobRef = `${CONTAINER_NAME}/${path}`;
+    try {
+      await blockBlobClient.uploadData(bytes, {
+        blobHTTPHeaders: { blobContentType: "application/pdf" },
+        // Write-once. Two renderers can target the same invoice concurrently —
+        // the post-commit render (post-run.ts) racing a manual retry-render,
+        // or a double-fired retry — and Chromium stamps a fresh timestamp per
+        // render, so their PDF bytes differ. `if-none-match: *` makes the first
+        // upload win; the loser gets 412 and adopts the WINNER's bytes below,
+        // so the checksum we return (and the caller persists to
+        // `bill_run_invoices`) always matches what a later download reads,
+        // never a set of bytes that got overwritten.
+        conditions: { ifNoneMatch: "*" },
+      });
+      return {
+        blobRef,
+        checksum: createHash("md5").update(bytes).digest("hex"),
+      };
+    } catch (err) {
+      if (!isBlobAlreadyExists(err)) throw err;
+      // Lost the race: the authoritative artifact is already stored. Return
+      // ITS checksum (from the actual stored bytes) so the caller's row stays
+      // consistent with the blob even though our own render is discarded.
+      const stored = await blockBlobClient.downloadToBuffer();
+      return {
+        blobRef,
+        checksum: createHash("md5").update(stored).digest("hex"),
+      };
+    }
   },
 
   async getInvoice(blobRef: string): Promise<Buffer> {

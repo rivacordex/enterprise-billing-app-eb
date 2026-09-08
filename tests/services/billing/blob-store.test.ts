@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm19-spec §Implementation §2 — the artifact store. Mocks `@azure/storage-
@@ -84,8 +86,12 @@ describe("blobStore.putInvoice — connection-string (dev/Azurite) path", () => 
     );
     expect(result.blobRef).toBe("invoices/2026-07/INV00000001.pdf");
     // md5("PDF-BYTES") — a fixed, known digest for this fixture, proving the
-    // checksum is computed from the exact bytes uploaded.
-    expect(result.checksum).toMatch(/^[0-9a-f]{32}$/);
+    // checksum is computed from the exact bytes uploaded (not merely well-formed).
+    expect(result.checksum).toBe("5cb3d06635eacf45e7946275cd49e3f2");
+    expect(mockUploadData).toHaveBeenCalledWith(
+      Buffer.from("PDF-BYTES"),
+      expect.objectContaining({ conditions: { ifNoneMatch: "*" } }),
+    );
   });
 
   it("auto-creates the container on the connection-string (dev) path only", async () => {
@@ -109,6 +115,50 @@ describe("blobStore.putInvoice — connection-string (dev/Azurite) path", () => 
     await blobStore.putInvoice("2026-07-01", "INV00000002", Buffer.from("b"));
 
     expect(mockFromConnectionString).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("blobStore.putInvoice — write-once (concurrent render race)", () => {
+  it("adopts the already-stored artifact's checksum when the upload loses the if-none-match race (412)", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    // The winning render stored DIFFERENT bytes (Chromium stamps a fresh
+    // timestamp per render), so Azure refuses this upload with 412. putInvoice
+    // must return the WINNER's checksum — the bytes a later getInvoice reads —
+    // not this loser's own bytes, so the persisted row stays consistent.
+    mockUploadData.mockRejectedValueOnce({ statusCode: 412 });
+    mockDownloadToBuffer.mockResolvedValueOnce(Buffer.from("WINNER-BYTES"));
+
+    const result = await blobStore.putInvoice(
+      "2026-07-01",
+      "INV00000001",
+      Buffer.from("LOSER-BYTES"),
+    );
+
+    expect(mockUploadData).toHaveBeenCalledWith(
+      Buffer.from("LOSER-BYTES"),
+      expect.objectContaining({ conditions: { ifNoneMatch: "*" } }),
+    );
+    expect(mockDownloadToBuffer).toHaveBeenCalledTimes(1);
+    expect(result.blobRef).toBe("invoices/2026-07/INV00000001.pdf");
+    expect(result.checksum).toBe(
+      createHash("md5").update(Buffer.from("WINNER-BYTES")).digest("hex"),
+    );
+  });
+
+  it("propagates a non-412 upload failure (does not swallow it as a duplicate)", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    mockUploadData.mockRejectedValueOnce({ statusCode: 500 });
+
+    await expect(
+      blobStore.putInvoice("2026-07-01", "INV00000001", Buffer.from("x")),
+    ).rejects.toMatchObject({ statusCode: 500 });
+    expect(mockDownloadToBuffer).not.toHaveBeenCalled();
   });
 });
 

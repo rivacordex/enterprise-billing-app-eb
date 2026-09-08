@@ -160,13 +160,33 @@ export const document = billing.table(
       "document_payment_mode_check",
       sql`payment_mode IN ('bank_transfer','cash','cheque')`,
     ),
+    // The two customer-bill reference columns are set as a pair or not at all.
+    // Postgres composite FKs default to MATCH SIMPLE, which SKIPS the FK check
+    // entirely when ANY referenced column is NULL — so a half-set
+    // `(ref_customer_bill_id, period_partition)` (one value, one NULL) would
+    // bypass `document_customer_bill_fk` and leave a dangling reference. This
+    // forbids the half-set state outright.
+    check(
+      "document_customer_bill_ref_paired_check",
+      sql`(ref_customer_bill_id IS NULL) = (period_partition IS NULL)`,
+    ),
+    // The customer-bill latch only ever applies to the one `INV` a posted bill
+    // carries (post-run.ts's `postAccount`); every other doc_type leaves both
+    // NULL. Enforce that structurally so no non-INV document can claim a bill.
+    check(
+      "document_customer_bill_ref_inv_only_check",
+      sql`ref_customer_bill_id IS NULL OR doc_type = 'INV'`,
+    ),
     // Composite FK to the (partitioned) `customer_bill`, keyed on its full
     // PK `(customer_bill_id, period_partition)` — mirrors
     // `customer-bill-tax-item.ts`'s composite-FK-to-a-partitioned-parent
     // shape. RESTRICT: a posted bill is never deleted (Inv. #4).
     foreignKey({
       columns: [t.refCustomerBillId, t.periodPartition],
-      foreignColumns: [customerBill.customerBillId, customerBill.periodPartition],
+      foreignColumns: [
+        customerBill.customerBillId,
+        customerBill.periodPartition,
+      ],
       name: "document_customer_bill_fk",
     }).onDelete("restrict"),
     // THE structural latch (T5): at most one `document` row can ever

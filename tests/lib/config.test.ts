@@ -612,4 +612,14 @@ describe("billRunBlobConfig (bm19)", () => {
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
+
+  it("fails loud when BOTH blob settings are provided (ambiguous — exactly one per environment)", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_BLOB_CONNECTION_STRING: "UseDevelopmentStorage=true",
+        BILLRUN_BLOB_ACCOUNT_URL: "https://acct.blob.core.windows.net",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
 });

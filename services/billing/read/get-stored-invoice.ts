@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { db } from "@/db/client";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import { blobStore } from "@/services/billing/blob-store";
@@ -13,6 +15,18 @@ export class StoredInvoiceNotFoundError extends Error {
   constructor(runId: string, banId: string) {
     super(`No stored invoice found for run ${runId} / account ${banId}.`);
     this.name = "StoredInvoiceNotFoundError";
+  }
+}
+
+// The stored PDF's bytes no longer hash to the checksum recorded when it was
+// stored (corruption, or a diverged blob). Thrown so the route fails closed
+// (500) rather than serving content that can't be proven authentic.
+export class StoredInvoiceChecksumMismatchError extends Error {
+  constructor(invoiceNumber: string, expected: string, actual: string) {
+    super(
+      `Stored invoice ${invoiceNumber} failed checksum verification (expected ${expected}, got ${actual}).`,
+    );
+    this.name = "StoredInvoiceChecksumMismatchError";
   }
 }
 
@@ -36,6 +50,18 @@ export async function getStoredInvoice(
     throw new StoredInvoiceNotFoundError(runId, banId);
   }
   const pdf = await blobStore.getInvoice(stored.blobRef);
+  // Integrity gate (Design "Two checksums, two purposes" — the PDF-bytes
+  // checksum exists precisely to prove the bytes came back intact). Verify
+  // before returning so corrupted/diverged content is never served as a valid
+  // invoice; fail closed on mismatch.
+  const actualChecksum = createHash("md5").update(pdf).digest("hex");
+  if (actualChecksum !== stored.checksum) {
+    throw new StoredInvoiceChecksumMismatchError(
+      stored.refInvDocumentId,
+      stored.checksum,
+      actualChecksum,
+    );
+  }
   return {
     pdf,
     invoiceNumber: stored.refInvDocumentId,

@@ -58,5 +58,6 @@ export async function listAccountBills(
     paymentDueDate: row.paymentDueDate,
     taxItems: itemsByBill.get(row.customerBillId) ?? [],
     invoiceId: row.refInvDocumentId,
+    hasStoredInvoice: row.hasStoredInvoice,
   }));
 }

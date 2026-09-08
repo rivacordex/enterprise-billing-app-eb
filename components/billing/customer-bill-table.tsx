@@ -124,21 +124,31 @@ export function CustomerBillTable({
                   </div>
                 </details>
                 <div className="mt-1">
-                  {/* bm19-spec §Implementation §5 — once posted (invoiceId
-                      set), the issued STORED record replaces the draft
-                      preview; the two are mutually exclusive per account. */}
-                  {row.invoiceId ? (
+                  {/* bm19-spec §Implementation §5 — once posted (invoiceId set)
+                      the issued STORED record replaces the draft preview. But a
+                      posted INV whose final render/store failed is a tolerated,
+                      retryable render-pending state (D10) with no stored
+                      artifact yet: offering StoredInvoiceModal there would only
+                      404, so surface the pending state and point to the Posting
+                      progress view, where the money-gated retry lives (this
+                      viewer tab must not carry an approver-only action). */}
+                  {!row.invoiceId ? (
+                    <InvoicePreviewModal
+                      billRunId={billRunId}
+                      billingAccountId={row.billingAccountId}
+                      accountName={row.accountName}
+                    />
+                  ) : row.hasStoredInvoice ? (
                     <StoredInvoiceModal
                       billRunId={billRunId}
                       billingAccountId={row.billingAccountId}
                       accountName={row.accountName}
                     />
                   ) : (
-                    <InvoicePreviewModal
-                      billRunId={billRunId}
-                      billingAccountId={row.billingAccountId}
-                      accountName={row.accountName}
-                    />
+                    <p className="text-body-sm text-[color:var(--color-warning-700)]">
+                      Final invoice still rendering — retry from the Posting
+                      progress view.
+                    </p>
                   )}
                 </div>
               </td>

@@ -188,6 +188,24 @@ const envSchema = z
         path: [hasUrl ? "BILLRUN_ENGINE_AUTH" : "BILLRUN_ENGINE_URL"],
       });
     }
+
+    // Exactly one blob backend per environment (Azurite connection string in
+    // dev, account URL + Managed Identity in prod). Neither is allowed (most
+    // environments never post — `blob-store.ts` fails closed only when
+    // actually invoked); but BOTH set is an ambiguous misconfiguration —
+    // `blob-store.ts` would silently prefer the connection string and ignore
+    // the account URL — so reject it at boot rather than resolve it silently.
+    if (
+      data.BILLRUN_BLOB_CONNECTION_STRING !== undefined &&
+      data.BILLRUN_BLOB_ACCOUNT_URL !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "BILLRUN_BLOB_CONNECTION_STRING and BILLRUN_BLOB_ACCOUNT_URL must not both be set — configure exactly one per environment (or neither).",
+        path: ["BILLRUN_BLOB_ACCOUNT_URL"],
+      });
+    }
   });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
