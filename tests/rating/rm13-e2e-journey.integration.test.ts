@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -393,7 +394,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     }
 
     function readManifest(uri: string): Record<string, unknown> {
-      const path = decodeURIComponent(uri.replace(/^file:\/\//, ""));
+      // fileURLToPath handles Windows (file:///C:/…) and POSIX file URIs alike;
+      // a bare strip leaves a leading slash before the drive letter on Windows.
+      const path = fileURLToPath(uri.trim());
       return JSON.parse(readFileSync(path, "utf8"));
     }
 
@@ -421,8 +424,15 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // 1. A RAN_USAGE file lands: 63 valid rows + 37 bad rows.
       // -----------------------------------------------------------
       const goodRows = Array.from({ length: 63 }, (_, i) => {
-        const minute = String(i % 60).padStart(2, "0");
-        return `2026-05-04T07:${minute}:00Z,${invA},CU,SITE,${(i % 9) + 0.5}`;
+        // 63 DISTINCT (udr_key, start_datetime) records. The udr_key columns
+        // (PUBLIC_KEY/COMMERCIAL_UNIT/SITE) are constant across the file, so
+        // the timestamp is the only differentiator — a bare `minute = i % 60`
+        // repeats for i=60,61,62 and PRP would reject those 3 as
+        // DUPLICATE_IN_FILE (60 survivors, not 63). Spread across seconds so
+        // all 63 are unique and stay within 07:xx (before NOW1 08:00).
+        const mm = String(Math.floor(i / 60)).padStart(2, "0");
+        const ss = String(i % 60).padStart(2, "0");
+        return `2026-05-04T07:${mm}:${ss}Z,${invA},CU,SITE,${(i % 9) + 0.5}`;
       });
       const badRows = Array.from(
         { length: 37 },
@@ -434,13 +444,16 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       ]);
 
       // -----------------------------------------------------------
-      // 2. PRP claims the file and rejects the 37 bad rows -> PARTIAL.
+      // 2. PRP claims the file and rejects the 37 bad rows. PRP leaves the
+      //    batch at PROCESSING (the carry status — RP/RL no-op on any
+      //    non-PROCESSING status, rm07/rm08/rm09 forward contract); the
+      //    terminal PARTIAL is RL's decision, asserted after step 4.
       // -----------------------------------------------------------
       const prpUri = runPrp(path, "journey-prp-1", NOW1);
       const prpManifest = readManifest(prpUri);
       const batchId = prpManifest.batch_id as string;
       let batch = await batchRow(batchId);
-      expect(batch.status).toBe("PARTIAL");
+      expect(batch.status).toBe("PROCESSING");
       expect(batch.parsedCount).toBe(100);
       expect(batch.rejectedCount).toBe(37);
       expect(batch.batchRunNum).toBe(1);
@@ -477,10 +490,15 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // -----------------------------------------------------------
       const NOW2 = "2026-05-04T09:00:00Z";
       const correctedRows = Array.from({ length: 63 }, (_, i) => {
-        const minute = String(i % 60).padStart(2, "0");
-        // A different usage value — a genuine correction, not a
-        // byte-identical redelivery (rm07 D5's DUPLICATE_BATCH guard).
-        return `2026-05-04T07:${minute}:00Z,${invA},CU,SITE,${(i % 9) + 1.5}`;
+        // Same 63 DISTINCT timestamps as run 1 (see goodRows) — a corrected
+        // reissue of the same records, with a different usage value (a genuine
+        // correction, not a byte-identical redelivery — rm07 D5's
+        // DUPLICATE_BATCH guard). Run-1's rows go SUPERSEDED (is_live NULL),
+        // run-2's go RATED (is_live true), so the live-row uniqueness
+        // constraint is not violated.
+        const mm = String(Math.floor(i / 60)).padStart(2, "0");
+        const ss = String(i % 60).padStart(2, "0");
+        return `2026-05-04T07:${mm}:${ss}Z,${invA},CU,SITE,${(i % 9) + 1.5}`;
       });
       const reissuePath = writeCsv("RAN_USAGE_20260504_v2.csv", correctedRows);
       const prpUri2 = runPrp(reissuePath, "journey-prp-2", NOW2);
@@ -514,13 +532,30 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(batch2.supersededCount).toBe(63);
 
       // -----------------------------------------------------------
-      // 7. The completeness check runs clean — the delivery already
-      //    arrived (both runs), well before an end-of-day deadline, so
-      //    nothing is FILE_NOT_RECEIVED or FILE_LATE.
+      // 7. The completeness check runs clean AGAINST the arrived, completed
+      //    delivery — no FILE_NOT_RECEIVED, no FILE_LATE.
+      //
+      //    completeness_check attributes a batch to a period by its
+      //    received_at UTC calendar day and only evaluates windows that have
+      //    already closed. received_at defaults to the real insert clock, which
+      //    no fixed `--now` could deterministically fall after — so back-date
+      //    the run-2 batch to a fixed UTC day and evaluate that day AFTER its
+      //    deadline. This genuinely exercises the "present + on-time + COMPLETE
+      //    → no alarm" path; the earlier form (lookback 1 with `now` before an
+      //    end-of-day deadline) evaluated ZERO periods, so its 0-count proved
+      //    nothing about the arrived batch.
       // -----------------------------------------------------------
+      await sql`
+        UPDATE rating.udr_batch SET received_at = '2026-05-04T05:00:00Z'
+        WHERE batch_id = ${batchId2}
+      `;
       const checkOut = runCompletenessCheck({
-        config: "RAN_USAGE:23:59",
-        now: "2026-05-04T09:05:00Z",
+        // Deadline 06:00; the back-dated delivery arrived 05:00 (on time) and
+        // is COMPLETE. `now` 09:00 is past the 2026-05-04 window, so that day
+        // is evaluated (lookback 1) and the present, on-time, completed batch
+        // yields no absence, no lateness, and nothing to clear.
+        config: "RAN_USAGE:06:00",
+        now: "2026-05-04T09:00:00Z",
         execId: "journey-completeness",
       });
       expect(checkOut).toMatch(/0 event\(s\) emitted/);

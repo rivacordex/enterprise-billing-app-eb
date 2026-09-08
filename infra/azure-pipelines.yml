@@ -207,7 +207,15 @@ stages:
           # changes) is ever needed, gate this step's `condition` on the
           # changed paths rather than reintroducing `continueOnError`.
           - script: |
-              python3 -m pip install --require-hashes -r rating-engine/worker/requirements.txt
+              # `--break-system-packages`: current hosted ubuntu-latest images
+              # ship a PEP 668 externally-managed system Python, which rejects a
+              # bare system-wide `pip install` (and even `--user`) with
+              # `error: externally-managed-environment`. The vitest DB-gated
+              # suites shell out to `python3 -m runtime.*`, so the deps must land
+              # on the default interpreter's path — install them into system
+              # site-packages explicitly. The flag is a no-op on a non-managed
+              # image, so it is safe either way.
+              python3 -m pip install --break-system-packages --require-hashes -r rating-engine/worker/requirements.txt
             displayName: Install rating-engine Python runtime deps (rm13 — for real guardrail-suite runs)
 
           - script: npm run test
@@ -521,15 +529,24 @@ stages:
               # NOT published to the host by the dev compose file). Any HTTP
               # response (even 401) means the engine process is up; a
               # connection failure means it is not.
+              #
+              # `-s` WITHOUT `-f`: Basic Auth is enabled (kestra.yml), so this
+              # endpoint answers 401 unauthenticated — which IS the "up" signal.
+              # `curl -f` exits non-zero and suppresses `%{http_code}` on any
+              # HTTP >= 400, so the grep would never match and this loop could
+              # only ever pass on a 2xx/3xx the auth-gated API never returns —
+              # timing out against a perfectly healthy engine.
               for i in $(seq 1 60); do
-                if curl -sf -o /dev/null -w '%{http_code}' http://localhost:8085/api/v1/executions/search 2>/dev/null | grep -qE '^[0-9]+$'; then
+                if curl -s -o /dev/null -w '%{http_code}' http://localhost:8085/api/v1/executions/search 2>/dev/null | grep -qE '^[0-9]+$'; then
                   echo "Kestra engine is responding on :8085."
                   exit 0
                 fi
                 sleep 5
               done
               echo "Kestra engine did not respond on :8085 within 5 minutes." >&2
-              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml logs kestra || true
+              # The engine runs in the `rating-engine` compose service (the
+              # overlay's Kestra container) — there is no service named `kestra`.
+              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml logs rating-engine || true
               exit 1
             displayName: Wait for the local Kestra engine
 
