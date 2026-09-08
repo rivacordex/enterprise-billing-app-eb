@@ -92,7 +92,11 @@ export function RunDetailTabs({
       {activeTab === "workflow" ? (
         <StageTimeline rows={timeline.rows} summary={timeline.summary} />
       ) : activeTab === "customers" ? (
-        <CustomerBillTable rows={customerBills} locale={locale} />
+        <CustomerBillTable
+          billRunId={runId}
+          rows={customerBills}
+          locale={locale}
+        />
       ) : activeTab === "uncharged" ? (
         <UnchargedTable
           runId={runId}

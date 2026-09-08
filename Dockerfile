@@ -1,8 +1,20 @@
 # um30-spec §"Container image". Multi-stage build — no .env/secrets/DB URLs
 # baked into any layer; all runtime config is injected at Container Apps
 # revision creation time from Key Vault references.
+#
+# bm18-spec §Implementation §1 — every stage moved from `node:22-alpine` to
+# `node:22-bookworm-slim` (Debian) for this unit. Playwright's Chromium build
+# needs glibc plus `apt`-installable OS dependencies (fonts, X11 libs, etc.);
+# Alpine's musl libc and `apk` are not a supported target for
+# `npx playwright install --with-deps` (see
+# infra/docs/rendering-image-size.md for the full rationale, the resulting
+# image-size increase, and the alternatives considered). `deps`/`builder` move
+# to the same base as `runner` so the one node_modules tree built in `deps`
+# (with its platform-specific optionalDependencies binaries) stays
+# glibc-consistent everywhere it's copied — mixing libc families across the
+# `COPY --from=deps` step would silently break any native addon.
 
-FROM node:22-alpine AS deps
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # --ignore-scripts: the prod tree drags in drizzle-kit (an optional peer of
@@ -13,7 +25,7 @@ COPY package.json package-lock.json ./
 # packages via optionalDependencies — so skipping scripts is safe here.
 RUN npm ci --omit=dev --ignore-scripts
 
-FROM node:22-alpine AS builder
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 # Install full deps (incl. devDependencies, required to run `next build`)
 # before copying the source so the npm layer caches on lockfile changes only.
@@ -43,13 +55,17 @@ RUN grep -rl "eval(" .next/static; rc=$?; \
   if [ "$rc" -eq 0 ]; then echo "eval( found in shipped JS chunks" >&2; exit 1; fi; \
   if [ "$rc" -ne 1 ]; then echo "grep failed inspecting .next/static (exit $rc)" >&2; exit "$rc"; fi
 
-FROM node:22-alpine AS runner
+FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ARG BUILD_VERSION=local
 ENV BUILD_VERSION=$BUILD_VERSION
 
-RUN addgroup --system nodejs && adduser --system --ingroup nodejs nextjs
+# Debian's `useradd`/`groupadd` (from the base `login`/`passwd` packages,
+# present in every official Debian image) — the direct equivalent of Alpine's
+# `adduser`/`addgroup --system` used before this unit's base-image switch.
+RUN groupadd --system nodejs && \
+    useradd --system --gid nodejs --no-create-home nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
@@ -71,6 +87,20 @@ COPY --from=builder --chown=nextjs:nodejs /app/lib/errors.ts ./lib/errors.ts
 COPY --from=builder --chown=nextjs:nodejs /app/lib/logger.ts ./lib/logger.ts
 COPY --from=builder --chown=nextjs:nodejs /app/types/password.ts ./types/password.ts
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
+
+# bm18-spec §Implementation §1 — Chromium + its OS deps for Playwright, baked
+# into the runtime image (D16/D17): this is the platform's first in-app
+# document rendering, so Chromium is now a runtime dependency, not just a
+# CI/test one. `playwright` is pinned exactly in package.json/package-lock.json
+# so the installed browser build is reproducible across builds. Runs as root
+# (before `USER nextjs` below) since `--with-deps` needs `apt-get install`;
+# PLAYWRIGHT_BROWSERS_PATH pins a fixed, known install location so the
+# ownership handoff to the non-root runtime user is a single explicit chown,
+# rather than depending on wherever Playwright's default (root's home
+# directory) happens to resolve.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install --with-deps chromium && \
+    chown -R nextjs:nodejs /ms-playwright
 
 USER nextjs
 EXPOSE 3000

@@ -8,15 +8,18 @@
 // state (and no `'use client'` leaf) is needed for it (code-standards §3.7).
 
 import { BillCategoryBadge } from "@/components/billing/bill-category-badge";
+import { InvoicePreviewModal } from "@/components/billing/invoice-preview-modal";
 import { formatCalendarDate, formatCurrency } from "@/lib/formatters";
 import type { CustomerBillRow } from "@/types/billing";
 
 export interface CustomerBillTableProps {
+  billRunId: string;
   rows: CustomerBillRow[];
   locale: string;
 }
 
 export function CustomerBillTable({
+  billRunId,
   rows,
   locale,
 }: CustomerBillTableProps): React.JSX.Element {
@@ -117,6 +120,13 @@ export function CustomerBillTable({
                     </p>
                   </div>
                 </details>
+                <div className="mt-1">
+                  <InvoicePreviewModal
+                    billRunId={billRunId}
+                    billingAccountId={row.billingAccountId}
+                    accountName={row.accountName}
+                  />
+                </div>
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
                 <BillCategoryBadge category={row.category} />

@@ -27,6 +27,13 @@ vi.mock("@/services/billing/read/list-uncharged", () => ({
 vi.mock("@/services/billing/read/list-errors", () => ({
   listErrors: vi.fn(),
 }));
+// bm17 — the Errors tab's "Rejected — pending reprocess" read; not mocked
+// until now, so its import of db/client.ts (needing the real
+// `config.DATABASE_URL` this test's `@/lib/config` mock doesn't provide)
+// only surfaced once the RejectDialog mock above cleared the first such gap.
+vi.mock("@/services/billing/read/list-rejected-pending", () => ({
+  listRejectedPending: vi.fn(),
+}));
 vi.mock("@/services/billing/read/list-run-audit", () => ({
   listRunAudit: vi.fn(),
 }));
@@ -47,6 +54,14 @@ vi.mock("@/components/billing/run-detail-tabs", () => ({
 // pulls the db/service graph; stub it so this page test stays framework-only.
 vi.mock("@/components/billing/rerun-dialog", () => ({
   RerunDialog: () => <div data-testid="rerun-dialog" />,
+}));
+// bm17 — RejectDialog is likewise a client island whose action pulls the
+// db/service graph (services/billing/reject-run.ts → db/client.ts, which
+// needs the real `config.DATABASE_URL` this test's `@/lib/config` mock
+// doesn't provide); stub it so this page test stays framework-only, same
+// convention as RerunDialog above.
+vi.mock("@/components/billing/reject-dialog", () => ({
+  RejectDialog: () => <div data-testid="reject-dialog" />,
 }));
 vi.mock("@/components/billing/placeholder-banner", () => ({
   PlaceholderBanner: () => <div data-testid="placeholder-banner" />,
@@ -72,6 +87,7 @@ import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
 import { listAccountBills } from "@/services/billing/read/list-account-bills";
 import { listUncharged } from "@/services/billing/read/list-uncharged";
 import { listErrors } from "@/services/billing/read/list-errors";
+import { listRejectedPending } from "@/services/billing/read/list-rejected-pending";
 import { listRunAudit } from "@/services/billing/read/list-run-audit";
 import {
   getAppLocale,
@@ -84,6 +100,7 @@ const mockGetStageTimeline = vi.mocked(getStageTimeline);
 const mockListAccountBills = vi.mocked(listAccountBills);
 const mockListUncharged = vi.mocked(listUncharged);
 const mockListErrors = vi.mocked(listErrors);
+const mockListRejectedPending = vi.mocked(listRejectedPending);
 const mockListRunAudit = vi.mocked(listRunAudit);
 const mockGetAppLocale = vi.mocked(getAppLocale);
 const mockGetAppTimezone = vi.mocked(getAppTimezone);
@@ -127,6 +144,7 @@ beforeEach(() => {
   mockListAccountBills.mockResolvedValue([]);
   mockListUncharged.mockResolvedValue([]);
   mockListErrors.mockResolvedValue([]);
+  mockListRejectedPending.mockResolvedValue([]);
   mockListRunAudit.mockResolvedValue([]);
   mockGetAppLocale.mockResolvedValue("en-MY");
   mockGetAppTimezone.mockReturnValue("UTC");
