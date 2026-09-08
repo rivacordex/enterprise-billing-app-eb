@@ -120,4 +120,28 @@ describe("getPostingProgress (bm11-spec §Visual)", () => {
 
     expect(result?.rows[0]).toMatchObject({ status: "pending" });
   });
+
+  // bm19-spec §Implementation §5 — `hasStoredInvoice` passes through
+  // unchanged from the repository read (already derived there from the
+  // `bill_run_invoices` left-join absence, D10's render-pending state).
+  it("threads hasStoredInvoice through for an invoiced account still render-pending", async () => {
+    mockListPostingProgress.mockResolvedValue([
+      {
+        billingAccountId: "BAN00000001",
+        accountName: "Acme",
+        status: "INVOICED",
+        errorCode: null,
+        errorDetail: null,
+        invoiceId: "INV00000001",
+        hasStoredInvoice: false,
+      },
+    ] as never);
+
+    const result = await getPostingProgress("BRN00000001");
+
+    expect(result?.rows[0]).toMatchObject({
+      status: "invoiced",
+      hasStoredInvoice: false,
+    });
+  });
 });

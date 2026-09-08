@@ -168,6 +168,10 @@ export interface CustomerBillTaxItemRow {
 // (`services/billing/aggregate-bill.ts`), `taxTotal` is the SQL SUM of the tax
 // items (`services/billing/taxation.ts`), and `totalAmount = subtotal +
 // taxTotal`.
+// bm19-spec §Implementation §5 — `invoiceId` is `null` until the account
+// posts (`category` flips `trial` → `normal` at the same moment, bm11); once
+// set, the Customers & Bills tab swaps `InvoicePreviewModal` (draft) for
+// `StoredInvoiceModal` (the issued, immutable record).
 export interface CustomerBillRow {
   customerBillId: string;
   billingAccountId: string;
@@ -179,6 +183,7 @@ export interface CustomerBillRow {
   totalAmount: string;
   paymentDueDate: string;
   taxItems: CustomerBillTaxItemRow[];
+  invoiceId: string | null;
 }
 
 // bm07-spec §Design/§2. The Uncharged tab's read model — one row per
@@ -226,12 +231,17 @@ export const POSTING_ACCOUNT_STATUSES = [
 ] as const;
 export type PostingAccountStatus = (typeof POSTING_ACCOUNT_STATUSES)[number];
 
+// bm19-spec §Implementation §5 — `true` once the account's final invoice PDF
+// is rendered and stored (`bill_run_invoices` row exists); `false` for an
+// `invoiced` account still `pending`/render-pending (D10's tolerated,
+// retryable state) and for every non-`invoiced` row (draws no meaning there).
 export interface PostingProgressRow {
   billingAccountId: string;
   accountName: string;
   status: PostingAccountStatus;
   invoiceId: string | null;
   errorDetail: string | null;
+  hasStoredInvoice: boolean;
 }
 
 export interface PostingProgress {

@@ -8,7 +8,10 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { InvoicePreviewModal } from "@/components/billing/invoice-preview-modal";
+import {
+  InvoicePreviewModal,
+  StoredInvoiceModal,
+} from "@/components/billing/invoice-preview-modal";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -155,5 +158,92 @@ describe("InvoicePreviewModal", () => {
     });
 
     expect(screen.getByText("Queued — rendering shortly")).toBeTruthy();
+  });
+});
+
+// bm19-spec §Implementation §5 — `StoredInvoiceModal`: no watermark/preview
+// banner (this IS the issued record), the real INV number + blob_ref/
+// checksum read from the download response's headers, and a Download link —
+// shares D-T5's a11y contract via the same `Dialog`.
+function renderStoredModal() {
+  return render(
+    <StoredInvoiceModal
+      billRunId="BRN00000001"
+      billingAccountId="BAN00000001"
+      accountName="Acme Communications"
+    />,
+  );
+}
+
+function storedResponse(headers: Record<string, string>) {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => headers[name] ?? null },
+    blob: () => Promise.resolve(new Blob(["pdf"], { type: "application/pdf" })),
+  };
+}
+
+describe("StoredInvoiceModal", () => {
+  it("fetches the session-guarded stored-invoice route on open", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      storedResponse({
+        "X-Invoice-Number": "INV00000001",
+        "X-Blob-Ref": "invoices/2026-07/INV00000001.pdf",
+        "X-Checksum": "abc123",
+      }) as never,
+    );
+    renderStoredModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
+
+    await screen.findByTitle("Invoice INV00000001");
+    expect(fetch).toHaveBeenCalledWith(
+      "/billing/bill-runs/BRN00000001/stored-invoice/BAN00000001",
+    );
+  });
+
+  it("shows the real invoice number and the PDF-bytes blob_ref/checksum (Design 'two checksums, two purposes')", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      storedResponse({
+        "X-Invoice-Number": "INV00000042",
+        "X-Blob-Ref": "invoices/2026-07/INV00000042.pdf",
+        "X-Checksum": "deadbeef",
+      }) as never,
+    );
+    renderStoredModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
+
+    expect(await screen.findByText("invoices/2026-07/INV00000042.pdf")).toBeTruthy();
+    expect(screen.getByText("deadbeef")).toBeTruthy();
+    expect(screen.getByTitle("Invoice INV00000042")).toBeTruthy();
+  });
+
+  it("offers a Download link once the stored PDF is retrieved", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      storedResponse({
+        "X-Invoice-Number": "INV00000001",
+        "X-Blob-Ref": "invoices/2026-07/INV00000001.pdf",
+        "X-Checksum": "abc123",
+      }) as never,
+    );
+    renderStoredModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
+
+    const download = await screen.findByRole("link", { name: /download/i });
+    expect(download.getAttribute("href")).toBe("blob:mock-url");
+  });
+
+  it("shows a not-found reason for a 404 (no stored invoice yet)", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 404 } as never);
+    renderStoredModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
+
+    expect(
+      await screen.findByText(/no stored invoice found for this account yet/i),
+    ).toBeTruthy();
   });
 });
