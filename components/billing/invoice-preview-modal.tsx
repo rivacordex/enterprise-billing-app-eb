@@ -88,10 +88,11 @@ export function InvoicePreviewModal({
     const queuedTimer = setTimeout(() => {
       setState((current) => (current === "loading" ? "queued" : current));
     }, QUEUED_HINT_DELAY_MS);
-    const timeoutTimer = setTimeout(
-      () => controller.abort(),
-      RENDER_TIMEOUT_MS,
-    );
+    let timedOut = false;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, RENDER_TIMEOUT_MS);
 
     try {
       const response = await fetch(
@@ -113,11 +114,14 @@ export function InvoicePreviewModal({
       setState("ready");
     } catch {
       // A superseded/closed/unmounted render aborts expectedly — it no longer
-      // owns the UI, so surface nothing. A genuine network failure or the
-      // RENDER_TIMEOUT abort (ref still intact) falls through to "error".
+      // owns the UI, so surface nothing. Otherwise distinguish the
+      // RENDER_TIMEOUT abort (ref still intact, `timedOut` set) from a genuine
+      // network failure so the message matches the actual cause.
       if (isStale()) return;
       setErrorMessage(
-        "The draft invoice took too long to render. Please try again.",
+        timedOut
+          ? "The draft invoice took too long to render. Please try again."
+          : "Could not render the draft invoice. Please try again.",
       );
       setState("error");
     } finally {
@@ -237,6 +241,8 @@ export function InvoicePreviewModal({
 
 function describeRenderError(status: number): string {
   switch (status) {
+    case 401:
+      return "Your session has expired. Please refresh the page and sign in again.";
     case 429:
       return "Too many preview requests right now — please wait a moment and try again.";
     case 403:
@@ -377,6 +383,15 @@ export function StoredInvoiceModal({
       abortActiveRender();
       revokeObjectUrl();
       setPdfUrl(null);
+      // Reset the display to its initial state so a reopen starts in "loading"
+      // with no stale ready frame or header — the invoice number is shown in
+      // the description (and blob/checksum in the ready panel) before the next
+      // fetch resolves, so leaving them set flashes the previous invoice.
+      setState("loading");
+      setInvoiceNumber(null);
+      setBlobRef(null);
+      setChecksum(null);
+      setErrorMessage(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -473,6 +488,8 @@ export function StoredInvoiceModal({
 
 function describeStoredInvoiceError(status: number): string {
   switch (status) {
+    case 401:
+      return "Your session has expired. Please refresh the page and sign in again.";
     case 403:
       return "You do not have permission to view this invoice.";
     case 404:

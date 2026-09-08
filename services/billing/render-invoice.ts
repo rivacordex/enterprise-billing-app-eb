@@ -50,6 +50,11 @@ export interface RenderDraftInvoiceParams {
 // carries Chromium.
 const MAX_CONCURRENT_RENDERS = 2;
 const renderSemaphore = createSemaphore(MAX_CONCURRENT_RENDERS);
+// `browser.close()` (unlike setContent/pdf, which carry Playwright's own
+// default timeouts) has no built-in bound; a wedged Chromium could hang it
+// forever, holding the render permit and — since post-run.ts awaits the render
+// inside the sequential posting loop — stalling the whole run. Cap it.
+const BROWSER_CLOSE_TIMEOUT_MS = 10_000;
 
 export async function renderDraftInvoice({
   runId,
@@ -169,7 +174,15 @@ function renderPdfFromHtml(html: string): Promise<Buffer> {
       });
       return pdf;
     } finally {
-      await browser.close();
+      // Bound the close and swallow any rejection: a hung close must not wedge
+      // the permit/loop, and a close failure must not mask the real render
+      // error propagating from the try block.
+      await Promise.race([
+        browser.close(),
+        new Promise<void>((resolve) =>
+          setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS),
+        ),
+      ]).catch(() => {});
     }
   });
 }

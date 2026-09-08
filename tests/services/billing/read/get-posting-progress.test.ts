@@ -53,6 +53,7 @@ describe("getPostingProgress (bm11-spec §Visual)", () => {
         errorCode: null,
         errorDetail: null,
         invoiceId: "INV00000001",
+        hasStoredInvoice: true,
       },
     ] as never);
 
@@ -78,6 +79,7 @@ describe("getPostingProgress (bm11-spec §Visual)", () => {
         errorCode: "PERIOD_CLOSED",
         errorDetail: "Period 2026-08 is closed for MYR.",
         invoiceId: null,
+        hasStoredInvoice: false,
       },
     ] as never);
 
@@ -96,6 +98,7 @@ describe("getPostingProgress (bm11-spec §Visual)", () => {
         errorCode: "POSTING_FAILED",
         errorDetail: "Something went wrong",
         invoiceId: null,
+        hasStoredInvoice: false,
       },
     ] as never);
 
@@ -113,6 +116,7 @@ describe("getPostingProgress (bm11-spec §Visual)", () => {
         errorCode: null,
         errorDetail: null,
         invoiceId: null,
+        hasStoredInvoice: false,
       },
     ] as never);
 

@@ -161,6 +161,20 @@ export async function retryRenderInvoice(
     });
     return { ok: true, value: { billingAccountId, blobRef } };
   } catch (err) {
+    // A concurrent renderer (the post-commit render in `renderAndStoreInvoice`,
+    // or a double-fired retry) can store the artifact between our existence
+    // check above and this insert; the (run, ban, period) unique constraint
+    // then rejects our insert. That is a successful store, not a render
+    // failure — re-check and report it as ALREADY_STORED rather than a
+    // misleading RENDER_FAILED.
+    const stored = await billRunInvoicesRepository.findByRunAndAccount(
+      db,
+      billRunId,
+      billingAccountId,
+    );
+    if (stored) {
+      return { ok: false, code: "ALREADY_STORED" };
+    }
     logger.error("post-run: retry-render failed", {
       billRunId,
       billingAccountId,
