@@ -54,8 +54,9 @@ enumerations were trimmed to key facts + decisions. Full history:
   rename + `distribution_*`/`*_engine_ref` columns),
   `0036_bill_run_invoices.sql` (bm19 — the stored-invoice table + its
   immutability trigger), and `0037_document_customer_bill_latch.sql` (bm19
-  T5 — the structural one-INV-per-bill latch) are generated/reviewed but
-  **not applied**.
+  T5 — the structural one-INV-per-bill latch, plus the two CodeRabbit-review
+  CHECKs: customer-bill ref both-null-or-both-set + INV-only) are
+  generated/reviewed but **not applied**.
 - No local Postgres has been reachable in this environment for the entire
   build — every DB-gated integration test (materialize/trigger/partman/stage-
   ingest/E2E-happy-path/billrun-db-roles/etc.) was written and statically
@@ -646,7 +647,8 @@ enumerations were trimmed to key facts + decisions. Full history:
     invoiceNo, bytes)`/`getInvoice(blobRef)` over `@azure/storage-blob`,
     path `invoices/<YYYY-MM>/<INV…>.pdf`, `checksum` = md5 of the PDF bytes
     (the SECOND checksum — Design "two checksums, two purposes": the charge
-    checksum anchors the charge lines, this one anchors the stored artifact).
+    checksum anchors the charge lines, this one anchors the stored artifact);
+    the upload is write-once (`if-none-match`, see Post-Review Hardening).
     Connection resolves from `lib/config.ts`'s new `billRunBlobConfig`
     (`BILLRUN_BLOB_CONNECTION_STRING` dev/Azurite XOR `BILLRUN_BLOB_ACCOUNT_URL`
     prod); the connection-string (dev) path auto-creates the container
@@ -689,10 +691,15 @@ enumerations were trimmed to key facts + decisions. Full history:
     checksum shown via the download response's `X-Invoice-Number`/
     `X-Blob-Ref`/`X-Checksum` headers — avoids a second round-trip — plus a
     Download link; shares the D-T5 a11y contract via the same `Dialog`).
-    `CustomerBillTable` swaps `InvoicePreviewModal` for `StoredInvoiceModal`
-    once `row.invoiceId` is set (`customerBillRepository.listForRun` +
-    `CustomerBillRow`/`listAccountBills` extended with `refInvDocumentId`/
-    `invoiceId`). `PostingProgressView` shows `StoredInvoiceModal` for an
+    `CustomerBillTable` is a three-way gate (bm19 CodeRabbit review): no
+    `invoiceId` → the draft `InvoicePreviewModal`; `invoiceId` +
+    `hasStoredInvoice` → `StoredInvoiceModal`; `invoiceId` but not yet stored
+    (render-pending) → a note pointing to Posting progress, never a
+    `StoredInvoiceModal` that would 404. `customerBillRepository.listForRun` +
+    `CustomerBillRow`/`listAccountBills` are extended with `refInvDocumentId`/
+    `invoiceId` and `hasStoredInvoice` (same `bill_run_invoices` left-join idiom
+    as `listPostingProgressForRun`). `PostingProgressView` shows
+    `StoredInvoiceModal` for an
     `invoiced` row with `hasStoredInvoice` (new field, derived via a second
     left-join to `bill_run_invoices` in
     `billRunAccountRepository.listPostingProgressForRun`, never a stored
@@ -831,6 +838,36 @@ file history).
     is no longer stamped by any app writer (Fork B retired `stampTaxRateVersion`;
     `billRunTaxConfig`/`BILLRUN_TAX_*` are now app-side dead config kept for
     provenance). Reject stamps its marker via a per-account N+1 loop.
+- **bm18/bm19 (CodeRabbit review, 2026-09-08):**
+  - **Invoice modals no longer race their own fetch.** `InvoicePreviewModal`
+    (bm18) and `StoredInvoiceModal` (bm19) track the in-flight render's
+    `AbortController`, abort it on close/unmount/retry, and drop a stale
+    completion so a superseded/closed generation never overwrites state or
+    leaks an object URL; `StoredInvoiceModal` also gained a fetch timeout so a
+    hung download can't freeze the frame (D-T2).
+  - **`blobStore.putInvoice` is write-once.** Uploads with `if-none-match: "*"`;
+    on Azure's 412 (a post-commit render racing a manual `retryRenderInvoice` —
+    Chromium stamps a fresh timestamp per render, so their bytes differ) it
+    adopts the WINNER's bytes' checksum, so the persisted
+    `bill_run_invoices.checksum` always matches what a later download reads.
+  - **`getStoredInvoice` verifies integrity.** Re-hashes the downloaded PDF and
+    fails closed (route → 500) on a mismatch with the stored checksum — the
+    "second checksum" now actually guards the artifact.
+  - **`lib/config` rejects BOTH blob backends being set**
+    (`BILLRUN_BLOB_CONNECTION_STRING` + `BILLRUN_BLOB_ACCOUNT_URL`) via
+    superRefine — a both-set misconfig previously resolved silently to the
+    connection string. Neither-set is still allowed (fail-on-first-use).
+  - **`billing.document` gains two CHECKs** (schema + `0037`):
+    `(ref_customer_bill_id IS NULL) = (period_partition IS NULL)` and
+    `ref_customer_bill_id IS NULL OR doc_type = 'INV'` — closes the Postgres
+    MATCH SIMPLE composite-FK bypass (a half-NULL pair would otherwise skip
+    `document_customer_bill_fk` entirely).
+  - **Customers & Bills tab gates on `hasStoredInvoice`** (see the corrected
+    bm19 UI narrative above) — a posted-but-render-pending invoice shows a
+    render-pending note pointing to Posting progress, not a 404-ing modal.
+  - **`db/migrations/README.md`** (new) + a `drizzle.config.ts` caveat record
+    that migrations are hand-authored — `drizzle-kit generate`'s snapshot
+    baseline is stale past `0026`.
 
 ## Architecture Decisions
 
@@ -908,6 +945,13 @@ file history).
   audit.sql` precedent (Drizzle can't express `PARTITION BY`) — generated/
   reviewed but not yet applied anywhere; run `db:migrate` then
   `db:setup-partman-billing` in that order wherever the database lives.
+- **`drizzle-kit generate` is retired for this module.** Its snapshot baseline
+  in `db/migrations/meta` stops at `0026`; every migration since (`0027`+, and
+  `0018`–`0020`) is hand-authored SQL with a hand-appended `_journal.json`
+  entry, and the apply path (`db:migrate` → `db/migrate.ts` → Drizzle's
+  migrator) reads the journal + `.sql` files, never the snapshots. Documented
+  in `db/migrations/README.md` + a `drizzle.config.ts` caveat so nobody runs
+  `db:generate` and gets a broken giant diff. `db:introspect` is unaffected.
 - The four partitioned billing tables share one `partman.create_parent`
   registration each (monthly, 4-premake, 7-year detach-not-drop — distinct
   from `audit_log`'s drop-on-expiry) and the existing shared
