@@ -127,6 +127,12 @@ describe("completeness and gap detection (rm12-spec D1-D6 — static)", () => {
   });
 
   it("never touches non-auto-clearing codes (D4 boundary)", () => {
+    // The boundary is that the module never EMITS or clears these codes — not
+    // that the string never appears at all. The module's own docstring names
+    // them precisely to document what it deliberately leaves alone (rm02 D5),
+    // so a bare `not.toContain` false-fails on that legitimate mention (same
+    // comment-vs-code class as the rm13 migration-boundary scanner). Assert on
+    // the emission shape (`event_code="CODE"`) instead.
     for (const code of [
       "LOAD_BLOCKED_BILLED",
       "RECON_IMBALANCE",
@@ -134,7 +140,9 @@ describe("completeness and gap detection (rm12-spec D1-D6 — static)", () => {
       "FILE_KEY_UNRESOLVED",
       "CURRENCY_MISMATCH",
     ]) {
-      expect(source).not.toContain(code);
+      expect(source).not.toMatch(
+        new RegExp(`event_code\\s*=\\s*["']${code}["']`),
+      );
     }
   });
 

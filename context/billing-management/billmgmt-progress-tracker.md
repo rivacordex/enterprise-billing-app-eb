@@ -633,6 +633,36 @@ file history).
     of Kestra's execution states recognized. Both revisit when the real
     `EngineClient` is wired — the stub is synchronous today, so neither is
     live yet.
+- **bm14/bm16/bm17 (cross-commit review, 2026-09-08):**
+  - **[CRITICAL] `billrun_status_guard` now permits the `REJECTED → BILL_DRAFT`
+    re-claim** (`db/bootstrap/billrun-db-roles.sql` Step 7b). bm14 hardened the
+    trigger to `RATED → BILL_DRAFT` only, but bm17's reject → rerun loop and
+    bm16's Collection stub both require the processor to re-claim a rejected
+    account (`status IN ('RATED','REJECTED') → BILL_DRAFT`, spec T6). The two
+    commits were mutually contradictory — the whole reject → rerun → approve
+    journey would have failed HARD at the DB against a real engine. Both checks
+    now treat `RATED` and `REJECTED` as the claimable source set (status flip
+    and claim-column rewrites); the frozen-state guard for `BILL_DRAFT`/
+    `BILL_APPROVED` and the "worker never sets `BILL_APPROVED`/`REJECTED`" rules
+    are unchanged. Integration tests 14/14b updated + a `REJECTED → BILL_DRAFT`
+    success case added. **Requires re-running `db:bootstrap-billrun-roles` in
+    every environment** (CREATE OR REPLACE FUNCTION).
+  - **`BILLRUN_ENGINE_AUTH` now rejects an empty string at boot** (`lib/config.ts`).
+    A present-but-empty `BILLRUN_ENGINE_AUTH=""` alongside a real URL passed the
+    both-or-neither superRefine (presence check) yet resolved to
+    `configured = false` in `engine-registry.ts` (`!!auth`) — silently selecting
+    the STUB client on a deployment that looked fully configured. `.min(1)`
+    makes it fail loud, consistent with the truthiness resolution.
+  - Deferred (documented, not fixed): cancel's `release()` leaves a prior
+    reject's `REJECTED` rows un-released (BILL_DRAFT-only) — now self-healing via
+    the corrected re-claim on the next Collection, and `REJECTED → RATED` on
+    cancel carries a live-row-uniqueness collision risk if a re-rating created a
+    competing live row. Double-reject on a still-`PROCESSED` run writes a
+    misleading `priorTotals: "0.00"` audit row (no data change). `release(runId, [])`
+    conflates an explicit empty scope with whole-run release. `ref_tax_rate_version`
+    is no longer stamped by any app writer (Fork B retired `stampTaxRateVersion`;
+    `billRunTaxConfig`/`BILLRUN_TAX_*` are now app-side dead config kept for
+    provenance). Reject stamps its marker via a per-account N+1 loop.
 
 ## Architecture Decisions
 

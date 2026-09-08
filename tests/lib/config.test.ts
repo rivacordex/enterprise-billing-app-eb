@@ -381,6 +381,19 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
 
+  it("fails loud when BILLRUN_ENGINE_URL is set but BILLRUN_ENGINE_AUTH is empty (no silent stub fallback)", async () => {
+    // Empty-but-present AUTH passes the both-or-neither superRefine yet resolves
+    // to `configured = false` (`!!auth`) — the `.min(1)` on AUTH turns that
+    // silent stub collapse into a boot failure instead.
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_URL: "https://engine.example.com",
+        BILLRUN_ENGINE_AUTH: "",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
   it("is configured when both engine vars are present", async () => {
     const { billRunEngineConfig, isBillRunEngineConfigured } =
       await loadConfigWithEnv({
