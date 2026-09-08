@@ -40,7 +40,25 @@ describe("billing-side rating.* write boundary (bm17-spec §Implementation §1)"
     for (const file of files) {
       if (file === SANCTIONED_WRITER) continue;
       const source = readFileSync(resolve(REPO_DIR, file), "utf8");
+<<<<<<< HEAD
       if (hasRatingWriteSurface(source)) {
+=======
+      // Any UPDATE/INSERT/DELETE targeting the rating schema, or a raw
+      // reference to its tables, would be a write surface this repository
+      // must not carry (Collection/claim moved to the processor, D5/T6).
+      // An ORM-based write is an equally sanctioned surface — a file that
+      // imports a rating table from db/schema/rating and then calls
+      // .insert(/.update(/.delete( never emits the raw-SQL patterns above,
+      // so it must be caught separately.
+      const hasRawWrite =
+        /rating\.udr_rated|"rating"\."udr_rated"|FROM\s+rating\./i.test(
+          source,
+        );
+      const hasOrmWrite =
+        /from\s+["']@\/db\/schema\/rating/.test(source) &&
+        /\.(insert|update|delete)\(/.test(source);
+      if (hasRawWrite || hasOrmWrite) {
+>>>>>>> e40f6c6 (Harden bm16 engine registry: topology-mismatch guard, HTTPS-only, fail-fast config)
         offenders.push(file);
       }
     }

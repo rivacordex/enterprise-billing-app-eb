@@ -31,6 +31,13 @@ enumerations were trimmed to key facts + decisions. Full history:
   Reject Action) — delivered.** See
   `context/billing-management/specs/bm17-udr-lifecycle-reject.md` and the
   Delivered Units entry below.
+- Phase 2 · Phase H — **bm18 (Rendering Foundation + Draft PRO-FORMA
+  Preview) — delivered.** See
+  `context/billing-management/specs/bm18-rendering-draft-preview.md` and the
+  Delivered Units entry below. The container-build/render proof (bm18's
+  checklist item 1) is statically reviewed only — no container runtime was
+  reachable to actually `docker build` the image and render a PDF from it;
+  see Outstanding.
 
 ## Outstanding (environmental only — not a build unit)
 
@@ -65,6 +72,17 @@ enumerations were trimmed to key facts + decisions. Full history:
   `bill_run` write grant, bm14 Step 9). The column stays reserved/unpopulated;
   not addressed by bm16 — revisit if a future unit needs run-level tax-version
   provenance.
+- **bm18's container-image Chromium proof is unverified end-to-end.** No
+  container runtime was reachable in this environment to `docker build .`
+  against the new `node:22-bookworm-slim`-based `Dockerfile` and confirm
+  `renderDraftInvoice` actually produces a PDF from *that* image (only a dev
+  machine with Playwright installed via `npm install` was exercised, via
+  unit/integration-style tests that mock Chromium — see
+  `infra/docs/rendering-image-size.md`'s Verification section). Build and
+  smoke-test the image before treating bm18 as ship-ready. The local Docker
+  dev stack (`docker-compose.dev.yml`) was deliberately **not** migrated off
+  `node:22-alpine`, so `Preview PRO-FORMA →` will fail there too until that
+  stack is revisited — same category of gap.
 
 ## Delivered Units (bm01–bm13)
 
@@ -469,6 +487,85 @@ enumerations were trimmed to key facts + decisions. Full history:
     `REJECTED` (rm01), and `error_code`/`error_detail` are unconstrained text
     columns — the marker is just a string value, no schema change.
 
+- **bm18 — Rendering Foundation + Draft PRO-FORMA Preview (Phase 2 · Phase
+  H).** See `context/billing-management/specs/bm18-rendering-draft-preview.md`.
+  The platform's first in-app document rendering — app-side, ephemeral,
+  stores nothing (bm19 adds storage):
+  - **`Dockerfile` base image: `node:22-alpine` → `node:22-bookworm-slim`**
+    across all three stages (`deps`/`builder`/`runner`), a resolved ambiguity
+    beyond the spec's literal "`npx playwright install --with-deps chromium`"
+    instruction — Playwright's Chromium needs glibc + `apt`, neither of which
+    Alpine's musl/`apk` provide; `deps`/`builder` moved too so the one
+    `node_modules` tree stays libc-consistent with `runner`. Full rationale +
+    the image-size increase in `infra/docs/rendering-image-size.md` (new).
+    `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` pins a fixed install path,
+    `chown`ed to the non-root `nextjs` user after install. `docker-compose.
+    dev.yml` deliberately left on Alpine (documented gap, Outstanding) —
+    draft preview needs a bare `npm run dev` with `npx playwright install
+    chromium` run once, or the built image.
+  - **`services/billing/render-invoice-template.ts`** (new) — the throwaway
+    HTML/CSS invoice template (D18: not `bill_template_version`), pure/DB-free
+    so `buildDraftInvoiceHtml` is unit-tested without a database or browser.
+    Invoice-number field is always **"— pending posting —"**; a diagonal
+    **"DRAFT · PRO-FORMA · NOT A VALID INVOICE"** watermark
+    (`position: fixed`, repeats on every printed page in Chromium's print
+    engine) sits at `z-index: 0` **behind** an opaque `.sheet` card
+    (`z-index: 1`, solid white) — the figures the reviewer opened the modal to
+    check are structurally never rendered through a translucent watermark
+    (ui-context §6c, new, Phase-2 review fold D-T5), rather than tuning an
+    opacity/contrast ratio. Money via `formatCurrency`, dates via
+    `formatCalendarDate`.
+  - **`services/billing/render-invoice.ts`** (new) — `renderDraftInvoice({
+    runId, banId })`: one repeatable-read read-only transaction reads the
+    account's trial `customer_bill` (new `customerBillRepository
+    .findForAccount`) + its tax items (new `customerBillTaxItemRepository
+    .listForBill`) + the claimed `rating.udr_rated` lines (new
+    `db/repositories/billing/rated-lines.repository.ts` — a plain `SELECT`
+    scoped to `BILL_DRAFT`/`BILL_APPROVED`, structurally distinct from
+    `udr-status.repository.ts`'s sole sanctioned `UPDATE`, verified against
+    the existing `billing-rating-write-boundary` guardrail); not-found (no
+    bill, or no run) throws `DraftInvoiceNotFoundError`. Launches Chromium
+    per render (D19), always closes it in `finally` — bounded by a new
+    process-level semaphore (`lib/concurrency.ts`'s `createSemaphore`,
+    `MAX_CONCURRENT_RENDERS = 2`, Phase-2 review fold T9): excess requests
+    queue rather than launch, verified by test.
+  - **`app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route.ts`**
+    (new) — a **session-guarded** PDF `GET` Route Handler, a deliberate,
+    reviewed exception to code-standards §3.5's "`app/api/*` = M2M only"
+    (same `getSession`/`resolveEffectivePermissions` shape as the existing
+    `app/api/accounts/gl-journal-export` precedent, not
+    `requirePermission`/`redirect` since a route can't redirect a fetch/
+    iframe request): `billrun_view:READ` (403 otherwise) → parse `runId`/
+    `banId` (new `validation/billing/ban-id.schema.ts` mirrors
+    `run-id.schema.ts`) → a **per-session rate limit** (new
+    `lib/rate-limit.ts`, in-memory sliding window, Phase-2 review fold T9) →
+    `renderDraftInvoice` → streams `application/pdf` inline
+    (`DRAFT-<ban>.pdf`), or 404/500 on failure. Added to code-standards §8's
+    permission-map table.
+  - **`components/billing/invoice-preview-modal.tsx`** (new)
+    `InvoicePreviewModal` — fetches the draft route (not a bare `<iframe
+    src>`) so the client drives its own loading/queued/error states (Phase-2
+    review fold D-T2): an immediate PDF-shaped skeleton captioned "Rendering
+    draft invoice…", switching to "Queued — rendering shortly" past a normal
+    render's window, or an inline **Retry** with a plain-language reason on
+    failure/timeout — never a frozen/empty frame. Built on the shared
+    `Dialog` (Radix), which already provides the D-T5 a11y contract (focus
+    trap, Esc-to-close, focus return) for free; adds the accessible `<iframe
+    title>`. Low-emphasis **ghost** trigger ("Preview PRO-FORMA →", never the
+    featured petrol or a danger role, ui-context §7), wired into
+    `CustomerBillTable` (which gained a `billRunId` prop, threaded from
+    `RunDetailTabs`'s existing `runId`) on the Customers & Bills tab.
+  - **ui-context §6c** (new) documents the watermark-legibility mechanism and
+    the shared preview-modal a11y contract (for `StoredInvoiceModal` too,
+    bm19).
+  - **Resolved ambiguity**: the `react-hooks/set-state-in-effect` lint rule
+    flags the deliberate "reset to loading, then fetch" pattern the moment
+    the modal opens — a single, commented, targeted
+    `eslint-disable-next-line` at that one call site (not a blanket
+    suppression) is the resolution; D-T2's "immediate skeleton" requirement is
+    exactly the case this rule's underlying heuristic doesn't fit.
+  - No migration, no new permission, no new env var (spec §Config/env).
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -630,6 +727,13 @@ file history).
 - `tests/accounts/grep-gates.test.ts` has one BAN-narrowing false positive
   on `db/repositories/billing/bill-run-account.repository.ts`, present since
   bm09 and not touched by later units.
+- **Fixed incidentally at bm18**: `tests/app/bill-run-detail-page.test.tsx`
+  (bm04) was never updated for bm17's `RejectDialog`/`listRejectedPending`
+  additions to the page — both are real, unmocked modules whose import graph
+  reaches `db/client.ts`, which this test's `@/lib/config` mock doesn't fully
+  satisfy, so the whole suite failed to import. Surfaced only when bm18's
+  verification run exercised this file; both are now mocked the same way as
+  the pre-existing `RerunDialog`/`listErrors` stubs.
 - All hand-authored partitioned-table migrations (`0027` bill_run_account,
   `0028` bill_run_account_stage, `0029` customer_bill, `0030`
   customer_bill_tax_item, `0033` finalization trigger) follow the `0001_
@@ -648,7 +752,7 @@ file history).
 
 ## Next Up
 
-- **bm01–bm17 are all delivered.** The remaining action items are
+- **bm01–bm18 are all delivered.** The remaining action items are
   environmental (see Outstanding, above): apply migrations `0033`/`0035`, run
   `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
   `db:bootstrap-rating-roles`), run the DB-gated suites (incl. the updated
@@ -660,5 +764,11 @@ file history).
   real `bill_run_processing` flow exists yet; the separate workflow-management
   repo/owner/deploy step are `TBD` in `flows/billrun/README.md`. Register the
   smoke run as a phase-2 exit criterion when bm21 (not yet specced) lands.
-- Phase 2 · Phase G continues past bm17 (bm20's distribution execution
-  columns, and any units between) — not yet specced in this session.
+- **bm18's container-image Chromium proof is unbuilt** — `docker build .`
+  against the new `node:22-bookworm-slim` Dockerfile plus an actual
+  `renderDraftInvoice` PDF from that image were never exercised in this
+  environment; do this before treating draft-invoice preview as ship-ready
+  (see Outstanding, above).
+- Phase 2 · Phase G/H continues past bm18 (bm19's stored-invoice + blob
+  persistence, bm20's distribution execution columns, and any units between)
+  — not yet specced in this session.

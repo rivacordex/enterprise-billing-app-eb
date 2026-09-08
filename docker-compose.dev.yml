@@ -11,6 +11,15 @@
 #
 # Requires a local .env (cp .env.example .env, then set BETTER_AUTH_SECRET).
 # The DATABASE_URL below overrides the localhost value in .env for in-container use.
+#
+# bm18-spec §Implementation §1 — draft PRO-FORMA rendering (Playwright/
+# Chromium) needs the Debian-based runtime image (see the Dockerfile's
+# `node:22-bookworm-slim` comment); this dev stack's `x-node` anchor still
+# runs plain `node:22-alpine` for hot-reload dev, so `Preview PRO-FORMA →`
+# will fail here with a missing-browser error (tracked as an environmental
+# gap in billmgmt-progress-tracker.md's Outstanding section, same category as
+# the never-applied migrations). For a bare host `npm run dev` (no Docker),
+# run `npx playwright install chromium` once first.
 
 x-node: &node-common
   image: node:22-alpine

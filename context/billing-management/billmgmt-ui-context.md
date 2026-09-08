@@ -75,6 +75,40 @@ While `BILLRUN_PLACEHOLDER_MODE` is set (Inv. #15, renamed bm15-spec §Implement
 
 Copy (bm15 Phase-2 review fold D-T4 — names what's REAL, not just what isn't): **"Placeholder pipeline — the workflow engine runs the bill run, but the billing steps are placeholders and `udr_rated` is seeded `_SAMPLE_` test data. Approval, posting, invoice numbers, rendered PDFs and distribution are wired end-to-end and REAL."** Always paired with a warning icon.
 
+## 6c. Draft PRO-FORMA watermark & preview modal a11y (bm18, Phase-2 review folds T9/D-T2/D-T5)
+
+**Watermark legibility.** The draft PDF's diagonal "DRAFT · PRO-FORMA · NOT A
+VALID INVOICE" watermark (Danger family, `--color-danger-500` `#D92D2D`) must
+never degrade the figures the reviewer opened the modal to validate (D-T5).
+`services/billing/render-invoice-template.ts` resolves this structurally
+rather than by tuning an opacity-vs-contrast ratio: the watermark is a
+`position: fixed` layer at `z-index: 0` (Chromium's print engine repeats a
+fixed-position element on every page, which is what makes it appear on every
+sheet without a header/footer template per page); the invoice content sits in
+an **opaque** `.sheet` card (`background: #ffffff`, `z-index: 1`) on top of
+it. The watermark is only ever visible in the page's empty margins/whitespace
+around the invoice card — never through the printed line items or totals,
+regardless of the chosen opacity (kept low, `0.14`, purely so the watermark
+itself doesn't read as aggressive on the page background). Do not remove the
+opaque background from `.sheet` without re-deriving an opacity/contrast
+budget to replace it.
+
+**Preview modal a11y contract** (`InvoicePreviewModal`, and `StoredInvoiceModal`
+when bm19 lands): built on the shared `Dialog` (Radix `Dialog.Root`), which
+already provides a **focus trap**, **Esc-to-close**, and **focus return to
+the trigger** for free — no bespoke implementation needed for those three.
+The one addition every such modal must carry itself: an accessible `<iframe
+title>` — `"Draft PRO-FORMA invoice — {BAN}"` for a draft, the real `INV…`
+reference for a stored invoice (bm19).
+
+**Loading/queued/error states** (D-T2, ui-context delta only — no new token):
+a PDF-shaped skeleton (`.pdfwrap` frame + shimmer lines, `animate-pulse`) with
+caption **"Rendering draft invoice…"**; past the render-side concurrency
+guard's normal-render window the caption reads **"Queued — rendering
+shortly"**; a failed/timed-out render shows an inline **Retry** button with a
+plain-language reason, in the destructive text color — never a frozen or
+empty frame.
+
 ## 7. Accent, CTA & destructive usage
 
 **Featured-action colour — Bill Run overrides the platform magenta.** For this money-moving, four-eyes module the platform `--action-cta-bg` magenta (`#E6007E`) reads as consumer-marketing energy, not the gravity a bill run warrants. Bill Run therefore defines **one module-scoped accent** — **"Deep Petrol"**, the brand's deepest connectivity teal — and uses it for the featured action in place of the magenta. This does **not** redefine the shared `--action-cta-bg`; every other module keeps magenta.

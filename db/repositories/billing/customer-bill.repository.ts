@@ -397,6 +397,59 @@ export const customerBillRepository = {
     return stamped.length > 0;
   },
 
+  // bm18-spec §Implementation §2 step 1 — the draft-invoice renderer's single-
+  // account read: the same account-name/currency join as `listForRun`, scoped
+  // to one `(run, ban)` pair. `null` means no bill exists yet for this
+  // account (the render service maps this to a typed not-found → 404 at the
+  // route, never a 500).
+  async findForAccount(
+    db: Database,
+    billRunId: string,
+    billingAccountId: string,
+  ): Promise<{
+    customerBillId: string;
+    periodPartition: string;
+    billingAccountId: string;
+    accountName: string;
+    currency: string;
+    category: string;
+    billingPeriodStart: string;
+    billingPeriodEnd: string;
+    subtotal: string;
+    taxTotal: string;
+    totalAmount: string;
+    paymentDueDate: string;
+  } | null> {
+    const [row] = await db
+      .select({
+        customerBillId: customerBill.customerBillId,
+        periodPartition: customerBill.periodPartition,
+        billingAccountId: customerBill.refBillingAccountId,
+        accountName: billingAccount.name,
+        currency: billingAccount.currency,
+        category: customerBill.category,
+        billingPeriodStart: customerBill.billingPeriodStart,
+        billingPeriodEnd: customerBill.billingPeriodEnd,
+        subtotal: customerBill.subtotal,
+        taxTotal: customerBill.taxTotal,
+        totalAmount: customerBill.totalAmount,
+        paymentDueDate: customerBill.paymentDueDate,
+      })
+      .from(customerBill)
+      .innerJoin(
+        billingAccount,
+        eq(customerBill.refBillingAccountId, billingAccount.billingAccountId),
+      )
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(customerBill.refBillingAccountId, billingAccountId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
   // bm05-spec §Visual — one row per trial bill, joined to the account name +
   // currency for money formatting (neither lives on `customer_bill`). No
   // `EXCLUDED`-account filter needed: those accounts never reach Aggregation

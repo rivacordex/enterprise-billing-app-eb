@@ -210,6 +210,7 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 | Approve & Post (four-eyes money gate) | `/billing/bill-runs/[runId]/approve` | `ApproveAndPostPage` → `ApproveAndPostPanel`, `PreApprovalChecks` | `app/(app)/billing/bill-runs/[runId]/approve/`, `actions/billing/{approve,post}-run.action.ts` | `billrun_approve` : **EDIT** |
 | M2M — stage completion signal | `POST /api/billrun/[runId]/stage/[stage]/complete` | `route.ts` → `handleStageSignal` | `app/api/billrun/[runId]/stage/[stage]/complete/` | **Service token** (no RBAC) |
 | M2M — run-level status push | `POST /api/billrun/[runId]/status` | `route.ts` → `handleStatusPush` | `app/api/billrun/[runId]/status/` | **Service token** (no RBAC) |
+| Draft PRO-FORMA invoice preview (session-guarded PDF) | `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` | `route.ts` → `renderDraftInvoice`, `InvoicePreviewModal` | `app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/` | `billrun_view` : **READ** |
 
 **Notes**
 
