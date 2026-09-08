@@ -14,6 +14,7 @@ import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillTaxItem } from "@/db/schema/billing/customer-bill-tax-item";
 import { document } from "@/db/schema/billing/documents";
+import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { seedSysAccounts } from "@/db/seeds/accounts/seed-sys-accounts";
 import { seedCoa } from "@/db/seeds/accounts/seed-coa";
@@ -576,6 +577,17 @@ describe.skipIf(!databaseUrl)(
         // No billing-side charge copy (Inv. #3): the finalized bill carries
         // only the checksum anchor, never a copy of the charge lines. FAILED
         // and EXCLUDED accounts never got a customer_bill row at all.
+        //
+        // bm19-spec §Design "Posting reads real udr_rated (Inv #3)" — the
+        // checksum is now `md5(...)` over the account's claimed
+        // `rating.udr_rated` rows for `(run, ban, posted_attempt)`, computed
+        // in SQL. This fixture never inserts any `rating.udr_rated` rows for
+        // `banBilled` (no rating-engine fixture exists in this synthetic
+        // journey), so the claimed set is empty and the checksum degrades to
+        // `md5('')` — still a deterministic, truthy 32-char hex string, so
+        // the `toBeTruthy()` assertion below is unaffected either way; this
+        // is NOT a proof that the checksum tracks real charge lines (that
+        // proof belongs to a rating-integrated fixture once one exists).
         const billedBillRows = await db
           .select()
           .from(customerBill)
@@ -616,6 +628,73 @@ describe.skipIf(!databaseUrl)(
           finalizedBill.refInvDocumentId,
         );
         expect(stillFinalized?.subtotal).toBe(finalizedBill.subtotal);
+
+        // ---- bm19-spec §Phase-2 review folds T5 [P1] — the structural
+        // one-INV-per-bill latch: `postAccount` stamped the real posted INV's
+        // `ref_customer_bill_id`/`period_partition`, and `document`'s new
+        // partial UNIQUE index (0037_document_customer_bill_latch.sql)
+        // refuses any SECOND document row referencing the same bill —
+        // proven directly (a duplicate posted-INV race is otherwise hard to
+        // provoke through the service layer alone, which is the whole point
+        // of the DB-level backstop).
+        expect(billedDocs[0]?.refCustomerBillId).toBe(
+          finalizedBill.customerBillId,
+        );
+        await expect(
+          sql!`
+            INSERT INTO billing.document
+              (document_id, doc_type, state, ref_financial_account_id,
+               reason_code, currency, total_amount, entry_date,
+               reference_info, event_at, created_by, last_edited_by,
+               ref_customer_bill_id, period_partition)
+            VALUES
+              ('INV99999999', 'INV', 'draft',
+               (SELECT ref_financial_account_id FROM billing.document WHERE document_id = ${billedDocs[0]!.documentId}),
+               'STANDARD_INVOICE',
+               (SELECT currency FROM billing.document WHERE document_id = ${billedDocs[0]!.documentId}),
+               '1.00', now(),
+               'duplicate-latch-probe', now(), ${approveActorId}, ${approveActorId},
+               ${finalizedBill.customerBillId}, ${finalizedBill.periodPartition})
+          `,
+        ).rejects.toThrow(/duplicate key value violates unique constraint/i);
+
+        // ---- bm19-spec §Design D10 — the post-commit render/store step.
+        // This environment has neither a reachable blob store
+        // (BILLRUN_BLOB_CONNECTION_STRING/_ACCOUNT_URL unset here) nor
+        // Playwright's Chromium installed, so `renderAndStoreInvoice`'s
+        // internal try/catch swallows that failure exactly as designed — the
+        // run still reached COMPLETED above (proving the failure never
+        // blocked INVOICED), and the account is left "render-pending": no
+        // `bill_run_invoices` row exists yet, self-documenting the tolerated,
+        // retryable gap (never a stored column, D10).
+        const renderPendingRows = await db
+          .select()
+          .from(billRunInvoices)
+          .where(eq(billRunInvoices.refBillingAccountId, banBilled));
+        expect(renderPendingRows).toHaveLength(0);
+
+        // ---- bill_run_invoices immutability guard (bm19-spec §Design "The
+        // stored PDF is the issued record — immutable", migration
+        // 0036_bill_run_invoices.sql) — proven directly via a synthetic row
+        // (independent of the blob store / Chromium gap above): once
+        // written, a row can never be UPDATEd or DELETEd.
+        const [syntheticInvoice] = await sql!<{ bill_run_invoice_id: string }[]>`
+          INSERT INTO billing.bill_run_invoices
+            (ref_bill_run_id, ref_billing_account_id, ref_customer_bill_id,
+             ref_inv_document_id, blob_ref, checksum, period_partition)
+          VALUES
+            (${runId}, ${banBilled}, ${finalizedBill.customerBillId},
+             ${finalizedBill.refInvDocumentId}, 'invoices/test/synthetic.pdf',
+             'synthetic-checksum', ${finalizedBill.periodPartition})
+          RETURNING bill_run_invoice_id
+        `;
+        expect(syntheticInvoice?.bill_run_invoice_id).toBeTruthy();
+        await expect(
+          sql!`UPDATE billing.bill_run_invoices SET checksum = 'tampered' WHERE bill_run_invoice_id = ${syntheticInvoice!.bill_run_invoice_id}`,
+        ).rejects.toThrow(/immutable/i);
+        await expect(
+          sql!`DELETE FROM billing.bill_run_invoices WHERE bill_run_invoice_id = ${syntheticInvoice!.bill_run_invoice_id}`,
+        ).rejects.toThrow(/immutable/i);
 
         // ---- Next-cycle operability keys off INVOICED, not COMPLETED
         // (overview success criterion #10). In v1 `POSTING` completes

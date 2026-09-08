@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDraftInvoiceHtml } from "@/services/billing/render-invoice-template";
+import {
+  buildDraftInvoiceHtml,
+  buildFinalInvoiceHtml,
+} from "@/services/billing/render-invoice-template";
 
 // bm18-spec §Design "Draft ≠ a valid invoice" / §Implementation §2 /
 // Verification checklist. Pure function — no DB/Next.js/Playwright import —
@@ -82,5 +85,65 @@ describe("buildDraftInvoiceHtml", () => {
     });
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+// bm19-spec §Design "Final render = draft renderer, no watermark, real
+// number" / §Implementation §3.
+describe("buildFinalInvoiceHtml", () => {
+  it("shows the real INV… number instead of the pending-posting placeholder", () => {
+    const html = buildFinalInvoiceHtml({
+      ...BASE_PARAMS,
+      invoiceNumber: "INV00000042",
+    });
+    expect(html).toContain("INV00000042");
+    expect(html).not.toContain("— pending posting —");
+  });
+
+  it("[CRITICAL] carries no DRAFT/PRO-FORMA watermark markup (ui-context §6c — this IS the issued record)", () => {
+    const html = buildFinalInvoiceHtml({
+      ...BASE_PARAMS,
+      invoiceNumber: "INV00000042",
+    });
+    expect(html).not.toContain("PRO-FORMA");
+    expect(html).not.toContain("NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE");
+    expect(html).not.toMatch(/class="watermark"/);
+  });
+
+  it("drops the preview-only subtitle/footer copy", () => {
+    const html = buildFinalInvoiceHtml({
+      ...BASE_PARAMS,
+      invoiceNumber: "INV00000042",
+    });
+    expect(html).not.toContain("Preview only");
+    expect(html).not.toContain("must not be sent to or relied upon by the customer");
+  });
+
+  it("renders the same charge lines, tax items, and formatted totals as the draft (same template/engine)", () => {
+    const html = buildFinalInvoiceHtml({
+      ...BASE_PARAMS,
+      invoiceNumber: "INV00000042",
+    });
+    expect(html).toContain("DATA_USAGE");
+    expect(html).toContain("GST @ 8.00%");
+    expect(html).not.toMatch(/>108\.00</);
+  });
+
+  it("escapes free-text account names the same as the draft", () => {
+    const html = buildFinalInvoiceHtml({
+      ...BASE_PARAMS,
+      invoiceNumber: "INV00000042",
+      bill: { ...BASE_PARAMS.bill, accountName: "<script>alert(1)</script>" },
+    });
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("escapes the invoice number too (defense in depth, though document ids are system-generated)", () => {
+    const html = buildFinalInvoiceHtml({
+      ...BASE_PARAMS,
+      invoiceNumber: "<b>INV00000042</b>",
+    });
+    expect(html).not.toContain("<b>INV00000042</b>");
   });
 });

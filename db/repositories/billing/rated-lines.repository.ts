@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { udrRated } from "@/db/schema/rating/udr-rated";
@@ -49,5 +49,43 @@ export const ratedLinesRepository = {
         ),
       )
       .orderBy(udrRated.startDatetime);
+  },
+
+  // bm19-spec §Design "Posting reads real udr_rated (Inv #3)" — the real
+  // charge_checksum anchor: `md5(string_agg(udr_rated_id || ':' || amount
+  // ORDER BY udr_rated_id))` over the account's claimed rows for this exact
+  // `(run, ban, posted_attempt)` — computed ENTIRELY in SQL (code-standards
+  // §2.4 — never reformatted in TS, or the tamper-evidence breaks). No
+  // claimed rows ⇒ an empty `string_agg` (COALESCE), not NULL-poisoning the
+  // whole hash. Deliberately kept in THIS file rather than
+  // `customer-bill.repository.ts` (which writes other tables elsewhere) —
+  // the billing-rating-write-boundary guardrail treats any file that both
+  // touches the rating schema and writes anywhere as suspect, independent
+  // of which table the write targets; this file stays entirely read-only,
+  // the same sanctioned-read shape as the claimed-lines lookup above.
+  async computeChargeChecksum(
+    tx: Database,
+    billRunId: string,
+    billingAccountId: string,
+    postedAttempt: number,
+  ): Promise<string> {
+    const [row] = await tx
+      .select({
+        checksum: sql<string>`md5(COALESCE(string_agg(${udrRated.udrId}::text || ':' || ${udrRated.udrRatedPrice}::text, ',' ORDER BY ${udrRated.udrId}), ''))`,
+      })
+      .from(udrRated)
+      .where(
+        and(
+          eq(udrRated.billrunRefId, billRunId),
+          eq(udrRated.billrunBanId, billingAccountId),
+          eq(udrRated.billrunAttempt, postedAttempt),
+        ),
+      );
+    if (!row) {
+      throw new Error(
+        `computeChargeChecksum: no result for run ${billRunId} / account ${billingAccountId} / attempt ${postedAttempt}`,
+      );
+    }
+    return row.checksum;
   },
 };

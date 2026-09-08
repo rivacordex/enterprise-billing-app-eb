@@ -704,6 +704,24 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    // ---- bill_run_invoices — no access at all (bm19) ------------------------
+    describe("bill_run_invoices — app-only, no billrun_runtime grant (bm19)", () => {
+      it("17b. billrun_runtime is refused SELECT/INSERT/UPDATE/DELETE on bill_run_invoices — no ALTER DEFAULT PRIVILEGES was ever added for it (Step 11)", async () => {
+        await expect(
+          billrunRuntime`SELECT 1 FROM billing.bill_run_invoices WHERE false`,
+        ).rejects.toThrow(/permission denied for table bill_run_invoices/);
+        await expect(
+          billrunRuntime`INSERT INTO billing.bill_run_invoices DEFAULT VALUES`,
+        ).rejects.toThrow(/permission denied for table bill_run_invoices/);
+        await expect(
+          billrunRuntime`UPDATE billing.bill_run_invoices SET checksum = 'x' WHERE false`,
+        ).rejects.toThrow(/permission denied for table bill_run_invoices/);
+        await expect(
+          billrunRuntime`DELETE FROM billing.bill_run_invoices WHERE false`,
+        ).rejects.toThrow(/permission denied for table bill_run_invoices/);
+      });
+    });
+
     // ---- pgledger SECURITY DEFINER REVOKE (Step 10) -------------------------
     describe("pgledger SECURITY DEFINER REVOKE (Step 10)", () => {
       it("18. billrun_runtime calling pgledger_create_transfer(...) is refused", async () => {

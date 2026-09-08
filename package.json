@@ -41,6 +41,8 @@
     "db:introspect": "drizzle-kit introspect"
   },
   "dependencies": {
+    "@azure/identity": "4.13.2",
+    "@azure/storage-blob": "12.33.0",
     "@better-auth/core": "^1.6.19",
     "@hookform/resolvers": "^5.4.0",
     "better-auth": "^1.6.19",

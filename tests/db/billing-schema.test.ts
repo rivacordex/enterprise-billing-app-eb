@@ -261,6 +261,10 @@ describe("billing.document", () => {
         "metadata",
         "last_modified",
         "last_edited_by",
+        // bm19-spec §Phase-2 review folds T5 [P1] — the structural
+        // one-INV-per-bill latch (0037_document_customer_bill_latch.sql).
+        "ref_customer_bill_id",
+        "period_partition",
       ].sort(),
     );
   });

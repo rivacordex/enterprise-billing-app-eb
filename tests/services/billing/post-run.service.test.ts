@@ -30,9 +30,12 @@ vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {
     lockBillForPosting: vi.fn(),
-    computeChargeChecksum: vi.fn(),
     stampPosted: vi.fn(),
+    findForAccount: vi.fn(),
   },
+}));
+vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
+  ratedLinesRepository: { computeChargeChecksum: vi.fn() },
 }));
 vi.mock("@/db/repositories/accounts/document.repository", () => ({
   documentRepository: { insert: vi.fn() },
@@ -46,16 +49,36 @@ vi.mock("@/services/accounts/post-document", () => ({
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
+// bm19-spec §Implementation §4 — the post-commit render/store hook and the
+// standalone retry-render path. Mocked at the module boundary (same
+// precedent as bm18's render-invoice.service.test.ts mocking `playwright`)
+// so this suite never launches Chromium or touches a real blob store.
+vi.mock("@/services/billing/render-invoice", () => ({
+  renderFinalInvoice: vi.fn(),
+}));
+vi.mock("@/services/billing/blob-store", () => ({
+  blobStore: { putInvoice: vi.fn() },
+}));
+vi.mock("@/db/repositories/billing/bill-run-invoices.repository", () => ({
+  billRunInvoicesRepository: {
+    insert: vi.fn(),
+    findByRunAndAccount: vi.fn(),
+  },
+}));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { postDocument } from "@/services/accounts/post-document";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { db } from "@/db/client";
-import { postRun } from "@/services/billing/post-run";
+import { postRun, retryRenderInvoice } from "@/services/billing/post-run";
+import { renderFinalInvoice } from "@/services/billing/render-invoice";
+import { blobStore } from "@/services/billing/blob-store";
+import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockMarkPosting = vi.mocked(billRunRepository.markPosting);
@@ -66,13 +89,20 @@ const mockListStatusesForRun = vi.mocked(
 const mockUpdateStatus = vi.mocked(billRunAccountRepository.updateStatus);
 const mockLockBill = vi.mocked(customerBillRepository.lockBillForPosting);
 const mockComputeChecksum = vi.mocked(
-  customerBillRepository.computeChargeChecksum,
+  ratedLinesRepository.computeChargeChecksum,
 );
 const mockStampPosted = vi.mocked(customerBillRepository.stampPosted);
+const mockFindForAccount = vi.mocked(customerBillRepository.findForAccount);
 const mockDocInsert = vi.mocked(documentRepository.insert);
 const mockLineInsert = vi.mocked(documentLineRepository.insert);
 const mockPostDocument = vi.mocked(postDocument);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
+const mockRenderFinalInvoice = vi.mocked(renderFinalInvoice);
+const mockPutInvoice = vi.mocked(blobStore.putInvoice);
+const mockInsertBillRunInvoice = vi.mocked(billRunInvoicesRepository.insert);
+const mockFindStoredInvoice = vi.mocked(
+  billRunInvoicesRepository.findByRunAndAccount,
+);
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -128,6 +158,32 @@ beforeEach(() => {
     },
   });
   mockComputeChecksum.mockResolvedValue("abc123");
+  // bm19-spec §Implementation §4 — the post-commit render/store hook's happy
+  // path; individual tests override to exercise the tolerant-failure path.
+  mockRenderFinalInvoice.mockResolvedValue(Buffer.from("PDF-BYTES"));
+  mockPutInvoice.mockResolvedValue({
+    blobRef: "invoices/2026-07/INV00000001.pdf",
+    checksum: "pdf-checksum",
+  });
+  mockInsertBillRunInvoice.mockResolvedValue({
+    billRunInvoiceId: "BRI00000001",
+  });
+  mockFindStoredInvoice.mockResolvedValue(null);
+  mockFindForAccount.mockResolvedValue({
+    customerBillId: "CBL00000001",
+    periodPartition: "2026-07-01",
+    billingAccountId: "BAN00000001",
+    accountName: "Acme Communications",
+    currency: "MYR",
+    category: "normal",
+    billingPeriodStart: "2026-07-01",
+    billingPeriodEnd: "2026-07-31",
+    subtotal: "100.00",
+    taxTotal: "8.00",
+    totalAmount: "108.00",
+    paymentDueDate: "2026-08-15",
+    refInvDocumentId: "INV00000001",
+  } as never);
   // `stampPosted` reports whether it actually wrote a row; the default success
   // path stamps exactly one (a `false` return signals a concurrent post and
   // makes `postAccount` throw — exercised by its own test below).
@@ -192,6 +248,11 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         currency: "MYR",
         totalAmount: "108.00",
         createdBy: "approver-1",
+        // bm19-spec §Phase-2 review folds T5 [P1] — the structural
+        // one-INV-per-bill latch: the INV is stamped with the bill it
+        // belongs to, backing `document`'s partial UNIQUE index.
+        refCustomerBillId: "CBL00000001",
+        periodPartition: "2026-07-01",
       }),
     );
     expect(mockLineInsert).toHaveBeenNthCalledWith(
@@ -218,6 +279,12 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
       txStub,
       "INV00000001",
       "user-1",
+    );
+    expect(mockComputeChecksum).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      1,
     );
     expect(mockStampPosted).toHaveBeenCalledWith(
       txStub,
@@ -473,5 +540,171 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
 
     expect(mockCompletePosting).not.toHaveBeenCalled();
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+// bm19-spec §Design "Render + store is a SEPARATE step from the posting
+// transaction (D10)" / §Implementation §4.
+describe("postAccount — final render + store (bm19-spec §Design D10)", () => {
+  it("renders and stores the final invoice AFTER the posting transaction commits", async () => {
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockRenderFinalInvoice).toHaveBeenCalledWith({
+      runId: "BRN00000001",
+      banId: "BAN00000001",
+      invoiceNo: "INV00000001",
+    });
+    expect(mockPutInvoice).toHaveBeenCalledWith(
+      "2026-07-01",
+      "INV00000001",
+      Buffer.from("PDF-BYTES"),
+    );
+    expect(mockInsertBillRunInvoice).toHaveBeenCalledWith(db, {
+      refBillRunId: "BRN00000001",
+      refBillingAccountId: "BAN00000001",
+      refCustomerBillId: "CBL00000001",
+      refInvDocumentId: "INV00000001",
+      blobRef: "invoices/2026-07/INV00000001.pdf",
+      checksum: "pdf-checksum",
+      periodPartition: "2026-07-01",
+    });
+  });
+
+  it("[CRITICAL] a render failure never rolls back the posted INV nor blocks INVOICED — still reported invoiced, run still completes", async () => {
+    mockRenderFinalInvoice.mockRejectedValue(new Error("chromium crashed"));
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    expect(result).toMatchObject({
+      value: {
+        results: [
+          {
+            billingAccountId: "BAN00000001",
+            result: { status: "invoiced", invoiceId: "INV00000001" },
+          },
+        ],
+      },
+    });
+    // The account was never re-parked over a render failure.
+    expect(mockUpdateStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({ status: "PROCESSED" }),
+    );
+    expect(mockInsertBillRunInvoice).not.toHaveBeenCalled();
+  });
+
+  it("a blob-store failure is tolerated the same way — no stored row, posting result unaffected", async () => {
+    mockPutInvoice.mockRejectedValue(new Error("blob store unreachable"));
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    expect(result).toMatchObject({
+      value: {
+        results: [
+          {
+            billingAccountId: "BAN00000001",
+            result: { status: "invoiced" },
+          },
+        ],
+      },
+    });
+    expect(mockInsertBillRunInvoice).not.toHaveBeenCalled();
+  });
+
+  it("does not render/store for a skipped (already-posted) account", async () => {
+    mockLockBill.mockResolvedValue(bill({ refInvDocumentId: "INV00000099" }));
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockRenderFinalInvoice).not.toHaveBeenCalled();
+  });
+
+  it("does not render/store for a parked (posting-failed) account", async () => {
+    mockPostDocument.mockResolvedValue({
+      ok: false,
+      code: "PERIOD_CLOSED",
+      openPeriodHint: "closed",
+    });
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockRenderFinalInvoice).not.toHaveBeenCalled();
+  });
+});
+
+// bm19-spec §Implementation §4 "Add a retry-render path" — standalone,
+// callable regardless of the run's status (unlike postRun/postAccount).
+describe("retryRenderInvoice (bm19-spec §Implementation §4)", () => {
+  it("re-renders and stores for a posted account missing its bill_run_invoices row", async () => {
+    const result = await retryRenderInvoice("BRN00000001", "BAN00000001");
+
+    expect(mockRenderFinalInvoice).toHaveBeenCalledWith({
+      runId: "BRN00000001",
+      banId: "BAN00000001",
+      invoiceNo: "INV00000001",
+    });
+    expect(mockInsertBillRunInvoice).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        refBillRunId: "BRN00000001",
+        refBillingAccountId: "BAN00000001",
+        refInvDocumentId: "INV00000001",
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        billingAccountId: "BAN00000001",
+        blobRef: "invoices/2026-07/INV00000001.pdf",
+      },
+    });
+  });
+
+  it("NOT_INVOICED — the account has no posted INV yet", async () => {
+    mockFindForAccount.mockResolvedValue({
+      customerBillId: "CBL00000001",
+      periodPartition: "2026-07-01",
+      billingAccountId: "BAN00000001",
+      accountName: "Acme Communications",
+      currency: "MYR",
+      category: "trial",
+      billingPeriodStart: "2026-07-01",
+      billingPeriodEnd: "2026-07-31",
+      subtotal: "100.00",
+      taxTotal: "8.00",
+      totalAmount: "108.00",
+      paymentDueDate: "2026-08-15",
+      refInvDocumentId: null,
+    } as never);
+
+    const result = await retryRenderInvoice("BRN00000001", "BAN00000001");
+
+    expect(result).toEqual({ ok: false, code: "NOT_INVOICED" });
+    expect(mockRenderFinalInvoice).not.toHaveBeenCalled();
+  });
+
+  it("ALREADY_STORED — a bill_run_invoices row already exists", async () => {
+    mockFindStoredInvoice.mockResolvedValue({
+      billRunInvoiceId: "BRI00000001",
+      refInvDocumentId: "INV00000001",
+      blobRef: "invoices/2026-07/INV00000001.pdf",
+      checksum: "pdf-checksum",
+      renderedAt: new Date("2026-08-01T00:00:00Z"),
+    });
+
+    const result = await retryRenderInvoice("BRN00000001", "BAN00000001");
+
+    expect(result).toEqual({ ok: false, code: "ALREADY_STORED" });
+    expect(mockRenderFinalInvoice).not.toHaveBeenCalled();
+  });
+
+  it("RENDER_FAILED — surfaces a fresh render failure without throwing", async () => {
+    mockRenderFinalInvoice.mockRejectedValue(new Error("chromium crashed"));
+
+    const result = await retryRenderInvoice("BRN00000001", "BAN00000001");
+
+    expect(result).toEqual({ ok: false, code: "RENDER_FAILED" });
   });
 });

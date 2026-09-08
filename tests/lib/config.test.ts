@@ -26,6 +26,8 @@ const ENV_KEYS = [
   "BILLRUN_TAX_VERSION",
   "BILLRUN_TAX_CATEGORY",
   "BILLRUN_STALL_THRESHOLD_MINUTES",
+  "BILLRUN_BLOB_CONNECTION_STRING",
+  "BILLRUN_BLOB_ACCOUNT_URL",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -552,6 +554,61 @@ describe("billRunStallThresholdMinutes (bm12)", () => {
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
         BILLRUN_STALL_THRESHOLD_MINUTES: "30.5",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+// bm19-spec §Design/§Implementation §2 — the invoice artifact store's
+// connection config. Both optional; `blob-store.ts` is the sole reader.
+describe("billRunBlobConfig (bm19)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults both to null when neither is set", async () => {
+    const { billRunBlobConfig } = await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(billRunBlobConfig).toEqual({
+      connectionString: null,
+      accountUrl: null,
+    });
+  });
+
+  it("reads the dev/Azurite connection string", async () => {
+    const { billRunBlobConfig } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_BLOB_CONNECTION_STRING: "UseDevelopmentStorage=true",
+    });
+    expect(billRunBlobConfig.connectionString).toBe(
+      "UseDevelopmentStorage=true",
+    );
+    expect(billRunBlobConfig.accountUrl).toBeNull();
+  });
+
+  it("reads the prod account URL", async () => {
+    const { billRunBlobConfig } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_BLOB_ACCOUNT_URL: "https://acct.blob.core.windows.net",
+    });
+    expect(billRunBlobConfig.accountUrl).toBe(
+      "https://acct.blob.core.windows.net",
+    );
+  });
+
+  it("fails loud when the account URL is not HTTPS", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_BLOB_ACCOUNT_URL: "http://acct.blob.core.windows.net",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("fails loud when the connection string is present but empty", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_BLOB_CONNECTION_STRING: "",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
