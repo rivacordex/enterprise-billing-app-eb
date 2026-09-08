@@ -49,6 +49,14 @@ export interface BuildDraftInvoiceHtmlParams {
   locale: string;
 }
 
+// bm19-spec §Design "Final render = draft renderer, no watermark, real
+// number" — the final (posted) invoice reuses this same template/params
+// shape, only substituting the real `INV…` number for the "pending
+// posting" placeholder and dropping the watermark entirely.
+export interface BuildFinalInvoiceHtmlParams extends BuildDraftInvoiceHtmlParams {
+  invoiceNumber: string;
+}
+
 // Draft ≠ a valid invoice (Design): no invoice number exists pre-posting
 // (the number IS `document_id`, consumed only at posting), so the number
 // field always reads "— pending posting —" and a diagonal watermark repeats
@@ -56,13 +64,32 @@ export interface BuildDraftInvoiceHtmlParams {
 // through `formatCalendarDate` — no inline `toFixed`, no client-side sum
 // (spec §Implementation §2). Every DB-sourced string (account/cycle names
 // are free text) is escaped before interpolation.
-export function buildDraftInvoiceHtml({
-  bill,
-  taxItems,
-  lines,
-  run,
-  locale,
-}: BuildDraftInvoiceHtmlParams): string {
+export function buildDraftInvoiceHtml(
+  params: BuildDraftInvoiceHtmlParams,
+): string {
+  return renderInvoiceHtml(params, { invoiceNumber: null });
+}
+
+// bm19-spec §Implementation §3 — the final, posted invoice: the real
+// `INV…` document id in place of the pending-posting placeholder, and no
+// DRAFT/PRO-FORMA watermark or preview-only subtitle/footer (this IS the
+// issued record, ui-context §6c). Same template/CSS/money-and-date
+// formatting as the draft otherwise (Design "Final render = draft renderer,
+// no watermark, real number").
+export function buildFinalInvoiceHtml({
+  invoiceNumber,
+  ...params
+}: BuildFinalInvoiceHtmlParams): string {
+  return renderInvoiceHtml(params, { invoiceNumber });
+}
+
+function renderInvoiceHtml(
+  { bill, taxItems, lines, run, locale }: BuildDraftInvoiceHtmlParams,
+  { invoiceNumber }: { invoiceNumber: string | null },
+): string {
+  const isDraft = invoiceNumber === null;
+  const invoiceNumberDisplay =
+    invoiceNumber === null ? "— pending posting —" : escapeHtml(invoiceNumber);
   const lineRows = lines
     .map((line) => {
       const period = `${formatCalendarDate(toDateOnly(line.startDatetime))} – ${formatCalendarDate(toDateOnly(line.endDatetime))}`;
@@ -152,15 +179,24 @@ export function buildDraftInvoiceHtml({
 </style>
 </head>
 <body>
-  <div class="watermark" aria-hidden="true">
+  ${
+    isDraft
+      ? `<div class="watermark" aria-hidden="true">
     <span>DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE<br />DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE<br />DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE</span>
-  </div>
+  </div>`
+      : ""
+  }
   <div class="sheet">
-    <h1>PRO-FORMA — Draft Invoice</h1>
-    <p class="subtitle">Preview only. This document has not been issued and is not a valid tax invoice.</p>
+    ${
+      isDraft
+        ? `<h1>PRO-FORMA — Draft Invoice</h1>
+    <p class="subtitle">Preview only. This document has not been issued and is not a valid tax invoice.</p>`
+        : `<h1>Invoice</h1>
+    <p class="subtitle">This is the final invoice issued for this billing period.</p>`
+    }
 
     <div class="meta">
-      <div><span class="label">Invoice #</span><span class="value">— pending posting —</span></div>
+      <div><span class="label">Invoice #</span><span class="value">${invoiceNumberDisplay}</span></div>
       <div><span class="label">Bill run</span><span class="value">${escapeHtml(run.billRunId)} (${escapeHtml(run.cycleName)})</span></div>
       <div><span class="label">Billing account</span><span class="value">${escapeHtml(bill.accountName)} (${escapeHtml(bill.billingAccountId)})</span></div>
       <div><span class="label">Billing period</span><span class="value">${escapeHtml(formatCalendarDate(bill.billingPeriodStart))} – ${escapeHtml(formatCalendarDate(bill.billingPeriodEnd))}</span></div>
@@ -182,13 +218,16 @@ export function buildDraftInvoiceHtml({
       <tfoot>
         <tr><td colspan="3">Subtotal</td><td class="num">${escapeHtml(formatCurrency(bill.subtotal, bill.currency, locale))}</td></tr>
         ${taxRows}
-        <tr class="total"><td colspan="3">Total (indicative)</td><td class="num">${escapeHtml(formatCurrency(bill.totalAmount, bill.currency, locale))}</td></tr>
+        <tr class="total"><td colspan="3">${isDraft ? "Total (indicative)" : "Total due"}</td><td class="num">${escapeHtml(formatCurrency(bill.totalAmount, bill.currency, locale))}</td></tr>
       </tfoot>
     </table>
 
     <p class="footer-note">
-      This is a computer-generated PRO-FORMA preview rendered on demand for internal review.
-      It carries no invoice number, is never stored, and must not be sent to or relied upon by the customer.
+      ${
+        isDraft
+          ? "This is a computer-generated PRO-FORMA preview rendered on demand for internal review. It carries no invoice number, is never stored, and must not be sent to or relied upon by the customer."
+          : "This is a computer-generated final invoice, issued and stored as the record of charge for this billing period."
+      }
     </p>
   </div>
 </body>

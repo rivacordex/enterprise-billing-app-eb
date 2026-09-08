@@ -8,7 +8,10 @@
 // state (and no `'use client'` leaf) is needed for it (code-standards §3.7).
 
 import { BillCategoryBadge } from "@/components/billing/bill-category-badge";
-import { InvoicePreviewModal } from "@/components/billing/invoice-preview-modal";
+import {
+  InvoicePreviewModal,
+  StoredInvoiceModal,
+} from "@/components/billing/invoice-preview-modal";
 import { formatCalendarDate, formatCurrency } from "@/lib/formatters";
 import type { CustomerBillRow } from "@/types/billing";
 
@@ -121,11 +124,22 @@ export function CustomerBillTable({
                   </div>
                 </details>
                 <div className="mt-1">
-                  <InvoicePreviewModal
-                    billRunId={billRunId}
-                    billingAccountId={row.billingAccountId}
-                    accountName={row.accountName}
-                  />
+                  {/* bm19-spec §Implementation §5 — once posted (invoiceId
+                      set), the issued STORED record replaces the draft
+                      preview; the two are mutually exclusive per account. */}
+                  {row.invoiceId ? (
+                    <StoredInvoiceModal
+                      billRunId={billRunId}
+                      billingAccountId={row.billingAccountId}
+                      accountName={row.accountName}
+                    />
+                  ) : (
+                    <InvoicePreviewModal
+                      billRunId={billRunId}
+                      billingAccountId={row.billingAccountId}
+                      accountName={row.accountName}
+                    />
+                  )}
                 </div>
               </td>
               <td className="px-4 py-3 whitespace-nowrap">

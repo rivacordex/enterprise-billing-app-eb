@@ -20,6 +20,13 @@
 # gap in billmgmt-progress-tracker.md's Outstanding section, same category as
 # the never-applied migrations). For a bare host `npm run dev` (no Docker),
 # run `npx playwright install chromium` once first.
+#
+# bm19-spec §Implementation §2/Dependencies — the `azurite` service below is
+# the local stand-in for Azure Blob's `invoices/` container
+# (services/billing/blob-store.ts resolves `BILLRUN_BLOB_CONNECTION_STRING`
+# to it). Its well-known dev connection string/account/key below are
+# Microsoft's published Azurite defaults (never real credentials) — see
+# .env.example.
 
 x-node: &node-common
   image: node:22-alpine
@@ -34,6 +41,23 @@ x-node: &node-common
     - next_cache:/app/.next
 
 services:
+  # bm19-spec §Dependencies "Dev infra: Azurite". Emulates Azure Blob Storage
+  # locally for the `invoices/` container — `setup`/`app` connect to it via
+  # `BILLRUN_BLOB_CONNECTION_STRING` (.env.example), which targets this
+  # service's blob endpoint (10000) using Azurite's published well-known dev
+  # account/key. Azurite creates no containers on its own; `blob-store.ts`'s
+  # connection-string path calls `createContainerIfNotExists` once per
+  # process (dev/Azurite only — prod's Managed-Identity path relies on the
+  # container already existing, the deploy-time prerequisite, spec
+  # §Dependencies), so no separate provisioning step is needed here.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    command: "azurite-blob --blobHost 0.0.0.0 --blobPort 10000"
+    ports:
+      - "${AZURITE_PORT:-10000}:10000"
+    volumes:
+      - azurite_data:/data
+
   db:
     build:
       context: ./infra/docker/postgres # Postgres 17 + pg_partman + pg_cron
@@ -81,6 +105,10 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
       WATCHPACK_POLLING: "true"
+      # Overrides .env's host-facing `127.0.0.1:10000` default with the
+      # in-network service name (bm19-spec §Implementation §2).
+      BILLRUN_BLOB_CONNECTION_STRING: >-
+        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
     ports:
       # Override with APP_PORT if 3000 is taken (e.g. a host `next dev`):
       #   APP_PORT=3001 docker compose -f docker-compose.dev.yml up
@@ -90,8 +118,11 @@ services:
         condition: service_healthy
       setup:
         condition: service_completed_successfully
+      azurite:
+        condition: service_started
 
 volumes:
   pgdata:
   node_modules:
   next_cache:
+  azurite_data:

@@ -14,7 +14,9 @@ import { FileCheck, RotateCcw } from "lucide-react";
 import { cva } from "class-variance-authority";
 
 import { postRunAction } from "@/actions/billing/post-run.action";
+import { retryRenderInvoiceAction } from "@/actions/billing/retry-render-invoice.action";
 import { Button } from "@/components/ui/button";
+import { StoredInvoiceModal } from "@/components/billing/invoice-preview-modal";
 import { cn } from "@/lib/utils";
 import { formatCalendarDate } from "@/lib/formatters";
 import type { PostingAccountStatus, PostingProgress } from "@/types/billing";
@@ -122,12 +124,31 @@ export function PostingProgressView({
                     {row.errorDetail}
                   </p>
                 )}
+                {/* bm19-spec §Design D10 — a render/store failure never blocks
+                    INVOICED, so it's surfaced here (not as an errorDetail on
+                    the account itself) alongside a standalone retry that
+                    works regardless of the run's own status. */}
+                {row.status === "invoiced" && !row.hasStoredInvoice && (
+                  <RenderPendingRow
+                    billRunId={progress.billRunId}
+                    billingAccountId={row.billingAccountId}
+                  />
+                )}
               </div>
-              <span
-                className={cn(statusBadgeVariants({ variant: row.status }))}
-              >
-                {STATUS_LABEL[row.status]}
-              </span>
+              <div className="flex items-center gap-2">
+                {row.status === "invoiced" && row.hasStoredInvoice && (
+                  <StoredInvoiceModal
+                    billRunId={progress.billRunId}
+                    billingAccountId={row.billingAccountId}
+                    accountName={row.accountName}
+                  />
+                )}
+                <span
+                  className={cn(statusBadgeVariants({ variant: row.status }))}
+                >
+                  {STATUS_LABEL[row.status]}
+                </span>
+              </div>
             </li>
           ))}
         </ul>
@@ -182,5 +203,82 @@ function describeError(code: string): string {
       return "Invalid request.";
     default:
       return "Something went wrong. Please try again.";
+  }
+}
+
+// bm19-spec §Implementation §4 "Add a retry-render path (operator or the
+// posting-progress 'Retry' already present)" — a standalone per-row control,
+// deliberately independent of `canPost`/`done`: the run itself may already be
+// `COMPLETED` (Design "postRun reaches INVOICED on posting completion
+// regardless of render outcome") long before an operator notices a render
+// gap, so this must stay reachable after the main Post/Retry-failed button
+// has disappeared.
+function RenderPendingRow({
+  billRunId,
+  billingAccountId,
+}: {
+  billRunId: string;
+  billingAccountId: string;
+}): React.JSX.Element {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRetry(): Promise<void> {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await retryRenderInvoiceAction({
+        billRunId,
+        billingAccountId,
+      });
+      if (!result.ok) {
+        setError(describeRetryRenderError(result.code));
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mt-1 flex items-center gap-2">
+      <p className="text-body-sm text-[color:var(--color-warning-700)]">
+        Invoice artifact render pending.
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={submitting}
+        onClick={() => void handleRetry()}
+      >
+        <RotateCcw aria-hidden="true" />
+        {submitting ? "Retrying…" : "Retry render"}
+      </Button>
+      {error && (
+        <span role="alert" className="text-caption text-destructive">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function describeRetryRenderError(code: string): string {
+  switch (code) {
+    case "NOT_INVOICED":
+      return "This account has not been posted yet.";
+    case "ALREADY_STORED":
+      return "The invoice was already stored — refresh to see it.";
+    case "FORBIDDEN":
+      return "You do not have permission to retry this.";
+    case "VALIDATION_ERROR":
+      return "Invalid request.";
+    default:
+      return "Render failed again. Please try again.";
   }
 }
