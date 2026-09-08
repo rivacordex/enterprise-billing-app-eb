@@ -200,7 +200,7 @@ function renderInvoiceHtml(
       <div><span class="label">Bill run</span><span class="value">${escapeHtml(run.billRunId)} (${escapeHtml(run.cycleName)})</span></div>
       <div><span class="label">Billing account</span><span class="value">${escapeHtml(bill.accountName)} (${escapeHtml(bill.billingAccountId)})</span></div>
       <div><span class="label">Billing period</span><span class="value">${escapeHtml(formatCalendarDate(bill.billingPeriodStart))} – ${escapeHtml(formatCalendarDate(bill.billingPeriodEnd))}</span></div>
-      <div><span class="label">Indicative due date</span><span class="value">${escapeHtml(formatCalendarDate(bill.paymentDueDate))}</span></div>
+      <div><span class="label">${isDraft ? "Indicative due date" : "Due date"}</span><span class="value">${escapeHtml(formatCalendarDate(bill.paymentDueDate))}</span></div>
     </div>
 
     <table>

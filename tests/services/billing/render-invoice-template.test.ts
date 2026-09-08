@@ -116,7 +116,9 @@ describe("buildFinalInvoiceHtml", () => {
       invoiceNumber: "INV00000042",
     });
     expect(html).not.toContain("Preview only");
-    expect(html).not.toContain("must not be sent to or relied upon by the customer");
+    expect(html).not.toContain(
+      "must not be sent to or relied upon by the customer",
+    );
   });
 
   it("renders the same charge lines, tax items, and formatted totals as the draft (same template/engine)", () => {
@@ -126,6 +128,13 @@ describe("buildFinalInvoiceHtml", () => {
     });
     expect(html).toContain("DATA_USAGE");
     expect(html).toContain("GST @ 8.00%");
+    // Positively assert the FINAL total renders — the `not.toMatch(/>108\.00</)`
+    // guard alone is vacuous (formatCurrency emits "RM 108.00", so ">108.00<"
+    // never appears and it would pass even if the total row were dropped): the
+    // issued invoice shows the "Total due" label and the currency-formatted
+    // total, never a bare number.
+    expect(html).toContain("Total due");
+    expect(html).toContain("108.00");
     expect(html).not.toMatch(/>108\.00</);
   });
 
