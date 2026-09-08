@@ -53,4 +53,34 @@ export const customerBillTaxItemRepository = {
         customerBillTaxItem.taxCategory,
       );
   },
+
+  // bm18-spec §Implementation §2 step 1 — the draft-invoice renderer's
+  // single-bill tax read, scoped to the full composite key (same partition-
+  // pruning discipline as `listForRun`).
+  async listForBill(
+    db: Database,
+    customerBillId: string,
+    periodPartition: string,
+  ): Promise<
+    {
+      category: string;
+      rate: string;
+      amount: string;
+    }[]
+  > {
+    return db
+      .select({
+        category: customerBillTaxItem.taxCategory,
+        rate: customerBillTaxItem.taxRate,
+        amount: customerBillTaxItem.taxAmount,
+      })
+      .from(customerBillTaxItem)
+      .where(
+        and(
+          eq(customerBillTaxItem.refCustomerBillId, customerBillId),
+          eq(customerBillTaxItem.periodPartition, periodPartition),
+        ),
+      )
+      .orderBy(customerBillTaxItem.taxCategory);
+  },
 };
