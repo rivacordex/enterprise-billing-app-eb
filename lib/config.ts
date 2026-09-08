@@ -20,144 +20,157 @@ function booleanEnvSchema(defaultValue: "true" | "false") {
     .transform((value) => value === "true");
 }
 
-const envSchema = z.object({
-  NODE_ENV: z
-    .enum(["development", "test", "production"])
-    .default("development"),
-  APP_URL: z.url().default("http://localhost:3000"),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  // In production this value is a Container Apps Key Vault secret reference
-  // (um30) — `lib/config.ts` itself always reads it from the env either way
-  // (um02); the platform resolves the reference before the process starts.
-  DATABASE_URL: z.string().refine((v) => v.startsWith("postgresql://"), {
-    message: "DATABASE_URL must be a postgresql:// connection string.",
-  }),
-  // Production sourcing is a Key Vault secret reference (um30); here
-  // BETTER_AUTH_SECRET is read directly from the env (um03).
-  BETTER_AUTH_SECRET: z.string().min(32),
-  BETTER_AUTH_URL: z.url(),
-  // Entra SSO (um10). All three optional — absence disables the Microsoft
-  // provider entirely (`isSsoConfigured` below) rather than failing loud,
-  // since SSO is opt-in and most local/test environments never configure it.
-  MICROSOFT_CLIENT_ID: z.string().optional(),
-  MICROSOFT_CLIENT_SECRET: z.string().optional(),
-  ENTRA_TENANT_ID: z.string().optional(),
-  // LOCAL password policy (um25-spec §"Policy source"). All optional with
-  // enforced defaults; not stored in `system_config` — this is an
-  // operational parameter that requires a redeploy to change, consistent
-  // with how the Entra secrets above are handled.
-  PASSWORD_MIN_LENGTH: z
-    .string()
-    .optional()
-    .transform((value) => (value === undefined ? 15 : Number(value)))
-    .pipe(
-      z
+const envSchema = z
+  .object({
+    NODE_ENV: z
+      .enum(["development", "test", "production"])
+      .default("development"),
+    APP_URL: z.url().default("http://localhost:3000"),
+    LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    // In production this value is a Container Apps Key Vault secret reference
+    // (um30) — `lib/config.ts` itself always reads it from the env either way
+    // (um02); the platform resolves the reference before the process starts.
+    DATABASE_URL: z.string().refine((v) => v.startsWith("postgresql://"), {
+      message: "DATABASE_URL must be a postgresql:// connection string.",
+    }),
+    // Production sourcing is a Key Vault secret reference (um30); here
+    // BETTER_AUTH_SECRET is read directly from the env (um03).
+    BETTER_AUTH_SECRET: z.string().min(32),
+    BETTER_AUTH_URL: z.url(),
+    // Entra SSO (um10). All three optional — absence disables the Microsoft
+    // provider entirely (`isSsoConfigured` below) rather than failing loud,
+    // since SSO is opt-in and most local/test environments never configure it.
+    MICROSOFT_CLIENT_ID: z.string().optional(),
+    MICROSOFT_CLIENT_SECRET: z.string().optional(),
+    ENTRA_TENANT_ID: z.string().optional(),
+    // LOCAL password policy (um25-spec §"Policy source"). All optional with
+    // enforced defaults; not stored in `system_config` — this is an
+    // operational parameter that requires a redeploy to change, consistent
+    // with how the Entra secrets above are handled.
+    PASSWORD_MIN_LENGTH: z
+      .string()
+      .optional()
+      .transform((value) => (value === undefined ? 15 : Number(value)))
+      .pipe(
+        z
+          .number()
+          .int()
+          .min(1, "PASSWORD_MIN_LENGTH must be at least 1.")
+          // Mirror `buildPasswordSchema`'s `.max(128)` hard cap: a min above it
+          // makes every password schema unsatisfiable, so reject at boot
+          // (fail-fast) instead of failing every validation at runtime.
+          .max(128, "PASSWORD_MIN_LENGTH must be at most 128."),
+      ),
+    PASSWORD_REQUIRE_UPPERCASE: booleanEnvSchema("true"),
+    PASSWORD_REQUIRE_LOWERCASE: booleanEnvSchema("true"),
+    PASSWORD_REQUIRE_NUMBER: booleanEnvSchema("true"),
+    PASSWORD_REQUIRE_SPECIAL: booleanEnvSchema("true"),
+    PASSWORD_SPECIAL_CHARS: z
+      .string()
+      .min(1, "PASSWORD_SPECIAL_CHARS must not be empty.")
+      .default(DEFAULT_PASSWORD_SPECIAL_CHARS),
+    // Business timezone (um29-spec §2.1). Optional IANA name validated against
+    // the curated `SUPPORTED_TIMEZONES`; defaults to `UTC` when unset, so date
+    // output is byte-identical to today until set. An unsupported/misspelled
+    // zone throws at startup with a descriptive message — identical fail-fast
+    // posture to `PASSWORD_MIN_LENGTH=abc`. Read once at boot, never at runtime
+    // (Inv. #17 — the zone defines billing-period boundaries).
+    APP_TIMEZONE: z.enum(SUPPORTED_TIMEZONES).default(DEFAULT_TIMEZONE),
+    // bm02-spec §2 / architecture Inv. #15, renamed bm15-spec §Implementation §4.
+    // While set, every bill run is loudly badged (the always-on
+    // `PlaceholderBanner`) as running placeholder billing logic over seeded
+    // `_SAMPLE_*` data (billmgmt-architecture.md §3). An environment flag,
+    // never a per-run column (code-standards §6.11). Defaults to `false` so
+    // production behavior is unchanged until a placeholder/UAT deployment
+    // opts in.
+    BILLRUN_PLACEHOLDER_MODE: booleanEnvSchema("false"),
+    // bm03-spec §Design/§4, extended bm16-spec §Implementation §1. The outbound
+    // workflow engine — treated as not-yet-deployed. URL/AUTH are both optional;
+    // absence selects the stub engine client (`isEngineConfigured`,
+    // `services/billing/engine-registry.ts`), so a bill run's trigger stays
+    // fully testable with no live Kestra. Production sources BILLRUN_ENGINE_AUTH
+    // from Key Vault via Managed Identity, matching every other credential here.
+    // NAMESPACE defaults to the logical engine name — the template flow
+    // (`flows/billrun/bill_run_processing.template.yml`) is deployed to the
+    // `billrun` Kestra namespace.
+    BILLRUN_ENGINE_URL: z
+      .url()
+      .refine((v) => v.startsWith("https://"), {
+        message: "BILLRUN_ENGINE_URL must be an HTTPS URL.",
+      })
+      .optional(),
+    // `.min(1)` matters: the superRefine below pairs URL/AUTH on PRESENCE
+    // (`!== undefined`), but `engine-registry.ts`/`isBillRunEngineConfigured`
+    // resolve `configured` on TRUTHINESS (`!!auth`). Without this, a
+    // present-but-empty `BILLRUN_ENGINE_AUTH=""` alongside a real URL would pass
+    // the paired check yet resolve to `configured = false` — silently selecting
+    // the STUB client on a deployment that looks fully configured. Rejecting
+    // empty at boot keeps the two checks consistent (fail-loud, never a silent
+    // placeholder).
+    BILLRUN_ENGINE_AUTH: z
+      .string()
+      .min(1, "BILLRUN_ENGINE_AUTH must not be empty.")
+      .optional(),
+    BILLRUN_ENGINE_NAMESPACE: z.string().min(1).default("billrun"),
+    // bm04-spec §Implementation §4. The inbound bearer service token the
+    // workflow engine (or a signed test caller) presents to `app/api/billrun/*`
+    // — Key Vault in prod, `.env` locally. Optional so most environments boot
+    // without it; absence means `requireServiceToken` rejects every M2M call
+    // with 401 (fail-closed), never a bypass.
+    BILLRUN_APP_TOKEN: z.string().min(32).optional(),
+    // bm06-spec §Design/§Implementation §2. The v1 taxation model is a single
+    // CONFIGURED rate — there is NO tax-rate catalog table in billing (deferred
+    // with the rating engine); `bill_run.ref_tax_rate_version` is stamped once
+    // per run from `BILLRUN_TAX_VERSION` for provenance. The rate parameterises a
+    // SQL `numeric` expression (`round(subtotal * rate / 100, 2)`), never JS
+    // float arithmetic (code-standards §2.3). All three carry the GST defaults so
+    // every environment boots without them.
+    // At most two decimal places — the rate is persisted/cast as `numeric(5,2)`
+    // (`customer_bill_tax_item.tax_rate`), so a higher-precision value would be
+    // silently rounded on store and no longer match what the amount was computed
+    // from. Reject at boot instead (fail-fast). An EMPTY value (`BILLRUN_TAX_RATE=`
+    // — the var present but blank) is treated as unset so the `8` default applies,
+    // NOT coerced to `0`: `z.coerce.number("")` is `0`, which would silently tax
+    // every bill at 0% instead of the intended default.
+    BILLRUN_TAX_RATE: z.preprocess(
+      (v) => (v === "" ? undefined : v),
+      z.coerce
         .number()
-        .int()
-        .min(1, "PASSWORD_MIN_LENGTH must be at least 1.")
-        // Mirror `buildPasswordSchema`'s `.max(128)` hard cap: a min above it
-        // makes every password schema unsatisfiable, so reject at boot
-        // (fail-fast) instead of failing every validation at runtime.
-        .max(128, "PASSWORD_MIN_LENGTH must be at most 128."),
+        .min(0)
+        .max(100)
+        .refine(
+          (n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-9,
+          "BILLRUN_TAX_RATE must have at most two decimal places.",
+        )
+        .default(8),
     ),
-  PASSWORD_REQUIRE_UPPERCASE: booleanEnvSchema("true"),
-  PASSWORD_REQUIRE_LOWERCASE: booleanEnvSchema("true"),
-  PASSWORD_REQUIRE_NUMBER: booleanEnvSchema("true"),
-  PASSWORD_REQUIRE_SPECIAL: booleanEnvSchema("true"),
-  PASSWORD_SPECIAL_CHARS: z
-    .string()
-    .min(1, "PASSWORD_SPECIAL_CHARS must not be empty.")
-    .default(DEFAULT_PASSWORD_SPECIAL_CHARS),
-  // Business timezone (um29-spec §2.1). Optional IANA name validated against
-  // the curated `SUPPORTED_TIMEZONES`; defaults to `UTC` when unset, so date
-  // output is byte-identical to today until set. An unsupported/misspelled
-  // zone throws at startup with a descriptive message — identical fail-fast
-  // posture to `PASSWORD_MIN_LENGTH=abc`. Read once at boot, never at runtime
-  // (Inv. #17 — the zone defines billing-period boundaries).
-  APP_TIMEZONE: z.enum(SUPPORTED_TIMEZONES).default(DEFAULT_TIMEZONE),
-  // bm02-spec §2 / architecture Inv. #15, renamed bm15-spec §Implementation §4.
-  // While set, every bill run is loudly badged (the always-on
-  // `PlaceholderBanner`) as running placeholder billing logic over seeded
-  // `_SAMPLE_*` data (billmgmt-architecture.md §3). An environment flag,
-  // never a per-run column (code-standards §6.11). Defaults to `false` so
-  // production behavior is unchanged until a placeholder/UAT deployment
-  // opts in.
-  BILLRUN_PLACEHOLDER_MODE: booleanEnvSchema("false"),
-  // bm03-spec §Design/§4, extended bm16-spec §Implementation §1. The outbound
-  // workflow engine — treated as not-yet-deployed. URL/AUTH are both optional;
-  // absence selects the stub engine client (`isEngineConfigured`,
-  // `services/billing/engine-registry.ts`), so a bill run's trigger stays
-  // fully testable with no live Kestra. Production sources BILLRUN_ENGINE_AUTH
-  // from Key Vault via Managed Identity, matching every other credential here.
-  // NAMESPACE defaults to the logical engine name — the template flow
-  // (`flows/billrun/bill_run_processing.template.yml`) is deployed to the
-  // `billrun` Kestra namespace.
-  BILLRUN_ENGINE_URL: z
-    .url()
-    .refine((v) => v.startsWith("https://"), {
-      message: "BILLRUN_ENGINE_URL must be an HTTPS URL.",
-    })
-    .optional(),
-  BILLRUN_ENGINE_AUTH: z.string().optional(),
-  BILLRUN_ENGINE_NAMESPACE: z.string().min(1).default("billrun"),
-  // bm04-spec §Implementation §4. The inbound bearer service token the
-  // workflow engine (or a signed test caller) presents to `app/api/billrun/*`
-  // — Key Vault in prod, `.env` locally. Optional so most environments boot
-  // without it; absence means `requireServiceToken` rejects every M2M call
-  // with 401 (fail-closed), never a bypass.
-  BILLRUN_APP_TOKEN: z.string().min(32).optional(),
-  // bm06-spec §Design/§Implementation §2. The v1 taxation model is a single
-  // CONFIGURED rate — there is NO tax-rate catalog table in billing (deferred
-  // with the rating engine); `bill_run.ref_tax_rate_version` is stamped once
-  // per run from `BILLRUN_TAX_VERSION` for provenance. The rate parameterises a
-  // SQL `numeric` expression (`round(subtotal * rate / 100, 2)`), never JS
-  // float arithmetic (code-standards §2.3). All three carry the GST defaults so
-  // every environment boots without them.
-  // At most two decimal places — the rate is persisted/cast as `numeric(5,2)`
-  // (`customer_bill_tax_item.tax_rate`), so a higher-precision value would be
-  // silently rounded on store and no longer match what the amount was computed
-  // from. Reject at boot instead (fail-fast). An EMPTY value (`BILLRUN_TAX_RATE=`
-  // — the var present but blank) is treated as unset so the `8` default applies,
-  // NOT coerced to `0`: `z.coerce.number("")` is `0`, which would silently tax
-  // every bill at 0% instead of the intended default.
-  BILLRUN_TAX_RATE: z.preprocess(
-    (v) => (v === "" ? undefined : v),
-    z.coerce
-      .number()
-      .min(0)
-      .max(100)
-      .refine(
-        (n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-9,
-        "BILLRUN_TAX_RATE must have at most two decimal places.",
-      )
-      .default(8),
-  ),
-  BILLRUN_TAX_VERSION: z.string().default("GST-2026"),
-  BILLRUN_TAX_CATEGORY: z.string().default("GST"),
-  // bm12-spec §Implementation §1. The stall threshold — a global config value
-  // (the plan floats a per-cycle threshold, but there is no cycle column for
-  // it, so v1 uses one config value, code-standards/architecture-supplement
-  // resolved-decision). A `PROCESSING` run past this many minutes without a
-  // heartbeat (`bill_run.last_progress_at`) DISPLAYS as stalled — derived on
-  // read (`services/billing/stall.ts`), never persisted.
-  BILLRUN_STALL_THRESHOLD_MINUTES: z.coerce.number().int().min(1).default(30),
-}).superRefine((data, ctx) => {
-  // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
-  // the other absent) is never a valid state: `engine-registry.ts`'s
-  // `configured` check (`!!url && !!auth`) would silently fall back to the
-  // stub client, so a misconfigured deployment looks like a working
-  // placeholder instead of failing loud at boot.
-  const hasUrl = data.BILLRUN_ENGINE_URL !== undefined;
-  const hasAuth = data.BILLRUN_ENGINE_AUTH !== undefined;
-  if (hasUrl !== hasAuth) {
-    ctx.addIssue({
-      code: "custom",
-      message:
-        "BILLRUN_ENGINE_URL and BILLRUN_ENGINE_AUTH must either both be set or both be absent.",
-      path: [hasUrl ? "BILLRUN_ENGINE_AUTH" : "BILLRUN_ENGINE_URL"],
-    });
-  }
-});
+    BILLRUN_TAX_VERSION: z.string().default("GST-2026"),
+    BILLRUN_TAX_CATEGORY: z.string().default("GST"),
+    // bm12-spec §Implementation §1. The stall threshold — a global config value
+    // (the plan floats a per-cycle threshold, but there is no cycle column for
+    // it, so v1 uses one config value, code-standards/architecture-supplement
+    // resolved-decision). A `PROCESSING` run past this many minutes without a
+    // heartbeat (`bill_run.last_progress_at`) DISPLAYS as stalled — derived on
+    // read (`services/billing/stall.ts`), never persisted.
+    BILLRUN_STALL_THRESHOLD_MINUTES: z.coerce.number().int().min(1).default(30),
+  })
+  .superRefine((data, ctx) => {
+    // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
+    // the other absent) is never a valid state: `engine-registry.ts`'s
+    // `configured` check (`!!url && !!auth`) would silently fall back to the
+    // stub client, so a misconfigured deployment looks like a working
+    // placeholder instead of failing loud at boot.
+    const hasUrl = data.BILLRUN_ENGINE_URL !== undefined;
+    const hasAuth = data.BILLRUN_ENGINE_AUTH !== undefined;
+    if (hasUrl !== hasAuth) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "BILLRUN_ENGINE_URL and BILLRUN_ENGINE_AUTH must either both be set or both be absent.",
+        path: [hasUrl ? "BILLRUN_ENGINE_AUTH" : "BILLRUN_ENGINE_URL"],
+      });
+    }
+  });
 
 export type Config = Readonly<z.infer<typeof envSchema>>;
 

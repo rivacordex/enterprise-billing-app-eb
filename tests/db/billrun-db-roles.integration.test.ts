@@ -33,12 +33,18 @@ const BOOTSTRAP_ROLES_SQL = join(
   process.cwd(),
   "db/bootstrap/bootstrap-db-roles.sql",
 );
-const RATING_ROLES_SQL = join(process.cwd(), "db/bootstrap/rating-db-roles.sql");
+const RATING_ROLES_SQL = join(
+  process.cwd(),
+  "db/bootstrap/rating-db-roles.sql",
+);
 const BILLRUN_ROLES_SQL = join(
   process.cwd(),
   "db/bootstrap/billrun-db-roles.sql",
 );
-const KESTRA_ROLES_SQL = join(process.cwd(), "db/bootstrap/kestra-db-roles.sql");
+const KESTRA_ROLES_SQL = join(
+  process.cwd(),
+  "db/bootstrap/kestra-db-roles.sql",
+);
 
 // The six columns app_runtime/billrun_runtime may UPDATE on udr_rated
 // (bm14-spec Step 7 — the same set rating rm03 granted app_runtime).
@@ -238,9 +244,15 @@ describe.skipIf(!databaseUrl)(
       await runSqlFile(sql, BILLRUN_ROLES_SQL);
       await runKestraBootstrap(databaseUrl as string);
 
-      await sql.unsafe(`ALTER ROLE app_runtime      WITH PASSWORD '${ROLE_PW}'`);
-      await sql.unsafe(`ALTER ROLE rating_runtime   WITH PASSWORD '${ROLE_PW}'`);
-      await sql.unsafe(`ALTER ROLE billrun_runtime  WITH PASSWORD '${ROLE_PW}'`);
+      await sql.unsafe(
+        `ALTER ROLE app_runtime      WITH PASSWORD '${ROLE_PW}'`,
+      );
+      await sql.unsafe(
+        `ALTER ROLE rating_runtime   WITH PASSWORD '${ROLE_PW}'`,
+      );
+      await sql.unsafe(
+        `ALTER ROLE billrun_runtime  WITH PASSWORD '${ROLE_PW}'`,
+      );
 
       billrunRuntime = postgres(
         roleUrl(databaseUrl as string, "billrun_runtime", ROLE_PW),
@@ -572,45 +584,79 @@ describe.skipIf(!databaseUrl)(
         ).rejects.toThrow(/permission denied/);
       });
 
-      it("14. RATED -> BILL_DRAFT succeeds; RATED -> BILL_APPROVED/REJECTED is refused by the trigger (Step 7b)", async () => {
-        const ok = await insertRatedRow();
+      it("14. claim to BILL_DRAFT is allowed from RATED and from REJECTED (re-claim); other status writes are refused (Step 7b)", async () => {
+        // Pristine claim: RATED -> BILL_DRAFT.
+        const rated = await insertRatedRow();
         await expect(
           billrunRuntime.unsafe(
             `UPDATE rating.udr_rated SET status = 'BILL_DRAFT' WHERE partition_period = $1 AND udr_id = $2`,
-            [ok.period, ok.id],
+            [rated.period, rated.id],
           ),
         ).resolves.toBeDefined();
 
-        for (const target of ["BILL_APPROVED", "REJECTED"]) {
-          const bad = await insertRatedRow();
+        // Re-claim after a reject: REJECTED -> BILL_DRAFT — the processor is the
+        // sole re-claimer of a rejected-then-reran account (bm16 Collection §3 /
+        // bm17 T6: "claims status IN ('RATED','REJECTED') -> BILL_DRAFT").
+        const rejected = await insertRatedRow({ status: "REJECTED" });
+        await expect(
+          billrunRuntime.unsafe(
+            `UPDATE rating.udr_rated SET status = 'BILL_DRAFT' WHERE partition_period = $1 AND udr_id = $2`,
+            [rejected.period, rejected.id],
+          ),
+        ).resolves.toBeDefined();
+
+        // The worker never writes the app-owned states (approve/reject are
+        // app_runtime's): BILL_APPROVED from either claimable state, and the
+        // reject flip RATED -> REJECTED, are all refused.
+        for (const { from, target } of [
+          { from: "RATED", target: "BILL_APPROVED" },
+          { from: "RATED", target: "REJECTED" },
+          { from: "REJECTED", target: "BILL_APPROVED" },
+        ]) {
+          const bad = await insertRatedRow({ status: from });
           await expect(
             billrunRuntime.unsafe(
               `UPDATE rating.udr_rated SET status = '${target}' WHERE partition_period = $1 AND udr_id = $2`,
               [bad.period, bad.id],
             ),
           ).rejects.toThrow(
-            /billrun_runtime may only transition udr_rated RATED -> BILL_DRAFT/,
+            /billrun_runtime may only claim udr_rated to BILL_DRAFT from RATED or REJECTED/,
           );
         }
       });
 
-      it("14b. claim columns cannot be rewritten once the row has left RATED (Step 7b)", async () => {
-        const { period, id } = await insertRatedRow({ status: "BILL_DRAFT" });
-        for (const assignment of [
-          "billrun_ref_id = 'BR-2'",
-          "billrun_ban_id = 'BAN-2'",
-          "billrun_attempt = 2",
-          "billrun_checksum = 'CHK2'",
-          "upsert_datetime = now()",
-        ]) {
-          await expect(
-            billrunRuntime.unsafe(
-              `UPDATE rating.udr_rated SET ${assignment} WHERE partition_period = $1 AND udr_id = $2`,
-              [period, id],
-            ),
-          ).rejects.toThrow(
-            /billrun_runtime may only change udr_rated claim columns while the row is RATED/,
-          );
+      it("14b. claim columns are rewritable while claimable (RATED/REJECTED) but frozen once BILL_DRAFT/BILL_APPROVED (Step 7b)", async () => {
+        // Re-claim re-stamps billrun_attempt while the row is still REJECTED
+        // (the worker writes the claim columns across several statements before
+        // the status flip) — allowed.
+        const reclaim = await insertRatedRow({ status: "REJECTED" });
+        await expect(
+          billrunRuntime.unsafe(
+            `UPDATE rating.udr_rated SET billrun_attempt = 2, upsert_datetime = now() WHERE partition_period = $1 AND udr_id = $2`,
+            [reclaim.period, reclaim.id],
+          ),
+        ).resolves.toBeDefined();
+
+        // But once the row is committed to a run (BILL_DRAFT) or approved
+        // (BILL_APPROVED), the worker can no longer rewrite the claim columns.
+        for (const frozen of ["BILL_DRAFT", "BILL_APPROVED"]) {
+          const { period, id } = await insertRatedRow({ status: frozen });
+          for (const assignment of [
+            "billrun_ref_id = 'BR-2'",
+            "billrun_ban_id = 'BAN-2'",
+            "billrun_attempt = 2",
+            "billrun_checksum = 'CHK2'",
+            "upsert_datetime = now()",
+          ]) {
+            await expect(
+              billrunRuntime.unsafe(
+                `UPDATE rating.udr_rated SET ${assignment} WHERE partition_period = $1 AND udr_id = $2`,
+                [period, id],
+              ),
+            ).rejects.toThrow(
+              /billrun_runtime may only change udr_rated claim columns while the row is claimable/,
+            );
+          }
         }
       });
 
@@ -671,7 +717,11 @@ describe.skipIf(!databaseUrl)(
     describe("database boundary (Step 11)", () => {
       it("19. billrun_runtime is refused CONNECT to the kestra database", async () => {
         const probe = postgres(
-          roleUrl(withDatabase(databaseUrl as string, "kestra"), "billrun_runtime", ROLE_PW),
+          roleUrl(
+            withDatabase(databaseUrl as string, "kestra"),
+            "billrun_runtime",
+            ROLE_PW,
+          ),
           { max: 1 },
         );
         try {
@@ -718,7 +768,9 @@ describe.skipIf(!databaseUrl)(
       });
 
       it("23. re-running billrun-db-roles.sql converges — no error, connlimit still 20", async () => {
-        await expect(runSqlFile(sql, BILLRUN_ROLES_SQL)).resolves.toBeUndefined();
+        await expect(
+          runSqlFile(sql, BILLRUN_ROLES_SQL),
+        ).resolves.toBeUndefined();
         const [row] = await sql<{ rolconnlimit: number }[]>`
           SELECT rolconnlimit FROM pg_roles WHERE rolname = 'billrun_runtime'
         `;
