@@ -75,7 +75,8 @@ describe("InvoicePreviewModal", () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      blob: () => Promise.resolve(new Blob(["pdf"], { type: "application/pdf" })),
+      blob: () =>
+        Promise.resolve(new Blob(["pdf"], { type: "application/pdf" })),
     } as never);
     renderModal();
 
@@ -85,9 +86,7 @@ describe("InvoicePreviewModal", () => {
       "Draft PRO-FORMA invoice — BAN00000001",
     );
     expect(iframe.getAttribute("src")).toBe("blob:mock-url");
-    expect(
-      fetch,
-    ).toHaveBeenCalledWith(
+    expect(fetch).toHaveBeenCalledWith(
       "/billing/bill-runs/BRN00000001/draft-invoice/BAN00000001",
       expect.anything(),
     );
@@ -99,9 +98,7 @@ describe("InvoicePreviewModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /preview pro-forma/i }));
 
-    expect(
-      await screen.findByText(/do not have permission/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/do not have permission/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /^retry$/i })).toBeTruthy();
   });
 
@@ -200,6 +197,7 @@ describe("StoredInvoiceModal", () => {
     await screen.findByTitle("Invoice INV00000001");
     expect(fetch).toHaveBeenCalledWith(
       "/billing/bill-runs/BRN00000001/stored-invoice/BAN00000001",
+      expect.anything(),
     );
   });
 
@@ -215,7 +213,9 @@ describe("StoredInvoiceModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
 
-    expect(await screen.findByText("invoices/2026-07/INV00000042.pdf")).toBeTruthy();
+    expect(
+      await screen.findByText("invoices/2026-07/INV00000042.pdf"),
+    ).toBeTruthy();
     expect(screen.getByText("deadbeef")).toBeTruthy();
     expect(screen.getByTitle("Invoice INV00000042")).toBeTruthy();
   });

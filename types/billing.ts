@@ -184,6 +184,11 @@ export interface CustomerBillRow {
   paymentDueDate: string;
   taxItems: CustomerBillTaxItemRow[];
   invoiceId: string | null;
+  // bm19-spec §Implementation §5 — true once the posted INV's final artifact
+  // is rendered + stored. `invoiceId` set but this `false` is the tolerated
+  // render-pending state (D10); the tab must not offer `StoredInvoiceModal`
+  // then (it would 404) — retry lives on the Posting progress view.
+  hasStoredInvoice: boolean;
 }
 
 // bm07-spec §Design/§2. The Uncharged tab's read model — one row per

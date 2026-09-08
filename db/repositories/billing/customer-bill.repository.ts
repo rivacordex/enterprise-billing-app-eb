@@ -4,6 +4,7 @@ import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
+import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 
 // bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
@@ -457,9 +458,16 @@ export const customerBillRepository = {
       totalAmount: string;
       paymentDueDate: string;
       refInvDocumentId: string | null;
+      hasStoredInvoice: boolean;
     }[]
   > {
-    return db
+    // bm19-spec §Implementation §5 — a left-join to `bill_run_invoices` (same
+    // shape as `bill-run-account.repository.ts`'s `listPostingProgressForRun`)
+    // so the tab can distinguish a posted bill whose final artifact is STORED
+    // from one still render-pending (D10's tolerated render failure — INV set,
+    // no `bill_run_invoices` row). Re-derived from the row's absence, never a
+    // stored column.
+    const rows = await db
       .select({
         customerBillId: customerBill.customerBillId,
         billingAccountId: customerBill.refBillingAccountId,
@@ -471,13 +479,28 @@ export const customerBillRepository = {
         totalAmount: customerBill.totalAmount,
         paymentDueDate: customerBill.paymentDueDate,
         refInvDocumentId: customerBill.refInvDocumentId,
+        billRunInvoiceId: billRunInvoices.billRunInvoiceId,
       })
       .from(customerBill)
       .innerJoin(
         billingAccount,
         eq(customerBill.refBillingAccountId, billingAccount.billingAccountId),
       )
+      .leftJoin(
+        billRunInvoices,
+        and(
+          eq(billRunInvoices.refBillRunId, customerBill.refBillRunId),
+          eq(
+            billRunInvoices.refBillingAccountId,
+            customerBill.refBillingAccountId,
+          ),
+        ),
+      )
       .where(eq(customerBill.refBillRunId, billRunId))
       .orderBy(billingAccount.name);
+    return rows.map(({ billRunInvoiceId, ...r }) => ({
+      ...r,
+      hasStoredInvoice: billRunInvoiceId !== null,
+    }));
   },
 };
