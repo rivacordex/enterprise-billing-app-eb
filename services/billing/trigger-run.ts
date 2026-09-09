@@ -7,6 +7,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { getBusinessToday } from "@/services/billing/business-today";
 import { engineRegistry } from "@/services/billing/engine-registry";
+import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
 
 // bm03-spec §Design/§7. The trigger transaction: row-locked double-trigger
@@ -133,14 +134,18 @@ export async function triggerRun(
       const banIds = pending.map((p) => p.refBillingAccountId);
       let executionRef;
       try {
-        executionRef = await engineRegistry.trigger("billrun", {
-          bill_run_id: run.billRunId,
-          period_start: run.periodStart,
-          period_end: run.periodEnd,
-          ban_ids: banIds,
-          attempt,
-          gl_event_at: run.scheduledRunDate,
-        });
+        executionRef = await engineRegistry.trigger(
+          "billrun",
+          PROCESSING_FLOW_ID,
+          {
+            bill_run_id: run.billRunId,
+            period_start: run.periodStart,
+            period_end: run.periodEnd,
+            ban_ids: banIds,
+            attempt,
+            gl_event_at: run.scheduledRunDate,
+          },
+        );
       } catch (err) {
         throw new EngineUnreachableSignal(
           err instanceof Error ? err.message : "Engine unreachable",

@@ -7,27 +7,60 @@ import {
   computeRunStatus,
 } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
+import { recomputeDistributionStatus } from "@/services/billing/distribute-run";
 import type { ExecutionState } from "@/services/billing/engine-client";
 import type { RunStatus } from "@/types/billing";
 
-// bm12-spec §Design/§Implementation §3. "Check status" — reconciles the run
-// against the workflow engine's ground truth. Read-only to the ledger; no
-// invoice numbers touched. One `db.transaction`, row-locked (Inv. #12 — the
-// run status is only ever recomputed under `FOR UPDATE`, never guessed):
+// bm12-spec §Design/§Implementation §3, extended bm20-spec §Phase-2 review
+// fold T2. "Check status" — reconciles the run against the workflow engine's
+// ground truth, for WHICHEVER execution the run's current status names
+// (the processing execution while `PROCESSING`, the distribution execution
+// while `DISTRIBUTING`). Read-only to the ledger; no invoice numbers touched.
+// One `db.transaction`, row-locked (Inv. #12 — the run status is only ever
+// recomputed under `FOR UPDATE`, never guessed):
 //   - Engine RUNNING → alive; just bump the heartbeat (resets the stall
 //     clock — a slow-but-live execution shouldn't keep re-flagging STALLED
 //     the instant an operator checks it).
 //   - Engine FAILED/KILLED → the app was never told (a lost status push);
-//     push the run to the rerunnable `PROCESSING_FAILED` terminal state.
-//   - Engine SUCCESS → the app's own account-grain truth
+//     push the run to the rerunnable `PROCESSING_FAILED`/`DISTRIBUTION_FAILED`
+//     terminal state.
+//   - Engine SUCCESS, PROCESSING → the app's own account-grain truth
 //     (`bill_run_account`) is re-derived via the same pure `computeRunStatus`
 //     every stage signal uses; if every account is now terminal, the run
 //     flips to `PROCESSED` (a lost final stage signal is repaired). If not,
 //     the engine's opinion and the app's are in genuine disagreement — that
 //     mismatch is surfaced to the operator rather than forcing a status the
 //     account grain doesn't support.
+//   - Engine SUCCESS, DISTRIBUTING → the SAME derivation
+//     `handle-status-push.ts`'s `DISTRIBUTION_FINISHED` push uses
+//     (`recomputeDistributionStatus`, shared so the two paths never disagree):
+//     COMPLETED/DISTRIBUTION_FAILED when derivable, else a mismatch.
 //   - Any other current run status (already resolved by another path) → just
 //     bump the heartbeat.
+
+interface ExecutionRefFields {
+  executionId: string | null;
+  engineRef: string | null;
+}
+
+function executionRefFor(run: {
+  status: string;
+  processingExecutionId: string | null;
+  processingEngineRef: string | null;
+  distributionExecutionId: string | null;
+  distributionEngineRef: string | null;
+}): ExecutionRefFields {
+  if (run.status === "DISTRIBUTING") {
+    return {
+      executionId: run.distributionExecutionId,
+      engineRef: run.distributionEngineRef,
+    };
+  }
+  return {
+    executionId: run.processingExecutionId,
+    engineRef: run.processingEngineRef,
+  };
+}
 
 export type ReconcileRunResult =
   | {
@@ -50,7 +83,8 @@ export async function reconcileRun(
   return db.transaction(async (tx) => {
     const run = await billRunRepository.findByIdForUpdate(tx, billRunId);
     if (!run) return { ok: false, code: "NOT_FOUND" } as const;
-    if (!run.processingExecutionId) {
+    const { executionId, engineRef } = executionRefFor(run);
+    if (!executionId) {
       return { ok: false, code: "NO_EXECUTION" } as const;
     }
 
@@ -58,8 +92,8 @@ export async function reconcileRun(
     try {
       execStatus = await engineRegistry.getExecutionStatus(
         "billrun",
-        run.processingExecutionId,
-        run.processingEngineRef,
+        executionId,
+        engineRef,
       );
     } catch {
       return { ok: false, code: "ENGINE_UNREACHABLE" } as const;
@@ -94,6 +128,24 @@ export async function reconcileRun(
           // refresh — unmounting the StallBanner (the sole host of Check status /
           // Cancel run) for another full threshold window on a run that is
           // actually stuck. Leave the run flagged so the operator can act.
+          mismatch = true;
+        }
+      } else {
+        await billRunRepository.bumpHeartbeat(tx, billRunId);
+      }
+    } else if (run.status === "DISTRIBUTING") {
+      if (execStatus.state === "FAILED" || execStatus.state === "KILLED") {
+        await billRunRepository.markDistributionFailed(tx, billRunId);
+        runStatus = "DISTRIBUTION_FAILED";
+      } else if (execStatus.state === "SUCCESS") {
+        const recomputed = await recomputeDistributionStatus(tx, run);
+        if (recomputed.status) {
+          runStatus = recomputed.status;
+        } else {
+          // Same "do not bump the heartbeat" reasoning as the PROCESSING
+          // branch above (and `recomputeDistributionStatus` itself, which
+          // deliberately skips it on this path too) — a genuine wedge stays
+          // flagged for the operator, never silently reset.
           mismatch = true;
         }
       } else {

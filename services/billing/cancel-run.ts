@@ -8,7 +8,19 @@ import { engineRegistry } from "@/services/billing/engine-registry";
 
 // bm12-spec §Design/§Implementation §3. The cancel transaction — the Layer-3
 // escape hatch for a wedged execution (architecture §Design "Layer-3
-// escape"): only a `PROCESSING`/`STALLED`-derived run can be cancelled. One
+// escape"): only a `PROCESSING`/`STALLED`-derived run can be cancelled.
+//
+// bm20-spec §Phase-2 review fold T2 resolved decision: this stays
+// `PROCESSING`-only, deliberately NOT extended to a wedged `DISTRIBUTING`
+// execution. Cancel's semantics (`resetForCancel` → every scoped account back
+// to `PENDING`, release the `rating` claim) are specific to a PRE-approval
+// run with nothing posted (Inv. #4/#7) — a `DISTRIBUTING` run has already
+// posted every INV, so there is nothing to "reset to PENDING" and no invoice
+// number to protect from re-consumption. A wedged `DISTRIBUTING` execution's
+// recovery path is "Check status" (`reconcile-run.ts`, extended to this
+// status) plus, once genuinely `DISTRIBUTION_FAILED`, either "Rerun
+// distribution" or the T11 force-complete/abandon action — never a
+// `bill_run`-level cancel. One
 // `db.transaction`:
 //   1. `SELECT … FOR UPDATE` the run → guard `status = 'PROCESSING'`.
 //   2. `killExecution` — BEST-EFFORT: a failed kill is logged but still lets
