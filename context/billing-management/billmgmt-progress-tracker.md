@@ -1287,6 +1287,57 @@ file history).
     the required Key Vault secrets (`billrun-engine-url`/`billrun-engine-auth`)
     do not yet exist, so a nightly run would fail every night at the Key Vault
     fetch / engine-configured guard. Kept manual-only until step 2 is met.
+- **bm20/bm21 (max-effort multi-agent review, 2026-09-09):** correctness +
+  efficiency fixes across the distribution flow, all unit-covered (green).
+  - **`recordDistributionOutcome` now bumps `last_progress_at`** on every valid
+    current-round outcome (after the stale-attempt guard, so a straggler never
+    resets the clock). It previously inserted the row without a heartbeat, so a
+    long, actively-delivering `DISTRIBUTING` run was falsely flagged `STALLED`
+    mid-delivery — contradicting stall.ts's stated invariant ("bumped by every
+    stage/outcome signal") and the PROCESSING precedent (`recomputeStatus`).
+  - **`forceCompleteDistribution` now records posted-but-unrendered accounts as
+    abandoned** (count + audit `abandonedUnrenderedAccounts`). A run pushed to
+    `DISTRIBUTION_FAILED` purely by the T8/D10 `unrenderedPosted` safety net has
+    ZERO `FAILED` rows, so the old `listFailedForAttempt`-only derivation
+    completed it with `abandonedCount: 0` and an empty audit while a posted
+    invoice was silently abandoned un-rendered.
+  - **`rerunDistribution` now re-attempts a never-recorded `report_csv`.** The
+    mandatory report is in every round's payload but is neither a
+    `bill_run_invoices` row nor (if its outcome was lost) a `FAILED` row, so a
+    run whose report outcome never landed could never reach COMPLETED via rerun
+    (expected = invoices + 1) — it wedged. Re-attempted whenever no outcome for
+    it was ever recorded.
+  - **`recomputeDistributionStatus` + `forceCompleteDistribution` share one
+    `postedVsStoredInvoices` read** (posted vs stored accounts). Replaces the
+    separate `hasUnrenderedPostedAccounts` + `computeExpectedMandatoryArtifact
+    Count` (a third `countForRun` scan of the same partition, now removed) — the
+    gap-check and the expected count are derived from the SAME read, so they can
+    never disagree.
+  - **`reconcile-run.ts`'s `executionRefFor` keys on `distributionExecutionId`**
+    (not `status === "DISTRIBUTING"`), so a run past DISTRIBUTING
+    (`DISTRIBUTION_FAILED`/`COMPLETED`) reconciles against its distribution
+    execution rather than auditing its long-finished processing one.
+  - **`posting-progress-view.tsx` completion message is now an ALLOWLIST**
+    (`INVOICED`/`DISTRIBUTING`/`COMPLETED`/`DISTRIBUTION_FAILED`), not the
+    `!== APPROVED && !== POSTING` denylist. The approve route falls through to
+    this view for any non-`PROCESSED` run, so the denylist showed a false green
+    "posting complete" over runs still `SCHEDULED`/`PROCESSING` or ones that
+    failed/were cancelled before posting. New test locks all states.
+  - **Deleted dead `bill-run-distribution.repository.listForAttempt`** (no
+    callers) and the now-unused `bill-run-invoices.repository.countForRun`.
+  - **Evaluated-and-deferred (rationale):** the M2M identity check accepting any
+    stored invoice regardless of the round's payload — **spec-conformant**
+    (bm20-spec §Impl §4 defines "launched" as exactly stored-invoice/report-ref
+    + loopback/mandatory; per-attempt-payload validation is beyond scope, and
+    the `attempt`-match + `DISTRIBUTING` gate is the intended stale guard); the
+    engine trigger inside the DB transaction — **intentional** (bm20-spec §3 /
+    bm03/bm08 "roll back on engine failure" pattern); the force-complete dialog
+    deriving the current round from `max(attempt-in-log)` vs the server's
+    `distribution_attempt` (D1) and `getDistribution`'s `hasExecution = rows>0`
+    (I4) — display-only/latent (the server is authoritative and correct; the
+    fix would widen a shared read model + 4 test mocks for a cosmetic edge),
+    tracked as a follow-up; the O(N²) `listForRun` in the identity check (H3)
+    and the report-CSV build duplication (G8) — efficiency/cosmetic, bounded.
 
 ## Architecture Decisions
 

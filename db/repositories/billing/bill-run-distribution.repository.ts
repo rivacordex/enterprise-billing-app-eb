@@ -3,7 +3,10 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { billRunDistribution } from "@/db/schema/billing/bill-run-distribution";
 import type { BillRunDistributionInsert } from "@/db/schema/billing/bill-run-distribution";
-import type { DistributionArtifactType, DistributionOutcome } from "@/types/billing";
+import type {
+  DistributionArtifactType,
+  DistributionOutcome,
+} from "@/types/billing";
 
 // bm20-spec §Implementation §1. Insert-first idempotency (mirrors
 // `bill_run_account_stage_repository.insertStageRow`) + the two read models:
@@ -14,58 +17,15 @@ export const billRunDistributionRepository = {
     db: Database,
     data: BillRunDistributionInsert,
   ): Promise<{ billRunDistributionId: string }> {
-    const [row] = await db
-      .insert(billRunDistribution)
-      .values(data)
-      .returning({ billRunDistributionId: billRunDistribution.billRunDistributionId });
+    const [row] = await db.insert(billRunDistribution).values(data).returning({
+      billRunDistributionId: billRunDistribution.billRunDistributionId,
+    });
     if (!row) {
       throw new Error(
         "bill-run-distribution.repository.insertOutcome: no row returned",
       );
     }
     return row;
-  },
-
-  // The delivery log for the CURRENT round only — the UNIQUE constraint
-  // scopes `(run, target, artifact_ref)` to one row per `distribution_attempt`,
-  // so filtering to `run.distributionAttempt` (the run's current round) is
-  // exactly "one row per (target, artifact_ref)", no DISTINCT ON needed.
-  async listForAttempt(
-    db: Database,
-    billRunId: string,
-    distributionAttempt: number,
-  ): Promise<
-    {
-      billRunDistributionId: string;
-      target: string;
-      artifactRef: string;
-      artifactType: DistributionArtifactType;
-      isMandatory: boolean;
-      outcome: DistributionOutcome;
-      at: Date;
-      distributionAttempt: number;
-    }[]
-  > {
-    const rows = await db
-      .select()
-      .from(billRunDistribution)
-      .where(
-        and(
-          eq(billRunDistribution.refBillRunId, billRunId),
-          eq(billRunDistribution.distributionAttempt, distributionAttempt),
-        ),
-      )
-      .orderBy(desc(billRunDistribution.at));
-    return rows.map((r) => ({
-      billRunDistributionId: r.billRunDistributionId,
-      target: r.target,
-      artifactRef: r.artifactRef,
-      artifactType: r.artifactType as DistributionArtifactType,
-      isMandatory: r.isMandatory,
-      outcome: r.outcome as DistributionOutcome,
-      at: r.at,
-      distributionAttempt: r.distributionAttempt,
-    }));
   },
 
   // The full delivery log across every round — `DistributionTab`'s read

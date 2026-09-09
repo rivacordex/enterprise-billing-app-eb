@@ -50,7 +50,13 @@ function executionRefFor(run: {
   distributionExecutionId: string | null;
   distributionEngineRef: string | null;
 }): ExecutionRefFields {
-  if (run.status === "DISTRIBUTING") {
+  // Reconcile the execution the run's current phase actually names. Keyed on
+  // the presence of a distribution execution, not on `status === "DISTRIBUTING"`
+  // alone: once distribution has launched (DISTRIBUTING and every state beyond
+  // — DISTRIBUTION_FAILED / COMPLETED), the distribution execution is the
+  // relevant one, so a terminal-distribution run must never reconcile against
+  // its long-finished PROCESSING execution and audit that stale state.
+  if (run.distributionExecutionId) {
     return {
       executionId: run.distributionExecutionId,
       engineRef: run.distributionEngineRef,
