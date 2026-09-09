@@ -38,6 +38,9 @@ inputs:
   - { id: bill_run_id, type: STRING }
   - { id: artifacts, type: JSON } # [{ ref, type, blob_ref }, ...] — invoice PDFs + the report CSV
   - { id: targets, type: JSON } # [{ name: 'loopback', is_mandatory: true, force_fail: false }]
+  - { id: attempt, type: INT } # the redelivery round (bumped by rerunDistribution, T1) — echoed
+                                # back on every outcome/status push below so the app can reject a
+                                # straggler signal from a superseded round
 tasks:
   - id: per_artifact
     type: io.kestra.plugin.core.flow.ForEach
@@ -48,23 +51,25 @@ tasks:
         #       (loopback). If force_fail => FAILED, else DELIVERED. REAL: push to the
         #       actual target (portal / AR feed / statutory / email).
         #       On each artifact: POST .../distribution/outcome {target, artifact_ref,
-        #       artifact_type, is_mandatory, outcome}.
+        #       artifact_type, is_mandatory, outcome, attempt: inputs.attempt}.
 errors:
-  - id: on_error # STUB: POST terminal DISTRIBUTION_FAILED to .../status
+  - id: on_error # STUB: POST terminal {status: DISTRIBUTION_FAILED, attempt: inputs.attempt}
+                 #       to .../status
 finally:
-  - id: on_finally # STUB: POST the terminal distribution status to .../status (Inv #1 obligation)
+  - id: on_finally # STUB: POST the terminal {status: DISTRIBUTION_FINISHED, attempt: inputs.attempt}
+                    #       to .../status (Inv #1 obligation)
 ```
 
 ### 3. `services/billing/distribute-run.ts` (new)
 
-- `triggerDistribution(runId)` — called when a run reaches `INVOICED` (from `post-run.ts` completion): gather the run's `bill_run_invoices` (blob refs) + generate the per-run register CSV → blob (transient); resolve the `billrun` engine (bm16 registry); trigger `bill_run_distribution` with `{bill_run_id, artifacts, targets}`; stamp `distribution_execution_id`/`_flow_revision`/`_engine_ref`; move `INVOICED → DISTRIBUTING`.
-- `rerunDistribution(runId)` (`billrun_operate`) — re-trigger `bill_run_distribution` for the **failed** artifacts only (from `bill_run_distribution` where `outcome='FAILED'`); audited (`BILL_RUN_DISTRIBUTION_RERUN`).
-- Run-status recompute for distribution: `DISTRIBUTING → COMPLETED` when every **mandatory** artifact is `DELIVERED`; `→ DISTRIBUTION_FAILED` when a mandatory artifact is `FAILED` (advisory failures listed, non-blocking).
+- `triggerDistribution(runId)` — called when a run reaches `INVOICED` (from `post-run.ts` completion): gather the run's `bill_run_invoices` (blob refs) + generate the per-run register CSV → blob (transient); resolve the `billrun` engine (bm16 registry); trigger `bill_run_distribution` with `{bill_run_id, artifacts, targets, attempt: 1}`; stamp `distribution_execution_id`/`_flow_revision`/`_engine_ref`; move `INVOICED → DISTRIBUTING`.
+- `rerunDistribution(runId)` (`billrun_operate`) — re-trigger `bill_run_distribution` for the **failed** artifacts only (from `bill_run_distribution` where `outcome='FAILED'`), passing the **bumped** `attempt` (the new `distribution_attempt`, T1); audited (`BILL_RUN_DISTRIBUTION_RERUN`).
+- Run-status recompute for distribution: `DISTRIBUTING → COMPLETED` when every **mandatory** artifact's LATEST recorded outcome (across every attempt, so a later round's redelivery supersedes an earlier round's `FAILED`) is `DELIVERED`; `→ DISTRIBUTION_FAILED` when a mandatory artifact's latest outcome is `FAILED` (advisory failures listed, non-blocking).
 
 ### 4. M2M handlers
 
-- New `app/api/billrun/[runId]/distribution/outcome/route.ts` — `POST`, service-token (constant-time), Zod-validate the outcome body, insert one `bill_run_distribution` row; idempotent on `(run, target, artifact_ref, distribution_attempt)` (replay → 200 no-op) — a rerun uses a **new** `distribution_attempt`, so its `DELIVERED` is a fresh row the recompute reads as the latest outcome, superseding the prior `FAILED` (T1); reject unless the run is `DISTRIBUTING`.
-- Extend `.../status` to accept the distribution execution's terminal push (recompute to `COMPLETED`/`DISTRIBUTION_FAILED`, bump `last_progress_at`).
+- New `app/api/billrun/[runId]/distribution/outcome/route.ts` — `POST`, service-token (constant-time), Zod-validate the outcome body (`{target, artifact_ref, artifact_type, is_mandatory, outcome, attempt}` — `attempt` echoes the `distribution_attempt` the flow was triggered with, T1's stale-round guard, mirrors `stageSignalBodySchema.attempt`), insert one `bill_run_distribution` row; idempotent on `(run, target, artifact_ref, distribution_attempt)` (replay → 200 no-op) — a rerun uses a **new** `distribution_attempt`, so its `DELIVERED` is a fresh row the recompute reads as the latest outcome, superseding the prior `FAILED` (T1); reject unless the run is `DISTRIBUTING` **and** `attempt` matches the run's current `distribution_attempt` (a stale round's outcome is a no-op replay, never rejected loudly) **and** the `(target, artifact_ref, artifact_type, is_mandatory)` tuple matches an artifact/target this run actually launched (the stored `bill_run_invoices`/the fixed report ref, `loopback`/`is_mandatory=true`) — never trust the M2M push to describe a real artifact on its own.
+- Extend `.../status` to accept the distribution execution's terminal push — `{status: 'DISTRIBUTION_FAILED'|'DISTRIBUTION_FINISHED', attempt}` (`attempt` required for both, same stale-round guard as the outcome endpoint: a push whose `attempt` doesn't match the run's current `distribution_attempt` is a no-op) — recompute to `COMPLETED`/`DISTRIBUTION_FAILED`, bump `last_progress_at`.
 - Update the bm13 route-inventory test to lock the surface to **three** `POST` handlers (record the §5 architecture decision in `billmgmt-code-standards.md` §5).
 
 ### 5. `post-run.ts` — completion path change

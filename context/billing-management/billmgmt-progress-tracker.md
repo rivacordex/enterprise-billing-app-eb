@@ -132,19 +132,23 @@ enumerations were trimmed to key facts + decisions. Full history:
   forced failure + Rerun/force-complete actually reaches `COMPLETED` against
   the live engine.
 - **`tests/db/billing-e2e-happy-path.integration.test.ts` (the ship-gate
-  journey) was NOT updated for bm20 and now asserts something false.** It
-  expects `completedRun?.status` to read `COMPLETED` immediately after
-  `postRun` (the bm11-era shape, when posting completed the run directly);
-  bm20 moves that transition to `POSTING → INVOICED` followed by a separate
-  `triggerDistribution` call, so the run sits at `DISTRIBUTING` (against the
-  stub engine, synchronously) once `postRun` returns — nothing in this test
-  signals a distribution outcome or a terminal push, so it never reaches
-  `COMPLETED` at all. This test is DB-gated and was never executed in this
-  environment (same gap as every other DB-gated test here), so the failure
-  was never observed directly — fix it (drive it through
-  `recordDistributionOutcome`/`recomputeDistributionStatus` or a status push
-  to reach `COMPLETED`, or assert `DISTRIBUTING` and stop there) before
-  relying on this suite as a ship gate.
+  journey) — fixed for bm20's lifecycle (2026-09-09 CodeRabbit review fold).**
+  It previously expected `completedRun?.status` to read `COMPLETED`
+  immediately after `postRun` (the bm11-era shape); bm20 moves that
+  transition to `POSTING → INVOICED` followed by a separate
+  `triggerDistribution` call, so the run actually sits at `DISTRIBUTING`
+  (against the stub engine, synchronously) once `postRun` returns. The test
+  now asserts that intermediate `DISTRIBUTING` state (`invoicedAt` set,
+  `completedAt` still null, a stamped `distributionExecutionId`), then drives
+  the run the rest of the way to `COMPLETED` itself — `recordDistribution
+  Outcome` for the sole mandatory artifact the automatic trigger actually
+  launched (this environment's render/store gap means `banBilled` never got
+  a `bill_run_invoices` row, so only the per-run report CSV was launched),
+  then `recomputeDistributionStatus` (standing in for the flow's `finally`
+  terminal push — the same functions the M2M route handlers themselves
+  delegate to, proven directly by `tests/app/api/billrun-distribution-
+  outcome.test.ts`/`billrun-status.test.ts`). Still DB-gated and unexecuted
+  in this environment (same gap as every other DB-gated test here).
 
 ## Delivered Units (bm01–bm13)
 
@@ -1058,6 +1062,53 @@ file history).
   - **`db/migrations/README.md`** (new) + a `drizzle.config.ts` caveat record
     that migrations are hand-authored — `drizzle-kit generate`'s snapshot
     baseline is stale past `0026`.
+- **bm20 (CodeRabbit review, 2026-09-09):**
+  - **`recomputeDistributionStatus` now merges outcomes ACROSS every
+    distribution attempt**, keeping only each `(target, artifact_ref)`'s
+    LATEST recorded outcome, instead of reading only the current round's
+    rows. `rerunDistribution` only ever re-triggers the PRIOR round's FAILED
+    artifacts (never the ones already `DELIVERED`), so a round-scoped read
+    could never satisfy the full mandatory count on its own — a rerun whose
+    redelivered artifacts all succeed could never reach `COMPLETED`. A
+    round-2 `DELIVERED` now correctly supersedes a round-1 `FAILED` for the
+    same artifact rather than being counted alongside it.
+  - **`recordDistributionOutcome` validates outcome identity before
+    inserting.** A pushed `(target, artifact_ref, artifact_type,
+    is_mandatory)` tuple is now checked against what this run actually
+    launched (`loopback`/`is_mandatory=true`, plus either the fixed report
+    ref or a real `bill_run_invoices` row) — closes a hole where a malformed
+    or malicious M2M push could fabricate an artifact `recomputeDistribution
+    Status` would count toward "all mandatory delivered", or smuggle
+    `is_mandatory: false` past the FAILED-blocks-completion check.
+  - **`rerunDistribution` bails out (returns `NO_FAILED_ARTIFACTS`) before
+    triggering the engine** if every previously-failed artifact's blob
+    reference fails to resolve, logging each one — previously it would
+    launch the engine (and advance the run to `DISTRIBUTING`) with an EMPTY
+    artifact list.
+  - **`handleStatusPush` now requires + validates `attempt` on both
+    `DISTRIBUTION_*` pushes** (`statusPushBodySchema` — required whenever
+    `status !== 'PROCESSING_FAILED'`), rejecting/no-op'ing a straggler push
+    from a superseded distribution execution — mirrors
+    `recordDistributionOutcome`'s stale-round guard (T1). The
+    `bill_run_distribution.template.yml` contract in the bm20 spec is
+    updated to show the flow echoing `attempt` back on the outcome push AND
+    both terminal `.../status` pushes.
+  - **`getDistribution` returns `null` before reading the delivery log** for
+    a run earlier than `INVOICED` (or one that never reaches it, e.g.
+    `CANCELLED`) — previously it read/returned an (empty) delivery log for
+    any existing run regardless of status.
+  - **`DistributionTab`'s COMPLETED message now distinguishes force-completed
+    from fully-delivered.** T11's force-complete/abandon path leaves the last
+    round's failed artifacts recorded as permanent `FAILED` rows; the tab now
+    detects any such row in the latest attempt (`failedArtifactRefsFromRows`)
+    and shows an abandonment summary instead of the "every mandatory artifact
+    was delivered" success copy.
+  - **`realEngineClient.startExecution`'s abort timer now stays armed through
+    `response.json()`**, not just the initial `fetch()` (same shape as
+    `getExecutionStatus`) — a response whose headers arrive but whose body
+    stalls no longer hangs the call past `REQUEST_TIMEOUT_MS`.
+  - **`tests/db/billing-e2e-happy-path.integration.test.ts` fixed** for bm20's
+    lifecycle — see the Outstanding entry above for the full before/after.
 
 ## Architecture Decisions
 

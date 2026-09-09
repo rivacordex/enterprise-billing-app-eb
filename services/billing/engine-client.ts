@@ -134,47 +134,65 @@ export const realEngineClient: EngineClient = {
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const url = `${connection.baseUrl}/executions/${connection.namespace}/${flowId}`;
 
-    let response: Response;
+    // Keep the abort timer live across the WHOLE exchange — the fetch, the
+    // status check, and the body read — so a response that streams its
+    // headers then stalls the body can't hang `response.json()` past the
+    // timeout (same shape as `getExecutionStatus` below). Cleared in the
+    // finally on every path (success and each throw below).
     try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: authHeader(connection.basicAuth),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-        // Never auto-follow a redirect — the engine URL is required to be
-        // HTTPS (lib/config.ts), and a followed redirect could downgrade to
-        // plain HTTP and resend the Basic-Auth header in the clear. A 3xx
-        // response surfaces here as a non-ok "opaqueredirect" and is rejected
-        // by the `!response.ok` check below like any other failure.
-        redirect: "manual",
-      });
-    } catch (err) {
-      throw new EngineError("Bill-run engine request failed.", { cause: err });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: authHeader(connection.basicAuth),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+          // Never auto-follow a redirect — the engine URL is required to be
+          // HTTPS (lib/config.ts), and a followed redirect could downgrade to
+          // plain HTTP and resend the Basic-Auth header in the clear. A 3xx
+          // response surfaces here as a non-ok "opaqueredirect" and is
+          // rejected by the `!response.ok` check below like any other
+          // failure.
+          redirect: "manual",
+        });
+      } catch (err) {
+        throw new EngineError("Bill-run engine request failed.", {
+          cause: err,
+        });
+      }
+
+      if (!response.ok) {
+        throw new EngineError(
+          `Bill-run engine returned ${response.status} for run ${payload.bill_run_id}.`,
+        );
+      }
+
+      let body: RawExecutionResponse;
+      try {
+        body = (await response.json()) as RawExecutionResponse;
+      } catch (err) {
+        throw new EngineError(
+          `Bill-run engine returned an unparseable body for run ${payload.bill_run_id}.`,
+          { cause: err },
+        );
+      }
+      if (!body.executionId) {
+        throw new EngineError(
+          `Bill-run engine response for run ${payload.bill_run_id} is missing executionId.`,
+        );
+      }
+
+      return {
+        executionId: body.executionId,
+        definitionId: body.definitionId ?? `${connection.namespace}.${flowId}`,
+        definitionRevision: body.definitionRevision ?? 0,
+      };
     } finally {
       clearTimeout(timeout);
     }
-
-    if (!response.ok) {
-      throw new EngineError(
-        `Bill-run engine returned ${response.status} for run ${payload.bill_run_id}.`,
-      );
-    }
-
-    const body = (await response.json()) as RawExecutionResponse;
-    if (!body.executionId) {
-      throw new EngineError(
-        `Bill-run engine response for run ${payload.bill_run_id} is missing executionId.`,
-      );
-    }
-
-    return {
-      executionId: body.executionId,
-      definitionId: body.definitionId ?? `${connection.namespace}.${flowId}`,
-      definitionRevision: body.definitionRevision ?? 0,
-    };
   },
 
   // bm12-spec §Design/§Implementation §2. FLAGGED: the status/kill endpoint

@@ -39,6 +39,14 @@ export function DistributionTab({
   timezone,
 }: DistributionTabProps): React.JSX.Element {
   const { runStatus, targets, rows } = view;
+  // A COMPLETED run can be reached two ways: every mandatory artifact
+  // actually DELIVERED, or T11's force-complete/abandon path, which leaves
+  // the last round's failed artifacts recorded as FAILED rows (never
+  // retried). Detect the latter from the delivery log itself — there is no
+  // separate "how did we get here" flag — so the calm success copy is never
+  // shown over artifacts that were actually abandoned.
+  const abandonedArtifactRefs =
+    runStatus === "COMPLETED" ? failedArtifactRefsFromRows(rows) : [];
 
   return (
     <div className="space-y-6">
@@ -65,7 +73,7 @@ export function DistributionTab({
         </div>
       )}
 
-      {runStatus === "COMPLETED" && (
+      {runStatus === "COMPLETED" && abandonedArtifactRefs.length === 0 && (
         <div className="flex items-center gap-2 rounded-md border border-[color:var(--color-success-500)] bg-[color:var(--color-success-50)] px-4 py-3">
           <CircleCheck
             className="shrink-0 text-[color:var(--color-success-500)]"
@@ -74,6 +82,22 @@ export function DistributionTab({
           />
           <p className="text-body-sm font-medium text-[color:var(--color-success-700)]">
             Distribution complete — every mandatory artifact was delivered.
+          </p>
+        </div>
+      )}
+
+      {runStatus === "COMPLETED" && abandonedArtifactRefs.length > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-[color:var(--color-neutral-300)] bg-[color:var(--color-neutral-50)] px-4 py-3">
+          <CircleCheck
+            className="shrink-0 text-muted-foreground"
+            size={18}
+            aria-hidden="true"
+          />
+          <p className="text-body-sm font-medium text-foreground">
+            Distribution completed with {abandonedArtifactRefs.length}{" "}
+            artifact{abandonedArtifactRefs.length === 1 ? "" : "s"} abandoned
+            ({abandonedArtifactRefs.join(", ")}) — force-completed rather than
+            delivered. Posted invoices are unaffected.
           </p>
         </div>
       )}

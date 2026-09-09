@@ -98,11 +98,13 @@ describe("handleStatusPush", () => {
     mockFindByIdForUpdate.mockResolvedValue({
       billRunId: "BRN00000001",
       status: "DISTRIBUTING",
+      distributionAttempt: 1,
     } as never);
 
     const result = await handleStatusPush({
       runId: "BRN00000001",
       status: "DISTRIBUTION_FAILED",
+      attempt: 1,
     });
 
     expect(result).toEqual({ ok: true });
@@ -114,12 +116,17 @@ describe("handleStatusPush", () => {
   });
 
   it("recomputes distribution status on the flow's finally (DISTRIBUTION_FINISHED) push", async () => {
-    const run = { billRunId: "BRN00000001", status: "DISTRIBUTING" };
+    const run = {
+      billRunId: "BRN00000001",
+      status: "DISTRIBUTING",
+      distributionAttempt: 1,
+    };
     mockFindByIdForUpdate.mockResolvedValue(run as never);
 
     const result = await handleStatusPush({
       runId: "BRN00000001",
       status: "DISTRIBUTION_FINISHED",
+      attempt: 1,
     });
 
     expect(result).toEqual({ ok: true });
@@ -130,10 +137,45 @@ describe("handleStatusPush", () => {
     expect(mockMarkDistributionFailed).not.toHaveBeenCalled();
   });
 
+  it("treats a stale on_error push from a superseded distribution attempt as a no-op", async () => {
+    mockFindByIdForUpdate.mockResolvedValue({
+      billRunId: "BRN00000001",
+      status: "DISTRIBUTING",
+      distributionAttempt: 2,
+    } as never);
+
+    const result = await handleStatusPush({
+      runId: "BRN00000001",
+      status: "DISTRIBUTION_FAILED",
+      attempt: 1,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockMarkDistributionFailed).not.toHaveBeenCalled();
+  });
+
+  it("treats a stale finally push from a superseded distribution attempt as a no-op", async () => {
+    mockFindByIdForUpdate.mockResolvedValue({
+      billRunId: "BRN00000001",
+      status: "DISTRIBUTING",
+      distributionAttempt: 2,
+    } as never);
+
+    const result = await handleStatusPush({
+      runId: "BRN00000001",
+      status: "DISTRIBUTION_FINISHED",
+      attempt: 1,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockRecomputeDistributionStatus).not.toHaveBeenCalled();
+  });
+
   it("rejects (409) PROCESSING_FAILED while DISTRIBUTING", async () => {
     mockFindByIdForUpdate.mockResolvedValue({
       billRunId: "BRN00000001",
       status: "DISTRIBUTING",
+      distributionAttempt: 1,
     } as never);
 
     await expect(

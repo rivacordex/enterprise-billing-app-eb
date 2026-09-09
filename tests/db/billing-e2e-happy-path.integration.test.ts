@@ -26,6 +26,10 @@ import type { triggerRun as TriggerRun } from "@/services/billing/trigger-run";
 import type { rerunRun as RerunRun } from "@/services/billing/rerun-run";
 import type { approveRun as ApproveRun } from "@/services/billing/approve-run";
 import type { postRun as PostRun } from "@/services/billing/post-run";
+import type {
+  recordDistributionOutcome as RecordDistributionOutcome,
+  recomputeDistributionStatus as RecomputeDistributionStatus,
+} from "@/services/billing/distribute-run";
 import type { listAccountBills as ListAccountBills } from "@/services/billing/read/list-account-bills";
 import type { listUncharged as ListUncharged } from "@/services/billing/read/list-uncharged";
 import type { listErrors as ListErrors } from "@/services/billing/read/list-errors";
@@ -35,11 +39,23 @@ import type { POST as StageCompletePost } from "@/app/api/billrun/[runId]/stage/
 // bm13-spec §3 — the one E2E happy-path journey: materialize → trigger →
 // drive stages via the signed M2M endpoints → PROCESSED → review (bills + tax
 // + uncharged + errors) → rerun a subset → approve (a DIFFERENT, four-eyes
-// user) → post → INVOICED → COMPLETED, on synthetic stub figures in a clean,
-// isolated test ledger (never production Accounts data). Also folds in the
-// bm13-spec §2 "Finalization latch" guardrail — proven against this same
-// run's real posted bill rather than rebuilding the fixture a second time —
-// and the "next cycle operable at INVOICED" success criterion #10.
+// user) → post → INVOICED → DISTRIBUTING → COMPLETED, on synthetic stub
+// figures in a clean, isolated test ledger (never production Accounts data).
+// Also folds in the bm13-spec §2 "Finalization latch" guardrail — proven
+// against this same run's real posted bill rather than rebuilding the
+// fixture a second time — and the "next cycle operable at INVOICED" success
+// criterion #10.
+//
+// bm20-spec §Design D8/D9 revises the tail of this journey: `postRun` now
+// stops at `INVOICED`, then automatically (post-commit) calls
+// `triggerDistribution`, which — against the stub engine, synchronously —
+// moves the run straight into `DISTRIBUTING` before `postRun` even returns.
+// There is no live engine in this environment to deliver the triggered
+// artifacts and push a terminal status back, so this journey drives the
+// SAME path a real `bill_run_distribution` flow would (`recordDistribution
+// Outcome` + `recomputeDistributionStatus`, directly — the M2M route
+// handlers themselves are proven by `tests/app/api/billrun-distribution-
+// outcome.test.ts`/`billrun-status.test.ts`) to reach `COMPLETED`.
 //
 // bm16-spec §Design "The M2M handler becomes record-only (D5)" — Phase 2
 // moves Aggregation/Taxation's bill-data WRITE off the app and onto the bill
@@ -77,6 +93,9 @@ describe.skipIf(!databaseUrl)(
     let rerunRun: typeof RerunRun;
     let approveRun: typeof ApproveRun;
     let postRun: typeof PostRun;
+    let recordDistributionOutcome: typeof RecordDistributionOutcome;
+    let recomputeDistributionStatus: typeof RecomputeDistributionStatus;
+    let REPORT_ARTIFACT_REF: string;
     let listAccountBills: typeof ListAccountBills;
     let listUncharged: typeof ListUncharged;
     let listErrors: typeof ListErrors;
@@ -273,6 +292,8 @@ describe.skipIf(!databaseUrl)(
       ({ rerunRun } = await import("@/services/billing/rerun-run"));
       ({ approveRun } = await import("@/services/billing/approve-run"));
       ({ postRun } = await import("@/services/billing/post-run"));
+      ({ recordDistributionOutcome, recomputeDistributionStatus, REPORT_ARTIFACT_REF } =
+        await import("@/services/billing/distribute-run"));
       ({ listAccountBills } =
         await import("@/services/billing/read/list-account-bills"));
       ({ listUncharged } =
@@ -541,6 +562,47 @@ describe.skipIf(!databaseUrl)(
         expect(posted.value.results[0]?.result.status).toBe("invoiced");
         expect(posted.value.completed).toBe(true);
 
+        // ---- bm20-spec §Design D8/D9, §Implementation §5 — posting stops at
+        // INVOICED; `triggerDistribution` then fires automatically
+        // (post-commit), and — against the stub engine, synchronously —
+        // moves the run straight into DISTRIBUTING before `postRun` returns.
+        const [invoicedRun] = await db
+          .select()
+          .from(billRun)
+          .where(eq(billRun.billRunId, runId));
+        expect(invoicedRun?.status).toBe("DISTRIBUTING");
+        expect(invoicedRun?.invoicedAt).not.toBeNull();
+        expect(invoicedRun?.completedAt).toBeNull();
+        expect(invoicedRun?.distributionExecutionId).toBeTruthy();
+
+        // ---- Drive distribution to COMPLETED the same way the deployed
+        // `bill_run_distribution` flow would: record the loopback's
+        // DELIVERED outcome for every mandatory artifact the automatic
+        // trigger actually launched, then the flow's `finally` handler's
+        // terminal push (`recomputeDistributionStatus`, invoked by
+        // `handle-status-push.ts` in production — called directly here since
+        // there is no live engine in this environment to fire the real
+        // push). This environment has no reachable blob store / Chromium
+        // (see the render-pending assertions below), so `banBilled`'s render
+        // never produced a `bill_run_invoices` row by the time
+        // `triggerDistribution` ran — the ONLY mandatory artifact it saw is
+        // the per-run report CSV.
+        const distributionAttempt = invoicedRun!.distributionAttempt ?? 1;
+        const reportOutcome = await recordDistributionOutcome({
+          runId,
+          target: "loopback",
+          artifactRef: REPORT_ARTIFACT_REF,
+          artifactType: "report_csv",
+          isMandatory: true,
+          outcome: "DELIVERED",
+          attempt: distributionAttempt,
+        });
+        expect(reportOutcome.replayed).toBe(false);
+
+        await db.transaction((tx) =>
+          recomputeDistributionStatus(tx, { billRunId: runId }),
+        );
+
         const [completedRun] = await db
           .select()
           .from(billRun)
@@ -697,13 +759,14 @@ describe.skipIf(!databaseUrl)(
         ).rejects.toThrow(/immutable/i);
 
         // ---- Next-cycle operability keys off INVOICED, not COMPLETED
-        // (overview success criterion #10). In v1 `POSTING` completes
-        // straight to `COMPLETED` — `invoiced_at`/`completed_at` are stamped
-        // in the SAME write (`completePosting`) because `DISTRIBUTING` is
-        // never entered — so there is no observable window where a run is
-        // INVOICED but not yet COMPLETED; both this run's terminal status
-        // (COMPLETED, not blocking) and the next period's operability are
-        // what the criterion actually cashes out to in this release. --------
+        // (overview success criterion #10, bm20-spec §Design D8/D9). This run
+        // DID pass through an observable INVOICED window before
+        // `triggerDistribution` moved it into DISTRIBUTING (asserted above) —
+        // the point of keying next-cycle operability off INVOICED rather than
+        // COMPLETED is exactly so a slow/stuck distribution round never holds
+        // up next month. This run has since reached COMPLETED too, so both
+        // this run's terminal status and the next period's operability are
+        // proven here. --------
         await materializeDueRuns("2026-08-02");
         const nextCyclePage = await listRuns(
           { tab: "current", cycleId, status: null, page: 1 },
