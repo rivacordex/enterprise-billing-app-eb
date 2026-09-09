@@ -25,6 +25,7 @@ import { listAccountBills } from "@/services/billing/read/list-account-bills";
 import { listUncharged } from "@/services/billing/read/list-uncharged";
 import { listErrors } from "@/services/billing/read/list-errors";
 import { listRejectedPending } from "@/services/billing/read/list-rejected-pending";
+import { getDistribution } from "@/services/billing/read/get-distribution";
 import { listRunAudit } from "@/services/billing/read/list-run-audit";
 import { isStalled } from "@/services/billing/stall";
 import {
@@ -107,6 +108,11 @@ export default async function BillRunDetailPage({
     parsedSearch.tab === "errors"
       ? await listRejectedPending(detail.billRunId)
       : [];
+
+  const distribution =
+    parsedSearch.tab === "distribution"
+      ? await getDistribution(detail.billRunId)
+      : null;
 
   const audit =
     parsedSearch.tab === "audit" ? await listRunAudit(detail.billRunId) : [];
@@ -241,6 +247,7 @@ export default async function BillRunDetailPage({
         <StallBanner
           billRunId={detail.billRunId}
           lastProgressAt={detail.lastProgressAt}
+          canCancel={detail.status === "PROCESSING"}
           locale={locale}
           timezone={timezone}
         />
@@ -254,9 +261,12 @@ export default async function BillRunDetailPage({
         uncharged={uncharged}
         errors={errors}
         rejectedPending={rejectedPending}
+        distribution={distribution}
         audit={audit}
         canRecover={canRecover}
         canRerun={canRerun}
+        canOperate={canOperate}
+        canApprove={canApprove}
         locale={locale}
         timezone={timezone}
       />

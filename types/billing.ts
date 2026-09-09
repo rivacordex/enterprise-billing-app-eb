@@ -305,6 +305,47 @@ export interface ApprovePreview {
   checks: PreApprovalCheck[];
 }
 
+// bm20-spec §Design/§1. `bill_run_distribution` domain unions — the
+// distributor's per-artifact-per-target outcome record. `artifactType`
+// distinguishes a per-account invoice PDF from the one transient per-run
+// report CSV (D21 — the report gets no `bill_run_output` row, only a
+// delivery-log entry here).
+export const DISTRIBUTION_ARTIFACT_TYPES = [
+  "invoice_pdf",
+  "report_csv",
+] as const;
+export type DistributionArtifactType =
+  (typeof DISTRIBUTION_ARTIFACT_TYPES)[number];
+
+export const DISTRIBUTION_OUTCOMES = ["DELIVERED", "FAILED"] as const;
+export type DistributionOutcome = (typeof DISTRIBUTION_OUTCOMES)[number];
+
+// bm20-spec §Visual/§Implementation §6. One delivery-log row — a single
+// `bill_run_distribution` outcome, joined to nothing else (the row is already
+// self-describing). `DistributionTab` renders these grouped by target.
+export interface DistributionRow {
+  billRunDistributionId: string;
+  target: string;
+  artifactRef: string;
+  artifactType: DistributionArtifactType;
+  isMandatory: boolean;
+  outcome: DistributionOutcome;
+  at: Date;
+  distributionAttempt: number;
+}
+
+// bm20-spec §Visual/D-T3. The Distribution tab's read model — the four
+// state-dependent views (INVOICED-pending / DISTRIBUTING / COMPLETED /
+// DISTRIBUTION_FAILED) all share this one shape; the component branches on
+// `runStatus` (never a separate prop per state).
+export interface DistributionView {
+  billRunId: string;
+  runStatus: RunStatus;
+  hasExecution: boolean;
+  targets: { name: string; isMandatory: boolean }[];
+  rows: DistributionRow[];
+}
+
 // bm17-spec §Design "Reject model (b)". The marker stamped on a rejected
 // account's latest (current-attempt) `bill_run_account_stage.error_code` —
 // the account stays `PROCESSED` (no new `AccountStatus` member), so this is

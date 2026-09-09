@@ -19,7 +19,7 @@ export interface EngineConnection {
   namespace: string;
 }
 
-export interface TriggerPayload {
+export interface ProcessingTriggerPayload {
   bill_run_id: string;
   period_start: string;
   period_end: string;
@@ -27,6 +27,34 @@ export interface TriggerPayload {
   attempt: number;
   gl_event_at: string;
 }
+
+// bm20-spec §Implementation §2/§3. The distribution execution's trigger
+// payload — transport-only references to already-stored artifacts (bm19)
+// plus the target list (D20's forceable-failure loopback). `attempt` mirrors
+// `ProcessingTriggerPayload`'s field (a resolved addition to the spec's
+// literal §2 input list — the flow template echoes it back on every outcome
+// POST so the app can reject a stale round, T1's stale-attempt guard applied
+// to distribution).
+export interface DistributionArtifactInput {
+  ref: string;
+  type: "invoice_pdf" | "report_csv";
+  blob_ref: string;
+}
+
+export interface DistributionTargetInput {
+  name: string;
+  is_mandatory: boolean;
+  force_fail: boolean;
+}
+
+export interface DistributionTriggerPayload {
+  bill_run_id: string;
+  artifacts: DistributionArtifactInput[];
+  targets: DistributionTargetInput[];
+  attempt: number;
+}
+
+export type TriggerPayload = ProcessingTriggerPayload | DistributionTriggerPayload;
 
 export interface ExecutionRef {
   executionId: string;
@@ -60,6 +88,7 @@ export interface ExecutionStatus {
 export interface EngineClient {
   startExecution(
     connection: EngineConnection,
+    flowId: string,
     payload: TriggerPayload,
   ): Promise<ExecutionRef>;
   getExecutionStatus(
@@ -76,10 +105,13 @@ export class EngineError extends Error {
   }
 }
 
-// bm16-spec §Implementation §3. The deployed (placeholder) flow's id — the
-// template contract's `id: bill_run_processing` — under the resolved engine's
-// namespace.
-const ENGINE_FLOW_ID = "bill_run_processing";
+// bm16-spec §Implementation §3, extended bm20-spec §Implementation §2. The
+// two deployed (placeholder) flows' ids — the template contracts' `id:
+// bill_run_processing` / `id: bill_run_distribution` — under the resolved
+// engine's namespace. `engineRegistry.trigger` threads the caller's choice of
+// flow id through to `startExecution`; this file hardcodes neither.
+export const PROCESSING_FLOW_ID = "bill_run_processing";
+export const DISTRIBUTION_FLOW_ID = "bill_run_distribution";
 const REQUEST_TIMEOUT_MS = 15_000;
 
 interface RawExecutionResponse {
@@ -95,11 +127,12 @@ function authHeader(basicAuth: string): string {
 export const realEngineClient: EngineClient = {
   async startExecution(
     connection: EngineConnection,
+    flowId: string,
     payload: TriggerPayload,
   ): Promise<ExecutionRef> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    const url = `${connection.baseUrl}/executions/${connection.namespace}/${ENGINE_FLOW_ID}`;
+    const url = `${connection.baseUrl}/executions/${connection.namespace}/${flowId}`;
 
     let response: Response;
     try {
@@ -139,8 +172,7 @@ export const realEngineClient: EngineClient = {
 
     return {
       executionId: body.executionId,
-      definitionId:
-        body.definitionId ?? `${connection.namespace}.${ENGINE_FLOW_ID}`,
+      definitionId: body.definitionId ?? `${connection.namespace}.${flowId}`,
       definitionRevision: body.definitionRevision ?? 0,
     };
   },
@@ -244,16 +276,17 @@ export const realEngineClient: EngineClient = {
 export const stubEngineClient: EngineClient = {
   async startExecution(
     _connection: EngineConnection,
+    flowId: string,
     payload: TriggerPayload,
   ): Promise<ExecutionRef> {
     logger.info("bill-run engine: stub startExecution", {
+      flowId,
       billRunId: payload.bill_run_id,
-      banCount: payload.ban_ids.length,
       attempt: payload.attempt,
     });
     return {
-      executionId: `stub-exec-${payload.bill_run_id}`,
-      definitionId: `${_connection.namespace}.${ENGINE_FLOW_ID}`,
+      executionId: `stub-exec-${flowId}-${payload.bill_run_id}`,
+      definitionId: `${_connection.namespace}.${flowId}`,
       definitionRevision: 0,
     };
   },

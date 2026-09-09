@@ -371,23 +371,131 @@ export const billRunRepository = {
     return rows.length > 0;
   },
 
-  // bm11-spec §Design/§Implementation §1 — run completion: every non-skipped
-  // account reached `INVOICED` (the caller verified this first), so the run
-  // passes `INVOICED` → (no v1 distribution targets, ai-workflow-rules §3.4 —
-  // `DISTRIBUTING` is never entered) straight to `COMPLETED`, stamping both
-  // timeline columns in the one write. Guarded on `status = 'POSTING'` so a
-  // stray double-call is a no-op (architecture Inv. #12 — the caller already
-  // holds the row lock via `findByIdForUpdate`).
+  // bm11-spec §Design/§Implementation §1, revised bm20-spec §Implementation
+  // §5 — run completion of the POSTING phase: every non-skipped account
+  // reached `INVOICED`, so the run flips `POSTING` → `INVOICED` (money is in
+  // the ledger; overview "next-cycle operability keys off INVOICED"),
+  // stamping `invoiced_at` only. `distribute-run.ts`'s `triggerDistribution`
+  // is what moves the run on into `DISTRIBUTING` — a SEPARATE call, made
+  // after this transaction commits (D8/D9). Guarded on `status = 'POSTING'`
+  // so a stray double-call is a no-op (architecture Inv. #12 — the caller
+  // already holds the row lock via `findByIdForUpdate`).
   async completePosting(tx: Database, billRunId: string): Promise<boolean> {
     const rows = await tx
       .update(billRun)
-      .set({
-        status: "COMPLETED",
-        invoicedAt: sql`now()`,
-        completedAt: sql`now()`,
-      })
+      .set({ status: "INVOICED", invoicedAt: sql`now()` })
       .where(
         and(eq(billRun.billRunId, billRunId), eq(billRun.status, "POSTING")),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm20-spec §Implementation §3 — `triggerDistribution`'s write: `INVOICED`
+  // → `DISTRIBUTING`, stamping the distribution execution reference columns
+  // (D23's second execution) plus `distribution_attempt = 1` (T1 — the first
+  // round) and `distributing_at` once. Guarded on `status = 'INVOICED'` so a
+  // concurrent/duplicate trigger (the auto-call racing an operator's "Start
+  // distribution", T2) is a safe no-op.
+  async markDistributing(
+    tx: Database,
+    billRunId: string,
+    data: {
+      distributionExecutionId: string;
+      distributionFlowId: string;
+      distributionFlowRevision: number;
+      distributionEngineRef: string;
+    },
+  ): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({
+        status: "DISTRIBUTING",
+        distributingAt: sql`now()`,
+        distributionAttempt: 1,
+        lastProgressAt: sql`now()`,
+        distributionExecutionId: data.distributionExecutionId,
+        distributionFlowId: data.distributionFlowId,
+        distributionFlowRevision: data.distributionFlowRevision,
+        distributionEngineRef: data.distributionEngineRef,
+      })
+      .where(
+        and(eq(billRun.billRunId, billRunId), eq(billRun.status, "INVOICED")),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm20-spec §Implementation §3 — `rerunDistribution`'s write:
+  // `DISTRIBUTION_FAILED` → `DISTRIBUTING` again, bumping
+  // `distribution_attempt` (T1's new redelivery round) and the execution
+  // reference. Does NOT re-stamp `distributing_at` (already set on the first
+  // entry) — mirrors `markRerunProcessing` never touching `gl_event_at`.
+  async markRerunDistributing(
+    tx: Database,
+    billRunId: string,
+    data: {
+      distributionAttempt: number;
+      distributionExecutionId: string;
+      distributionFlowId: string;
+      distributionFlowRevision: number;
+      distributionEngineRef: string;
+    },
+  ): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({
+        status: "DISTRIBUTING",
+        distributionAttempt: data.distributionAttempt,
+        lastProgressAt: sql`now()`,
+        distributionExecutionId: data.distributionExecutionId,
+        distributionFlowId: data.distributionFlowId,
+        distributionFlowRevision: data.distributionFlowRevision,
+        distributionEngineRef: data.distributionEngineRef,
+      })
+      .where(
+        and(
+          eq(billRun.billRunId, billRunId),
+          eq(billRun.status, "DISTRIBUTION_FAILED"),
+        ),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm20-spec §Implementation §5 — the distribution execution's terminal
+  // push / reconcile SUCCESS branch: every mandatory artifact landed, so
+  // `DISTRIBUTING` → `COMPLETED`. Reused by T11's force-complete too — its
+  // `WHERE` admits `DISTRIBUTION_FAILED` as a source status as well, since the
+  // resulting write (flip to COMPLETED, stamp `completed_at`) is identical
+  // either way.
+  async completeDistribution(tx: Database, billRunId: string): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({ status: "COMPLETED", completedAt: sql`now()` })
+      .where(
+        and(
+          eq(billRun.billRunId, billRunId),
+          sql`${billRun.status} IN ('DISTRIBUTING','DISTRIBUTION_FAILED')`,
+        ),
+      )
+      .returning({ billRunId: billRun.billRunId });
+    return rows.length > 0;
+  },
+
+  // bm20-spec §Design "a mandatory-target failure" — a mandatory artifact's
+  // latest-round outcome is FAILED (or the flow's `on_error` handler pushed a
+  // flow-level failure): `DISTRIBUTING` → `DISTRIBUTION_FAILED`, the
+  // rerunnable terminal state (mirrors `markProcessingFailed`).
+  async markDistributionFailed(tx: Database, billRunId: string): Promise<boolean> {
+    const rows = await tx
+      .update(billRun)
+      .set({ status: "DISTRIBUTION_FAILED", lastProgressAt: sql`now()` })
+      .where(
+        and(
+          eq(billRun.billRunId, billRunId),
+          eq(billRun.status, "DISTRIBUTING"),
+        ),
       )
       .returning({ billRunId: billRun.billRunId });
     return rows.length > 0;

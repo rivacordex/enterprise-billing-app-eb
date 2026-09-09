@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
@@ -58,5 +58,34 @@ export const billRunInvoicesRepository = {
       )
       .limit(1);
     return row ?? null;
+  },
+
+  // bm20-spec §Implementation §3 — `distribute-run.ts`'s artifact-gathering
+  // read: every STORED final invoice for the run (a render-pending account,
+  // D10's tolerated gap, simply has no row here and is never handed to the
+  // distributor as an artifact — transport-only, it can only deliver what was
+  // actually rendered and stored, bm19).
+  async listForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<{ billRunInvoiceId: string; blobRef: string }[]> {
+    return db
+      .select({
+        billRunInvoiceId: billRunInvoices.billRunInvoiceId,
+        blobRef: billRunInvoices.blobRef,
+      })
+      .from(billRunInvoices)
+      .where(eq(billRunInvoices.refBillRunId, billRunId));
+  },
+
+  // The expected-mandatory-artifact count's invoice half (distribute-run.ts's
+  // `computeExpectedMandatoryArtifactCount` adds the one always-expected
+  // report_csv artifact on top of this).
+  async countForRun(db: Database, billRunId: string): Promise<number> {
+    const [row] = await db
+      .select({ total: count() })
+      .from(billRunInvoices)
+      .where(eq(billRunInvoices.refBillRunId, billRunId));
+    return row?.total ?? 0;
   },
 };

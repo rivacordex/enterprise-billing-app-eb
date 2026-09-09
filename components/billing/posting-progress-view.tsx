@@ -66,13 +66,17 @@ export function PostingProgressView({
   const failedCount = progress.rows.filter(
     (r) => r.status === "PERIOD_CLOSED" || r.status === "failed",
   ).length;
-  // Keyed on the run reaching COMPLETED (not a count match) so a run with zero
-  // postable accounts — every account SKIPPED — still renders the completion
-  // message once it completes, as well as runs with posted accounts.
-  const done = progress.runStatus === "COMPLETED";
-  const canPost =
-    !done &&
-    (progress.runStatus === "APPROVED" || progress.runStatus === "POSTING");
+  // bm20-spec §Design D8/D9 — posting itself now completes into `INVOICED`,
+  // not `COMPLETED` directly (the run moves on into `DISTRIBUTING` via a
+  // separate, automatic trigger). `postingDone` covers every status past
+  // `POSTING` — the posting phase is over the moment the run leaves it,
+  // regardless of how far distribution has gotten; `DistributionTab` is the
+  // dedicated surface for what happens next (Keyed on leaving APPROVED/POSTING,
+  // not a count match, so a run with zero postable accounts — every account
+  // SKIPPED — still renders the completion message).
+  const postingDone =
+    progress.runStatus !== "APPROVED" && progress.runStatus !== "POSTING";
+  const canPost = !postingDone;
 
   async function handlePost(): Promise<void> {
     setSubmitting(true);
@@ -160,15 +164,15 @@ export function PostingProgressView({
         </p>
       )}
 
-      {done ? (
+      {postingDone ? (
         <p
           role="status"
           aria-live="polite"
           className="text-body-sm font-medium text-[color:var(--color-success-700)]"
         >
           {progress.postedCount > 0
-            ? "All accounts invoiced. Run completed."
-            : "Run completed. No invoices were posted."}
+            ? "All accounts invoiced. See the Distribution tab for delivery progress."
+            : "Posting complete. No invoices were posted."}
         </p>
       ) : canPost ? (
         <Button

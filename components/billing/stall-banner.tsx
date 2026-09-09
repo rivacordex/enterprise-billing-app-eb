@@ -1,11 +1,15 @@
 "use client";
 
-// bm12-spec §Visual/§Implementation §5. `StallBanner` — a derived-state
-// Warning-family banner (ui-context §1/§7), shown on the run detail ONLY
-// when `isStalled` computes true (services/billing/stall.ts) — never a
-// stored `STALLED` pill (architecture Inv. #10). Offers "Check status"
-// (primary) and, via `CancelRunDialog`, "Cancel run" (secondary, danger,
-// inside a spelled-out confirm dialog).
+// bm12-spec §Visual/§Implementation §5, extended bm20-spec §Phase-2 review
+// fold T2. `StallBanner` — a derived-state Warning-family banner (ui-context
+// §1/§7), shown on the run detail ONLY when `isStalled` computes true
+// (services/billing/stall.ts) — never a stored `STALLED` pill (architecture
+// Inv. #10). Offers "Check status" (primary) always, and, via
+// `CancelRunDialog`, "Cancel run" (secondary, danger, inside a spelled-out
+// confirm dialog) ONLY when `canCancel` — cancel-run.ts's resolved decision:
+// a wedged DISTRIBUTING execution has no "reset accounts to PENDING" path
+// (money's already posted), so the run-detail page passes `canCancel={status
+// === 'PROCESSING'}` and a stalled DISTRIBUTING run gets Check status only.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -19,6 +23,7 @@ import { formatDatetime } from "@/lib/formatters";
 export interface StallBannerProps {
   billRunId: string;
   lastProgressAt: Date | null;
+  canCancel: boolean;
   locale: string;
   timezone: string;
 }
@@ -26,6 +31,7 @@ export interface StallBannerProps {
 export function StallBanner({
   billRunId,
   lastProgressAt,
+  canCancel,
   locale,
   timezone,
 }: StallBannerProps): React.JSX.Element {
@@ -94,7 +100,7 @@ export function StallBanner({
           <RefreshCw size={14} aria-hidden="true" />
           {checking ? "Checking…" : "Check status"}
         </Button>
-        <CancelRunDialog billRunId={billRunId} />
+        {canCancel && <CancelRunDialog billRunId={billRunId} />}
       </div>
     </div>
   );

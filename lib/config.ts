@@ -171,6 +171,15 @@ const envSchema = z
         message: "BILLRUN_BLOB_ACCOUNT_URL must be an HTTPS URL.",
       })
       .optional(),
+    // bm20-spec §Design D20 — "one loopback target, FORCEABLE failure": the
+    // switch that exercises the DISTRIBUTION_FAILED → rerun-distribution path
+    // against the deployed placeholder flow. No UI control exists for it (the
+    // module has no target-catalog table, code-standards §6.11's "no
+    // udr_mode-style column" posture applies here too) — an environment flag,
+    // read only by `distribute-run.ts`, threaded into the trigger payload's
+    // `targets[].force_fail`. Defaults to `false` so production/normal
+    // deployments never force a failure.
+    BILLRUN_DISTRIBUTION_FORCE_FAIL: booleanEnvSchema("false"),
   })
   .superRefine((data, ctx) => {
     // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
@@ -240,6 +249,8 @@ function loadConfig(): Config {
       process.env.BILLRUN_STALL_THRESHOLD_MINUTES,
     BILLRUN_BLOB_CONNECTION_STRING: process.env.BILLRUN_BLOB_CONNECTION_STRING,
     BILLRUN_BLOB_ACCOUNT_URL: process.env.BILLRUN_BLOB_ACCOUNT_URL,
+    BILLRUN_DISTRIBUTION_FORCE_FAIL:
+      process.env.BILLRUN_DISTRIBUTION_FORCE_FAIL,
   });
 
   if (!parsed.success) {
@@ -326,6 +337,12 @@ export const billRunBlobConfig = {
   connectionString: config.BILLRUN_BLOB_CONNECTION_STRING ?? null,
   accountUrl: config.BILLRUN_BLOB_ACCOUNT_URL ?? null,
 } as const;
+
+// bm20-spec §Design D20. Read ONLY by `services/billing/distribute-run.ts`,
+// which threads it into the distribution trigger payload's
+// `targets[].force_fail` — never read directly by a UI component or action.
+export const billRunDistributionForceFail: boolean =
+  config.BILLRUN_DISTRIBUTION_FORCE_FAIL;
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

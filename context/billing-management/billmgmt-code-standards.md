@@ -82,12 +82,13 @@
 
 This module owns the platform's first M2M Route Handlers. They are thin, uniform, and **session-less**.
 
-1. **Exactly two handlers exist, both under `app/api/billrun/`:**
+1. **Exactly three handlers exist, all under `app/api/billrun/`** (bm20 — the sanctioned third-handler architecture decision this rule anticipated):
    - `POST /api/billrun/[runId]/stage/[stage]/complete` — body `{ ban_id, attempt, status, error_class?, error_code?, error_detail? }`.
-   - `POST /api/billrun/[runId]/status` — run-level terminal / execution-failure push.
-   No `GET`, no other verbs, no other paths. Adding a third handler needs an architecture decision.
+   - `POST /api/billrun/[runId]/status` — run-level terminal / execution-failure push for EITHER execution: `{ status: 'PROCESSING_FAILED' }` (processing) or `{ status: 'DISTRIBUTION_FAILED' | 'DISTRIBUTION_FINISHED' }` (distribution, bm20 — the latter triggers the app's own COMPLETED/DISTRIBUTION_FAILED recompute from the recorded `bill_run_distribution` outcomes).
+   - `POST /api/billrun/[runId]/distribution/outcome` (bm20, new) — body `{ target, artifact_ref, artifact_type, is_mandatory, outcome, attempt }`, one per-artifact-per-target delivery outcome; idempotent on `(run, target, artifact_ref, distribution_attempt)`.
+   No `GET`, no other verbs, no other paths. A fourth handler needs its own architecture decision.
 2. **No session semantics — bearer service token only** (Inv. #9). The handler never calls `getSession`/`requirePermission`. It authenticates a single bearer token via a **constant-time compare** against the Key Vault value, authorized by the token's fixed scope (not RBAC levels). The token is never logged, never string-manipulated, never returned.
-3. **Auth order, every request:** constant-time bearer check (fail → **401**) → Zod-parse the body and `[runId]`/`[stage]` params (fail → **422**) → reject unless the run is `PROCESSING` (a stage signal after `APPROVED` → **409**) → delegate to the service. No business logic in the handler.
+3. **Auth order, every request:** constant-time bearer check (fail → **401**) → Zod-parse the body and `[runId]`/`[stage]` params (fail → **422**) → reject unless the run is in the state the handler expects — `PROCESSING` for the stage-complete handler (a signal after `APPROVED` → **409**) and `DISTRIBUTING` for the distribution-outcome handler (bm20) — → delegate to the service. No business logic in the handler.
 4. **Idempotency is the DB constraint, never handler logic** (Inv. #5). The stage handler's service inserts the `bill_run_account_stage` row **first** inside its transaction; a duplicate `(ref_bill_run_id, ref_billing_account_id, stage, attempt, period_partition)` hits the UNIQUE constraint and returns **200** as a no-op replay. The handler does not pre-check for existence.
 5. **The signal carries no charge payload.** The handler/service never accepts amounts or charge lines over the wire; on collection/aggregation it reads `rating.udr_rated` itself. Reject any body with charge fields.
 6. **Status codes** (general §5.5, module usage): `200` accepted / replay no-op · `401` bad token · `409` run not `PROCESSING` · `422` malformed body/params · `500` unexpected. Envelopes and `AppError`→HTTP mapping per general §5.6–5.7.
@@ -205,11 +206,14 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 | Surface | Route | Top-level component(s) | Folder | Permission : level |
 |---|---|---|---|---|
 | Bill Runs list (Current & Upcoming / Historical) + lazy materialize | `/billing/bill-runs` | `BillRunsPage` → `BillRunList`, `RunActionCard`, `RunStatusBadge` | `app/(app)/billing/bill-runs/` | `billrun_view` : **READ** |
-| Run detail — Workflow / Customers & Bills / Uncharged / Errors / Audit + posting-progress | `/billing/bill-runs/[runId]` | `BillRunDetailPage` → `StageTimeline`, `CustomerBillTable`, `UnchargedTable`, `ErrorsTable`, `AuditTable`, `PostingProgressView` | `app/(app)/billing/bill-runs/[runId]/` | `billrun_view` : **READ** |
+| Run detail — Workflow / Customers & Bills / Uncharged / Errors / Distribution / Audit + posting-progress | `/billing/bill-runs/[runId]` | `BillRunDetailPage` → `StageTimeline`, `CustomerBillTable`, `UnchargedTable`, `ErrorsTable`, `DistributionTab`, `AuditTable`, `PostingProgressView` | `app/(app)/billing/bill-runs/[runId]/` | `billrun_view` : **READ** |
 | Trigger / Rerun / Check status / Cancel a run | `/billing/bill-runs/[runId]` (dialogs + `StallBanner`) | `TriggerRunDialog`, `RerunDialog`, `StallBanner`, `CancelRunDialog` | `actions/billing/{trigger,rerun,check-status,cancel-run}.action.ts` | `billrun_operate` : **EDIT** |
 | Approve & Post (four-eyes money gate) | `/billing/bill-runs/[runId]/approve` | `ApproveAndPostPage` → `ApproveAndPostPanel`, `PreApprovalChecks` | `app/(app)/billing/bill-runs/[runId]/approve/`, `actions/billing/{approve,post}-run.action.ts` | `billrun_approve` : **EDIT** |
+| Start distribution / Rerun distribution (Distribution tab, bm20) | `/billing/bill-runs/[runId]` (Distribution tab) | `StartDistributionControl`, `RerunDistributionControl` | `actions/billing/{start,rerun}-distribution.action.ts` | `billrun_operate` : **EDIT** |
+| Force-complete / abandon distribution (bm20 T11) | `/billing/bill-runs/[runId]` (Distribution tab) | `ForceCompleteDistributionDialog` | `actions/billing/force-complete-distribution.action.ts` | `billrun_approve` : **EDIT** |
 | M2M — stage completion signal | `POST /api/billrun/[runId]/stage/[stage]/complete` | `route.ts` → `handleStageSignal` | `app/api/billrun/[runId]/stage/[stage]/complete/` | **Service token** (no RBAC) |
-| M2M — run-level status push | `POST /api/billrun/[runId]/status` | `route.ts` → `handleStatusPush` | `app/api/billrun/[runId]/status/` | **Service token** (no RBAC) |
+| M2M — run-level status push (processing or distribution execution) | `POST /api/billrun/[runId]/status` | `route.ts` → `handleStatusPush` | `app/api/billrun/[runId]/status/` | **Service token** (no RBAC) |
+| M2M — distribution per-artifact outcome (bm20, the sanctioned third handler) | `POST /api/billrun/[runId]/distribution/outcome` | `route.ts` → `recordDistributionOutcome` | `app/api/billrun/[runId]/distribution/outcome/` | **Service token** (no RBAC) |
 | Draft PRO-FORMA invoice preview (session-guarded PDF) | `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` | `route.ts` → `renderDraftInvoice`, `InvoicePreviewModal` | `app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/` | `billrun_view` : **READ** |
 | Stored final invoice download (session-guarded PDF) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]` | `route.ts` → `blobStore.getInvoice`, `StoredInvoiceModal` | `app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/` | `billrun_view` : **READ** |
 | Retry final invoice render/store for a render-pending account | `/billing/bill-runs/[runId]` (posting-progress view) | `RenderPendingRow` → `actions/billing/retry-render-invoice.action.ts` | `actions/billing/retry-render-invoice.action.ts` | `billrun_approve` : **EDIT** |
@@ -218,7 +222,7 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 
 - Component names are the binding convention (general §9) — create them exactly so the page ↔ route ↔ component ↔ permission chain stays traceable.
 - `billrun_operate` and `billrun_approve` gate **mutations**; a `billrun_view`-only principal reaches every read surface and no action (verified by the route × level matrix against server actions and handlers, not just navigation).
-- The two M2M handlers are **not** in the RBAC matrix — they authenticate a service token and are covered by their own auth tests (401 on bad token; 409 unless `PROCESSING`; 200 replay).
+- The three M2M handlers are **not** in the RBAC matrix — they authenticate a service token and are covered by their own auth tests (401 on bad token; 409 unless the run is in the state the handler expects; 200 replay).
 - Deep links (`/billing/bill-runs/[runId]?tab=…`) pass through the `billrun_view` guard; the searchParam grants nothing.
 - **bm02 (delivered):** the `/billing/bill-runs` list page lazily materializes each active monthly cycle's single most-recent due run on its RSC render (a write, not an action/route/job — Inv. #10) before the read. Materialization writes exactly one `BILL_RUN_MATERIALIZED` `core.AUDIT_LOG` row **per row actually inserted**, as a **system write with `actorUserId = null`** (it is triggered by a page view but is not an operator mutation); a no-op load writes none. The Historical CSV export is a `billrun_view`-guarded **Server Action** (`actions/billing/export-runs.action.ts`), never a Route Handler, and — being read-only — is **not** audited. The `STUB_DATA_MODE` env flag drives `StubDataBanner`/`StubBadge` (Inv. #15); it is threaded server-side as a prop, never read in a client component.
 - **bm03 (delivered):** the Run action lives on the **list page's `RunActionCard`** (`components/billing/trigger-run-dialog.tsx`, the `TriggerRunDialog` interaction leaf) — **not** the `/billing/bill-runs/[runId]` detail route in the table row above, which bm03 does not build (the detail page, and moving Trigger/Rerun/Cancel there, land with a later unit). `actions/billing/trigger-run.action.ts` requires `billrun_operate:EDIT` and delegates to `services/billing/trigger-run.ts`, which snapshots the cycle's active accounts into `bill_run_account` (marking any account with a partial-period subscription `EXCLUDED`), flips `SCHEDULED → PROCESSING`, resolves `gl_event_at = scheduled_run_date`, and writes one `BILL_RUN_TRIGGERED` audit row — all in one transaction, including the **mockable engine client** call (`services/billing/engine-client.ts`, real fetch client or a `stub-exec-{runId}` stub selected by `isBillRunEngineConfigured`): an engine failure throws, rolling the whole trigger back so the run stays `SCHEDULED` with no orphan snapshot. The confirm-dialog copy omits the plan's `{N} eligible accounts` placeholder (scoping only happens server-side at click time, so no pre-click count exists without a new preview endpoint out of this unit's scope) — the actual `banCount`/`excludedCount` are shown in the post-trigger success message instead.
@@ -370,6 +374,51 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   {check-status,cancel-run}.action.ts` both require `billrun_operate:EDIT`
   and revalidate the run page (cancel also revalidates the list page, since a
   cancelled run's list-page affordance changes).
+
+- **bm20 (delivered) — Distribution flow + `bill_run_distribution` + the
+  Distribution tab (Phase 2 · Phase H).** See
+  `context/billing-management/specs/bm20-distribution-flow.md`. The third
+  M2M handler above; new partitioned `billing.bill_run_distribution`
+  (composite PK, UNIQUE `(run, target, artifact_ref, distribution_attempt,
+  period_partition)` — T1's stale-round-safe idempotency key); `bill_run`
+  gains `distribution_attempt` (mirrors `bill_run_account.attempt_count`).
+  `services/billing/distribute-run.ts` — `triggerDistribution` (auto-called
+  once from `post-run.ts` at `INVOICED`, re-derivable via the T2 "Start
+  distribution" operator action for a lost/failed trigger; gathers stored
+  `bill_run_invoices` + a fresh per-run register CSV as artifacts, triggers
+  the `billrun` engine's SECOND flow — `engine-client.ts`/`engine-registry.ts`
+  generalized to take an explicit `flowId`, `bill_run_processing` vs.
+  `bill_run_distribution` — and moves `INVOICED → DISTRIBUTING`),
+  `rerunDistribution` (T1 — redelivers only the current round's FAILED
+  artifacts under a bumped `distribution_attempt`), `recordDistributionOutcome`
+  (the M2M handler's insert-first idempotent write, no run recompute),
+  `recomputeDistributionStatus` (shared by the `.../status` route's
+  `DISTRIBUTION_FINISHED` push AND `reconcile-run.ts`'s DISTRIBUTING branch —
+  COMPLETED once every expected mandatory artifact is DELIVERED,
+  DISTRIBUTION_FAILED if one is FAILED, else left unresolved with NO heartbeat
+  bump, mirroring the PROCESSING-mismatch precedent), and T11's
+  `forceCompleteDistribution` (`DISTRIBUTION_FAILED → COMPLETED`, abandons the
+  currently-failed artifacts, audited `BILL_RUN_DISTRIBUTION_ABANDONED`).
+  `post-run.ts`'s completion transaction now stops at `INVOICED` (not
+  `COMPLETED` — `completePosting` renamed semantics), and calls
+  `triggerDistribution` as a separate, failure-swallowed system write
+  (`actorUserId: null`) after it commits. T2 also extends `stall.ts`'s
+  `isStalled` and `reconcile-run.ts`'s "Check status" to a `DISTRIBUTING`
+  execution (picking `distribution*` vs. `processing*` execution-ref columns
+  by run status); `cancel-run.ts` is a **resolved decision to stay
+  `PROCESSING`-only** (a `DISTRIBUTING` run has already posted every INV, so
+  "reset accounts to PENDING" doesn't apply) — `StallBanner` gains a
+  `canCancel` prop the detail page sets to `status === 'PROCESSING'`.
+  `DistributionTab` (D-T3's four states: INVOICED-pending →
+  `StartDistributionControl`; DISTRIBUTING → live delivery log; COMPLETED →
+  all-green summary; DISTRIBUTION_FAILED → `RerunDistributionControl`
+  primary + `ForceCompleteDistributionDialog` a quiet secondary behind a
+  spelled-out danger confirm, D-T1's control hierarchy) joins the run-detail
+  tabs. Three new audit events — `BILL_RUN_DISTRIBUTION_STARTED`/`_RERUN`/
+  `_ABANDONED`, all `"Change"`. `BILLRUN_DISTRIBUTION_FORCE_FAIL` (env flag,
+  D20) threads a forceable-failure switch into the loopback target for
+  exercising the `DISTRIBUTION_FAILED` path against the deployed placeholder
+  flow. No new permission.
 
 ---
 

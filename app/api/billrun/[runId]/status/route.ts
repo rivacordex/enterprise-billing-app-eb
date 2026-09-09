@@ -34,7 +34,10 @@ export async function POST(
       throw validationFailed("Invalid status-push body.");
     }
 
-    const result = await handleStatusPush({ runId: runIdResult.data });
+    const result = await handleStatusPush({
+      runId: runIdResult.data,
+      status: bodyResult.data.status,
+    });
 
     return Response.json({ data: result }, { status: 200 });
   } catch (err) {

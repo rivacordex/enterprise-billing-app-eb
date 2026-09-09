@@ -100,6 +100,16 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // only or also push the run to a corrected status — a state-change surface
   // either way.
   BILL_RUN_RECONCILED: "Change",
+  // bm20 — the app-triggered start of the distribution execution:
+  // INVOICED → DISTRIBUTING, a state transition (mirrors BILL_RUN_TRIGGERED).
+  BILL_RUN_DISTRIBUTION_STARTED: "Change",
+  // bm20 — DISTRIBUTION_FAILED → DISTRIBUTING, redelivering the failed
+  // artifacts: a state transition carrying the failed-artifact list, mirroring
+  // BILL_RUN_RERUN's classification.
+  BILL_RUN_DISTRIBUTION_RERUN: "Change",
+  // bm20 T11 — DISTRIBUTION_FAILED → COMPLETED, force-completing a
+  // permanently-failing distribution: a state transition, mandatory reason.
+  BILL_RUN_DISTRIBUTION_ABANDONED: "Change",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the
