@@ -84,7 +84,9 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
   });
 
   it("returns NO_EXECUTION when the run has no recorded execution ref", async () => {
-    mockFindByIdForUpdate.mockResolvedValue(run({ processingExecutionId: null }));
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ processingExecutionId: null }),
+    );
 
     const result = await reconcileRun("BRN00000001", "user-1");
 
@@ -232,6 +234,40 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
       },
     });
     expect(mockMarkProcessingFailed).not.toHaveBeenCalled();
+    expect(mockBumpHeartbeat).toHaveBeenCalledWith(txStub, "BRN00000001");
+  });
+
+  // bm-review fix (E3) — once a distribution execution exists, a run PAST
+  // DISTRIBUTING (DISTRIBUTION_FAILED / COMPLETED) must reconcile against THAT
+  // execution, never fall back to its long-finished processing one and audit
+  // the wrong engine state.
+  it("a DISTRIBUTION_FAILED run reconciles against the distribution execution, not the processing one", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({
+        status: "DISTRIBUTION_FAILED",
+        processingExecutionId: "proc-exec",
+        distributionExecutionId: "dist-exec",
+        distributionEngineRef: "billrun@stub/billrun",
+      }),
+    );
+    mockGetExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
+
+    const result = await reconcileRun("BRN00000001", "user-1");
+
+    expect(mockGetExecutionStatus).toHaveBeenCalledWith(
+      "billrun",
+      "dist-exec",
+      "billrun@stub/billrun",
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        billRunId: "BRN00000001",
+        runStatus: "DISTRIBUTION_FAILED",
+        engineState: "SUCCESS",
+        mismatch: false,
+      },
+    });
     expect(mockBumpHeartbeat).toHaveBeenCalledWith(txStub, "BRN00000001");
   });
 

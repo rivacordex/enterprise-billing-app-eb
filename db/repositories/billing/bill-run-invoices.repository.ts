@@ -1,4 +1,4 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
@@ -76,17 +76,6 @@ export const billRunInvoicesRepository = {
       })
       .from(billRunInvoices)
       .where(eq(billRunInvoices.refBillRunId, billRunId));
-  },
-
-  // The expected-mandatory-artifact count's invoice half (distribute-run.ts's
-  // `computeExpectedMandatoryArtifactCount` adds the one always-expected
-  // report_csv artifact on top of this).
-  async countForRun(db: Database, billRunId: string): Promise<number> {
-    const [row] = await db
-      .select({ total: count() })
-      .from(billRunInvoices)
-      .where(eq(billRunInvoices.refBillRunId, billRunId));
-    return row?.total ?? 0;
   },
 
   // bm21-spec §Implementation §2, Phase-2 review fold T8 — the D10 safety-net

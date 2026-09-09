@@ -80,44 +80,40 @@ function buildInvoiceRegisterCsv(
   return Buffer.from(buildCsv(header, rows), "utf-8");
 }
 
-// The expected mandatory-artifact count for the CURRENT run: every stored
-// final invoice (bill_run_invoices) plus the one always-triggered report_csv
-// artifact. Re-derived from what was actually triggered, never assumed —
-// `recomputeDistributionStatus` compares the recorded DELIVERED count against
-// this so "all mandatory delivered" can never be satisfied vacuously by a
-// partial or empty outcome set (mirrors `computeRunStatus`'s "derived, not
-// guessed" discipline, architecture Inv. #12).
-async function computeExpectedMandatoryArtifactCount(
+// bm20 recompute + bm21-spec §Implementation §2 (T8, the D10 safety net) — ONE
+// read of the run's POSTED accounts vs its STORED final invoices, shared by
+// `recomputeDistributionStatus` (BOTH the never-silently-complete-around-an-
+// unrendered-posted-account check AND the expected mandatory-artifact count)
+// and `forceCompleteDistribution` (so an abandoned run's audit records the
+// posted-but-unrendered accounts it gave up on, not just the FAILED rows).
+//
+// `unrenderedAccountIds` — POSTED accounts with no stored `bill_run_invoices`
+// row yet (bm19's tolerated render-pending gap, D10): a mandatory artifact
+// this run could never have triggered (`triggerDistribution` only ever hands
+// the engine what is actually STORED), so "every expected mandatory artifact
+// delivered" must never be satisfied vacuously around one. A run can reach
+// DISTRIBUTION_FAILED on this signal ALONE, with zero FAILED outcome rows.
+//
+// `storedInvoiceCount` — the stored-invoice half of the expected mandatory
+// count; the one always-triggered `report_csv` adds the `+ 1`. Derived from
+// the SAME read as the gap-check (one row per (run, ban),
+// `bill_run_invoices_run_ban_period_unique`), so the count and the gap-check
+// can never disagree — and never a third `countForRun` scan of the same
+// partition (mirrors `computeRunStatus`'s "derived, not guessed" discipline,
+// architecture Inv. #12).
+async function postedVsStoredInvoices(
   tx: Database,
   billRunId: string,
-): Promise<number> {
-  const invoiceCount = await billRunInvoicesRepository.countForRun(
-    tx,
-    billRunId,
-  );
-  return invoiceCount + 1;
-}
-
-// bm21-spec §Implementation §2, Phase-2 review fold T8 "assert the D10 safety
-// net end-to-end" — a POSTED account with no stored `bill_run_invoices` row
-// yet (bm19's tolerated render-pending gap, D10) is a mandatory artifact this
-// run can never have triggered in the first place (`triggerDistribution`
-// below only ever hands the engine what's actually STORED). Left unchecked,
-// `computeExpectedMandatoryArtifactCount` — derived from the same stored
-// rows — would never even count it, so "every expected mandatory artifact
-// delivered" could be satisfied vacuously while a posted invoice sits
-// un-rendered forever. Checked structurally against the posted/stored account
-// sets directly, never via a fabricated outcome row.
-async function hasUnrenderedPostedAccounts(
-  tx: Database,
-  billRunId: string,
-): Promise<boolean> {
+): Promise<{ unrenderedAccountIds: string[]; storedInvoiceCount: number }> {
   const [postedIds, storedIds] = await Promise.all([
     customerBillRepository.listPostedAccountIds(tx, billRunId),
     billRunInvoicesRepository.listBillingAccountIdsForRun(tx, billRunId),
   ]);
   const stored = new Set(storedIds);
-  return postedIds.some((id) => !stored.has(id));
+  return {
+    unrenderedAccountIds: postedIds.filter((id) => !stored.has(id)),
+    storedInvoiceCount: storedIds.length,
+  };
 }
 
 export type TriggerDistributionResult =
@@ -282,8 +278,24 @@ export async function rerunDistribution(
         (inv) =>
           !attemptedRefs.has(`${LOOPBACK_TARGET}::${inv.billRunInvoiceId}`),
       );
+      // The report_csv is mandatory and part of EVERY round's payload
+      // (`triggerDistribution`), yet it is neither a `bill_run_invoices` row
+      // (so `neverAttemptedInvoices` can't cover it) nor — if its round-1
+      // outcome was lost entirely — a `FAILED` row (so `failed` can't either).
+      // Left out, a run whose report outcome never landed can never re-attempt
+      // it, so `recomputeDistributionStatus` (expected = invoices + 1) can
+      // never reach COMPLETED and the run wedges. Re-attempt it whenever NO
+      // outcome for it was ever recorded (a genuine FAILED report is already in
+      // `failed`; a DELIVERED one has a row and is correctly left alone).
+      const reportNeverAttempted = !attemptedRefs.has(
+        `${LOOPBACK_TARGET}::${REPORT_ARTIFACT_REF}`,
+      );
 
-      if (failed.length === 0 && neverAttemptedInvoices.length === 0) {
+      if (
+        failed.length === 0 &&
+        neverAttemptedInvoices.length === 0 &&
+        !reportNeverAttempted
+      ) {
         return { ok: false, code: "NO_FAILED_ARTIFACTS" } as const;
       }
       const newAttempt = priorAttempt + 1;
@@ -296,6 +308,16 @@ export async function rerunDistribution(
           artifactType: "invoice_pdf" as const,
           isMandatory: true,
         })),
+        ...(reportNeverAttempted
+          ? [
+              {
+                target: LOOPBACK_TARGET,
+                artifactRef: REPORT_ARTIFACT_REF,
+                artifactType: "report_csv" as const,
+                isMandatory: true,
+              },
+            ]
+          : []),
       ];
 
       // Resolve blob refs: an invoice PDF is looked up from the immutable
@@ -510,6 +532,16 @@ export async function recordDistributionOutcome(
       );
     }
 
+    // stall.ts's invariant — a DISTRIBUTING run's heartbeat is "bumped by every
+    // stage/outcome signal" — plus bm20-spec §Implementation §4. A valid
+    // per-artifact outcome for the CURRENT round is live progress, so bump
+    // `last_progress_at` exactly as the PROCESSING path does on every stage
+    // signal (`recomputeStatus`). Placed AFTER the stale-attempt guard (a
+    // straggler from a superseded round returned early above), so a long,
+    // actively-delivering distribution is never falsely flagged STALLED
+    // mid-delivery, and a stale signal never resets the stall clock.
+    await billRunRepository.bumpHeartbeat(tx, input.runId);
+
     try {
       await billRunDistributionRepository.insertOutcome(tx, {
         refBillRunId: input.runId,
@@ -578,17 +610,18 @@ export async function recomputeDistributionStatus(
     return { status: "DISTRIBUTION_FAILED" };
   }
 
-  // T8's D10 safety net — never silently COMPLETED around a posted account
-  // with nothing stored to deliver (see `hasUnrenderedPostedAccounts` above).
-  if (await hasUnrenderedPostedAccounts(tx, run.billRunId)) {
+  // T8's D10 safety net + the expected count in ONE read (see
+  // `postedVsStoredInvoices`) — never silently COMPLETED around a posted
+  // account with nothing stored to deliver.
+  const { unrenderedAccountIds, storedInvoiceCount } =
+    await postedVsStoredInvoices(tx, run.billRunId);
+  if (unrenderedAccountIds.length > 0) {
     await billRunRepository.markDistributionFailed(tx, run.billRunId);
     return { status: "DISTRIBUTION_FAILED" };
   }
 
-  const expected = await computeExpectedMandatoryArtifactCount(
-    tx,
-    run.billRunId,
-  );
+  // Every stored final invoice + the one always-triggered report_csv.
+  const expected = storedInvoiceCount + 1;
   const delivered = mandatoryRows.filter(
     (r) => r.outcome === "DELIVERED",
   ).length;
@@ -629,11 +662,20 @@ export async function forceCompleteDistribution(
       return { ok: false, code: "NOT_ABANDONABLE" } as const;
     }
     const attempt = run.distributionAttempt ?? 1;
-    const abandoned = await billRunDistributionRepository.listFailedForAttempt(
-      tx,
-      billRunId,
-      attempt,
-    );
+    // A run reaches DISTRIBUTION_FAILED two ways: a FAILED artifact outcome,
+    // OR (T8/D10) a POSTED account never rendered/stored, which has NO outcome
+    // row at all. Force-completing abandons BOTH, so the audit must record both
+    // — otherwise a run failed purely on the unrendered-posted path completes
+    // with an empty abandoned list and `abandonedCount` 0, hiding that a posted
+    // invoice was given up on un-rendered/undelivered.
+    const [abandoned, { unrenderedAccountIds }] = await Promise.all([
+      billRunDistributionRepository.listFailedForAttempt(
+        tx,
+        billRunId,
+        attempt,
+      ),
+      postedVsStoredInvoices(tx, billRunId),
+    ]);
 
     const flipped = await billRunRepository.completeDistribution(tx, billRunId);
     if (!flipped) {
@@ -648,13 +690,20 @@ export async function forceCompleteDistribution(
       beforeData: {
         status: run.status,
         abandonedArtifacts: abandoned.map((a) => a.artifactRef),
+        // Posted accounts with no stored invoice to deliver (render-pending,
+        // D10) — abandoned un-rendered by this force-complete. Recorded so the
+        // audit never understates what was given up on.
+        abandonedUnrenderedAccounts: unrenderedAccountIds,
       },
       afterData: { status: "COMPLETED", reason },
     });
 
     return {
       ok: true,
-      value: { billRunId, abandonedCount: abandoned.length },
+      value: {
+        billRunId,
+        abandonedCount: abandoned.length + unrenderedAccountIds.length,
+      },
     } as const;
   });
 }

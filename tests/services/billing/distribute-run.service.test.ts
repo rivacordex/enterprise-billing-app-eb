@@ -26,7 +26,6 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
 vi.mock("@/db/repositories/billing/bill-run-invoices.repository", () => ({
   billRunInvoicesRepository: {
     listForRun: vi.fn(),
-    countForRun: vi.fn(),
     listBillingAccountIdsForRun: vi.fn(),
   },
 }));
@@ -38,7 +37,10 @@ vi.mock("@/db/repositories/billing/bill-run-distribution.repository", () => ({
   },
 }));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
-  customerBillRepository: { listForRun: vi.fn(), listPostedAccountIds: vi.fn() },
+  customerBillRepository: {
+    listForRun: vi.fn(),
+    listPostedAccountIds: vi.fn(),
+  },
 }));
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
@@ -76,11 +78,12 @@ const mockCompleteDistribution = vi.mocked(
 );
 const mockBumpHeartbeat = vi.mocked(billRunRepository.bumpHeartbeat);
 const mockListInvoicesForRun = vi.mocked(billRunInvoicesRepository.listForRun);
-const mockCountForRun = vi.mocked(billRunInvoicesRepository.countForRun);
 const mockListBillingAccountIdsForRun = vi.mocked(
   billRunInvoicesRepository.listBillingAccountIdsForRun,
 );
-const mockInsertOutcome = vi.mocked(billRunDistributionRepository.insertOutcome);
+const mockInsertOutcome = vi.mocked(
+  billRunDistributionRepository.insertOutcome,
+);
 const mockListForRunDistribution = vi.mocked(
   billRunDistributionRepository.listForRun,
 );
@@ -111,9 +114,8 @@ beforeEach(() => {
   mockListInvoicesForRun.mockResolvedValue([
     { billRunInvoiceId: "BRI00000001", blobRef: "invoices/2026-07/INV1.pdf" },
   ]);
-  mockCountForRun.mockResolvedValue(1);
   // bm21-spec §Implementation §2, T8 — the D10 safety-net check's reads.
-  // Deterministic empty defaults so `hasUnrenderedPostedAccounts` (and
+  // Deterministic empty defaults so `postedVsStoredInvoices` (and
   // `rerunDistribution`'s never-attempted-artifact scan) start from a clean
   // slate in every test regardless of execution order; `vi.clearAllMocks()`
   // clears call/result history but NOT a previously-set `mockResolvedValue`
@@ -250,6 +252,9 @@ describe("recordDistributionOutcome", () => {
         distributionAttempt: 1,
       }),
     );
+    // A valid current-round outcome is live progress — it bumps the heartbeat
+    // so an actively-delivering DISTRIBUTING run is never falsely STALLED.
+    expect(mockBumpHeartbeat).toHaveBeenCalledWith(txStub, "BRN00000001");
   });
 
   it("treats a stale-round signal (attempt mismatch) as a replayed no-op", async () => {
@@ -261,6 +266,8 @@ describe("recordDistributionOutcome", () => {
 
     expect(result).toEqual({ replayed: true });
     expect(mockInsertOutcome).not.toHaveBeenCalled();
+    // A straggler from a superseded round must NOT reset the stall clock.
+    expect(mockBumpHeartbeat).not.toHaveBeenCalled();
   });
 
   it("rejects when the run is not DISTRIBUTING", async () => {
@@ -382,7 +389,7 @@ describe("recomputeDistributionStatus", () => {
         distributionAttempt: 1,
       },
     ]);
-    mockCountForRun.mockResolvedValue(1); // 1 invoice + the report = 2 expected
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]); // 1 stored invoice + the report = 2 expected
 
     const result = await recomputeDistributionStatus(txStub as never, {
       billRunId: "BRN00000001",
@@ -408,7 +415,7 @@ describe("recomputeDistributionStatus", () => {
         distributionAttempt: 1,
       },
     ]);
-    mockCountForRun.mockResolvedValue(1); // expects 2 (invoice + report), only 1 recorded
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]); // expects 2 (invoice + report), only 1 recorded
 
     const result = await recomputeDistributionStatus(txStub as never, {
       billRunId: "BRN00000001",
@@ -460,7 +467,7 @@ describe("recomputeDistributionStatus", () => {
         distributionAttempt: 2,
       },
     ]);
-    mockCountForRun.mockResolvedValue(1); // 1 invoice + the report = 2 expected
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]); // 1 stored invoice + the report = 2 expected
 
     const result = await recomputeDistributionStatus(txStub as never, {
       billRunId: "BRN00000001",
@@ -493,9 +500,8 @@ describe("recomputeDistributionStatus", () => {
         distributionAttempt: 1,
       },
     ]);
-    mockCountForRun.mockResolvedValue(0); // no stored invoices at all yet
     mockListPostedAccountIds.mockResolvedValue(["BAN00000001"]);
-    mockListBillingAccountIdsForRun.mockResolvedValue([]); // nothing stored
+    mockListBillingAccountIdsForRun.mockResolvedValue([]); // nothing stored yet
 
     const result = await recomputeDistributionStatus(txStub as never, {
       billRunId: "BRN00000001",
@@ -532,7 +538,6 @@ describe("recomputeDistributionStatus", () => {
         distributionAttempt: 2,
       },
     ]);
-    mockCountForRun.mockResolvedValue(1);
     mockListPostedAccountIds.mockResolvedValue(["BAN00000001"]);
     mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]);
 
@@ -565,6 +570,18 @@ describe("rerunDistribution", () => {
         artifactType: "invoice_pdf",
         isMandatory: true,
         outcome: "FAILED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      // The report was DELIVERED in round 1 — attempted, so it is NOT
+      // re-attempted; only the failed invoice is.
+      {
+        billRunDistributionId: "BRD00000002",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
         at: new Date(),
         distributionAttempt: 1,
       },
@@ -618,6 +635,17 @@ describe("rerunDistribution", () => {
         at: new Date(),
         distributionAttempt: 1,
       },
+      // The report was also DELIVERED in round 1 — nothing left to re-attempt.
+      {
+        billRunDistributionId: "BRD00000002",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
     ]);
 
     const result = await rerunDistribution("BRN00000001", "user-1");
@@ -642,6 +670,18 @@ describe("rerunDistribution", () => {
         artifactType: "invoice_pdf",
         isMandatory: true,
         outcome: "FAILED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      // Report already DELIVERED in round 1 — isolates this test to the
+      // vanished-invoice-blob path (no report re-attempt to muddy it).
+      {
+        billRunDistributionId: "BRD00000002",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
         at: new Date(),
         distributionAttempt: 1,
       },
@@ -701,6 +741,52 @@ describe("rerunDistribution", () => {
       }),
     );
   });
+
+  // bm-review fix (B1) — the mandatory report_csv is in EVERY round's payload
+  // but is neither a bill_run_invoices row (so the never-attempted-invoice
+  // scan misses it) nor, if its outcome was lost entirely, a FAILED row. A run
+  // whose report outcome never landed must re-attempt the report, or it can
+  // never reach COMPLETED (expected = invoices + 1) and wedges.
+  it("re-attempts a never-recorded report_csv (its round-1 outcome was lost)", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
+    );
+    // The invoice has an outcome row (attempted + delivered); the report has
+    // NO row at all — its round-1 outcome never landed.
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "BRI00000001",
+        artifactType: "invoice_pdf",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+    ]);
+
+    const result = await rerunDistribution("BRN00000001", "user-1");
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { attempt: 2, artifactCount: 1 },
+    });
+    expect(mockTrigger).toHaveBeenCalledWith(
+      "billrun",
+      "bill_run_distribution",
+      expect.objectContaining({
+        attempt: 2,
+        artifacts: [
+          {
+            ref: "REPORT",
+            type: "report_csv",
+            blob_ref: "invoices/2026-07/BRN00000001-report.csv",
+          },
+        ],
+      }),
+    );
+  });
 });
 
 describe("forceCompleteDistribution", () => {
@@ -733,6 +819,42 @@ describe("forceCompleteDistribution", () => {
       expect.objectContaining({
         eventType: "BILL_RUN_DISTRIBUTION_ABANDONED",
         actorUserId: "approver-1",
+      }),
+    );
+  });
+
+  // bm-review fix (A2) — a run pushed to DISTRIBUTION_FAILED purely by the
+  // T8/D10 unrendered-posted-account safety net has NO failed artifact rows;
+  // force-complete must still count those accounts as abandoned and record
+  // them in the audit, never report abandonedCount 0 over a posted-but-
+  // undelivered invoice.
+  it("records posted-but-unrendered accounts as abandoned even with zero FAILED rows", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
+    );
+    mockListFailedForAttempt.mockResolvedValue([]); // no failed artifact rows
+    mockListPostedAccountIds.mockResolvedValue(["BAN00000001", "BAN00000002"]);
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]); // BAN2 never rendered
+    mockCompleteDistribution.mockResolvedValue(true);
+
+    const result = await forceCompleteDistribution(
+      "BRN00000001",
+      "approver-1",
+      "Render permanently failing for BAN00000002",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: { billRunId: "BRN00000001", abandonedCount: 1 },
+    });
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "BILL_RUN_DISTRIBUTION_ABANDONED",
+        beforeData: expect.objectContaining({
+          abandonedArtifacts: [],
+          abandonedUnrenderedAccounts: ["BAN00000002"],
+        }),
       }),
     );
   });
