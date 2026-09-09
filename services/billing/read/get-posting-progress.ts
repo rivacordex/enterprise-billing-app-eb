@@ -41,6 +41,7 @@ export async function getPostingProgress(
     status: deriveStatus(r),
     invoiceId: r.invoiceId,
     errorDetail: r.errorDetail,
+    hasStoredInvoice: r.hasStoredInvoice,
   }));
 
   return {

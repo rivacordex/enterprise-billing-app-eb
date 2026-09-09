@@ -153,6 +153,24 @@ const envSchema = z
     // heartbeat (`bill_run.last_progress_at`) DISPLAYS as stalled — derived on
     // read (`services/billing/stall.ts`), never persisted.
     BILLRUN_STALL_THRESHOLD_MINUTES: z.coerce.number().int().min(1).default(30),
+    // bm19-spec §Design "Blob: Azure Blob in prod, Azurite in dev" / §Implementation
+    // §2. The `invoices/` artifact store's connection — exactly one of the two is
+    // ever set per environment: a full Azurite connection string locally
+    // (`services/billing/blob-store.ts` resolves it via
+    // `BlobServiceClient.fromConnectionString`), or the real Azure Storage account
+    // URL in prod (resolved via a Managed Identity `DefaultAzureCredential`, never
+    // a connection string committed to config). Both optional so most
+    // environments (unit tests, an environment never exercising posting) boot
+    // without either — `blob-store.ts` throws only when actually invoked with
+    // neither configured, matching `BILLRUN_APP_TOKEN`'s "absent = every call
+    // fails closed" posture rather than failing every boot.
+    BILLRUN_BLOB_CONNECTION_STRING: z.string().min(1).optional(),
+    BILLRUN_BLOB_ACCOUNT_URL: z
+      .url()
+      .refine((v) => v.startsWith("https://"), {
+        message: "BILLRUN_BLOB_ACCOUNT_URL must be an HTTPS URL.",
+      })
+      .optional(),
   })
   .superRefine((data, ctx) => {
     // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
@@ -168,6 +186,24 @@ const envSchema = z
         message:
           "BILLRUN_ENGINE_URL and BILLRUN_ENGINE_AUTH must either both be set or both be absent.",
         path: [hasUrl ? "BILLRUN_ENGINE_AUTH" : "BILLRUN_ENGINE_URL"],
+      });
+    }
+
+    // Exactly one blob backend per environment (Azurite connection string in
+    // dev, account URL + Managed Identity in prod). Neither is allowed (most
+    // environments never post — `blob-store.ts` fails closed only when
+    // actually invoked); but BOTH set is an ambiguous misconfiguration —
+    // `blob-store.ts` would silently prefer the connection string and ignore
+    // the account URL — so reject it at boot rather than resolve it silently.
+    if (
+      data.BILLRUN_BLOB_CONNECTION_STRING !== undefined &&
+      data.BILLRUN_BLOB_ACCOUNT_URL !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "BILLRUN_BLOB_CONNECTION_STRING and BILLRUN_BLOB_ACCOUNT_URL must not both be set — configure exactly one per environment (or neither).",
+        path: ["BILLRUN_BLOB_ACCOUNT_URL"],
       });
     }
   });
@@ -202,6 +238,8 @@ function loadConfig(): Config {
     BILLRUN_TAX_CATEGORY: process.env.BILLRUN_TAX_CATEGORY,
     BILLRUN_STALL_THRESHOLD_MINUTES:
       process.env.BILLRUN_STALL_THRESHOLD_MINUTES,
+    BILLRUN_BLOB_CONNECTION_STRING: process.env.BILLRUN_BLOB_CONNECTION_STRING,
+    BILLRUN_BLOB_ACCOUNT_URL: process.env.BILLRUN_BLOB_ACCOUNT_URL,
   });
 
   if (!parsed.success) {
@@ -278,6 +316,16 @@ export const billRunTaxConfig = {
 // process.env), so the helper stays pure and testable.
 export const billRunStallThresholdMinutes: number =
   config.BILLRUN_STALL_THRESHOLD_MINUTES;
+
+// bm19-spec §Design/§Implementation §2. Read ONLY by
+// `services/billing/blob-store.ts`, which resolves these into an actual
+// `BlobServiceClient` (connection string in dev/Azurite, Managed Identity
+// `DefaultAzureCredential` against `accountUrl` in prod) — never read
+// directly by `post-run.ts` or any other caller.
+export const billRunBlobConfig = {
+  connectionString: config.BILLRUN_BLOB_CONNECTION_STRING ?? null,
+  accountUrl: config.BILLRUN_BLOB_ACCOUNT_URL ?? null,
+} as const;
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

@@ -93,13 +93,13 @@ itself doesn't read as aggressive on the page background). Do not remove the
 opaque background from `.sheet` without re-deriving an opacity/contrast
 budget to replace it.
 
-**Preview modal a11y contract** (`InvoicePreviewModal`, and `StoredInvoiceModal`
-when bm19 lands): built on the shared `Dialog` (Radix `Dialog.Root`), which
+**Preview modal a11y contract** (`InvoicePreviewModal` and `StoredInvoiceModal`,
+the latter landed bm19): built on the shared `Dialog` (Radix `Dialog.Root`), which
 already provides a **focus trap**, **Esc-to-close**, and **focus return to
 the trigger** for free — no bespoke implementation needed for those three.
 The one addition every such modal must carry itself: an accessible `<iframe
-title>` — `"Draft PRO-FORMA invoice — {BAN}"` for a draft, the real `INV…`
-reference for a stored invoice (bm19).
+title>` — `"Draft PRO-FORMA invoice — {BAN}"` for a draft, `"Invoice {INV…}"`
+for a stored invoice.
 
 **Loading/queued/error states** (D-T2, ui-context delta only — no new token):
 a PDF-shaped skeleton (`.pdfwrap` frame + shimmer lines, `animate-pulse`) with

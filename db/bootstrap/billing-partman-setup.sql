@@ -136,8 +136,31 @@ SET retention            = '7 years',
 WHERE parent_table = 'billing.customer_bill_tax_item';
 --> statement-breakpoint
 
+-- bm19-spec §Implementation §1. Fifth parent registration in this same
+-- bootstrap file: billing.bill_run_invoices (created by
+-- 0036_bill_run_invoices.sql). Same monthly/7-year-detach shape as the four
+-- parents above — the stored invoice is the issued, immutable record (Inv
+-- #17), so its partition must never be dropped within the statutory window.
+SELECT partman.create_parent(
+  p_parent_table  := 'billing.bill_run_invoices',
+  p_control       := 'period_partition',
+  p_interval      := '1 month',
+  p_type          := 'range',
+  p_premake       := 4,
+  p_default_table := false
+);
+--> statement-breakpoint
+
+UPDATE partman.part_config
+SET retention            = '7 years',
+    retention_keep_table = true,
+    premake              = 4,
+    infinite_time_partitions = true
+WHERE parent_table = 'billing.bill_run_invoices';
+--> statement-breakpoint
+
 -- Materialise premake/forward partitions immediately on a fresh install
--- (covers all four parents registered above).
+-- (covers all five parents registered above).
 CALL partman.run_maintenance_proc();
 
 -- No second cron job: the audit-log-partman-maintenance job

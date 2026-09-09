@@ -2,12 +2,15 @@ import {
   type AnyPgColumn,
   char,
   check,
+  date,
+  foreignKey,
   integer,
   jsonb,
   numeric,
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -15,6 +18,7 @@ import { appuser } from "@/db/schema/identity";
 import { billing } from "@/db/schema/billing/pg-schema";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { reasonCode } from "@/db/schema/billing/catalogs";
+import { customerBill } from "@/db/schema/billing/customer-bill";
 import type { ModeRef } from "@/validation/accounts/mode-ref.schema";
 import type { DocumentMetadata } from "@/validation/accounts/metadata.schema";
 
@@ -128,8 +132,19 @@ export const document = billing.table(
     lastEditedBy: text("last_edited_by")
       .notNull()
       .references(() => appuser.id, { onDelete: "restrict" }),
+    // bm19-spec §Phase-2 review folds T5 [P1] — "structural one-INV-per-bill
+    // latch (closes known-issue #2)". Nullable: only ever populated for the
+    // one `INV` a posted bill's document carries (`services/billing/
+    // post-run.ts`'s `postAccount`); every other `doc_type` (PAY/DEP/CRN/
+    // DBN/ADJ) leaves both NULL. `period_partition` is carried alongside
+    // `ref_customer_bill_id` only because Postgres requires the full
+    // referenced key — `customer_bill`'s PK is the composite
+    // `(customer_bill_id, period_partition)` — `document` itself stays
+    // un-partitioned.
+    refCustomerBillId: text("ref_customer_bill_id"),
+    periodPartition: date("period_partition", { mode: "string" }),
   },
-  () => [
+  (t) => [
     check(
       "document_doc_type_check",
       // 'INV' added by bm09 — physical DDL of record is
@@ -145,6 +160,44 @@ export const document = billing.table(
       "document_payment_mode_check",
       sql`payment_mode IN ('bank_transfer','cash','cheque')`,
     ),
+    // The two customer-bill reference columns are set as a pair or not at all.
+    // Postgres composite FKs default to MATCH SIMPLE, which SKIPS the FK check
+    // entirely when ANY referenced column is NULL — so a half-set
+    // `(ref_customer_bill_id, period_partition)` (one value, one NULL) would
+    // bypass `document_customer_bill_fk` and leave a dangling reference. This
+    // forbids the half-set state outright.
+    check(
+      "document_customer_bill_ref_paired_check",
+      sql`(ref_customer_bill_id IS NULL) = (period_partition IS NULL)`,
+    ),
+    // The customer-bill latch only ever applies to the one `INV` a posted bill
+    // carries (post-run.ts's `postAccount`); every other doc_type leaves both
+    // NULL. Enforce that structurally so no non-INV document can claim a bill.
+    check(
+      "document_customer_bill_ref_inv_only_check",
+      sql`ref_customer_bill_id IS NULL OR doc_type = 'INV'`,
+    ),
+    // Composite FK to the (partitioned) `customer_bill`, keyed on its full
+    // PK `(customer_bill_id, period_partition)` — mirrors
+    // `customer-bill-tax-item.ts`'s composite-FK-to-a-partitioned-parent
+    // shape. RESTRICT: a posted bill is never deleted (Inv. #4).
+    foreignKey({
+      columns: [t.refCustomerBillId, t.periodPartition],
+      foreignColumns: [
+        customerBill.customerBillId,
+        customerBill.periodPartition,
+      ],
+      name: "document_customer_bill_fk",
+    }).onDelete("restrict"),
+    // THE structural latch (T5): at most one `document` row can ever
+    // reference a given `customer_bill`, full stop — a second posted INV for
+    // the same bill is a DB-refused UNIQUE VIOLATION, not merely an
+    // app-layer race the service happens to avoid. Partial (`WHERE ...
+    // IS NOT NULL`) so the many non-INV documents (NULL here) never collide
+    // with each other.
+    uniqueIndex("document_ref_customer_bill_id_unique")
+      .on(t.refCustomerBillId)
+      .where(sql`ref_customer_bill_id IS NOT NULL`),
   ],
 );
 

@@ -44,6 +44,8 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
         taxTotal: "8.60",
         totalAmount: "116.10",
         paymentDueDate: "2026-08-31",
+        refInvDocumentId: null,
+        hasStoredInvoice: false,
       },
     ]);
     mockListTaxItems.mockResolvedValue([
@@ -69,6 +71,8 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
         totalAmount: "116.10",
         paymentDueDate: "2026-08-31",
         taxItems: [{ category: "GST", rate: "8.00", amount: "8.60" }],
+        invoiceId: null,
+        hasStoredInvoice: false,
       },
     ]);
   });
@@ -85,6 +89,8 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
         taxTotal: "0.00",
         totalAmount: "107.50",
         paymentDueDate: "2026-08-31",
+        refInvDocumentId: null,
+        hasStoredInvoice: false,
       },
     ]);
 
@@ -104,6 +110,8 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
         taxTotal: "8.00",
         totalAmount: "108.00",
         paymentDueDate: "2026-08-31",
+        refInvDocumentId: null,
+        hasStoredInvoice: false,
       },
       {
         customerBillId: "CBL00000002",
@@ -115,6 +123,8 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
         taxTotal: "16.00",
         totalAmount: "216.00",
         paymentDueDate: "2026-08-31",
+        refInvDocumentId: null,
+        hasStoredInvoice: false,
       },
     ]);
     mockListTaxItems.mockResolvedValue([
@@ -140,6 +150,63 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
     expect(rows[1]?.taxItems).toEqual([
       { category: "GST", rate: "8.00", amount: "16.00" },
     ]);
+  });
+
+  // bm19-spec §Implementation §5 — `invoiceId` threads through once posted
+  // (`category` flips to `normal` at the same moment, bm11), so the tab can
+  // swap in `StoredInvoiceModal` — but only once the artifact is also STORED.
+  it("threads invoiceId + hasStoredInvoice through for a posted, stored bill", async () => {
+    mockListForRun.mockResolvedValue([
+      {
+        customerBillId: "CBL00000001",
+        billingAccountId: "BAN00000001",
+        accountName: "Acme Sdn Bhd",
+        currency: "MYR",
+        category: "normal",
+        subtotal: "107.50",
+        taxTotal: "8.60",
+        totalAmount: "116.10",
+        paymentDueDate: "2026-08-31",
+        refInvDocumentId: "INV00000001",
+        hasStoredInvoice: true,
+      },
+    ]);
+
+    const [row] = await listAccountBills("BRN00000001");
+
+    expect(row).toMatchObject({
+      category: "normal",
+      invoiceId: "INV00000001",
+      hasStoredInvoice: true,
+    });
+  });
+
+  // bm19-spec §Design D10 — a posted INV whose final render/store failed is
+  // INVOICED but has no stored artifact yet: `invoiceId` set, `hasStoredInvoice`
+  // false, so the tab shows the render-pending note, not a 404-ing modal.
+  it("reports a posted-but-render-pending bill as invoiced with hasStoredInvoice false", async () => {
+    mockListForRun.mockResolvedValue([
+      {
+        customerBillId: "CBL00000001",
+        billingAccountId: "BAN00000001",
+        accountName: "Acme Sdn Bhd",
+        currency: "MYR",
+        category: "normal",
+        subtotal: "107.50",
+        taxTotal: "8.60",
+        totalAmount: "116.10",
+        paymentDueDate: "2026-08-31",
+        refInvDocumentId: "INV00000001",
+        hasStoredInvoice: false,
+      },
+    ]);
+
+    const [row] = await listAccountBills("BRN00000001");
+
+    expect(row).toMatchObject({
+      invoiceId: "INV00000001",
+      hasStoredInvoice: false,
+    });
   });
 
   it("returns an empty array when the run has no draft bills yet", async () => {

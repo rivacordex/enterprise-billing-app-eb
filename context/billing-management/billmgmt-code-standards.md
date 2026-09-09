@@ -211,6 +211,8 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 | M2M — stage completion signal | `POST /api/billrun/[runId]/stage/[stage]/complete` | `route.ts` → `handleStageSignal` | `app/api/billrun/[runId]/stage/[stage]/complete/` | **Service token** (no RBAC) |
 | M2M — run-level status push | `POST /api/billrun/[runId]/status` | `route.ts` → `handleStatusPush` | `app/api/billrun/[runId]/status/` | **Service token** (no RBAC) |
 | Draft PRO-FORMA invoice preview (session-guarded PDF) | `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` | `route.ts` → `renderDraftInvoice`, `InvoicePreviewModal` | `app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/` | `billrun_view` : **READ** |
+| Stored final invoice download (session-guarded PDF) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]` | `route.ts` → `blobStore.getInvoice`, `StoredInvoiceModal` | `app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/` | `billrun_view` : **READ** |
+| Retry final invoice render/store for a render-pending account | `/billing/bill-runs/[runId]` (posting-progress view) | `RenderPendingRow` → `actions/billing/retry-render-invoice.action.ts` | `actions/billing/retry-render-invoice.action.ts` | `billrun_approve` : **EDIT** |
 
 **Notes**
 

@@ -58,6 +58,8 @@ function makeDocument(overrides: Partial<Document> = {}): Document {
     metadata: null,
     lastModified: NOW,
     lastEditedBy: CREATOR_ID,
+    refCustomerBillId: null,
+    periodPartition: null,
     ...overrides,
   };
 }

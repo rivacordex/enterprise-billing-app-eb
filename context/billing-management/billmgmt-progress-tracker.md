@@ -38,14 +38,25 @@ enumerations were trimmed to key facts + decisions. Full history:
   checklist item 1) is statically reviewed only — no container runtime was
   reachable to actually `docker build` the image and render a PDF from it;
   see Outstanding.
+- Phase 2 · Phase H — **bm19 (Posting on Real Charges + Final Render &
+  Store) — delivered.** See
+  `context/billing-management/specs/bm19-posting-real-charges-final-render.md`
+  and the Delivered Units entry below. Migrations `0036`/`0037` are
+  generated/reviewed but **not applied**, and the render/store step is
+  unproven against a real blob store or a real Chromium browser in this
+  environment — see Outstanding.
 
 ## Outstanding (environmental only — not a build unit)
 
 - Migrations `0033_customer_bill_finalization_guard.sql` (bm13 — DB trigger
-  enforcing the `ref_inv_document_id` finalization latch) and
+  enforcing the `ref_inv_document_id` finalization latch),
   `0035_bill_run_two_executions.sql` (bm16 — the `workflow_*` → `processing_*`
-  rename + `distribution_*`/`*_engine_ref` columns) are generated/reviewed but
-  **not applied**.
+  rename + `distribution_*`/`*_engine_ref` columns),
+  `0036_bill_run_invoices.sql` (bm19 — the stored-invoice table + its
+  immutability trigger), and `0037_document_customer_bill_latch.sql` (bm19
+  T5 — the structural one-INV-per-bill latch, plus the two CodeRabbit-review
+  CHECKs: customer-bill ref both-null-or-both-set + INV-only) are
+  generated/reviewed but **not applied**.
 - No local Postgres has been reachable in this environment for the entire
   build — every DB-gated integration test (materialize/trigger/partman/stage-
   ingest/E2E-happy-path/billrun-db-roles/etc.) was written and statically
@@ -83,6 +94,21 @@ enumerations were trimmed to key facts + decisions. Full history:
   dev stack (`docker-compose.dev.yml`) was deliberately **not** migrated off
   `node:22-alpine`, so `Preview PRO-FORMA →` will fail there too until that
   stack is revisited — same category of gap.
+- **bm19's render/store step is unproven against real infrastructure.** No
+  container/Docker runtime, reachable Postgres, or installed Chromium was
+  available in this environment, so: (1) the `azurite` docker-compose
+  service has never actually been started and connected to; (2)
+  `renderFinalInvoice`/`blobStore.putInvoice` have only ever run against
+  mocked Playwright/`@azure/storage-blob` (unit tests) — never a real
+  Chromium render into a real (even emulated) blob store; (3) migration
+  `0036`'s partitioned table + immutability trigger + the fifth
+  `partman.create_parent` registration have never executed against a real
+  Postgres (same gap as every other DB-gated item above). Before treating
+  bm19 as ship-ready: apply `0036`, run `db:setup-partman-billing`, bring up
+  `docker-compose.dev.yml` (or a real Azure Storage account), and post a run
+  end-to-end to confirm a `bill_run_invoices` row + a real blob object are
+  produced and the stored-invoice download route serves bytes matching the
+  stored checksum.
 
 ## Delivered Units (bm01–bm13)
 
@@ -566,6 +592,155 @@ enumerations were trimmed to key facts + decisions. Full history:
     exactly the case this rule's underlying heuristic doesn't fit.
   - No migration, no new permission, no new env var (spec §Config/env).
 
+- **bm19 — Posting on Real Charges + Final Render & Store (Phase 2 · Phase
+  H).** See
+  `context/billing-management/specs/bm19-posting-real-charges-final-render.md`.
+  Posting now anchors to the real claimed `udr_rated` charge lines and, per
+  account right after its `INV` commits, renders + stores the immutable
+  final invoice PDF:
+  - **`db/schema/billing/bill-run-invoices.ts` + migration `0036` +
+    `db/repositories/billing/bill-run-invoices.repository.ts`** (new) — hand-
+    authored partitioned `billing.bill_run_invoices` (`BRI`+8 seq, composite
+    PK on `(bill_run_invoice_id, period_partition)`, UNIQUE `(run, ban,
+    period)`, composite FK to `customer_bill`), registered as the fifth
+    parent in `billing-partman-setup.sql` (monthly/7-year detach-not-drop,
+    same shape as the other four). An **unconditional** `BEFORE UPDATE OR
+    DELETE` trigger (`bill_run_invoices_immutability_guard`) rejects any
+    mutation of an existing row — simpler than `customer_bill`'s guard
+    (0033) since this table has no "unfinalized" state to distinguish, every
+    row is born final. `billrun_runtime` gets no grant at all (bm14's
+    billrun-db-roles.sql Step 11 already declares "no `ALTER DEFAULT
+    PRIVILEGES` for it" — a new table is inaccessible to it by construction,
+    with a new DB-gated assertion added to
+    `tests/db/billrun-db-roles.integration.test.ts`, test #17b).
+  - **Real checksum (Inv #3).** `customerBillRepository.computeChargeChecksum`
+    is REPLACED (same name, new signature `(tx, billRunId, billingAccountId,
+    postedAttempt)`): now `md5(COALESCE(string_agg(udr_id || ':' ||
+    udr_rated_price, ',' ORDER BY udr_id), ''))` over `rating.udr_rated`
+    scoped to `(billrun_ref_id, billrun_ban_id, billrun_attempt)` — computed
+    entirely in SQL (code-standards §2.4), replacing the phase-1 stub formula
+    that hashed `customer_bill`'s own subtotal/tax-items/total. `post-run.ts`
+    passes `run.billRunId`/`billingAccountId`/`bill.attemptCount` (the
+    account's current attempt, matching the processor's own claim scope)
+    instead of `customerBillId`/`periodPartition`. Still no billing-side
+    charge copy — the checksum reads `rating.udr_rated` directly.
+  - **Render + store, separate from the posting transaction (D10).**
+    `services/billing/render-invoice-template.ts` gains `buildFinalInvoiceHtml`
+    (shares the internal template builder with `buildDraftInvoiceHtml` via a
+    private `renderInvoiceHtml`, `isDraft` flag) — no watermark, no "pending
+    posting" placeholder, the real `INV…` number. `services/billing/
+    render-invoice.ts` gains `renderFinalInvoice({ runId, banId, invoiceNo })`
+    — a plain (non-transactional) read (once posted, `customer_bill` is
+    immutable, no concurrent-commit window to straddle, unlike the draft
+    path's repeatable-read snapshot) — and shares the SAME T9 concurrency
+    semaphore as draft rendering (Phase-2 review fold T9 "same render
+    concurrency guard applies to final render"), via an extracted
+    `renderPdfFromHtml` helper. `post-run.ts`'s `postAccount` captures the
+    posted `(customerBillId, periodPartition, documentId)` inside its
+    transaction, then — AFTER the transaction commits — calls a new
+    `renderAndStoreInvoice` helper (render → `blobStore.putInvoice` → `bill-
+    RunInvoicesRepository.insert`) wrapped in its own try/catch that
+    swallows every failure: a render/store failure is recorded ONLY by the
+    absence of a `bill_run_invoices` row (no new status column) and never
+    rolls back the INV, blocks `INVOICED`, or aborts the posting loop.
+  - **`services/billing/blob-store.ts`** (new) — `putInvoice(period,
+    invoiceNo, bytes)`/`getInvoice(blobRef)` over `@azure/storage-blob`,
+    path `invoices/<YYYY-MM>/<INV…>.pdf`, `checksum` = md5 of the PDF bytes
+    (the SECOND checksum — Design "two checksums, two purposes": the charge
+    checksum anchors the charge lines, this one anchors the stored artifact);
+    the upload is write-once (`if-none-match`, see Post-Review Hardening).
+    Connection resolves from `lib/config.ts`'s new `billRunBlobConfig`
+    (`BILLRUN_BLOB_CONNECTION_STRING` dev/Azurite XOR `BILLRUN_BLOB_ACCOUNT_URL`
+    prod); the connection-string (dev) path auto-creates the container
+    (`createContainerIfNotExists`) since Azurite provisions nothing on its
+    own, while the Managed-Identity (prod) path relies on the container
+    already existing (a deploy-time prerequisite, unchanged from spec) so no
+    extra "create container" RBAC is needed in prod.
+    - **Resolved ambiguity**: the spec's Dependencies section names only
+      `@azure/storage-blob` as new, but "connection via Managed Identity in
+      prod" (Design) is a literal second auth mechanism, not just where a
+      secret value is sourced from (unlike `BETTER_AUTH_SECRET`'s "Key Vault
+      via Managed Identity" phrasing elsewhere, which is single-value/two-
+      environments) — `@azure/identity`'s `DefaultAzureCredential` was added
+      alongside `@azure/storage-blob` to implement it for real, rather than
+      leaving prod on a connection string.
+  - **`docker-compose.dev.yml`** gains an `azurite` service
+    (`mcr.microsoft.com/azure-storage/azurite:3.35.0`, blob port 10000,
+    named volume) + `BILLRUN_BLOB_CONNECTION_STRING` override on `app`
+    pointing at the in-network `azurite:10000` host (mirrors the existing
+    `DATABASE_URL` in-network-override pattern); `.env.example`'s host-facing
+    default targets `127.0.0.1:10000` for a bare `npm run dev`. Both use
+    Microsoft's published well-known Azurite dev account/key (never a real
+    credential).
+  - **Retry-render path (§Implementation §4) — standalone, not
+    `postRun`-gated.** `postRun` reaches `INVOICED`/`COMPLETED` on posting
+    completion regardless of render outcome (Design), so by the time an
+    operator would notice a render gap the run itself may already be
+    `COMPLETED` — past the point `postRun`/`postAccount` accept new
+    invocations (`NOT_POSTABLE`). `retryRenderInvoice(billRunId,
+    billingAccountId)` (new export, `post-run.ts`) is therefore deliberately
+    independent of the run's status: checks the account is posted
+    (`refInvDocumentId` set, via `customerBillRepository.findForAccount`,
+    extended with that column) and not already stored
+    (`billRunInvoicesRepository.findByRunAndAccount`), then re-renders +
+    stores. `actions/billing/retry-render-invoice.action.ts` +
+    `validation/billing/retry-render-invoice.schema.ts` wire it under the
+    same `billrun_approve:EDIT` money gate as Post/Retry-failed.
+  - **UI.** `components/billing/invoice-preview-modal.tsx` gains
+    `StoredInvoiceModal` (no watermark, real `INV…` number, `blob_ref`/
+    checksum shown via the download response's `X-Invoice-Number`/
+    `X-Blob-Ref`/`X-Checksum` headers — avoids a second round-trip — plus a
+    Download link; shares the D-T5 a11y contract via the same `Dialog`).
+    `CustomerBillTable` is a three-way gate (bm19 CodeRabbit review): no
+    `invoiceId` → the draft `InvoicePreviewModal`; `invoiceId` +
+    `hasStoredInvoice` → `StoredInvoiceModal`; `invoiceId` but not yet stored
+    (render-pending) → a note pointing to Posting progress, never a
+    `StoredInvoiceModal` that would 404. `customerBillRepository.listForRun` +
+    `CustomerBillRow`/`listAccountBills` are extended with `refInvDocumentId`/
+    `invoiceId` and `hasStoredInvoice` (same `bill_run_invoices` left-join idiom
+    as `listPostingProgressForRun`). `PostingProgressView` shows
+    `StoredInvoiceModal` for an
+    `invoiced` row with `hasStoredInvoice` (new field, derived via a second
+    left-join to `bill_run_invoices` in
+    `billRunAccountRepository.listPostingProgressForRun`, never a stored
+    column) or a new `RenderPendingRow` ("Retry render" button, reachable
+    even after the run is `COMPLETED`, unlike the main Post/Retry-failed
+    button) otherwise. Download served by a new session-guarded Route
+    Handler, `app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/`
+    (same `billrun_view:READ` / non-`app/api` carve-out as bm18's
+    draft-invoice route) — delegates to a new `services/billing/read/
+    get-stored-invoice.ts` (`getStoredInvoice`) rather than touching
+    `db`/`blobStore` inline, since the eslint `boundaries/dependencies` rule
+    forbids `app/**` → `db/**` (only `app/**` → `services/**` is allowed;
+    bm18's draft route already follows this shape via `renderDraftInvoice`).
+  - **Phase-2 review fold T5 [P1] — structural one-INV-per-bill latch
+    (closes known-issue #2).** `billing.document` gains two nullable columns,
+    `ref_customer_bill_id`/`period_partition` (migration `0037`, stamped only
+    on the one `INV` a posted bill's document carries — `post-run.ts`'s
+    `postAccount`), a composite FK to `customer_bill`'s composite PK, and a
+    **partial UNIQUE index** on `ref_customer_bill_id` (`WHERE ... IS NOT
+    NULL`) — structurally, at most one `document` row can ever reference a
+    given bill, so a duplicate posted INV is a DB-refused UNIQUE VIOLATION
+    regardless of the app-layer's own lock discipline.
+    `customerBillRepository.stampPosted`'s existing `IS NULL` guard (and
+    `lockBillForPosting`'s row lock) are now a friendly, resumable
+    early-return rather than the sole backstop (unchanged code — only the
+    doc comment demotes their role). The E2E ship-gate journey proves the
+    latch directly via a synthetic duplicate INSERT.
+  - **`tests/db/billing-e2e-happy-path.integration.test.ts`** (the ship-gate
+    journey) extended: a comment documents that its checksum degrades to
+    `md5('')` in this fixture (no `rating.udr_rated` rows exist for the
+    synthetic BILLED account — the `toBeTruthy()` assertion is unaffected);
+    a new block proves the T5 structural latch (a synthetic duplicate INV
+    INSERT against the same bill is refused); another proves the account is
+    left render-pending (no `bill_run_invoices` row — this environment has
+    neither a blob store nor Playwright's Chromium installed, so the
+    post-commit hook's swallowed failure is exercised for real) and
+    separately proves the `bill_run_invoices` immutability trigger via a
+    synthetic INSERT + rejected UPDATE/DELETE (independent of the
+    blob/Chromium gap). DB-gated, statically verified only (see Outstanding).
+  - No new permission, no new audit event type.
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -663,6 +838,36 @@ file history).
     is no longer stamped by any app writer (Fork B retired `stampTaxRateVersion`;
     `billRunTaxConfig`/`BILLRUN_TAX_*` are now app-side dead config kept for
     provenance). Reject stamps its marker via a per-account N+1 loop.
+- **bm18/bm19 (CodeRabbit review, 2026-09-08):**
+  - **Invoice modals no longer race their own fetch.** `InvoicePreviewModal`
+    (bm18) and `StoredInvoiceModal` (bm19) track the in-flight render's
+    `AbortController`, abort it on close/unmount/retry, and drop a stale
+    completion so a superseded/closed generation never overwrites state or
+    leaks an object URL; `StoredInvoiceModal` also gained a fetch timeout so a
+    hung download can't freeze the frame (D-T2).
+  - **`blobStore.putInvoice` is write-once.** Uploads with `if-none-match: "*"`;
+    on Azure's 412 (a post-commit render racing a manual `retryRenderInvoice` —
+    Chromium stamps a fresh timestamp per render, so their bytes differ) it
+    adopts the WINNER's bytes' checksum, so the persisted
+    `bill_run_invoices.checksum` always matches what a later download reads.
+  - **`getStoredInvoice` verifies integrity.** Re-hashes the downloaded PDF and
+    fails closed (route → 500) on a mismatch with the stored checksum — the
+    "second checksum" now actually guards the artifact.
+  - **`lib/config` rejects BOTH blob backends being set**
+    (`BILLRUN_BLOB_CONNECTION_STRING` + `BILLRUN_BLOB_ACCOUNT_URL`) via
+    superRefine — a both-set misconfig previously resolved silently to the
+    connection string. Neither-set is still allowed (fail-on-first-use).
+  - **`billing.document` gains two CHECKs** (schema + `0037`):
+    `(ref_customer_bill_id IS NULL) = (period_partition IS NULL)` and
+    `ref_customer_bill_id IS NULL OR doc_type = 'INV'` — closes the Postgres
+    MATCH SIMPLE composite-FK bypass (a half-NULL pair would otherwise skip
+    `document_customer_bill_fk` entirely).
+  - **Customers & Bills tab gates on `hasStoredInvoice`** (see the corrected
+    bm19 UI narrative above) — a posted-but-render-pending invoice shows a
+    render-pending note pointing to Posting progress, not a 404-ing modal.
+  - **`db/migrations/README.md`** (new) + a `drizzle.config.ts` caveat record
+    that migrations are hand-authored — `drizzle-kit generate`'s snapshot
+    baseline is stale past `0026`.
 
 ## Architecture Decisions
 
@@ -740,6 +945,13 @@ file history).
   audit.sql` precedent (Drizzle can't express `PARTITION BY`) — generated/
   reviewed but not yet applied anywhere; run `db:migrate` then
   `db:setup-partman-billing` in that order wherever the database lives.
+- **`drizzle-kit generate` is retired for this module.** Its snapshot baseline
+  in `db/migrations/meta` stops at `0026`; every migration since (`0027`+, and
+  `0018`–`0020`) is hand-authored SQL with a hand-appended `_journal.json`
+  entry, and the apply path (`db:migrate` → `db/migrate.ts` → Drizzle's
+  migrator) reads the journal + `.sql` files, never the snapshots. Documented
+  in `db/migrations/README.md` + a `drizzle.config.ts` caveat so nobody runs
+  `db:generate` and gets a broken giant diff. `db:introspect` is unaffected.
 - The four partitioned billing tables share one `partman.create_parent`
   registration each (monthly, 4-premake, 7-year detach-not-drop — distinct
   from `audit_log`'s drop-on-expiry) and the existing shared
@@ -752,14 +964,15 @@ file history).
 
 ## Next Up
 
-- **bm01–bm18 are all delivered.** The remaining action items are
-  environmental (see Outstanding, above): apply migrations `0033`/`0035`, run
-  `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
-  `db:bootstrap-rating-roles`), run the DB-gated suites (incl. the updated
-  `billing-e2e-happy-path.integration.test.ts`, which does not yet exercise
-  Reject end-to-end — bm17's reject → rerun → re-approve journey has only
-  unit-test coverage in this session) against a real Postgres, and run
-  `db:seed-sample` there to verify bm15's checklist.
+- **bm01–bm19 are all delivered.** The remaining action items are
+  environmental (see Outstanding, above): apply migrations `0033`/`0035`/
+  `0036`/`0037`, run `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
+  `db:bootstrap-rating-roles`), run `db:setup-partman-billing` (now
+  registering five parents incl. `bill_run_invoices`), run the DB-gated
+  suites (incl. the updated `billing-e2e-happy-path.integration.test.ts`,
+  which does not yet exercise Reject end-to-end — bm17's reject → rerun →
+  re-approve journey has only unit-test coverage in this session) against a
+  real Postgres, and run `db:seed-sample` there to verify bm15's checklist.
 - **bm16's live-Kestra smoke gate is unmet** — no deployed `billrun` engine or
   real `bill_run_processing` flow exists yet; the separate workflow-management
   repo/owner/deploy step are `TBD` in `flows/billrun/README.md`. Register the
@@ -769,6 +982,11 @@ file history).
   `renderDraftInvoice` PDF from that image were never exercised in this
   environment; do this before treating draft-invoice preview as ship-ready
   (see Outstanding, above).
-- Phase 2 · Phase G/H continues past bm18 (bm19's stored-invoice + blob
-  persistence, bm20's distribution execution columns, and any units between)
-  — not yet specced in this session.
+- **bm19's blob store / render-and-store step is unbuilt end-to-end** —
+  `docker-compose.dev.yml`'s new `azurite` service has never been started,
+  and no real (or emulated) blob upload/download has been exercised outside
+  mocked unit tests; do this, plus apply `0036` and post a run for real,
+  before treating final-invoice storage as ship-ready (see Outstanding,
+  above).
+- Phase 2 · Phase G/H continues past bm19 (bm20's distribution execution
+  columns and any units between) — not yet specced in this session.

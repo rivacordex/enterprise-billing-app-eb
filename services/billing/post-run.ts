@@ -5,10 +5,14 @@ import { documentLineRepository } from "@/db/repositories/accounts/document-line
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
+import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import { postDocument } from "@/services/accounts/post-document";
 import type { PostDocumentResult } from "@/services/accounts/post-document";
 import * as money from "@/services/accounts/money";
 import { firstOfMonth } from "@/services/billing/derive-periods";
+import { renderFinalInvoice } from "@/services/billing/render-invoice";
+import { blobStore } from "@/services/billing/blob-store";
 import { logger } from "@/lib/logger";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 
@@ -49,6 +53,135 @@ class PostAccountFailureSignal extends Error {
     message: string,
   ) {
     super(message);
+  }
+}
+
+// bm19-spec §Design "Render + store is a SEPARATE step from the posting
+// transaction (D10)" — called ONLY after `postAccount`'s per-account
+// transaction has committed the posted INV. Deliberately swallows every
+// failure: a render/store failure must never roll back the posted INV, never
+// hold `INVOICED`, and never abort the caller's loop — it is only ever
+// recorded via the ABSENCE of a `bill_run_invoices` row (no separate
+// "render-pending" flag column exists; `retryRenderInvoice` below re-derives
+// exactly this same absence).
+async function renderAndStoreInvoice(
+  billRunId: string,
+  billingAccountId: string,
+  posted: {
+    customerBillId: string;
+    periodPartition: string;
+    documentId: string;
+  },
+): Promise<void> {
+  try {
+    const pdf = await renderFinalInvoice({
+      runId: billRunId,
+      banId: billingAccountId,
+      invoiceNo: posted.documentId,
+    });
+    const { blobRef, checksum } = await blobStore.putInvoice(
+      posted.periodPartition,
+      posted.documentId,
+      pdf,
+    );
+    await billRunInvoicesRepository.insert(db, {
+      refBillRunId: billRunId,
+      refBillingAccountId: billingAccountId,
+      refCustomerBillId: posted.customerBillId,
+      refInvDocumentId: posted.documentId,
+      blobRef,
+      checksum,
+      periodPartition: posted.periodPartition,
+    });
+  } catch (err) {
+    logger.error(
+      "post-run: final render/store failed — INV posted, artifact render-pending",
+      {
+        billRunId,
+        billingAccountId,
+        documentId: posted.documentId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+  }
+}
+
+// bm19-spec §Implementation §4 "Add a retry-render path". Standalone —
+// deliberately NOT gated on the run's status (unlike `postRun`/`postAccount`,
+// which require `APPROVED`/`POSTING`): a run reaches `INVOICED`/`COMPLETED`
+// on posting completion regardless of render outcome (Design), so a
+// render-pending account may need retrying long after the run itself is
+// done and `postRun` would refuse it (`NOT_POSTABLE`). Only requires the
+// target account to actually be posted and not yet stored.
+export type RetryRenderResult =
+  | { ok: true; value: { billingAccountId: string; blobRef: string } }
+  | { ok: false; code: "NOT_INVOICED" | "ALREADY_STORED" | "RENDER_FAILED" };
+
+export async function retryRenderInvoice(
+  billRunId: string,
+  billingAccountId: string,
+): Promise<RetryRenderResult> {
+  const bill = await customerBillRepository.findForAccount(
+    db,
+    billRunId,
+    billingAccountId,
+  );
+  if (!bill || !bill.refInvDocumentId) {
+    return { ok: false, code: "NOT_INVOICED" };
+  }
+
+  const existing = await billRunInvoicesRepository.findByRunAndAccount(
+    db,
+    billRunId,
+    billingAccountId,
+  );
+  if (existing) {
+    return { ok: false, code: "ALREADY_STORED" };
+  }
+
+  try {
+    const pdf = await renderFinalInvoice({
+      runId: billRunId,
+      banId: billingAccountId,
+      invoiceNo: bill.refInvDocumentId,
+    });
+    const { blobRef, checksum } = await blobStore.putInvoice(
+      bill.periodPartition,
+      bill.refInvDocumentId,
+      pdf,
+    );
+    await billRunInvoicesRepository.insert(db, {
+      refBillRunId: billRunId,
+      refBillingAccountId: billingAccountId,
+      refCustomerBillId: bill.customerBillId,
+      refInvDocumentId: bill.refInvDocumentId,
+      blobRef,
+      checksum,
+      periodPartition: bill.periodPartition,
+    });
+    return { ok: true, value: { billingAccountId, blobRef } };
+  } catch (err) {
+    // A concurrent renderer (the post-commit render in `renderAndStoreInvoice`,
+    // or a double-fired retry) can store the artifact between our existence
+    // check above and this insert; the (run, ban, period) unique constraint
+    // then rejects our insert. That is a successful store, not a render
+    // failure — re-check and report it as ALREADY_STORED rather than a
+    // misleading RENDER_FAILED.
+    const stored = await billRunInvoicesRepository.findByRunAndAccount(
+      db,
+      billRunId,
+      billingAccountId,
+    );
+    if (stored) {
+      return { ok: false, code: "ALREADY_STORED" };
+    }
+    logger.error("post-run: retry-render failed", {
+      billRunId,
+      billingAccountId,
+      documentId: bill.refInvDocumentId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { ok: false, code: "RENDER_FAILED" };
   }
 }
 
@@ -103,8 +236,19 @@ export async function postAccount(
   const eventAt = new Date(run.glEventAt ?? run.scheduledRunDate);
   const entryDate = new Date(run.scheduledRunDate);
 
+  // Captured inside the transaction below, read again just after it commits
+  // (D10 — render + store is a step SEPARATE from the posting transaction,
+  // never inside it). Stays `null` on every path that doesn't reach a fresh
+  // `INVOICED` (skip/failure), so the post-commit hook only ever fires once
+  // per new post.
+  let justPosted: {
+    customerBillId: string;
+    periodPartition: string;
+    documentId: string;
+  } | null = null;
+
   try {
-    return await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       // One row-locked read: the trial bill + the account's attempt counter +
       // the billing-account GL fields, in a single round-trip. `FOR UPDATE OF
       // customer_bill` serializes concurrent posts of the same account.
@@ -141,6 +285,13 @@ export async function postAccount(
         approvedBy: null,
         metadata: null,
         lastEditedBy: actorId,
+        // bm19-spec §Phase-2 review folds T5 [P1] — the structural
+        // one-INV-per-bill latch: stamping these two lets the DB's partial
+        // UNIQUE index (`document_ref_customer_bill_id_unique`) refuse a
+        // second INV for this same bill outright, backing up (not
+        // replacing) the `lockBillForPosting`/`stampPosted` guards below.
+        refCustomerBillId: bill.customerBillId,
+        periodPartition: bill.periodPartition,
       });
 
       await documentLineRepository.insert(tx, {
@@ -178,10 +329,11 @@ export async function postAccount(
         );
       }
 
-      const chargeChecksum = await customerBillRepository.computeChargeChecksum(
+      const chargeChecksum = await ratedLinesRepository.computeChargeChecksum(
         tx,
-        bill.customerBillId,
-        bill.periodPartition,
+        run.billRunId,
+        billingAccountId,
+        bill.attemptCount,
       );
       const stamped = await customerBillRepository.stampPosted(
         tx,
@@ -208,8 +360,18 @@ export async function postAccount(
         { status: "INVOICED", errorCode: null, errorDetail: null },
       );
 
+      justPosted = {
+        customerBillId: bill.customerBillId,
+        periodPartition: bill.periodPartition,
+        documentId: doc.documentId,
+      };
       return { status: "invoiced", invoiceId: doc.documentId } as const;
     });
+
+    if (justPosted) {
+      await renderAndStoreInvoice(run.billRunId, billingAccountId, justPosted);
+    }
+    return result;
   } catch (err) {
     // The transaction above already rolled back — no orphan INV/ledger write.
     // Park the account with a fresh, separate write so the failure is visible

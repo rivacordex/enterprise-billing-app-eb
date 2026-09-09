@@ -7,6 +7,7 @@ import { billRunAccountStage } from "@/db/schema/billing/bill-run-account-stage"
 import { billRun } from "@/db/schema/billing/bill-run";
 import { billingAccount } from "@/db/schema/billing/accounts";
 import { customerBill } from "@/db/schema/billing/customer-bill";
+import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import type { AccountStatus, ErrorClass, Stage } from "@/types/billing";
 
 // bm03-spec §Design/§6/§7 — the scoping snapshot write: one INSERT of every
@@ -198,7 +199,11 @@ export const billRunAccountRepository = {
   // `customer_bill` for the invoice id once posted. The view derives the
   // displayed status (pending / invoiced / PERIOD_CLOSED / failed) from
   // `status` + `errorCode` — no new stored column, same read-derived
-  // convention as `StallBanner`/`overdue`.
+  // convention as `StallBanner`/`overdue`. bm19-spec §Implementation §5 adds a
+  // second left-join to `bill_run_invoices`: `hasStoredInvoice` is `false` for
+  // an `INVOICED` account whose final render/store failed (D10's tolerated,
+  // retryable render-pending state) — never a stored column, re-derived from
+  // the row's absence exactly like `retryRenderInvoice` does.
   async listPostingProgressForRun(
     db: Database,
     billRunId: string,
@@ -210,6 +215,7 @@ export const billRunAccountRepository = {
       errorCode: string | null;
       errorDetail: string | null;
       invoiceId: string | null;
+      hasStoredInvoice: boolean;
     }[]
   > {
     const rows = await db
@@ -220,6 +226,7 @@ export const billRunAccountRepository = {
         errorCode: billRunAccount.errorCode,
         errorDetail: billRunAccount.errorDetail,
         invoiceId: customerBill.refInvDocumentId,
+        billRunInvoiceId: billRunInvoices.billRunInvoiceId,
       })
       .from(billRunAccount)
       .innerJoin(
@@ -236,6 +243,16 @@ export const billRunAccountRepository = {
           ),
         ),
       )
+      .leftJoin(
+        billRunInvoices,
+        and(
+          eq(billRunInvoices.refBillRunId, billRunAccount.refBillRunId),
+          eq(
+            billRunInvoices.refBillingAccountId,
+            billRunAccount.refBillingAccountId,
+          ),
+        ),
+      )
       .where(
         and(
           eq(billRunAccount.refBillRunId, billRunId),
@@ -243,7 +260,11 @@ export const billRunAccountRepository = {
         ),
       )
       .orderBy(billingAccount.name);
-    return rows.map((r) => ({ ...r, status: r.status as AccountStatus }));
+    return rows.map(({ billRunInvoiceId, ...r }) => ({
+      ...r,
+      status: r.status as AccountStatus,
+      hasStoredInvoice: billRunInvoiceId !== null,
+    }));
   },
 
   // bm12-spec §Design/§Implementation §3 — the cancel write: every scoped

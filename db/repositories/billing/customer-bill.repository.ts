@@ -4,6 +4,7 @@ import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
+import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 
 // bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
@@ -321,42 +322,17 @@ export const customerBillRepository = {
     return row ?? null;
   },
 
-  // bm11-spec §Design/§Implementation §1-2 — the "Resolved" checksum formula,
-  // computed entirely in SQL over the stored strings (code-standards §2.4 —
-  // never re-derived/reformatted in TypeScript): `md5(subtotal || ':' ||
-  // the ordered tax items || ':' || total_amount)`. No tax items ⇒ the
-  // middle segment is empty (COALESCE), not NULL-poisoning the whole hash.
-  async computeChargeChecksum(
-    tx: Database,
-    customerBillId: string,
-    periodPartition: string,
-  ): Promise<string> {
-    const [row] = await tx.execute<{ checksum: string }>(sql`
-      SELECT md5(
-        cb.subtotal::text || ':' ||
-        COALESCE(
-          (SELECT string_agg(
-             cti.tax_category || '|' || cti.tax_rate::text || '|' || cti.tax_amount::text,
-             ',' ORDER BY cti.tax_category
-           )
-           FROM billing.customer_bill_tax_item cti
-           WHERE cti.ref_customer_bill_id = cb.customer_bill_id
-             AND cti.period_partition = cb.period_partition),
-          ''
-        ) || ':' ||
-        cb.total_amount::text
-      ) AS checksum
-      FROM billing.customer_bill cb
-      WHERE cb.customer_bill_id = ${customerBillId}
-        AND cb.period_partition = ${periodPartition}
-    `);
-    if (!row) {
-      throw new Error(
-        `computeChargeChecksum: no customer_bill ${customerBillId}/${periodPartition}`,
-      );
-    }
-    return row.checksum;
-  },
+  // bm19-spec §Design "Posting reads real udr_rated (Inv #3)" — the
+  // charge-checksum computation now lives in
+  // `db/repositories/billing/rated-lines.repository.ts`
+  // (`computeChargeChecksum` there), which reads the account's claimed
+  // rated-usage rows directly. It could not stay in THIS file: this
+  // repository already writes other tables below it, and the
+  // billing-rating-write-boundary guardrail treats any file that both
+  // touches the rating schema and writes anywhere as suspect, independent
+  // of which table the write targets. The other file stays read-only, so
+  // it is the sanctioned home for this read (same shape as its existing
+  // claimed-lines lookup).
 
   // bm11-spec §Design/§Implementation §1 step 5 — the posting stamp: sets the
   // finalization latch (`ref_inv_document_id`, architecture Inv. #4) plus
@@ -368,6 +344,13 @@ export const customerBillRepository = {
   // a row was actually stamped — `false` means the bill was concurrently posted
   // between this transaction's resume check and here, and the caller MUST throw
   // so the duplicate INV create + account `INVOICED` flip roll back together.
+  //
+  // bm19-spec §Phase-2 review folds T5 [P1] — this `IS NULL` guard (and
+  // `lockBillForPosting`'s row lock above it) is demoted to a friendly,
+  // resumable early-return rather than the SOLE backstop: `document`'s new
+  // partial UNIQUE index (`document_ref_customer_bill_id_unique`,
+  // 0037_document_customer_bill_latch.sql) structurally refuses a second
+  // posted INV for the same bill regardless of what this guard does.
   async stampPosted(
     tx: Database,
     customerBillId: string,
@@ -401,7 +384,10 @@ export const customerBillRepository = {
   // account read: the same account-name/currency join as `listForRun`, scoped
   // to one `(run, ban)` pair. `null` means no bill exists yet for this
   // account (the render service maps this to a typed not-found → 404 at the
-  // route, never a 500).
+  // route, never a 500). bm19-spec §Implementation §3/§4 reuses this same
+  // read for the final renderer AND the retry-render path — both need
+  // `refInvDocumentId` (the real invoice number / the render-pending check),
+  // so it's included unconditionally rather than forking a second read.
   async findForAccount(
     db: Database,
     billRunId: string,
@@ -419,6 +405,7 @@ export const customerBillRepository = {
     taxTotal: string;
     totalAmount: string;
     paymentDueDate: string;
+    refInvDocumentId: string | null;
   } | null> {
     const [row] = await db
       .select({
@@ -434,6 +421,7 @@ export const customerBillRepository = {
         taxTotal: customerBill.taxTotal,
         totalAmount: customerBill.totalAmount,
         paymentDueDate: customerBill.paymentDueDate,
+        refInvDocumentId: customerBill.refInvDocumentId,
       })
       .from(customerBill)
       .innerJoin(
@@ -469,9 +457,17 @@ export const customerBillRepository = {
       taxTotal: string;
       totalAmount: string;
       paymentDueDate: string;
+      refInvDocumentId: string | null;
+      hasStoredInvoice: boolean;
     }[]
   > {
-    return db
+    // bm19-spec §Implementation §5 — a left-join to `bill_run_invoices` (same
+    // shape as `bill-run-account.repository.ts`'s `listPostingProgressForRun`)
+    // so the tab can distinguish a posted bill whose final artifact is STORED
+    // from one still render-pending (D10's tolerated render failure — INV set,
+    // no `bill_run_invoices` row). Re-derived from the row's absence, never a
+    // stored column.
+    const rows = await db
       .select({
         customerBillId: customerBill.customerBillId,
         billingAccountId: customerBill.refBillingAccountId,
@@ -482,13 +478,29 @@ export const customerBillRepository = {
         taxTotal: customerBill.taxTotal,
         totalAmount: customerBill.totalAmount,
         paymentDueDate: customerBill.paymentDueDate,
+        refInvDocumentId: customerBill.refInvDocumentId,
+        billRunInvoiceId: billRunInvoices.billRunInvoiceId,
       })
       .from(customerBill)
       .innerJoin(
         billingAccount,
         eq(customerBill.refBillingAccountId, billingAccount.billingAccountId),
       )
+      .leftJoin(
+        billRunInvoices,
+        and(
+          eq(billRunInvoices.refBillRunId, customerBill.refBillRunId),
+          eq(
+            billRunInvoices.refBillingAccountId,
+            customerBill.refBillingAccountId,
+          ),
+        ),
+      )
       .where(eq(customerBill.refBillRunId, billRunId))
       .orderBy(billingAccount.name);
+    return rows.map(({ billRunInvoiceId, ...r }) => ({
+      ...r,
+      hasStoredInvoice: billRunInvoiceId !== null,
+    }));
   },
 };
