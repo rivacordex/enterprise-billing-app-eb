@@ -66,13 +66,19 @@ describe.skipIf(!databaseUrl)(
     it("two concurrent inserts of the same period create exactly one row", async () => {
       for (let i = 0; i < RACE_RUNS; i++) {
         // A distinct period per race iteration so each starts clean.
+        // bm21-spec Phase-2 review fold T7 (#4a) — day 28 (never 29), since
+        // this fixture builds a plain calendar-date string per iteration and
+        // 2026 is not a leap year: `2026-02-29` doesn't exist and Postgres
+        // rejects it (22008), independent of any run-date derivation logic
+        // (`currentDuePeriod` itself already clamps correctly via `Date.UTC`
+        // — this was purely a test-fixture bug, not a production one).
         const month = String(i + 1).padStart(2, "0");
         const rows = [
           {
             refBillCycleId: cycleId,
             periodStart: `2026-${month}-01`,
             periodEnd: `2026-${month}-28`,
-            scheduledRunDate: `2026-${month}-29`,
+            scheduledRunDate: `2026-${month}-28`,
           },
         ];
 

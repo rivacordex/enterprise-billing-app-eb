@@ -26,6 +26,11 @@
 #     anywhere in this repo's Bicep (every existing Key Vault role assignment
 #     here is to a Container App Managed Identity, not this pipeline's own
 #     service connection principal); flagged, not assumed.
+#   - bm21's billrun_live_kestra_smoke stage (off by default) reads
+#     `pg-connection-string-app` (existing) plus two NOT YET CREATED Key
+#     Vault secrets, `billrun-engine-url`/`billrun-engine-auth` — see
+#     flows/billrun/README.md's phase-2 exit criterion. Same "flagged, not
+#     assumed" access-grant caveat as the line above.
 #
 # rm13 (the rating module's ship gate) adds two OFF-BY-DEFAULT stages
 # branching off test_scan, neither of which is part of the mandatory five-
@@ -89,6 +94,26 @@ parameters:
   # deployed and reachable.
   - name: scanRatingEngineDast
     displayName: Run the rm13 OWASP ZAP DAST baseline against the deployed rating engine (engine must be deployed first)
+    type: boolean
+    default: false
+
+  # bm21-spec §Implementation §3/Phase-2 review fold T3 — the billing
+  # module's analogue of runRatingFanoutGate/scanRatingEngineDast: proves
+  # `scripts/billrun-live-kestra-smoke.ts`'s trigger -> claim -> PROCESSED
+  # path against a REALLY DEPLOYED `bill_run_processing` flow on a real
+  # `billrun` Kestra engine — something the CI-doubled DB-gated E2E
+  # (tests/db/billing-e2e-happy-path.integration.test.ts) can never prove.
+  # Defaults to false for the SAME reason as the rating gates above: the
+  # separate workflow-management repo that builds/deploys the real flow, its
+  # owning team, and its deploy step are still TBD (flows/billrun/README.md)
+  # — there is normally no real engine for this to target. Queue manually
+  # (or via a scheduled trigger configured with this parameter set to true
+  # in the Azure DevOps UI's Scheduled Triggers, once a nightly cadence is
+  # wanted — T3 asks for "non-CI / nightly", and Azure DevOps schedules
+  # support per-schedule parameter overrides there) once a real engine is
+  # deployed and reachable.
+  - name: runBillrunLiveKestraSmoke
+    displayName: Run the bm21 live-Kestra smoke gate (trigger -> claim -> PROCESSED) against the deployed billrun engine (engine must be deployed first)
     type: boolean
     default: false
 
@@ -812,3 +837,81 @@ stages:
   # zap-scan-rating-engine-stage.yml's header for the full gating rationale
   # (scanRatingEngineDast, default false).
   - template: zap-scan-rating-engine-stage.yml
+
+  # ---------------------------------------------------------------------
+  # bm21-spec §Implementation §3/Phase-2 review fold T3 — the billing
+  # module's live-Kestra smoke gate (see the runBillrunLiveKestraSmoke
+  # parameter above for the gating rationale). Unlike rating_fanout_gate,
+  # this does NOT stand up a local/disposable engine — the real
+  # `bill_run_processing` flow is built and deployed from a separate
+  # workflow-management repo (flows/billrun/README.md), so this targets an
+  # ALREADY-DEPLOYED engine + an already-migrated/seeded real database
+  # (same "targets a deployed environment" shape as zap-scan-rating-engine-
+  # stage.yml, not rating_fanout_gate's local docker-compose stack).
+  #
+  # Required Key Vault secrets (KEYVAULT_NAME, um30-infra variable group):
+  # `pg-connection-string-app` (the existing app-runtime DB connection — the
+  # SAME database the deployed engine's `billrun_runtime` role connects to)
+  # and two NOT YET CREATED secrets, `billrun-engine-url`/
+  # `billrun-engine-auth` (the real BILLRUN_ENGINE_URL/_AUTH once a `billrun`
+  # namespace is deployed — flagged, not assumed, same posture as
+  # deploy_rating_flows's `kestra-basic-auth-password` note above). Also
+  # requires `db:seed-sample` to have already been run against that database
+  # (out of band — this stage does not run it, to avoid silently reseeding a
+  # shared environment on every smoke run).
+  - stage: billrun_live_kestra_smoke
+    displayName: Billing ship gate — live-Kestra smoke (bm21, trigger -> claim -> PROCESSED)
+    dependsOn: test_scan
+    condition: and(succeeded(), eq(${{ parameters.runBillrunLiveKestraSmoke }}, true))
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: live_kestra_smoke
+        displayName: Real billrun engine + scripts/billrun-live-kestra-smoke.ts
+        steps:
+          - task: UseNode@1
+            inputs:
+              version: "22.x"
+            displayName: Use Node 22
+
+          - script: npm ci
+            displayName: Install dependencies
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                DATABASE_URL=$(az keyvault secret show \
+                  --vault-name "$(KEYVAULT_NAME)" \
+                  --name pg-connection-string-app \
+                  --query value -o tsv)
+                BILLRUN_ENGINE_URL=$(az keyvault secret show \
+                  --vault-name "$(KEYVAULT_NAME)" \
+                  --name billrun-engine-url \
+                  --query value -o tsv)
+                BILLRUN_ENGINE_AUTH=$(az keyvault secret show \
+                  --vault-name "$(KEYVAULT_NAME)" \
+                  --name billrun-engine-auth \
+                  --query value -o tsv)
+                echo "##vso[task.setvariable variable=DATABASE_URL;issecret=true]$DATABASE_URL"
+                echo "##vso[task.setvariable variable=BILLRUN_ENGINE_URL;issecret=true]$BILLRUN_ENGINE_URL"
+                echo "##vso[task.setvariable variable=BILLRUN_ENGINE_AUTH;issecret=true]$BILLRUN_ENGINE_AUTH"
+            displayName: Fetch DATABASE_URL + BILLRUN_ENGINE_URL/_AUTH from Key Vault
+
+          - script: npm run billrun:live-kestra-smoke
+            env:
+              DATABASE_URL: $(DATABASE_URL)
+              BILLRUN_ENGINE_URL: $(BILLRUN_ENGINE_URL)
+              BILLRUN_ENGINE_AUTH: $(BILLRUN_ENGINE_AUTH)
+              # This script never serves HTTP or runs an auth flow — these two
+              # only need to satisfy lib/config.ts's eager env-schema parse
+              # (same reason tests/services/billing/trigger-run.service.test.ts
+              # needs them set, per billmgmt-progress-tracker.md's Session
+              # Notes), so a fixed placeholder is deliberate, not a shortcut
+              # around a real secret.
+              BETTER_AUTH_SECRET: "ci-placeholder-secret-min-32-characters-long"
+              BETTER_AUTH_URL: "https://localhost"
+            displayName: Trigger -> claim -> PROCESSED against the real billrun engine

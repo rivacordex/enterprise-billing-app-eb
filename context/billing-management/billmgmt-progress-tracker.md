@@ -8,6 +8,11 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 2 · Phase I — **bm21 (Phase-2 Ship Gate) — delivered** (audit +
+  cross-cutting closures; DB-gated proof still environmental, see
+  Outstanding). See
+  `context/billing-management/specs/bm21-phase2-ship-gate.md` and the
+  Delivered Units entry below. **Phase 2 (bm14–bm21) is feature-complete.**
 - Phase 1 — Bill Run module build. **Complete.** bm01–bm13 (the entirety of
   `bm00-build-plan.md`) are delivered.
 - Phase 2 · Phase F — **bm14 (`billrun_runtime` role & the two-writer grant
@@ -77,12 +82,16 @@ enumerations were trimmed to key facts + decisions. Full history:
   DB either — verify the full checklist (idempotent re-run, prod-guard trip,
   the seeded `udr_rated` CHECK/UNIQUE pass, a real bill run against the
   seeded scenario) once Postgres is reachable.
-- **bm16's live-Kestra smoke gate is unmet** (spec review fold T3): no deployed
-  `billrun` engine or real `bill_run_processing` flow exists anywhere yet — the
-  separate workflow-management repo, its owning team, and its deploy step are
-  named as `TBD` in `flows/billrun/README.md`. The checklist's "end-to-end
-  against the deployed placeholder flow" item is unproven; register the
-  live-Kestra smoke run as a phase-2 exit criterion when bm21 is specced.
+- **bm16/bm20's live-Kestra smoke gate is unmet** (spec review fold T3,
+  formalized as an explicit 3-item phase-2 exit criterion by bm21 — see
+  `flows/billrun/README.md`): no deployed `billrun` engine or real
+  `bill_run_processing`/`bill_run_distribution` flow exists anywhere yet —
+  the separate workflow-management repo, its owning team, and its deploy
+  step are still `_TBD_`. bm21 shipped the runnable half
+  (`npm run billrun:live-kestra-smoke`, wired as the off-by-default
+  `billrun_live_kestra_smoke` Azure Pipelines stage) but it has **never
+  been run against a real engine** — there isn't one. Run it (and resolve
+  the three `_TBD_` lines) once a real `billrun` namespace exists.
 - `bill_run.ref_tax_rate_version`'s only writer (`stampTaxRateVersion`,
   `services/billing/taxation.ts`) was retired with bm16 Fork B — no app or
   processor writer is specced for it yet (`billrun_runtime` holds no
@@ -132,23 +141,27 @@ enumerations were trimmed to key facts + decisions. Full history:
   forced failure + Rerun/force-complete actually reaches `COMPLETED` against
   the live engine.
 - **`tests/db/billing-e2e-happy-path.integration.test.ts` (the ship-gate
-  journey) — fixed for bm20's lifecycle (2026-09-09 CodeRabbit review fold).**
-  It previously expected `completedRun?.status` to read `COMPLETED`
-  immediately after `postRun` (the bm11-era shape); bm20 moves that
-  transition to `POSTING → INVOICED` followed by a separate
-  `triggerDistribution` call, so the run actually sits at `DISTRIBUTING`
-  (against the stub engine, synchronously) once `postRun` returns. The test
-  now asserts that intermediate `DISTRIBUTING` state (`invoicedAt` set,
-  `completedAt` still null, a stamped `distributionExecutionId`), then drives
-  the run the rest of the way to `COMPLETED` itself — `recordDistribution
-  Outcome` for the sole mandatory artifact the automatic trigger actually
-  launched (this environment's render/store gap means `banBilled` never got
-  a `bill_run_invoices` row, so only the per-run report CSV was launched),
-  then `recomputeDistributionStatus` (standing in for the flow's `finally`
-  terminal push — the same functions the M2M route handlers themselves
-  delegate to, proven directly by `tests/app/api/billrun-distribution-
-  outcome.test.ts`/`billrun-status.test.ts`). Still DB-gated and unexecuted
-  in this environment (same gap as every other DB-gated test here).
+  journey) — extended by bm21 for the reject leg + the D10 safety net (T8);
+  still DB-gated and unexecuted in this environment.** History: fixed for
+  bm20's lifecycle by a 2026-09-09 CodeRabbit review fold (`POSTING →
+  INVOICED` then a separate `triggerDistribution` call, landing on
+  `DISTRIBUTING` rather than the bm11-era immediate `COMPLETED`). bm21 then
+  replaced the old "rerun a subset" demonstration with a real reject →
+  blocked-approval → rerun-rejected → re-process leg (bm17 model (b)), and
+  — because auditing the D10 gap (T8) surfaced a genuine unenforced
+  correctness hole (see the bm21 Delivered Units entry) — changed what the
+  distribution tail now asserts: the run reaches `DISTRIBUTION_FAILED`
+  (not a silent `COMPLETED`) while `banBilled` is render-pending, then a
+  simulated retry-render + real `rerunDistribution` + a second
+  `recordDistributionOutcome` reaches `COMPLETED` for real. Every DB-gated
+  suite in this module (this file, `billrun-db-roles`, `materialize-runs`,
+  `trigger-run`, and the rest) remains written and statically verified
+  (imports cleanly, `tsc`/lint clean, `describe.skipIf(!databaseUrl)`) but
+  **never executed against a real Postgres in this environment** — per this
+  session's own memory/established convention, DB-gated integration tests
+  are never run against the shared local dev DB (it would wipe seed data
+  and break login); run them against a disposable/CI database before
+  treating bm21 (or anything in Phase 2) as end-to-end proven.
 
 ## Delivered Units (bm01–bm13)
 
@@ -935,6 +948,143 @@ enumerations were trimmed to key facts + decisions. Full history:
     `AUDIT_EVENT_CATEGORY_MAP`. No new permission (Start/Rerun distribution
     share `billrun_operate`; force-complete shares `billrun_approve`).
 
+- **bm21 — Phase-2 Ship Gate (Phase 2 · Phase I).** See
+  `context/billing-management/specs/bm21-phase2-ship-gate.md`. Bm13-discipline
+  audit of the assembled phase-2 guardrail suite (bm14–bm20) plus the
+  cross-cutting closures no single unit owned:
+  - **Guardrail audit (§1) — mostly already shipped.** Two-writer boundary
+    (bm14), `udr_rated` lifecycle incl. `REJECTED → BILL_DRAFT` re-claim
+    (bm16/bm17), M2M record-only + the 3-handler route-inventory lock
+    (bm16/bm20), rendered-invoice integrity (bm18/bm19), distribution
+    (bm20), two-execution + engine registry (bm16/bm20), and placeholder
+    isolation's "every run visibly badged" half (bm15, per-page tests e.g.
+    `tests/app/bill-runs-page.test.tsx`) were all already present and CI-
+    wired — confirmed by direct audit, not rebuilt. `billmgmt-code-
+    standards.md` §9 rewritten to assemble the full phase-1 + phase-2 list
+    (18 items) in one place, replacing the phase-1-only wording that never
+    got updated across bm14–bm20.
+  - **Closed gap — placeholder-mode's `_SAMPLE_*` marker had no test.** New
+    DB-free `tests/guardrails/billing-sample-seed-marker.test.ts` asserts
+    `db/seeds/sample/udr-rated-sample.ts`'s `buildSampleUdrRatedRow` (the
+    D28 stand-in factory `db:seed-sample` uses for every unclaimed
+    `rating.udr_rated` charge) marks `udrSourceFile`/`udrRefBatchId`/
+    `ratingEngineVersion` with the `_SAMPLE_` prefix, for both `RATED` and
+    `BILL_NOTUSED` rows — a pure-function assertion, no DB needed. Actually
+    executed in this environment (unlike the DB-gated suites below) — 4/4
+    green.
+  - **[CRITICAL] Closed gap — the D10 safety net (Phase-2 review fold T8)
+    was unproven AND, on inspection, not actually enforced.** No test
+    proved "posted INV but no `bill_run_invoices` row → distribution
+    mandatory-fails"; auditing the code confirmed the gap was real, not
+    just untested — `computeExpectedMandatoryArtifactCount` derived its
+    "expected" count from STORED invoices only, so a render-pending account
+    was invisible to distribution's own math and could let the run reach
+    `COMPLETED` silently around it (the OLD E2E assertion literally proved
+    this "worked as designed" — now corrected). Fixed structurally, not via
+    a fabricated outcome row: `services/billing/distribute-run.ts` gains
+    `hasUnrenderedPostedAccounts` (diffs `customerBillRepository
+    .listPostedAccountIds` against a new `billRunInvoicesRepository
+    .listBillingAccountIdsForRun`), checked in `recomputeDistributionStatus`
+    right after the existing mandatory-FAILED check — `DISTRIBUTION_FAILED`,
+    never a silent `COMPLETED`, for as long as ANY posted account has
+    nothing stored to deliver. `rerunDistribution` is broadened to redeliver
+    not just the prior round's genuinely FAILED artifacts but also any
+    stored invoice that has NEVER been part of any round's outcome log (a
+    late `retryRenderInvoice`, rendered after the top-level trigger already
+    ran) — derived from ONE read of the full delivery log
+    (`billRunDistributionRepository.listForRun`) rather than a second,
+    independently-drifting `listFailedForAttempt` query, so a retry-render +
+    Rerun can still reach `COMPLETED`. 6 new/updated unit tests in
+    `tests/services/billing/distribute-run.service.test.ts` (2 new
+    `recomputeDistributionStatus` cases, 1 new `rerunDistribution` case, 3
+    existing `rerunDistribution` cases fixed for the new single-source-of-
+    truth read) — all green (25/25 in that file), plus the full non-DB-gated
+    `vitest run` suite reconfirmed no other regression.
+  - **Phase-2 E2E extended (§2) — reject leg + T8 leg, both new.**
+    `tests/db/billing-e2e-happy-path.integration.test.ts` (the bm13/bm20-era
+    journey) now also drives: **(a) reject → reprocess** — replaces the
+    prior arbitrary "rerun a subset" demonstration with a real
+    `rejectRun` (model (b), bm17) on the BILLED account, asserts the run
+    stays `PROCESSED`, the account's status is untouched, its unposted
+    trial bill is deleted, the `REJECTED_PENDING_REPROCESS` marker is
+    stamped (`listRejectedPendingForRun`), approval is blocked
+    (`CHECKS_FAILED` / `no_rejected_pending`), then reruns the rejected
+    account from Validation (re-claim → full six-stage re-drive, write-
+    then-signal again) back to `PROCESSED` with the marker cleared, before
+    proceeding to Approve/Post as before; **(b) the D10 safety net
+    end-to-end (T8)** — after posting, asserts distribution now
+    mandatory-fails (`DISTRIBUTION_FAILED`, not the old silent `COMPLETED`)
+    because the billed account is render-pending in this environment (no
+    Chromium/blob store, same gap as every prior unit), simulates a
+    retry-render's OUTCOME via a direct synthetic `bill_run_invoices` insert
+    (same technique as `simulateProcessorAggregation`/`Taxation` — this
+    row also doubles as the immutability-guard proof, replacing a second,
+    disconnected synthetic insert), calls the real `rerunDistribution`
+    (asserts it picks the new invoice up as never-attempted), delivers it,
+    and recomputes to `COMPLETED`. Still DB-gated and **unexecuted in this
+    environment** (same convention as every other DB-gated test in this
+    module — see Outstanding).
+  - **T7 — two real bugs found and fixed while assembling the gate, per
+    `billmgmt-known-issues.md` §4a/§4b** (both confirmed root-caused by
+    direct code reading, not guessed): **#4a** —
+    `tests/db/materialize-runs.integration.test.ts`'s race-loop built a
+    literal `2026-02-29` (non-leap year) as a plain template-string date,
+    independent of `currentDuePeriod`'s own `Date.UTC`-based arithmetic
+    (which already clamps correctly) — the bug was in the TEST FIXTURE, not
+    production date logic; fixed by using day 28 (valid in every month,
+    matching `periodEnd`'s existing convention) instead of 29. **#4b** —
+    `tests/db/trigger-run.integration.test.ts`'s "double-trigger guard"
+    case reused test 1's exact `(cycleId, periodStart="2026-06-01")` pair
+    with no per-test reset (one shared `beforeAll`/`afterAll` for the whole
+    file), colliding on `bill_run_cycle_period_unique` before the guard
+    under test was ever reached; fixed by giving that case its own distinct
+    period (July, not June) and updating both `triggerRun` calls' `today`
+    argument to stay due against the new `scheduledRunDate`.
+  - **T3 — live-Kestra smoke gate formalized as an explicit phase-2 exit
+    criterion**, not fabricated as already-met. `flows/billrun/README.md`'s
+    three `_TBD_` lines (repo/owner/deploy step) are left honestly `_TBD_`
+    (no real values exist to fill in) but are now framed as an explicit,
+    numbered 3-item exit checklist rather than a buried paragraph. New
+    `scripts/billrun-live-kestra-smoke.ts` (`npm run
+    billrun:live-kestra-smoke`) — a real, runnable script (materialize →
+    trigger → poll `reconcileRun` until `PROCESSED`, against the
+    `db:seed-sample` `_SAMPLE_*` scenario) that refuses to run against the
+    STUB engine client (`isBillRunEngineConfigured` false ⇒ throws loudly)
+    so it can never falsely "pass" unconfigured. Wired as a new, off-by-
+    default `billrun_live_kestra_smoke` stage in `infra/azure-
+    pipelines.yml` (`runBillrunLiveKestraSmoke` parameter, mirrors rm13's
+    `runRatingFanoutGate`/`scanRatingEngineDast` precedent), reading
+    `DATABASE_URL`/`BILLRUN_ENGINE_URL`/`BILLRUN_ENGINE_AUTH` from Key
+    Vault (`pg-connection-string-app`, existing, plus two **not yet
+    created** secrets `billrun-engine-url`/`billrun-engine-auth`, flagged
+    in the pipeline header comment the same way `kestra-basic-auth-
+    password` is). **Never executed against a real engine in this
+    environment** (none exists yet, by design — see Outstanding); YAML
+    syntax-validated (`js-yaml` parse) and the script typechecks/lints
+    clean.
+  - **Security gates (§3) — already fully covering the new phase-2
+    surfaces, confirmed by audit, no config change needed.** Semgrep scans
+    the whole repo tree (not a route allow-list) and OWASP ZAP's scope is
+    whole-host-by-regex (`infra/zap/zap-context.xml`), so the bm18/bm19
+    session-guarded PDF routes and bm20's third M2M handler were already
+    in scope by construction. The "authz-sweep inventory" the spec asks to
+    update turned out to already exist as `billmgmt-code-standards.md` §8's
+    route table (already current with every phase-2 row) — §8 now says so
+    explicitly, closing the ambiguity rather than standing up a duplicate
+    artifact.
+  - **Docs (§4).** `billmgmt-code-standards.md` §9 rewritten (phase-1 +
+    phase-2 guardrail list, 18 items); §8 gains the "this table IS the
+    authz-sweep inventory" note. This tracker entry.
+  - **No new npm packages, no new page/permission/table** — the unit's
+    stated boundary held; every change is a test, a doc, a CI-config
+    addition, or a small, targeted service-layer fix to a genuine
+    correctness gap surfaced while auditing (T7/T8), matching the bm13
+    ship-gate precedent of fixing what auditing finds rather than only
+    reporting it.
+  - **`tsc`/lint green** across every touched file (repeatedly reconfirmed
+    through this unit's edits); the full non-DB-gated `vitest run` suite
+    was run and showed no new regressions.
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -1229,20 +1379,26 @@ file history).
 
 ## Next Up
 
-- **bm01–bm20 are all delivered.** The remaining action items are
-  environmental (see Outstanding, above): apply migrations `0033`/`0035`/
+- **bm01–bm21 are all delivered — Phase 2 is feature-complete.** The
+  remaining action items are environmental (see Outstanding, above), same
+  category as every unit before bm21: apply migrations `0033`/`0035`/
   `0036`/`0037`/`0038`, run `db:bootstrap-billrun-roles` (after
   `db:bootstrap-roles` and `db:bootstrap-rating-roles`), run
-  `db:setup-partman-billing` (now registering six parents incl.
-  `bill_run_invoices`/`bill_run_distribution`), run the DB-gated suites
-  (incl. `billing-e2e-happy-path.integration.test.ts` — which does not yet
-  exercise Reject end-to-end, AND needs a bm20 fix before it can pass past
-  posting, see Outstanding above) against a real Postgres, and run
-  `db:seed-sample` there to verify bm15's checklist.
-- **bm16's live-Kestra smoke gate is unmet** — no deployed `billrun` engine or
-  real `bill_run_processing` flow exists yet; the separate workflow-management
-  repo/owner/deploy step are `TBD` in `flows/billrun/README.md`. Register the
-  smoke run as a phase-2 exit criterion when a future unit specs it.
+  `db:setup-partman-billing` (registering six parents incl.
+  `bill_run_invoices`/`bill_run_distribution`), run the full DB-gated suite
+  (incl. bm21's extended `billing-e2e-happy-path.integration.test.ts` —
+  now exercises Reject and the D10 safety net end-to-end) against a real
+  Postgres, and run `db:seed-sample` there to verify bm15's checklist AND
+  the new `billing-sample-seed-marker.test.ts` guardrail's real-DB
+  counterpart (it currently only asserts the seed factory's pure output
+  shape).
+- **The live-Kestra smoke gate (bm16/bm20, formalized by bm21 T3) is
+  unmet** — no deployed `billrun` engine or real `bill_run_processing`/
+  `bill_run_distribution` flow exists yet; the separate workflow-management
+  repo/owner/deploy step are still `_TBD_` in `flows/billrun/README.md`.
+  Run `npm run billrun:live-kestra-smoke` (or queue the
+  `billrun_live_kestra_smoke` pipeline stage) once a real engine exists —
+  this is the literal, numbered exit criterion now, not a vague future item.
 - **bm18's container-image Chromium proof is unbuilt** — `docker build .`
   against the new `node:22-bookworm-slim` Dockerfile plus an actual
   `renderDraftInvoice` PDF from that image were never exercised in this
@@ -1255,9 +1411,12 @@ file history).
   before treating final-invoice storage as ship-ready (see Outstanding,
   above).
 - **bm20's `bill_run_distribution` flow has no deployed engine either** —
-  same gap as bm16's `bill_run_processing`, now doubled: `flows/billrun/
-  README.md`'s owning team/repo/deploy step are `TBD` for BOTH flows. Fold
-  bm20's smoke run into the same live-Kestra exit criterion above rather than
-  tracking it separately.
-- Phase 2 · Phase H is now feature-complete per the current spec set
-  (bm01–bm20); no further unit is specced in this session.
+  folded into the live-Kestra exit criterion above, not tracked separately.
+- **bm21's own D10 safety-net fix (`distribute-run.ts`'s
+  `hasUnrenderedPostedAccounts` + `rerunDistribution`'s broadened
+  redelivery) is unit-tested (25/25 green, mocked repositories) and
+  DB-gated-E2E-written but, like everything else in this list, unproven
+  against a real Postgres** — run the extended E2E for real before treating
+  the D10 gap as genuinely closed in production.
+- No further unit is specced in this session; Phase 2 (bm14–bm21) is
+  feature-complete per the current spec set.

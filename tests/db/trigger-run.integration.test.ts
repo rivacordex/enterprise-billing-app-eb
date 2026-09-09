@@ -189,16 +189,23 @@ describe.skipIf(!databaseUrl)(
 
     it("rejects a second trigger while the run is already PROCESSING (double-trigger guard)", async () => {
       await newBillingAccount();
+      // bm21-spec Phase-2 review fold T7 (#4b) — a DISTINCT period from the
+      // previous case's (same shared `cycleId`, only one `beforeAll`/
+      // `afterAll` for the whole file, no per-test reset): reusing
+      // "2026-06-01" here collided with that case's own row on
+      // `bill_run_cycle_period_unique` (ref_bill_cycle_id, period_start),
+      // failing this test with a duplicate-key violation before it ever
+      // reached the double-trigger guard under test.
       const runId = await newScheduledRun({
-        periodStart: "2026-06-01",
-        periodEnd: "2026-06-30",
-        scheduledRunDate: "2026-07-01",
+        periodStart: "2026-07-01",
+        periodEnd: "2026-07-31",
+        scheduledRunDate: "2026-08-01",
       });
 
-      const first = await triggerRun(runId, actorId, "2026-07-01");
+      const first = await triggerRun(runId, actorId, "2026-08-01");
       expect(first.ok).toBe(true);
 
-      const second = await triggerRun(runId, actorId, "2026-07-01");
+      const second = await triggerRun(runId, actorId, "2026-08-01");
       expect(second).toEqual({ ok: false, code: "NOT_OPERABLE" });
 
       const snapshotRows = await db
