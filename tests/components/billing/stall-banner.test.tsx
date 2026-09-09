@@ -34,6 +34,7 @@ describe("StallBanner (bm12-spec §Visual)", () => {
       <StallBanner
         billRunId="BRN00000001"
         lastProgressAt={LAST_PROGRESS_AT}
+        canCancel
         locale="en-MY"
         timezone="UTC"
       />,
@@ -59,6 +60,7 @@ describe("StallBanner (bm12-spec §Visual)", () => {
       <StallBanner
         billRunId="BRN00000001"
         lastProgressAt={LAST_PROGRESS_AT}
+        canCancel
         locale="en-MY"
         timezone="UTC"
       />,
@@ -79,6 +81,7 @@ describe("StallBanner (bm12-spec §Visual)", () => {
       <StallBanner
         billRunId="BRN00000001"
         lastProgressAt={LAST_PROGRESS_AT}
+        canCancel
         locale="en-MY"
         timezone="UTC"
       />,
@@ -104,6 +107,7 @@ describe("StallBanner (bm12-spec §Visual)", () => {
       <StallBanner
         billRunId="BRN00000001"
         lastProgressAt={LAST_PROGRESS_AT}
+        canCancel
         locale="en-MY"
         timezone="UTC"
       />,
@@ -122,6 +126,7 @@ describe("StallBanner (bm12-spec §Visual)", () => {
       <StallBanner
         billRunId="BRN00000001"
         lastProgressAt={LAST_PROGRESS_AT}
+        canCancel
         locale="en-MY"
         timezone="UTC"
       />,
@@ -130,5 +135,23 @@ describe("StallBanner (bm12-spec §Visual)", () => {
     await user.click(screen.getByRole("button", { name: /cancel run/i }));
 
     expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  // bm20-spec §Phase-2 review fold T2 — a stalled DISTRIBUTING run has no
+  // "reset accounts to PENDING" cancel path (money's already posted); the
+  // detail page passes `canCancel={false}` for it.
+  it("hides Cancel run when canCancel is false, but Check status still shows", () => {
+    render(
+      <StallBanner
+        billRunId="BRN00000001"
+        lastProgressAt={LAST_PROGRESS_AT}
+        canCancel={false}
+        locale="en-MY"
+        timezone="UTC"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /check status/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /cancel run/i })).toBeNull();
   });
 });

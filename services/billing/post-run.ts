@@ -13,6 +13,7 @@ import * as money from "@/services/accounts/money";
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { renderFinalInvoice } from "@/services/billing/render-invoice";
 import { blobStore } from "@/services/billing/blob-store";
+import { triggerDistribution } from "@/services/billing/distribute-run";
 import { logger } from "@/lib/logger";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 
@@ -472,12 +473,21 @@ export async function postRun(
   }
 
   // Decide completion INSIDE the run's FOR UPDATE lock: read the account
-  // statuses and flip to COMPLETED atomically, so the "no account still
+  // statuses and flip to INVOICED atomically, so the "no account still
   // PROCESSED" check and the write can't be computed from divergent snapshots
   // (two concurrent resumes, or a park landing between an unlocked read and the
   // flip). `completePosting`'s `status = 'POSTING'` guard makes a losing
   // concurrent invocation a no-op that skips the audit.
-  const completed = await db.transaction(async (tx) => {
+  //
+  // bm20-spec §Design D8/D9, §Implementation §5 — this txn now stops at
+  // `INVOICED` (money in the ledger; next-cycle operability keys off this,
+  // never `COMPLETED`), not `COMPLETED` directly. `triggerDistribution` is a
+  // SEPARATE call made after this transaction commits — a system write
+  // (`actorUserId: null`), swallowed on failure: a lost/failed distribution
+  // trigger leaves the run `INVOICED` with no execution reference, recoverable
+  // via the "Start distribution" operator action (T2) rather than aborting or
+  // retrying this posting loop.
+  const invoiced = await db.transaction(async (tx) => {
     const locked = await billRunRepository.findByIdForUpdate(tx, billRunId);
     if (!locked || locked.status !== "POSTING") return false;
     const statuses = await billRunAccountRepository.listStatusesForRun(
@@ -493,13 +503,30 @@ export async function postRun(
       targetEntity: "BILL_RUN",
       targetId: billRunId,
       beforeData: { status: locked.status },
-      afterData: { status: "COMPLETED" },
+      afterData: { status: "INVOICED" },
     });
     return true;
   });
 
+  if (invoiced) {
+    try {
+      const triggered = await triggerDistribution(billRunId, null);
+      if (!triggered.ok) {
+        logger.error(
+          "post-run: automatic distribution trigger did not start",
+          { billRunId, code: triggered.code },
+        );
+      }
+    } catch (err) {
+      logger.error("post-run: automatic distribution trigger failed", {
+        billRunId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return {
     ok: true,
-    value: { billRunId, results, completed },
+    value: { billRunId, results, completed: invoiced },
   } as const;
 }

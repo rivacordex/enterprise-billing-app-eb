@@ -54,8 +54,46 @@ describe("POST /api/billrun/[runId]/status", () => {
     expect(response.status).toBe(422);
   });
 
-  it("422s on a malformed body (status must be PROCESSING_FAILED)", async () => {
+  it("422s on a malformed body (status must be one of the three recognized literals)", async () => {
     const response = await POST(request({ status: "PROCESSED" }), ctx());
+    expect(response.status).toBe(422);
+    expect(mockHandleStatusPush).not.toHaveBeenCalled();
+  });
+
+  // bm20-spec §Implementation §4 — the SAME endpoint also carries the
+  // distribution execution's terminal push. T1's stale-round guard requires
+  // `attempt` on both DISTRIBUTION_* pushes.
+  it("accepts DISTRIBUTION_FAILED (the flow's on_error push)", async () => {
+    const response = await POST(
+      request({ status: "DISTRIBUTION_FAILED", attempt: 1 }),
+      ctx(),
+    );
+    expect(response.status).toBe(200);
+    expect(mockHandleStatusPush).toHaveBeenCalledWith({
+      runId: "BRN00000001",
+      status: "DISTRIBUTION_FAILED",
+      attempt: 1,
+    });
+  });
+
+  it("accepts DISTRIBUTION_FINISHED (the flow's finally push)", async () => {
+    const response = await POST(
+      request({ status: "DISTRIBUTION_FINISHED", attempt: 1 }),
+      ctx(),
+    );
+    expect(response.status).toBe(200);
+    expect(mockHandleStatusPush).toHaveBeenCalledWith({
+      runId: "BRN00000001",
+      status: "DISTRIBUTION_FINISHED",
+      attempt: 1,
+    });
+  });
+
+  it("422s a DISTRIBUTION_* push missing the required attempt field", async () => {
+    const response = await POST(
+      request({ status: "DISTRIBUTION_FAILED" }),
+      ctx(),
+    );
     expect(response.status).toBe(422);
     expect(mockHandleStatusPush).not.toHaveBeenCalled();
   });
@@ -94,6 +132,7 @@ describe("POST /api/billrun/[runId]/status", () => {
     expect(json.data).toEqual({ ok: true });
     expect(mockHandleStatusPush).toHaveBeenCalledWith({
       runId: "BRN00000001",
+      status: "PROCESSING_FAILED",
     });
   });
 

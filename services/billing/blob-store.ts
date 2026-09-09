@@ -64,6 +64,16 @@ function blobPath(period: string, invoiceNo: string): string {
   return `${yearMonth}/${invoiceNo}.pdf`;
 }
 
+// bm20-spec §Design D21 — the per-run invoice-register report is a transient
+// distribution PAYLOAD, not a stored record (no `bill_run_output` row); it
+// still needs somewhere to live between "rendered" and "delivered", so it
+// shares the SAME `invoices/` container/blob client as the final invoice
+// PDFs (no second container to provision or auth against).
+function reportPath(period: string, billRunId: string): string {
+  const yearMonth = period.slice(0, 7);
+  return `${yearMonth}/${billRunId}-report.csv`;
+}
+
 // Azure answers an `if-none-match: *` upload that lost the write-once race
 // with HTTP 412 (the blob already exists). Duck-typed rather than importing
 // `RestError` so the check survives across `@azure/*` package internals.
@@ -124,6 +134,30 @@ export const blobStore = {
         checksum: createHash("md5").update(stored).digest("hex"),
       };
     }
+  },
+
+  // bm20-spec §Design D21/§Implementation §3 — writes the per-run register
+  // CSV as a distribution payload. Unlike `putInvoice`, this is NOT
+  // write-once: `triggerDistribution` regenerates it fresh on every trigger
+  // (first entry) AND every `rerunDistribution` (if the report itself failed
+  // delivery) — there is no immutable posted-artifact contract for a
+  // transient report, so a plain overwrite is correct here.
+  async putReport(
+    period: string,
+    billRunId: string,
+    bytes: Buffer,
+  ): Promise<PutInvoiceResult> {
+    const path = reportPath(period, billRunId);
+    const container = await getContainerClient();
+    const blockBlobClient = container.getBlockBlobClient(path);
+    const blobRef = `${CONTAINER_NAME}/${path}`;
+    await blockBlobClient.uploadData(bytes, {
+      blobHTTPHeaders: { blobContentType: "text/csv" },
+    });
+    return {
+      blobRef,
+      checksum: createHash("md5").update(bytes).digest("hex"),
+    };
   },
 
   async getInvoice(blobRef: string): Promise<Buffer> {

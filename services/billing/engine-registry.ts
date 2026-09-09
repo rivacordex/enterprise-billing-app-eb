@@ -101,16 +101,23 @@ function clientFor(resolved: ResolvedEngine): EngineClient {
 }
 
 export const engineRegistry = {
-  // Triggers the named engine and returns the execution ref PLUS the resolved
-  // engine's stable identity — the caller stamps `engineRef` onto the run
-  // alongside the execution id/flow id/flow revision.
+  // Triggers the named engine's given FLOW and returns the execution ref PLUS
+  // the resolved engine's stable identity — the caller stamps `engineRef`
+  // onto the run alongside the execution id/flow id/flow revision.
+  // bm20-spec §Implementation §3 — the `billrun` engine now hosts two flows
+  // (`bill_run_processing`/`bill_run_distribution`, `services/billing/
+  // engine-client.ts`'s exported flow-id constants); `flowId` selects which
+  // one this trigger targets. Adding a flow needs no change here — only a new
+  // constant + a caller passing it.
   async trigger(
     name: EngineName,
+    flowId: string,
     payload: TriggerPayload,
   ): Promise<ExecutionRef & { engineRef: string }> {
     const resolved = resolveEngine(name);
     const ref = await clientFor(resolved).startExecution(
       resolved.connection,
+      flowId,
       payload,
     );
     return { ...ref, engineRef: resolved.engineRef };

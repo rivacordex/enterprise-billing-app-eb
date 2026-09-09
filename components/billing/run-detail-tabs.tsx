@@ -9,6 +9,7 @@ import Link from "next/link";
 
 import { AuditTable } from "@/components/billing/audit-table";
 import { CustomerBillTable } from "@/components/billing/customer-bill-table";
+import { DistributionTab } from "@/components/billing/distribution-tab";
 import { ErrorsTable } from "@/components/billing/errors-table";
 import { StageTimeline } from "@/components/billing/stage-timeline";
 import { UnchargedTable } from "@/components/billing/uncharged-table";
@@ -17,6 +18,7 @@ import type { RunDetailTab } from "@/validation/billing/run-detail.schema";
 import { RUN_DETAIL_TABS } from "@/validation/billing/run-detail.schema";
 import type {
   CustomerBillRow,
+  DistributionView,
   ErrorRow,
   RejectedPendingRow,
   StageTimelineRow,
@@ -29,6 +31,7 @@ const TAB_LABELS: Record<RunDetailTab, string> = {
   customers: "Customers & Bills",
   uncharged: "Uncharged",
   errors: "Errors",
+  distribution: "Distribution",
   audit: "Audit",
 };
 
@@ -43,9 +46,12 @@ export interface RunDetailTabsProps {
   uncharged: UnchargedRow[];
   errors: ErrorRow[];
   rejectedPending: RejectedPendingRow[];
+  distribution: DistributionView | null;
   audit: AuditLogRow[];
   canRecover: boolean;
   canRerun: boolean;
+  canOperate: boolean;
+  canApprove: boolean;
   locale: string;
   timezone: string;
 }
@@ -58,9 +64,12 @@ export function RunDetailTabs({
   uncharged,
   errors,
   rejectedPending,
+  distribution,
   audit,
   canRecover,
   canRerun,
+  canOperate,
+  canApprove,
   locale,
   timezone,
 }: RunDetailTabsProps): React.JSX.Element {
@@ -110,6 +119,21 @@ export function RunDetailTabs({
           canRerun={canRerun}
           rejectedPending={rejectedPending}
         />
+      ) : activeTab === "distribution" ? (
+        distribution ? (
+          <DistributionTab
+            view={distribution}
+            canOperate={canOperate}
+            canApprove={canApprove}
+            locale={locale}
+            timezone={timezone}
+          />
+        ) : (
+          <p className="text-body-sm text-muted-foreground">
+            Distribution has not started yet — it becomes available once the
+            run is Invoiced.
+          </p>
+        )
       ) : (
         <AuditTable rows={audit} timezone={timezone} />
       )}

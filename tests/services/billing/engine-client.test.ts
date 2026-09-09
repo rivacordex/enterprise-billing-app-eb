@@ -13,6 +13,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   EngineError,
+  PROCESSING_FLOW_ID,
   realEngineClient,
   stubEngineClient,
 } from "@/services/billing/engine-client";
@@ -45,10 +46,10 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await stubEngineClient.startExecution(CONNECTION, PAYLOAD);
+    const ref = await stubEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD);
 
     expect(ref).toEqual({
-      executionId: "stub-exec-BRN00000001",
+      executionId: "stub-exec-bill_run_processing-BRN00000001",
       definitionId: "billrun.bill_run_processing",
       definitionRevision: 0,
     });
@@ -94,7 +95,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await realEngineClient.startExecution(CONNECTION, PAYLOAD);
+    const ref = await realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD);
 
     expect(ref).toEqual({
       executionId: "exec-123",
@@ -120,7 +121,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     );
 
     await expect(
-      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
     ).rejects.toThrow(EngineError);
   });
 
@@ -131,7 +132,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     );
 
     await expect(
-      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
     ).rejects.toThrow(EngineError);
   });
 
@@ -146,8 +147,71 @@ describe("realEngineClient (bm03-spec §5)", () => {
     );
 
     await expect(
-      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
     ).rejects.toThrow(EngineError);
+  });
+
+  it("throws EngineError when the 2xx body is not valid JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.reject(new SyntaxError("Unexpected token")),
+      }),
+    );
+
+    await expect(
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
+    ).rejects.toThrow(EngineError);
+  });
+
+  // The abort timer must stay armed through `response.json()`, not just the
+  // initial `fetch()` — otherwise a response whose headers arrive but whose
+  // body stalls (a hung/slow-loris-style engine) hangs `startExecution`
+  // forever instead of timing out.
+  it("keeps the abort timer armed through response.json() so a stalled body is aborted rather than left hanging", async () => {
+    vi.useFakeTimers();
+    try {
+      let capturedSignal: AbortSignal | undefined;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url: string, init: RequestInit) => {
+          capturedSignal = init.signal as AbortSignal;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () =>
+              new Promise((_resolve, reject) => {
+                capturedSignal?.addEventListener("abort", () =>
+                  reject(new Error("The operation was aborted.")),
+                );
+              }),
+          });
+        }),
+      );
+
+      const promise = realEngineClient.startExecution(
+        CONNECTION,
+        PROCESSING_FLOW_ID,
+        PAYLOAD,
+      );
+      // Attach a handler immediately (the assertion below re-awaits the SAME
+      // promise) so the rejection fired by advancing timers below is never
+      // briefly "unhandled" from Node's perspective.
+      promise.catch(() => {});
+      // Let the mocked fetch() promise settle so execution is parked inside
+      // `response.json()` before the timer is advanced.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(promise).rejects.toThrow(EngineError);
+      expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // bm12-spec §Design/§Implementation §2.

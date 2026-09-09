@@ -5,6 +5,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
+import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 import type { AccountStatus } from "@/types/billing";
 import type { RerunStage } from "@/validation/billing/rerun-run.schema";
 
@@ -153,14 +154,18 @@ export async function rerunRun(
       // 5. Re-trigger the engine scoped to the rerun accounts + new attempt.
       let executionRef;
       try {
-        executionRef = await engineRegistry.trigger("billrun", {
-          bill_run_id: run.billRunId,
-          period_start: run.periodStart,
-          period_end: run.periodEnd,
-          ban_ids: banIds,
-          attempt: newAttempt,
-          gl_event_at: run.glEventAt ?? run.scheduledRunDate,
-        });
+        executionRef = await engineRegistry.trigger(
+          "billrun",
+          PROCESSING_FLOW_ID,
+          {
+            bill_run_id: run.billRunId,
+            period_start: run.periodStart,
+            period_end: run.periodEnd,
+            ban_ids: banIds,
+            attempt: newAttempt,
+            gl_event_at: run.glEventAt ?? run.scheduledRunDate,
+          },
+        );
       } catch (err) {
         throw new EngineUnreachableSignal(
           err instanceof Error ? err.message : "Engine unreachable",
