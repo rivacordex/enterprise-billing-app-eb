@@ -19,7 +19,10 @@ import {
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { blobStore } from "@/services/billing/blob-store";
-import type { DistributionArtifactType, DistributionOutcome } from "@/types/billing";
+import type {
+  DistributionArtifactType,
+  DistributionOutcome,
+} from "@/types/billing";
 
 // bm20-spec §Design/§Implementation §3/§4. The bill-run distributor's app
 // side — transport-only (D-push): this file hands the flow references to
@@ -88,7 +91,10 @@ async function computeExpectedMandatoryArtifactCount(
   tx: Database,
   billRunId: string,
 ): Promise<number> {
-  const invoiceCount = await billRunInvoicesRepository.countForRun(tx, billRunId);
+  const invoiceCount = await billRunInvoicesRepository.countForRun(
+    tx,
+    billRunId,
+  );
   return invoiceCount + 1;
 }
 
@@ -273,7 +279,8 @@ export async function rerunDistribution(
         everAttempted.map((r) => `${r.target}::${r.artifactRef}`),
       );
       const neverAttemptedInvoices = allInvoices.filter(
-        (inv) => !attemptedRefs.has(`${LOOPBACK_TARGET}::${inv.billRunInvoiceId}`),
+        (inv) =>
+          !attemptedRefs.has(`${LOOPBACK_TARGET}::${inv.billRunInvoiceId}`),
       );
 
       if (failed.length === 0 && neverAttemptedInvoices.length === 0) {
@@ -326,11 +333,20 @@ export async function rerunDistribution(
         if (!blobRef) {
           logger.error(
             "rerunDistribution: failed artifact has no resolvable blob reference, skipping",
-            { billRunId, target: f.target, artifactRef: f.artifactRef, artifactType: f.artifactType },
+            {
+              billRunId,
+              target: f.target,
+              artifactRef: f.artifactRef,
+              artifactType: f.artifactType,
+            },
           );
           continue;
         }
-        artifacts.push({ ref: f.artifactRef, type: f.artifactType, blob_ref: blobRef });
+        artifacts.push({
+          ref: f.artifactRef,
+          type: f.artifactType,
+          blob_ref: blobRef,
+        });
       }
 
       if (artifacts.length === 0) {
@@ -377,8 +393,21 @@ export async function rerunDistribution(
         actorUserId: actorId,
         targetEntity: "BILL_RUN",
         targetId: billRunId,
-        beforeData: { failedArtifacts: failed.map((f) => f.artifactRef) },
-        afterData: { attempt: newAttempt, executionId: executionRef.executionId },
+        beforeData: {
+          // bm21 T8 — `toRedeliver` (and thus the engine payload) is the union
+          // of the prior round's genuine failures AND the never-attempted
+          // mandatory invoices; the audit must record BOTH so it reflects
+          // every artifact actually sent for redelivery, not just the failed
+          // subset.
+          failedArtifacts: [
+            ...failed.map((f) => f.artifactRef),
+            ...neverAttemptedInvoices.map((inv) => inv.billRunInvoiceId),
+          ],
+        },
+        afterData: {
+          attempt: newAttempt,
+          executionId: executionRef.executionId,
+        },
       });
 
       return {
@@ -528,7 +557,10 @@ export async function recomputeDistributionStatus(
   tx: Database,
   run: Pick<BillRun, "billRunId">,
 ): Promise<RecomputeDistributionStatusResult> {
-  const rows = await billRunDistributionRepository.listForRun(tx, run.billRunId);
+  const rows = await billRunDistributionRepository.listForRun(
+    tx,
+    run.billRunId,
+  );
   const latestByArtifact = new Map<string, (typeof rows)[number]>();
   for (const row of rows) {
     const key = `${row.target}::${row.artifactRef}`;
@@ -557,7 +589,9 @@ export async function recomputeDistributionStatus(
     tx,
     run.billRunId,
   );
-  const delivered = mandatoryRows.filter((r) => r.outcome === "DELIVERED").length;
+  const delivered = mandatoryRows.filter(
+    (r) => r.outcome === "DELIVERED",
+  ).length;
   if (expected > 0 && delivered >= expected) {
     await billRunRepository.completeDistribution(tx, run.billRunId);
     return { status: "COMPLETED" };

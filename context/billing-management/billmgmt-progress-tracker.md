@@ -1259,6 +1259,34 @@ file history).
     stalls no longer hangs the call past `REQUEST_TIMEOUT_MS`.
   - **`tests/db/billing-e2e-happy-path.integration.test.ts` fixed** for bm20's
     lifecycle — see the Outstanding entry above for the full before/after.
+- **bm21 (CodeRabbit review, 2026-09-09):**
+  - **`rerunDistribution`'s audit event now records EVERY redelivered
+    artifact.** `toRedeliver` (and the engine payload) is the union of the
+    prior round's genuine `FAILED` artifacts AND the never-attempted mandatory
+    invoices (T8), but the `BILL_RUN_DISTRIBUTION_RERUN` audit's
+    `beforeData.failedArtifacts` recorded only the `failed` subset —
+    under-reporting what was actually re-triggered. It now spreads
+    `neverAttemptedInvoices` alongside `failed`.
+  - **`billrun-live-kestra-smoke.ts` selects only a DUE scheduled run.** The
+    run query now adds `lte(scheduledRunDate, today)` so it can never trigger a
+    future-dated `SCHEDULED` run against today's business date.
+  - **`billrun-live-kestra-smoke.ts` gained a pre-trigger `_SAMPLE_`-only
+    safety gate.** Because the script triggers a real, irreversible bill run
+    against whatever `DATABASE_URL` targets, it now aborts before `triggerRun`
+    unless (1) `BILLRUN_PLACEHOLDER_MODE` is set, (2) every account
+    `scopeAccounts` would scope belongs to the seeded `_SAMPLE_-BILLRUN-0001`
+    customer, and (3) every candidate (`RATED`) `udr_rated` charge for those
+    accounts carries the `_SAMPLE_` provenance markers (udrSourceFile/
+    udrRefBatchId/ratingEngineVersion). Guards against a misconfigured
+    `DATABASE_URL` processing real billing data.
+  - **Skipped:** the CodeRabbit suggestion to add a named nightly
+    `schedules:` block + wire the `billrun_live_kestra_smoke` stage condition
+    to `Build.CronSchedule.DisplayName`. Auto-firing the gate nightly
+    contradicts the documented invariant (`flows/billrun/README.md` steps 1–2,
+    the parameter's own rationale): there is no deployed `billrun` engine and
+    the required Key Vault secrets (`billrun-engine-url`/`billrun-engine-auth`)
+    do not yet exist, so a nightly run would fail every night at the Key Vault
+    fetch / engine-configured guard. Kept manual-only until step 2 is met.
 
 ## Architecture Decisions
 
