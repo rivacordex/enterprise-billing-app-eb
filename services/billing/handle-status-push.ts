@@ -73,6 +73,19 @@ export async function handleStatusPush(
       throw conflict("Bill run is not PROCESSING.");
     }
 
+    if (run.status === "COMPLETED" || run.status === "DISTRIBUTION_FAILED") {
+      if (input.status === "DISTRIBUTION_FAILED" || input.status === "DISTRIBUTION_FINISHED") {
+        // The run already left DISTRIBUTING — a prior terminal push (or
+        // reconcile) already recomputed it to COMPLETED/DISTRIBUTION_FAILED.
+        // A duplicate or late-arriving terminal callback for the same or a
+        // superseded round is an idempotent no-op, never a 409: COMPLETED
+        // is never reopened by a late DISTRIBUTION_FAILED, and a settled
+        // DISTRIBUTION_FAILED is never re-completed by a late FINISHED.
+        return { ok: true };
+      }
+      throw conflict("Bill run is not PROCESSING or DISTRIBUTING.");
+    }
+
     throw conflict("Bill run is not PROCESSING or DISTRIBUTING.");
   });
 }
