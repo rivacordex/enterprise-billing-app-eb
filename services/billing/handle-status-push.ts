@@ -25,10 +25,18 @@ import { recomputeDistributionStatus } from "@/services/billing/distribute-run";
 // A status that doesn't match the run's current execution (a
 // `DISTRIBUTION_*` value while PROCESSING, `PROCESSING_FAILED` while
 // DISTRIBUTING, or anything while the run is neither) is rejected with 409.
+// Both `DISTRIBUTION_*` pushes carry the flow's `attempt` (T1's stale-round
+// guard, the same shape `recordDistributionOutcome` applies to a per-artifact
+// outcome): a push whose `attempt` doesn't match the locked run's CURRENT
+// `distribution_attempt` is a straggler from a superseded execution — e.g. a
+// prior round's `on_error`/`finally` firing late after `rerunDistribution`
+// already started a new attempt — and is accepted as a no-op rather than
+// allowed to force/recompute the current round's status.
 
 export interface StatusPushInput {
   runId: string;
   status: "PROCESSING_FAILED" | "DISTRIBUTION_FAILED" | "DISTRIBUTION_FINISHED";
+  attempt?: number;
 }
 
 export interface StatusPushResult {
@@ -51,11 +59,14 @@ export async function handleStatusPush(
     }
 
     if (run.status === "DISTRIBUTING") {
-      if (input.status === "DISTRIBUTION_FAILED") {
-        await billRunRepository.markDistributionFailed(tx, input.runId);
-        return { ok: true };
-      }
-      if (input.status === "DISTRIBUTION_FINISHED") {
+      if (input.status === "DISTRIBUTION_FAILED" || input.status === "DISTRIBUTION_FINISHED") {
+        if (input.attempt !== (run.distributionAttempt ?? 1)) {
+          return { ok: true };
+        }
+        if (input.status === "DISTRIBUTION_FAILED") {
+          await billRunRepository.markDistributionFailed(tx, input.runId);
+          return { ok: true };
+        }
         await recomputeDistributionStatus(tx, run);
         return { ok: true };
       }

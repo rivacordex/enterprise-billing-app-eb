@@ -1,5 +1,6 @@
 import type { Database } from "@/db/client";
 import { db } from "@/db/client";
+import { logger } from "@/lib/logger";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
@@ -270,8 +271,21 @@ export async function rerunDistribution(
         // Defensive only — an invoice/report that vanished between the failed
         // read above and here should not happen (both are immutable/
         // regenerated), but never hand the engine a null blob_ref.
-        if (!blobRef) continue;
+        if (!blobRef) {
+          logger.error(
+            "rerunDistribution: failed artifact has no resolvable blob reference, skipping",
+            { billRunId, target: f.target, artifactRef: f.artifactRef, artifactType: f.artifactType },
+          );
+          continue;
+        }
         artifacts.push({ ref: f.artifactRef, type: f.artifactType, blob_ref: blobRef });
+      }
+
+      if (artifacts.length === 0) {
+        // Every previously-failed artifact lost its blob reference — nothing
+        // resolvable to redeliver. Bail out before triggering the engine or
+        // advancing the run to DISTRIBUTING with an empty payload.
+        return { ok: false, code: "NO_FAILED_ARTIFACTS" } as const;
       }
 
       const targetIsMandatory = new Map(
@@ -333,6 +347,30 @@ export async function rerunDistribution(
   }
 }
 
+// The identity check backing `recordDistributionOutcome`: v1 ships exactly
+// one target (`LOOPBACK_TARGET`, always mandatory, D20), so a pushed outcome
+// can only ever legitimately describe that target plus one of the artifacts
+// this run actually has — the stored final invoices (bm19) or the one fixed
+// report ref. Rejecting anything else stops a malformed or malicious M2M
+// push from fabricating an artifact/target `recomputeDistributionStatus`
+// would otherwise count toward "all mandatory delivered", or from smuggling
+// `is_mandatory: false` past the FAILED-blocks-completion check for a target
+// this run never actually configured as advisory.
+async function isLaunchedDistributionIdentity(
+  tx: Database,
+  input: Pick<
+    RecordDistributionOutcomeInput,
+    "runId" | "target" | "artifactRef" | "artifactType" | "isMandatory"
+  >,
+): Promise<boolean> {
+  if (input.target !== LOOPBACK_TARGET || !input.isMandatory) return false;
+  if (input.artifactType === "report_csv") {
+    return input.artifactRef === REPORT_ARTIFACT_REF;
+  }
+  const invoices = await billRunInvoicesRepository.listForRun(tx, input.runId);
+  return invoices.some((inv) => inv.billRunInvoiceId === input.artifactRef);
+}
+
 export interface RecordDistributionOutcomeInput {
   runId: string;
   target: string;
@@ -373,6 +411,12 @@ export async function recordDistributionOutcome(
       return { replayed: true };
     }
 
+    if (!(await isLaunchedDistributionIdentity(tx, input))) {
+      throw conflict(
+        "Distribution outcome does not match a launched artifact/target for this run.",
+      );
+    }
+
     try {
       await billRunDistributionRepository.insertOutcome(tx, {
         refBillRunId: input.runId,
@@ -402,26 +446,36 @@ export interface RecomputeDistributionStatusResult {
 // Called by `handle-status-push.ts` on the distribution flow's generic
 // `DISTRIBUTION_FINISHED` terminal push, and reused by `reconcile-run.ts`'s
 // "Check status" SUCCESS branch for a DISTRIBUTING run — the SAME derivation
-// either way, so the two paths can never disagree. Reads only the CURRENT
-// round's outcomes (the UNIQUE key already scopes one row per
-// (target, artifact_ref) within an attempt, so no DISTINCT ON is needed):
-//   - Any mandatory artifact FAILED at this round → DISTRIBUTION_FAILED.
+// either way, so the two paths can never disagree. `rerunDistribution` only
+// re-triggers the PRIOR round's FAILED artifacts (never the ones already
+// DELIVERED), so a round's own rows are never the full mandatory set on
+// their own — reads across EVERY round instead and keeps, per
+// `(target, artifact_ref)`, only the outcome from its highest recorded
+// `distribution_attempt` (a `FAILED` from round 1 that round 2 redelivers as
+// `DELIVERED` must supersede it, never be double-counted):
+//   - Any mandatory artifact's latest outcome is FAILED → DISTRIBUTION_FAILED.
 //   - Every expected mandatory artifact (bm19 stored invoices + the report,
-//     computeExpectedMandatoryArtifactCount) DELIVERED → COMPLETED.
+//     computeExpectedMandatoryArtifactCount) DELIVERED (at its latest attempt)
+//     → COMPLETED.
 //   - Otherwise → no change (heartbeat bumped only) — the recorded set is
 //     still incomplete; never force a status the outcome set doesn't support
 //     (architecture Inv. #12's "derived, never forced" discipline).
 export async function recomputeDistributionStatus(
   tx: Database,
-  run: Pick<BillRun, "billRunId" | "distributionAttempt">,
+  run: Pick<BillRun, "billRunId">,
 ): Promise<RecomputeDistributionStatusResult> {
-  const attempt = run.distributionAttempt ?? 1;
-  const rows = await billRunDistributionRepository.listForAttempt(
-    tx,
-    run.billRunId,
-    attempt,
+  const rows = await billRunDistributionRepository.listForRun(tx, run.billRunId);
+  const latestByArtifact = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    const key = `${row.target}::${row.artifactRef}`;
+    const current = latestByArtifact.get(key);
+    if (!current || row.distributionAttempt > current.distributionAttempt) {
+      latestByArtifact.set(key, row);
+    }
+  }
+  const mandatoryRows = [...latestByArtifact.values()].filter(
+    (r) => r.isMandatory,
   );
-  const mandatoryRows = rows.filter((r) => r.isMandatory);
 
   if (mandatoryRows.some((r) => r.outcome === "FAILED")) {
     await billRunRepository.markDistributionFailed(tx, run.billRunId);

@@ -37,6 +37,9 @@ export async function POST(
     const result = await handleStatusPush({
       runId: runIdResult.data,
       status: bodyResult.data.status,
+      ...(bodyResult.data.attempt !== undefined
+        ? { attempt: bodyResult.data.attempt }
+        : {}),
     });
 
     return Response.json({ data: result }, { status: 200 });
