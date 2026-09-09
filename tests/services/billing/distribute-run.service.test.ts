@@ -254,6 +254,28 @@ describe("recordDistributionOutcome", () => {
     });
   });
 
+  it("treats a stale-round signal as a replayed no-op even once the run has terminated", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "COMPLETED", distributionAttempt: 2 }),
+    );
+
+    const result = await recordDistributionOutcome(input);
+
+    expect(result).toEqual({ replayed: true });
+    expect(mockInsertOutcome).not.toHaveBeenCalled();
+  });
+
+  it("rejects a current-attempt signal once the run has left DISTRIBUTING", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "COMPLETED", distributionAttempt: 1 }),
+    );
+
+    await expect(recordDistributionOutcome(input)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(mockInsertOutcome).not.toHaveBeenCalled();
+  });
+
   it("replays a duplicate insert (unique-violation) as a no-op", async () => {
     mockFindByIdForUpdate.mockResolvedValue(
       run({ status: "DISTRIBUTING", distributionAttempt: 1 }),

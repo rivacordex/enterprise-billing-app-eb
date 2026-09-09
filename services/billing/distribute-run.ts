@@ -399,16 +399,28 @@ export async function recordDistributionOutcome(
   return db.transaction(async (tx) => {
     const run = await billRunRepository.findByIdForUpdate(tx, input.runId);
     if (!run) throw notFound("Bill run not found.");
-    if (run.status !== "DISTRIBUTING") {
-      throw conflict("Bill run is not DISTRIBUTING.");
-    }
-    if (run.distributionAttempt !== input.attempt) {
+
+    if (
+      run.distributionAttempt !== null &&
+      run.distributionAttempt !== input.attempt
+    ) {
       // A straggler signal from a superseded round (T1's stale-attempt guard,
       // the same shape `handle-stage-signal.ts` applies to
       // `bill_run_account.attempt_count`) — accepted as a no-op replay rather
       // than rejected, so a slow/duplicate signal from the prior attempt can
-      // never land on the current round's outcome set.
+      // never land on the current round's outcome set. Evaluated BEFORE the
+      // status check so this holds even once the run has left DISTRIBUTING
+      // entirely (a later round already completed/failed while this
+      // straggler was in flight) — a stale attempt is never a 409. A run that
+      // never entered distribution (`distributionAttempt` still null) has no
+      // round to be stale relative to, so it falls through to the status
+      // check below instead of being swallowed as a replay.
       return { replayed: true };
+    }
+
+    // Only the CURRENT attempt's push needs the run to still be DISTRIBUTING.
+    if (run.status !== "DISTRIBUTING") {
+      throw conflict("Bill run is not DISTRIBUTING.");
     }
 
     if (!(await isLaunchedDistributionIdentity(tx, input))) {
