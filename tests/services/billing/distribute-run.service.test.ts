@@ -27,6 +27,7 @@ vi.mock("@/db/repositories/billing/bill-run-invoices.repository", () => ({
   billRunInvoicesRepository: {
     listForRun: vi.fn(),
     countForRun: vi.fn(),
+    listBillingAccountIdsForRun: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/billing/bill-run-distribution.repository", () => ({
@@ -37,7 +38,7 @@ vi.mock("@/db/repositories/billing/bill-run-distribution.repository", () => ({
   },
 }));
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
-  customerBillRepository: { listForRun: vi.fn() },
+  customerBillRepository: { listForRun: vi.fn(), listPostedAccountIds: vi.fn() },
 }));
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
@@ -76,6 +77,9 @@ const mockCompleteDistribution = vi.mocked(
 const mockBumpHeartbeat = vi.mocked(billRunRepository.bumpHeartbeat);
 const mockListInvoicesForRun = vi.mocked(billRunInvoicesRepository.listForRun);
 const mockCountForRun = vi.mocked(billRunInvoicesRepository.countForRun);
+const mockListBillingAccountIdsForRun = vi.mocked(
+  billRunInvoicesRepository.listBillingAccountIdsForRun,
+);
 const mockInsertOutcome = vi.mocked(billRunDistributionRepository.insertOutcome);
 const mockListForRunDistribution = vi.mocked(
   billRunDistributionRepository.listForRun,
@@ -84,6 +88,9 @@ const mockListFailedForAttempt = vi.mocked(
   billRunDistributionRepository.listFailedForAttempt,
 );
 const mockListBillsForRun = vi.mocked(customerBillRepository.listForRun);
+const mockListPostedAccountIds = vi.mocked(
+  customerBillRepository.listPostedAccountIds,
+);
 const mockTrigger = vi.mocked(engineRegistry.trigger);
 const mockPutReport = vi.mocked(blobStore.putReport);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
@@ -105,6 +112,16 @@ beforeEach(() => {
     { billRunInvoiceId: "BRI00000001", blobRef: "invoices/2026-07/INV1.pdf" },
   ]);
   mockCountForRun.mockResolvedValue(1);
+  // bm21-spec §Implementation §2, T8 — the D10 safety-net check's reads.
+  // Deterministic empty defaults so `hasUnrenderedPostedAccounts` (and
+  // `rerunDistribution`'s never-attempted-artifact scan) start from a clean
+  // slate in every test regardless of execution order; `vi.clearAllMocks()`
+  // clears call/result history but NOT a previously-set `mockResolvedValue`
+  // implementation, so a mock left unset here would otherwise leak whatever
+  // the LAST test to configure it left behind.
+  mockListPostedAccountIds.mockResolvedValue([]);
+  mockListBillingAccountIdsForRun.mockResolvedValue([]);
+  mockListForRunDistribution.mockResolvedValue([]);
   mockListBillsForRun.mockResolvedValue([
     {
       billingAccountId: "BAN00000001",
@@ -456,6 +473,80 @@ describe("recomputeDistributionStatus", () => {
       "BRN00000001",
     );
   });
+
+  // bm21-spec §Implementation §2, Phase-2 review fold T8 — "assert the D10
+  // safety net end-to-end". Every mandatory artifact the trigger actually
+  // launched (the report) is DELIVERED, but a SECOND account is POSTED with
+  // no stored `bill_run_invoices` row (render-pending, bm19's D10 gap) — it
+  // was never even an artifact this run could have triggered. Must never
+  // silently reach COMPLETED around it.
+  it("never completes around a posted account with no stored invoice, even when every triggered artifact was delivered", async () => {
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+    ]);
+    mockCountForRun.mockResolvedValue(0); // no stored invoices at all yet
+    mockListPostedAccountIds.mockResolvedValue(["BAN00000001"]);
+    mockListBillingAccountIdsForRun.mockResolvedValue([]); // nothing stored
+
+    const result = await recomputeDistributionStatus(txStub as never, {
+      billRunId: "BRN00000001",
+    });
+
+    expect(result).toEqual({ status: "DISTRIBUTION_FAILED" });
+    expect(mockMarkDistributionFailed).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+    );
+    expect(mockCompleteDistribution).not.toHaveBeenCalled();
+  });
+
+  it("completes normally once the posted account's invoice is stored (no more render-pending gap)", async () => {
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      {
+        billRunDistributionId: "BRD00000002",
+        target: "loopback",
+        artifactRef: "BRI00000001",
+        artifactType: "invoice_pdf",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 2,
+      },
+    ]);
+    mockCountForRun.mockResolvedValue(1);
+    mockListPostedAccountIds.mockResolvedValue(["BAN00000001"]);
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]);
+
+    const result = await recomputeDistributionStatus(txStub as never, {
+      billRunId: "BRN00000001",
+    });
+
+    expect(result).toEqual({ status: "COMPLETED" });
+    expect(mockMarkDistributionFailed).not.toHaveBeenCalled();
+    expect(mockCompleteDistribution).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+    );
+  });
 });
 
 describe("rerunDistribution", () => {
@@ -463,12 +554,19 @@ describe("rerunDistribution", () => {
     mockFindByIdForUpdate.mockResolvedValue(
       run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
     );
-    mockListFailedForAttempt.mockResolvedValue([
+    // rerunDistribution derives both "failed" and "never-attempted" from ONE
+    // read of the full delivery log (billRunDistributionRepository.listForRun)
+    // — no separate listFailedForAttempt call any more (bm21-spec T8).
+    mockListForRunDistribution.mockResolvedValue([
       {
+        billRunDistributionId: "BRD00000001",
         target: "loopback",
         artifactRef: "BRI00000001",
         artifactType: "invoice_pdf",
         isMandatory: true,
+        outcome: "FAILED",
+        at: new Date(),
+        distributionAttempt: 1,
       },
     ]);
 
@@ -502,11 +600,25 @@ describe("rerunDistribution", () => {
     expect(result).toEqual({ ok: false, code: "NOT_RERUNNABLE" });
   });
 
-  it("returns NO_FAILED_ARTIFACTS when nothing is currently failed", async () => {
+  it("returns NO_FAILED_ARTIFACTS when nothing is currently failed and nothing is newly available", async () => {
     mockFindByIdForUpdate.mockResolvedValue(
       run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
     );
-    mockListFailedForAttempt.mockResolvedValue([]);
+    // The stored invoice (mockListInvoicesForRun, beforeEach) was already
+    // DELIVERED in round 1 — attempted, and not failed, so neither set
+    // picks it up.
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "BRI00000001",
+        artifactType: "invoice_pdf",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+    ]);
 
     const result = await rerunDistribution("BRN00000001", "user-1");
 
@@ -518,14 +630,20 @@ describe("rerunDistribution", () => {
     mockFindByIdForUpdate.mockResolvedValue(
       run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
     );
-    // `mockListInvoicesForRun` (beforeEach) only ever returns "BRI00000001" —
-    // a failed artifact referencing a different invoice id can't be resolved.
-    mockListFailedForAttempt.mockResolvedValue([
+    // No stored invoices at all in this scenario — the failed artifact
+    // referencing BRI99999999 can't be resolved via listForRun (bm19), and
+    // there is nothing else stored to pick up as never-attempted either.
+    mockListInvoicesForRun.mockResolvedValue([]);
+    mockListForRunDistribution.mockResolvedValue([
       {
+        billRunDistributionId: "BRD00000001",
         target: "loopback",
         artifactRef: "BRI99999999",
         artifactType: "invoice_pdf",
         isMandatory: true,
+        outcome: "FAILED",
+        at: new Date(),
+        distributionAttempt: 1,
       },
     ]);
 
@@ -534,6 +652,54 @@ describe("rerunDistribution", () => {
     expect(result).toEqual({ ok: false, code: "NO_FAILED_ARTIFACTS" });
     expect(mockTrigger).not.toHaveBeenCalled();
     expect(mockMarkRerunDistributing).not.toHaveBeenCalled();
+  });
+
+  // bm21-spec §Implementation §2, T8 — "retry-render + rerun-distribution
+  // reaches COMPLETED". A stored invoice that was never part of ANY prior
+  // round's outcome set (rendered/stored AFTER the top-level trigger ran,
+  // e.g. via retryRenderInvoice) is redelivered too, not just genuinely
+  // FAILED artifacts — using its own real stored identity.
+  it("also redelivers a never-before-attempted stored invoice (a late retry-render), even with zero FAILED artifacts", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
+    );
+    // The report was already DELIVERED in round 1 — an attempted artifact,
+    // never redelivered again.
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+    ]);
+    // `mockListInvoicesForRun` (beforeEach) returns BRI00000001 — never
+    // attempted in any round above, so it's picked up as never-attempted.
+
+    const result = await rerunDistribution("BRN00000001", "user-1");
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { attempt: 2, artifactCount: 1 },
+    });
+    expect(mockTrigger).toHaveBeenCalledWith(
+      "billrun",
+      "bill_run_distribution",
+      expect.objectContaining({
+        attempt: 2,
+        artifacts: [
+          {
+            ref: "BRI00000001",
+            type: "invoice_pdf",
+            blob_ref: "invoices/2026-07/INV1.pdf",
+          },
+        ],
+      }),
+    );
   });
 });
 

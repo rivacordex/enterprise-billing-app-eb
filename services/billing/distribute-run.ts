@@ -92,6 +92,28 @@ async function computeExpectedMandatoryArtifactCount(
   return invoiceCount + 1;
 }
 
+// bm21-spec §Implementation §2, Phase-2 review fold T8 "assert the D10 safety
+// net end-to-end" — a POSTED account with no stored `bill_run_invoices` row
+// yet (bm19's tolerated render-pending gap, D10) is a mandatory artifact this
+// run can never have triggered in the first place (`triggerDistribution`
+// below only ever hands the engine what's actually STORED). Left unchecked,
+// `computeExpectedMandatoryArtifactCount` — derived from the same stored
+// rows — would never even count it, so "every expected mandatory artifact
+// delivered" could be satisfied vacuously while a posted invoice sits
+// un-rendered forever. Checked structurally against the posted/stored account
+// sets directly, never via a fabricated outcome row.
+async function hasUnrenderedPostedAccounts(
+  tx: Database,
+  billRunId: string,
+): Promise<boolean> {
+  const [postedIds, storedIds] = await Promise.all([
+    customerBillRepository.listPostedAccountIds(tx, billRunId),
+    billRunInvoicesRepository.listBillingAccountIdsForRun(tx, billRunId),
+  ]);
+  const stored = new Set(storedIds);
+  return postedIds.some((id) => !stored.has(id));
+}
+
 export type TriggerDistributionResult =
   | {
       ok: true;
@@ -231,24 +253,54 @@ export async function rerunDistribution(
         return { ok: false, code: "NOT_RERUNNABLE" } as const;
       }
       const priorAttempt = run.distributionAttempt ?? 1;
-      const failed = await billRunDistributionRepository.listFailedForAttempt(
-        tx,
-        billRunId,
-        priorAttempt,
+
+      // bm21-spec §Implementation §2, Phase-2 review fold T8 — a mandatory
+      // invoice rendered/stored AFTER this run's distribution was first
+      // triggered (a late `retryRenderInvoice`) was never even attempted —
+      // no outcome row exists for it in any round. Both this and the prior
+      // round's genuine failures are derived from ONE read of the full
+      // delivery log (never `listFailedForAttempt` separately) so the two
+      // sets can never drift apart from each other (they are filters over
+      // the SAME rows, not two independent queries of the same table).
+      const [everAttempted, allInvoices] = await Promise.all([
+        billRunDistributionRepository.listForRun(tx, billRunId),
+        billRunInvoicesRepository.listForRun(tx, billRunId),
+      ]);
+      const failed = everAttempted.filter(
+        (r) => r.distributionAttempt === priorAttempt && r.outcome === "FAILED",
       );
-      if (failed.length === 0) {
+      const attemptedRefs = new Set(
+        everAttempted.map((r) => `${r.target}::${r.artifactRef}`),
+      );
+      const neverAttemptedInvoices = allInvoices.filter(
+        (inv) => !attemptedRefs.has(`${LOOPBACK_TARGET}::${inv.billRunInvoiceId}`),
+      );
+
+      if (failed.length === 0 && neverAttemptedInvoices.length === 0) {
         return { ok: false, code: "NO_FAILED_ARTIFACTS" } as const;
       }
       const newAttempt = priorAttempt + 1;
 
+      const toRedeliver = [
+        ...failed,
+        ...neverAttemptedInvoices.map((inv) => ({
+          target: LOOPBACK_TARGET,
+          artifactRef: inv.billRunInvoiceId,
+          artifactType: "invoice_pdf" as const,
+          isMandatory: true,
+        })),
+      ];
+
       // Resolve blob refs: an invoice PDF is looked up from the immutable
       // `bill_run_invoices` store (bm19); the transient report CSV (D21) is
       // regenerated fresh rather than re-read (there is no stored row for it).
-      const needsInvoices = failed.some((f) => f.artifactType === "invoice_pdf");
-      const needsReport = failed.some((f) => f.artifactType === "report_csv");
-      const invoices = needsInvoices
-        ? await billRunInvoicesRepository.listForRun(tx, billRunId)
-        : [];
+      const needsInvoices = toRedeliver.some(
+        (f) => f.artifactType === "invoice_pdf",
+      );
+      const needsReport = toRedeliver.some(
+        (f) => f.artifactType === "report_csv",
+      );
+      const invoices = needsInvoices ? allInvoices : [];
       const invoiceBlobByRef = new Map(
         invoices.map((i) => [i.billRunInvoiceId, i.blobRef]),
       );
@@ -263,7 +315,7 @@ export async function rerunDistribution(
       }
 
       const artifacts: DistributionArtifactInput[] = [];
-      for (const f of failed) {
+      for (const f of toRedeliver) {
         const blobRef =
           f.artifactType === "report_csv"
             ? reportBlobRef
@@ -289,7 +341,7 @@ export async function rerunDistribution(
       }
 
       const targetIsMandatory = new Map(
-        failed.map((f) => [f.target, f.isMandatory]),
+        toRedeliver.map((f) => [f.target, f.isMandatory]),
       );
       const targets: DistributionTargetInput[] = [...targetIsMandatory].map(
         ([name, isMandatory]) => ({
@@ -490,6 +542,13 @@ export async function recomputeDistributionStatus(
   );
 
   if (mandatoryRows.some((r) => r.outcome === "FAILED")) {
+    await billRunRepository.markDistributionFailed(tx, run.billRunId);
+    return { status: "DISTRIBUTION_FAILED" };
+  }
+
+  // T8's D10 safety net — never silently COMPLETED around a posted account
+  // with nothing stored to deliver (see `hasUnrenderedPostedAccounts` above).
+  if (await hasUnrenderedPostedAccounts(tx, run.billRunId)) {
     await billRunRepository.markDistributionFailed(tx, run.billRunId);
     return { status: "DISTRIBUTION_FAILED" };
   }

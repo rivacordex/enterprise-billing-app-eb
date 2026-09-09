@@ -88,4 +88,20 @@ export const billRunInvoicesRepository = {
       .where(eq(billRunInvoices.refBillRunId, billRunId));
     return row?.total ?? 0;
   },
+
+  // bm21-spec §Implementation §2, Phase-2 review fold T8 — the D10 safety-net
+  // check's read: every billing account that already has a stored final
+  // invoice for this run, so `distribute-run.ts` can diff it against every
+  // POSTED account and detect a render-pending gap (posted, nothing stored
+  // yet) structurally, without scanning the invoice rows themselves.
+  async listBillingAccountIdsForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<string[]> {
+    const rows = await db
+      .select({ billingAccountId: billRunInvoices.refBillingAccountId })
+      .from(billRunInvoices)
+      .where(eq(billRunInvoices.refBillRunId, billRunId));
+    return rows.map((r) => r.billingAccountId);
+  },
 };
