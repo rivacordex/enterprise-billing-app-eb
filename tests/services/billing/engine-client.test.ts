@@ -13,6 +13,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   EngineError,
+  PROCESSING_FLOW_ID,
   realEngineClient,
   stubEngineClient,
 } from "@/services/billing/engine-client";
@@ -45,10 +46,10 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await stubEngineClient.startExecution(CONNECTION, PAYLOAD);
+    const ref = await stubEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD);
 
     expect(ref).toEqual({
-      executionId: "stub-exec-BRN00000001",
+      executionId: "stub-exec-bill_run_processing-BRN00000001",
       definitionId: "billrun.bill_run_processing",
       definitionRevision: 0,
     });
@@ -94,7 +95,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await realEngineClient.startExecution(CONNECTION, PAYLOAD);
+    const ref = await realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD);
 
     expect(ref).toEqual({
       executionId: "exec-123",
@@ -120,7 +121,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     );
 
     await expect(
-      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
     ).rejects.toThrow(EngineError);
   });
 
@@ -131,7 +132,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     );
 
     await expect(
-      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
     ).rejects.toThrow(EngineError);
   });
 
@@ -146,7 +147,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
     );
 
     await expect(
-      realEngineClient.startExecution(CONNECTION, PAYLOAD),
+      realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD),
     ).rejects.toThrow(EngineError);
   });
 

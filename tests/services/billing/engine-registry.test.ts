@@ -29,6 +29,7 @@ import {
   isEngineConfigured,
   resolveEngine,
 } from "@/services/billing/engine-registry";
+import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 
 const PAYLOAD = {
   bill_run_id: "BRN00000001",
@@ -118,11 +119,15 @@ describe("engineRegistry.trigger (bm16-spec §1)", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await engineRegistry.trigger("billrun", PAYLOAD);
+    const ref = await engineRegistry.trigger(
+      "billrun",
+      PROCESSING_FLOW_ID,
+      PAYLOAD,
+    );
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(ref).toEqual({
-      executionId: "stub-exec-BRN00000001",
+      executionId: "stub-exec-bill_run_processing-BRN00000001",
       definitionId: "billrun.bill_run_processing",
       definitionRevision: 0,
       engineRef: "billrun@stub/billrun",
@@ -147,7 +152,11 @@ describe("engineRegistry.trigger (bm16-spec §1)", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await engineRegistry.trigger("billrun", PAYLOAD);
+    const ref = await engineRegistry.trigger(
+      "billrun",
+      PROCESSING_FLOW_ID,
+      PAYLOAD,
+    );
 
     expect(ref).toEqual({
       executionId: "exec-123",
