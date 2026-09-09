@@ -147,6 +147,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     // The engine re-trigger is scoped to exactly that account, new attempt.
     expect(mockTrigger).toHaveBeenCalledWith(
       "billrun",
+      "bill_run_processing",
       expect.objectContaining({ ban_ids: ["BAN00000001"], attempt: 2 }),
     );
   });
@@ -227,6 +228,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     );
     expect(mockTrigger).toHaveBeenCalledWith(
       "billrun",
+      "bill_run_processing",
       expect.objectContaining({ attempt: 4 }),
     );
     expect(result).toMatchObject({ ok: true, value: { attempt: 4 } });

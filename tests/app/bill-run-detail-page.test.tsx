@@ -37,6 +37,11 @@ vi.mock("@/services/billing/read/list-rejected-pending", () => ({
 vi.mock("@/services/billing/read/list-run-audit", () => ({
   listRunAudit: vi.fn(),
 }));
+// bm20 — the Distribution tab's read; not mocked out per-test since only
+// `?tab=distribution` calls it.
+vi.mock("@/services/billing/read/get-distribution", () => ({
+  getDistribution: vi.fn(),
+}));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn(),
   getAppTimezone: vi.fn(),

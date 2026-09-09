@@ -28,6 +28,7 @@ const ENV_KEYS = [
   "BILLRUN_STALL_THRESHOLD_MINUTES",
   "BILLRUN_BLOB_CONNECTION_STRING",
   "BILLRUN_BLOB_ACCOUNT_URL",
+  "BILLRUN_DISTRIBUTION_FORCE_FAIL",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -86,6 +87,7 @@ describe("config", () => {
       BILLRUN_TAX_VERSION: "GST-2026",
       BILLRUN_TAX_CATEGORY: "GST",
       BILLRUN_STALL_THRESHOLD_MINUTES: 30,
+      BILLRUN_DISTRIBUTION_FORCE_FAIL: false,
     });
   });
 
@@ -621,5 +623,28 @@ describe("billRunBlobConfig (bm19)", () => {
         BILLRUN_BLOB_ACCOUNT_URL: "https://acct.blob.core.windows.net",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+});
+
+// bm20-spec §Design D20 — the loopback target's forceable-failure switch,
+// read only by `distribute-run.ts`. Defaults false so a normal deployment
+// never forces a failure.
+describe("billRunDistributionForceFail (bm20)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to false when unset", async () => {
+    const { billRunDistributionForceFail } =
+      await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(billRunDistributionForceFail).toBe(false);
+  });
+
+  it("reads true when explicitly set", async () => {
+    const { billRunDistributionForceFail } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_DISTRIBUTION_FORCE_FAIL: "true",
+    });
+    expect(billRunDistributionForceFail).toBe(true);
   });
 });

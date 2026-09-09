@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm11-spec §Design/§Implementation. Posting: per-account transaction,
-// resumable (skip already-INVOICED), never double-posts (a postDocument
-// failure rolls the per-account transaction back and parks the account via a
-// SEPARATE write), SKIPPED/EXCLUDED accounts consume no invoice number, and
-// the run completes (INVOICED → COMPLETED) once no account remains PROCESSED.
-// `db.transaction` runs its callback with a stub tx (trigger-run/rerun-run
+// bm11-spec §Design/§Implementation, revised bm20-spec §Implementation §5.
+// Posting: per-account transaction, resumable (skip already-INVOICED), never
+// double-posts (a postDocument failure rolls the per-account transaction back
+// and parks the account via a SEPARATE write), SKIPPED/EXCLUDED accounts
+// consume no invoice number, and the run completes (POSTING → INVOICED, not
+// COMPLETED — bm20 moves COMPLETED behind a separate distribution execution)
+// once no account remains PROCESSED, then triggers distribution. `db.
+// transaction` runs its callback with a stub tx (trigger-run/rerun-run
 // service test precedent).
 
 const txStub = {};
@@ -65,6 +67,12 @@ vi.mock("@/db/repositories/billing/bill-run-invoices.repository", () => ({
     findByRunAndAccount: vi.fn(),
   },
 }));
+// bm20-spec §Implementation §5 — the automatic distribution trigger, called
+// AFTER the completion transaction commits. Mocked at the module boundary so
+// this suite never exercises the real engine/blob/report-CSV path.
+vi.mock("@/services/billing/distribute-run", () => ({
+  triggerDistribution: vi.fn(),
+}));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
@@ -79,6 +87,7 @@ import { postRun, retryRenderInvoice } from "@/services/billing/post-run";
 import { renderFinalInvoice } from "@/services/billing/render-invoice";
 import { blobStore } from "@/services/billing/blob-store";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
+import { triggerDistribution } from "@/services/billing/distribute-run";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockMarkPosting = vi.mocked(billRunRepository.markPosting);
@@ -103,6 +112,7 @@ const mockInsertBillRunInvoice = vi.mocked(billRunInvoicesRepository.insert);
 const mockFindStoredInvoice = vi.mocked(
   billRunInvoicesRepository.findByRunAndAccount,
 );
+const mockTriggerDistribution = vi.mocked(triggerDistribution);
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -169,6 +179,10 @@ beforeEach(() => {
     billRunInvoiceId: "BRI00000001",
   });
   mockFindStoredInvoice.mockResolvedValue(null);
+  mockTriggerDistribution.mockResolvedValue({
+    ok: true,
+    value: { billRunId: "BRN00000001", executionId: "stub-exec-dist", artifactCount: 1 },
+  });
   mockFindForAccount.mockResolvedValue({
     customerBillId: "CBL00000001",
     periodPartition: "2026-07-01",
@@ -502,7 +516,7 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
     expect(mockCompletePosting).toHaveBeenCalled();
   });
 
-  it("completes the run (INVOICED → COMPLETED) and writes BILL_RUN_POSTED once no account remains PROCESSED", async () => {
+  it("completes posting (POSTING → INVOICED), writes BILL_RUN_POSTED, and triggers distribution once no account remains PROCESSED", async () => {
     // The pre-loop read finds the account PROCESSED (eligible to post); the
     // post-loop completion check reads the fresh state after `postAccount`
     // marked it INVOICED.
@@ -524,8 +538,27 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         actorUserId: "user-1",
         targetEntity: "BILL_RUN",
         targetId: "BRN00000001",
+        afterData: { status: "INVOICED" },
       }),
     );
+    // bm20-spec §Design D8/D9 — a SEPARATE, system-actor (`null`) call, made
+    // only after the completion transaction above has committed.
+    expect(mockTriggerDistribution).toHaveBeenCalledWith("BRN00000001", null);
+    expect(result).toMatchObject({ ok: true, value: { completed: true } });
+  });
+
+  it("logs but does not fail postRun when the automatic distribution trigger fails", async () => {
+    mockListStatusesForRun
+      .mockResolvedValueOnce([
+        { billingAccountId: "BAN00000001", status: "PROCESSED" },
+      ] as never)
+      .mockResolvedValueOnce([
+        { billingAccountId: "BAN00000001", status: "INVOICED" },
+      ] as never);
+    mockTriggerDistribution.mockRejectedValue(new Error("engine unreachable"));
+
+    const result = await postRun("BRN00000001", "user-1");
+
     expect(result).toMatchObject({ ok: true, value: { completed: true } });
   });
 

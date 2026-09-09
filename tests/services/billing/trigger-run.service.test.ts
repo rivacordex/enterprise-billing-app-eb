@@ -148,7 +148,7 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       PENDING_ROW,
       EXCLUDED_ROW,
     ]);
-    expect(mockTrigger).toHaveBeenCalledWith("billrun", {
+    expect(mockTrigger).toHaveBeenCalledWith("billrun", "bill_run_processing", {
       bill_run_id: "BRN00000001",
       period_start: "2026-07-01",
       period_end: "2026-07-31",
@@ -268,6 +268,7 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       ]);
       expect(mockTrigger).toHaveBeenCalledWith(
         "billrun",
+        "bill_run_processing",
         expect.objectContaining({ attempt: 2 }),
       );
       // Deleting happens before re-inserting, so no ordering collision.
@@ -284,6 +285,7 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
 
       expect(mockTrigger).toHaveBeenCalledWith(
         "billrun",
+        "bill_run_processing",
         expect.objectContaining({ attempt: 1 }),
       );
     });

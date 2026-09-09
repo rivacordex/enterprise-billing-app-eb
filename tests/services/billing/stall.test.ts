@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { isStalled } from "@/services/billing/stall";
 
-// bm12-spec §Design/§Implementation §3, architecture Inv. #10. Pure,
-// total: STALLED is derived on read from `status = 'PROCESSING'` and
-// `now() - last_progress_at` versus the configured threshold — never stored.
+// bm12-spec §Design/§Implementation §3, architecture Inv. #10, extended
+// bm20-spec §Phase-2 review fold T2. Pure, total: STALLED is derived on read
+// from `status IN ('PROCESSING','DISTRIBUTING')` and `now() -
+// last_progress_at` versus the configured threshold — never stored.
 
 const NOW = new Date("2026-08-24T12:00:00.000Z");
 const THRESHOLD_MINUTES = 30;
@@ -43,7 +44,7 @@ describe("isStalled (bm12-spec §3)", () => {
     ).toBe(true);
   });
 
-  it("is never stalled for a non-PROCESSING run, however old the heartbeat", () => {
+  it("is never stalled for a non-PROCESSING/DISTRIBUTING run, however old the heartbeat", () => {
     const lastProgressAt = new Date(NOW.getTime() - 10_000 * 60_000);
     for (const status of [
       "SCHEDULED",
@@ -51,7 +52,6 @@ describe("isStalled (bm12-spec §3)", () => {
       "APPROVED",
       "POSTING",
       "INVOICED",
-      "DISTRIBUTING",
       "COMPLETED",
       "PROCESSING_FAILED",
       "DISTRIBUTION_FAILED",
@@ -67,6 +67,40 @@ describe("isStalled (bm12-spec §3)", () => {
     expect(
       isStalled(
         { status: "PROCESSING", lastProgressAt: null },
+        NOW,
+        THRESHOLD_MINUTES,
+      ),
+    ).toBe(false);
+  });
+
+  // bm20-spec §Phase-2 review fold T2 — a wedged DISTRIBUTING execution gets
+  // the same derived-STALLED treatment as a wedged PROCESSING one.
+  it("is stalled just over the threshold while DISTRIBUTING", () => {
+    const lastProgressAt = new Date(NOW.getTime() - 31 * 60_000);
+    expect(
+      isStalled(
+        { status: "DISTRIBUTING", lastProgressAt },
+        NOW,
+        THRESHOLD_MINUTES,
+      ),
+    ).toBe(true);
+  });
+
+  it("is not stalled just under the threshold while DISTRIBUTING", () => {
+    const lastProgressAt = new Date(NOW.getTime() - 29 * 60_000);
+    expect(
+      isStalled(
+        { status: "DISTRIBUTING", lastProgressAt },
+        NOW,
+        THRESHOLD_MINUTES,
+      ),
+    ).toBe(false);
+  });
+
+  it("is not stalled when DISTRIBUTING with no heartbeat at all", () => {
+    expect(
+      isStalled(
+        { status: "DISTRIBUTING", lastProgressAt: null },
         NOW,
         THRESHOLD_MINUTES,
       ),
