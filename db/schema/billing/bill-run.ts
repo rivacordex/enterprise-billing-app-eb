@@ -63,6 +63,13 @@ export const billRun = billing.table(
     distributionFlowId: text("distribution_flow_id"),
     distributionFlowRevision: integer("distribution_flow_revision"),
     distributionEngineRef: text("distribution_engine_ref"),
+    // bm20-spec §Design/§Implementation §1 T1 — the current distribution
+    // round, mirroring `bill_run_account.attempt_count`. Stamped `1` by
+    // `triggerDistribution`, bumped by `rerunDistribution`; the M2M outcome
+    // handler rejects a signal whose `attempt` no longer matches this value as
+    // a stale-round no-op (the same stale-attempt guard `handle-stage-signal.ts`
+    // applies to `bill_run_account.attempt_count`).
+    distributionAttempt: integer("distribution_attempt"),
     lastProgressAt: timestamp("last_progress_at", {
       withTimezone: true,
       precision: 3,

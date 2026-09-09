@@ -45,6 +45,12 @@ enumerations were trimmed to key facts + decisions. Full history:
   generated/reviewed but **not applied**, and the render/store step is
   unproven against a real blob store or a real Chromium browser in this
   environment — see Outstanding.
+- Phase 2 · Phase H — **bm20 (Distribution Flow + `bill_run_distribution` +
+  Distribution Tab) — delivered**, including the 2026-08-28 Phase-2 review
+  folds (T1/T2/T11/D-T1/D-T3) that were already folded into the spec. See
+  `context/billing-management/specs/bm20-distribution-flow.md` and the
+  Delivered Units entry below. Migration `0038_bill_run_distribution.sql` is
+  generated/reviewed but **not applied** — see Outstanding.
 
 ## Outstanding (environmental only — not a build unit)
 
@@ -109,6 +115,36 @@ enumerations were trimmed to key facts + decisions. Full history:
   end-to-end to confirm a `bill_run_invoices` row + a real blob object are
   produced and the stored-invoice download route serves bytes matching the
   stored checksum.
+- **bm20's migration and live-engine paths are unproven, same category of gap
+  as every unit above.** Migration `0038_bill_run_distribution.sql` (the
+  `bill_run.distribution_attempt` column + the new partitioned table) is
+  generated/reviewed but **not applied**; `db:setup-partman-billing` now
+  registers a sixth parent (`bill_run_distribution`) and must be re-run.
+  `triggerDistribution`/`rerunDistribution` were only ever exercised against
+  the mockable `stubEngineClient` (unit tests) — no deployed `billrun` engine
+  hosts a `bill_run_distribution` flow anywhere (the same gap bm16 recorded
+  for `bill_run_processing`; `flows/billrun/README.md`'s owning team/repo/
+  deploy step are still `TBD`). Before treating bm20 as ship-ready: apply
+  `0038`, run `db:setup-partman-billing`, deploy a real (or placeholder)
+  `bill_run_distribution` flow built to `flows/billrun/
+  bill_run_distribution.template.yml`'s contract, and post a run end-to-end
+  to confirm the loopback delivers, `bill_run_distribution` rows land, and a
+  forced failure + Rerun/force-complete actually reaches `COMPLETED` against
+  the live engine.
+- **`tests/db/billing-e2e-happy-path.integration.test.ts` (the ship-gate
+  journey) was NOT updated for bm20 and now asserts something false.** It
+  expects `completedRun?.status` to read `COMPLETED` immediately after
+  `postRun` (the bm11-era shape, when posting completed the run directly);
+  bm20 moves that transition to `POSTING → INVOICED` followed by a separate
+  `triggerDistribution` call, so the run sits at `DISTRIBUTING` (against the
+  stub engine, synchronously) once `postRun` returns — nothing in this test
+  signals a distribution outcome or a terminal push, so it never reaches
+  `COMPLETED` at all. This test is DB-gated and was never executed in this
+  environment (same gap as every other DB-gated test here), so the failure
+  was never observed directly — fix it (drive it through
+  `recordDistributionOutcome`/`recomputeDistributionStatus` or a status push
+  to reach `COMPLETED`, or assert `DISTRIBUTING` and stop there) before
+  relying on this suite as a ship gate.
 
 ## Delivered Units (bm01–bm13)
 
@@ -741,6 +777,160 @@ enumerations were trimmed to key facts + decisions. Full history:
     blob/Chromium gap). DB-gated, statically verified only (see Outstanding).
   - No new permission, no new audit event type.
 
+- **bm20 — Distribution Flow + `bill_run_distribution` + Distribution Tab
+  (Phase 2 · Phase H).** See
+  `context/billing-management/specs/bm20-distribution-flow.md`. The bill run
+  distributor's app side — transport-only (D-push): it hands the flow
+  references to bm19's already-stored artifacts and records the outcomes it
+  signals back; it computes/renders nothing. Delivered together with the
+  spec's own 2026-08-28 Phase-2 review folds (T1/T2/T11/D-T1/D-T3), which
+  were already part of the read spec rather than a separate pass.
+  - **`db/schema/billing/bill-run-distribution.ts` + migration
+    `0038_bill_run_distribution.sql`** (new, hand-authored partitioned table,
+    `bill_run_invoices` pattern) — `BRD`+8 seq, composite PK on
+    `(bill_run_distribution_id, period_partition)`, **UNIQUE `(ref_bill_run_id,
+    target, artifact_ref, distribution_attempt, period_partition)`** (T1 — a
+    rerun's outcome is a fresh row, never a dropped replay), CHECKs on
+    `artifact_type`/`outcome`. `bill_run` gains one plain column,
+    `distribution_attempt` (mirrors `bill_run_account.attempt_count` —
+    T1's app-side "current round" counter). `billrun_runtime` gets no grant
+    at all (bm14's "no `ALTER DEFAULT PRIVILEGES`" posture, same as
+    `bill_run_invoices`, bm19). `db-repositories/billing/
+    bill-run-distribution.repository.ts` — `insertOutcome` (insert-first,
+    the M2M handler catches the unique-violation for replay), `listForAttempt`
+    (one row per `(target, artifact_ref)` within the CURRENT round — the
+    UNIQUE constraint already scopes this, no `DISTINCT ON` needed),
+    `listForRun` (the full cross-round delivery log, `DistributionTab`'s
+    read), `listFailedForAttempt` (the redelivery/abandon set).
+  - **`services/billing/engine-client.ts`/`engine-registry.ts` generalized
+    for a SECOND flow on the same `billrun` engine.** `startExecution`/
+    `engineRegistry.trigger` now take an explicit `flowId` (exported
+    constants `PROCESSING_FLOW_ID`/`DISTRIBUTION_FLOW_ID`) instead of the
+    hardcoded `bill_run_processing` constant; `trigger-run.ts`/`rerun-run.ts`
+    pass `PROCESSING_FLOW_ID` explicitly (behavior unchanged). `TriggerPayload`
+    splits into `ProcessingTriggerPayload`/`DistributionTriggerPayload` (a
+    union) — the distribution payload is `{bill_run_id, artifacts, targets,
+    attempt}`; `attempt` is a **resolved addition** beyond the spec's literal
+    §2 input list (`bill_run_id`/`artifacts`/`targets` only) — T1's
+    stale-round guard needs the flow to echo back which
+    `distribution_attempt` it's reporting for, so the flow template
+    (authored fresh in this unit) declares it as a fourth input, mirroring
+    `ProcessingTriggerPayload.attempt`.
+  - **`services/billing/distribute-run.ts`** (new) —
+    `triggerDistribution(billRunId, actorUserId)`: one `db.transaction`
+    (bm03/bm08's "engine call inside the txn, throw to roll back" shape),
+    idempotent (`NOT_INVOICED`/`ALREADY_STARTED` guards) — gathers every
+    STORED `bill_run_invoices` row + generates a fresh per-run invoice-register
+    CSV (`buildInvoiceRegisterCsv`, `lib/csv.ts`'s `buildCsv`) as the one
+    `report_csv` artifact (constant ref `REPORT_ARTIFACT_REF = "REPORT"`, D21
+    — no `bill_run_output` row), triggers `DISTRIBUTION_FLOW_ID` with a
+    `{name: 'loopback', is_mandatory: true, force_fail: <config>}` target,
+    stamps the execution ref + `distribution_attempt = 1`, writes
+    `BILL_RUN_DISTRIBUTION_STARTED` (`actorUserId: null` for the automatic
+    call from `post-run.ts`; the real actor id when T2's "Start distribution"
+    operator action re-invokes the SAME function to recover a lost/failed
+    auto-trigger). `rerunDistribution(billRunId, actorId)` — T1: redelivers
+    ONLY the current round's FAILED artifacts (`listFailedForAttempt`),
+    resolving each artifact's blob ref from `bill_run_invoices` (immutable) or
+    regenerating the report CSV fresh (transient, D21), under a bumped
+    `distribution_attempt`; audited `BILL_RUN_DISTRIBUTION_RERUN`.
+    `recordDistributionOutcome` — the M2M handler's write: rejects unless
+    `DISTRIBUTING`; a signal whose `attempt` no longer matches the run's
+    current `distribution_attempt` is an accepted no-op (T1's stale-round
+    guard, the same shape `handle-stage-signal.ts` applies via
+    `bill_run_account.attempt_count`); the actual insert is idempotent on the
+    UNIQUE constraint (a duplicate → replay). No run recompute here and no
+    `AUDIT_LOG` write — the appended row is the audit surface (code-standards
+    §1.10), same as `bill_run_account_stage`. `recomputeDistributionStatus(tx,
+    run)` — derives `COMPLETED` (every expected mandatory artifact
+    DELIVERED — expected = stored-invoice count + 1 for the report, so
+    "all delivered" can never be satisfied vacuously by a partial signalled
+    set) / `DISTRIBUTION_FAILED` (any mandatory FAILED) / unresolved (no
+    write, no heartbeat bump — mirrors `reconcile-run.ts`'s PROCESSING-mismatch
+    rule exactly); shared by the `.../status` route's `DISTRIBUTION_FINISHED`
+    push AND `reconcile-run.ts`'s new DISTRIBUTING branch, so the two paths
+    can never disagree. `forceCompleteDistribution(billRunId, actorId,
+    reason)` (T11) — `DISTRIBUTION_FAILED → COMPLETED`, records the abandoned
+    artifact refs in the audit event (`BILL_RUN_DISTRIBUTION_ABANDONED`),
+    never touches a posted INV.
+  - **The third M2M handler** — `app/api/billrun/[runId]/distribution/
+    outcome/route.ts` → `recordDistributionOutcome`, body `{target,
+    artifact_ref, artifact_type, is_mandatory, outcome, attempt}`
+    (`validation/billing/distribution-outcome.schema.ts`, `strictObject`).
+    The bm13 route-inventory test (`tests/app/api/
+    billrun-route-inventory.test.ts`) now locks the surface to **three**
+    `POST` handlers. `.../status`'s `statusPushBodySchema` widens to
+    `status: 'PROCESSING_FAILED' | 'DISTRIBUTION_FAILED' |
+    'DISTRIBUTION_FINISHED'` — the first two are literal forced pushes (the
+    flow's `on_error` handler for the latter), the third triggers
+    `recomputeDistributionStatus` (the flow's `finally` handler, per the
+    template's stub comments); `handle-status-push.ts` branches on
+    `run.status` (PROCESSING vs. DISTRIBUTING) to decide which literal is
+    legal, 409 otherwise.
+  - **`post-run.ts`'s completion path (D8/D9).** `billRunRepository.
+    completePosting` is renamed in semantics (same function name): it now
+    stamps `POSTING → INVOICED` only (`invoiced_at`, no `completed_at`) — the
+    prior direct `→ COMPLETED` write is gone. `postRun` calls
+    `triggerDistribution(billRunId, null)` as a SEPARATE call once that
+    transaction commits, wrapped in try/catch that swallows every failure
+    (logged) — a lost/failed auto-trigger leaves the run `INVOICED` with no
+    execution reference, recoverable via T2's "Start distribution" rather
+    than blocking or retrying the posting loop itself.
+  - **T2 — recover a stuck/lost distribution trigger.** `services/billing/
+    stall.ts`'s `isStalled` now also derives STALLED for a `DISTRIBUTING` run
+    (was PROCESSING-only). `reconcile-run.ts`'s "Check status" resolves
+    `distribution*` vs. `processing*` execution-ref columns by the run's
+    current status (a small `executionRefFor` helper) and gains a
+    DISTRIBUTING branch: `FAILED`/`KILLED` → `markDistributionFailed`;
+    `SUCCESS` → `recomputeDistributionStatus` (shared with the M2M path
+    above). `actions/billing/start-distribution.action.ts`
+    (`billrun_operate:EDIT`) re-invokes `triggerDistribution` with the real
+    actor id for an `INVOICED` run with no execution yet.
+    `components/billing/start-distribution-control.tsx` — a plain
+    explicit-click primary control (no confirm modal — a benign, resumable
+    recovery action, not money-moving), same discipline as Post/Retry-failed.
+    **`cancel-run.ts` is a resolved decision to stay `PROCESSING`-only** —
+    NOT extended to DISTRIBUTING: a `DISTRIBUTING` run has already posted
+    every INV, so "reset accounts to PENDING" (cancel's semantics) doesn't
+    apply; `StallBanner` gains a `canCancel` prop (`components/billing/
+    stall-banner.tsx`) the detail page sets to `status === 'PROCESSING'` so a
+    stalled DISTRIBUTING run's banner offers Check status only.
+  - **T11 — force-complete/abandon.** `actions/billing/
+    force-complete-distribution.action.ts` (`billrun_approve:EDIT`, the
+    money-gate permission, mirroring Approve/Post/Reject) + `validation/
+    billing/force-complete-distribution.schema.ts` (mandatory `reason`).
+    `components/billing/force-complete-distribution-dialog.tsx` — a quiet,
+    low-emphasis text-button trigger ("Force-complete / abandon", never a
+    peer button to Rerun, D-T1) opening a spelled-out danger-role confirm
+    (lists the abandoned artifact refs, states the GL-closes/abandoned
+    consequence) — mirrors `RejectDialog`'s shape.
+  - **UI — `DistributionTab`** (`components/billing/distribution-tab.tsx`,
+    new) — D-T3's four states, all sharing one `DistributionView` read model
+    (`services/billing/read/get-distribution.ts`): targets list (loopback
+    mandatory; portal/AR-feed/statutory/email rendered greyed
+    "not configured"); INVOICED-pending → money-posted banner +
+    `StartDistributionControl`; DISTRIBUTING → live in-flight banner;
+    COMPLETED → all-green success summary, no actions; DISTRIBUTION_FAILED →
+    `RerunDistributionControl` (primary, D-T1's happy path) +
+    `ForceCompleteDistributionDialog` (quiet secondary). The full
+    cross-round delivery log (`DistributionOutcomeBadge`, new) renders below
+    every state — zero rows is a positive empty state, not a blank panel.
+    Added to `run-detail-tabs.tsx`/`run-detail.schema.ts`'s `RUN_DETAIL_TABS`
+    and the `[runId]/page.tsx` fetch-per-active-tab idiom (same shape as
+    every other tab).
+  - **`BILLRUN_DISTRIBUTION_FORCE_FAIL`** (env flag, D20) — `lib/config.ts`,
+    threaded only into `distribute-run.ts`'s target payload
+    (`targets[].force_fail`); no UI control (no target-catalog table to hang
+    one off, mirrors Inv. #11's "no `udr_mode`-style column" posture) — a
+    resolved ambiguity: the spec's "a switch to force a failure" is realized
+    as a deploy-time/test-environment toggle, not an operator-facing control,
+    since forcing a failure is a verification concern against the deployed
+    placeholder flow, not a production affordance.
+  - Three new audit events — `BILL_RUN_DISTRIBUTION_STARTED`/`_RERUN`/
+    `_ABANDONED`, all `"Change"` — join `AUDIT_EVENT_TYPES`/
+    `AUDIT_EVENT_CATEGORY_MAP`. No new permission (Start/Rerun distribution
+    share `billrun_operate`; force-complete shares `billrun_approve`).
+
 ## Post-Review Hardening — notable fixes only
 
 Every unit above went through at least one code-review pass; only fixes with
@@ -914,6 +1104,21 @@ file history).
   rows under the idempotency latch). `resetForCancel` excludes `EXCLUDED`
   accounts (never re-entered into the pipeline, matching bm08's rerun
   convention).
+- **bm20** — `attempt` was added as a fourth distribution trigger-payload
+  field (and a fourth outcome-body field) beyond the spec's literal §2/§4
+  lists — needed for T1's stale-round guard, mirroring
+  `ProcessingTriggerPayload.attempt`; `bill_run.distribution_attempt` is the
+  app-side source of truth a signal's `attempt` is checked against (not
+  re-derived from the outcome rows themselves). The "expected mandatory
+  artifact count" `recomputeDistributionStatus` compares against is derived
+  from `bill_run_invoices` count + 1 (the report) — never assumed from the
+  recorded outcome set alone, so "all delivered" can't be satisfied
+  vacuously by a partial signal set. `cancel-run.ts` stays `PROCESSING`-only
+  (not extended to DISTRIBUTING — nothing to reset once INVs are posted).
+  `BILLRUN_DISTRIBUTION_FORCE_FAIL` is an env flag, not an operator control
+  (no target-catalog table to hang a UI switch off). The per-run report's
+  artifact ref is the literal constant `"REPORT"` (stable across attempts,
+  never a generated id) since D21 gives it no stored row to derive one from.
 
 ## Session Notes / Environment Quirks
 
@@ -957,6 +1162,15 @@ file history).
   from `audit_log`'s drop-on-expiry) and the existing shared
   `run_maintenance_proc()` daily cron covers all of them; no second cron job
   was ever added.
+- **bm20's three new `AUDIT_EVENT_TYPES` entries rippled into two places
+  `tsc` does not catch** (the known pattern from every prior audit-event
+  addition): `tests/components/audit-log-filters.test.tsx`'s hardcoded
+  option-count assertion (70 → 73) and `tests/lib/config.test.ts`'s
+  exact-object `parses a valid env` assertion needed the new
+  `BILLRUN_DISTRIBUTION_FORCE_FAIL` key added (its `ENV_KEYS` array too).
+  Both fixed in this unit; confirmed via a full non-integration `vitest run`
+  that the only OTHER failures are the four pre-existing, unrelated
+  hardcoded-date-drift files noted above.
 
 ## Open Questions
 
@@ -964,19 +1178,20 @@ file history).
 
 ## Next Up
 
-- **bm01–bm19 are all delivered.** The remaining action items are
+- **bm01–bm20 are all delivered.** The remaining action items are
   environmental (see Outstanding, above): apply migrations `0033`/`0035`/
-  `0036`/`0037`, run `db:bootstrap-billrun-roles` (after `db:bootstrap-roles` and
-  `db:bootstrap-rating-roles`), run `db:setup-partman-billing` (now
-  registering five parents incl. `bill_run_invoices`), run the DB-gated
-  suites (incl. the updated `billing-e2e-happy-path.integration.test.ts`,
-  which does not yet exercise Reject end-to-end — bm17's reject → rerun →
-  re-approve journey has only unit-test coverage in this session) against a
-  real Postgres, and run `db:seed-sample` there to verify bm15's checklist.
+  `0036`/`0037`/`0038`, run `db:bootstrap-billrun-roles` (after
+  `db:bootstrap-roles` and `db:bootstrap-rating-roles`), run
+  `db:setup-partman-billing` (now registering six parents incl.
+  `bill_run_invoices`/`bill_run_distribution`), run the DB-gated suites
+  (incl. `billing-e2e-happy-path.integration.test.ts` — which does not yet
+  exercise Reject end-to-end, AND needs a bm20 fix before it can pass past
+  posting, see Outstanding above) against a real Postgres, and run
+  `db:seed-sample` there to verify bm15's checklist.
 - **bm16's live-Kestra smoke gate is unmet** — no deployed `billrun` engine or
   real `bill_run_processing` flow exists yet; the separate workflow-management
   repo/owner/deploy step are `TBD` in `flows/billrun/README.md`. Register the
-  smoke run as a phase-2 exit criterion when bm21 (not yet specced) lands.
+  smoke run as a phase-2 exit criterion when a future unit specs it.
 - **bm18's container-image Chromium proof is unbuilt** — `docker build .`
   against the new `node:22-bookworm-slim` Dockerfile plus an actual
   `renderDraftInvoice` PDF from that image were never exercised in this
@@ -988,5 +1203,10 @@ file history).
   mocked unit tests; do this, plus apply `0036` and post a run for real,
   before treating final-invoice storage as ship-ready (see Outstanding,
   above).
-- Phase 2 · Phase G/H continues past bm19 (bm20's distribution execution
-  columns and any units between) — not yet specced in this session.
+- **bm20's `bill_run_distribution` flow has no deployed engine either** —
+  same gap as bm16's `bill_run_processing`, now doubled: `flows/billrun/
+  README.md`'s owning team/repo/deploy step are `TBD` for BOTH flows. Fold
+  bm20's smoke run into the same live-Kestra exit criterion above rather than
+  tracking it separately.
+- Phase 2 · Phase H is now feature-complete per the current spec set
+  (bm01–bm20); no further unit is specced in this session.
