@@ -152,24 +152,28 @@ tests/rating/
 
 **`db/repositories/rating/` does not exist in v1.** Read repositories have no consumer — there is no UI and the bill run's claim path is out of scope — so no unit builds them. They arrive with the bill run's collection stage, in that module's plan. rm03's grant assertions are raw SQL.
 
-**Rating repository**
+**Rating on the workflow-management surface** (`wfm-architecture.md` §4 / `wfm01` — flows are **function-first** under the `workflow-management/` spin-off subdirectory; the Azure bicep stays at the app-root `infra/`, renamed to the `workflow-engine` identity):
 
 ```
-flows/
-  ran-usage-rating.yaml        # the PRP/RP/RL template
-  log-sweep.yaml
-  completeness-check.yaml
-  stranded-batch-reconcile.yaml
-worker/
-  Dockerfile                   # Kestra base pinned BY DIGEST + rating runtime
-infra/
-  container-app.bicep          # engine deployment, volume mounts, ingress
-  keyvault.bicep
-  easy-auth.bicep              # rm05: Entra authentication + IP allow-list
-dev/
-  docker-compose.dev.yml       # joins the app stack's network, same Postgres
-  .env.example                 # dummy values only
-  landing/ archive/ error/ logs/   # bind mounts, .gitkeep + sample fixtures
+workflow-management/
+  flows/
+    rating-engine/               # function 1 — rating's flows (was a flat flows/)
+      ran-usage-rating.yaml      # the PRP/RP/RL template
+      log-sweep.yaml
+      completeness-check.yaml
+      stranded-batch-reconcile.yaml
+  worker/
+    workflow-engine/
+      Dockerfile                 # Kestra base pinned BY DIGEST + rating runtime + Postgres client (shared image)
+  kestra/kestra.yml
+  dev/
+    docker-compose.dev.yml       # joins the app stack's network, same Postgres
+    .env.example                 # dummy values only
+    landing/ archive/ error/ logs/   # bind mounts, .gitkeep + sample fixtures
+infra/bicep/modules/             # app-root — NOT under workflow-management/
+  workflow-engine-container-app.bicep  # engine deployment, volume mounts, ingress (was rating-engine-*)
+  key-vault.bicep
+  easy-auth.bicep                # rm05: Entra authentication + IP allow-list
 ```
 
 **No `tests/` directory in the rating repo.** rm13 runs the assembled suite from the app repo and changes only CI configuration; it does not create a second test tree.

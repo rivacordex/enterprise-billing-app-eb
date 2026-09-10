@@ -2,6 +2,8 @@
 
 Update after every meaningful change. Git history is authoritative for *what* changed and *when*; this file is for *why*, *what's still open*, and *what a fresh session must not silently re-decide*. Keep entries dense.
 
+> **Pending restructure — `context/workflow-management/specs/wfm01-engine-restructure.md`.** Path references below (`rating-engine/flows/`, `rating-engine/worker/`, `rating-engine/dev/`, `infra/bicep/modules/rating-engine-*`) record the **current** on-disk layout and stay accurate until `wfm01` executes in the code repo. After that move they become: `workflow-management/flows/rating-engine/`, `workflow-management/worker/workflow-engine/`, `workflow-management/dev/`, and `infra/bicep/modules/workflow-engine-*` (the physical engine renamed `rating-engine` → `workflow-engine`). Do not rewrite historical entries pre-emptively.
+
 ## Status
 
 - **Phase F/G — ship gate.** Units rm01–rm13 are all file-complete and build-hygiene-clean (`tsc`/ESLint/Prettier; `py_compile`/stubbed-import harness wherever `python3` was available).
