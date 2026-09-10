@@ -77,7 +77,9 @@ export const billRunDistribution = billing.table(
     // The idempotency latch (Inv. #5's shape, extended by T1): a replay of
     // the SAME round is a no-op; a NEW `distribution_attempt` (a rerun) is a
     // fresh row.
-    unique("bill_run_distribution_run_target_artifact_attempt_period_unique").on(
+    unique(
+      "bill_run_distribution_run_target_artifact_attempt_period_unique",
+    ).on(
       t.refBillRunId,
       t.target,
       t.artifactRef,

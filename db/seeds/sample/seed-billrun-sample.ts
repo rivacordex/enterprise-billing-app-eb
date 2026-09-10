@@ -116,7 +116,9 @@ async function purgeSampleGraph(): Promise<void> {
         const faIds = fas.map((f) => f.financialAccountId);
 
         if (banIds.length > 0) {
-          await tx.delete(udrRated).where(inArray(udrRated.billrunBanId, banIds));
+          await tx
+            .delete(udrRated)
+            .where(inArray(udrRated.billrunBanId, banIds));
 
           const inventories = await tx
             .select({ productInventoryId: productInventory.productInventoryId })
@@ -134,7 +136,9 @@ async function purgeSampleGraph(): Promise<void> {
               );
             await tx
               .delete(productInventory)
-              .where(inArray(productInventory.productInventoryId, inventoryIds));
+              .where(
+                inArray(productInventory.productInventoryId, inventoryIds),
+              );
           }
 
           const orders = await tx
@@ -213,11 +217,16 @@ async function purgeSampleGraph(): Promise<void> {
       await tx
         .delete(productOfferingPrice)
         .where(
-          eq(productOfferingPrice.productOfferingId, offering.productOfferingId),
+          eq(
+            productOfferingPrice.productOfferingId,
+            offering.productOfferingId,
+          ),
         );
       await tx
         .delete(productOffering)
-        .where(eq(productOffering.productOfferingId, offering.productOfferingId));
+        .where(
+          eq(productOffering.productOfferingId, offering.productOfferingId),
+        );
     }
   });
 }
@@ -378,9 +387,7 @@ async function createSampleCustomerAndAccounts(actorId: string): Promise<{
 
   // BAN #2 (full-period) and #3 (partial-period) — self-provisioned onto the
   // same FA (ac04's own step 2b–2d, `ordering-inventory.ts` precedent).
-  async function provisionAdditionalBan(
-    name: string,
-  ): Promise<string> {
+  async function provisionAdditionalBan(name: string): Promise<string> {
     return db.transaction(async (tx) => {
       const ban = await billingAccountRepository.insert(tx, {
         name,
@@ -580,9 +587,8 @@ async function main(): Promise<void> {
 
   const { offeringId, priceId } = await ensureSampleOffering();
 
-  const { partyRoleId, accounts } = await createSampleCustomerAndAccounts(
-    actorId,
-  );
+  const { partyRoleId, accounts } =
+    await createSampleCustomerAndAccounts(actorId);
 
   const today = todayInZone(new Date(), config.APP_TIMEZONE);
   const period = currentDuePeriod(1, today);

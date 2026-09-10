@@ -427,9 +427,9 @@ describe.skipIf(!databaseUrl)(
             status: "DONE",
           });
           expect(status).toBe(200);
-          expect(
-            (data as { data: { replayed: boolean } }).data.replayed,
-          ).toBe(false);
+          expect((data as { data: { replayed: boolean } }).data.replayed).toBe(
+            false,
+          );
         }
 
         await simulateProcessorTaxation(customerBillId, periodPartition);
@@ -440,9 +440,9 @@ describe.skipIf(!databaseUrl)(
             status: "DONE",
           });
           expect(status).toBe(200);
-          expect(
-            (data as { data: { replayed: boolean } }).data.replayed,
-          ).toBe(false);
+          expect((data as { data: { replayed: boolean } }).data.replayed).toBe(
+            false,
+          );
         }
 
         const verify1 = await stageSignal(runId, "verification", {
@@ -559,8 +559,11 @@ describe.skipIf(!databaseUrl)(
           .from(customerBill)
           .where(eq(customerBill.refBillingAccountId, banBilled));
         expect(billedBillsAfterReject).toHaveLength(0);
-        const rejectedPending = await billRunAccountStageRepository
-          .listRejectedPendingForRun(db, runId);
+        const rejectedPending =
+          await billRunAccountStageRepository.listRejectedPendingForRun(
+            db,
+            runId,
+          );
         expect(rejectedPending.map((r) => r.billingAccountId)).toContain(
           banBilled,
         );
@@ -654,8 +657,11 @@ describe.skipIf(!databaseUrl)(
         // ONLY the account's CURRENT-attempt row (bm17-spec Phase-2 review
         // fold T6), and the attempt bump above already makes the marked
         // (attempt-1) row stale.
-        const rejectedPendingAfterRerun = await billRunAccountStageRepository
-          .listRejectedPendingForRun(db, runId);
+        const rejectedPendingAfterRerun =
+          await billRunAccountStageRepository.listRejectedPendingForRun(
+            db,
+            runId,
+          );
         expect(
           rejectedPendingAfterRerun.map((r) => r.billingAccountId),
         ).not.toContain(banBilled);
@@ -877,7 +883,9 @@ describe.skipIf(!databaseUrl)(
         // guard's proof (bm19-spec §Design "The stored PDF is the issued
         // record — immutable", migration 0036_bill_run_invoices.sql) — once
         // written, a row can never be UPDATEd or DELETEd.
-        const [syntheticInvoice] = await sql!<{ bill_run_invoice_id: string }[]>`
+        const [syntheticInvoice] = await sql!<
+          { bill_run_invoice_id: string }[]
+        >`
           INSERT INTO billing.bill_run_invoices
             (ref_bill_run_id, ref_billing_account_id, ref_customer_bill_id,
              ref_inv_document_id, blob_ref, checksum, period_partition)

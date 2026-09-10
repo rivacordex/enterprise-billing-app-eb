@@ -66,7 +66,11 @@ describe("RejectDialog (bm17-spec §Design/§Implementation §5)", () => {
   it("submits scope 'selected' with the account ids and reason, then shows a success message", async () => {
     mockAction.mockResolvedValue({
       ok: true,
-      value: { billRunId: "BRN00000001", accountCount: 1, priorTotals: "107.50" },
+      value: {
+        billRunId: "BRN00000001",
+        accountCount: 1,
+        priorTotals: "107.50",
+      },
     });
     const user = userEvent.setup();
     render(
@@ -93,7 +97,11 @@ describe("RejectDialog (bm17-spec §Design/§Implementation §5)", () => {
   it("submits scope 'all' when no accounts are passed", async () => {
     mockAction.mockResolvedValue({
       ok: true,
-      value: { billRunId: "BRN00000001", accountCount: 3, priorTotals: "315.00" },
+      value: {
+        billRunId: "BRN00000001",
+        accountCount: 3,
+        priorTotals: "315.00",
+      },
     });
     const user = userEvent.setup();
     render(<RejectDialog billRunId="BRN00000001" accountIds={[]} />);

@@ -94,7 +94,10 @@ describe("rejectRunAction (bm17-spec §Implementation §2)", () => {
   });
 
   it("returns VALIDATION_ERROR for an invalid scope", async () => {
-    const result = await rejectRunAction({ ...VALID_INPUT, scope: "everything" });
+    const result = await rejectRunAction({
+      ...VALID_INPUT,
+      scope: "everything",
+    });
 
     expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
     expect(mockRejectRun).not.toHaveBeenCalled();

@@ -192,6 +192,8 @@ export function failedArtifactRefsFromRows(rows: DistributionRow[]): string[] {
   if (rows.length === 0) return [];
   const currentAttempt = Math.max(...rows.map((r) => r.distributionAttempt));
   return rows
-    .filter((r) => r.distributionAttempt === currentAttempt && r.outcome === "FAILED")
+    .filter(
+      (r) => r.distributionAttempt === currentAttempt && r.outcome === "FAILED",
+    )
     .map((r) => r.artifactRef);
 }

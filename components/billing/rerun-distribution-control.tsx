@@ -53,8 +53,7 @@ export function RerunDistributionControl({
         {submitting ? "Redelivering…" : "Rerun distribution"}
       </Button>
       <p className="text-body-sm text-muted-foreground">
-        Redelivers only the failed artifacts. Posted invoices are never
-        touched.
+        Redelivers only the failed artifacts. Posted invoices are never touched.
       </p>
       {error && (
         <p role="alert" className="text-body-sm text-destructive">

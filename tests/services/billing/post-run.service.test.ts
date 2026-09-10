@@ -181,7 +181,11 @@ beforeEach(() => {
   mockFindStoredInvoice.mockResolvedValue(null);
   mockTriggerDistribution.mockResolvedValue({
     ok: true,
-    value: { billRunId: "BRN00000001", executionId: "stub-exec-dist", artifactCount: 1 },
+    value: {
+      billRunId: "BRN00000001",
+      executionId: "stub-exec-dist",
+      artifactCount: 1,
+    },
   });
   mockFindForAccount.mockResolvedValue({
     customerBillId: "CBL00000001",

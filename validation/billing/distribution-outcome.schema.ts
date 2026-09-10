@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { DISTRIBUTION_ARTIFACT_TYPES, DISTRIBUTION_OUTCOMES } from "@/types/billing";
+import {
+  DISTRIBUTION_ARTIFACT_TYPES,
+  DISTRIBUTION_OUTCOMES,
+} from "@/types/billing";
 import { billRunIdSchema } from "@/validation/billing/run-id.schema";
 
 // bm20-spec §Implementation §4. The third M2M handler's body — one

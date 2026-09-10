@@ -512,10 +512,10 @@ export async function postRun(
     try {
       const triggered = await triggerDistribution(billRunId, null);
       if (!triggered.ok) {
-        logger.error(
-          "post-run: automatic distribution trigger did not start",
-          { billRunId, code: triggered.code },
-        );
+        logger.error("post-run: automatic distribution trigger did not start", {
+          billRunId,
+          code: triggered.code,
+        });
       }
     } catch (err) {
       logger.error("post-run: automatic distribution trigger failed", {

@@ -44,7 +44,10 @@ describe("db:seed-sample marks every seeded udr_rated row _SAMPLE_* (bm15-spec Â
   });
 
   it("a BILL_NOTUSED row (bm15-spec's second seeded pair) is marked the same way", () => {
-    const row = buildSampleUdrRatedRow({ ...BASE_SPEC, status: "BILL_NOTUSED" });
+    const row = buildSampleUdrRatedRow({
+      ...BASE_SPEC,
+      status: "BILL_NOTUSED",
+    });
     expect(row.status).toBe("BILL_NOTUSED");
     expect(row.udrSourceFile).toMatch(SAMPLE_MARKER);
     expect(row.udrRefBatchId).toMatch(SAMPLE_MARKER);

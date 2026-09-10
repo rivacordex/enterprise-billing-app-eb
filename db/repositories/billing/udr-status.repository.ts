@@ -25,7 +25,10 @@ export const udrStatusRepository = {
       .update(udrRated)
       .set({ status: "BILL_APPROVED", upsertDatetime: sql`now()` })
       .where(
-        and(eq(udrRated.billrunRefId, billRunId), eq(udrRated.status, "BILL_DRAFT")),
+        and(
+          eq(udrRated.billrunRefId, billRunId),
+          eq(udrRated.status, "BILL_DRAFT"),
+        ),
       );
   },
 
@@ -56,7 +59,11 @@ export const udrStatusRepository = {
   // `BILL_APPROVED`/posted row — no separate posted-row check is needed.
   // `banIds` omitted ⇒ every claimed row in the run (cancel's whole-run
   // release); passed ⇒ scoped to those accounts only.
-  async release(tx: Database, billRunId: string, banIds?: string[]): Promise<void> {
+  async release(
+    tx: Database,
+    billRunId: string,
+    banIds?: string[],
+  ): Promise<void> {
     await tx
       .update(udrRated)
       .set({

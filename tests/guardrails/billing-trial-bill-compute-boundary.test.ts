@@ -67,6 +67,8 @@ describe("no app service re-derives customer_bill/customer_bill_tax_item (bm16-s
       resolve(SERVICES_DIR, "handle-stage-signal.ts"),
       "utf8",
     );
-    expect(source).not.toMatch(/customerBillRepository|customerBillTaxItemRepository/);
+    expect(source).not.toMatch(
+      /customerBillRepository|customerBillTaxItemRepository/,
+    );
   });
 });

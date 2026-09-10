@@ -10,8 +10,5 @@ import type { RejectedPendingRow } from "@/types/billing";
 export async function listRejectedPending(
   billRunId: string,
 ): Promise<RejectedPendingRow[]> {
-  return billRunAccountStageRepository.listRejectedPendingForRun(
-    db,
-    billRunId,
-  );
+  return billRunAccountStageRepository.listRejectedPendingForRun(db, billRunId);
 }
