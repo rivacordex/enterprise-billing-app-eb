@@ -16,6 +16,7 @@ import { customerBillTaxItem } from "@/db/schema/billing/customer-bill-tax-item"
 import { document } from "@/db/schema/billing/documents";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
+import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { seedSysAccounts } from "@/db/seeds/accounts/seed-sys-accounts";
 import { seedCoa } from "@/db/seeds/accounts/seed-coa";
 import { seedGlMappings } from "@/db/seeds/accounts/seed-gl-mappings";
@@ -24,9 +25,11 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { materializeDueRuns as MaterializeDueRuns } from "@/services/billing/materialize-runs";
 import type { triggerRun as TriggerRun } from "@/services/billing/trigger-run";
 import type { rerunRun as RerunRun } from "@/services/billing/rerun-run";
+import type { rejectRun as RejectRun } from "@/services/billing/reject-run";
 import type { approveRun as ApproveRun } from "@/services/billing/approve-run";
 import type { postRun as PostRun } from "@/services/billing/post-run";
 import type {
+  rerunDistribution as RerunDistribution,
   recordDistributionOutcome as RecordDistributionOutcome,
   recomputeDistributionStatus as RecomputeDistributionStatus,
 } from "@/services/billing/distribute-run";
@@ -38,13 +41,23 @@ import type { POST as StageCompletePost } from "@/app/api/billrun/[runId]/stage/
 
 // bm13-spec §3 — the one E2E happy-path journey: materialize → trigger →
 // drive stages via the signed M2M endpoints → PROCESSED → review (bills + tax
-// + uncharged + errors) → rerun a subset → approve (a DIFFERENT, four-eyes
-// user) → post → INVOICED → DISTRIBUTING → COMPLETED, on synthetic stub
-// figures in a clean, isolated test ledger (never production Accounts data).
-// Also folds in the bm13-spec §2 "Finalization latch" guardrail — proven
-// against this same run's real posted bill rather than rebuilding the
-// fixture a second time — and the "next cycle operable at INVOICED" success
-// criterion #10.
+// + uncharged + errors) → reject a subset (approval blocked) → rerun the
+// rejected account (re-process) → approve (a DIFFERENT, four-eyes user) →
+// post → INVOICED → DISTRIBUTING → COMPLETED, on synthetic stub figures in a
+// clean, isolated test ledger (never production Accounts data). Also folds in
+// the bm13-spec §2 "Finalization latch" guardrail — proven against this same
+// run's real posted bill rather than rebuilding the fixture a second time —
+// and the "next cycle operable at INVOICED" success criterion #10.
+//
+// bm21-spec §Implementation §2/§4, Phase-2 review folds T3/T8 — extends the
+// bm20-era journey (below) with the two legs no single phase-2 unit owned:
+// (a) reject → approval-blocked → rerun-rejected → re-process (bm17-spec
+// §Implementation §2's model (b), never exercised end-to-end before this
+// unit); (b) the D10 safety net (bm19) — a posted account with no stored
+// invoice must mandatory-fail distribution rather than let it complete
+// silently around the gap, then recover via a (simulated) retry-render +
+// Rerun distribution. Both close review-fold gaps the bm13/bm20-era journey
+// left open — see this file's tail for (b).
 //
 // bm20-spec §Design D8/D9 revises the tail of this journey: `postRun` now
 // stops at `INVOICED`, then automatically (post-commit) calls
@@ -91,8 +104,10 @@ describe.skipIf(!databaseUrl)(
     let materializeDueRuns: typeof MaterializeDueRuns;
     let triggerRun: typeof TriggerRun;
     let rerunRun: typeof RerunRun;
+    let rejectRun: typeof RejectRun;
     let approveRun: typeof ApproveRun;
     let postRun: typeof PostRun;
+    let rerunDistribution: typeof RerunDistribution;
     let recordDistributionOutcome: typeof RecordDistributionOutcome;
     let recomputeDistributionStatus: typeof RecomputeDistributionStatus;
     let REPORT_ARTIFACT_REF: string;
@@ -290,10 +305,15 @@ describe.skipIf(!databaseUrl)(
         await import("@/services/billing/materialize-runs"));
       ({ triggerRun } = await import("@/services/billing/trigger-run"));
       ({ rerunRun } = await import("@/services/billing/rerun-run"));
+      ({ rejectRun } = await import("@/services/billing/reject-run"));
       ({ approveRun } = await import("@/services/billing/approve-run"));
       ({ postRun } = await import("@/services/billing/post-run"));
-      ({ recordDistributionOutcome, recomputeDistributionStatus, REPORT_ARTIFACT_REF } =
-        await import("@/services/billing/distribute-run"));
+      ({
+        rerunDistribution,
+        recordDistributionOutcome,
+        recomputeDistributionStatus,
+        REPORT_ARTIFACT_REF,
+      } = await import("@/services/billing/distribute-run"));
       ({ listAccountBills } =
         await import("@/services/billing/read/list-account-bills"));
       ({ listUncharged } =
@@ -327,7 +347,8 @@ describe.skipIf(!databaseUrl)(
 
     it(
       "materialize → trigger → stage signals → PROCESSED → review " +
-        "→ rerun → approve (four-eyes) → post → COMPLETED",
+        "→ reject → rerun-rejected → approve (four-eyes) → post → " +
+        "distribution mandatory-fail → rerun-distribution → COMPLETED",
       async () => {
         // ---- Fixtures: three accounts, three distinct run outcomes. -------
         const banBilled = await newBillingAccount("Billed");
@@ -500,13 +521,71 @@ describe.skipIf(!databaseUrl)(
         expect(errors[0]?.errorClass).toBe("HARD");
         expect(errors[0]?.stage).toBe("aggregation");
 
-        // ---- Rerun a subset: the BILLED account only, from Taxation. -----
+        // ---- bm17-spec §Implementation §2, bm21-spec §Implementation §2 —
+        // Reject the BILLED account (model (b): the run stays PROCESSED,
+        // the operator reruns). ----------------------------------------------
+        const rejected = await rejectRun(
+          {
+            billRunId: runId,
+            scope: "selected",
+            banIds: [banBilled],
+            reason: "E2E ship-gate reject demonstration.",
+          },
+          approveActorId,
+        );
+        expect(rejected.ok).toBe(true);
+        if (!rejected.ok) return;
+        expect(rejected.value.accountCount).toBe(1);
+
+        // The run stays PROCESSED throughout (bm17-spec — no new
+        // AccountStatus member; the account's own status is left UNTOUCHED).
+        const [runAfterReject] = await db
+          .select()
+          .from(billRun)
+          .where(eq(billRun.billRunId, runId));
+        expect(runAfterReject?.status).toBe("PROCESSED");
+        const accountAfterReject = await billRunAccountRepository.findStatus(
+          db,
+          runId,
+          banBilled,
+        );
+        expect(accountAfterReject?.status).toBe("PROCESSED");
+
+        // The rejected account's unposted trial bill is gone (deleteUnposted
+        // ForAccounts) and the REJECTED_PENDING_REPROCESS marker is stamped
+        // on its latest (current-attempt) stage row.
+        const billedBillsAfterReject = await db
+          .select()
+          .from(customerBill)
+          .where(eq(customerBill.refBillingAccountId, banBilled));
+        expect(billedBillsAfterReject).toHaveLength(0);
+        const rejectedPending = await billRunAccountStageRepository
+          .listRejectedPendingForRun(db, runId);
+        expect(rejectedPending.map((r) => r.billingAccountId)).toContain(
+          banBilled,
+        );
+
+        // ---- `no_rejected_pending` blocks approval until the rejected
+        // account is rerun (bm17-spec §Design, the 6th pre-approval check). --
+        const blockedApproval = await approveRun(runId, approveActorId);
+        expect(blockedApproval.ok).toBe(false);
+        if (blockedApproval.ok) return;
+        expect(blockedApproval.code).toBe("CHECKS_FAILED");
+        if (blockedApproval.code === "CHECKS_FAILED") {
+          const noRejectedPending = blockedApproval.checks.find(
+            (c) => c.check === "no_rejected_pending",
+          );
+          expect(noRejectedPending?.pass).toBe(false);
+        }
+
+        // ---- Rerun the rejected account: re-claim → re-process, from
+        // Validation (its trial bill was deleted by reject). ----------------
         const rerun = await rerunRun(
           {
             billRunId: runId,
             accountIds: [banBilled],
-            fromStage: "taxation",
-            reason: "E2E ship-gate rerun demonstration.",
+            fromStage: "validation",
+            reason: "E2E ship-gate rerun-rejected demonstration.",
           },
           triggerActorId,
         );
@@ -515,14 +594,44 @@ describe.skipIf(!databaseUrl)(
         expect(rerun.value.accountCount).toBe(1);
         expect(rerun.value.attempt).toBe(2);
 
-        // Drive the re-signalled stages at the new attempt (the engine does
-        // not auto-resignal in v1, rerun-run.ts §5).
-        const retax = await stageSignal(runId, "taxation", {
-          ban_id: banBilled,
-          attempt: 2,
-          status: "DONE",
+        // Drive the full six-stage pipeline again at the new attempt (the
+        // engine does not auto-resignal in v1, rerun-run.ts §5) — same
+        // write-then-signal shape as the account's first pass above.
+        for (const stage of ["validation", "collection"]) {
+          const { status } = await stageSignal(runId, stage, {
+            ban_id: banBilled,
+            attempt: 2,
+            status: "DONE",
+          });
+          expect(status).toBe(200);
+        }
+        const reagg = await simulateProcessorAggregation({
+          runId,
+          banId: banBilled,
+          periodStart: "2026-06-01",
+          periodEnd: "2026-06-30",
+          paymentDueDate: "2026-08-01",
         });
-        expect(retax.status).toBe(200);
+        {
+          const { status } = await stageSignal(runId, "aggregation", {
+            ban_id: banBilled,
+            attempt: 2,
+            status: "DONE",
+          });
+          expect(status).toBe(200);
+        }
+        await simulateProcessorTaxation(
+          reagg.customerBillId,
+          reagg.periodPartition,
+        );
+        {
+          const { status } = await stageSignal(runId, "taxation", {
+            ban_id: banBilled,
+            attempt: 2,
+            status: "DONE",
+          });
+          expect(status).toBe(200);
+        }
         const reverify = await stageSignal(runId, "verification", {
           ban_id: banBilled,
           attempt: 2,
@@ -539,6 +648,17 @@ describe.skipIf(!databaseUrl)(
           .from(billRun)
           .where(eq(billRun.billRunId, runId));
         expect(reprocessedRun?.status).toBe("PROCESSED");
+
+        // The re-processed attempt's stage row carries no
+        // REJECTED_PENDING_REPROCESS marker — `no_rejected_pending` reads
+        // ONLY the account's CURRENT-attempt row (bm17-spec Phase-2 review
+        // fold T6), and the attempt bump above already makes the marked
+        // (attempt-1) row stale.
+        const rejectedPendingAfterRerun = await billRunAccountStageRepository
+          .listRejectedPendingForRun(db, runId);
+        expect(
+          rejectedPendingAfterRerun.map((r) => r.billingAccountId),
+        ).not.toContain(banBilled);
 
         // ---- Approve: a DIFFERENT user — four-eyes. -------------------------
         const approved = await approveRun(runId, approveActorId);
@@ -575,7 +695,7 @@ describe.skipIf(!databaseUrl)(
         expect(invoicedRun?.completedAt).toBeNull();
         expect(invoicedRun?.distributionExecutionId).toBeTruthy();
 
-        // ---- Drive distribution to COMPLETED the same way the deployed
+        // ---- Drive distribution the same way the deployed
         // `bill_run_distribution` flow would: record the loopback's
         // DELIVERED outcome for every mandatory artifact the automatic
         // trigger actually launched, then the flow's `finally` handler's
@@ -603,13 +723,24 @@ describe.skipIf(!databaseUrl)(
           recomputeDistributionStatus(tx, { billRunId: runId }),
         );
 
-        const [completedRun] = await db
+        // ---- bm21-spec §Implementation §2, Phase-2 review fold T8 — "assert
+        // the D10 safety net end-to-end": `banBilled` is POSTED but has no
+        // stored `bill_run_invoices` row (no reachable blob store/Chromium in
+        // this environment, same gap as bm19's Outstanding notes). Every
+        // mandatory artifact the trigger actually launched (the report) WAS
+        // delivered — the pre-D10-safety-net behavior would have let this
+        // silently reach COMPLETED around the gap (see the OLD assertion this
+        // replaces, kept only in history). `recomputeDistributionStatus`'s
+        // `hasUnrenderedPostedAccounts` check (services/billing/
+        // distribute-run.ts) now refuses to complete around it —
+        // DISTRIBUTION_FAILED, never a silent COMPLETED.
+        const [mandatoryFailRun] = await db
           .select()
           .from(billRun)
           .where(eq(billRun.billRunId, runId));
-        expect(completedRun?.status).toBe("COMPLETED");
-        expect(completedRun?.invoicedAt).not.toBeNull();
-        expect(completedRun?.completedAt).not.toBeNull();
+        expect(mandatoryFailRun?.status).toBe("DISTRIBUTION_FAILED");
+        expect(mandatoryFailRun?.invoicedAt).not.toBeNull();
+        expect(mandatoryFailRun?.completedAt).toBeNull();
 
         // ---- Exactly one INV per billed account; SKIPPED/EXCLUDED consume
         // no invoice number. ------------------------------------------------
@@ -725,20 +856,26 @@ describe.skipIf(!databaseUrl)(
         // (BILLRUN_BLOB_CONNECTION_STRING/_ACCOUNT_URL unset here) nor
         // Playwright's Chromium installed, so `renderAndStoreInvoice`'s
         // internal try/catch swallows that failure exactly as designed — the
-        // run still reached COMPLETED above (proving the failure never
-        // blocked INVOICED), and the account is left "render-pending": no
-        // `bill_run_invoices` row exists yet, self-documenting the tolerated,
-        // retryable gap (never a stored column, D10).
+        // account is left "render-pending": no `bill_run_invoices` row exists
+        // yet, self-documenting the tolerated, retryable gap (never a stored
+        // column, D10) — and, per the D10 safety net above, distribution is
+        // now stuck at DISTRIBUTION_FAILED rather than silently COMPLETED.
         const renderPendingRows = await db
           .select()
           .from(billRunInvoices)
           .where(eq(billRunInvoices.refBillingAccountId, banBilled));
         expect(renderPendingRows).toHaveLength(0);
 
-        // ---- bill_run_invoices immutability guard (bm19-spec §Design "The
-        // stored PDF is the issued record — immutable", migration
-        // 0036_bill_run_invoices.sql) — proven directly via a synthetic row
-        // (independent of the blob store / Chromium gap above): once
+        // ---- bm21-spec §Implementation §2, T8 — "retry-render + rerun-
+        // distribution reaches COMPLETED". `retryRenderInvoice` itself needs
+        // real Chromium/blob storage (unavailable here — same environmental
+        // gap noted throughout this module's Outstanding notes), so this
+        // simulates its OUTCOME the same way `simulateProcessorAggregation`/
+        // `simulateProcessorTaxation` stand in for the processor's writes: a
+        // direct insert of the `bill_run_invoices` row `retryRenderInvoice`
+        // would have produced. This same row doubles as the immutability
+        // guard's proof (bm19-spec §Design "The stored PDF is the issued
+        // record — immutable", migration 0036_bill_run_invoices.sql) — once
         // written, a row can never be UPDATEd or DELETEd.
         const [syntheticInvoice] = await sql!<{ bill_run_invoice_id: string }[]>`
           INSERT INTO billing.bill_run_invoices
@@ -757,6 +894,49 @@ describe.skipIf(!databaseUrl)(
         await expect(
           sql!`DELETE FROM billing.bill_run_invoices WHERE bill_run_invoice_id = ${syntheticInvoice!.bill_run_invoice_id}`,
         ).rejects.toThrow(/immutable/i);
+
+        // ---- Rerun distribution: now that the (simulated) retry-render
+        // produced a stored invoice, `rerunDistribution` picks it up as a
+        // never-before-attempted mandatory artifact (services/billing/
+        // distribute-run.ts's `neverAttemptedInvoices`, bm21-spec T8) even
+        // though it was never part of a FAILED outcome row — the D10 safety
+        // net above never fabricated one, it derived the gap structurally.
+        const rerunDist = await rerunDistribution(runId, approveActorId);
+        expect(rerunDist.ok).toBe(true);
+        if (!rerunDist.ok) return;
+        expect(rerunDist.value.attempt).toBe(2);
+        expect(rerunDist.value.artifactCount).toBe(1);
+
+        const [redistributingRun] = await db
+          .select()
+          .from(billRun)
+          .where(eq(billRun.billRunId, runId));
+        expect(redistributingRun?.status).toBe("DISTRIBUTING");
+        expect(redistributingRun?.distributionAttempt).toBe(2);
+
+        // The loopback delivers the now-stored invoice under the new round.
+        const invoiceOutcome = await recordDistributionOutcome({
+          runId,
+          target: "loopback",
+          artifactRef: syntheticInvoice!.bill_run_invoice_id,
+          artifactType: "invoice_pdf",
+          isMandatory: true,
+          outcome: "DELIVERED",
+          attempt: 2,
+        });
+        expect(invoiceOutcome.replayed).toBe(false);
+
+        await db.transaction((tx) =>
+          recomputeDistributionStatus(tx, { billRunId: runId }),
+        );
+
+        const [completedRun] = await db
+          .select()
+          .from(billRun)
+          .where(eq(billRun.billRunId, runId));
+        expect(completedRun?.status).toBe("COMPLETED");
+        expect(completedRun?.invoicedAt).not.toBeNull();
+        expect(completedRun?.completedAt).not.toBeNull();
 
         // ---- Next-cycle operability keys off INVOICED, not COMPLETED
         // (overview success criterion #10, bm20-spec §Design D8/D9). This run

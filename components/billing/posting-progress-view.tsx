@@ -68,15 +68,24 @@ export function PostingProgressView({
   ).length;
   // bm20-spec §Design D8/D9 — posting itself now completes into `INVOICED`,
   // not `COMPLETED` directly (the run moves on into `DISTRIBUTING` via a
-  // separate, automatic trigger). `postingDone` covers every status past
-  // `POSTING` — the posting phase is over the moment the run leaves it,
-  // regardless of how far distribution has gotten; `DistributionTab` is the
-  // dedicated surface for what happens next (Keyed on leaving APPROVED/POSTING,
-  // not a count match, so a run with zero postable accounts — every account
-  // SKIPPED — still renders the completion message).
-  const postingDone =
-    progress.runStatus !== "APPROVED" && progress.runStatus !== "POSTING";
-  const canPost = !postingDone;
+  // separate, automatic trigger). `postingDone` is the set of states that are
+  // strictly AT-OR-PAST posting completion (keyed on the status, not a count
+  // match, so a run with zero postable accounts — every account SKIPPED —
+  // still renders the completion message); `DistributionTab` is the dedicated
+  // surface for what happens next. Deliberately an ALLOWLIST, not
+  // `!== APPROVED && !== POSTING`: this page also renders for any non-PROCESSED
+  // run (the approve route falls through to it), so a denylist would show a
+  // false "posting complete" message on a run that is still SCHEDULED/
+  // PROCESSING, or one that FAILED/was CANCELLED before posting ever ran.
+  const POSTING_DONE_STATUSES: ReadonlySet<string> = new Set([
+    "INVOICED",
+    "DISTRIBUTING",
+    "COMPLETED",
+    "DISTRIBUTION_FAILED",
+  ]);
+  const postingDone = POSTING_DONE_STATUSES.has(progress.runStatus);
+  const canPost =
+    progress.runStatus === "APPROVED" || progress.runStatus === "POSTING";
 
   async function handlePost(): Promise<void> {
     setSubmitting(true);

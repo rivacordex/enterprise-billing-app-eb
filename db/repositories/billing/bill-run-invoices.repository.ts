@@ -1,4 +1,4 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
@@ -78,14 +78,19 @@ export const billRunInvoicesRepository = {
       .where(eq(billRunInvoices.refBillRunId, billRunId));
   },
 
-  // The expected-mandatory-artifact count's invoice half (distribute-run.ts's
-  // `computeExpectedMandatoryArtifactCount` adds the one always-expected
-  // report_csv artifact on top of this).
-  async countForRun(db: Database, billRunId: string): Promise<number> {
-    const [row] = await db
-      .select({ total: count() })
+  // bm21-spec §Implementation §2, Phase-2 review fold T8 — the D10 safety-net
+  // check's read: every billing account that already has a stored final
+  // invoice for this run, so `distribute-run.ts` can diff it against every
+  // POSTED account and detect a render-pending gap (posted, nothing stored
+  // yet) structurally, without scanning the invoice rows themselves.
+  async listBillingAccountIdsForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<string[]> {
+    const rows = await db
+      .select({ billingAccountId: billRunInvoices.refBillingAccountId })
       .from(billRunInvoices)
       .where(eq(billRunInvoices.refBillRunId, billRunId));
-    return row?.total ?? 0;
+    return rows.map((r) => r.billingAccountId);
   },
 };

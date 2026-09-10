@@ -201,6 +201,8 @@ tests/…                        # mirrors source; route × level matrix for the
 
 **Permission names** (general §8): this module ships **three** permission names — `billrun_view`, `billrun_operate`, `billrun_approve` — a **deliberate deviation** from general §8.3's one-name-per-page model, required by **segregation of duties**: operate and approve must be grantable to different people (four-eyes), so they cannot be levels of one permission. Each is code-seeded via migration and referenced by a typed constant in `auth/` (`PERMISSIONS.BILLRUN_VIEW` / `_OPERATE` / `_APPROVE`). `billrun_operate` and `billrun_approve` each **imply** `billrun_view`. A **Billing Viewer** role (Finance, Internal Audit) carries `billrun_view` alone. All three, plus the M2M path, are in the authz-sweep inventory.
 
+**The route table below IS the authz-sweep inventory** (bm21-spec §Implementation §3 confirmed this rather than standing up a separate list-of-routes artifact): OWASP ZAP's whole-host scan scope (`infra/zap/zap-context.xml`) and Semgrep's whole-repo-tree scan already cover every row here by construction — there is no per-route allow-list to maintain in either scanner's config. "Add the routes to the authz-sweep inventory" therefore means: land the row in this table (this is where the bm18/bm19 session-guarded PDF routes and bm20's third M2M handler were added, below) — not a separate CI config edit.
+
 Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are appended before they ship (general §9).
 
 | Surface | Route | Top-level component(s) | Folder | Permission : level |
@@ -424,7 +426,9 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
 
 ## 9. Module Guardrail Tests (CI gate, general §10.4)
 
-The general test-suite gate includes this module's guardrails; each ships with the unit that introduces the behavior:
+The general test-suite gate includes this module's guardrails; each ships with the unit that introduces the behavior. **bm21 (the phase-2 ship gate) assembles and verifies this full list against a live database** — it audits that each item below is present and CI-wired rather than rebuilding what already shipped (bm13 discipline), adding only the cross-cutting assertions and the one full-journey E2E that no single unit owns.
+
+### Phase 1 (bm01–bm13)
 
 1. **Authz matrix** — the three pages × role/level, incl. the `operate` ≠ `approve` split (an `operate`-only principal cannot approve/post; four-eyes: approver == final trigger actor → reject).
 2. **M2M auth** — missing/invalid bearer → 401; valid stage signal advances `bill_run_account_stage` in one txn; **replay `(run,ban,stage,attempt,period_partition)` → 200 no-op**; signal after `APPROVED` → 409; charge fields in body → rejected; **the stage signal writes NO per-signal `core.AUDIT_LOG` row** — the appended `bill_run_account_stage` row is the sole stage audit surface (§1.10). Land this assertion with the M2M-handler unit that introduces the signal path.
@@ -433,4 +437,17 @@ The general test-suite gate includes this module's guardrails; each ships with t
 5. **No billing charge copy** — no table in `db/schema/billing/` stores charge amounts; `charge_checksum` detects a change to a posted invoice's `rating` lines.
 6. **Partition/idempotency** — `period_partition` is fixed per run across a cross-month rerun; the stage UNIQUE includes `period_partition`; run status is recomputed under `FOR UPDATE`, and any cached counter equals the derived value.
 7. **Status/materialize** — every legal `RunStatus`/`AccountStatus` transition accepted, illegal rejected; `STALLED` is never persisted; concurrent list loads create exactly one `bill_run` row; the next cycle is operable once the prior run reaches `INVOICED` (not `COMPLETED`).
-8. **Stub isolation** — while the stub flag is set every run is visibly badged and the environment is isolated from any real-Accounts ledger.
+8. **Placeholder isolation** — while `BILLRUN_PLACEHOLDER_MODE` is set every run is visibly badged and the environment is isolated from any real-Accounts ledger (renamed from "Stub isolation" at bm15; see item 15 below for the phase-2 additions to this guardrail).
+
+### Phase 2 (bm14–bm20, assembled by bm21)
+
+9. **[CRITICAL] Two-writer boundary (bm14)** — `tests/db/billrun-db-roles.integration.test.ts`. `billrun_runtime` writes only `customer_bill` (trial columns)/`customer_bill_tax_item`/the six `udr_rated` claim columns; refused per column/table on the posting-stamp columns, `bill_run*`, `billing.document`, pgledger, `bill_run_invoices`, `bill_run_distribution`, and the `kestra` DB — asserted over `pg_attribute`; the Step 0 deploy-ordering guard and re-run idempotency are proven too.
+10. **[CRITICAL] `udr_rated` lifecycle (bm16/bm17)** — `RATED → BILL_DRAFT` (processor claim, incl. `REJECTED → BILL_DRAFT` re-claim) → `BILL_APPROVED` (approve)/`→ REJECTED` (reject)/`→ RATED` (cancel release); reprocess re-claims; reject refused once `BILL_APPROVED`/posted; the app's only `rating.*` write is `udr-status.repository.ts` (`tests/guardrails/billing-rating-write-boundary.test.ts`); no billing-side `INSERT`.
+11. **M2M record-only (bm16/bm20)** — the handler records, computes no stage; replay 200; 409 after `APPROVED`; stale-attempt no-op; charge-field body rejected. Route-inventory (`tests/app/api/billrun-route-inventory.test.ts`) locks exactly **three** `POST` handlers (stage-complete, status, distribution/outcome).
+12. **[CRITICAL] Rendered-invoice integrity (bm18/bm19)** — draft watermarked/no-number/never-stored; final per-account/post-posting/immutable/checksummed in `bill_run_invoices`; a render failure never rolls back a posted INV, never blocks `INVOICED` — but (bm21 T8) never lets distribution silently reach `COMPLETED` around the gap either; see item 14.
+13. **Distribution (bm20)** — separate execution; mandatory-fail → `DISTRIBUTION_FAILED` → rerun without touching posted INVs; advisory non-blocking; next cycle operable at `INVOICED`.
+14. **[CRITICAL] D10 safety net (bm19/bm20, closed by bm21 T8)** — a POSTED account with no stored `bill_run_invoices` row is a mandatory artifact that was never even deliverable; `recomputeDistributionStatus`'s `hasUnrenderedPostedAccounts` check (`services/billing/distribute-run.ts`) refuses to complete around it — `DISTRIBUTION_FAILED`, never a silent `COMPLETED` — and `rerunDistribution` picks up a late-rendered invoice as a never-attempted mandatory artifact so a retry-render + Rerun distribution still reaches `COMPLETED`. Proven end-to-end in `tests/db/billing-e2e-happy-path.integration.test.ts`.
+15. **Two-execution + engine registry (bm16/bm20)** — processing terminates at `PROCESSED` without awaiting approval; distribution triggered at `INVOICED`; the app resolves `billrun` by name; each execution stamps its resolved engine identity.
+16. **Placeholder isolation, phase-2 additions (bm15)** — while `BILLRUN_PLACEHOLDER_MODE` is set, every run is badged and seeded `udr_rated` is `_SAMPLE_*`-marked (proven via `db:seed-sample`'s own idempotency/prod-guard checks and the seeded-row shape); `db:seed-sample` is prod-guarded and absent from `db:setup` (`tests/guardrails/billing-sample-seed-boundary.test.ts`).
+17. **Phase-1 guardrails still green (bm21)** — the bm13 set (items 1–8 above) re-run unchanged; no regression from any phase-2 unit.
+18. **Reject → reprocess (bm17, proven end-to-end by bm21)** — reject blocks approval (`no_rejected_pending`) until the rejected account is rerun; the marker lives on the rejected attempt's stage row and is implicitly cleared by the rerun's attempt bump, never an explicit clear write. Proven in `tests/db/billing-e2e-happy-path.integration.test.ts`.

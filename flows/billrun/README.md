@@ -33,13 +33,38 @@ one tax line, verifies) so a demo against the `_SAMPLE_*` seed (bm15)
 produces real seeded-derived bills; only the **sophistication** (real
 correlation, price/tax rules, plausibility checks) is stubbed.
 
-**Live-Kestra smoke gate (bm16-spec review fold T3).** This unit's
-"end-to-end against the deployed placeholder flow" verification item can only
-be proven against a real, deployed Kestra instance — out of scope here and
-CI-doubled (the M2M ingest path is unit/integration-tested via a signed test
-caller instead, per bm16-spec §Dependencies "Test double"). A live-Kestra
-smoke run — trigger a real bill run against this template's contract and
-confirm it reaches `PROCESSED` — is registered as a **phase-2 exit
-criterion**, not a CI gate, to be run at least once against the real engine.
-It belongs in **bm21** (the phase-2 exit-criteria unit), not yet specced in
-this repo as of bm16 — see `billmgmt-progress-tracker.md`.
+**Live-Kestra smoke gate (bm16-spec review fold T3, closed by bm21).** This
+unit's "end-to-end against the deployed placeholder flow" verification item
+can only be proven against a real, deployed Kestra instance — out of scope
+here and CI-doubled (the M2M ingest path is unit/integration-tested via a
+signed test caller instead, per bm16-spec §Dependencies "Test double", and
+`tests/db/billing-e2e-happy-path.integration.test.ts` doubles the whole flow
+via its own `simulateProcessorAggregation`/`simulateProcessorTaxation`
+helpers). A live-Kestra smoke run — trigger a real bill run against this
+template's contract and confirm it reaches `PROCESSED` — is an explicit
+**phase-2 exit criterion**, not a CI gate:
+
+**Phase 2 is not fully ship-ready until ALL THREE of the following are
+resolved**, in this order:
+
+1. **Repo/Owner/Deploy step named** — the three `_TBD_` lines above are
+   filled in with the real separate workflow-management repo, its owning
+   team, and its deploy step (how a new flow revision reaches the `billrun`
+   Kestra namespace). This file staying `_TBD_` IS the signal that phase 2
+   is not yet ship-ready on this criterion — do not read a green CI
+   pipeline as satisfying it.
+2. **A real `billrun` engine is deployed**, reachable at
+   `BILLRUN_ENGINE_URL`/`BILLRUN_ENGINE_NAMESPACE` (`lib/config.ts`), running
+   the real `bill_run_processing` flow built to this template's contract
+   (and, once bm20's distribution stage matters here too, a real
+   `bill_run_distribution` flow).
+3. **The smoke run has actually executed at least once** —
+   `npm run billrun:live-kestra-smoke` (`scripts/billrun-live-kestra-smoke.ts`,
+   bm21) against that real engine and a real, `db:seed-sample`-seeded
+   database, driving trigger → claim → `PROCESSED`. Wired as the
+   `billrun_live_kestra_smoke` stage in `infra/azure-pipelines.yml`
+   (`runBillrunLiveKestraSmoke` parameter, off by default — queue manually,
+   or via a scheduled trigger with the parameter set to true, once step 2 is
+   met). The script itself refuses to run against the STUB engine client
+   (fails loud, never a silent pass) so a misconfigured run can never be
+   mistaken for this criterion being met.
