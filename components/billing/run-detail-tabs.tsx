@@ -130,8 +130,8 @@ export function RunDetailTabs({
           />
         ) : (
           <p className="text-body-sm text-muted-foreground">
-            Distribution has not started yet — it becomes available once the
-            run is Invoiced.
+            Distribution has not started yet — it becomes available once the run
+            is Invoiced.
           </p>
         )
       ) : (

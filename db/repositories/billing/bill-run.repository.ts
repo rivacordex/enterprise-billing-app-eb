@@ -469,7 +469,10 @@ export const billRunRepository = {
   // `WHERE` admits `DISTRIBUTION_FAILED` as a source status as well, since the
   // resulting write (flip to COMPLETED, stamp `completed_at`) is identical
   // either way.
-  async completeDistribution(tx: Database, billRunId: string): Promise<boolean> {
+  async completeDistribution(
+    tx: Database,
+    billRunId: string,
+  ): Promise<boolean> {
     const rows = await tx
       .update(billRun)
       .set({ status: "COMPLETED", completedAt: sql`now()` })
@@ -487,7 +490,10 @@ export const billRunRepository = {
   // latest-round outcome is FAILED (or the flow's `on_error` handler pushed a
   // flow-level failure): `DISTRIBUTING` → `DISTRIBUTION_FAILED`, the
   // rerunnable terminal state (mirrors `markProcessingFailed`).
-  async markDistributionFailed(tx: Database, billRunId: string): Promise<boolean> {
+  async markDistributionFailed(
+    tx: Database,
+    billRunId: string,
+  ): Promise<boolean> {
     const rows = await tx
       .update(billRun)
       .set({ status: "DISTRIBUTION_FAILED", lastProgressAt: sql`now()` })

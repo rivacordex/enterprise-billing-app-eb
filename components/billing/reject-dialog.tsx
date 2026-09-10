@@ -127,10 +127,9 @@ export function RejectDialog({
       className="w-full max-w-xl space-y-3 rounded-md border border-[color:var(--border-default)] bg-[color:var(--surface-card)] p-4"
     >
       <p className="text-body-sm text-foreground">
-        Reject <strong>{scope}</strong> and send{" "}
-        {count === 1 ? "it" : "them"} back to reprocess. Their draft bills are
-        discarded; an operator must rerun them before this run can be
-        approved.
+        Reject <strong>{scope}</strong> and send {count === 1 ? "it" : "them"}{" "}
+        back to reprocess. Their draft bills are discarded; an operator must
+        rerun them before this run can be approved.
       </p>
 
       <label className="block space-y-1">

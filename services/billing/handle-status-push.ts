@@ -59,7 +59,10 @@ export async function handleStatusPush(
     }
 
     if (run.status === "DISTRIBUTING") {
-      if (input.status === "DISTRIBUTION_FAILED" || input.status === "DISTRIBUTION_FINISHED") {
+      if (
+        input.status === "DISTRIBUTION_FAILED" ||
+        input.status === "DISTRIBUTION_FINISHED"
+      ) {
         if (input.attempt !== (run.distributionAttempt ?? 1)) {
           return { ok: true };
         }
@@ -74,7 +77,10 @@ export async function handleStatusPush(
     }
 
     if (run.status === "COMPLETED" || run.status === "DISTRIBUTION_FAILED") {
-      if (input.status === "DISTRIBUTION_FAILED" || input.status === "DISTRIBUTION_FINISHED") {
+      if (
+        input.status === "DISTRIBUTION_FAILED" ||
+        input.status === "DISTRIBUTION_FINISHED"
+      ) {
         // The run already left DISTRIBUTING — a prior terminal push (or
         // reconcile) already recomputed it to COMPLETED/DISTRIBUTION_FAILED.
         // A duplicate or late-arriving terminal callback for the same or a

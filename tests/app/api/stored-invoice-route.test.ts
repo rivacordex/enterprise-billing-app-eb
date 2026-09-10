@@ -37,7 +37,10 @@ vi.mock("@/services/billing/read/get-stored-invoice", () => {
 
 import { GET } from "@/app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/route";
 import { auth } from "@/auth";
-import { findActiveUserById, resolveEffectivePermissions } from "@/auth/resolver";
+import {
+  findActiveUserById,
+  resolveEffectivePermissions,
+} from "@/auth/resolver";
 import {
   StoredInvoiceNotFoundError,
   getStoredInvoice,

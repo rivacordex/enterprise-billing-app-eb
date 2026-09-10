@@ -56,10 +56,7 @@ describe("billing-side rating.* write boundary (bm17-spec §Implementation §1)"
   });
 
   it("udr-status.repository.ts touches only the six claim columns (no INSERT, no other column)", () => {
-    const source = readFileSync(
-      resolve(REPO_DIR, SANCTIONED_WRITER),
-      "utf8",
-    );
+    const source = readFileSync(resolve(REPO_DIR, SANCTIONED_WRITER), "utf8");
     expect(source).not.toMatch(/\.insert\(/);
     // Every .set({...}) block may only assign these keys.
     const ALLOWED_KEYS = new Set([

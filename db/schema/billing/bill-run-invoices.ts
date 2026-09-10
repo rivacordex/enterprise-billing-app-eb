@@ -86,7 +86,10 @@ export const billRunInvoices = billing.table(
     // an impossible ordering, not a real cascade path.
     foreignKey({
       columns: [t.refCustomerBillId, t.periodPartition],
-      foreignColumns: [customerBill.customerBillId, customerBill.periodPartition],
+      foreignColumns: [
+        customerBill.customerBillId,
+        customerBill.periodPartition,
+      ],
       name: "bill_run_invoices_customer_bill_fk",
     }).onDelete("restrict"),
     index("bill_run_invoices_ref_bill_run_id_idx").on(t.refBillRunId),

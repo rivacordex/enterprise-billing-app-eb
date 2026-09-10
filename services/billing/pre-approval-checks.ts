@@ -192,10 +192,11 @@ async function checkNoRejectedPending(
   dbOrTx: Database,
   run: BillRun,
 ): Promise<PreApprovalCheck> {
-  const rejected = await billRunAccountStageRepository.listRejectedPendingForRun(
-    dbOrTx,
-    run.billRunId,
-  );
+  const rejected =
+    await billRunAccountStageRepository.listRejectedPendingForRun(
+      dbOrTx,
+      run.billRunId,
+    );
   if (rejected.length > 0) {
     return {
       check: "no_rejected_pending",

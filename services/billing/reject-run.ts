@@ -48,10 +48,7 @@ export async function rejectRun(
   actorId: string,
 ): Promise<RejectRunResult> {
   return db.transaction(async (tx) => {
-    const run = await billRunRepository.findByIdForUpdate(
-      tx,
-      params.billRunId,
-    );
+    const run = await billRunRepository.findByIdForUpdate(tx, params.billRunId);
     if (!run || run.status !== "PROCESSED") {
       return { ok: false, code: "NOT_REJECTABLE" } as const;
     }
@@ -101,13 +98,12 @@ export async function rejectRun(
     // stage row — per-account, since each account's attempt/stage row
     // resolves independently.
     for (const account of eligible) {
-      const stageRow =
-        await billRunAccountStageRepository.findLatestForAccount(
-          tx,
-          run.billRunId,
-          account.billingAccountId,
-          account.attemptCount,
-        );
+      const stageRow = await billRunAccountStageRepository.findLatestForAccount(
+        tx,
+        run.billRunId,
+        account.billingAccountId,
+        account.attemptCount,
+      );
       // A PROCESSED account always has a stage row for its current attempt
       // (the verification-stage signal that advances it to PROCESSED inserts
       // one first) — a missing row here is an invariant violation, not a

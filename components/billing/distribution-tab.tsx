@@ -56,19 +56,21 @@ export function DistributionTab({
         <div className="space-y-3 rounded-md border border-[color:var(--color-success-500)] bg-[color:var(--color-success-50)] p-4">
           <p className="text-body-sm font-medium text-[color:var(--color-success-700)]">
             Money posted — every invoice for this run is in the ledger.
-            Distribution to the configured targets starts automatically; use
-            the control below if it hasn&apos;t started yet.
+            Distribution to the configured targets starts automatically; use the
+            control below if it hasn&apos;t started yet.
           </p>
-          {canOperate && <StartDistributionControl billRunId={view.billRunId} />}
+          {canOperate && (
+            <StartDistributionControl billRunId={view.billRunId} />
+          )}
         </div>
       )}
 
       {runStatus === "DISTRIBUTING" && (
         <div className="rounded-md border border-[color:var(--color-info-500)] bg-[color:var(--color-info-50)] px-4 py-3">
           <p className="text-body-sm font-medium text-[color:var(--color-info-700)]">
-            Delivering artifacts to every configured target… this list fills
-            in as outcomes land, then completes once every mandatory artifact
-            is delivered.
+            Delivering artifacts to every configured target… this list fills in
+            as outcomes land, then completes once every mandatory artifact is
+            delivered.
           </p>
         </div>
       )}
@@ -94,9 +96,9 @@ export function DistributionTab({
             aria-hidden="true"
           />
           <p className="text-body-sm font-medium text-foreground">
-            Distribution completed with {abandonedArtifactRefs.length}{" "}
-            artifact{abandonedArtifactRefs.length === 1 ? "" : "s"} abandoned
-            ({abandonedArtifactRefs.join(", ")}) — force-completed rather than
+            Distribution completed with {abandonedArtifactRefs.length} artifact
+            {abandonedArtifactRefs.length === 1 ? "" : "s"} abandoned (
+            {abandonedArtifactRefs.join(", ")}) — force-completed rather than
             delivered. Posted invoices are unaffected.
           </p>
         </div>
@@ -105,10 +107,9 @@ export function DistributionTab({
       {runStatus === "DISTRIBUTION_FAILED" && (
         <div className="space-y-3 rounded-md border border-[color:var(--color-danger-500)] bg-[color:var(--color-danger-50)] p-4">
           <p className="text-body-sm font-medium text-[color:var(--color-danger-700)]">
-            A mandatory target failed to receive at least one artifact.
-            Posted invoices are untouched, and next month&apos;s run is
-            already unblocked (next-cycle operability keys off Invoiced, not
-            Completed).
+            A mandatory target failed to receive at least one artifact. Posted
+            invoices are untouched, and next month&apos;s run is already
+            unblocked (next-cycle operability keys off Invoiced, not Completed).
           </p>
           <div className="flex flex-wrap items-center gap-4">
             {canOperate && (

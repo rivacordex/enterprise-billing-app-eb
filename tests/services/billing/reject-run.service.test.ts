@@ -139,16 +139,14 @@ describe("rejectRun (bm17-spec §Design/§2)", () => {
   it("[CRITICAL] only PROCESSED (postable) accounts are reject-eligible — PROCESSING_FAILED/EXCLUDED are dropped", async () => {
     await rejectRun(params(), "user-approver");
 
-    expect(mockMarkRejected).toHaveBeenCalledWith(
-      txStub,
-      "BRN00000001",
-      ["BAN00000001", "BAN00000002"],
-    );
-    expect(mockDeleteUnposted).toHaveBeenCalledWith(
-      txStub,
-      "BRN00000001",
-      ["BAN00000001", "BAN00000002"],
-    );
+    expect(mockMarkRejected).toHaveBeenCalledWith(txStub, "BRN00000001", [
+      "BAN00000001",
+      "BAN00000002",
+    ]);
+    expect(mockDeleteUnposted).toHaveBeenCalledWith(txStub, "BRN00000001", [
+      "BAN00000001",
+      "BAN00000002",
+    ]);
   });
 
   it("[CRITICAL] never touches a finalized (posted) account — dropped from the eligible set", async () => {
@@ -156,11 +154,9 @@ describe("rejectRun (bm17-spec §Design/§2)", () => {
 
     await rejectRun(params(), "user-approver");
 
-    expect(mockMarkRejected).toHaveBeenCalledWith(
-      txStub,
-      "BRN00000001",
-      ["BAN00000001"],
-    );
+    expect(mockMarkRejected).toHaveBeenCalledWith(txStub, "BRN00000001", [
+      "BAN00000001",
+    ]);
   });
 
   it("scopes to the explicit selection when scope is 'selected'", async () => {
@@ -169,11 +165,9 @@ describe("rejectRun (bm17-spec §Design/§2)", () => {
       "user-approver",
     );
 
-    expect(mockMarkRejected).toHaveBeenCalledWith(
-      txStub,
-      "BRN00000001",
-      ["BAN00000001"],
-    );
+    expect(mockMarkRejected).toHaveBeenCalledWith(txStub, "BRN00000001", [
+      "BAN00000001",
+    ]);
   });
 
   it("[CRITICAL] stamps the REJECTED_PENDING_REPROCESS marker on each account's latest CURRENT-ATTEMPT stage row", async () => {

@@ -48,7 +48,15 @@ describe("getDistribution (bm20-spec §Visual/D-T3)", () => {
     expect(mockListForRun).not.toHaveBeenCalled();
   });
 
-  it.each(["SCHEDULED", "PROCESSING", "PROCESSED", "APPROVED", "POSTING", "PROCESSING_FAILED", "CANCELLED"])(
+  it.each([
+    "SCHEDULED",
+    "PROCESSING",
+    "PROCESSED",
+    "APPROVED",
+    "POSTING",
+    "PROCESSING_FAILED",
+    "CANCELLED",
+  ])(
     "returns null before the delivery log is read when the run is %s (earlier than INVOICED, or never reaches it)",
     async (status) => {
       mockFindDetailById.mockResolvedValue(detail(status));
@@ -67,8 +75,14 @@ describe("getDistribution (bm20-spec §Visual/D-T3)", () => {
 
       const result = await getDistribution("BRN00000001");
 
-      expect(result).toMatchObject({ billRunId: "BRN00000001", runStatus: status });
-      expect(mockListForRun).toHaveBeenCalledWith(expect.anything(), "BRN00000001");
+      expect(result).toMatchObject({
+        billRunId: "BRN00000001",
+        runStatus: status,
+      });
+      expect(mockListForRun).toHaveBeenCalledWith(
+        expect.anything(),
+        "BRN00000001",
+      );
     },
   );
 });

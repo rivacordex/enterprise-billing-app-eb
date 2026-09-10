@@ -130,10 +130,7 @@ describe("handleStatusPush", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(mockRecomputeDistributionStatus).toHaveBeenCalledWith(
-      txStub,
-      run,
-    );
+    expect(mockRecomputeDistributionStatus).toHaveBeenCalledWith(txStub, run);
     expect(mockMarkDistributionFailed).not.toHaveBeenCalled();
   });
 

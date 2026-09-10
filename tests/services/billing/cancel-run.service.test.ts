@@ -133,7 +133,9 @@ describe("cancelRun (bm12-spec §Design/§3)", () => {
   });
 
   it("skips killExecution when the run has no recorded execution ref", async () => {
-    mockFindByIdForUpdate.mockResolvedValue(run({ processingExecutionId: null }));
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ processingExecutionId: null }),
+    );
 
     const result = await cancelRun("BRN00000001", "user-1");
 
