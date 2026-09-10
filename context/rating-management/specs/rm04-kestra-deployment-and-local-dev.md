@@ -24,11 +24,13 @@ Stand up a **dedicated, process-runner Kestra OSS engine for rating** on Azure C
 
 ### D1. Dedicated engine, shared platform footprint
 
+> **Platform reconciliation (`wfm-architecture.md` §5 / `wfm01`).** "Dedicated rating instance" is the platform's **split-by-module topology** — one valid mapping of the one shared workflow-management platform, selected by the `topology` deploy parameter. The **default is `collapsed`**: rating and bill run co-tenant on a single physical instance named **`workflow-engine`** (separate namespaces, roles, and credentials, so a split needs no new secrets). The isolation rationale below is why an environment *may* split to a dedicated instance — it is not a reason the base deployment is separate. Splitting is a config/deploy change with **no app-code change**. The physical container/image/bicep identity is `workflow-engine` (was `rating-engine`); the ACA process-runner custom-image constraint (D0/D2) is the platform image pattern.
+
 rm00 rm04 fixed a **dedicated** rating Kestra instance (not a namespace on the bill run's engine — sharing would run bill-run flows on the rating worker image and let anyone past rm05's proxy edit bill-run flows). Everything else is **shared**, referenced as existing resources exactly as `infra/bicep/modules/postgres.bicep` references the existing Flexible Server.
 
-| Concern | Owned by rm04 (rating repo) | Shared (app repo owns, rm04 references) |
+| Concern | Owned by rm04 (workflow-management surface) | Shared (app repo owns, rm04 references) |
 | --- | --- | --- |
-| Compute | Container App `rating-engine`; its User-Assigned Managed Identity | Container Apps Environment; Log Analytics |
+| Compute | Container App `workflow-engine` (collapsed default; `workflow-engine-rating` when split); its User-Assigned Managed Identity | Container Apps Environment; Log Analytics |
 | Registry | the worker image | the ACR |
 | Secrets | four secret **references** + MI access | the Key Vault |
 | Database | connects to the `kestra` DB as `kestra_engine` | the Flexible Server (the `kestra` DB itself is rm03a) |

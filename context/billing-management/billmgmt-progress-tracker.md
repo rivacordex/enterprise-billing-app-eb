@@ -2,6 +2,8 @@
 
 Update this file after every meaningful implementation change.
 
+> **Pending restructure — `context/workflow-management/specs/wfm01-engine-restructure.md`.** Path references below (`flows/billrun/…`) record the **current** on-disk layout and stay accurate until `wfm01` executes in the code repo. After that move they become function-first: `workflow-management/flows/bill-run-processor/…` and `workflow-management/flows/bill-run-distributor/…`. Do not rewrite historical entries pre-emptively.
+
 _Compressed 2026-08-26 — build plan is complete; per-unit narrative and test-file
 enumerations were trimmed to key facts + decisions. Full history:
 `git log -- context/billing-management/billmgmt-progress-tracker.md`._

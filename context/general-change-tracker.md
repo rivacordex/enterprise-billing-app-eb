@@ -4,11 +4,31 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Migration-chain consolidation: fold the two recent trailing changes back into
-  their rightful CREATE migrations so the runtime migrator builds correctly
-  0000 → latest without patch migrations.
+- **IN PROGRESS — wfm01 Workflow-Engine Restructure**
+  (`context/workflow-management/specs/wfm01-engine-restructure.md`). Restructure the
+  workflow-engine code into the wfm platform shape: spin-off `workflow-management/`
+  subdirectory with function-first `flows/`, one shared process-runner
+  `workflow-engine` image, physical rename `rating-engine` → `workflow-engine`,
+  topology as a single deploy parameter (default `collapsed`), and stand-up that
+  deploys both functions' flows into the running engine. Executing **code changes
+  §1–§7b** in this app repo; **§8 doc reconciliations are the planning repo's** and
+  are out of scope for this session. No `[CRITICAL]` invariant/grant/claim/two-writer/
+  money-math touched.
 
-## Current Goal
+  In Progress (§ = wfm01 spec section):
+  - [ ] §1 Directory move → `workflow-management/` (D-A move map); remove emptied
+        `rating-engine/`, `flows/billrun/`; `.gitignore` pycache glob.
+  - [ ] §2 Shared `worker/workflow-engine/` image — add `postgresql-client`, platform header.
+  - [ ] §3 `kestra/kestra.yml` header cross-refs (semantics unchanged; default-namespace stays `rating`).
+  - [ ] §4 Infra bicep rename `rating-engine-*` → `workflow-engine-*` (keep `RATING_ENGINE_VERSION` + non-`KESTRA_STORAGE_AZURE_` storage prefix).
+  - [ ] §4b Topology deploy param (`collapsed` default | `split-by-module` | `enterprise`); no app/services code change.
+  - [ ] §5 CI stages `containerize_workflow_engine` / `deploy_workflow_flows`; rename ZAP stage file.
+  - [ ] §6 Dev compose service `rating-engine` → `workflow-engine`, paths under `workflow-management/`.
+  - [ ] §7 App-repo comment/doc touch-ups only (no `services/billing/*` or `app/api/billrun/*` logic change).
+  - [ ] §7b Idempotent stand-up flow bootstrap (dev `flow-deploy` service + CI); billrun flows as `# STUB` shells.
+  - [ ] Verification checklist (spec §Verification).
+
+## Previous Goal (done)
 
 - Implement `_change-id-padding-standardization-plan.md`: widen the 9 non-compliant
   domain-table ID DEFAULT expressions (6/7 → 8 digits), loosen the exact-length
