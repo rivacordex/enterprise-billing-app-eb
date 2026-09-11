@@ -192,7 +192,7 @@ describe("engineRegistry.getExecutionStatus / killExecution (bm16-spec §1)", ()
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ state: "SUCCESS" }),
+      json: () => Promise.resolve({ state: { current: "SUCCESS" } }),
     });
     vi.stubGlobal("fetch", fetchSpy);
 

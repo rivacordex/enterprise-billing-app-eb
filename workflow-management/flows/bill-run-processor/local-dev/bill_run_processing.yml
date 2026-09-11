@@ -1,0 +1,60 @@
+# LOCAL-DEV DEPLOYABLE PLACEHOLDER — not the canonical contract doc
+# (../bill_run_processing.template.yml) and not the real flow (separate
+# workflow-management repo). This is a *valid, deployable* Kestra flow that
+# preserves the bm16 stage contract but replaces every real activity with a
+# no-op Log so it can run end-to-end on a local Kestra. See ./README.md.
+id: bill_run_processing
+namespace: billrun
+inputs:
+  - id: bill_run_id
+    type: STRING
+    defaults: "BRN-DEMO"
+  - id: period_start
+    type: STRING
+    defaults: "2026-09-01"
+  - id: period_end
+    type: STRING
+    defaults: "2026-09-30"
+  - id: ban_ids
+    type: JSON
+    defaults: "[]"
+  - id: attempt
+    type: INT
+    defaults: 1
+  - id: gl_event_at
+    type: STRING
+    defaults: "2026-09-01"
+tasks:
+  - id: start
+    type: io.kestra.plugin.core.log.Log
+    message: "bill_run_processing START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} period={{ inputs.period_start }}..{{ inputs.period_end }} gl_event_at={{ inputs.gl_event_at }}"
+  - id: per_account
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ inputs.ban_ids }}"
+    tasks:
+      - id: validation
+        type: io.kestra.plugin.core.log.Log
+        message: "[{{ taskrun.value }}] validation — STUB: confirm claimable udr_rated consistency (currency, window coverage)"
+      - id: collection
+        type: io.kestra.plugin.core.log.Log
+        message: "[{{ taskrun.value }}] collection — STUB: claim udr_rated (RATED|REJECTED)->BILL_DRAFT as billrun_runtime"
+      - id: aggregation
+        type: io.kestra.plugin.core.log.Log
+        message: "[{{ taskrun.value }}] aggregation — STUB: sum BILL_DRAFT into one customer_bill row"
+      - id: taxation
+        type: io.kestra.plugin.core.log.Log
+        message: "[{{ taskrun.value }}] taxation — STUB: one tax line, recompute tax_total/total in SQL"
+      - id: verification
+        type: io.kestra.plugin.core.log.Log
+        message: "[{{ taskrun.value }}] verification — STUB: sanity checks (non-negative total)"
+  - id: done
+    type: io.kestra.plugin.core.debug.Return
+    format: "processed run={{ inputs.bill_run_id }} accounts={{ inputs.ban_ids }}"
+errors:
+  - id: on_error
+    type: io.kestra.plugin.core.log.Log
+    message: "on_error — STUB: POST terminal per-account/run failure to app /api/billrun/{{ inputs.bill_run_id }}/status"
+finally:
+  - id: on_finally
+    type: io.kestra.plugin.core.log.Log
+    message: "on_finally — STUB: always POST a terminal status (Inv #1 obligation)"

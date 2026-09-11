@@ -32,14 +32,19 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // deploy — and are NOT automated here; see ratemgmt-progress-tracker.md.
 //
 // The DB-gated describe below shells out to the REAL `runtime.log_sweep`
-// Python module (rating-engine/worker/runtime/log_sweep.py) via
+// Python module (workflow-management/worker/workflow-engine/runtime/log_sweep.py) via
 // `python3 -m runtime.log_sweep`, exactly as log-sweep.yaml's task invokes
 // it — this is a black-box test of the actual sweep, not a reimplementation
 // of its SQL in TypeScript. Requires `python3` on PATH with the worker's
 // requirements installed (psycopg at minimum); skipped loudly, like the
 // DATABASE_URL gate, when that isn't available.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {
@@ -77,7 +82,12 @@ async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
 // Static structural checks — no DATABASE_URL, no engine. D1/D3/D4/D5/D6/D7.
 // ---------------------------------------------------------------------
 describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
-  const flowsDir = join(process.cwd(), "rating-engine", "flows");
+  const flowsDir = join(
+    process.cwd(),
+    "workflow-management",
+    "flows",
+    "rating-engine",
+  );
   const template = readFileSync(
     join(flowsDir, "ran-usage-rating.yaml"),
     "utf8",

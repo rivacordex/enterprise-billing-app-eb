@@ -417,13 +417,15 @@ export async function rerunDistribution(
         targetId: billRunId,
         beforeData: {
           // bm21 T8 — `toRedeliver` (and thus the engine payload) is the union
-          // of the prior round's genuine failures AND the never-attempted
-          // mandatory invoices; the audit must record BOTH so it reflects
-          // every artifact actually sent for redelivery, not just the failed
-          // subset.
+          // of the prior round's genuine failures, the never-attempted
+          // mandatory invoices, AND a never-attempted report_csv; the audit
+          // must record ALL THREE so it reflects every artifact actually sent
+          // for redelivery, not just the failed subset. Kept in lockstep with
+          // `toRedeliver` above.
           failedArtifacts: [
             ...failed.map((f) => f.artifactRef),
             ...neverAttemptedInvoices.map((inv) => inv.billRunInvoiceId),
+            ...(reportNeverAttempted ? [REPORT_ARTIFACT_REF] : []),
           ],
         },
         afterData: {

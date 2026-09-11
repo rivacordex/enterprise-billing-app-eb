@@ -54,7 +54,9 @@ export interface DistributionTriggerPayload {
   attempt: number;
 }
 
-export type TriggerPayload = ProcessingTriggerPayload | DistributionTriggerPayload;
+export type TriggerPayload =
+  | ProcessingTriggerPayload
+  | DistributionTriggerPayload;
 
 export interface ExecutionRef {
   executionId: string;
@@ -73,14 +75,6 @@ export const EXECUTION_STATES = [
 ] as const;
 export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
-// Runtime narrowing over the SAME `EXECUTION_STATES` array that backs the type,
-// so the recognized-state set has one source of truth — a state added to the
-// array is accepted by the guard automatically (no parallel literal list to
-// keep in sync).
-function isExecutionState(value: string | undefined): value is ExecutionState {
-  return (EXECUTION_STATES as readonly string[]).includes(value ?? "");
-}
-
 export interface ExecutionStatus {
   state: ExecutionState;
 }
@@ -95,7 +89,10 @@ export interface EngineClient {
     connection: EngineConnection,
     executionId: string,
   ): Promise<ExecutionStatus>;
-  killExecution(connection: EngineConnection, executionId: string): Promise<void>;
+  killExecution(
+    connection: EngineConnection,
+    executionId: string,
+  ): Promise<void>;
 }
 
 export class EngineError extends Error {
@@ -114,8 +111,17 @@ export const PROCESSING_FLOW_ID = "bill_run_processing";
 export const DISTRIBUTION_FLOW_ID = "bill_run_distribution";
 const REQUEST_TIMEOUT_MS = 15_000;
 
+// Kestra's Execution response shape (v1.3.x). The trigger endpoint returns the
+// created Execution: `id` is the execution id (NOT `executionId`), `flowRevision`
+// the deployed flow revision, `state.current` the lifecycle state. Legacy
+// `executionId`/`definitionRevision` are kept as fallbacks so the stub's
+// synthetic shape still parses.
 interface RawExecutionResponse {
+  id?: string;
   executionId?: string;
+  namespace?: string;
+  flowId?: string;
+  flowRevision?: number;
   definitionId?: string;
   definitionRevision?: number;
 }
@@ -123,6 +129,42 @@ interface RawExecutionResponse {
 function authHeader(basicAuth: string): string {
   return `Basic ${Buffer.from(basicAuth).toString("base64")}`;
 }
+
+// Kestra's trigger endpoint consumes multipart/form-data — each flow input is a
+// form field. JSON-typed inputs (ban_ids, artifacts, targets) go as JSON
+// strings; scalars are stringified. `fetch` sets the multipart Content-Type +
+// boundary from the FormData, so Content-Type is deliberately NOT set by hand.
+function toFormData(payload: TriggerPayload): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) continue;
+    form.append(
+      key,
+      typeof value === "object" ? JSON.stringify(value) : String(value),
+    );
+  }
+  return form;
+}
+
+// Maps Kestra's `state.current` onto the four states the module reasons about.
+// Non-terminal states (incl. KILLING mid-cancel) surface as RUNNING; SUCCESS/
+// WARNING as SUCCESS; CANCELLED as KILLED. An unmapped state throws (fail loud),
+// never silently treated as alive.
+const KESTRA_STATE_MAP: Record<string, ExecutionState> = {
+  CREATED: "RUNNING",
+  QUEUED: "RUNNING",
+  RUNNING: "RUNNING",
+  PAUSED: "RUNNING",
+  RESTARTED: "RUNNING",
+  RETRYING: "RUNNING",
+  RETRIED: "RUNNING",
+  KILLING: "RUNNING",
+  SUCCESS: "SUCCESS",
+  WARNING: "SUCCESS",
+  FAILED: "FAILED",
+  KILLED: "KILLED",
+  CANCELLED: "KILLED",
+};
 
 export const realEngineClient: EngineClient = {
   async startExecution(
@@ -146,9 +188,8 @@ export const realEngineClient: EngineClient = {
           method: "POST",
           headers: {
             Authorization: authHeader(connection.basicAuth),
-            "Content-Type": "application/json",
           },
-          body: JSON.stringify(payload),
+          body: toFormData(payload),
           signal: controller.signal,
           // Never auto-follow a redirect — the engine URL is required to be
           // HTTPS (lib/config.ts), and a followed redirect could downgrade to
@@ -179,27 +220,30 @@ export const realEngineClient: EngineClient = {
           { cause: err },
         );
       }
-      if (!body.executionId) {
+      const executionId = body.id ?? body.executionId;
+      if (!executionId) {
         throw new EngineError(
           `Bill-run engine response for run ${payload.bill_run_id} is missing executionId.`,
         );
       }
 
       return {
-        executionId: body.executionId,
-        definitionId: body.definitionId ?? `${connection.namespace}.${flowId}`,
-        definitionRevision: body.definitionRevision ?? 0,
+        executionId,
+        definitionId:
+          body.namespace && body.flowId
+            ? `${body.namespace}.${body.flowId}`
+            : (body.definitionId ?? `${connection.namespace}.${flowId}`),
+        definitionRevision: body.flowRevision ?? body.definitionRevision ?? 0,
       };
     } finally {
       clearTimeout(timeout);
     }
   },
 
-  // bm12-spec §Design/§Implementation §2. FLAGGED: the status/kill endpoint
-  // paths below (`/executions/{id}` GET, `/executions/{id}/kill` DELETE) are
-  // this unit's best guess at Kestra's execution API — they must be verified
-  // against the deployed engine version before this real client is wired up
-  // (plan §13 open item).
+  // bm12-spec §Design/§Implementation §2. Endpoint paths (`/executions/{id}`
+  // GET, `/executions/{id}/kill` DELETE) and the `state.current` response shape
+  // verified against Kestra v1.3.35 (local dev). Still subject to whatever the
+  // separate workflow-management repo's engine ultimately deploys.
   async getExecutionStatus(
     connection: EngineConnection,
     executionId: string,
@@ -233,9 +277,9 @@ export const realEngineClient: EngineClient = {
         );
       }
 
-      let body: { state?: string };
+      let body: { state?: { current?: string } };
       try {
-        body = (await response.json()) as { state?: string };
+        body = (await response.json()) as { state?: { current?: string } };
       } catch (err) {
         // A 2xx with a malformed body still breaks the client's contract — wrap
         // it as an EngineError like every other failure rather than leaking a raw
@@ -245,13 +289,15 @@ export const realEngineClient: EngineClient = {
           { cause: err },
         );
       }
-      if (!isExecutionState(body.state)) {
+      const current = body.state?.current;
+      const mapped = current ? KESTRA_STATE_MAP[current] : undefined;
+      if (!mapped) {
         throw new EngineError(
           `Bill-run engine returned an unrecognized state for execution ${executionId}.`,
         );
       }
 
-      return { state: body.state };
+      return { state: mapped };
     } finally {
       clearTimeout(timeout);
     }

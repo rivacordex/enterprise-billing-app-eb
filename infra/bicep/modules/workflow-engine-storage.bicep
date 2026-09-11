@@ -18,7 +18,7 @@
 // platform's first file storage.
 param location string
 param storageAccountName string
-param ratingEngineManagedIdentityPrincipalId string
+param workflowEngineManagedIdentityPrincipalId string
 
 @description('Blob lifecycle retention for archive/, in days. 7 years = 2555 days (D4).')
 param archiveRetentionDays int = 2555
@@ -37,7 +37,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
     // NOT disabled: the Container Apps Environment's Azure Files mount
-    // (rating-engine-container-app.bicep) is provisioned at the PLATFORM
+    // (workflow-engine-container-app.bicep) is provisioned at the PLATFORM
     // level via this account's key (an ARM listKeys() reference at deploy
     // time), which is how ACA's `Microsoft.App/managedEnvironments/storages`
     // resource authenticates SMB — there is no Managed-Identity mount option
@@ -164,22 +164,22 @@ var storageFileDataSmbShareContributorRoleId = subscriptionResourceId(
 // D5 — "prefer a Managed Identity role assignment over a KV secret" for the
 // internal-storage credential; scoped to the whole account since the engine
 // reads/writes all four Blob locations plus kestra-internal.
-resource ratingEngineBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, ratingEngineManagedIdentityPrincipalId, storageBlobDataContributorRoleId)
+resource workflowEngineBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, workflowEngineManagedIdentityPrincipalId, storageBlobDataContributorRoleId)
   scope: storageAccount
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
-    principalId: ratingEngineManagedIdentityPrincipalId
+    principalId: workflowEngineManagedIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
 
-resource ratingEngineFileDataSmbContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, ratingEngineManagedIdentityPrincipalId, storageFileDataSmbShareContributorRoleId)
+resource workflowEngineFileDataSmbContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, workflowEngineManagedIdentityPrincipalId, storageFileDataSmbShareContributorRoleId)
   scope: storageAccount
   properties: {
     roleDefinitionId: storageFileDataSmbShareContributorRoleId
-    principalId: ratingEngineManagedIdentityPrincipalId
+    principalId: workflowEngineManagedIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -187,7 +187,7 @@ resource ratingEngineFileDataSmbContributor 'Microsoft.Authorization/roleAssignm
 // The account key is NEVER exported across a module boundary. The ACA
 // Environment's Azure Files storage definition needs it (no MI mount option
 // for Files on Container Apps — see the account's allowBlobPublicAccess
-// comment above), but rating-engine-container-app.bicep resolves it there via
+// comment above), but workflow-engine-container-app.bicep resolves it there via
 // an `existing` reference + listKeys() — the same inline pattern the rest of
 // this codebase uses (e.g. main.bicep's Log Analytics key). Exposing the id
 // instead lets that consumer scope its `existing` reference precisely.

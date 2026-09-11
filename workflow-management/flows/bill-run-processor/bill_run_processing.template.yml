@@ -2,7 +2,7 @@
 # the separate workflow-management repo and is deployed to the `billrun` engine.
 # This skeleton documents (a) the stage contract the app records against and
 # (b) the key activities each stage must perform. Every real activity is a
-# `# STUB:` marker naming what replaces it. See flows/billrun/README.md.
+# `# STUB:` marker naming what replaces it. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:

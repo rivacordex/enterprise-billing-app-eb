@@ -13,8 +13,8 @@
 # changed across major versions.
 #
 # Every value is `${ENV_VAR}` interpolation, matching the env vars set on
-# the Container App (infra/bicep/modules/rating-engine-container-app.bicep)
-# and the local compose stack (rating-engine/dev/docker-compose.dev.yml) —
+# the Container App (infra/bicep/modules/workflow-engine-container-app.bicep)
+# and the local compose stack (workflow-management/dev/docker-compose.dev.yml) —
 # never a literal secret in this file.
 
 datasources:
@@ -54,7 +54,7 @@ kestra:
       # ResourceId, workloadIdentityClientId, additionallyAllowedTenants,
       # blobContainerClient.
       #
-      # sharedKeyAccountName/connectionString read from RATING_ENGINE_AZURE_*
+      # sharedKeyAccountName/connectionString read from WORKFLOW_ENGINE_AZURE_*
       # env vars, NOT KESTRA_STORAGE_AZURE_ACCOUNT_NAME/CONNECTION_STRING
       # (also confirmed live, same session): Micronaut auto-exposes every
       # container env var as a property by lowercasing + splitting on `_`,
@@ -67,7 +67,7 @@ kestra:
       # internal `_`) so they don't collide and keep the KESTRA_STORAGE_AZURE_
       # names, matching infra/bicep/modules/rating-engine-container-app.bicep.
       endpoint: ${KESTRA_STORAGE_AZURE_ENDPOINT}
-      sharedKeyAccountName: ${RATING_ENGINE_AZURE_ACCOUNT_NAME}
+      sharedKeyAccountName: ${WORKFLOW_ENGINE_AZURE_ACCOUNT_NAME}
       container: ${KESTRA_STORAGE_AZURE_CONTAINER}
       # connectionString is deliberately ABSENT here, not defaulted empty:
       # AzureClientFactory (the plugin's client builder) takes the
@@ -93,8 +93,10 @@ kestra:
     tmp-dir:
       path: /tmp/kestra-wd/tmp
 
-  # namespace default for flow deploys (D7). Flow definitions themselves
-  # (flows/**) are a later unit (rm06+) — this only sets where an
-  # unqualified flow deploy lands.
+  # namespace default for flow deploys (D7). STAYS `rating` — every flow under
+  # workflow-management/flows/<function>/ is namespace-qualified (`namespace:` in
+  # the flow), so this default only affects an UNqualified deploy. The stand-up
+  # bootstrap (wfm01 §7b) deploys each function's flows to its own namespace
+  # (rating | billrun) explicitly.
   webserver:
     default-namespace: ${KESTRA_SERVER_DEFAULT_NAMESPACE}
