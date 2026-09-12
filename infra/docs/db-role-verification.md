@@ -169,7 +169,7 @@ connection — and store them as:
 `rating_runtime` and `kestra_engine` are deployed differently: their
 connection details are split into separate `RATING_DB_HOST`/`PORT`/`NAME`/
 `USER` env vars plus a bare-password Key Vault secret (`rating-runtime-db-password`,
-`kestra-engine-db-password` — see `rating-engine-container-app.bicep`), not a
+`kestra-engine-db-password` — see `workflow-engine-container-app.bicep`), not a
 full `postgresql://` URL.
 
 `billrun_runtime`'s `BILLRUN_RUNTIME_DATABASE_URL` has **no Key Vault secret

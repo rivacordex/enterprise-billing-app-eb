@@ -24,7 +24,7 @@ targetScope = 'tenant'
 param logAnalyticsWorkspaceId string
 
 resource entraSignInDiagnostics 'Microsoft.aadiam/diagnosticSettings@2017-04-01' = {
-  name: 'rating-engine-signin-logs'
+  name: 'workflow-engine-signin-logs'
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     logs: [

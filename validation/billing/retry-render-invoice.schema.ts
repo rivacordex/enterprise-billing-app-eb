@@ -12,6 +12,4 @@ export const retryRenderInvoiceSchema = z.object({
   billingAccountId: billingAccountIdSchema,
 });
 
-export type RetryRenderInvoiceInput = z.infer<
-  typeof retryRenderInvoiceSchema
->;
+export type RetryRenderInvoiceInput = z.infer<typeof retryRenderInvoiceSchema>;

@@ -14,14 +14,14 @@
 #     CONTAINER_APPS_ENV, KEYVAULT_NAME, APP_MI_RESOURCE_ID,
 #     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN, MICROSOFT_CLIENT_ID,
 #     ENTRA_TENANT_ID, RATING_ENGINE_CONTAINERAPP_NAME (rm06 — the
-#     deploy_rating_flows stage's Container App name; only read when
+#     deploy_workflow_flows stage's Container App name; only read when
 #     deployRatingFlows=true). The SSO pair are non-secret Microsoft
 #     identifiers (the client SECRET is a Key Vault reference, never a
 #     variable) — defined here, not in source control, so the concrete
 #     tenant/client IDs stay out of git; leave them empty in the group for an
 #     environment without SSO.
 #   - The service connection's principal needs `Key Vault Secrets User` (or
-#     equivalent get-secret access) on KEYVAULT_NAME for deploy_rating_flows
+#     equivalent get-secret access) on KEYVAULT_NAME for deploy_workflow_flows
 #     to read `kestra-basic-auth-password` — not yet confirmed granted
 #     anywhere in this repo's Bicep (every existing Key Vault role assignment
 #     here is to a Container App Managed Identity, not this pipeline's own
@@ -29,28 +29,28 @@
 #   - bm21's billrun_live_kestra_smoke stage (off by default) reads
 #     `pg-connection-string-app` (existing) plus two NOT YET CREATED Key
 #     Vault secrets, `billrun-engine-url`/`billrun-engine-auth` — see
-#     flows/billrun/README.md's phase-2 exit criterion. Same "flagged, not
+#     workflow-management/flows/bill-run-processor/README.md's phase-2 exit criterion. Same "flagged, not
 #     assumed" access-grant caveat as the line above.
 #
 # rm13 (the rating module's ship gate) adds two OFF-BY-DEFAULT stages
 # branching off test_scan, neither of which is part of the mandatory five-
 # stage backbone above: rating_fanout_gate (test #15 against a disposable
-# LOCAL Kestra engine, runRatingFanoutGate param), zap_scan_rating_engine
+# LOCAL Kestra engine, runRatingFanoutGate param), zap_scan_workflow_engine
 # (DAST against a DEPLOYED engine, scanRatingEngineDast param — see
-# zap-scan-rating-engine-stage.yml). test_scan itself also now installs the
-# rating-engine Python runtime (best-effort) so the existing rm06-rm12
+# zap-scan-workflow-engine-stage.yml). test_scan itself also now installs the
+# workflow-engine Python runtime (best-effort) so the existing rm06-rm12
 # DB-gated rating guardrail suites run for real instead of skipping, and
 # runs the rm13 migration-boundary check + Semgrep p/python.
 parameters:
-  # rm04 D0 — the rating-engine worker image CANNOT be built until the D0
-  # process-runner spike has passed AND rating-engine/worker/Dockerfile's base
+  # rm04 D0 — the workflow-engine worker image CANNOT be built until the D0
+  # process-runner spike has passed AND workflow-management/worker/workflow-engine/Dockerfile's base
   # digest + a fully hashed requirements.txt are filled in (both are
   # placeholders today, so a build would fail). Defaults to false so automatic
-  # CI/PR runs skip the containerize_rating_engine stage entirely; queue the
+  # CI/PR runs skip the containerize_workflow_engine stage entirely; queue the
   # pipeline manually with this set to true once the spike passes. Mirrors
   # main.bicep's deployRatingEngine gate.
   - name: buildRatingEngine
-    displayName: Build the rm04 rating-engine worker image (D0 spike must have passed)
+    displayName: Build the rm04 workflow-engine worker image (D0 spike must have passed)
     type: boolean
     default: false
 
@@ -105,7 +105,7 @@ parameters:
   # (tests/db/billing-e2e-happy-path.integration.test.ts) can never prove.
   # Defaults to false for the SAME reason as the rating gates above: the
   # separate workflow-management repo that builds/deploys the real flow, its
-  # owning team, and its deploy step are still TBD (flows/billrun/README.md)
+  # owning team, and its deploy step are still TBD (workflow-management/flows/bill-run-processor/README.md)
   # — there is normally no real engine for this to target. Queue manually
   # (or via a scheduled trigger configured with this parameter set to true
   # in the Azure DevOps UI's Scheduled Triggers, once a nightly cadence is
@@ -224,7 +224,7 @@ stages:
           # repeated "not run this session" notes). No `continueOnError`
           # here: `requirements.txt` is now a fully `uv pip compile
           # --generate-hashes`'d lock proven to install cleanly (see the
-          # `containerize_rating_engine` Docker build), so a failure here is
+          # `containerize_workflow_engine` Docker build), so a failure here is
           # a real regression, not expected noise — letting it continue
           # would silently fall back to the DB-gated suites' own skip
           # behaviour, making the "required" rm06-rm12 guardrails
@@ -240,8 +240,8 @@ stages:
               # on the default interpreter's path — install them into system
               # site-packages explicitly. The flag is a no-op on a non-managed
               # image, so it is safe either way.
-              python3 -m pip install --break-system-packages --require-hashes -r rating-engine/worker/requirements.txt
-            displayName: Install rating-engine Python runtime deps (rm13 — for real guardrail-suite runs)
+              python3 -m pip install --break-system-packages --require-hashes -r workflow-management/worker/workflow-engine/requirements.txt
+            displayName: Install workflow-engine Python runtime deps (rm13 — for real guardrail-suite runs)
 
           - script: npm run test
             displayName: Test (Vitest, incl. DB migration integration)
@@ -256,7 +256,7 @@ stages:
           # SAST — fails (non-zero exit) and blocks containerize on any
           # high/critical finding. `--error` makes Semgrep exit 1 on findings.
           # rm13-spec D5/Implementation §5 — `p/python` added so the scan
-          # actually covers rating-engine/worker/runtime/*.py, not just the
+          # actually covers workflow-management/worker/workflow-engine/runtime/*.py, not just the
           # TS/JS app surface the original four configs target.
           - script: |
               docker run --rm \
@@ -318,7 +318,7 @@ stages:
   # this stage; it only runs when the pipeline is queued with
   # buildRatingEngine=true (after the D0 spike, once both placeholders are
   # resolved).
-  - stage: containerize_rating_engine
+  - stage: containerize_workflow_engine
     displayName: Containerize (rating engine)
     dependsOn: test_scan
     # A custom condition replaces the implicit succeeded() gate on dependsOn,
@@ -343,7 +343,7 @@ stages:
                 /^[A-Za-z0-9._-]+[[:space:]]*==/ { flush(); pkg=$0; seen=0; next }
                 /--hash=sha256:/ { seen=1 }
                 END { flush(); if (bad) { print "requirements.txt has unhashed entries — failing build." > "/dev/stderr"; exit 1 } }
-              ' rating-engine/worker/requirements.txt
+              ' workflow-management/worker/workflow-engine/requirements.txt
             displayName: Validate requirements.txt hashes
 
           - task: AzureCLI@2
@@ -353,8 +353,8 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -euo pipefail
-                az bicep build --file infra/bicep/modules/rating-engine-container-app.bicep
-                az bicep build --file infra/bicep/modules/rating-engine-storage.bicep
+                az bicep build --file infra/bicep/modules/workflow-engine-container-app.bicep
+                az bicep build --file infra/bicep/modules/workflow-engine-storage.bicep
                 az bicep build --file infra/bicep/modules/easy-auth.bicep
                 az bicep build --file infra/bicep/main.bicep
                 # entra-signin-diagnostics.bicep is tenant-scoped (targetScope
@@ -362,14 +362,14 @@ stages:
                 # see the file header and infra/docs/engine-access.md. Linted
                 # here on its own so it stays build-hygiene-clean too.
                 az bicep build --file infra/bicep/modules/entra-signin-diagnostics.bicep
-            displayName: Lint rating-engine Bicep (az bicep build)
+            displayName: Lint workflow-engine Bicep (az bicep build)
 
           - script: |
               SHORT_SHA=$(echo "$(Build.SourceVersion)" | cut -c1-7)
               TAG="$(Build.BuildId)-$SHORT_SHA"
               echo "Rating engine image tag: $TAG"
-              echo "##vso[task.setvariable variable=ratingEngineImageTag;isOutput=true]$TAG"
-            name: setRatingEngineImageTag
+              echo "##vso[task.setvariable variable=workflowEngineImageTag;isOutput=true]$TAG"
+            name: setWorkflowEngineImageTag
             displayName: Compute image tag (BuildId-gitSHA)
 
           - task: AzureCLI@2
@@ -379,28 +379,28 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -euo pipefail
-                IMAGE="$(ACR_NAME).azurecr.io/rating-engine:$(setRatingEngineImageTag.ratingEngineImageTag)"
+                IMAGE="$(ACR_NAME).azurecr.io/workflow-engine:$(setWorkflowEngineImageTag.workflowEngineImageTag)"
                 az acr login --name $(ACR_NAME)
-                docker build -t "$IMAGE" rating-engine/worker
+                docker build -t "$IMAGE" workflow-management/worker/workflow-engine
                 docker push "$IMAGE"
             displayName: docker build + push worker image to shared ACR
 
   # ---------------------------------------------------------------------
   # rm06-spec D2 / Implementation §6 — flows deployed from git via the
   # `kestra` CLI, never edited in the Kestra UI (code-standards §3.1). Runs
-  # the SAME pinned Kestra image as the worker (rating-engine/worker/
+  # the SAME pinned Kestra image as the worker (workflow-management/worker/workflow-engine/
   # Dockerfile) so `flow validate`/`flow namespace update` always matches the
   # deployed engine's version.
   #
   # GATED by deployRatingFlows (default false) AND merge-to-main only (D2 says
   # "on merge to main" — a PR validation run must never push flows). Depends
-  # on test_scan, NOT containerize_rating_engine: flows deploy independently of
-  # the worker image (see below), and containerize_rating_engine is itself
+  # on test_scan, NOT containerize_workflow_engine: flows deploy independently of
+  # the worker image (see below), and containerize_workflow_engine is itself
   # gated by buildRatingEngine (default false), so depending on it would make a
   # normal deployRatingFlows run block on a skipped stage — succeeded() treats
   # a skipped dependency as not-succeeded, so the deploy would never fire in
   # any run that does not also rebuild the image. test_scan is the last stage
-  # common to every run; a skipped containerize_rating_engine is permitted.
+  # common to every run; a skipped containerize_workflow_engine is permitted.
   #
   # UNRESOLVED, flagged rather than assumed (mirrors the D0 caveat style used
   # throughout rm04/rm05): (1) exact `kestra` CLI flag names/auth flags below
@@ -420,11 +420,11 @@ stages:
   # Easy-Auth exception path for this one client) is infrastructure work
   # outside rm06's boundary (flows/**) and is NOT solved here — see
   # ratemgmt-progress-tracker.md Open Questions.
-  - stage: deploy_rating_flows
-    displayName: Deploy rating flows (flows/**)
+  - stage: deploy_workflow_flows
+    displayName: Deploy workflow flows (all functions → their namespaces)
     dependsOn: test_scan
     # succeeded() here refers to test_scan (the sole dependency) — it must have
-    # passed. containerize_rating_engine is intentionally not a dependency, so a
+    # passed. containerize_workflow_engine is intentionally not a dependency, so a
     # skipped worker-image build (buildRatingEngine=false) never blocks a flow
     # deploy.
     condition: >
@@ -447,15 +447,10 @@ stages:
               inlineScript: |
                 set -euo pipefail
 
-                # Same pinned digest as rating-engine/worker/Dockerfile — the
+                # Same pinned digest as workflow-management/worker/workflow-engine/Dockerfile — the
                 # CLI that validates/deploys a flow should be the same
                 # release that runs it.
                 KESTRA_IMAGE="kestra/kestra:v1.3.35@sha256:0b880e20e403ef635a6bc7e9e72786c7a6dde143858723449dc57500830868e2"
-
-                docker run --rm \
-                  -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
-                  "$KESTRA_IMAGE" \
-                  kestra flow validate /flows
 
                 ENGINE_FQDN=$(az containerapp show \
                   --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" \
@@ -478,6 +473,12 @@ stages:
                   --name kestra-basic-auth-password \
                   --query value -o tsv)
 
+                # wfm01 §7b — deploy EVERY function's flows to its namespace on
+                # the collapsed engine, idempotently. Function dir → namespace:
+                #   rating-engine        → rating   (real flows)
+                #   bill-run-processor   → billrun  (# STUB template shells)
+                #   bill-run-distributor → billrun  (# STUB template shells)
+                #
                 # `--no-delete`: `flow namespace update` reconciles the whole
                 # namespace to the input directory and, by default, DELETES
                 # flows on the engine that are absent from /flows. A partial
@@ -490,19 +491,35 @@ stages:
                 # name differs, the intent is "never delete a server-side flow
                 # missing from the checkout".
                 # Username matches KESTRA_SERVER_BASIC_AUTH_USERNAME in
-                # rating-engine-container-app.bicep — CONFIRMED live (D0,
+                # workflow-engine-container-app.bicep — CONFIRMED live (D0,
                 # 2026-09-02): Kestra 1.3.35 requires this to be a valid
                 # email address or it rejects the whole Basic Auth config at
                 # startup, leaving no credential active at all. Keep the two
                 # in lockstep.
-                docker run --rm \
-                  -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
-                  "$KESTRA_IMAGE" \
-                  kestra flow namespace update rating /flows \
-                    --no-delete \
-                    --server "https://${ENGINE_FQDN}" \
-                    --user "rating-ops@example.invalid:${BASIC_AUTH_PASSWORD}"
-            displayName: kestra flow validate + namespace update (D2)
+                # The image's default entrypoint is `exec /app/kestra "$@"`, so
+                # the CLI verb is `flow ...` — a leading literal `kestra` becomes a
+                # bogus first arg ("Unmatched argument at index 0: 'kestra'").
+                # NOTE: standalone `flow validate` is DEPRECATED in v1.3.35 and
+                # connects to a server (not an offline file check), so it is not
+                # used — `flow namespace update --server` validates server-side on
+                # ingest and rejects an invalid flow.
+                deploy_fn() {  # $1 = flow dir under workflow-management/flows, $2 = namespace
+                  local dir="$(System.DefaultWorkingDirectory)/workflow-management/flows/$1"
+                  docker run --rm -v "${dir}:/flows" "$KESTRA_IMAGE" \
+                    flow namespace update "$2" /flows \
+                      --no-delete \
+                      --server "https://${ENGINE_FQDN}" \
+                      --user "workflow-ops@billing.ops:${BASIC_AUTH_PASSWORD}"
+                }
+
+                # Rating flows are real (function root); each bill-run function's
+                # deployable placeholder is the shell under local-dev/ (the
+                # *.template.yml at the bill-run root is a non-deployable contract
+                # doc — tasks omit `type:` — and `kestra flow` does not recurse).
+                deploy_fn rating-engine                  rating
+                deploy_fn bill-run-processor/local-dev   billrun
+                deploy_fn bill-run-distributor/local-dev billrun
+            displayName: kestra flow namespace update — all functions (D2)
 
   # ---------------------------------------------------------------------
   # rm13-spec D2/Implementation §2 — test #15 (no-per-record-fan-out), the
@@ -543,8 +560,8 @@ stages:
 
           - script: |
               set -euo pipefail
-              cp rating-engine/dev/.env.example rating-engine/dev/.env
-              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml up -d
+              cp workflow-management/dev/.env.example workflow-management/dev/.env
+              docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml up -d
             displayName: Start the local Postgres + Kestra dev stack (rm04 D9)
 
           - script: |
@@ -569,27 +586,27 @@ stages:
                 sleep 5
               done
               echo "Kestra engine did not respond on :8085 within 5 minutes." >&2
-              # The engine runs in the `rating-engine` compose service (the
+              # The engine runs in the `workflow-engine` compose service (the
               # overlay's Kestra container) — there is no service named `kestra`.
-              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml logs rating-engine || true
+              docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml logs workflow-engine || true
               exit 1
             displayName: Wait for the local Kestra engine
 
           - script: |
               set -euo pipefail
-              # Same pinned digest + mechanism as the deploy_rating_flows
+              # Same pinned digest + mechanism as the deploy_workflow_flows
               # stage above, targeting the disposable LOCAL engine instead
               # of a deployed one.
               KESTRA_IMAGE="kestra/kestra:v1.3.35@sha256:0b880e20e403ef635a6bc7e9e72786c7a6dde143858723449dc57500830868e2"
-              source rating-engine/dev/.env
+              source workflow-management/dev/.env
+              # CLI verb is `flow ...` (default entrypoint execs /app/kestra "$@");
+              # a leading literal `kestra` is rejected as an unmatched argument.
+              # (Standalone `flow validate` is deprecated/server-connecting in
+              # v1.3.35 — `namespace update` validates server-side on ingest.)
               docker run --rm --network host \
-                -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
+                -v "$(System.DefaultWorkingDirectory)/workflow-management/flows/rating-engine:/flows" \
                 "$KESTRA_IMAGE" \
-                kestra flow validate /flows
-              docker run --rm --network host \
-                -v "$(System.DefaultWorkingDirectory)/rating-engine/flows:/flows" \
-                "$KESTRA_IMAGE" \
-                kestra flow namespace update rating /flows \
+                flow namespace update rating /flows \
                   --no-delete \
                   --server "http://localhost:8085" \
                   --user "${KESTRA_SERVER_BASIC_AUTH_USERNAME}:${KESTRA_SERVER_BASIC_AUTH_PASSWORD}"
@@ -597,18 +614,18 @@ stages:
 
           - script: |
               set -euo pipefail
-              source rating-engine/dev/.env
+              source workflow-management/dev/.env
               export KESTRA_URL="http://localhost:8085"
               export KESTRA_BASIC_AUTH_USER="$KESTRA_SERVER_BASIC_AUTH_USERNAME"
               export KESTRA_BASIC_AUTH_PASSWORD="$KESTRA_SERVER_BASIC_AUTH_PASSWORD"
-              export RATING_LANDING_HOST_DIR="$(System.DefaultWorkingDirectory)/rating-engine/dev/landing"
+              export RATING_LANDING_HOST_DIR="$(System.DefaultWorkingDirectory)/workflow-management/dev/landing"
               export RATING_RAN_USAGE_CHUNK_SIZE="10000"
               npx vitest run --config vitest.integration.config.ts \
                 tests/rating/rm13-no-fan-out.integration.test.ts
             displayName: Run rm13 test #15 against the live local engine
 
           - script: |
-              docker compose -f docker-compose.dev.yml -f rating-engine/dev/docker-compose.dev.yml down -v
+              docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml down -v
             condition: always()
             displayName: Tear down the local dev stack
 
@@ -834,9 +851,9 @@ stages:
   # ---------------------------------------------------------------------
   # rm13-spec D5 — the DAST half of the ship gate, against the rating
   # engine itself (distinct from the app-targeting template above). See
-  # zap-scan-rating-engine-stage.yml's header for the full gating rationale
+  # zap-scan-workflow-engine-stage.yml's header for the full gating rationale
   # (scanRatingEngineDast, default false).
-  - template: zap-scan-rating-engine-stage.yml
+  - template: zap-scan-workflow-engine-stage.yml
 
   # ---------------------------------------------------------------------
   # bm21-spec §Implementation §3/Phase-2 review fold T3 — the billing
@@ -844,9 +861,9 @@ stages:
   # parameter above for the gating rationale). Unlike rating_fanout_gate,
   # this does NOT stand up a local/disposable engine — the real
   # `bill_run_processing` flow is built and deployed from a separate
-  # workflow-management repo (flows/billrun/README.md), so this targets an
+  # workflow-management repo (workflow-management/flows/bill-run-processor/README.md), so this targets an
   # ALREADY-DEPLOYED engine + an already-migrated/seeded real database
-  # (same "targets a deployed environment" shape as zap-scan-rating-engine-
+  # (same "targets a deployed environment" shape as zap-scan-workflow-engine-
   # stage.yml, not rating_fanout_gate's local docker-compose stack).
   #
   # Required Key Vault secrets (KEYVAULT_NAME, um30-infra variable group):
@@ -855,7 +872,7 @@ stages:
   # and two NOT YET CREATED secrets, `billrun-engine-url`/
   # `billrun-engine-auth` (the real BILLRUN_ENGINE_URL/_AUTH once a `billrun`
   # namespace is deployed — flagged, not assumed, same posture as
-  # deploy_rating_flows's `kestra-basic-auth-password` note above). Also
+  # deploy_workflow_flows's `kestra-basic-auth-password` note above). Also
   # requires `db:seed-sample` to have already been run against that database
   # (out of band — this stage does not run it, to avoid silently reseeding a
   # shared environment on every smoke run).

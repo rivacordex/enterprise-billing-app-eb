@@ -6,7 +6,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
- 
+## Workflow Management Refactoring / Restructuring / Reworking Context
+
+Read the following files in order before implementing
+or making any architectural decision related to clearly define Workflow Management:
+
+1. `context/workflow-management/wfm-architecture.md` — system structure, boundaries
+
+ <!--
 ## Billing Module Building Context
 
 Read the following files in order before implementing
@@ -20,4 +27,4 @@ or making any architectural decision related to Billing Module update for Bill R
 6. `context/billing-management/billmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
 
 Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
-
+ -->

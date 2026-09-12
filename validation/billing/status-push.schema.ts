@@ -48,7 +48,10 @@ export const statusPushBodySchema = z
   })
   .refine(
     (body) => body.status === "PROCESSING_FAILED" || body.attempt !== undefined,
-    { message: "attempt is required for a distribution status push.", path: ["attempt"] },
+    {
+      message: "attempt is required for a distribution status push.",
+      path: ["attempt"],
+    },
   );
 
 export type StatusPushBody = z.infer<typeof statusPushBodySchema>;

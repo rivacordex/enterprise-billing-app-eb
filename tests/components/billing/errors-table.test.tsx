@@ -112,7 +112,10 @@ describe("ErrorsTable — rejected-pending surface (bm17-spec §Implementation �
         runId="BRN00000001"
         rows={[]}
         canRerun={true}
-        rejectedPending={[rejectedRow(), rejectedRow({ billingAccountId: "BAN00000010" })]}
+        rejectedPending={[
+          rejectedRow(),
+          rejectedRow({ billingAccountId: "BAN00000010" }),
+        ]}
       />,
     );
     const dialog = getByTestId("rerun-dialog");

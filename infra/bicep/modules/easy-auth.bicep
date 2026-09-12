@@ -1,9 +1,9 @@
 // rm05-spec Implementation §3/§5/§6 — Container Apps Easy Auth (Entra) in
-// front of the `rating-engine` Kestra UI (D1: Easy Auth, not Front Door).
-// Declares the authConfig on the existing rating-engine Container App
+// front of the `workflow-engine` Kestra UI (D1: Easy Auth, not Front Door).
+// Declares the authConfig on the existing workflow-engine Container App
 // (rm04), the Container App diagnostic setting, and the Log Analytics
 // table-level retention rm05 D7 requires. Deployed alongside
-// rating-engine-container-app.bicep with enableEasyAuthIngress=true in the
+// workflow-engine-container-app.bicep with enableEasyAuthIngress=true in the
 // same pass — see that file's D2 comment for the ingress-ownership split.
 //
 // Deviation from the spec's literal `infra/easy-auth.bicep` path: this repo
@@ -25,18 +25,18 @@ param logAnalyticsWorkspaceName string
 @description('rm04 containerAppsEnvironment.id (main.bicep) — resolved to the environment name below so the log-category diagnostic setting (Container Apps only supports ContainerAppConsoleLogs/ContainerAppSystemLogs at the managedEnvironments scope, not on the containerApps resource itself) can target the environment.')
 param containerAppsEnvironmentId string
 
-@description('rm05 D3 — the separate `rating-engine` Entra app registration\'s client (application) ID. Same tenant as the app\'s own login registration, but a distinct app id (Implementation §1, provisioning prerequisite).')
-param ratingEngineClientId string
+@description('rm05 D3 — the separate `workflow-engine` Entra app registration\'s client (application) ID. Same tenant as the app\'s own login registration, but a distinct app id (Implementation §1, provisioning prerequisite).')
+param workflowEngineClientId string
 
 @description('rm05 D3 — same tenant the app already federates to (ENTRA_TENANT_ID).')
 param entraTenantId string
 
-@description('rm05 Implementation §3 — the `rating-engine` registration\'s Application ID URI, used as the sole allowed audience. Defaults to the Entra-assigned `api://<clientId>` form; override if the registration was given a custom URI at provisioning.')
-param ratingEngineAppIdUri string = 'api://${ratingEngineClientId}'
+@description('rm05 Implementation §3 — the `workflow-engine` registration\'s Application ID URI, used as the sole allowed audience. Defaults to the Entra-assigned `api://<clientId>` form; override if the registration was given a custom URI at provisioning.')
+param workflowEngineAppIdUri string = 'api://${workflowEngineClientId}'
 
 // rm05 D6/verification#14 — required, non-empty. This module's own
 // resources don't consume the list directly (ingress lives in
-// rating-engine-container-app.bicep, which receives the same value from
+// workflow-engine-container-app.bicep, which receives the same value from
 // main.bicep but does NOT enforce non-emptiness itself — seeing D2's
 // comment there). Declaring it here as a required + @minLength(1) param,
 // deployed in the SAME pass as the ingress change, is what makes an empty
@@ -45,17 +45,17 @@ param ratingEngineAppIdUri string = 'api://${ratingEngineClientId}'
 @minLength(1)
 param corporateIpAllowList array
 
-resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' existing = {
+resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' existing = {
   name: containerAppName
 }
 
-resource ratingEngineEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' existing = {
+resource workflowEngineEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' existing = {
   name: last(split(containerAppsEnvironmentId, '/'))
 }
 
 // rm05 Implementation §3 (D1/D3/D4/D5) — the auth config itself.
 resource easyAuthConfig 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
-  parent: ratingEngineApp
+  parent: workflowEngineApp
   name: 'current'
   properties: {
     platform: {
@@ -77,13 +77,13 @@ resource easyAuthConfig 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          clientId: ratingEngineClientId
-          clientSecretSettingName: 'rating-engine-client-secret'
+          clientId: workflowEngineClientId
+          clientSecretSettingName: 'workflow-engine-client-secret'
           openIdIssuer: '${environment().authentication.loginEndpoint}${entraTenantId}/v2.0'
         }
         validation: {
           allowedAudiences: [
-            ratingEngineAppIdUri
+            workflowEngineAppIdUri
           ]
         }
       }
@@ -102,8 +102,8 @@ resource easyAuthConfig 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
 // parameter is not supported"). Log categories live on the environment
 // diagnostic setting below instead.
 resource containerAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01' = {
-  name: 'rating-engine-diagnostics'
-  scope: ratingEngineApp
+  name: 'workflow-engine-diagnostics'
+  scope: workflowEngineApp
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     metrics: [
@@ -118,10 +118,10 @@ resource containerAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-
 // rm05 D7/Implementation §5 — ContainerAppConsoleLogs/ContainerAppSystemLogs
 // are only valid categories on the managedEnvironments diagnostic setting,
 // not on the containerApps resource above. Scoped to the shared environment
-// (all container apps' console/system logs), not just rating-engine's.
+// (all container apps' console/system logs), not just workflow-engine's.
 resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01' = {
-  name: 'rating-engine-environment-diagnostics'
-  scope: ratingEngineEnvironment
+  name: 'workflow-engine-environment-diagnostics'
+  scope: workflowEngineEnvironment
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     logs: [

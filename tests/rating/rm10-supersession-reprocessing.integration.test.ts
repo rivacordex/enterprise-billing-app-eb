@@ -52,7 +52,12 @@ import { udrBatch } from "@/db/schema/rating/udr-batch";
 // worker's requirements (psycopg + polars); skipped loudly, like the
 // DATABASE_URL gate, when unavailable — same posture as the rm06-rm09 suites.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {
@@ -108,7 +113,14 @@ async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
 // ---------------------------------------------------------------------
 describe("rl supersede predicate (rm10-spec D1-D4 — static)", () => {
   const rlSource = readFileSync(
-    join(process.cwd(), "rating-engine", "worker", "runtime", "rl.py"),
+    join(
+      process.cwd(),
+      "workflow-management",
+      "worker",
+      "workflow-engine",
+      "runtime",
+      "rl.py",
+    ),
     "utf8",
   );
 

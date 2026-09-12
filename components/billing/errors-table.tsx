@@ -58,8 +58,8 @@ export function ErrorsTable({
           <p className="text-body-sm text-muted-foreground">
             {rejectedPending.length} account
             {rejectedPending.length === 1 ? "" : "s"} rejected — sent back to
-            reprocess. This run cannot be approved until every rejected
-            account is rerun.
+            reprocess. This run cannot be approved until every rejected account
+            is rerun.
           </p>
           <div className="overflow-x-auto rounded-none border-l-2 border-[color:var(--color-warning-500)] bg-card shadow-sm">
             <table className="w-full border-collapse text-body-sm">

@@ -46,7 +46,11 @@ describe("stubEngineClient (bm03-spec §5)", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await stubEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD);
+    const ref = await stubEngineClient.startExecution(
+      CONNECTION,
+      PROCESSING_FLOW_ID,
+      PAYLOAD,
+    );
 
     expect(ref).toEqual({
       executionId: "stub-exec-bill_run_processing-BRN00000001",
@@ -82,20 +86,25 @@ describe("stubEngineClient (bm03-spec §5)", () => {
 });
 
 describe("realEngineClient (bm03-spec §5)", () => {
-  it("POSTs to the namespace/bill_run_processing endpoint with Basic auth and maps the response", async () => {
+  it("POSTs multipart inputs to the namespace/bill_run_processing endpoint with Basic auth and maps the response", async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: () =>
         Promise.resolve({
-          executionId: "exec-123",
-          definitionId: "billrun.bill_run_processing",
-          definitionRevision: 2,
+          id: "exec-123",
+          namespace: "billrun",
+          flowId: "bill_run_processing",
+          flowRevision: 2,
         }),
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const ref = await realEngineClient.startExecution(CONNECTION, PROCESSING_FLOW_ID, PAYLOAD);
+    const ref = await realEngineClient.startExecution(
+      CONNECTION,
+      PROCESSING_FLOW_ID,
+      PAYLOAD,
+    );
 
     expect(ref).toEqual({
       executionId: "exec-123",
@@ -111,7 +120,15 @@ describe("realEngineClient (bm03-spec §5)", () => {
     expect(headers.Authorization).toBe(
       `Basic ${Buffer.from("user:pass").toString("base64")}`,
     );
-    expect(JSON.parse(init.body as string)).toEqual(PAYLOAD);
+    // multipart/form-data — fetch sets Content-Type + boundary from the
+    // FormData; a hand-set application/json would break Kestra's trigger.
+    expect(headers["Content-Type"]).toBeUndefined();
+    const form = init.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get("bill_run_id")).toBe(PAYLOAD.bill_run_id);
+    expect(form.get("attempt")).toBe(String(PAYLOAD.attempt));
+    expect(form.get("ban_ids")).toBe(JSON.stringify(PAYLOAD.ban_ids));
+    expect(form.get("gl_event_at")).toBe(PAYLOAD.gl_event_at);
   });
 
   it("throws EngineError on a non-2xx response", async () => {
@@ -220,7 +237,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
       const fetchSpy = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({ state: "SUCCESS" }),
+        json: () => Promise.resolve({ state: { current: "SUCCESS" } }),
       });
       vi.stubGlobal("fetch", fetchSpy);
 
@@ -252,7 +269,7 @@ describe("realEngineClient (bm03-spec §5)", () => {
         vi.fn().mockResolvedValue({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ state: "BOGUS" }),
+          json: () => Promise.resolve({ state: { current: "BOGUS" } }),
         }),
       );
 

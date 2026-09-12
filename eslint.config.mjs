@@ -246,7 +246,16 @@ const eslintConfig = defineConfig([
               // "services" (see the element carve-out comment above).
               from: { type: "db-seed-sample" },
               allow: {
-                to: { type: ["db-seed-sample", "db", "services", "validation", "types", "lib"] },
+                to: {
+                  type: [
+                    "db-seed-sample",
+                    "db",
+                    "services",
+                    "validation",
+                    "types",
+                    "lib",
+                  ],
+                },
               },
             },
             {

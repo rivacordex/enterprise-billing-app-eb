@@ -40,7 +40,10 @@ vi.mock("@/services/billing/render-invoice", () => {
 
 import { GET } from "@/app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route";
 import { auth } from "@/auth";
-import { findActiveUserById, resolveEffectivePermissions } from "@/auth/resolver";
+import {
+  findActiveUserById,
+  resolveEffectivePermissions,
+} from "@/auth/resolver";
 import { isRateLimited } from "@/lib/rate-limit";
 import {
   DraftInvoiceNotFoundError,

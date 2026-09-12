@@ -46,7 +46,12 @@ import { udrBatch } from "@/db/schema/rating/udr-batch";
 // needed (this shells out to the real runtime modules directly, exactly as
 // the flow's own tasks invoke them, same black-box precedent as rm07-rm12).
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {

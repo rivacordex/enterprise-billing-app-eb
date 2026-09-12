@@ -60,7 +60,12 @@ import { udrBatch } from "@/db/schema/rating/udr-batch";
 // (see ratemgmt-progress-tracker.md: not run in a session without a live test
 // Postgres + the worker deps).
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {
@@ -120,11 +125,24 @@ function firstLine(lines: readonly string[]): string {
 // ---------------------------------------------------------------------
 describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
   const template = readFileSync(
-    join(process.cwd(), "rating-engine", "flows", "ran-usage-rating.yaml"),
+    join(
+      process.cwd(),
+      "workflow-management",
+      "flows",
+      "rating-engine",
+      "ran-usage-rating.yaml",
+    ),
     "utf8",
   );
   const rlSource = readFileSync(
-    join(process.cwd(), "rating-engine", "worker", "runtime", "rl.py"),
+    join(
+      process.cwd(),
+      "workflow-management",
+      "worker",
+      "workflow-engine",
+      "runtime",
+      "rl.py",
+    ),
     "utf8",
   );
 

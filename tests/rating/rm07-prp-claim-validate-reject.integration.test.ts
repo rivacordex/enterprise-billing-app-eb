@@ -37,7 +37,12 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // the rm06 suite (see ratemgmt-progress-tracker.md: not run in a session without
 // a live test Postgres + the worker deps).
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {
@@ -108,7 +113,13 @@ function firstLine(lines: readonly string[]): string {
 // ---------------------------------------------------------------------
 describe("prp flow wiring (rm07-spec D1/D3/D6/D7 — static)", () => {
   const template = readFileSync(
-    join(process.cwd(), "rating-engine", "flows", "ran-usage-rating.yaml"),
+    join(
+      process.cwd(),
+      "workflow-management",
+      "flows",
+      "rating-engine",
+      "ran-usage-rating.yaml",
+    ),
     "utf8",
   );
 

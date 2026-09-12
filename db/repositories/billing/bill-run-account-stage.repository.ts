@@ -76,7 +76,10 @@ export const billRunAccountStageRepository = {
     billRunId: string,
     billingAccountId: string,
     attempt: number,
-  ): Promise<{ billRunAccountStageId: string; periodPartition: string } | null> {
+  ): Promise<{
+    billRunAccountStageId: string;
+    periodPartition: string;
+  } | null> {
     const [row] = await tx
       .select({
         billRunAccountStageId: billRunAccountStage.billRunAccountStageId,

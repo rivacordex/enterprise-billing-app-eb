@@ -6,3 +6,5 @@ param environmentName = 'staging'
 param minReplicas = 2
 param maxReplicas = 4
 param appTimezone = 'Asia/Kuala_Lumpur'
+// wfm01 §4b — non-prod is collapsed (one workflow-engine instance, both namespaces).
+param topology = 'collapsed'

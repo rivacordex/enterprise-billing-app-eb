@@ -251,7 +251,11 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th)", () =>
 
   it("[CRITICAL] no_rejected_pending fails while a rejected account is pending reprocess", async () => {
     mockListRejectedPending.mockResolvedValue([
-      { billingAccountId: "BAN00000001", accountName: "Acme", errorDetail: "bad rate" },
+      {
+        billingAccountId: "BAN00000001",
+        accountName: "Acme",
+        errorDetail: "bad rate",
+      },
     ] as never);
 
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");

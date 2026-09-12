@@ -786,6 +786,15 @@ describe("rerunDistribution", () => {
         ],
       }),
     );
+    // The audit must record the re-attempted report too — the failedArtifacts
+    // set reflects everything actually sent for redelivery.
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "BILL_RUN_DISTRIBUTION_RERUN",
+        beforeData: expect.objectContaining({ failedArtifacts: ["REPORT"] }),
+      }),
+    );
   });
 });
 

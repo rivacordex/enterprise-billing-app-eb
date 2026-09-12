@@ -1,6 +1,6 @@
-// rm04-spec Implementation §3 — the `rating-engine` Container App: a
+// rm04-spec Implementation §3 — the `workflow-engine` Container App: a
 // dedicated, process-runner Kestra OSS engine (D1/D2). Runs the worker image
-// built from rating-engine/worker/Dockerfile against the `kestra` database
+// built from workflow-management/worker/workflow-engine/Dockerfile against the `kestra` database
 // (rm03a) as `kestra_engine`.
 //
 // D0 CAVEAT — this module has not been validated against a real Container
@@ -23,23 +23,29 @@ param containerAppName string
 param containerAppsEnvironmentId string
 param acrLoginServer string
 param keyVaultUri string
-param ratingEngineManagedIdentityId string
+param workflowEngineManagedIdentityId string
 param imageName string
 
 @description('The deployed image digest/tag, stamped per-row into udr_rated.rating_engine_version (D6, Inv #12) — NOT NULL, no other source.')
-param ratingEngineVersion string
+param workflowEngineVersion string
 
 @description('kestra database host (the existing Flexible Server FQDN, rm03/rm03a) — the `kestra` DB itself, not the billing DB.')
 param postgresServerFqdn string
 
-@description('Storage account name backing landing/ (Files) + archive/error/logs/kestra-internal (Blob) — rating-engine-storage.bicep output.')
+@description('Storage account name backing landing/ (Files) + archive/error/logs/kestra-internal (Blob) — workflow-engine-storage.bicep output.')
 param storageAccountName string
 
-@description('Azure Files share name for landing/ — rating-engine-storage.bicep output.')
+@description('Azure Files share name for landing/ — workflow-engine-storage.bicep output.')
 param landingShareName string
 
-@description('Blob container name for Kestra internal storage — rating-engine-storage.bicep output.')
+@description('Blob container name for Kestra internal storage — workflow-engine-storage.bicep output.')
 param kestraInternalContainerName string
+
+@description('wfm01 §4b — name of the Container-Apps-Environment storage definition for the landing mount. MUST be unique per instance under split-by-module, since both split engines share one environment; a fixed literal would collide (duplicate managedEnvironments/storages resource).')
+param landingEnvStorageName string = 'rating-landing'
+
+@description('wfm01 §4b — Kestra default namespace for UNqualified flow deploys. Flows are namespace-qualified, so this only affects an unqualified deploy; the split billrun instance sets it to `billrun`.')
+param defaultNamespace string = 'rating'
 
 @description('true = ingress fully internal to the Container Apps Environment (no external DNS at all); false = disabled (D8 default until rm05).')
 param internalIngress bool = false
@@ -77,7 +83,7 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2023-05-01'
   name: last(split(containerAppsEnvironmentId, '/'))
 }
 
-// The rating-engine storage account (rating-engine-storage.bicep). Referenced,
+// The workflow-engine storage account (workflow-engine-storage.bicep). Referenced,
 // not created — the implicit dependency on storageAccountName (a storage-module
 // output) guarantees it exists before this deploys. The account key is
 // resolved inline via listKeys() for the platform-level SMB Files mount ONLY
@@ -89,7 +95,7 @@ resource ratingStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' exi
 
 resource landingFileStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
   parent: containerAppsEnvironment
-  name: 'rating-landing'
+  name: landingEnvStorageName
   properties: {
     azureFile: {
       accountName: storageAccountName
@@ -100,13 +106,13 @@ resource landingFileStorage 'Microsoft.App/managedEnvironments/storages@2023-05-
   }
 }
 
-resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
+resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${ratingEngineManagedIdentityId}': {}
+      '${workflowEngineManagedIdentityId}': {}
     }
   }
   properties: {
@@ -116,21 +122,21 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
       registries: [
         {
           server: acrLoginServer
-          identity: ratingEngineManagedIdentityId
+          identity: workflowEngineManagedIdentityId
         }
       ]
       secrets: concat(
         [
           // D5 — three of the four credentials as Key Vault secret refs (the
           // fourth, internal-storage, is Managed-Identity-only — see
-          // rating-engine-storage.bicep's role assignments, no KV secret here).
+          // workflow-engine-storage.bicep's role assignments, no KV secret here).
           {
             name: 'kestra-basic-auth-password'
             keyVaultUrl: '${keyVaultUri}secrets/kestra-basic-auth-password'
-            identity: ratingEngineManagedIdentityId
+            identity: workflowEngineManagedIdentityId
           }
           {
-            // rating-engine/worker/runtime/db.py's `_dsn()` reads
+            // workflow-management/worker/workflow-engine/runtime/db.py's `_dsn()` reads
             // SECRET_RATING_RUNTIME_PASSWORD as a bare password and builds
             // the DSN itself from separate RATING_DB_HOST/PORT/NAME/USER env
             // vars (never a full connection string) — so this KV secret
@@ -141,7 +147,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // `-migrate` secrets which genuinely are full DATABASE_URL values.
             name: 'rating-runtime-db-password'
             keyVaultUrl: '${keyVaultUri}secrets/rating-runtime-db-password'
-            identity: ratingEngineManagedIdentityId
+            identity: workflowEngineManagedIdentityId
           }
           {
             // kestra.yml sets `datasources.postgres.password` from
@@ -152,7 +158,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // infra/docs/db-role-verification.md), NOT a full connection string.
             name: 'kestra-engine-db-password'
             keyVaultUrl: '${keyVaultUri}secrets/kestra-engine-db-password'
-            identity: ratingEngineManagedIdentityId
+            identity: workflowEngineManagedIdentityId
           }
           {
             // rm06 — backs ran-usage-rating.yaml's Webhook trigger
@@ -166,19 +172,19 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // behaviour against the pinned release at the D0 spike.
             name: 'rating-usage-webhook-key'
             keyVaultUrl: '${keyVaultUri}secrets/rating-usage-webhook-key'
-            identity: ratingEngineManagedIdentityId
+            identity: workflowEngineManagedIdentityId
           }
         ],
         enableEasyAuthIngress
           ? [
-              // rm05 D8 — the rating-engine Entra registration's client
+              // rm05 D8 — the workflow-engine Entra registration's client
               // secret; easy-auth.bicep's authConfig points
               // clientSecretSettingName at this secret's NAME (not the KV
               // reference directly, matching the app's established pattern).
               {
-                name: 'rating-engine-client-secret'
-                keyVaultUrl: '${keyVaultUri}secrets/rating-engine-client-secret'
-                identity: ratingEngineManagedIdentityId
+                name: 'workflow-engine-client-secret'
+                keyVaultUrl: '${keyVaultUri}secrets/workflow-engine-client-secret'
+                identity: workflowEngineManagedIdentityId
               }
             ]
           : []
@@ -205,11 +211,11 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
     template: {
       containers: [
         {
-          name: 'rating-engine'
+          name: 'workflow-engine'
           image: imageName
           env: [
             // D6 — resolved per row by a task, never per batch (Inv #12).
-            { name: 'RATING_ENGINE_VERSION', value: ratingEngineVersion }
+            { name: 'RATING_ENGINE_VERSION', value: workflowEngineVersion }
 
             // D7 — datasource is the `kestra` DB via `kestra_engine`, NOT
             // the billing DB. Kestra runs its own startup migrations here
@@ -227,7 +233,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // to a SAS/connection-string KV secret and D5's credential count
             // changes from three KV secrets to four.
             //
-            // ACCOUNT_NAME is deliberately named RATING_ENGINE_AZURE_*, not
+            // ACCOUNT_NAME is deliberately named WORKFLOW_ENGINE_AZURE_*, not
             // KESTRA_STORAGE_AZURE_* (confirmed live, 2026-09-01, local dev):
             // Micronaut auto-exposes EVERY container env var as a property by
             // lowercasing + splitting on `_`, so KESTRA_STORAGE_AZURE_ACCOUNT_NAME
@@ -238,7 +244,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // property. ENDPOINT/CONTAINER are single-word suffixes (no
             // internal `_`) so they don't collide and keep their names.
             { name: 'KESTRA_STORAGE_TYPE', value: 'azure' }
-            { name: 'RATING_ENGINE_AZURE_ACCOUNT_NAME', value: storageAccountName }
+            { name: 'WORKFLOW_ENGINE_AZURE_ACCOUNT_NAME', value: storageAccountName }
             { name: 'KESTRA_STORAGE_AZURE_CONTAINER', value: kestraInternalContainerName }
             { name: 'KESTRA_STORAGE_AZURE_ENDPOINT', value: 'https://${storageAccountName}.blob.${environment().suffixes.storage}' }
 
@@ -247,7 +253,7 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // login name); only the password is a KV secret.
             //
             // CONFIRMED against the pinned engine (2026-09-02, live local
-            // login attempt — see rating-engine/dev/.env.example): Kestra
+            // login attempt — see workflow-management/dev/.env.example): Kestra
             // 1.3.35's BasicAuthService validates this pair at startup and
             // silently rejects the WHOLE configuration (no active credential
             // at all, every login 401s) if the username is not a valid email
@@ -259,11 +265,25 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // also satisfy the password policy** — that value is not visible
             // or settable from this file; confirm it separately before the
             // next deploy that exercises this.
-            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'rating-ops@example.invalid' }
+            //
+            // COUPLED IDENTITY — keep these THREE in lockstep on any rename:
+            //   1. this env var — the username the engine ACCEPTS;
+            //   2. azure-pipelines.yml `deploy_workflow_flows` `--user` — the
+            //      flow-deploy CLI login (hard-coded there to match this);
+            //   3. the `billrun-engine-auth` Key Vault secret the APP presents —
+            //      billing's engine-client.ts base64-encodes it as Basic-Auth,
+            //      and it bundles `<username>:<password>`, so its username half
+            //      MUST equal this value.
+            // (1) and (2) are in git and change together; (3) is OUT OF BAND in
+            // Key Vault. Renaming here without updating the `billrun-engine-auth`
+            // secret makes every app→engine call (trigger / check-status /
+            // cancel) 401 after deploy. See billmgmt-progress-tracker Outstanding.
+            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'workflow-ops@billing.ops' }
             { name: 'KESTRA_SERVER_BASIC_AUTH_PASSWORD', secretRef: 'kestra-basic-auth-password' }
 
-            // D7 — default namespace `rating`.
-            { name: 'KESTRA_SERVER_DEFAULT_NAMESPACE', value: 'rating' }
+            // D7 — default namespace (defaults to `rating`; the split billrun
+            // instance overrides it to `billrun`). Only affects unqualified deploys.
+            { name: 'KESTRA_SERVER_DEFAULT_NAMESPACE', value: defaultNamespace }
 
             // code-standards §3.8 — the worker's db.py reads this bare
             // password directly from os.environ (NOT via Kestra's `secret()`),
@@ -325,4 +345,4 @@ resource ratingEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-output ratingEngineAppName string = ratingEngineApp.name
+output workflowEngineAppName string = workflowEngineApp.name
