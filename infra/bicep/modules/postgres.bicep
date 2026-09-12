@@ -22,20 +22,21 @@
 // every extension/library the server already relies on, not only the new ones.
 param postgresServerName string
 
-// PINNED to PostgreSQL major 17 (not "≥16"). The audit/billing/rating partman
-// bootstrap SQL (db/bootstrap/*-partman-setup.sql) uses pg_partman 5.x's
-// named-parameter create_parent() signature, which PGDG ships for PG 17; a
-// PG-16 server would get partman 4.x with the incompatible 'native' p_type
-// signature, so the same bootstrap that works on local Docker (postgres:17-
-// bookworm) would fail. The Flexible Server itself is provisioned out of band
-// (um02 / the um30-infra variable group) and must be CREATED at this major;
-// this module references it as `existing` and cannot change an in-place major,
-// so `serverMajorMatchesPin` below is a deploy-time DRIFT GUARD (surfaced as an
-// output) rather than a setter — a mismatch means the provisioning targeted the
-// wrong major and must be fixed at the source, before configuring partman on it.
-@description('Pinned PostgreSQL major version. Only 17 is permitted (pg_partman 5.x coupling — see comment).')
-@allowed(['17'])
-param postgresVersion string = '17'
+// This solution is PINNED to PostgreSQL major 17. The audit/billing/rating
+// partman bootstrap SQL (db/bootstrap/*-partman-setup.sql) uses pg_partman 5.x's
+// named-parameter create_parent() signature (PGDG's PG-17 build); a PG-16 server
+// gets partman 4.x with the incompatible 'native' p_type signature. Local Docker
+// (infra/docker/postgres) is postgres:17-bookworm, so local mirrors prod.
+//
+// ENFORCEMENT is NOT in this module: it references the server as `existing`
+// (provisioned out of band — um02 / the um30-infra variable group) and can
+// neither set nor block on the server's major. The HARD stop already lives
+// where the coupling actually bites: the pg_partman-version preflight at the top
+// of each db/bootstrap/*-partman-setup.sql, which RAISES and fails
+// `db:setup-partman` on a pre-v5 server. The `serverMajorMatchesPin` output
+// below is only an EARLIER, clearer drift signal for whoever runs the
+// out-of-band `az deployment` — not a gate.
+var pinnedPostgresMajor = '17'
 
 // Required (no default): azure.extensions and shared_preload_libraries are
 // full-replacement settings, so a silent module default would overwrite
@@ -89,13 +90,14 @@ resource timezoneConfig 'Microsoft.DBforPostgreSQL/flexibleServers/configuration
 output postgresServerFqdn string = postgresServer.properties.fullyQualifiedDomainName
 output postgresServerLocation string = postgresServer.location
 
-// Deploy-time DRIFT GUARD for the PG-17 pin (see the postgresVersion comment):
-// surface the live server major, and whether it matches the pin. This module
-// references the server as `existing` and cannot change an in-place major, so a
-// `false` here means the out-of-band provisioning (um02 / um30-infra) targeted
-// the wrong version and must be corrected before partman is configured on it.
+// Early DRIFT SIGNAL for the PG-17 pin (see the pinnedPostgresMajor comment):
+// surface the live server major and whether it matches. This is NOT an
+// enforcement gate — the module can't change an existing server's major and is
+// applied out of band; the real hard stop is the pg_partman v5 preflight in
+// db/bootstrap/*-partman-setup.sql. A `false` here is an early warning to fix
+// the provisioned major before running db:setup-partman against it.
 output detectedPostgresVersion string = postgresServer.properties.version
 output serverMajorMatchesPin bool = startsWith(
   postgresServer.properties.version,
-  postgresVersion
+  pinnedPostgresMajor
 )
