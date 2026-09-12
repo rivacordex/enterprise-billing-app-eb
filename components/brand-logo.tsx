@@ -39,7 +39,11 @@ function monogramFor(appName: string): string {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((word) => word[0]!.toUpperCase())
+    // `[...word][0]` takes the first Unicode *code point* (string spread
+    // iterates code points), so a name starting with an astral char — emoji,
+    // supplementary-plane letter — yields a whole glyph, not a lone UTF-16
+    // surrogate half. `filter(Boolean)` guarantees each word is non-empty.
+    .map((word) => [...word][0]!.toUpperCase())
     .join("");
   return initials || DEFAULT_APP_NAME[0]!;
 }
