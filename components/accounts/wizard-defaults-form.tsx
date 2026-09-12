@@ -6,6 +6,7 @@ import {
   setWizardDefaultsAction,
   type SetWizardDefaultsActionResult,
 } from "@/actions/accounts/set-wizard-defaults.action";
+import { EDIT_DISABLED_TITLE } from "@/components/accounts/edit-access";
 import type { BillCycle } from "@/types/accounts";
 
 interface WizardDefaultsFormProps {
@@ -13,6 +14,7 @@ interface WizardDefaultsFormProps {
   defaultBillCycleId: string | null;
   defaultCurrency: string | null;
   defaultCreditLimit: string | null;
+  canEdit: boolean;
 }
 
 function describeError(result: SetWizardDefaultsActionResult): string {
@@ -32,6 +34,7 @@ export function WizardDefaultsForm({
   defaultBillCycleId,
   defaultCurrency,
   defaultCreditLimit,
+  canEdit,
 }: WizardDefaultsFormProps): React.JSX.Element {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SetWizardDefaultsActionResult | null>(
@@ -79,8 +82,9 @@ export function WizardDefaultsForm({
             id="wd-cycle"
             name="defaultBillCycleId"
             required
+            disabled={!canEdit}
             defaultValue={defaultBillCycleId ?? ""}
-            className="h-8 rounded-md border border-[color:var(--border-default)] bg-background px-3 text-body-sm text-foreground focus:ring-1 focus:ring-[color:var(--border-focus)] focus:outline-none"
+            className="h-8 rounded-md border border-[color:var(--border-default)] bg-background px-3 text-body-sm text-foreground focus:ring-1 focus:ring-[color:var(--border-focus)] focus:outline-none disabled:cursor-not-allowed disabled:bg-[color:var(--surface-sunken)] disabled:text-muted-foreground"
           >
             {defaultBillCycleId === null && (
               <option value="" disabled>
@@ -125,8 +129,9 @@ export function WizardDefaultsForm({
             id="wd-limit"
             name="defaultCreditLimit"
             defaultValue={defaultCreditLimit ?? ""}
+            readOnly={!canEdit}
             placeholder="Leave blank for no pre-fill"
-            className="h-8 rounded-md border border-[color:var(--border-default)] bg-background px-3 text-body-sm text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-[color:var(--border-focus)] focus:outline-none"
+            className="h-8 rounded-md border border-[color:var(--border-default)] bg-background px-3 text-body-sm text-foreground placeholder:text-muted-foreground read-only:cursor-not-allowed read-only:bg-[color:var(--surface-sunken)] read-only:text-muted-foreground focus:ring-1 focus:ring-[color:var(--border-focus)] focus:outline-none"
           />
           <span className="text-[11px] text-muted-foreground">
             Pre-fills the onboarding wizard; blank = manual entry per customer.
@@ -156,8 +161,9 @@ export function WizardDefaultsForm({
 
       <button
         type="submit"
-        disabled={submitting}
-        className="h-8 rounded-md bg-[color:var(--action-primary-bg)] px-4 text-body-sm font-medium text-white hover:bg-[color:var(--action-primary-bg-hover)] disabled:opacity-50"
+        disabled={!canEdit || submitting}
+        title={canEdit ? undefined : EDIT_DISABLED_TITLE}
+        className="h-8 rounded-md bg-[color:var(--action-primary-bg)] px-4 text-body-sm font-medium text-white hover:bg-[color:var(--action-primary-bg-hover)] disabled:cursor-not-allowed disabled:bg-[color:var(--action-disabled-bg)] disabled:opacity-50"
       >
         {submitting ? "Saving…" : "Save Defaults"}
       </button>

@@ -8,6 +8,11 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { updateConfigAction } from "@/actions/system-config/update-config.action";
+import {
+  CONFIG_VALUE_MAX_LENGTH,
+  configValueLength,
+} from "@/lib/config-limits";
+import { cn } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +64,15 @@ export function ConfigEditDialog({
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<ConfigEditErrorCode | null>(null);
+  // D12: the per-key VALUE_TOO_LONG rejection is a field error, not a generic
+  // Alert — the problem is the value itself, shown under the textarea.
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  // D12: per-key length budget (e.g. app/app_name → 40). Undefined for every
+  // other row, which renders without a counter. Counted in Unicode code points
+  // (not UTF-16 units) to match the "N characters" contract and the server
+  // check, so an emoji/astral glyph counts as one.
+  const lengthLimit = CONFIG_VALUE_MAX_LENGTH[`${configGroup}:${configKey}`];
 
   const {
     register,
@@ -70,18 +84,35 @@ export function ConfigEditDialog({
     defaultValues: { configValue: initialValue ?? "" },
   });
 
+  // The length that counts toward the budget is the TRIMMED, code-point length
+  // — exactly what the dialog stores (onSubmit trims + coerces "" → null) and
+  // what the server validates (both via `configValueLength`) — so the counter
+  // never overstates the stored value (e.g. trailing spaces don't inflate it).
+  // Tracked without react-hook-form's `watch()` (its returned fn the React
+  // Compiler can't memoize); the field's own onChange is wrapped below.
+  const measure = (v: string): number => configValueLength(v.trim());
+  const initialLength = measure(initialValue ?? "");
+  const [currentLength, setCurrentLength] = useState(initialLength);
+  const valueField = register("configValue");
+  const isOverLimit = lengthLimit !== undefined && currentLength > lengthLimit;
+
   function handleOpenChange(nextOpen: boolean): void {
     if (isSubmitting) return;
-    if (!nextOpen) {
-      setError(null);
-      reset({ configValue: initialValue ?? "" });
-    }
+    // Re-sync the field, counter, and errors to the CURRENT stored value on
+    // every open AND close — so reopening after a prior edit (or after another
+    // admin changed the row and the list revalidated) never shows a stale value,
+    // count, or lingering rejection. `useState` seeds only the first mount.
+    setError(null);
+    setFieldError(null);
+    setCurrentLength(initialLength);
+    reset({ configValue: initialValue ?? "" });
     setOpen(nextOpen);
   }
 
   async function onSubmit(values: ConfigValueFormValues): Promise<void> {
     setIsSubmitting(true);
     setError(null);
+    setFieldError(null);
 
     const trimmed = values.configValue.trim();
     const coerced = trimmed === "" ? null : trimmed;
@@ -95,6 +126,10 @@ export function ConfigEditDialog({
       if (result.ok) {
         setOpen(false);
         toast.success("Configuration updated.");
+      } else if (result.code === "VALUE_TOO_LONG") {
+        // D12: surfaced as a field error below the textarea. The live counter
+        // warns before submit; the server remains the enforcement boundary.
+        setFieldError(`Value must be ${result.limit} characters or fewer.`);
       } else if (result.code === "VALIDATION_ERROR") {
         // result.fieldErrors is intentionally discarded: configValueFormSchema
         // above mirrors updateConfigValueSchema's configValue rule exactly, so
@@ -115,7 +150,7 @@ export function ConfigEditDialog({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => handleOpenChange(true)}
         aria-label="Edit configuration value"
         className="rounded-sm p-1 text-muted-foreground outline-none hover:bg-[color:var(--action-ghost-hover)] hover:text-foreground focus-visible:[box-shadow:var(--focus-ring)]"
       >
@@ -147,11 +182,44 @@ export function ConfigEditDialog({
                 rows={4}
                 placeholder="Enter value…"
                 className="font-mono text-sm"
-                aria-invalid={!!errors.configValue}
+                aria-invalid={!!errors.configValue || !!fieldError}
+                aria-describedby={fieldError ? "config-value-error" : undefined}
                 disabled={isSubmitting}
-                {...register("configValue")}
+                {...valueField}
+                onChange={(e) => {
+                  void valueField.onChange(e);
+                  setCurrentLength(measure(e.target.value));
+                  // Clear a prior too-long rejection as soon as the value
+                  // changes, so a stale error doesn't linger over a now-valid
+                  // value (no native maxLength caps code points, so the counter
+                  // + server are the guard).
+                  if (fieldError) setFieldError(null);
+                }}
               />
               <FieldError errors={[errors.configValue]} />
+              {/* D12: field-level rejection + a live counter for capped keys so
+                  the limit is visible before submit. */}
+              {fieldError && (
+                <p
+                  id="config-value-error"
+                  role="alert"
+                  className="text-sm text-destructive"
+                >
+                  {fieldError}
+                </p>
+              )}
+              {lengthLimit !== undefined && (
+                <p
+                  className={cn(
+                    "text-right text-xs tabular-nums",
+                    currentLength > lengthLimit
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {currentLength}/{lengthLimit}
+                </p>
+              )}
             </Field>
           </form>
 
@@ -173,7 +241,12 @@ export function ConfigEditDialog({
             <Button
               type="submit"
               form="config-edit-form"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isOverLimit}
+              title={
+                isOverLimit
+                  ? `Value must be ${lengthLimit} characters or fewer.`
+                  : undefined
+              }
             >
               {isSubmitting && <Loader2 className="animate-spin" size={14} />}
               Save changes

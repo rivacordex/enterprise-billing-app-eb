@@ -77,8 +77,8 @@ This file is the **shared core** inherited by every module (User Management, Pro
 | `--surface-raised`     | `#FFFFFF` + shadow      | Dropdowns, popovers |
 | `--surface-sunken`     | `#EEF0F4` (neutral-100) | Wells, code/data areas |
 | `--surface-selected`   | `#EDF0FB` (primary-50)  | Selected table row |
-| `--surface-nav`        | `#131D49` (primary-800) | Sidebar / left nav |
-| `--surface-topbar`     | `#1B2A68` (primary-700) | Top app bar |
+| `--surface-nav`        | `#131D49` (primary-800) | Sidebar (nav-only) **and** the top app bar — unified chrome color; the two are separated only by the top bar's `--color-primary-900` bottom hairline |
+| `--surface-topbar`     | `#1B2A68` (primary-700) | Defined but currently **unused** — the top bar shares `--surface-nav` (unified chrome). Kept for a future two-tone chrome |
 | `--text-primary`       | `#11141A` (neutral-900) | Headings, key labels |
 | `--text-body`          | `#353B46` (neutral-700) | Body copy |
 | `--text-muted`         | `#6A7283` (neutral-500) | Secondary / helper text |
@@ -181,6 +181,8 @@ Recommended families: **IBM Plex Sans** for UI (engineered, telecom-native feel)
 | `--text-mono` | 13px / 20px | 400 | IDs, invoice/account numbers, keys |
 
 **Weights:** Regular 400 (body), Medium 500 (controls, emphasis), SemiBold 600 (headings). Avoid 700+ in dense UI. Enable `font-variant-numeric: tabular-nums` for all numeric/currency columns so billing figures align.
+
+**`app_name` budget:** the configurable application name (`app`/`app_name` in `system_config`) is capped at **40 characters** (`APP_NAME_MAX_LENGTH` in `lib/config-limits.ts`, enforced by the config write service). The number is derived from the binding surface — the top-bar wordmark (`max-w-[320px]`, `text-sm`) — which fits ~44 chars; the login card (~45) and browser tab (~50) have more room, so 40 clears all three at ≥1280px without ellipsis. A future chrome change that shrinks the wordmark should re-derive this number rather than guessing. `truncate` stays on every wordmark as the narrow-viewport safety net.
 
 ---
 

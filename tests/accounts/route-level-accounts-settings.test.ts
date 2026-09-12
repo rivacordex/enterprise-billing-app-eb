@@ -18,10 +18,18 @@ describe("Accounts Settings main page — structural guardrails (ac15-spec §3.1
     );
   });
 
-  it("calls requirePermission with ACCOUNTS_CONFIG and EDIT (write gate)", () => {
+  it("calls requirePermission with ACCOUNTS_CONFIG and READ (D7 read gate)", () => {
     expect(mainSource).toContain("PERMISSIONS.ACCOUNTS_CONFIG");
-    expect(mainSource).toContain("LEVELS.EDIT");
+    expect(mainSource).toContain("LEVELS.READ");
     expect(mainSource).toContain("requirePermission");
+  });
+
+  it("derives canEdit from the map and threads it to the mutation controls (D7)", () => {
+    // The page guards at READ but the mutation controls grey out unless the
+    // viewer also holds EDIT; the actions remain the EDIT boundary (Inv. #3).
+    expect(mainSource).toContain("canEdit");
+    expect(mainSource).toContain("meetsLevel");
+    expect(mainSource).toContain("LEVELS.EDIT");
   });
 
   it("imports all three service list functions", () => {

@@ -1,27 +1,28 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The layout resolves the full permission map (via the request-scoped
+// getEffectivePermissions wrapper) whenever an identity resolves, to thread
+// AdminNav's show/hide state. Grant across several modules — not just
+// Administration — so the test can catch a registry→nav regression for any
+// section, not only the admin one.
 vi.mock("@/auth/guard", () => ({
   getCurrentUserIdentity: vi.fn(),
-}));
-// cm03: the layout now resolves the full permission map whenever an
-// identity resolves, to thread `AdminNav`'s locked/greyed-item state.
-vi.mock("@/auth/resolver", () => ({
-  resolveEffectivePermissions: vi.fn(async () => ({
-    users: null,
-    roles: null,
-    system_config: null,
-    audit_log: null,
-    products: null,
-    customers: null,
+  getEffectivePermissions: vi.fn(async () => ({
+    users: "READ",
+    roles: "READ",
+    system_config: "READ",
+    audit_log: "READ",
+    products: "READ",
+    customers: "READ",
+    accounts_view: "READ",
+    billrun_view: "READ",
   })),
 }));
-// um28: the layout now reads the collapse cookie + branding logo server-side.
+// The layout reads the collapse cookie + branding logo server-side.
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: () => undefined })),
 }));
-// The layout also resolves the dynamic app name (wordmark + generateMetadata);
-// mock it alongside getBrandingLogo so the whole service module is stubbed.
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getBrandingLogo: vi.fn(async () => null),
   getAppName: vi.fn(async () => "Acme Telco"),
@@ -47,8 +48,8 @@ beforeEach(() => {
   mockGetCurrentUserIdentity.mockReset();
 });
 
-describe("AdminLayout sidebar footer", () => {
-  it("renders the signed-in user's name and email in the footer", async () => {
+describe("AdminLayout — top-bar identity", () => {
+  it("renders the signed-in user's name and email in the top bar", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
       userId: "user-1",
       userName: "Ada Lovelace",
@@ -65,7 +66,7 @@ describe("AdminLayout sidebar footer", () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
       userId: "user-1",
       userName:
-        "A Very Long User Name That Would Otherwise Overflow The Sidebar",
+        "A Very Long User Name That Would Otherwise Overflow The Top Bar",
       userEmail: "averylongemailaddress.that.overflows@example.com",
     });
 
@@ -75,7 +76,7 @@ describe("AdminLayout sidebar footer", () => {
     expect(name.className).toContain("truncate");
   });
 
-  it("renders the sidebar sign-out button in the footer", async () => {
+  it("renders the sign-out button in the top bar", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
       userId: "user-1",
       userName: "Ada Lovelace",
@@ -89,7 +90,7 @@ describe("AdminLayout sidebar footer", () => {
     ).toBeInTheDocument();
   });
 
-  it("still renders all four admin nav links", async () => {
+  it("renders the permitted admin nav links (permission-scoped)", async () => {
     mockGetCurrentUserIdentity.mockResolvedValue({
       userId: "user-1",
       userName: "Ada Lovelace",
@@ -104,6 +105,11 @@ describe("AdminLayout sidebar footer", () => {
       screen.getByRole("link", { name: "System Configuration" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Audit Log" })).toBeInTheDocument();
+    // A non-Administration section also renders from the registry, so a
+    // registry→nav regression outside admin is caught too.
+    expect(
+      screen.getByRole("link", { name: "View Product" }),
+    ).toBeInTheDocument();
   });
 
   it("omits the identity strip but keeps the sign-out button when no identity resolves", async () => {
@@ -111,9 +117,8 @@ describe("AdminLayout sidebar footer", () => {
 
     render(await AdminLayout({ children: <main>content</main> }));
 
-    // um28 (admin-sidebar.tsx footer): the sign-out action ALWAYS renders so a
-    // user can sign out even if the identity lookup fails; only the identity
-    // strip (name + email) is gated on a resolved identity.
+    // The sign-out action always renders; only the identity strip depends on a
+    // resolved identity. With no identity the nav also fails closed (D6).
     expect(
       screen.getByRole("button", { name: "Sign out" }),
     ).toBeInTheDocument();

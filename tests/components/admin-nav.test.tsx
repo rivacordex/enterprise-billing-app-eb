@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockPathname = "/administration/users";
@@ -21,65 +21,60 @@ function permissionMap(
     audit_log: null,
     products: null,
     customers: null,
+    accounts_view: null,
+    accounts_transactions: null,
+    accounts_config: null,
+    product_orders: null,
+    product_inventory: null,
+    billrun_view: null,
+    billrun_operate: null,
+    billrun_approve: null,
     ...overrides,
   };
 }
 
-const managerMap = permissionMap({ customers: "EDIT" });
-const userMap = permissionMap({ customers: "READ" });
+// Everything granted → all 5 sections, all 17 links visible.
+const adminMap = permissionMap({
+  users: "READ",
+  roles: "READ",
+  system_config: "READ",
+  audit_log: "READ",
+  products: "EDIT",
+  customers: "EDIT",
+  accounts_view: "READ",
+  accounts_transactions: "READ",
+  accounts_config: "READ",
+  product_orders: "READ",
+  product_inventory: "READ",
+  billrun_view: "READ",
+});
 
-describe("AdminNav — expanded", () => {
-  it("shows the Products and Administration captions and all eight labelled links", () => {
-    render(<AdminNav permissionMap={managerMap} />);
-    expect(screen.getByText("Products")).toBeInTheDocument();
-    expect(screen.getByText("Administration")).toBeInTheDocument();
-    for (const label of [
-      "View Product",
-      "Manage Products",
-      "Orders",
-      "Subscriptions",
-      "Users",
-      "Roles",
-      "System Configuration",
-      "Audit Log",
+// Read-only on products + customers → Manage Products / Manage Customer hidden.
+const userMap = permissionMap({ products: "READ", customers: "READ" });
+
+describe("AdminNav — registry-driven, expanded", () => {
+  it("renders the granted captions and links", () => {
+    render(<AdminNav permissionMap={adminMap} />);
+    for (const caption of [
+      "Products",
+      "Customer",
+      "Accounts",
+      "Billing",
+      "Administration",
     ]) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+      expect(screen.getByText(caption)).toBeInTheDocument();
     }
     expect(screen.getByRole("link", { name: "View Product" })).toHaveAttribute(
       "href",
       "/products/product-offering",
     );
     expect(
-      screen.getByRole("link", { name: "Manage Products" }),
-    ).toHaveAttribute("href", "/products/manage-products");
-    expect(screen.getByRole("link", { name: "Orders" })).toHaveAttribute(
-      "href",
-      "/products/orders",
-    );
-    expect(screen.getByRole("link", { name: "Subscriptions" })).toHaveAttribute(
-      "href",
-      "/products/subscriptions",
-    );
-  });
-
-  it("renders Orders and Subscriptions as real, unlocked links even with no permissionMap prop at all", () => {
-    render(<AdminNav />);
-    for (const label of ["Orders", "Subscriptions"]) {
-      const link = screen.getByRole("link", { name: label });
-      expect(link).toBeInTheDocument();
-      expect(link).not.toHaveAttribute("aria-disabled");
-    }
-  });
-
-  it("renders Manage Products as a real, unlocked link even with no permissionMap prop at all", () => {
-    render(<AdminNav />);
-    const link = screen.getByRole("link", { name: "Manage Products" });
-    expect(link).toBeInTheDocument();
-    expect(link).not.toHaveAttribute("aria-disabled");
+      screen.getByRole("link", { name: "Accounts Settings" }),
+    ).toHaveAttribute("href", "/administration/accounts-settings");
   });
 
   it("marks the active route with aria-current=page", () => {
-    render(<AdminNav permissionMap={managerMap} />);
+    render(<AdminNav permissionMap={adminMap} />);
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -89,204 +84,84 @@ describe("AdminNav — expanded", () => {
     );
   });
 
-  it("renders the Products caption before the Administration caption", () => {
-    render(<AdminNav permissionMap={managerMap} />);
-    const productsCaption = screen.getByText("Products");
-    const administrationCaption = screen.getByText("Administration");
+  it("orders Products before Administration", () => {
+    render(<AdminNav permissionMap={adminMap} />);
+    const products = screen.getByText("Products");
+    const administration = screen.getByText("Administration");
     expect(
-      productsCaption.compareDocumentPosition(administrationCaption) &
+      products.compareDocumentPosition(administration) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
+});
 
-  it("has no divider between sections", () => {
-    const { container } = render(<AdminNav permissionMap={managerMap} />);
-    expect(container.querySelectorAll("hr")).toHaveLength(0);
+describe("AdminNav — denied pages are hidden, not locked (D2)", () => {
+  it("omits Manage Products and Manage Customer for a READ-only grant", () => {
+    render(<AdminNav permissionMap={userMap} />);
+    expect(
+      screen.getByRole("link", { name: "View Product" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Manage Products" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Manage Products")).not.toBeInTheDocument();
+    expect(screen.queryByText("Manage Customer")).not.toBeInTheDocument();
+  });
+
+  it("renders no aria-disabled item and no locked treatment anywhere", () => {
+    const { container } = render(<AdminNav permissionMap={userMap} />);
+    expect(container.querySelector("[aria-disabled]")).toBeNull();
   });
 });
 
-describe("AdminNav — expanded, active state on product route", () => {
-  beforeEach(() => {
-    mockPathname = "/products/product-offering";
-  });
-
-  afterEach(() => {
-    mockPathname = "/administration/users";
-  });
-
-  it("marks View Product active and Users inactive", () => {
-    render(<AdminNav permissionMap={managerMap} />);
-    expect(screen.getByRole("link", { name: "View Product" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getByRole("link", { name: "Users" })).not.toHaveAttribute(
-      "aria-current",
-    );
+describe("AdminNav — fail-closed with no permissionMap (D6)", () => {
+  it("renders nothing at all when no map is passed", () => {
+    render(<AdminNav />);
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
+    expect(screen.queryByText("Products")).not.toBeInTheDocument();
+    expect(screen.queryByText("Administration")).not.toBeInTheDocument();
   });
 });
 
-describe("AdminNav — active state on manage-products route", () => {
+describe("AdminNav — collapsed rail", () => {
+  it("hides captions and titles each visible link; divider count follows visible sections", () => {
+    const { container } = render(
+      <AdminNav collapsed permissionMap={adminMap} />,
+    );
+    expect(screen.queryByText("Products")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute(
+      "title",
+      "Users",
+    );
+    // 5 visible sections → 4 dividers.
+    expect(container.querySelectorAll("hr")).toHaveLength(4);
+  });
+
+  it("drops the divider count to the visible-section count, not a fixed five", () => {
+    // USER map → Products + Customer visible only (Customer has just View
+    // Customer) → 2 sections → 1 divider.
+    const { container } = render(
+      <AdminNav collapsed permissionMap={userMap} />,
+    );
+    expect(container.querySelectorAll("hr")).toHaveLength(1);
+  });
+});
+
+describe("AdminNav — active state on a product route", () => {
   beforeEach(() => {
     mockPathname = "/products/manage-products";
   });
-
   afterEach(() => {
     mockPathname = "/administration/users";
   });
 
   it("marks Manage Products active and View Product inactive", () => {
-    render(<AdminNav permissionMap={managerMap} />);
+    render(<AdminNav permissionMap={adminMap} />);
     expect(
       screen.getByRole("link", { name: "Manage Products" }),
     ).toHaveAttribute("aria-current", "page");
     expect(
       screen.getByRole("link", { name: "View Product" }),
     ).not.toHaveAttribute("aria-current");
-  });
-});
-
-describe("AdminNav — collapsed rail", () => {
-  it("hides the Products and Administration captions", () => {
-    render(<AdminNav collapsed permissionMap={managerMap} />);
-    expect(screen.queryByText("Products")).not.toBeInTheDocument();
-    expect(screen.queryByText("Administration")).not.toBeInTheDocument();
-  });
-
-  it("keeps all eight links reachable with a title tooltip", () => {
-    render(<AdminNav collapsed permissionMap={managerMap} />);
-    for (const label of [
-      "View Product",
-      "Manage Products",
-      "Orders",
-      "Subscriptions",
-      "Users",
-      "Roles",
-      "System Configuration",
-      "Audit Log",
-    ]) {
-      const link = screen.getByRole("link", { name: label });
-      expect(link).toHaveAttribute("title", label);
-    }
-  });
-});
-
-describe("AdminNav — Customer section, expanded, granted (MANAGER-shaped map)", () => {
-  it("renders the Customer caption between Products and Administration", () => {
-    render(<AdminNav permissionMap={managerMap} />);
-    const productsCaption = screen.getByText("Products");
-    const customerCaption = screen.getByText("Customer");
-    const administrationCaption = screen.getByText("Administration");
-    expect(
-      productsCaption.compareDocumentPosition(customerCaption) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      customerCaption.compareDocumentPosition(administrationCaption) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("renders both View Customer and Manage Customer as real, unlocked links", () => {
-    render(<AdminNav permissionMap={managerMap} />);
-
-    const viewLink = screen.getByRole("link", { name: "View Customer" });
-    expect(viewLink).toHaveAttribute("href", "/customers/view");
-    expect(viewLink).not.toHaveAttribute("aria-disabled");
-
-    const manageLink = screen.getByRole("link", { name: "Manage Customer" });
-    expect(manageLink).toHaveAttribute("href", "/customers/manage");
-    expect(manageLink).not.toHaveAttribute("aria-disabled");
-  });
-});
-
-describe("AdminNav — Customer section, expanded, not granted (USER-shaped map)", () => {
-  it("still renders View Customer as a normal link", () => {
-    render(<AdminNav permissionMap={userMap} />);
-    const viewLink = screen.getByRole("link", { name: "View Customer" });
-    expect(viewLink).toHaveAttribute("href", "/customers/view");
-  });
-
-  it("renders Manage Customer locked: aria-disabled, no real link, not clickable-to-navigate", () => {
-    const { container } = render(<AdminNav permissionMap={userMap} />);
-
-    expect(
-      container.querySelector('a[href="/customers/manage"]'),
-    ).not.toBeInTheDocument();
-
-    const lockedItem = screen.getByRole("link", { name: "Manage Customer" });
-    expect(lockedItem).toHaveAttribute("aria-disabled", "true");
-    expect(lockedItem.tagName).toBe("SPAN");
-    expect(lockedItem).toHaveAttribute(
-      "title",
-      "Requires customer edit access",
-    );
-
-    fireEvent.click(lockedItem);
-    expect(
-      container.querySelector('a[href="/customers/manage"]'),
-    ).not.toBeInTheDocument();
-  });
-});
-
-describe("AdminNav — Customer section, no permissionMap prop at all", () => {
-  it("still renders Manage Customer locked (fail-closed)", () => {
-    render(<AdminNav />);
-    const label = screen.getByText("Manage Customer");
-    const lockedItem = label.closest('[role="link"]');
-    expect(lockedItem).toHaveAttribute("aria-disabled", "true");
-  });
-
-  it("still renders View Customer locked (fail-closed)", () => {
-    render(<AdminNav />);
-    const label = screen.getByText("View Customer");
-    const lockedItem = label.closest('[role="link"]');
-    expect(lockedItem).toHaveAttribute("aria-disabled", "true");
-  });
-});
-
-describe("AdminNav — Customer section, collapsed", () => {
-  it("granted: shows Building2/UserCog items with plain-label titles, and 4 dividers for 5 sections", () => {
-    const { container } = render(
-      <AdminNav collapsed permissionMap={managerMap} />,
-    );
-    expect(screen.getByRole("link", { name: "View Customer" })).toHaveAttribute(
-      "title",
-      "View Customer",
-    );
-    expect(
-      screen.getByRole("link", { name: "Manage Customer" }),
-    ).toHaveAttribute("title", "Manage Customer");
-    expect(container.querySelectorAll("hr")).toHaveLength(4);
-  });
-
-  it("not granted: locked item's collapsed title is still just the label", () => {
-    render(<AdminNav collapsed permissionMap={userMap} />);
-    const label = screen.getByText("Manage Customer");
-    const lockedItem = label.closest('[role="link"]');
-    expect(lockedItem).toHaveAttribute("title", "Manage Customer");
-    expect(lockedItem?.className).toContain("opacity-50");
-  });
-});
-
-describe("AdminNav — Customer active state", () => {
-  beforeEach(() => {
-    mockPathname = "/customers/view";
-  });
-
-  afterEach(() => {
-    mockPathname = "/administration/users";
-  });
-
-  it("marks only View Customer active; a locked Manage Customer is never marked active", () => {
-    render(<AdminNav permissionMap={userMap} />);
-    expect(screen.getByRole("link", { name: "View Customer" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-
-    const label = screen.getByText("Manage Customer");
-    const lockedItem = label.closest('[role="link"]');
-    expect(lockedItem).not.toHaveAttribute("aria-current");
   });
 });

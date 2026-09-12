@@ -1,121 +1,25 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/administration/users",
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: vi.fn() }),
-}));
-vi.mock("@/auth/client", () => ({
-  authClient: { signOut: vi.fn() },
 }));
 
 import { AdminSidebar } from "@/components/admin-sidebar";
 
-const IDENTITY = { userName: "Ada Lovelace", userEmail: "ada@example.com" };
-
-beforeEach(() => {
-  // Clear the collapse cookie between tests.
-  document.cookie = "sidebar_collapsed=; max-age=0; path=/";
-});
-
-describe("AdminSidebar — collapse toggle", () => {
-  it("starts expanded (w-64) with aria-expanded=true and the identity strip", () => {
-    render(
-      <AdminSidebar
-        defaultCollapsed={false}
-        identity={IDENTITY}
-        logo={null}
-        appName="Acme Telco"
-      />,
-    );
-
+// After the top-bar move (plan §3.6) the sidebar is controlled + nav-only: it
+// owns no state, toggle, identity strip, or brand. All that remains to assert
+// is the <aside> width reacting to the `collapsed` prop. The toggle/cookie and
+// identity cases moved to app-topbar.test.tsx / app-shell.test.tsx.
+describe("AdminSidebar — controlled width", () => {
+  it("renders w-64 when expanded", () => {
+    render(<AdminSidebar collapsed={false} />);
     expect(screen.getByRole("complementary").className).toContain("w-64");
-    const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("ada@example.com")).toBeInTheDocument();
   });
 
-  it("collapses to w-16, flips aria-expanded/label, and writes the cookie on toggle", () => {
-    render(
-      <AdminSidebar
-        defaultCollapsed={false}
-        identity={IDENTITY}
-        logo={null}
-        appName="Acme Telco"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-
+  it("renders w-16 when collapsed", () => {
+    render(<AdminSidebar collapsed />);
     expect(screen.getByRole("complementary").className).toContain("w-16");
-    const toggle = screen.getByRole("button", { name: "Expand sidebar" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(document.cookie).toContain("sidebar_collapsed=1");
-  });
-
-  it("honors defaultCollapsed=true (first paint collapsed, no identity strip)", () => {
-    render(
-      <AdminSidebar
-        defaultCollapsed
-        identity={IDENTITY}
-        logo={null}
-        appName="Acme Telco"
-      />,
-    );
-
-    expect(screen.getByRole("complementary").className).toContain("w-16");
-    expect(
-      screen.getByRole("button", { name: "Expand sidebar" }),
-    ).toBeInTheDocument();
-    // Collapsed rail drops the identity strip but keeps the sign-out control.
-    expect(screen.queryByText("ada@example.com")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Sign out" }),
-    ).toBeInTheDocument();
-  });
-
-  it("writes the cookie back to 0 when expanding from collapsed", () => {
-    render(
-      <AdminSidebar
-        defaultCollapsed
-        identity={IDENTITY}
-        logo={null}
-        appName="Acme Telco"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-
-    expect(document.cookie).toContain("sidebar_collapsed=0");
-  });
-});
-
-describe("AdminSidebar — appName reaches BrandLogo", () => {
-  it("renders the appName wordmark when expanded", () => {
-    render(
-      <AdminSidebar
-        defaultCollapsed={false}
-        identity={IDENTITY}
-        logo={null}
-        appName="Acme Telco"
-      />,
-    );
-
-    expect(screen.getByText("Acme Telco")).toBeInTheDocument();
-  });
-
-  it("renders the appName-derived monogram when collapsed", () => {
-    render(
-      <AdminSidebar
-        defaultCollapsed
-        identity={IDENTITY}
-        logo={null}
-        appName="Acme Telco"
-      />,
-    );
-
-    // First letters of the first two words: "Acme Telco" → "AT".
-    expect(screen.getByText("AT")).toBeInTheDocument();
   });
 });

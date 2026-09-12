@@ -26,7 +26,7 @@ One matrix test asserting, for each page/route, that every relevant `(permission
 | `/accounts/transactions` | `accounts_transactions : READ` (view) / `EDIT` (draft/submit/post-within-limit/approve) |
 | `/accounts/chart-of-accounts` | `accounts_config : READ` / `EDIT` |
 | `/accounts/gl-journal` | `accounts_config : READ` / `EDIT` (export/close) |
-| `/administration/accounts-settings` | `accounts_config : EDIT` (flows doc `: READ`) |
+| `/administration/accounts-settings` | `accounts_config : READ` page guard (D7 — lowered from EDIT; flows doc `: READ`); write controls grey out unless `: EDIT`; mutations re-check `: EDIT` at the action layer |
 | `POST /api/accounts/gl-journal-export` | `accounts_config : EDIT` |
 
 Plus the **workflow rules that are not permission levels** (code-standards §8): MANAGER-vs-USER approval routing is the reason-code threshold + `approved_by ≠ created_by` service check (Inv. #6), asserted here as a cross-cutting property — a USER cannot post above a limit, a creator cannot approve their own doc, regardless of holding `accounts_transactions:EDIT`. And the **dual-permission** onboarding action (ac04 — `accounts_transactions:EDIT` **and** the Customer transition permission).
