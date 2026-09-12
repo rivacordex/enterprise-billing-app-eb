@@ -40,14 +40,27 @@ END $$;
 -- p_default_table := false: the migration (0034_rating.sql) already created
 -- and attached rating.udr_rated_default as the DEFAULT partition (audit_log
 -- precedent) — pg_partman must not try to manage its own.
-SELECT partman.create_parent(
-  p_parent_table  := 'rating.udr_rated',
-  p_control       := 'partition_period',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,           -- keep 4 future months pre-created
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'rating.udr_rated') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'rating.udr_rated',
+      p_control       := 'partition_period',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,           -- keep 4 future months pre-created
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 -- 7-year retention; DETACH (never drop) an out-of-window partition —
@@ -63,14 +76,27 @@ UPDATE partman.part_config
 -- (created by 0034_rating.sql). Same monthly/DETACH shape as udr_rated above,
 -- but a shorter 24-month retention — operational telemetry aligned to the
 -- 24-month retention of the log files it is loaded from (rm01-spec D7).
-SELECT partman.create_parent(
-  p_parent_table  := 'rating.process_log',
-  p_control       := 'partition_period',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'rating.process_log') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'rating.process_log',
+      p_control       := 'partition_period',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 UPDATE partman.part_config
