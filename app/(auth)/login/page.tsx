@@ -67,6 +67,15 @@ export default async function LoginPage({
       <div className="relative z-10 w-full max-w-[440px] rounded-lg bg-card p-8 shadow-lg">
         <div className="flex flex-col items-center">
           <BrandLogo variant="login" logo={logo} appName={appName} />
+          {/* App-name wordmark beneath the logo. Shown only when a logo
+              occupies the slot above; without a logo `BrandLogo` already
+              renders the app name AS the wordmark, so repeating it here would
+              duplicate the name (same rationale as the top bar's center zone). */}
+          {logo !== null && (
+            <span className="mt-3 max-w-full truncate text-h4 font-semibold text-foreground">
+              {appName}
+            </span>
+          )}
         </div>
 
         <h1 className="mt-6 text-h2 font-semibold text-foreground">Sign in</h1>
