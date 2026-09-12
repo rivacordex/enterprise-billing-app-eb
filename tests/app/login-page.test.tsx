@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/auth", () => ({
   auth: { api: { getSession: vi.fn().mockResolvedValue(null) } },
@@ -22,11 +22,20 @@ vi.mock("@/lib/config", () => ({
 }));
 // um28: the login page now resolves the branding logo server-side; mock it so
 // importing the page never reaches `db/client` (and `lib/config`'s eager env
-// validation).
+// validation). `getBrandingLogo` defaults to no logo (wordmark path); tests
+// that need the logo path override its resolved value per case. `vi.hoisted`
+// so the fn exists before the hoisted `vi.mock` factory references it.
+const { mockGetBrandingLogo } = vi.hoisted(() => ({
+  mockGetBrandingLogo: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
-  getBrandingLogo: vi.fn().mockResolvedValue(null),
+  getBrandingLogo: mockGetBrandingLogo,
   getAppName: vi.fn().mockResolvedValue("Acme Telco"),
 }));
+
+afterEach(() => {
+  mockGetBrandingLogo.mockResolvedValue(null);
+});
 
 import LoginPage, { generateMetadata } from "@/app/(auth)/login/page";
 
@@ -84,6 +93,22 @@ describe("LoginPage", () => {
   it("renders the resolved app_name in the wordmark (no logo configured)", async () => {
     render(await LoginPage({ searchParams: Promise.resolve({}) }));
 
+    expect(screen.getByText("Acme Telco")).toBeInTheDocument();
+  });
+
+  it("renders the app_name beneath the logo when a logo is configured", async () => {
+    mockGetBrandingLogo.mockResolvedValue({
+      src: "/brand/logo.svg",
+      alt: "Acme Telco logo",
+    });
+
+    render(await LoginPage({ searchParams: Promise.resolve({}) }));
+
+    // The logo image renders (from `logo.alt`) AND the app-name wordmark text
+    // now sits beneath it — the name is no longer missing when a logo is set.
+    expect(
+      screen.getByRole("img", { name: "Acme Telco logo" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Acme Telco")).toBeInTheDocument();
   });
 

@@ -31,9 +31,21 @@ files (tracking applied ones by hash) only.
    source of truth for the app's typed queries, and its `check()`/constraint
    definitions are cross-referenced from the SQL of record (see the
    "kept in sync with it" notes in `db/schema/billing/documents.ts`).
-4. Never edit a migration that has already been applied anywhere (its hash is
-   recorded; a changed file re-applies the whole thing). Editing an
+4. As a rule, don't edit a migration that has already been applied anywhere —
+   **not because it re-applies, but because it _silently doesn't_.** This
+   migrator does **not** compare hashes: Drizzle's postgres-js migrator reads
+   the most-recently-applied row from `drizzle.__drizzle_migrations` and applies
+   a journal entry only when `entry.when > last_applied.created_at`. An edited
+   file whose `when` is older than the last applied entry is **skipped** — not
+   re-applied, not errored, not warned about. So the edit reaches **new
+   databases only** (a fresh `db:setup` from empty); every already-migrated
+   environment (your dev DB, test, staging, prod) keeps the old content until
+   its volume is wiped and rebuilt. That is why **forward migrations remain the
+   rule**: they are the only change that actually lands everywhere. Editing an
    unapplied, not-yet-shipped migration in place is fine and is the idiom here.
+   (A rare, explicitly-granted exception: editing **seed metadata that nothing
+   reads but admin help text** — e.g. a `system_config` row `description` — in
+   place, paired with a one-off documented `UPDATE` for existing environments.)
 
 `drizzle-kit introspect` (`npm run db:introspect`) is still safe — it reads the
 live database, not the snapshots. pgledger's raw-SQL tables are deliberately

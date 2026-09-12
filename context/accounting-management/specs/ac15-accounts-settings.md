@@ -9,7 +9,7 @@
 
 ## 1. Goal
 
-Add `/administration/accounts-settings` (permission `accounts_config:EDIT`) — CRUD for reason codes including their `auto_post_limit` thresholds (audited config changes, Q20), CRUD for the bill-cycle catalog with retire-not-delete and default-cycle designation (Q13), editing of the wizard defaults (default cycle/currency/credit-limit config rows), and a config-driven flows/interaction-map documentation page (locked item 8). Done when retiring a bill cycle removes it from the onboarding wizard (ac04) while leaving existing BANs untouched (V9), changing a reason-code threshold changes ac07's approval routing on the next post, and the term-resolution invariant (coalesce(override, cycle default), frozen at issuance) holds (V10).
+Add `/administration/accounts-settings` (page guard `accounts_config:READ`; mutation controls + Server Actions require `accounts_config:EDIT` — D7) — CRUD for reason codes including their `auto_post_limit` thresholds (audited config changes, Q20), CRUD for the bill-cycle catalog with retire-not-delete and default-cycle designation (Q13), editing of the wizard defaults (default cycle/currency/credit-limit config rows), and a config-driven flows/interaction-map documentation page (locked item 8). Done when retiring a bill cycle removes it from the onboarding wizard (ac04) while leaving existing BANs untouched (V9), changing a reason-code threshold changes ac07's approval routing on the next post, and the term-resolution invariant (coalesce(override, cycle default), frozen at issuance) holds (V10).
 
 ## 2. Design
 
@@ -38,7 +38,7 @@ A config-driven flows/interaction-map documentation page — a static-but-config
 ### 2.6 Structural decisions
 
 - Config services + audited mutations; retire-not-delete (no delete functions, code-standards §1.3). Optimistic lock on every catalog row (code-standards §2.5).
-- Under `administration/`, guarded `accounts_config:EDIT` (the flows doc sub-view is `:READ`).
+- Under `administration/`, guarded `accounts_config:READ` (the flows doc sub-view is also `:READ`). **Updated by the homepage-topbar-nav change (D7):** the page guard was lowered `EDIT → READ` so the role allowed to read the linked `/flows` reference can reach this parent; the five mutation controls grey out (a `canEdit = meetsLevel(map.accounts_config, EDIT)` prop) unless the viewer also holds EDIT. The backing Server Actions still re-check `accounts_config:EDIT`, so the enforcement boundary is unchanged (Inv. #3) — the greying is UX only.
 - No new pgledger/GL objects — pure catalog + config editing.
 
 ---
@@ -50,7 +50,7 @@ A config-driven flows/interaction-map documentation page — a static-but-config
 ### 3.4 Actions — `upsert-reason-code`, `retire-reason-code`, `upsert-bill-cycle`, `retire-bill-cycle`, `set-wizard-defaults` (`accounts_config:EDIT`), all audited.
 ### 3.5 Repository bodies — `reason-code.repository`, `bill-cycle.repository` (list/upsert/retire; no delete).
 ### 3.6 Flows doc page — config-driven reference (§2.4).
-### 3.7 Guardrail tests — **V9** `tests/accounts/v09-bill-cycle-integrity.integration.test.ts`: assigning a retired cycle to a new BAN rejected; retiring a cycle referenced by open BANs succeeds and removes it from the wizard's active options while existing BANs are unaffected; no delete path exists. **V10** `tests/accounts/v10-term-resolution.test.ts`: coalesce(override, default) both ways; changing cycle default or override after issuance doesn't move an issued doc's resolved term. Plus: a threshold change is audited and changes ac07 routing on the next post (integration — edit `GOODWILL_CREDIT` limit down, then a formerly-auto-post amount now routes to approval). Route × level: `accounts_config:EDIT`; USER blocked; flows doc viewable at `:READ`.
+### 3.7 Guardrail tests — **V9** `tests/accounts/v09-bill-cycle-integrity.integration.test.ts`: assigning a retired cycle to a new BAN rejected; retiring a cycle referenced by open BANs succeeds and removes it from the wizard's active options while existing BANs are unaffected; no delete path exists. **V10** `tests/accounts/v10-term-resolution.test.ts`: coalesce(override, default) both ways; changing cycle default or override after issuance doesn't move an issued doc's resolved term. Plus: a threshold change is audited and changes ac07 routing on the next post (integration — edit `GOODWILL_CREDIT` limit down, then a formerly-auto-post amount now routes to approval). Route × level: page guard `accounts_config:READ` (D7); mutation controls + Server Actions require `:EDIT`; USER (no grant) blocked; flows doc viewable at `:READ`.
 
 ### 3.8 Explicitly NOT in this unit
 No new doc operations. No period/close/export (ac14). No CoA/GL pages (ac12/ac13). No account closure (ac16). No `posting_nature`/`doc_type` free-rewrite of in-use reason codes (§2.1). No second-currency config beyond the ready MYR family (Q12). No stamped-due-date logic (Invoicing module — only the resolution/freeze property is tested here).
@@ -73,7 +73,7 @@ No new doc operations. No period/close/export (ac14). No CoA/GL pages (ac12/ac13
 - [ ] **V10:** resolved term = coalesce(override, default); post-issuance changes don't move issued terms.
 - [ ] Changing a reason-code threshold is audited and changes ac07 approval routing on the next post.
 - [ ] Wizard defaults editable and read live by ac04; flows doc reflects live catalogs.
-- [ ] Route × level: `accounts_config:EDIT` (flows doc at `:READ`); USER blocked.
+- [ ] Route × level: page guard `accounts_config:READ` (D7; flows doc also `:READ`); write controls gated on `:EDIT`; each action re-checks `:EDIT`; USER (no grant) blocked.
 
 **Docs in sync**
 - [ ] `acctmgmt-progress-tracker.md`: `ac15` complete, "Next Up" → `ac16`.

@@ -63,13 +63,28 @@ workflow-management/worker/workflow-engine/**/__pycache__/
 *.pyc
 
 # Kestra dev-stack runtime output written into the bind-mounted fixture dirs
-# (logs/reject/archive). Keep only the committed .gitkeep + README.md placeholders.
+# (landing/logs/reject/archive). Keep only the committed .gitkeep + README.md
+# placeholders. `landing` belongs here for the same reason as the other three:
+# it is the fourth bind mount in workflow-management/dev/docker-compose.dev.yml
+# and ran-usage-rating.yaml consumes real usage files out of it
+# (`vars.landing_dir` -> /data/landing), so it fills with runtime input that is
+# not source.
+workflow-management/dev/landing/*
 workflow-management/dev/logs/*
 workflow-management/dev/error/*
 workflow-management/dev/archive/*
+!workflow-management/dev/landing/.gitkeep
+!workflow-management/dev/landing/README.md
 !workflow-management/dev/logs/.gitkeep
 !workflow-management/dev/logs/README.md
 !workflow-management/dev/error/.gitkeep
 !workflow-management/dev/error/README.md
 !workflow-management/dev/archive/.gitkeep
 !workflow-management/dev/archive/README.md
+
+# Brand assets (public/brand/): keep the committed placeholder `logo.svg`;
+# ignore every other file dropped here so a real/company-specific logo never
+# lands in the (open-source) repo. Point `app_logo_path` at the ignored file
+# per environment.
+/public/brand/*
+!/public/brand/logo.svg

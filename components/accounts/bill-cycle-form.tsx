@@ -14,6 +14,7 @@ import {
   setWizardDefaultsAction,
   type SetWizardDefaultsActionResult,
 } from "@/actions/accounts/set-wizard-defaults.action";
+import { EDIT_DISABLED_TITLE } from "@/components/accounts/edit-access";
 import type { BillCycle } from "@/types/accounts";
 import { BILL_CYCLE_FREQUENCIES } from "@/validation/accounts/bill-cycle.schema";
 
@@ -70,7 +71,11 @@ function describeRetireError(result: RetireBillCycleActionResult): string {
 
 // ── Add form ──────────────────────────────────────────────────────────────────
 
-export function AddBillCycleButton(): React.JSX.Element {
+export function AddBillCycleButton({
+  canEdit,
+}: {
+  canEdit: boolean;
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<UpsertBillCycleActionResult | null>(
@@ -79,6 +84,20 @@ export function AddBillCycleButton(): React.JSX.Element {
   const [fieldErrors, setFieldErrors] = useState<
     Record<string, string[] | undefined>
   >({});
+
+  // D7: read-only viewers see the affordance disabled rather than missing.
+  if (!canEdit) {
+    return (
+      <button
+        type="button"
+        disabled
+        title={EDIT_DISABLED_TITLE}
+        className="h-8 cursor-not-allowed rounded-md bg-[color:var(--action-disabled-bg)] px-3 text-body-sm font-medium text-white"
+      >
+        + Add Bill Cycle
+      </button>
+    );
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -216,12 +235,14 @@ interface BillCycleActionsProps {
   row: BillCycle;
   defaultBillCycleId: string | null;
   currentCreditLimit: string | null;
+  canEdit: boolean;
 }
 
 export function BillCycleActions({
   row,
   defaultBillCycleId,
   currentCreditLimit,
+  canEdit,
 }: BillCycleActionsProps): React.JSX.Element {
   const [mode, setMode] = useState<"idle" | "edit" | "retiring">("idle");
   const [submitting, setSubmitting] = useState(false);
@@ -460,7 +481,9 @@ export function BillCycleActions({
               <button
                 type="button"
                 onClick={() => setMode("edit")}
-                className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline"
+                disabled={!canEdit}
+                title={canEdit ? undefined : EDIT_DISABLED_TITLE}
+                className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:hover:no-underline"
               >
                 Edit
               </button>
@@ -468,8 +491,9 @@ export function BillCycleActions({
                 <button
                   type="button"
                   onClick={handleSetDefault}
-                  disabled={submitting}
-                  className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline disabled:opacity-50"
+                  disabled={!canEdit || submitting}
+                  title={canEdit ? undefined : EDIT_DISABLED_TITLE}
+                  className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:opacity-50 disabled:hover:no-underline"
                 >
                   {submitting ? "…" : "Set Default"}
                 </button>
@@ -477,7 +501,9 @@ export function BillCycleActions({
               <button
                 type="button"
                 onClick={() => setMode("retiring")}
-                className="text-body-sm text-destructive hover:underline"
+                disabled={!canEdit}
+                title={canEdit ? undefined : EDIT_DISABLED_TITLE}
+                className="text-body-sm text-destructive hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:hover:no-underline"
               >
                 Retire
               </button>

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -6,8 +7,32 @@ import { resolveEffectivePermissions } from "@/auth/resolver";
 import { db } from "@/db/client";
 import { findUserById } from "@/db/repositories/appuser.repository";
 import { deleteByUserId } from "@/db/repositories/session.repository";
+import type { AppUser } from "@/db/schema/identity";
 import { meetsLevel, type EffectivePermissionMap } from "@/types/permissions";
 import type { PermissionName, PermissionType } from "@/types/rbac";
+
+// Request-scoped memo (React.cache) of the session + its APPUSER row. The `(app)`
+// shell layout (via getCurrentUserIdentity) and the Homepage both resolve the
+// signed-in user on a `/` render; without this they'd each run getSession +
+// findUserById. `cache` dedupes them to a single fetch per RSC request and is
+// a no-op/pass-through outside a request scope — it never caches across
+// requests (Inv #2/#15). Not used by getActiveUser/requirePermission, which
+// keep their own live reads for the enforcement path.
+export const loadSessionUser = cache(
+  async (): Promise<{ userId: string; user: AppUser | null } | null> => {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session) return null;
+    const user = await findUserById(db, session.user.id);
+    return { userId: session.user.id, user };
+  },
+);
+
+// Request-scoped memo around the single effective-permission resolver, for the
+// RSC callers that resolve the SAME user more than once per render (the `/`
+// shell layout for the nav + the Homepage for the directory grid). The resolver
+// itself stays uncached/framework-agnostic (auth/resolver.ts) for action/route
+// guards; this wrapper only dedupes within one request.
+export const getEffectivePermissions = cache(resolveEffectivePermissions);
 
 // Steps 1–4 shared by both guards below (um06-spec §6.5): resolve the
 // session, confirm the user is ACTIVE (deleting stale sessions otherwise),
@@ -53,20 +78,15 @@ export async function getCurrentUserIdentity(): Promise<{
   userName: string;
   userEmail: string;
 } | null> {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return null;
-  }
-
-  const user = await findUserById(db, session.user.id);
-  if (!user) {
+  const resolved = await loadSessionUser();
+  if (!resolved || !resolved.user) {
     return null;
   }
 
   return {
-    userId: user.id,
-    userName: user.userName,
-    userEmail: user.userEmail,
+    userId: resolved.user.id,
+    userName: resolved.user.userName,
+    userEmail: resolved.user.userEmail,
   };
 }
 

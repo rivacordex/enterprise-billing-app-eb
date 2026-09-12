@@ -35,7 +35,7 @@ The user-facing flow is in the overview's *Core User Flow*; the platform enforce
 
 **Authorization (RBAC).** Engine per `architecture.md` §5 (code-seeded registry; DELETE ⊃ EDIT ⊃ READ; union across roles, highest wins). The role list and seed are canonical in the overview. Distinguish: **assigning a role** is `users:EDIT` (Users page); **defining a role's mappings** is `roles:EDIT` (Roles page).
 
-**ADMIN-only Administration.** In v1 the section is ADMIN-only, so role assignment is ADMIN-only. MANAGER/USER carry no v1 grants and land on `/no-access`. This removes role-assignment escalation at the root (only ADMIN, holding every permission, assigns roles). The RBAC engine stays general for later modules.
+**ADMIN-only Administration.** In v1 the section is ADMIN-only, so role assignment is ADMIN-only. MANAGER/USER carry no v1 grants and land on the Homepage's empty state. This removes role-assignment escalation at the root (only ADMIN, holding every permission, assigns roles). The RBAC engine stays general for later modules.
 
 **Auth-method change.** Switching `auth_method` revokes that user's sessions; they re-authenticate via the new method.
 
@@ -43,15 +43,15 @@ The user-facing flow is in the overview's *Core User Flow*; the platform enforce
 
 ## 3. Per-Page Permission Matrix
 
-Every page declares its access (platform rule — `architecture.md` §5). Viewing needs **READ**; mutations need **EDIT**/**DELETE**. In v1 only **ADMIN** holds the permissions below; MANAGER/USER resolve to `/no-access`.
+Every page declares its access (platform rule — `architecture.md` §5). Viewing needs **READ**; mutations need **EDIT**/**DELETE**. In v1 only **ADMIN** holds the permissions below; a MANAGER/USER with no grants lands on the Homepage's empty state (not `/no-access`).
 
 | Page (route) | Access | Required permission : level |
 |---|---|---|
 | `/login` | Public | — (redirects if already authenticated) |
 | Entra sign-in / callback (`/api/auth/*`) | Public (provider-gated) | Valid Entra identity matching a pre-created SSO user |
 | `/set-password` (forced first-login change) | Session-gated | Valid session with `force_password_change = TRUE` (own credential only) |
-| `/` (root) | Authenticated | Redirects to the first page the user can READ; if none, `/no-access` |
-| `/no-access` | Authenticated | Any ACTIVE session — "no module access yet, contact an administrator" (no nav). v1 landing for MANAGER/USER. |
+| `/` (Homepage) | Session-gated | Landing directory listing every page the viewer may open, grouped by module (filtered through `NAV_REGISTRY`). A zero-grant user sees an empty state here, not a redirect. The permission-ordered `ROUTE_ORDER` redirect table is **retired** (homepage-topbar-nav plan, D3). |
+| `/no-access` | Authenticated | Any ACTIVE session — shown on a **direct hit** to a page the viewer lacks ("no access", contact an administrator). No longer the zero-grant landing — that is the Homepage empty state. |
 | `/administration/users` (list/detail) | Authenticated | `users` : **READ** (ADMIN only in v1) |
 | — create / edit user, assign or revoke roles, reset password, unlock, change auth method | Authenticated | `users` : **EDIT** (role assignment is ADMIN-only, §2) |
 | — tombstone (delete) user | Authenticated | `users` : **DELETE** (target must be DISABLED first) |
@@ -62,7 +62,7 @@ Every page declares its access (platform rule — `architecture.md` §5). Viewin
 | — change configuration values | Authenticated | `system_config` : **EDIT** |
 | `/administration/audit-log` | Authenticated | `audit_log` : **READ** (READ-max — no EDIT/DELETE) |
 
-> A MANAGER/USER account has no v1 grants and lands on `/no-access` until a later module grants a permission. New pages **must** be added here with an explicit permission + level and a migration adding the `PERMISSIONS` row before they ship.
+> A MANAGER/USER account has no v1 grants and lands on the Homepage's empty state until a later module grants a permission. New pages **must** be added here with an explicit permission + level and a migration adding the `PERMISSIONS` row before they ship, plus a `NAV_REGISTRY` entry + `NAV_ICONS` glyph so they appear in the nav and Homepage. Dynamic detail routes (e.g. `/customers/view/[id]`) are auto-exempt; a **non-dynamic** child route reached from a parent (e.g. `/customers/manage/new`, `/administration/accounts-settings/flows`) is exempt only by a one-line entry in the guardrail's `UNLISTED_BY_DESIGN` set.
 
 ---
 

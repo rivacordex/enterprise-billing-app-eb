@@ -4,6 +4,98 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE (code-complete, verified) — Landing Homepage, top-bar chrome, and
+  permission-filtered navigation** (`context/_change-homepage-topbar-nav-rbac-plan.md`).
+  Platform-level chrome change (authorized by the plan under `ai-workflow-rules.md`
+  §2.8). All seven units implemented exactly as specified:
+  - [x] U1 — `lib/nav-registry.ts` (`NAV_REGISTRY` via `as const satisfies` so
+        `NavHref` stays a literal union; `visibleSections` fail-closed) +
+        `components/nav-icons.ts` (`Record<NavHref, LucideIcon>`) +
+        `tests/lib/nav-registry.test.ts` + the §6.3 guardrail gate
+        (`tests/guardrails/nav-registry-guard.test.ts`: registry↔guard parity,
+        orphan check w/ `UNLISTED_BY_DESIGN`, icon exhaustiveness, no locked residue).
+  - [x] U2 — Accounts Settings guard EDIT→READ (D7); `canEdit` threaded to the five
+        mutation controls (disabled + `--action-disabled-bg` + title; wizard inputs
+        readOnly); `route-level-accounts-settings` guard assertion flipped to READ +
+        canEdit; new `accounts-settings-can-edit` test. Actions unchanged (still EDIT).
+  - [x] U3 — `admin-nav.tsx` reads `visibleSections` + `NAV_ICONS`; locked-item
+        branch + `Lock`/`hasLevel` deleted (D2/D6); divider count follows visible
+        sections; nav + accounts-context tests rewritten. Fixes the 8 unguarded links.
+  - [x] U4 — `app-shell.tsx` + `app-topbar.tsx` (new), `brand-logo.tsx` (topbar in;
+        nav/nav-collapsed/Monogram out), `admin-sidebar.tsx` slimmed to controlled
+        nav-only, `lib/sidebar.ts` `DEFAULT_SIDEBAR_COLLAPSED`+`resolveSidebarCollapsed`
+        (D9), `(app)/layout.tsx` renders `<AppShell>` in a flex-col shell. Tests moved
+        to app-topbar/app-shell; admin-layout/admin-sidebar/brand-logo rewritten.
+  - [x] U5 — `app/page.tsx` → `app/(app)/page.tsx` (Homepage directory, empty state,
+        redirect-preamble verbatim); `lib/root-redirect.ts` simplified to
+        `(session) → "/login" | "/set-password" | null`; `ROUTE_ORDER`/`RouteOrderEntry`
+        deleted; eslint `root-page` carve-out moved to `app/\(app\)/page.tsx` (escaped
+        parens) so the preamble keeps its db access; `home-page`/`root-redirect` tests.
+  - [x] U6 — `app_name` 40-char cap: `0005` description edited in place (D14),
+        `lib/config-limits.ts` (`APP_NAME_MAX_LENGTH`), write-service `VALUE_TOO_LONG`
+        + action passthrough, `ConfigEditDialog` `maxLength`+live counter+field error
+        (no `watch()` — tracked via field onChange), `db/migrations/README.md` §4
+        corrected (edited applied migration = silently *skipped*, not re-applied),
+        `migration.integration.test` description assertion + new write-length test.
+        **NOTE:** the one-off `UPDATE` for already-migrated environments + README
+        install/admin rewrite are **D15 — tracked in `_change-readme-install-and-admin-plan.md`**
+        (not this change); README.md untouched here.
+  - [x] U7 — §7 doc amendments: `architecture.md` §2 components/lib rows + §5 `/`
+        session-gated exception; `usrmgmt-architecture.md` `/` Homepage row + ROUTE_ORDER
+        retired + zero-grant-lands-on-Homepage; `acctmgmt-ui-context.md` + `ac15`/`ac17`
+        READ-with-disabled-controls; `ui-context.md` `--surface-topbar` in use + 40-char
+        budget; `ai-workflow-rules.md` new-page rule gains NAV_REGISTRY+NAV_ICONS;
+        `um28` records `app_logo_mark_path` as orphaned (D10). AGENTS.md already points here.
+
+  Verification: `tsc --noEmit` clean; full `eslint .` clean; Prettier clean on all
+  changed files; `npm run build` passes (`/` now served through the `(app)` shell).
+  Affected unit tests green: 143/143 across the 17 touched/new files. Full unit suite
+  = only the 5 PRE-EXISTING failing files remain (4 order/subscription action files +
+  `config.test.ts` env-artifact, all fail at HEAD, outside this blast radius) — one
+  self-introduced `grep-gates` regression (the `carriesAccountsContext` flag moved to
+  the registry) was caught and fixed. Integration assertions (`migration.integration`)
+  updated but not run here (need the disposable test DB).
+
+  Post-review fixes (xhigh code-review, all applied + verified — tsc/eslint/prettier
+  clean, build passes, affected suites green, full unit suite = same 5 pre-existing
+  failures only):
+  - [x] [authz] Homepage admitted a PENDING session (status check only rejected
+        DISABLED/DELETED), diverging from `getActiveUser`/Inv #4. Now, after the
+        force-password gate, a non-ACTIVE session is deleted + bounced to `/login`
+        (a PENDING SSO user whose activation never completed no longer sees the
+        directory). New `home-page` test covers it.
+  - [x] [perf] Moving `/` into `(app)` double-resolved the permission map + session +
+        user (layout + page). Added request-scoped `React.cache` wrappers in
+        `auth/guard.ts` (`loadSessionUser`, `getEffectivePermissions`) used by the
+        layout + Homepage; resolver stays uncached/framework-agnostic (note clarified).
+  - [x] [ux] `ConfigEditDialog`: clear the stale `VALUE_TOO_LONG` field error on edit;
+        count the app_name cap in Unicode code points (counter + write service) so
+        emoji/astral names aren't miscounted; counter reflects the trimmed/stored
+        value; dropped the UTF-16 `maxLength` (it can't count code points). New
+        emoji-safe write-service test.
+  - [x] [types] `visibleSections` now returns `VisibleNavSection` (href narrowed to
+        `NavHref`), so `NAV_ICONS[item.href]` needs no `as NavHref` cast — a missing
+        icon is a compile error end-to-end.
+  - [x] [hardening/cleanup] slugify Homepage section ids (`aria-labelledby`); shared
+        `EDIT_DISABLED_TITLE` (`components/accounts/edit-access.ts`) replacing the
+        triplicated constant; broadened `admin-layout.test` mock to cover non-admin
+        sections.
+  - Left as plan-intended (noted, not "fixed"): `markSrc` read (§7.9 deferral),
+    sign-out reuse (§3.5), gradient empty-state (ui-context §4), brand+Home dual
+    `/` link (§3.5).
+
+  Post-delivery UI adjustments (user request, applied + verified):
+  - [x] Top bar shares the sidebar color (`--surface-nav`, unified chrome separated
+        by the `--color-primary-900` hairline); `--surface-topbar` now defined-but-unused
+        (ui-context token note updated).
+  - [x] Nav + Homepage section order → **Billing, Customer, Accounts, Products,
+        Administration** (reordered once in `NAV_REGISTRY`; both consumers follow;
+        section-order tests realigned).
+  - [x] Homepage tiles: horizontal chips (icon beside label, not stacked), squeezed
+        icon (24→18), 5 side by side at every width (`grid-cols-5`; labels wrap within
+        the chip when narrow). (A responsive `sm:3 md:4 lg:5` was tried first but
+        yielded only 3–4 per row below the lg viewport — forced to 5.)
+
 - **DONE (code-complete, verified) — Dynamic application name** (`context/_change-dynamic-app-name-plan.md`).
   Drive the wordmark / monogram / `<title>` from the existing `app`/`app_name`
   `system_config` row (um28 open item #2). FRONTEND-only: one new `getAppName()`

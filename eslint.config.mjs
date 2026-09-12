@@ -9,11 +9,15 @@ import prettierConfig from "eslint-config-prettier";
 // layered import graph and may import any layer.
 const BOUNDARIES_ELEMENTS = [
   // Carved out ahead of the general "app" pattern (um06-spec §6.8): the
-  // root redirect intentionally bypasses `requirePermission`/
+  // landing Homepage at `/` intentionally bypasses `requirePermission`/
   // `requireAuthenticated` (reusing the guard here risks a redirect loop
   // when `force_password_change` is true), so it needs the same direct
-  // repository access the guard would otherwise provide.
-  { type: "root-page", mode: "full", pattern: "app/page.tsx" },
+  // repository access the guard would otherwise provide. It moved from
+  // `app/page.tsx` into the `(app)` route group so it inherits the shell
+  // (homepage-topbar-nav-rbac plan, D3); the carve-out moves with it.
+  // Parens are escaped so micromatch matches the literal `(app)` route-group
+  // segment rather than treating it as a glob group.
+  { type: "root-page", mode: "full", pattern: "app/\\(app\\)/page.tsx" },
   { type: "app", mode: "full", pattern: "app/**" },
   { type: "actions", mode: "full", pattern: "actions/**" },
   { type: "services", mode: "full", pattern: "services/**" },
