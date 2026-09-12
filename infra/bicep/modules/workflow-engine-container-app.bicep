@@ -265,7 +265,20 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // also satisfy the password policy** — that value is not visible
             // or settable from this file; confirm it separately before the
             // next deploy that exercises this.
-            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'rating-ops@example.invalid' }
+            //
+            // COUPLED IDENTITY — keep these THREE in lockstep on any rename:
+            //   1. this env var — the username the engine ACCEPTS;
+            //   2. azure-pipelines.yml `deploy_workflow_flows` `--user` — the
+            //      flow-deploy CLI login (hard-coded there to match this);
+            //   3. the `billrun-engine-auth` Key Vault secret the APP presents —
+            //      billing's engine-client.ts base64-encodes it as Basic-Auth,
+            //      and it bundles `<username>:<password>`, so its username half
+            //      MUST equal this value.
+            // (1) and (2) are in git and change together; (3) is OUT OF BAND in
+            // Key Vault. Renaming here without updating the `billrun-engine-auth`
+            // secret makes every app→engine call (trigger / check-status /
+            // cancel) 401 after deploy. See billmgmt-progress-tracker Outstanding.
+            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'workflow-ops@billing.ops' }
             { name: 'KESTRA_SERVER_BASIC_AUTH_PASSWORD', secretRef: 'kestra-basic-auth-password' }
 
             // D7 — default namespace (defaults to `rating`; the split billrun

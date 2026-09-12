@@ -84,6 +84,18 @@ enumerations were trimmed to key facts + decisions. Full history:
   DB either — verify the full checklist (idempotent re-run, prod-guard trip,
   the seeded `udr_rated` CHECK/UNIQUE pass, a real bill run against the
   seeded scenario) once Postgres is reachable.
+- **Kestra Basic-Auth username is a coupled triple — update the Key Vault
+  secret on any rename.** The operator login was renamed
+  `rating-ops@example.invalid` → `workflow-ops@billing.ops` across
+  `workflow-engine-container-app.bicep` (engine accepts), `azure-pipelines.yml`
+  `deploy_workflow_flows` (`--user`), and the local `.env`/`dev/.env.example`.
+  The APP authenticates to the engine via the **out-of-band `billrun-engine-auth`
+  Key Vault secret** (billing's `engine-client.ts` base64-encodes the whole
+  `<username>:<password>`), which is NOT in git — its username half must be
+  updated to `workflow-ops@billing.ops` in lockstep, or every app→engine call
+  (trigger / check-status / cancel) 401s after the next deploy against a live
+  engine. **Action before next prod deploy:** rotate `billrun-engine-auth` so its
+  username matches.
 - **bm16/bm20's live-Kestra smoke gate is unmet** (spec review fold T3,
   formalized as an explicit 3-item phase-2 exit criterion by bm21 — see
   `flows/billrun/README.md`): no deployed `billrun` engine or real

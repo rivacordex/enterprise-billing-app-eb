@@ -509,7 +509,7 @@ stages:
                     flow namespace update "$2" /flows \
                       --no-delete \
                       --server "https://${ENGINE_FQDN}" \
-                      --user "rating-ops@example.invalid:${BASIC_AUTH_PASSWORD}"
+                      --user "workflow-ops@billing.ops:${BASIC_AUTH_PASSWORD}"
                 }
 
                 # Rating flows are real (function root); each bill-run function's
