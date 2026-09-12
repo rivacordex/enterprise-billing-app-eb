@@ -8,6 +8,7 @@ import { getSubscriptionDetail } from "@/services/inventory/get-subscription-det
 import { listSubscriptions } from "@/services/inventory/list-subscriptions";
 import {
   getAppLocale,
+  getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import { hasLevel } from "@/types/permissions";
@@ -15,9 +16,11 @@ import { subscriptionsListSearchParamsSchema } from "@/validation/inventory/subs
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Subscriptions — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Subscriptions — ${await getAppName()}` };
+}
 
 function firstValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

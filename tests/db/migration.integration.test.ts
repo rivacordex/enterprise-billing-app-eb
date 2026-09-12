@@ -113,7 +113,10 @@ describe.skipIf(!databaseUrl)(
         config_key: "app_name",
         config_value: "Enterprise Billing System",
         // um28: the pre-existing app_name row was given its description by 0005.
-        description: "Application display name.",
+        // Dynamic-app-name change: description extended to note the wordmark/
+        // title wiring and the one-line truncation behavior.
+        description:
+          "Application display name — drives the sidebar/sign-in wordmark and browser tab titles. Kept to one line: long values are truncated with an ellipsis in the wordmark, so keep it short.",
         is_secret: false,
         status: "ACTIVE",
         modified_by: null,

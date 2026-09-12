@@ -10,14 +10,17 @@ import {
 } from "@/services/roles/roles-read.service";
 import {
   getAppLocale,
+  getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Roles — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Roles — ${await getAppName()}` };
+}
 
 export default async function RolesPage({
   searchParams,

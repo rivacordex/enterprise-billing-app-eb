@@ -6,13 +6,19 @@ import { resolveEffectivePermissions } from "@/auth/resolver";
 import { AdminSidebar } from "@/components/admin-sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { SIDEBAR_COOKIE } from "@/lib/sidebar";
-import { getBrandingLogo } from "@/services/system-config/app-config-read.service";
+import {
+  getAppName,
+  getBrandingLogo,
+} from "@/services/system-config/app-config-read.service";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Administration — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (static `metadata`
+// exports can't read the DB); `getAppName()` is `React.cache`d, so it shares
+// the single per-request read with the layout body below.
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Administration — ${await getAppName()}` };
+}
 
 // Navigation sidebar ships in um07 (first administration page) — um06
 // deferred it per spec §6.6. No auth check here: each child page handles
@@ -35,6 +41,7 @@ export default async function AdminLayout({
     ? await resolveEffectivePermissions(identity.userId)
     : undefined;
   const logo = await getBrandingLogo();
+  const appName = await getAppName();
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -43,6 +50,7 @@ export default async function AdminLayout({
         identity={identity}
         permissionMap={permissionMap}
         logo={logo}
+        appName={appName}
       />
       <main className="flex-1 overflow-y-auto bg-background">{children}</main>
       <Toaster />

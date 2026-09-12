@@ -14,6 +14,7 @@ vi.mock("@/services/roles/roles-read.service", () => ({
 // guard-level test never reaches the real repository/db.
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn().mockResolvedValue("en-GB"),
+  getAppName: vi.fn().mockResolvedValue("Acme Telco"),
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
 }));
 // `RoleTable` now renders `CreateRoleDialog`, whose import chain (the

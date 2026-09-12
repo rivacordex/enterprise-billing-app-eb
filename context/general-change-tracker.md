@@ -4,7 +4,56 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- **IN PROGRESS — wfm01 Workflow-Engine Restructure**
+- **DONE (code-complete, verified) — Dynamic application name** (`context/_change-dynamic-app-name-plan.md`).
+  Drive the wordmark / monogram / `<title>` from the existing `app`/`app_name`
+  `system_config` row (um28 open item #2). FRONTEND-only: one new `getAppName()`
+  reader + one new `lib/branding.ts` `DEFAULT_APP_NAME` constant + prop
+  thread-through to the four wordmark surfaces (sidebar nav, login, set-password,
+  no-access) and `generateMetadata()` on the admin layout + auth/no-access pages.
+  No schema/migration, no repo change, no new RBAC/audit/Server-Action surface,
+  no new dependency. Recommended options taken for all §6 open questions:
+  (Q1) accept the seeded `"Enterprise Billing System"` value — no migration;
+  (Q2) wire only the dynamic name on set-password/no-access (no logo);
+  (Q3) convert admin-layout + auth/no-access metadata to `generateMetadata()`,
+  root `app/layout.tsx` stays literal; (Q4) monogram derives initials from
+  `appName`; (Q5) constant lives in new `lib/branding.ts`.
+  Verified: `tsc --noEmit` clean, ESLint clean (src + tests), Prettier clean,
+  `npm run build` passes, affected unit tests green (new `getAppName`
+  service cases, `BrandLogo` monogram-derivation + required-`appName` prop,
+  `AdminSidebar` prop reach, login/no-access/set-password wordmark +
+  `generateMetadata` title/description).
+
+  Post-review fixes (high-effort /code-review, all applied + verified):
+  - [x] [CRITICAL] `tests/app/admin-layout.test.tsx` mocked the config-read
+        service but omitted the new `getAppName` → all 5 AdminLayout tests threw
+        `getAppName is not a function`. (The earlier "50/50" claim missed this
+        file.) Added `getAppName` to the mock; 5/5 pass.
+  - [x] [altitude, decision: extend] The layout `generateMetadata` title is
+        overridden by each child page's own title (Next.js precedence), so the
+        8 admin/product pages that hardcoded `"… — Enterprise Billing"`
+        (users, roles, system-config, audit-log, subscriptions, orders,
+        manage-products, product-offering) stayed stale after a rebrand.
+        Converted all 8 to `generateMetadata()` → `"… — ${getAppName()}"` and
+        added `getAppName` to their existing service mocks. (Bare-title pages —
+        customers/accounts/bill-runs — left alone: no stale literal; they rely
+        on the root `%s · User Management` template.)
+  - [x] [robustness, decision: truncate] `app_name` is now unbounded admin text
+        feeding the wordmark spans. Added `truncate` (login/nav via `BrandLogo`;
+        `set-password`/`no-access` spans) so an over-long name clips with an
+        ellipsis instead of breaking layout. Also extended the `app`/`app_name`
+        config-row description (migration `0005`) to note the wordmark/title
+        wiring + one-line truncation, and realigned the
+        `migration.integration.test.ts` assertion.
+  - Verification: `tsc` + ESLint + Prettier clean; `npm run build` passes;
+    15 affected unit-test files green (102 tests). Full unit suite = same 15
+    pre-existing failures as HEAD (4 order/subscription action files +
+    `config.test.ts` env-artifact), zero new. `migration.integration.test.ts`
+    run against the disposable integration DB (docker-compose.test.yml, project
+    `ebill-test`, port 5434) — 15/15 green after a real DROP→migrate cycle,
+    confirming the updated `app_name` description assertion; DB torn down
+    (`down -v`), dev stack on 5432 untouched.
+
+- **DONE (code-complete) — wfm01 Workflow-Engine Restructure**
   (`context/workflow-management/specs/wfm01-engine-restructure.md`). Restructure the
   workflow-engine code into the wfm platform shape: spin-off `workflow-management/`
   subdirectory with function-first `flows/`, one shared process-runner

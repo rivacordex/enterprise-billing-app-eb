@@ -19,6 +19,7 @@ import { systemConfigRepository } from "@/db/repositories/system-config.reposito
 import {
   getAppCurrency,
   getAppLocale,
+  getAppName,
   getAppTimezone,
   getBrandingLogo,
 } from "@/services/system-config/app-config-read.service";
@@ -93,6 +94,28 @@ describe("getBrandingLogo", () => {
   ])("rejects an unsafe logo path (%s) ⇒ null", async (path) => {
     stub({ "app/app_logo_path": path, "app/app_name": "Acme" });
     expect(await getBrandingLogo()).toBeNull();
+  });
+});
+
+describe("getAppName", () => {
+  it("returns the ACTIVE app_name value, trimmed", async () => {
+    stub({ "app/app_name": "  Acme Telco  " });
+    expect(await getAppName()).toBe("Acme Telco");
+  });
+
+  it.each([
+    ["blank", ""],
+    ["whitespace", "   "],
+  ])("falls back to DEFAULT_APP_NAME when %s", async (_label, value) => {
+    stub({ "app/app_name": value });
+    expect(await getAppName()).toBe("Enterprise Billing");
+  });
+
+  it("falls back to DEFAULT_APP_NAME when unset (missing / RETIRED / secret ⇒ null)", async () => {
+    // `findActiveValue` already filters to the highest-version, ACTIVE,
+    // non-secret row — a RETIRED or secret row surfaces here as `null`.
+    stub({});
+    expect(await getAppName()).toBe("Enterprise Billing");
   });
 });
 

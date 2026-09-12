@@ -7,15 +7,20 @@ import { CopyRedirectUriButton } from "@/components/system-config/copy-redirect-
 import { EntraConfigRow } from "@/components/system-config/entra-config-row";
 import { entraConfig } from "@/lib/config";
 import { groupConfigRows } from "@/lib/formatters";
-import { getAppTimezone } from "@/services/system-config/app-config-read.service";
+import {
+  getAppName,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 import { getSystemConfigParams } from "@/services/system-config/system-config-read.service";
 import { hasLevel } from "@/types/permissions";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "System Configuration — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `System Configuration — ${await getAppName()}` };
+}
 
 // um10 only built the read-only "Entra ID Settings" section (admin-nav's
 // link was a 404-until-shipped placeholder since um07). um22 adds the

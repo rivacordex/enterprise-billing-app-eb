@@ -22,7 +22,12 @@ beforeEach(() => {
 describe("AdminSidebar — collapse toggle", () => {
   it("starts expanded (w-64) with aria-expanded=true and the identity strip", () => {
     render(
-      <AdminSidebar defaultCollapsed={false} identity={IDENTITY} logo={null} />,
+      <AdminSidebar
+        defaultCollapsed={false}
+        identity={IDENTITY}
+        logo={null}
+        appName="Acme Telco"
+      />,
     );
 
     expect(screen.getByRole("complementary").className).toContain("w-64");
@@ -33,7 +38,12 @@ describe("AdminSidebar — collapse toggle", () => {
 
   it("collapses to w-16, flips aria-expanded/label, and writes the cookie on toggle", () => {
     render(
-      <AdminSidebar defaultCollapsed={false} identity={IDENTITY} logo={null} />,
+      <AdminSidebar
+        defaultCollapsed={false}
+        identity={IDENTITY}
+        logo={null}
+        appName="Acme Telco"
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
@@ -45,7 +55,14 @@ describe("AdminSidebar — collapse toggle", () => {
   });
 
   it("honors defaultCollapsed=true (first paint collapsed, no identity strip)", () => {
-    render(<AdminSidebar defaultCollapsed identity={IDENTITY} logo={null} />);
+    render(
+      <AdminSidebar
+        defaultCollapsed
+        identity={IDENTITY}
+        logo={null}
+        appName="Acme Telco"
+      />,
+    );
 
     expect(screen.getByRole("complementary").className).toContain("w-16");
     expect(
@@ -59,10 +76,46 @@ describe("AdminSidebar — collapse toggle", () => {
   });
 
   it("writes the cookie back to 0 when expanding from collapsed", () => {
-    render(<AdminSidebar defaultCollapsed identity={IDENTITY} logo={null} />);
+    render(
+      <AdminSidebar
+        defaultCollapsed
+        identity={IDENTITY}
+        logo={null}
+        appName="Acme Telco"
+      />,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
 
     expect(document.cookie).toContain("sidebar_collapsed=0");
+  });
+});
+
+describe("AdminSidebar — appName reaches BrandLogo", () => {
+  it("renders the appName wordmark when expanded", () => {
+    render(
+      <AdminSidebar
+        defaultCollapsed={false}
+        identity={IDENTITY}
+        logo={null}
+        appName="Acme Telco"
+      />,
+    );
+
+    expect(screen.getByText("Acme Telco")).toBeInTheDocument();
+  });
+
+  it("renders the appName-derived monogram when collapsed", () => {
+    render(
+      <AdminSidebar
+        defaultCollapsed
+        identity={IDENTITY}
+        logo={null}
+        appName="Acme Telco"
+      />,
+    );
+
+    // First letters of the first two words: "Acme Telco" → "AT".
+    expect(screen.getByText("AT")).toBeInTheDocument();
   });
 });

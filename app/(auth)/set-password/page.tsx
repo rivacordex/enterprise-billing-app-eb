@@ -5,17 +5,24 @@ import { SetPasswordForm } from "@/components/auth/set-password-form";
 import { SignOutButton } from "@/components/sign-out-button";
 import { passwordPolicy } from "@/lib/config";
 import { formatPasswordPolicyHints } from "@/lib/formatters";
+import { getAppName } from "@/services/system-config/app-config-read.service";
 
-export const metadata: Metadata = {
-  title: "Set Password",
-  description: "Set your password to continue",
-};
+// Dynamic so the tab title tracks the configured `app_name`; the visible
+// wordmark (below) is the primary target. `getAppName()` is `React.cache`d ⇒
+// it shares the page's single per-request read.
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    title: `Set Password — ${await getAppName()}`,
+    description: "Set your password to continue",
+  };
+}
 
 export const dynamic = "force-dynamic";
 
 export default async function SetPasswordPage(): Promise<React.JSX.Element> {
   const { status } = await resolveForcePasswordChangeSession();
   const isFirstLogin = status === "PENDING";
+  const appName = await getAppName();
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[color:var(--surface-nav)] px-4 py-12">
@@ -24,8 +31,8 @@ export default async function SetPasswordPage(): Promise<React.JSX.Element> {
 
       <div className="relative z-10 w-full max-w-[28rem] rounded-lg bg-card p-8 shadow-lg">
         <div className="flex flex-col items-center">
-          <span className="text-h4 font-semibold text-foreground">
-            Enterprise Billing
+          <span className="max-w-full truncate text-h4 font-semibold text-foreground">
+            {appName}
           </span>
         </div>
 

@@ -23,6 +23,7 @@ vi.mock("@/services/users/users-read.service", () => ({
   getUserById: vi.fn(),
 }));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppName: vi.fn().mockResolvedValue("Acme Telco"),
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
   getAppLocale: vi.fn().mockResolvedValue("en-US"),
 }));

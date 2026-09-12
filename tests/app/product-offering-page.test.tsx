@@ -11,6 +11,7 @@ vi.mock("@/services/product/get-offering-detail", () => ({
   getOfferingDetail: vi.fn(),
 }));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppName: vi.fn().mockResolvedValue("Acme Telco"),
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
   getAppLocale: vi.fn().mockResolvedValue("en-US"),
 }));
