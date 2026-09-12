@@ -112,11 +112,11 @@ describe.skipIf(!databaseUrl)(
         config_version: 1,
         config_key: "app_name",
         config_value: "Enterprise Billing System",
-        // um28: the pre-existing app_name row was given its description by 0005.
-        // Dynamic-app-name change: description extended to note the wordmark/
-        // title wiring and the one-line truncation behavior.
+        // D14: 0005's app_name description is edited in place (one-time
+        // exception) to name the 40-char cap. This is the only automated proof
+        // the in-place edit reaches the path it can (a freshly-migrated DB).
         description:
-          "Application display name — drives the sidebar/sign-in wordmark and browser tab titles. Kept to one line: long values are truncated with an ellipsis in the wordmark, so keep it short.",
+          "Application display name — drives the top-bar wordmark, the sign-in page and browser tab titles. Maximum 40 characters; longer values are truncated with an ellipsis in the top bar.",
         is_secret: false,
         status: "ACTIVE",
         modified_by: null,

@@ -62,10 +62,21 @@ export function BrandLogo({
       ? "border-[color:var(--border-default)]"
       : "border-[color:var(--text-on-brand)]/15";
 
+  // topbar: also cap the width and `object-contain` so a wide configured logo
+  // stays inside the bounded top-bar brand slot (max-w-[320px]) instead of
+  // overflowing and pushing the collapse toggle off-row.
   const imgSizeClass =
-    variant === "login" ? "max-h-12 w-auto" : "max-h-8 w-auto";
+    variant === "login"
+      ? "max-h-12 w-auto"
+      : "max-h-8 w-auto max-w-full object-contain";
   return (
-    <span className={cn(PLATE_BASE, borderClass)}>
+    <span
+      className={cn(
+        PLATE_BASE,
+        borderClass,
+        variant === "topbar" && "max-w-full min-w-0",
+      )}
+    >
       {/* eslint-disable-next-line @next/next/no-img-element -- plain <img> is deliberate (um28-spec §2.3): next/image blocks SVG without dangerouslyAllowSVG (a CSP concern) and buys nothing for a local /public asset; this keeps next.config.ts untouched. */}
       <img src={logo.src} alt={logo.alt} className={imgSizeClass} />
     </span>

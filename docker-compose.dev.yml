@@ -78,10 +78,16 @@ services:
   # One-shot: install deps, migrate + seed admin + seed RBAC, then provision
   # pg_partman/pg_cron for core.audit_log. Source is mounted here, so unlike the
   # prod image this has the seed + bootstrap scripts. db:setup-partman must run
-  # AFTER db:migrate creates the partitioned core.audit_log parent.
+  # AFTER db:migrate creates the partitioned core.audit_log parent — and it does:
+  # `db:setup` already chains db:migrate -> db:setup-partman{,-billing,-rating}
+  # -> the seeds, in that order. Do NOT append a trailing `npm run
+  # db:setup-partman` here: partman.create_parent is not idempotent (it aborts
+  # with a part_config primary-key violation once the parent is registered), so
+  # the second call always fails, `setup` exits 1, and `app` never starts because
+  # it gates on service_completed_successfully.
   setup:
     <<: *node-common
-    command: sh -c "npm install && npm run db:setup && npm run db:setup-partman"
+    command: sh -c "npm install && npm run db:setup"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_billing
       # db:setup-partman needs a superuser/owner conn (CREATE EXTENSION, cron.*);

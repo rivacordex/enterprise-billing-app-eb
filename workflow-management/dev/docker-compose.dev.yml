@@ -49,6 +49,18 @@ services:
       sh -c "npm install &&
              npm run db:bootstrap-kestra-roles &&
              node workflow-management/dev/set-kestra-role-password.mjs"
+    # Without these, this service races BOTH the db (its bootstrap needs a live
+    # one) AND the root stack's `setup` service. The race with `setup` is the
+    # damaging one: both mount the SAME `node_modules` volume and both begin
+    # with `npm install`, so two concurrent installs corrupt it
+    # (`npm error ENOTEMPTY ... rmdir '/app/node_modules/rolldown/dist'` in
+    # `setup`, `npm warn tar TAR_ENTRY_ERROR` in this one), `setup` exits 1 and
+    # `app` never starts. Never run two services sharing that volume at once.
+    depends_on:
+      db:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
     restart: "no"
 
   # Blob emulator for Kestra's internal storage ONLY (kestra-internal

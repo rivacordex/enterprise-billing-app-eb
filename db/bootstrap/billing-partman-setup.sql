@@ -44,14 +44,27 @@ END $$;
 -- already created and attached billing.bill_run_account_default as the
 -- DEFAULT partition (audit_log precedent) — pg_partman must not try to manage
 -- its own.
-SELECT partman.create_parent(
-  p_parent_table  := 'billing.bill_run_account',
-  p_control       := 'period_partition',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,           -- keep 4 future months pre-created
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.bill_run_account') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.bill_run_account',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,           -- keep 4 future months pre-created
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 -- 7-year (84-partition) retention; DETACH (never drop) an out-of-window
@@ -71,14 +84,27 @@ WHERE parent_table = 'billing.bill_run_account';
 -- bill_run_account above — the stage table is the per-account, per-attempt
 -- append-only audit surface (code-standards §1.10), so it shares the
 -- volume/retention profile.
-SELECT partman.create_parent(
-  p_parent_table  := 'billing.bill_run_account_stage',
-  p_control       := 'period_partition',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.bill_run_account_stage') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.bill_run_account_stage',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 UPDATE partman.part_config
@@ -94,14 +120,27 @@ WHERE parent_table = 'billing.bill_run_account_stage';
 -- 0029_customer_bill.sql). Same monthly/7-year-detach shape as the two
 -- parents above — the finalization latch (`ref_inv_document_id`) means a
 -- posted bill's partition must never be dropped within the statutory window.
-SELECT partman.create_parent(
-  p_parent_table  := 'billing.customer_bill',
-  p_control       := 'period_partition',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.customer_bill') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.customer_bill',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 UPDATE partman.part_config
@@ -118,14 +157,27 @@ WHERE parent_table = 'billing.customer_bill';
 -- three parents above — a tax item is financially significant and shares its
 -- parent bill's retention window (the composite FK means both partitions must
 -- survive together within the statutory life).
-SELECT partman.create_parent(
-  p_parent_table  := 'billing.customer_bill_tax_item',
-  p_control       := 'period_partition',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.customer_bill_tax_item') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.customer_bill_tax_item',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 UPDATE partman.part_config
@@ -141,14 +193,27 @@ WHERE parent_table = 'billing.customer_bill_tax_item';
 -- 0036_bill_run_invoices.sql). Same monthly/7-year-detach shape as the four
 -- parents above — the stored invoice is the issued, immutable record (Inv
 -- #17), so its partition must never be dropped within the statutory window.
-SELECT partman.create_parent(
-  p_parent_table  := 'billing.bill_run_invoices',
-  p_control       := 'period_partition',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.bill_run_invoices') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.bill_run_invoices',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 UPDATE partman.part_config
@@ -165,14 +230,27 @@ WHERE parent_table = 'billing.bill_run_invoices';
 -- five parents above — the delivery log is the distributor's own audit
 -- surface (code-standards §1.10's "append-only row is the audit surface"
 -- idiom) and shares the module's retention window.
-SELECT partman.create_parent(
-  p_parent_table  := 'billing.bill_run_distribution',
-  p_control       := 'period_partition',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.bill_run_distribution') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.bill_run_distribution',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 UPDATE partman.part_config
