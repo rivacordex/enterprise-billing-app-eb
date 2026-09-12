@@ -340,13 +340,29 @@ async function createSampleCustomerAndAccounts(actorId: string): Promise<{
   }
   const { partyRoleId } = customerResult.value;
 
+  // onboardCustomerAccounts guards its status transition with an exact-match
+  // optimistic lock on the party role's lastModifiedDatetime (the real wizard
+  // submits the value it loaded). createCustomer stamps last_modified =
+  // created and does not return it, so read the freshly-created row's actual
+  // timestamp here — passing `new Date()` would never match and always CONFLICT.
+  const [freshRole] = await db
+    .select({ lastModifiedDatetime: partyRole.lastModifiedDatetime })
+    .from(partyRole)
+    .where(eq(partyRole.partyRoleId, partyRoleId))
+    .limit(1);
+  if (!freshRole) {
+    throw new Error(
+      `db:seed-sample: party role ${partyRoleId} not found immediately after createCustomer.`,
+    );
+  }
+
   const onboardResult = await onboardCustomerAccounts(
     {
       partyRoleId,
       billCycleId,
       currency: CURRENCY,
       statusReason: "_SAMPLE_ billrun scenario onboarding",
-      lastModifiedDatetime: new Date(),
+      lastModifiedDatetime: freshRole.lastModifiedDatetime,
     },
     actorId,
   );

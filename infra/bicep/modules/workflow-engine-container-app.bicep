@@ -265,7 +265,7 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // also satisfy the password policy** — that value is not visible
             // or settable from this file; confirm it separately before the
             // next deploy that exercises this.
-            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'rating-ops@example.invalid' }
+            { name: 'KESTRA_SERVER_BASIC_AUTH_USERNAME', value: 'workflow-ops@billing.ops' }
             { name: 'KESTRA_SERVER_BASIC_AUTH_PASSWORD', secretRef: 'kestra-basic-auth-password' }
 
             // D7 — default namespace (defaults to `rating`; the split billrun

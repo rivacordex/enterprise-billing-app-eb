@@ -5,6 +5,8 @@
 // render as calendar dates (`dd Mon yyyy`); no money is shown (bm02-spec
 // §Visual).
 
+import Link from "next/link";
+
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { PlaceholderBadge } from "@/components/billing/placeholder-banner";
 import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
@@ -25,9 +27,12 @@ export function RunActionCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-mono text-foreground">
+            <Link
+              href={`/billing/bill-runs/${run.billRunId}`}
+              className="font-mono text-mono text-[color:var(--color-primary-600)] hover:underline"
+            >
               {run.billRunId}
-            </span>
+            </Link>
             <RunStatusBadge status={run.status} />
             {placeholderMode && <PlaceholderBadge />}
           </div>

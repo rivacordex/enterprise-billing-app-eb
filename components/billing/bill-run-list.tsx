@@ -266,9 +266,12 @@ function RunsTable({
             className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]"
           >
             <td className="px-4 py-3 whitespace-nowrap">
-              <span className="font-mono text-mono text-foreground">
+              <Link
+                href={`/billing/bill-runs/${row.billRunId}`}
+                className="font-mono text-mono text-[color:var(--color-primary-600)] hover:underline"
+              >
                 {row.billRunId}
-              </span>
+              </Link>
             </td>
             {showCycle && (
               <td className="px-4 py-3 text-body-sm text-foreground">
