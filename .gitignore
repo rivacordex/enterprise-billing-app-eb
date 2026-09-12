@@ -81,3 +81,10 @@ workflow-management/dev/archive/*
 !workflow-management/dev/error/README.md
 !workflow-management/dev/archive/.gitkeep
 !workflow-management/dev/archive/README.md
+
+# Brand assets (public/brand/): keep the committed placeholder `logo.svg`;
+# ignore every other file dropped here so a real/company-specific logo never
+# lands in the (open-source) repo. Point `app_logo_path` at the ignored file
+# per environment.
+/public/brand/*
+!/public/brand/logo.svg

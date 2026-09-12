@@ -35,8 +35,9 @@ export function BrandLogo({
   variant,
   appName,
 }: BrandLogoProps): React.JSX.Element {
-  // Wordmark fallback when no valid logo is configured (the shipped default —
-  // migration 0005 seeds `app_logo_path` as '').
+  // Wordmark fallback when no valid logo is configured. Migration 0005 now
+  // seeds `app_logo_path` as `/brand/logo.svg` (the committed default logo), so
+  // this fires only when an admin clears the path or sets an invalid one.
   if (logo === null) {
     if (variant === "login") {
       // `max-w-full truncate`: an over-long admin-set app_name is clipped with
@@ -62,13 +63,16 @@ export function BrandLogo({
       ? "border-[color:var(--border-default)]"
       : "border-[color:var(--text-on-brand)]/15";
 
-  // topbar: also cap the width and `object-contain` so a wide configured logo
-  // stays inside the bounded top-bar brand slot (max-w-[320px]) instead of
-  // overflowing and pushing the collapse toggle off-row.
+  // Definite height (`h-*`, not `max-h-*`): an SVG exported with only a
+  // `viewBox` and no width/height (e.g. Adobe Illustrator output) has an aspect
+  // ratio but NO intrinsic size, so a max-height can't size it and the image
+  // collapses to ~zero. A fixed height + `w-auto` resolves the width from the
+  // viewBox ratio. `max-w-full`/`object-contain` then keep a wide logo inside
+  // its slot (the top-bar brand slot is max-w-[320px]) without distortion.
   const imgSizeClass =
     variant === "login"
-      ? "max-h-12 w-auto"
-      : "max-h-8 w-auto max-w-full object-contain";
+      ? "h-12 w-auto max-w-full object-contain"
+      : "h-8 w-auto max-w-full object-contain";
   return (
     <span
       className={cn(

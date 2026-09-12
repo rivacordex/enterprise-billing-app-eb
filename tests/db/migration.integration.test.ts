@@ -193,7 +193,7 @@ describe.skipIf(!databaseUrl)(
         config_value: "MYR",
       });
       expect(byKey.get("app_logo_path")?.config_group).toBe("app");
-      expect(byKey.get("app_logo_path")?.config_value).toBe("");
+      expect(byKey.get("app_logo_path")?.config_value).toBe("/brand/logo.svg");
       for (const key of [
         "company_name",
         "company_address",

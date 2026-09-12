@@ -47,6 +47,23 @@ describe("AppTopBar", () => {
     );
   });
 
+  it("shows the app name as a centered title when a logo is configured (logo left, name center)", () => {
+    renderTopBar({ logo: { src: "/brand/logo.svg", alt: "Acme Telco" } });
+    // Left: the configured logo image; Center: the app-name title text.
+    expect(screen.getByRole("img", { name: "Acme Telco" })).toHaveAttribute(
+      "src",
+      "/brand/logo.svg",
+    );
+    expect(screen.getByText("Acme Telco")).toBeInTheDocument();
+  });
+
+  it("does not duplicate the app name when no logo is configured (wordmark only, no center title)", () => {
+    renderTopBar({ logo: null });
+    // The wordmark fallback renders exactly once; there is no separate centered
+    // title to duplicate it.
+    expect(screen.getAllByText("Acme Telco")).toHaveLength(1);
+  });
+
   it("renders the identity line as name and email (D11)", () => {
     renderTopBar();
     expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
