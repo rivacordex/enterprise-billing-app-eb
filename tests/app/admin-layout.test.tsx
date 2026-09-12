@@ -20,8 +20,11 @@ vi.mock("@/auth/resolver", () => ({
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: () => undefined })),
 }));
+// The layout also resolves the dynamic app name (wordmark + generateMetadata);
+// mock it alongside getBrandingLogo so the whole service module is stubbed.
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getBrandingLogo: vi.fn(async () => null),
+  getAppName: vi.fn(async () => "Acme Telco"),
 }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/administration/users",

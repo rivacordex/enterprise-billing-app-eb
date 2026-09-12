@@ -7,33 +7,57 @@ import type { BrandingLogo } from "@/types/system-config";
 const LOGO: BrandingLogo = { src: "/brand/logo.svg", alt: "Acme Telco" };
 
 describe("BrandLogo — wordmark/monogram fallback (logo null)", () => {
-  it("renders the text wordmark for the login variant", () => {
-    render(<BrandLogo variant="login" logo={null} />);
-    expect(screen.getByText("Enterprise Billing")).toBeInTheDocument();
+  it("renders the passed appName wordmark for the login variant (truncated)", () => {
+    render(<BrandLogo variant="login" logo={null} appName="Acme Telco" />);
+    // truncate guards against an over-long admin-set app_name breaking layout.
+    expect(screen.getByText("Acme Telco")).toHaveClass("truncate");
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
-  it("renders the text wordmark for the nav variant", () => {
-    render(<BrandLogo variant="nav" logo={null} />);
-    expect(screen.getByText("Enterprise Billing")).toBeInTheDocument();
+  it("renders the passed appName wordmark for the nav variant (truncated)", () => {
+    render(<BrandLogo variant="nav" logo={null} appName="Acme Telco" />);
+    expect(screen.getByText("Acme Telco")).toHaveClass("truncate");
   });
 
-  it("renders the monogram for the collapsed nav variant", () => {
-    render(<BrandLogo variant="nav-collapsed" logo={null} />);
+  it("derives the collapsed-nav monogram from the first two words of appName", () => {
+    render(
+      <BrandLogo
+        variant="nav-collapsed"
+        logo={null}
+        appName="Enterprise Billing System"
+      />,
+    );
     expect(screen.getByText("EB")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("derives a single-letter monogram from a one-word appName", () => {
+    render(<BrandLogo variant="nav-collapsed" logo={null} appName="Acme" />);
+    expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("takes the whole first code point for an astral-prefixed appName", () => {
+    // A leading emoji must render as one glyph, not a broken surrogate half.
+    render(
+      <BrandLogo
+        variant="nav-collapsed"
+        logo={null}
+        appName="🚀 Rocket Bill"
+      />,
+    );
+    expect(screen.getByText("🚀R")).toBeInTheDocument();
   });
 });
 
 describe("BrandLogo — image (logo present)", () => {
-  it("renders an <img> with the src and app_name alt for the login variant", () => {
-    render(<BrandLogo variant="login" logo={LOGO} />);
+  it("renders an <img> with the src and logo.alt for the login variant", () => {
+    render(<BrandLogo variant="login" logo={LOGO} appName="Ignored" />);
     const img = screen.getByRole("img", { name: "Acme Telco" });
     expect(img).toHaveAttribute("src", "/brand/logo.svg");
   });
 
-  it("renders the nav image", () => {
-    render(<BrandLogo variant="nav" logo={LOGO} />);
+  it("renders the nav image with logo.alt (not appName)", () => {
+    render(<BrandLogo variant="nav" logo={LOGO} appName="Ignored" />);
     expect(screen.getByRole("img", { name: "Acme Telco" })).toHaveAttribute(
       "src",
       "/brand/logo.svg",
@@ -45,6 +69,7 @@ describe("BrandLogo — image (logo present)", () => {
       <BrandLogo
         variant="nav-collapsed"
         logo={{ ...LOGO, markSrc: "/brand/mark.svg" }}
+        appName="Ignored"
       />,
     );
     expect(screen.getByRole("img", { name: "Acme Telco" })).toHaveAttribute(
@@ -53,9 +78,9 @@ describe("BrandLogo — image (logo present)", () => {
     );
   });
 
-  it("falls back to the monogram for the collapsed rail when no mark is set", () => {
-    render(<BrandLogo variant="nav-collapsed" logo={LOGO} />);
-    expect(screen.getByText("EB")).toBeInTheDocument();
+  it("falls back to the appName monogram for the collapsed rail when no mark is set", () => {
+    render(<BrandLogo variant="nav-collapsed" logo={LOGO} appName="Acme" />);
+    expect(screen.getByText("A")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 });

@@ -6,12 +6,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
-## Workflow Management Refactoring / Restructuring / Reworking Context
+## Change Configuration
 
 Read the following files in order before implementing
-or making any architectural decision related to clearly define Workflow Management:
+or making any architectural decision related to the change required
 
-1. `context/workflow-management/wfm-architecture.md` — system structure, boundaries
+1. `context/_change-dynamic-app-name-plan.md` 
+2. `context/architecture.md` 
 
  <!--
 ## Billing Module Building Context

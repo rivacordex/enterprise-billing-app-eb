@@ -25,9 +25,10 @@ vi.mock("@/lib/config", () => ({
 // validation).
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getBrandingLogo: vi.fn().mockResolvedValue(null),
+  getAppName: vi.fn().mockResolvedValue("Acme Telco"),
 }));
 
-import LoginPage from "@/app/(auth)/login/page";
+import LoginPage, { generateMetadata } from "@/app/(auth)/login/page";
 
 describe("LoginPage", () => {
   it("hides the Microsoft button and divider when SSO is not configured", async () => {
@@ -78,5 +79,18 @@ describe("LoginPage", () => {
     render(await LoginPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("renders the resolved app_name in the wordmark (no logo configured)", async () => {
+    render(await LoginPage({ searchParams: Promise.resolve({}) }));
+
+    expect(screen.getByText("Acme Telco")).toBeInTheDocument();
+  });
+
+  it("folds the resolved app_name into the metadata description", async () => {
+    const metadata = await generateMetadata();
+
+    expect(metadata.title).toBe("Sign In");
+    expect(metadata.description).toBe("Sign in to Acme Telco");
   });
 });

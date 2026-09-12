@@ -13,6 +13,7 @@ import { getOrderDetail } from "@/services/ordering/get-order-detail";
 import { listOrders } from "@/services/ordering/list-orders";
 import {
   getAppLocale,
+  getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import { getUserById } from "@/services/users/users-read.service";
@@ -21,9 +22,11 @@ import { ordersListSearchParamsSchema } from "@/validation/ordering/orders-list.
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Orders — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Orders — ${await getAppName()}` };
+}
 
 const MANAGER_ROLE = "MANAGER";
 

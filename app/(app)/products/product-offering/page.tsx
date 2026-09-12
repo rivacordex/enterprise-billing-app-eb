@@ -9,15 +9,18 @@ import { getOfferingDetail } from "@/services/product/get-offering-detail";
 import { listOfferings } from "@/services/product/list-offerings";
 import {
   getAppLocale,
+  getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import { offeringListSearchParamsSchema } from "@/validation/product/offering-list.schema";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "View Product — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `View Product — ${await getAppName()}` };
+}
 
 function firstValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

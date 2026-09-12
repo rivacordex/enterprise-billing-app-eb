@@ -2,6 +2,7 @@ import { cache } from "react";
 
 import { db } from "@/db/client";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
+import { DEFAULT_APP_NAME } from "@/lib/branding";
 import { config } from "@/lib/config";
 import {
   DEFAULT_CURRENCY,
@@ -34,21 +35,37 @@ function resolveBrandPath(value: string | null): string | null {
 }
 
 export const getBrandingLogo = cache(async (): Promise<BrandingLogo | null> => {
-  const [logoPath, markPath, appName] = await Promise.all([
+  const [logoPath, markPath, alt] = await Promise.all([
     systemConfigRepository.findActiveValue(db, "app", "app_logo_path"),
     systemConfigRepository.findActiveValue(db, "app", "app_logo_mark_path"),
-    systemConfigRepository.findActiveValue(db, "app", "app_name"),
+    // Route the `alt` through the shared `getAppName()` reader (both are
+    // `React.cache`d ⇒ one query) so the `DEFAULT_APP_NAME` fallback lives in
+    // exactly one place instead of a re-implemented inline literal here.
+    getAppName(),
   ]);
 
   const src = resolveBrandPath(logoPath);
   if (src === null) return null;
 
   const markSrc = resolveBrandPath(markPath);
-  const alt = (appName ?? "").trim() || "Enterprise Billing";
 
   // `markSrc` is conditionally spread (not set to `undefined`) so the shape
   // satisfies `exactOptionalPropertyTypes` (`BrandingLogo.markSrc?: string`).
   return markSrc !== null ? { src, markSrc, alt } : { src, alt };
+});
+
+// The displayed application name — highest-version ACTIVE, non-secret
+// `app`/`app_name` value, resolved once server-side and threaded to every
+// wordmark surface as a plain `appName: string` prop (symmetric with
+// `getAppLocale()` / `getAppCurrency()`). Blank / whitespace / missing →
+// `DEFAULT_APP_NAME`, so the header is never empty.
+export const getAppName = cache(async (): Promise<string> => {
+  const value = await systemConfigRepository.findActiveValue(
+    db,
+    "app",
+    "app_name",
+  );
+  return value?.trim() || DEFAULT_APP_NAME;
 });
 
 export const getAppLocale = cache(async (): Promise<string> => {

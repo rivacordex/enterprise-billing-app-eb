@@ -1,9 +1,16 @@
+import { DEFAULT_APP_NAME } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import type { BrandingLogo } from "@/types/system-config";
 
 interface BrandLogoProps {
   logo: BrandingLogo | null;
   variant: "login" | "nav" | "nav-collapsed";
+  // The configuration-driven application name (resolved server-side via
+  // `getAppName()`). Required so the type-checker forces every wordmark
+  // surface to supply it — no surface can be silently missed. Drives the
+  // text/monogram fallback only; when a `logo` is set the `<img alt>` still
+  // comes from `logo.alt`.
+  appName: string;
 }
 
 // Pure presentational logo-or-wordmark renderer (um28-spec §2.3). NOT
@@ -22,15 +29,34 @@ interface BrandLogoProps {
 const PLATE_BASE =
   "inline-flex items-center justify-center rounded-sm border bg-[color:var(--surface-card)] p-1.5";
 
+// Derive the collapsed-rail monogram from the application name: the first
+// letter of each of the first two words, uppercased, capped at 2 chars
+// (`"Enterprise Billing System"` → `"EB"`, `"Acme"` → `"A"`). This file is the
+// only consumer, so it stays a tiny local helper.
+function monogramFor(appName: string): string {
+  const initials = appName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    // `[...word][0]` takes the first Unicode *code point* (string spread
+    // iterates code points), so a name starting with an astral char — emoji,
+    // supplementary-plane letter — yields a whole glyph, not a lone UTF-16
+    // surrogate half. `filter(Boolean)` guarantees each word is non-empty.
+    .map((word) => [...word][0]!.toUpperCase())
+    .join("");
+  return initials || DEFAULT_APP_NAME[0]!;
+}
+
 // Monogram fallback for the collapsed rail when no square mark is configured
 // (the mark is decorative when collapsed). Fits the w-16 rail.
-function Monogram(): React.JSX.Element {
+function Monogram({ appName }: { appName: string }): React.JSX.Element {
   return (
     <span
       aria-hidden
       className="inline-flex size-8 items-center justify-center rounded-sm bg-[color:var(--color-primary-700)] text-sm font-semibold text-[color:var(--text-on-brand)]"
     >
-      EB
+      {monogramFor(appName)}
     </span>
   );
 }
@@ -38,24 +64,29 @@ function Monogram(): React.JSX.Element {
 export function BrandLogo({
   logo,
   variant,
+  appName,
 }: BrandLogoProps): React.JSX.Element {
   // Wordmark / monogram fallback when no valid logo is configured.
   if (logo === null) {
     if (variant === "login") {
+      // `max-w-full truncate`: an over-long admin-set app_name is clipped with
+      // an ellipsis rather than overflowing the login card.
       return (
-        <span className="text-h4 font-semibold text-foreground">
-          Enterprise Billing
+        <span className="max-w-full truncate text-h4 font-semibold text-foreground">
+          {appName}
         </span>
       );
     }
     if (variant === "nav") {
+      // `min-w-0 truncate`: let the wordmark shrink+ellipsize inside the fixed-
+      // width nav rail instead of pushing the collapse toggle off-row.
       return (
-        <span className="text-sm font-semibold text-[color:var(--text-on-brand)]">
-          Enterprise Billing
+        <span className="min-w-0 truncate text-sm font-semibold text-[color:var(--text-on-brand)]">
+          {appName}
         </span>
       );
     }
-    return <Monogram />;
+    return <Monogram appName={appName} />;
   }
 
   const borderClass =
@@ -65,7 +96,7 @@ export function BrandLogo({
 
   if (variant === "nav-collapsed") {
     if (logo.markSrc === undefined) {
-      return <Monogram />;
+      return <Monogram appName={appName} />;
     }
     return (
       <span className={cn(PLATE_BASE, borderClass)}>

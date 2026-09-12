@@ -8,6 +8,7 @@ import { getOfferingDetail } from "@/services/product/get-offering-detail";
 import { listOfferings } from "@/services/product/list-offerings";
 import {
   getAppLocale,
+  getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import type {
@@ -19,9 +20,11 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Manage Products — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Manage Products — ${await getAppName()}` };
+}
 
 const MAX_COMBINED_ROWS = 1000; // defensive ceiling — see pm18-spec §2.2
 const SPECIFICATION_FETCH_CONCURRENCY = 10; // caps concurrent getOfferingDetail calls below
