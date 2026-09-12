@@ -39,7 +39,12 @@ import { udrRated } from "@/db/schema/rating/udr-rated";
 // about producing that state, so a full price-resolution graph would add
 // nothing this module's tests need to prove.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {
@@ -80,15 +85,22 @@ describe("completeness and gap detection (rm12-spec D1-D6 — static)", () => {
   const source = readFileSync(
     join(
       process.cwd(),
-      "rating-engine",
+      "workflow-management",
       "worker",
+      "workflow-engine",
       "runtime",
       "completeness_check.py",
     ),
     "utf8",
   );
   const flowYaml = readFileSync(
-    join(process.cwd(), "rating-engine", "flows", "completeness-check.yaml"),
+    join(
+      process.cwd(),
+      "workflow-management",
+      "flows",
+      "rating-engine",
+      "completeness-check.yaml",
+    ),
     "utf8",
   );
 

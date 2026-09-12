@@ -2,18 +2,19 @@
 // Soft-delete + purge protection enabled; RBAC authorization (no legacy
 // access policies). enabledForTemplateDeployment is left false — secrets
 // are never read into ARM/Bicep template outputs.
-// rm04-spec D5 — the rating engine's Managed Identity reads its four
+// rm04-spec D5 — the workflow-engine's Managed Identity reads its four
 // credentials (Kestra Basic Auth, rating_runtime password, kestra_engine
 // password, and — where a KV secret is used rather than the preferred role
 // assignment — the internal-storage credential) from this SAME shared Key
-// Vault. Defaults to '' so this module stays backward-compatible; empty
-// skips the role assignment.
+// Vault. wfm01 §4b: an ARRAY of engine principal IDs so the split-by-module
+// topology grants Secrets User to BOTH engine instances. Empty (default) skips;
+// one = collapsed; two = split.
 param location string
 param keyVaultName string
 param appManagedIdentityPrincipalId string
 param migrateManagedIdentityPrincipalId string
 param pipelineServicePrincipalId string
-param ratingEngineManagedIdentityPrincipalId string = ''
+param workflowEngineManagedIdentityPrincipalIds array = []
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
@@ -76,17 +77,19 @@ resource pipelineRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
-// Rating engine Managed Identity — read-only (Secrets User), same as the app
-// and migrate identities above.
-resource ratingEngineMiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(ratingEngineManagedIdentityPrincipalId)) {
-  name: guid(keyVault.id, ratingEngineManagedIdentityPrincipalId, keyVaultSecretsUserRoleId)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: keyVaultSecretsUserRoleId
-    principalId: ratingEngineManagedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
+// Workflow-engine Managed Identity(ies) — read-only (Secrets User), same as the
+// app and migrate identities above. One entry (collapsed) or two (split-by-module).
+resource workflowEngineMiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
+  for pid in workflowEngineManagedIdentityPrincipalIds: {
+    name: guid(keyVault.id, pid, keyVaultSecretsUserRoleId)
+    scope: keyVault
+    properties: {
+      roleDefinitionId: keyVaultSecretsUserRoleId
+      principalId: pid
+      principalType: 'ServicePrincipal'
+    }
   }
-}
+]
 
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri

@@ -48,7 +48,12 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // claim under batch_run_num = N+1 (a corrected reissue, `_v2`) succeeds and
 // is unaffected by run 1's now-resolved state.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(process.cwd(), "rating-engine", "worker");
+const workerDir = join(
+  process.cwd(),
+  "workflow-management",
+  "worker",
+  "workflow-engine",
+);
 
 function pythonRuntimeReady(): boolean {
   try {
@@ -104,8 +109,9 @@ describe("stranded-batch reconcile (rm11-spec D1-D9 — static)", () => {
   const source = readFileSync(
     join(
       process.cwd(),
-      "rating-engine",
+      "workflow-management",
       "worker",
+      "workflow-engine",
       "runtime",
       "stranded_reconcile.py",
     ),
@@ -114,8 +120,9 @@ describe("stranded-batch reconcile (rm11-spec D1-D9 — static)", () => {
   const flowYaml = readFileSync(
     join(
       process.cwd(),
-      "rating-engine",
+      "workflow-management",
       "flows",
+      "rating-engine",
       "stranded-batch-reconcile.yaml",
     ),
     "utf8",

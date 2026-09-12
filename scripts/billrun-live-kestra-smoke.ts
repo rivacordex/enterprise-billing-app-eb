@@ -17,7 +17,7 @@ import { reconcileRun } from "@/services/billing/reconcile-run";
 import { getBusinessToday } from "@/services/billing/business-today";
 
 // bm21-spec §Implementation §1 D-9/§Phase-2 review fold T3 — the live-Kestra
-// smoke gate `flows/billrun/README.md` registers as an explicit phase-2 exit
+// smoke gate `workflow-management/flows/bill-run-processor/README.md` registers as an explicit phase-2 exit
 // criterion. NOT part of the DB-gated CI suite (which doubles the flow — see
 // `tests/db/billing-e2e-happy-path.integration.test.ts`'s header): this is a
 // deliberately separate, off-by-default script (wired to the
@@ -33,7 +33,7 @@ import { getBusinessToday } from "@/services/billing/business-today";
 // (against the `DEFAULT_BILL_CYCLE_NAME` cycle) in the target database, and
 // `BILLRUN_ENGINE_URL`/`BILLRUN_ENGINE_AUTH`/`BILLRUN_ENGINE_NAMESPACE`
 // (`lib/config.ts`) point at that real, deployed namespace — per
-// `flows/billrun/README.md`'s "Repo / Owner / Deploy step" exit criterion.
+// `workflow-management/flows/bill-run-processor/README.md`'s "Repo / Owner / Deploy step" exit criterion.
 
 const POLL_INTERVAL_MS = 10_000;
 const POLL_TIMEOUT_MS = 10 * 60_000;
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
         "are not set to a real engine — this smoke gate refuses to run " +
         "against the STUB client (that would prove nothing about a real " +
         "deployed flow). Configure a real `billrun` Kestra namespace first " +
-        "(flows/billrun/README.md's Repo/Owner/Deploy-step exit criterion).",
+        "(workflow-management/flows/bill-run-processor/README.md's Repo/Owner/Deploy-step exit criterion).",
     );
   }
 

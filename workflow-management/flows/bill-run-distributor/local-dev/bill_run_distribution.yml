@@ -1,0 +1,39 @@
+# LOCAL-DEV DEPLOYABLE PLACEHOLDER — the bm20 distribution sibling. Valid,
+# deployable Kestra flow with no-op stages; not the real flow. See ./README.md.
+id: bill_run_distribution
+namespace: billrun
+inputs:
+  - id: bill_run_id
+    type: STRING
+    defaults: "BRN-DEMO"
+  - id: artifacts
+    type: JSON
+    defaults: "[]"
+  - id: targets
+    type: JSON
+    defaults: "[]"
+  - id: attempt
+    type: INT
+    defaults: 1
+tasks:
+  - id: start
+    type: io.kestra.plugin.core.log.Log
+    message: "bill_run_distribution START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} artifacts={{ inputs.artifacts }}"
+  - id: per_target
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ inputs.targets }}"
+    tasks:
+      - id: dispatch
+        type: io.kestra.plugin.core.log.Log
+        message: "[{{ taskrun.value }}] dispatch — STUB: deliver artifacts to target; honor is_mandatory + force_fail (D20 loopback)"
+  - id: done
+    type: io.kestra.plugin.core.debug.Return
+    format: "distributed run={{ inputs.bill_run_id }} targets={{ inputs.targets }}"
+errors:
+  - id: on_error
+    type: io.kestra.plugin.core.log.Log
+    message: "on_error — STUB: POST distribution outcome failure to app /api/billrun/{{ inputs.bill_run_id }}/distribution/outcome"
+finally:
+  - id: on_finally
+    type: io.kestra.plugin.core.log.Log
+    message: "on_finally — STUB: always POST a terminal distribution outcome"

@@ -1,7 +1,7 @@
 # rm13-spec D5/Implementation §5 — the DAST half of the ship gate: an OWASP
 # ZAP baseline scan against the rating engine (behind Easy Auth, rm05), gated
 # on no high/critical finding. Stages template included by
-# infra/azure-pipelines.yml via `- template: zap-scan-rating-engine-stage.yml`
+# infra/azure-pipelines.yml via `- template: zap-scan-workflow-engine-stage.yml`
 # directly under the parent's `stages:` list (same mechanism as
 # zap-scan-stage.yml — see that file's header for the "must declare its own
 # top-level stages:" note).
@@ -25,7 +25,7 @@
 # convention, ratemgmt-progress-tracker.md). Queue manually with
 # scanRatingEngineDast=true once a real engine is deployed and reachable.
 stages:
-  - stage: zap_scan_rating_engine
+  - stage: zap_scan_workflow_engine
     displayName: OWASP ZAP DAST (rating engine)
     dependsOn: test_scan
     condition: and(succeeded(), eq(${{ parameters.scanRatingEngineDast }}, true))
@@ -48,15 +48,15 @@ stages:
                   --query "properties.configuration.ingress.fqdn" -o tsv)
                 echo "##vso[task.setvariable variable=engineFqdn;isOutput=true]$ENGINE_FQDN"
             name: resolveEngineFqdn
-            displayName: Resolve the rating engine's FQDN (same lookup as deploy_rating_flows)
+            displayName: Resolve the workflow engine's FQDN (same lookup as deploy_workflow_flows)
 
           - script: |
-              mkdir -p $(System.DefaultWorkingDirectory)/zap-out-rating-engine
+              mkdir -p $(System.DefaultWorkingDirectory)/zap-out-workflow-engine
               # ZAP runs as uid 1000 inside the container (see zap-scan-stage.yml's
               # identical note) — make the mounted output dir world-writable.
-              chmod 777 $(System.DefaultWorkingDirectory)/zap-out-rating-engine
+              chmod 777 $(System.DefaultWorkingDirectory)/zap-out-workflow-engine
               docker run --rm \
-                -v "$(System.DefaultWorkingDirectory)/zap-out-rating-engine:/zap/wrk/out" \
+                -v "$(System.DefaultWorkingDirectory)/zap-out-workflow-engine:/zap/wrk/out" \
                 ghcr.io/zaproxy/zaproxy:stable \
                 zap-baseline.py \
                   -t https://$(resolveEngineFqdn.engineFqdn) \
@@ -66,7 +66,7 @@ stages:
             displayName: Run ZAP baseline scan against $(resolveEngineFqdn.engineFqdn) (login surface only — Easy Auth gates everything else)
 
           - script: |
-              REPORT="$(System.DefaultWorkingDirectory)/zap-out-rating-engine/zap-report.xml"
+              REPORT="$(System.DefaultWorkingDirectory)/zap-out-workflow-engine/zap-report.xml"
               if [ ! -f "$REPORT" ]; then
                 echo "ZAP report not found at $REPORT — the scan produced no report. Failing the stage."
                 exit 1
@@ -86,15 +86,15 @@ stages:
           - task: CopyFiles@2
             condition: succeededOrFailed()
             inputs:
-              sourceFolder: $(System.DefaultWorkingDirectory)/zap-out-rating-engine
+              sourceFolder: $(System.DefaultWorkingDirectory)/zap-out-workflow-engine
               contents: "**"
-              targetFolder: $(Build.ArtifactStagingDirectory)/zap-rating-engine
+              targetFolder: $(Build.ArtifactStagingDirectory)/zap-workflow-engine
             displayName: Stage ZAP reports
 
           - task: PublishBuildArtifacts@1
             condition: succeededOrFailed()
             continueOnError: true
             inputs:
-              pathToPublish: $(Build.ArtifactStagingDirectory)/zap-rating-engine
-              artifactName: zap-reports-rating-engine
+              pathToPublish: $(Build.ArtifactStagingDirectory)/zap-workflow-engine
+              artifactName: zap-reports-workflow-engine
             displayName: Publish ZAP HTML + XML reports

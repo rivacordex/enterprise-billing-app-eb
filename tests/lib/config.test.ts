@@ -21,6 +21,7 @@ const ENV_KEYS = [
   "BILLRUN_ENGINE_URL",
   "BILLRUN_ENGINE_AUTH",
   "BILLRUN_ENGINE_NAMESPACE",
+  "BILLRUN_ENGINE_LOOPBACK",
   "BILLRUN_APP_TOKEN",
   "BILLRUN_TAX_RATE",
   "BILLRUN_TAX_VERSION",
@@ -83,6 +84,7 @@ describe("config", () => {
       APP_TIMEZONE: "UTC",
       BILLRUN_PLACEHOLDER_MODE: false,
       BILLRUN_ENGINE_NAMESPACE: "billrun",
+      BILLRUN_ENGINE_LOOPBACK: false,
       BILLRUN_TAX_RATE: 8,
       BILLRUN_TAX_VERSION: "GST-2026",
       BILLRUN_TAX_CATEGORY: "GST",
@@ -421,7 +423,7 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
   });
 
-  it("fails loud when BILLRUN_ENGINE_URL is not HTTPS", async () => {
+  it("fails loud when BILLRUN_ENGINE_URL is not HTTPS (loopback flag off)", async () => {
     await expect(
       loadConfigWithEnv({
         ...VALID_REQUIRED_ENV,
@@ -429,6 +431,42 @@ describe("billRunEngineConfig / isBillRunEngineConfigured (bm03)", () => {
         BILLRUN_ENGINE_AUTH: "user:pass",
       }),
     ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("allows http:// to a loopback host when BILLRUN_ENGINE_LOOPBACK=true", async () => {
+    const { billRunEngineConfig, isBillRunEngineConfigured } =
+      await loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_LOOPBACK: "true",
+        BILLRUN_ENGINE_URL: "http://localhost:8085/api/v1/main",
+        BILLRUN_ENGINE_AUTH: "user:pass",
+      });
+
+    expect(isBillRunEngineConfigured).toBe(true);
+    expect(billRunEngineConfig.url).toBe("http://localhost:8085/api/v1/main");
+  });
+
+  it("fails loud when BILLRUN_ENGINE_LOOPBACK=true but the URL host is not loopback", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_ENGINE_LOOPBACK: "true",
+        BILLRUN_ENGINE_URL: "http://engine.example.com",
+        BILLRUN_ENGINE_AUTH: "user:pass",
+      }),
+    ).rejects.toMatchObject({ name: "AppError", code: "INTERNAL" });
+  });
+
+  it("allows https:// to any host regardless of the loopback flag", async () => {
+    // The flag only relaxes the scheme for loopback http; https to a remote
+    // engine is always fine and unaffected by it.
+    const { billRunEngineConfig } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_ENGINE_LOOPBACK: "true",
+      BILLRUN_ENGINE_URL: "https://engine.example.com",
+      BILLRUN_ENGINE_AUTH: "user:pass",
+    });
+    expect(billRunEngineConfig.url).toBe("https://engine.example.com");
   });
 });
 

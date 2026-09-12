@@ -58,6 +58,18 @@ docker-compose.test.yml
 /infra/zap/zap-context.rendered.xml
 
 
-# Python bytecode caches (rating-engine worker runtime)
-rating-engine/worker/**/__pycache__/
+# Python bytecode caches (workflow-engine worker runtime)
+workflow-management/worker/workflow-engine/**/__pycache__/
 *.pyc
+
+# Kestra dev-stack runtime output written into the bind-mounted fixture dirs
+# (logs/reject/archive). Keep only the committed .gitkeep + README.md placeholders.
+workflow-management/dev/logs/*
+workflow-management/dev/error/*
+workflow-management/dev/archive/*
+!workflow-management/dev/logs/.gitkeep
+!workflow-management/dev/logs/README.md
+!workflow-management/dev/error/.gitkeep
+!workflow-management/dev/error/README.md
+!workflow-management/dev/archive/.gitkeep
+!workflow-management/dev/archive/README.md

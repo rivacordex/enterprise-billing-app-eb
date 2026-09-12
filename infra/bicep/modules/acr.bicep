@@ -2,16 +2,17 @@
 // Standard SKU, admin user disabled (auth is via Managed Identity /
 // AcrPull role only — no shared admin credential).
 //
-// rm04-spec D1/Implementation §3 — the rating engine's Managed Identity also
+// rm04-spec D1/Implementation §3 — the workflow-engine's Managed Identity also
 // pulls the worker image from this SAME registry (shared platform footprint;
-// rm04 owns only the image, not a second ACR). ratingEngineManagedIdentityPrincipalId
-// defaults to '' so this module stays backward-compatible for callers that
-// haven't wired the engine identity yet; empty skips the role assignment.
+// wfm01 owns only the image, not a second ACR). wfm01 §4b: this is an ARRAY of
+// engine principal IDs so the split-by-module topology can grant AcrPull to
+// BOTH engine instances (rating + billrun). Empty (default) skips the
+// assignment entirely; one principal = collapsed; two = split.
 param location string
 param acrName string
 param appManagedIdentityPrincipalId string
 param migrateManagedIdentityPrincipalId string
-param ratingEngineManagedIdentityPrincipalId string = ''
+param workflowEngineManagedIdentityPrincipalIds array = []
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -49,15 +50,17 @@ resource migrateAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource ratingEngineAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(ratingEngineManagedIdentityPrincipalId)) {
-  name: guid(acr.id, ratingEngineManagedIdentityPrincipalId, acrPullRoleId)
-  scope: acr
-  properties: {
-    roleDefinitionId: acrPullRoleId
-    principalId: ratingEngineManagedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
+resource workflowEngineAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
+  for pid in workflowEngineManagedIdentityPrincipalIds: {
+    name: guid(acr.id, pid, acrPullRoleId)
+    scope: acr
+    properties: {
+      roleDefinitionId: acrPullRoleId
+      principalId: pid
+      principalType: 'ServicePrincipal'
+    }
   }
-}
+]
 
 output acrLoginServer string = acr.properties.loginServer
 output acrName string = acr.name

@@ -45,7 +45,7 @@ same treatment as any other Azure AD artifact in this repo.
      deploy time (never committed as literals, D6) — **required and
      non-empty**; an empty list fails this deployment rather than shipping
      external ingress with no restriction (verification item 14).
-   - This same pass also flips `rating-engine-container-app.bicep`'s
+   - This same pass also flips `workflow-engine-container-app.bicep`'s
      ingress from internal-only/disabled to external
      (`enableEasyAuthIngress: deployEasyAuth`, D2) and adds the
      `rating-engine-client-secret` Key Vault secret reference (D8) — the
@@ -80,14 +80,14 @@ Table-level Log Analytics retention (step 3) is the default path. Teams
 that prefer cheaper cold storage instead of/alongside the archive tier can
 add a **diagnostic export to a Storage Account** with a 7-year lifecycle
 policy on both the Entra sign-in logs and the Container App logs — the
-same lifecycle-rule pattern `rating-engine-storage.bicep` already uses for
+same lifecycle-rule pattern `workflow-engine-storage.bicep` already uses for
 the `archive` container (rm04 D4). Not built in this pass; documented here
 per Implementation §5 as the alternative, not the default.
 
 ## Flow deployment — git is the required process, not the UI (rm06 D2)
 
-Every flow change (`rating-engine/flows/**`) is a git commit, deployed by
-`infra/azure-pipelines.yml`'s `deploy_rating_flows` stage on merge to
+Every flow change (`workflow-management/flows/rating-engine/**`) is a git commit, deployed by
+`infra/azure-pipelines.yml`'s `deploy_workflow_flows` stage on merge to
 `main`, via the `kestra` CLI (the same pinned image as the worker,
 `kestra flow validate` then `kestra flow namespace update rating ./flows`,
 authenticated with the `kestra-basic-auth-password` Key Vault secret).
@@ -107,13 +107,13 @@ resolves its required `key` via `{{ secret('RATING_USAGE_WEBHOOK_KEY') }}`.
 Provision a Key Vault secret **`rating-usage-webhook-key`** whose value is the
 **base64-encoded** webhook token (Kestra OSS's env secret backend
 base64-decodes `SECRET_<NAME>`) — wired to the engine as
-`SECRET_RATING_USAGE_WEBHOOK_KEY` in `rating-engine-container-app.bicep`. The
+`SECRET_RATING_USAGE_WEBHOOK_KEY` in `workflow-engine-container-app.bicep`. The
 decoded token is the last path segment of the webhook URL
 (`.../executions/webhook/rating/ran-usage-rating/<token>`); keep it secret.
-Local dev uses the committed base64 dummy in `rating-engine/dev/.env.example`.
+Local dev uses the committed base64 dummy in `workflow-management/dev/.env.example`.
 
 **Not yet resolved** (rm06, flagged rather than assumed — see the
-`deploy_rating_flows` stage's own header comment in `azure-pipelines.yml`
+`deploy_workflow_flows` stage's own header comment in `azure-pipelines.yml`
 and `ratemgmt-progress-tracker.md` Open Questions):
 
 - **Network reachability.** Every other stage in this pipeline reaches
@@ -134,7 +134,7 @@ and `ratemgmt-progress-tracker.md` Open Questions):
   existing Key Vault role assignment in this repo's Bicep grants a
   Container App's Managed Identity access; none grants the pipeline's
   service connection principal `Key Vault Secrets User`, which
-  `deploy_rating_flows` needs to read `kestra-basic-auth-password` directly.
+  `deploy_workflow_flows` needs to read `kestra-basic-auth-password` directly.
 
 ## Deviations from the spec's literal text (recorded, not silent)
 

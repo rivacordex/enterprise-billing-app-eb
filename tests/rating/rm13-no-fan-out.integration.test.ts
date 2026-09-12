@@ -56,7 +56,13 @@ const liveEngineReady = Boolean(
 
 function flowYaml(): string {
   return readFileSync(
-    join(process.cwd(), "rating-engine", "flows", "ran-usage-rating.yaml"),
+    join(
+      process.cwd(),
+      "workflow-management",
+      "flows",
+      "rating-engine",
+      "ran-usage-rating.yaml",
+    ),
     "utf8",
   );
 }

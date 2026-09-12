@@ -91,14 +91,12 @@ const envSchema = z
     // fully testable with no live Kestra. Production sources BILLRUN_ENGINE_AUTH
     // from Key Vault via Managed Identity, matching every other credential here.
     // NAMESPACE defaults to the logical engine name — the template flow
-    // (`flows/billrun/bill_run_processing.template.yml`) is deployed to the
+    // (`workflow-management/flows/bill-run-processor/bill_run_processing.template.yml`) is deployed to the
     // `billrun` Kestra namespace.
-    BILLRUN_ENGINE_URL: z
-      .url()
-      .refine((v) => v.startsWith("https://"), {
-        message: "BILLRUN_ENGINE_URL must be an HTTPS URL.",
-      })
-      .optional(),
+    // HTTPS is enforced in the object-level superRefine below (not inline) so
+    // the check can consult BILLRUN_ENGINE_LOOPBACK: a loopback dev engine may
+    // use plain http://; everything else must be https://.
+    BILLRUN_ENGINE_URL: z.url().optional(),
     // `.min(1)` matters: the superRefine below pairs URL/AUTH on PRESENCE
     // (`!== undefined`), but `engine-registry.ts`/`isBillRunEngineConfigured`
     // resolve `configured` on TRUTHINESS (`!!auth`). Without this, a
@@ -112,6 +110,14 @@ const envSchema = z
       .min(1, "BILLRUN_ENGINE_AUTH must not be empty.")
       .optional(),
     BILLRUN_ENGINE_NAMESPACE: z.string().min(1).default("billrun"),
+    // Local-dev escape hatch for the HTTPS-only engine URL rule. When `true`,
+    // BILLRUN_ENGINE_URL may be plain `http://` — but ONLY to a loopback host
+    // (enforced in the superRefine below), so a deployed environment can never
+    // use it to send the Basic-Auth credential to a remote engine in the clear.
+    // Azure never sets this: Container Apps ingress terminates TLS (see
+    // architecture.md §1 "Local development equivalents"). Defaults to `false`
+    // (HTTPS required), so production behavior is unchanged unless opted in.
+    BILLRUN_ENGINE_LOOPBACK: booleanEnvSchema("false"),
     // bm04-spec §Implementation §4. The inbound bearer service token the
     // workflow engine (or a signed test caller) presents to `app/api/billrun/*`
     // — Key Vault in prod, `.env` locally. Optional so most environments boot
@@ -198,6 +204,36 @@ const envSchema = z
       });
     }
 
+    // HTTPS is always allowed. Plain http:// is permitted ONLY when
+    // BILLRUN_ENGINE_LOOPBACK=true AND the host is a loopback address — so the
+    // Basic-Auth credential can never leave the machine in cleartext, and the
+    // flag's sole effect is enabling http to a local loopback engine. Any other
+    // non-HTTPS URL (flag off, or flag on but a remote host) fails loud.
+    if (
+      data.BILLRUN_ENGINE_URL !== undefined &&
+      !data.BILLRUN_ENGINE_URL.startsWith("https://")
+    ) {
+      let host = "";
+      try {
+        host = new URL(data.BILLRUN_ENGINE_URL).hostname;
+      } catch {
+        host = "";
+      }
+      const isLoopbackHost =
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host === "[::1]";
+      if (!data.BILLRUN_ENGINE_LOOPBACK || !isLoopbackHost) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "BILLRUN_ENGINE_URL must be HTTPS unless BILLRUN_ENGINE_LOOPBACK=true and the URL is a loopback host (localhost/127.0.0.1/[::1]).",
+          path: ["BILLRUN_ENGINE_URL"],
+        });
+      }
+    }
+
     // Exactly one blob backend per environment (Azurite connection string in
     // dev, account URL + Managed Identity in prod). Neither is allowed (most
     // environments never post — `blob-store.ts` fails closed only when
@@ -241,6 +277,7 @@ function loadConfig(): Config {
     BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
     BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
     BILLRUN_ENGINE_NAMESPACE: process.env.BILLRUN_ENGINE_NAMESPACE,
+    BILLRUN_ENGINE_LOOPBACK: process.env.BILLRUN_ENGINE_LOOPBACK,
     BILLRUN_APP_TOKEN: process.env.BILLRUN_APP_TOKEN,
     BILLRUN_TAX_RATE: process.env.BILLRUN_TAX_RATE,
     BILLRUN_TAX_VERSION: process.env.BILLRUN_TAX_VERSION,

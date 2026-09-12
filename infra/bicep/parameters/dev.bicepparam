@@ -11,3 +11,5 @@ param appTimezone = 'Asia/Kuala_Lumpur'
 // Phase-2: infra (Key Vault + secrets, ACR + image) is in place, so deploy
 // the Container App + migrate Job that consume them.
 param deployWorkloads = true
+// wfm01 §4b — non-prod is collapsed (one workflow-engine instance, both namespaces).
+param topology = 'collapsed'
