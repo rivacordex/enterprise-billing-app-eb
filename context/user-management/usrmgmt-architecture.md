@@ -62,7 +62,7 @@ Every page declares its access (platform rule — `architecture.md` §5). Viewin
 | — change configuration values | Authenticated | `system_config` : **EDIT** |
 | `/administration/audit-log` | Authenticated | `audit_log` : **READ** (READ-max — no EDIT/DELETE) |
 
-> A MANAGER/USER account has no v1 grants and lands on the Homepage's empty state until a later module grants a permission. New pages **must** be added here with an explicit permission + level and a migration adding the `PERMISSIONS` row before they ship, plus a `NAV_REGISTRY` entry + `NAV_ICONS` glyph so they appear in the nav and Homepage.
+> A MANAGER/USER account has no v1 grants and lands on the Homepage's empty state until a later module grants a permission. New pages **must** be added here with an explicit permission + level and a migration adding the `PERMISSIONS` row before they ship, plus a `NAV_REGISTRY` entry + `NAV_ICONS` glyph so they appear in the nav and Homepage. Dynamic detail routes (e.g. `/customers/view/[id]`) are auto-exempt; a **non-dynamic** child route reached from a parent (e.g. `/customers/manage/new`, `/administration/accounts-settings/flows`) is exempt only by a one-line entry in the guardrail's `UNLISTED_BY_DESIGN` set.
 
 ---
 

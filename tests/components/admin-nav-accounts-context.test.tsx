@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-let mockPathname = "/accounts/overview";
+const DEFAULT_PATHNAME = "/accounts/overview";
+let mockPathname = DEFAULT_PATHNAME;
 let mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
@@ -10,6 +11,14 @@ vi.mock("next/navigation", () => ({
 
 import { AdminNav } from "@/components/admin-nav";
 import type { EffectivePermissionMap } from "@/types/permissions";
+
+// Reset the shared mutable pathname/search params after every test so a case
+// that mutates them (e.g. the active-state test) can't leak into later tests
+// even if an assertion throws before an inline reset.
+afterEach(() => {
+  mockPathname = DEFAULT_PATHNAME;
+  mockSearchParams = new URLSearchParams();
+});
 
 function permissionMap(
   overrides: Partial<EffectivePermissionMap>,
@@ -24,11 +33,30 @@ function permissionMap(
     accounts_view: null,
     accounts_transactions: null,
     accounts_config: null,
+    product_orders: null,
+    product_inventory: null,
+    billrun_view: null,
+    billrun_operate: null,
+    billrun_approve: null,
     ...overrides,
   };
 }
 
 const grantedMap = permissionMap({
+  accounts_view: "READ",
+  accounts_transactions: "READ",
+  accounts_config: "EDIT",
+});
+
+// A map that also grants every non-accounts page so they render and can be
+// checked for the *absence* of the accounts-context query.
+const fullMap = permissionMap({
+  users: "READ",
+  roles: "READ",
+  system_config: "READ",
+  audit_log: "READ",
+  products: "EDIT",
+  customers: "EDIT",
   accounts_view: "READ",
   accounts_transactions: "READ",
   accounts_config: "EDIT",
@@ -96,16 +124,7 @@ describe("AdminNav — Accounts context propagation (SC2)", () => {
 describe("AdminNav — Accounts context scope", () => {
   it("does not propagate context to Products, Customer or Administration links, including Accounts Settings", () => {
     setSearchParams("party=PTRL00000001&fa=FIN000001&ban=BAN000001");
-    render(
-      <AdminNav
-        permissionMap={permissionMap({
-          customers: "EDIT",
-          accounts_view: "READ",
-          accounts_transactions: "READ",
-          accounts_config: "EDIT",
-        })}
-      />,
-    );
+    render(<AdminNav permissionMap={fullMap} />);
 
     for (const label of NON_ACCOUNTS_LABELS) {
       const href = screen
@@ -182,26 +201,26 @@ describe("AdminNav — Accounts active state with context present", () => {
       "aria-current",
       "page",
     );
-
-    mockPathname = "/accounts/overview";
+    // pathname reset handled by afterEach.
   });
 });
 
-describe("AdminNav — Accounts context and locked items", () => {
-  it("renders a locked item as a span with no href even when context is present", () => {
+describe("AdminNav — denied accounts item is hidden, not locked (D2)", () => {
+  it("omits Transactions entirely when the grant is missing, even with context present", () => {
     setSearchParams("party=PTRL00000001&fa=FIN000001&ban=BAN000001");
     render(
-      <AdminNav
-        permissionMap={permissionMap({
-          accounts_view: "READ",
-        })}
-      />,
+      <AdminNav permissionMap={permissionMap({ accounts_view: "READ" })} />,
     );
 
-    const label = screen.getByText("Transactions");
-    const lockedItem = label.closest('[role="link"]');
-    expect(lockedItem).toHaveAttribute("aria-disabled", "true");
-    expect(lockedItem?.tagName).toBe("SPAN");
-    expect(lockedItem).not.toHaveAttribute("href");
+    // accounts_view shows Overview + Ledger Explorer; Transactions
+    // (accounts_transactions) is absent — no locked span anywhere.
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Ledger Explorer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Transactions" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Transactions")).not.toBeInTheDocument();
   });
 });
