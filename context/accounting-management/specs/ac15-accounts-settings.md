@@ -38,7 +38,7 @@ A config-driven flows/interaction-map documentation page — a static-but-config
 ### 2.6 Structural decisions
 
 - Config services + audited mutations; retire-not-delete (no delete functions, code-standards §1.3). Optimistic lock on every catalog row (code-standards §2.5).
-- Under `administration/`, guarded `accounts_config:EDIT` (the flows doc sub-view is `:READ`).
+- Under `administration/`, guarded `accounts_config:READ` (the flows doc sub-view is also `:READ`). **Updated by the homepage-topbar-nav change (D7):** the page guard was lowered `EDIT → READ` so the role allowed to read the linked `/flows` reference can reach this parent; the five mutation controls grey out (a `canEdit = meetsLevel(map.accounts_config, EDIT)` prop) unless the viewer also holds EDIT. The backing Server Actions still re-check `accounts_config:EDIT`, so the enforcement boundary is unchanged (Inv. #3) — the greying is UX only.
 - No new pgledger/GL objects — pure catalog + config editing.
 
 ---
@@ -73,7 +73,7 @@ No new doc operations. No period/close/export (ac14). No CoA/GL pages (ac12/ac13
 - [ ] **V10:** resolved term = coalesce(override, default); post-issuance changes don't move issued terms.
 - [ ] Changing a reason-code threshold is audited and changes ac07 approval routing on the next post.
 - [ ] Wizard defaults editable and read live by ac04; flows doc reflects live catalogs.
-- [ ] Route × level: `accounts_config:EDIT` (flows doc at `:READ`); USER blocked.
+- [ ] Route × level: page guard `accounts_config:READ` (D7; flows doc also `:READ`); write controls gated on `:EDIT`; each action re-checks `:EDIT`; USER (no grant) blocked.
 
 **Docs in sync**
 - [ ] `acctmgmt-progress-tracker.md`: `ac15` complete, "Next Up" → `ac16`.

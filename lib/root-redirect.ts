@@ -1,32 +1,20 @@
-import { meetsLevel, type EffectivePermissionMap } from "@/types/permissions";
-import type { PermissionName } from "@/types/rbac";
-
 export interface RootRedirectSession {
   forcePasswordChange: boolean;
 }
 
-export interface RouteOrderEntry {
-  name: PermissionName;
-  route: string;
-}
-
-// Extracted from `app/page.tsx` for testability (um06-spec §6.10) — callable
-// directly without a running Next.js server. The routing table itself stays
-// defined in `app/page.tsx` (routing policy, not permission logic, per
-// um06-spec §6.8) and is passed in here rather than duplicated.
-export async function resolveRootRedirect(
+// Extracted from the Homepage for testability (um06-spec §6.10) — callable
+// directly without a running Next.js server. The permission-ordered
+// `ROUTE_ORDER` table and the `/no-access` fallback are retired with the
+// Homepage (D3): a user with no grants now lands on the Homepage's empty state,
+// not `/no-access`. So this keeps only the two pre-render gates that don't
+// depend on the viewer's permissions.
+//
+// Returns a redirect target, or `null` when the caller should render the
+// Homepage itself.
+export function resolveRootRedirect(
   session: RootRedirectSession | null,
-  permissionMap: EffectivePermissionMap | null,
-  routeOrder: readonly RouteOrderEntry[],
-): Promise<string> {
+): string | null {
   if (!session) return "/login";
   if (session.forcePasswordChange) return "/set-password";
-
-  if (permissionMap) {
-    for (const { name, route } of routeOrder) {
-      if (meetsLevel(permissionMap[name], "READ")) return route;
-    }
-  }
-
-  return "/no-access";
+  return null;
 }

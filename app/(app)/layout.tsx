@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 
-import { getCurrentUserIdentity } from "@/auth/guard";
-import { resolveEffectivePermissions } from "@/auth/resolver";
-import { AdminSidebar } from "@/components/admin-sidebar";
+import { getCurrentUserIdentity, getEffectivePermissions } from "@/auth/guard";
+import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
-import { SIDEBAR_COOKIE } from "@/lib/sidebar";
+import { SIDEBAR_COOKIE, resolveSidebarCollapsed } from "@/lib/sidebar";
 import {
   getAppName,
   getBrandingLogo,
@@ -20,39 +19,41 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: `Administration — ${await getAppName()}` };
 }
 
-// Navigation sidebar ships in um07 (first administration page) — um06
-// deferred it per spec §6.6. No auth check here: each child page handles
-// its own guard. um26 adds the sidebar footer (identity strip + sign-out);
-// um28 extracts the whole `<aside>` into the `"use client"` `AdminSidebar`
-// (it owns live collapse state) and reads the persisted collapse cookie +
-// branding logo server-side, passing them down as plain-serializable props.
+// Navigation chrome ships in um07 (first administration page) — um06 deferred
+// it per spec §6.6. No auth check here: each child page handles its own guard.
+// The persisted collapse cookie, the signed-in identity, the effective
+// permission map (show/hide only) and the branding are all resolved
+// server-side and passed as plain-serializable props into the `"use client"`
+// `AppShell`, which owns live collapse state and renders the top bar + sidebar
+// + `<main>` (plan §3.4 / §3.9 — the top bar moved the brand, toggle, identity
+// and sign-out out of the sidebar).
 export default async function AdminLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>): Promise<React.JSX.Element> {
-  const collapsed = (await cookies()).get(SIDEBAR_COOKIE)?.value === "1";
+  const cookieValue = (await cookies()).get(SIDEBAR_COOKIE)?.value;
   const identity = await getCurrentUserIdentity();
-  // cm03-spec §2.3.5: the layout only had `{ userId, userEmail }` (in
-  // practice `{ userId, userName, userEmail }` per `getCurrentUserIdentity`)
-  // in scope, not the full map — one added call to `um06`'s existing
-  // resolver, not a new resolver.
+  // cm03-spec §2.3.5: one added call to um06's existing resolver, not a new
+  // resolver. Omitted when there is no resolved identity — `visibleSections`
+  // then fails closed (D6).
   const permissionMap = identity
-    ? await resolveEffectivePermissions(identity.userId)
+    ? await getEffectivePermissions(identity.userId)
     : undefined;
   const logo = await getBrandingLogo();
   const appName = await getAppName();
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <AdminSidebar
-        defaultCollapsed={collapsed}
+    <div className="flex h-screen flex-col overflow-hidden">
+      <AppShell
+        defaultCollapsed={resolveSidebarCollapsed(cookieValue)}
         identity={identity}
         permissionMap={permissionMap}
         logo={logo}
         appName={appName}
-      />
-      <main className="flex-1 overflow-y-auto bg-background">{children}</main>
+      >
+        {children}
+      </AppShell>
       <Toaster />
     </div>
   );

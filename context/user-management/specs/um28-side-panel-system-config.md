@@ -179,6 +179,8 @@ Add a nullable `description` text column to `core.system_config` so every config
 
 - `public/brand/logo.svg` (+ optional square `logo-mark.svg` for the collapsed rail) — committed placeholder until real artwork is available; swap later with no code change. `public/` is currently empty.
 
+> **`app_logo_mark_path` is now an unused config row (homepage-topbar-nav change, D10).** The collapsed-rail monogram and the `BrandLogo` `"nav-collapsed"` variant that consumed `markSrc` were deleted when the brand moved to the always-expanded top bar — the brand no longer changes shape with collapse state, so there is no square-mark surface left. The `app_logo_mark_path` config row is **left in place** (removing a seeded row is a separate decision) but has no consumer; `getBrandingLogo()` may still read it into `markSrc`, which nothing renders. Recorded here so nobody wires it back to a variant that no longer exists.
+
 > **Validation is format-only, not existence (deliberate, per source-plan Q2 "render optimistically").** `getBrandingLogo()` validates the _shape_ of the path (`/brand/…`, no scheme/`//`/`..`), not that the file exists on disk. A valid-format but nonexistent path (e.g. a typo'd `/brand/logp.svg`) therefore yields a broken-image icon rather than the wordmark/monogram fallback — the fallback only fires on a `null`/format-invalid value. To keep the seeded path always resolvable, **commit `logo-mark.svg` if `app_logo_mark_path` is seeded non-blank** (else seed it blank and let the monogram fallback handle the collapsed rail).
 
 ### 2.12 Visual / a11y details (ui-context tokens)

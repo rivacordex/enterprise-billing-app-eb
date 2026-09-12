@@ -1,72 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveRootRedirect, type RouteOrderEntry } from "@/lib/root-redirect";
-import type { EffectivePermissionMap } from "@/types/permissions";
-
-const ROUTE_ORDER: RouteOrderEntry[] = [
-  { name: "users", route: "/administration/users" },
-  { name: "roles", route: "/administration/roles" },
-  { name: "system_config", route: "/administration/system-config" },
-  { name: "audit_log", route: "/administration/audit-log" },
-];
-
-const NO_GRANTS: EffectivePermissionMap = {
-  users: null,
-  roles: null,
-  system_config: null,
-  audit_log: null,
-  products: null,
-  customers: null,
-};
-
-const ADMIN_GRANTS: EffectivePermissionMap = {
-  users: "DELETE",
-  roles: "DELETE",
-  system_config: "DELETE",
-  audit_log: "READ",
-  products: "DELETE",
-  customers: null,
-};
+import { resolveRootRedirect } from "@/lib/root-redirect";
 
 describe("resolveRootRedirect", () => {
-  it("redirects to /login when there is no session", async () => {
-    const route = await resolveRootRedirect(null, null, ROUTE_ORDER);
-    expect(route).toBe("/login");
+  it("redirects to /login when there is no session", () => {
+    expect(resolveRootRedirect(null)).toBe("/login");
   });
 
-  it("redirects to /set-password when force_password_change is true", async () => {
-    const route = await resolveRootRedirect(
-      { forcePasswordChange: true },
-      ADMIN_GRANTS,
-      ROUTE_ORDER,
+  it("redirects to /set-password when force_password_change is true", () => {
+    expect(resolveRootRedirect({ forcePasswordChange: true })).toBe(
+      "/set-password",
     );
-    expect(route).toBe("/set-password");
   });
 
-  it("redirects the seeded ADMIN to /administration/users", async () => {
-    const route = await resolveRootRedirect(
-      { forcePasswordChange: false },
-      ADMIN_GRANTS,
-      ROUTE_ORDER,
-    );
-    expect(route).toBe("/administration/users");
-  });
-
-  it("redirects a no-grants ACTIVE user to /no-access", async () => {
-    const route = await resolveRootRedirect(
-      { forcePasswordChange: false },
-      NO_GRANTS,
-      ROUTE_ORDER,
-    );
-    expect(route).toBe("/no-access");
-  });
-
-  it("redirects to /no-access when permissionMap is null and no force_password_change", async () => {
-    const route = await resolveRootRedirect(
-      { forcePasswordChange: false },
-      null,
-      ROUTE_ORDER,
-    );
-    expect(route).toBe("/no-access");
+  it("returns null (render the Homepage) for an ACTIVE user with no forced change", () => {
+    // D3: the permission-ordered table and the /no-access fallback are retired
+    // — a user with no grants now lands on the Homepage's empty state, not a
+    // redirect.
+    expect(resolveRootRedirect({ forcePasswordChange: false })).toBeNull();
   });
 });

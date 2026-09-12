@@ -102,7 +102,7 @@ Every page is permission-bearing; that declaration is the map authorization is e
 3. **Re-check every mutation server-side.** Each Server Action / Route Handler re-resolves the live `ACTIVE` user and re-checks `permission : level` (`EDIT` for changes, `DELETE` for destructive). Never trust the page guard or client; insufficient → **403**.
 4. **Map controls to the effective-permission set for show/hide only** — it carries no secret and grants nothing.
 5. **One permission name per page, referenced by a typed constant** in `auth/`. No per-button names; mutations reuse the page's name at a higher level.
-6. **Add a new page only with its full mapping:** typed constant + registry migration + permission-map/component-map rows + page guard + action re-checks + route × level matrix tests. No mapping, no merge.
+6. **Add a new page only with its full mapping:** typed constant + registry migration + permission-map/component-map rows + page guard + action re-checks + route × level matrix tests + a `NAV_REGISTRY` entry (`lib/nav-registry.ts`) carrying its `permission : level` and a `NAV_ICONS` glyph (`components/nav-icons.ts`) so it appears in the nav and Homepage and the `nav-registry-guard` gate passes — or, for a genuinely unlisted child/detail route, an `UNLISTED_BY_DESIGN` entry with a one-line reason. No mapping, no merge.
 7. **Honor the hierarchy and resolution.** `DELETE ⊃ EDIT ⊃ READ`; effective permission = union across roles, highest wins, in the single `auth/` resolver. Don't re-implement it elsewhere.
 8. **Keep the page↔route↔component↔permission chain intact** — create components with the exact names the module's code-standards define.
 
