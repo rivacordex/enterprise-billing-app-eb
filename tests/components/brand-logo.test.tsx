@@ -35,6 +35,18 @@ describe("BrandLogo — wordmark/monogram fallback (logo null)", () => {
     render(<BrandLogo variant="nav-collapsed" logo={null} appName="Acme" />);
     expect(screen.getByText("A")).toBeInTheDocument();
   });
+
+  it("takes the whole first code point for an astral-prefixed appName", () => {
+    // A leading emoji must render as one glyph, not a broken surrogate half.
+    render(
+      <BrandLogo
+        variant="nav-collapsed"
+        logo={null}
+        appName="🚀 Rocket Bill"
+      />,
+    );
+    expect(screen.getByText("🚀R")).toBeInTheDocument();
+  });
 });
 
 describe("BrandLogo — image (logo present)", () => {
