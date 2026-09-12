@@ -18,6 +18,9 @@ interface AdminSidebarProps {
   // component reads it (show/hide only, never an enforcement boundary).
   permissionMap?: EffectivePermissionMap | undefined;
   logo: BrandingLogo | null;
+  // Configuration-driven application name (server-resolved via `getAppName()`);
+  // drives the wordmark / collapsed-monogram fallback in `BrandLogo`.
+  appName: string;
 }
 
 // The collapsible left admin panel (um28-spec §2.4) — the merge point that
@@ -31,6 +34,7 @@ export function AdminSidebar({
   identity,
   permissionMap,
   logo,
+  appName,
 }: AdminSidebarProps): React.JSX.Element {
   // Seeded at init from the prop (never synced via useEffect) so SSR and the
   // first client render agree — no hydration mismatch, and the enforced
@@ -70,12 +74,12 @@ export function AdminSidebar({
       <div className="border-b border-[color:var(--text-on-brand)]/10 px-3 py-5">
         {collapsed ? (
           <div className="flex flex-col items-center gap-3">
-            <BrandLogo logo={logo} variant="nav-collapsed" />
+            <BrandLogo logo={logo} variant="nav-collapsed" appName={appName} />
             {toggleButton}
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2 px-1">
-            <BrandLogo logo={logo} variant="nav" />
+            <BrandLogo logo={logo} variant="nav" appName={appName} />
             {toggleButton}
           </div>
         )}

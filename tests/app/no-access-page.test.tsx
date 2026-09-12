@@ -12,8 +12,13 @@ vi.mock("@/auth/client", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
+// The page now resolves the app name server-side; mock it so importing the
+// page never reaches `db/client` (and `lib/config`'s eager env validation).
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppName: vi.fn().mockResolvedValue("Acme Telco"),
+}));
 
-import NoAccessPage from "@/app/(app)/no-access/page";
+import NoAccessPage, { generateMetadata } from "@/app/(app)/no-access/page";
 import { requireAuthenticated } from "@/auth/guard";
 
 describe("NoAccessPage", () => {
@@ -31,6 +36,18 @@ describe("NoAccessPage", () => {
     expect(
       screen.getByText(/doesn.t have access to this module yet/i),
     ).toBeInTheDocument();
+  });
+
+  it("renders the resolved app_name in the wordmark", async () => {
+    render(await NoAccessPage());
+
+    expect(screen.getByText("Acme Telco")).toBeInTheDocument();
+  });
+
+  it("folds the resolved app_name into the tab title", async () => {
+    const metadata = await generateMetadata();
+
+    expect(metadata.title).toBe("No Access — Acme Telco");
   });
 
   it("renders a focusable sign-out control and no admin navigation", async () => {

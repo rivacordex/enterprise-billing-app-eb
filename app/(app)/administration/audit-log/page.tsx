@@ -10,14 +10,19 @@ import {
   getAuditLog,
   getAuditLogActors,
 } from "@/services/audit-log/audit-log-read.service";
-import { getAppTimezone } from "@/services/system-config/app-config-read.service";
+import {
+  getAppName,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 import { auditLogSearchParamsSchema } from "@/validation/audit-log-filters.schema";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Audit Log — Enterprise Billing",
-};
+// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
+// `React.cache`d, so it shares the page's per-request read).
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Audit Log — ${await getAppName()}` };
+}
 
 interface AuditLogPageProps {
   searchParams: Promise<{

@@ -19,6 +19,7 @@ vi.mock("@/services/system-config/system-config-read.service", () => ({
 // ConfigTable prop); mock the synchronous accessor so importing the page never
 // reaches the real `lib/config`/`db`.
 vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppName: vi.fn().mockResolvedValue("Acme Telco"),
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
 }));
 vi.mock("@/components/system-config/config-table", () => ({
