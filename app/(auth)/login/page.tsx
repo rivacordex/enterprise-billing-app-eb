@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { BrandLogo } from "@/components/brand-logo";
+import { BrandLogo, LOGIN_WORDMARK_CLASS } from "@/components/brand-logo";
 import { LoginForm } from "@/components/login-form";
 import { MicrosoftLogo } from "@/components/icons/microsoft-logo";
 import { CSRF_HEADER_NAME } from "@/lib/csrf";
@@ -72,9 +72,7 @@ export default async function LoginPage({
               renders the app name AS the wordmark, so repeating it here would
               duplicate the name (same rationale as the top bar's center zone). */}
           {logo !== null && (
-            <span className="mt-3 max-w-full truncate text-h4 font-semibold text-foreground">
-              {appName}
-            </span>
+            <span className={`mt-3 ${LOGIN_WORDMARK_CLASS}`}>{appName}</span>
           )}
         </div>
 

@@ -13,11 +13,16 @@ import { AmountCell } from "@/components/accounts/amount-cell";
 import { ClosePeriodButton } from "@/components/accounts/close-period-button";
 import { JournalExportButton } from "@/components/accounts/journal-export-button";
 import { LedgerKindChip } from "@/components/accounts/ledger-kind-chip";
+import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import {
   getPeriodSummary,
   getCodeDrilldown,
 } from "@/services/accounts/gl-journal";
+import {
+  getAppLocale,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 import { getPeriodState } from "@/services/accounts/period-close";
 import type { LedgerAccountKind } from "@/types/accounts";
 import { meetsLevel } from "@/types/permissions";
@@ -127,13 +132,17 @@ export default async function GlJournalPage({
     expand,
   };
 
-  const [summary, drilldown, periodState] = await Promise.all([
-    getPeriodSummary(period, view, sort),
-    expand ? getCodeDrilldown(expand, period, view) : Promise.resolve(null),
-    canEdit
-      ? getPeriodState(period, DISPLAY_CURRENCY)
-      : Promise.resolve("open" as const),
-  ]);
+  const [locale, timezone, summary, drilldown, periodState] = await Promise.all(
+    [
+      getAppLocale(),
+      Promise.resolve(getAppTimezone()),
+      getPeriodSummary(period, view, sort),
+      expand ? getCodeDrilldown(expand, period, view) : Promise.resolve(null),
+      canEdit
+        ? getPeriodState(period, DISPLAY_CURRENCY)
+        : Promise.resolve("open" as const),
+    ],
+  );
 
   const { rows, totals } = summary;
   const totalRowBroken = !totals.balanced;
@@ -354,7 +363,7 @@ export default async function GlJournalPage({
                                           Kind
                                         </th>
                                         <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                          Date
+                                          Date/Time
                                         </th>
                                         <th className="pr-4 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
                                           Document
@@ -378,9 +387,11 @@ export default async function GlJournalPage({
                                             />
                                           </td>
                                           <td className="py-1.5 pr-4 text-muted-foreground">
-                                            {entry.eventAt
-                                              .toISOString()
-                                              .slice(0, 10)}
+                                            {formatDatetime(
+                                              entry.eventAt,
+                                              locale,
+                                              timezone,
+                                            )}
                                           </td>
                                           <td className="py-1.5 pr-4 font-mono text-muted-foreground">
                                             {entry.docId ?? "—"}

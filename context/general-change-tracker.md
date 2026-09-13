@@ -4,6 +4,73 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE — xhigh code-review fixes** (uncommitted changes + last 2 commits;
+  multi-agent review, 15 findings). Fixed by criticality, evaluated against specs:
+  - [x] [#2, CONFIRMED] GL-journal drill-down rendered `event_at` via raw
+        `.toISOString()` (UTC) — a `um29 §2.4` violation (every displayed instant
+        must go through `formatDatetime` with a server-resolved zone). Now threads
+        `getAppLocale()`/`getAppTimezone()` and renders `formatDatetime(...)`;
+        column relabelled "Date/Time" (`app/(app)/accounts/gl-journal/page.tsx`).
+  - [x] [#3/#4/#5/#6, seed] One coherent refactor of `seed-billrun-sample.ts`:
+        the privileged teardown connection is now **opened + probed + host-checked
+        inside the transaction, before its destructive deletes commit** (chosen:
+        pre-commit health-check) — closing the broken/unreachable-DSN strand window
+        (#5/#1) and running `BOOTSTRAP_DATABASE_URL` through the same non-prod gate as
+        `DATABASE_URL` via a shared `assertNonProductionUrl` (#3). Corrected the
+        misleading "the same connection db:migrate uses" messaging → "superuser/owner
+        DSN used to provision (db:setup/db:bootstrap-roles)" (#4). Removed the now-dead
+        duplicate guard by passing the resolved connection in; teardown returns
+        `{orphanLedgerAccountIds, admin}` rather than mutating outer `let`s (#6).
+  - [x] [#1, CONFIRMED] README day-to-day "After pulling new commits" told operators
+        to run bare `npm run db:migrate` — fails as least-privilege `app_runtime` (no
+        DDL). Now documents the superuser `DATABASE_URL` override + reset (mirrors
+        Part 1 step 4) + a new-schema `db:bootstrap-roles` note.
+  - [x] [#8] README design-note precision: `db:migrate` reads `DATABASE_URL`;
+        `BOOTSTRAP_DATABASE_URL` drives roles/partman + migrations via an override.
+  - [x] [#7] Deduped the login wordmark Tailwind string → exported
+        `LOGIN_WORDMARK_CLASS` from `brand-logo.tsx`, reused on the login page.
+  - [x] [#10] `login-page.test.tsx`: reset `mockIsSsoConfigured` in `afterEach`
+        (asymmetric teardown → latent false-green).
+  - [x] Rule codified: `code-standards.md §2.13` (already the home for this rule)
+        strengthened with an explicit anti-pattern ban — no `toISOString()`/
+        `toLocaleString()`/`.slice()`/ad-hoc `Intl` for displayed instants.
+  - Skipped [#9, PLAUSIBLE]: `new Date(r.event_at)` offset-reliance — verified
+        not currently triggerable (columns are `timestamptz`, always offset-carrying);
+        speculative hardening not warranted.
+  - Verified: `tsc` clean; ESLint clean; Prettier clean; affected suites 14/14
+        (login-page + brand-logo). Seed integration path not run here (needs the
+        disposable test DB).
+
+- **DONE — README install/admin rewrite + migrations doc §4 correction**
+  (`context/_change-readme-install-and-admin-plan.md`, D15). DOCUMENTATION ONLY,
+  implemented per §3:
+  - [x] §3.1 Intro reworded (from-scratch-rebuild → install + operate).
+  - [x] §3.2 Part 0 deleted; the port-3000 process-kill salvaged into Troubleshooting;
+        both `down -v` lines + the `git clean -fdx` dropped.
+  - [x] §3.3 Part A/B/C → Part 1/2/3; volume-persistence caution lines added to steps
+        5 (roles+passwords) and 6 (billing grant patch); in-body "Part A/B" refs (steps
+        7, 13, and the intro SSO note) retargeted to Part 1/2.
+  - [x] §3.4 Teardown replaced by "Running the stack day to day" (Start / Stop / Check /
+        After-pulling / Troubleshooting); Verify-a-real-execution folded in as the deep
+        health check; Credentials & endpoints moved below the new admin section.
+  - [x] §3.5 Useful scripts extended (`db:migrate`, `docker compose ps`, health curl).
+  - [x] R5 / §4 `db/migrations/README.md`: already reads the corrected "silently
+        skipped" form (timestamp-not-hash comparison) — NO change needed; the "wrong"
+        parenthetical the plan targeted was corrected in a prior change.
+  - Deviation from the plan's specified text (flagged): §3.4's line "`/api/health`
+    returning OK means the app is up **and** its database connection is live" is
+    FALSE — `app/api/health/route.ts` intentionally does no DB query (um30 liveness
+    probe; `/api/health/db` reserved, unimplemented). Rewrote the sentence + the
+    Useful-scripts label to say "app liveness (no DB query)" rather than ship the
+    incorrect claim.
+  - Open questions Q1 (one-sentence "how to start over" pointer) and Q2 (Windows-first
+    framing) left as-is — flagged in the plan for review, not part of the §3 spec.
+  - Verification: grep of README + wider repo for `Part 0`/`Part A/B/C` → zero README
+    hits (remaining hits are unrelated accounting-management specs referencing their
+    own plans); step numbering stays contiguous 1–14; all referenced npm scripts
+    (`db:migrate`/`db:setup`/`db:seed-sample`/`db:bootstrap-roles`) and `/api/health`
+    exist.
+
 - **DONE (code-complete, verified) — Landing Homepage, top-bar chrome, and
   permission-filtered navigation** (`context/_change-homepage-topbar-nav-rbac-plan.md`).
   Platform-level chrome change (authorized by the plan under `ai-workflow-rules.md`

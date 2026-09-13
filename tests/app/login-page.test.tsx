@@ -35,6 +35,10 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
 
 afterEach(() => {
   mockGetBrandingLogo.mockResolvedValue(null);
+  // Reset the SSO flag too: the "SSO configured" case flips it to true, and
+  // without this every later test would inherit SSO=true out of definition
+  // order (asymmetric teardown → latent false-green).
+  mockIsSsoConfigured = false;
 });
 
 import LoginPage, { generateMetadata } from "@/app/(auth)/login/page";
