@@ -10,6 +10,7 @@ import {
   retireReasonCodeAction,
   type RetireReasonCodeActionResult,
 } from "@/actions/accounts/retire-reason-code.action";
+import { EDIT_DISABLED_TITLE } from "@/components/accounts/edit-access";
 import type { ReasonCode } from "@/types/accounts";
 import { DOC_TYPES, POSTING_NATURES } from "@/types/accounts";
 
@@ -91,7 +92,11 @@ function describeRetireError(result: RetireReasonCodeActionResult): string {
 
 // ── Add form ──────────────────────────────────────────────────────────────────
 
-export function AddReasonCodeButton(): React.JSX.Element {
+export function AddReasonCodeButton({
+  canEdit,
+}: {
+  canEdit: boolean;
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<UpsertReasonCodeActionResult | null>(
@@ -100,6 +105,21 @@ export function AddReasonCodeButton(): React.JSX.Element {
   const [fieldErrors, setFieldErrors] = useState<
     Record<string, string[] | undefined>
   >({});
+
+  // D7: read-only viewers see the affordance disabled rather than missing, so
+  // the page reads as "not yours to change" rather than broken.
+  if (!canEdit) {
+    return (
+      <button
+        type="button"
+        disabled
+        title={EDIT_DISABLED_TITLE}
+        className="h-8 cursor-not-allowed rounded-md bg-[color:var(--action-disabled-bg)] px-3 text-body-sm font-medium text-white"
+      >
+        + Add Reason Code
+      </button>
+    );
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -240,10 +260,12 @@ export function AddReasonCodeButton(): React.JSX.Element {
 
 interface ReasonCodeActionsProps {
   row: ReasonCode;
+  canEdit: boolean;
 }
 
 export function ReasonCodeActions({
   row,
+  canEdit,
 }: ReasonCodeActionsProps): React.JSX.Element {
   const [mode, setMode] = useState<"idle" | "edit" | "retiring">("idle");
   const [submitting, setSubmitting] = useState(false);
@@ -426,7 +448,9 @@ export function ReasonCodeActions({
           <button
             type="button"
             onClick={() => setMode("edit")}
-            className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline"
+            disabled={!canEdit}
+            title={canEdit ? undefined : EDIT_DISABLED_TITLE}
+            className="text-body-sm text-[color:var(--action-primary-bg)] hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:hover:no-underline"
           >
             Edit
           </button>
@@ -434,7 +458,9 @@ export function ReasonCodeActions({
             <button
               type="button"
               onClick={() => setMode("retiring")}
-              className="text-body-sm text-destructive hover:underline"
+              disabled={!canEdit}
+              title={canEdit ? undefined : EDIT_DISABLED_TITLE}
+              className="text-body-sm text-destructive hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:hover:no-underline"
             >
               Retire
             </button>

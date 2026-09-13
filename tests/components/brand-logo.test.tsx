@@ -6,46 +6,19 @@ import type { BrandingLogo } from "@/types/system-config";
 
 const LOGO: BrandingLogo = { src: "/brand/logo.svg", alt: "Acme Telco" };
 
-describe("BrandLogo — wordmark/monogram fallback (logo null)", () => {
+// D10: only "login" and "topbar" remain — the "nav"/"nav-collapsed" variants
+// and their monogram fallback are deleted with the sidebar brand.
+describe("BrandLogo — wordmark fallback (logo null)", () => {
   it("renders the passed appName wordmark for the login variant (truncated)", () => {
     render(<BrandLogo variant="login" logo={null} appName="Acme Telco" />);
-    // truncate guards against an over-long admin-set app_name breaking layout.
     expect(screen.getByText("Acme Telco")).toHaveClass("truncate");
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
-  it("renders the passed appName wordmark for the nav variant (truncated)", () => {
-    render(<BrandLogo variant="nav" logo={null} appName="Acme Telco" />);
+  it("renders the passed appName wordmark for the topbar variant (truncated)", () => {
+    render(<BrandLogo variant="topbar" logo={null} appName="Acme Telco" />);
     expect(screen.getByText("Acme Telco")).toHaveClass("truncate");
-  });
-
-  it("derives the collapsed-nav monogram from the first two words of appName", () => {
-    render(
-      <BrandLogo
-        variant="nav-collapsed"
-        logo={null}
-        appName="Enterprise Billing System"
-      />,
-    );
-    expect(screen.getByText("EB")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-  });
-
-  it("derives a single-letter monogram from a one-word appName", () => {
-    render(<BrandLogo variant="nav-collapsed" logo={null} appName="Acme" />);
-    expect(screen.getByText("A")).toBeInTheDocument();
-  });
-
-  it("takes the whole first code point for an astral-prefixed appName", () => {
-    // A leading emoji must render as one glyph, not a broken surrogate half.
-    render(
-      <BrandLogo
-        variant="nav-collapsed"
-        logo={null}
-        appName="🚀 Rocket Bill"
-      />,
-    );
-    expect(screen.getByText("🚀R")).toBeInTheDocument();
   });
 });
 
@@ -56,31 +29,40 @@ describe("BrandLogo — image (logo present)", () => {
     expect(img).toHaveAttribute("src", "/brand/logo.svg");
   });
 
-  it("renders the nav image with logo.alt (not appName)", () => {
-    render(<BrandLogo variant="nav" logo={LOGO} appName="Ignored" />);
+  it("renders the topbar image with logo.alt (not appName)", () => {
+    render(<BrandLogo variant="topbar" logo={LOGO} appName="Ignored" />);
     expect(screen.getByRole("img", { name: "Acme Telco" })).toHaveAttribute(
       "src",
       "/brand/logo.svg",
     );
   });
+});
 
-  it("uses markSrc for the collapsed rail when present", () => {
-    render(
-      <BrandLogo
-        variant="nav-collapsed"
-        logo={{ ...LOGO, markSrc: "/brand/mark.svg" }}
-        appName="Ignored"
-      />,
-    );
-    expect(screen.getByRole("img", { name: "Acme Telco" })).toHaveAttribute(
-      "src",
-      "/brand/mark.svg",
-    );
-  });
+// Regression: an extremely wide SVG (viewBox-only, no intrinsic size) must not
+// escape its bounded parent. Both the plate (a centered flex item) and the
+// <img> carry `max-w-full min-w-0` so the logo shrinks to fit rather than
+// overflowing the login card / top-bar brand slot.
+describe("BrandLogo — wide-logo width constraints", () => {
+  const WIDE_LOGO: BrandingLogo = {
+    // A 2000x40 viewBox with no width/height — the exact wide, intrinsically
+    // unsized case the sizing classes guard against.
+    src: "/brand/wide-banner.svg",
+    alt: "Extremely Wide Banner Logo",
+  };
 
-  it("falls back to the appName monogram for the collapsed rail when no mark is set", () => {
-    render(<BrandLogo variant="nav-collapsed" logo={LOGO} appName="Acme" />);
-    expect(screen.getByText("A")).toBeInTheDocument();
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
-  });
+  it.each(["login", "topbar"] as const)(
+    "keeps the %s img constrained (max-w-full + min-w-0)",
+    (variant) => {
+      render(
+        <BrandLogo variant={variant} logo={WIDE_LOGO} appName="Ignored" />,
+      );
+      const img = screen.getByRole("img", {
+        name: "Extremely Wide Banner Logo",
+      });
+      expect(img).toHaveClass("max-w-full", "min-w-0", "object-contain");
+
+      // The plate wrapper is the flex item that must not expand past its parent.
+      expect(img.parentElement).toHaveClass("max-w-full", "min-w-0");
+    },
+  );
 });

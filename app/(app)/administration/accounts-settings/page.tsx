@@ -15,13 +15,25 @@ import { WizardDefaultsForm } from "@/components/accounts/wizard-defaults-form";
 import { listReasonCodes } from "@/services/accounts/reason-code";
 import { listBillCycles } from "@/services/accounts/bill-cycle";
 import { getWizardDefaultsFull } from "@/services/accounts/wizard-defaults";
+import { meetsLevel } from "@/types/permissions";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Accounts Settings" };
 
 export default async function AccountsSettingsPage(): Promise<React.JSX.Element> {
-  await requirePermission(PERMISSIONS.ACCOUNTS_CONFIG, LEVELS.EDIT);
+  // D7: guard lowered EDIT→READ so the only role allowed to read the linked
+  // `/flows` reference can actually reach this parent page. The five mutation
+  // controls grey out below unless the viewer also holds EDIT; every backing
+  // Server Action independently re-checks ACCOUNTS_CONFIG:EDIT, so lowering the
+  // page guard grants no new mutation power (Inv. #3 — the action is the
+  // boundary, the greying is UX). `system-config`/`roles` pages use exactly
+  // this READ-guard + map-for-show/hide shape.
+  const { permissionMap } = await requirePermission(
+    PERMISSIONS.ACCOUNTS_CONFIG,
+    LEVELS.READ,
+  );
+  const canEdit = meetsLevel(permissionMap.accounts_config, LEVELS.EDIT);
 
   const [reasonCodes, billCycles, wizardDefaults] = await Promise.all([
     listReasonCodes(),
@@ -59,7 +71,7 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
               ac07 routing immediately.
             </p>
           </div>
-          <AddReasonCodeButton />
+          <AddReasonCodeButton canEdit={canEdit} />
         </div>
 
         <div className="overflow-x-auto rounded-md border border-[color:var(--border-default)]">
@@ -96,7 +108,11 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
                 </tr>
               ) : (
                 reasonCodes.map((rc) => (
-                  <ReasonCodeActions key={rc.reasonCode} row={rc} />
+                  <ReasonCodeActions
+                    key={rc.reasonCode}
+                    row={rc}
+                    canEdit={canEdit}
+                  />
                 ))
               )}
             </tbody>
@@ -119,7 +135,7 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
               leaving existing BANs intact (V9 / Inv. #11).
             </p>
           </div>
-          <AddBillCycleButton />
+          <AddBillCycleButton canEdit={canEdit} />
         </div>
 
         <div className="overflow-x-auto rounded-md border border-[color:var(--border-default)]">
@@ -160,6 +176,7 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
                     row={bc}
                     defaultBillCycleId={wizardDefaults.defaultBillCycleId}
                     currentCreditLimit={wizardDefaults.defaultCreditLimit}
+                    canEdit={canEdit}
                   />
                 ))
               )}
@@ -185,6 +202,7 @@ export default async function AccountsSettingsPage(): Promise<React.JSX.Element>
             defaultBillCycleId={wizardDefaults.defaultBillCycleId}
             defaultCurrency={wizardDefaults.defaultCurrency}
             defaultCreditLimit={wizardDefaults.defaultCreditLimit}
+            canEdit={canEdit}
           />
         </div>
       </section>

@@ -4,6 +4,165 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE — xhigh code-review fixes** (uncommitted changes + last 2 commits;
+  multi-agent review, 15 findings). Fixed by criticality, evaluated against specs:
+  - [x] [#2, CONFIRMED] GL-journal drill-down rendered `event_at` via raw
+        `.toISOString()` (UTC) — a `um29 §2.4` violation (every displayed instant
+        must go through `formatDatetime` with a server-resolved zone). Now threads
+        `getAppLocale()`/`getAppTimezone()` and renders `formatDatetime(...)`;
+        column relabelled "Date/Time" (`app/(app)/accounts/gl-journal/page.tsx`).
+  - [x] [#3/#4/#5/#6, seed] One coherent refactor of `seed-billrun-sample.ts`:
+        the privileged teardown connection is now **opened + probed + host-checked
+        inside the transaction, before its destructive deletes commit** (chosen:
+        pre-commit health-check) — closing the broken/unreachable-DSN strand window
+        (#5/#1) and running `BOOTSTRAP_DATABASE_URL` through the same non-prod gate as
+        `DATABASE_URL` via a shared `assertNonProductionUrl` (#3). Corrected the
+        misleading "the same connection db:migrate uses" messaging → "superuser/owner
+        DSN used to provision (db:setup/db:bootstrap-roles)" (#4). Removed the now-dead
+        duplicate guard by passing the resolved connection in; teardown returns
+        `{orphanLedgerAccountIds, admin}` rather than mutating outer `let`s (#6).
+  - [x] [#1, CONFIRMED] README day-to-day "After pulling new commits" told operators
+        to run bare `npm run db:migrate` — fails as least-privilege `app_runtime` (no
+        DDL). Now documents the superuser `DATABASE_URL` override + reset (mirrors
+        Part 1 step 4) + a new-schema `db:bootstrap-roles` note.
+  - [x] [#8] README design-note precision: `db:migrate` reads `DATABASE_URL`;
+        `BOOTSTRAP_DATABASE_URL` drives roles/partman + migrations via an override.
+  - [x] [#7] Deduped the login wordmark Tailwind string → exported
+        `LOGIN_WORDMARK_CLASS` from `brand-logo.tsx`, reused on the login page.
+  - [x] [#10] `login-page.test.tsx`: reset `mockIsSsoConfigured` in `afterEach`
+        (asymmetric teardown → latent false-green).
+  - [x] Rule codified: `code-standards.md §2.13` (already the home for this rule)
+        strengthened with an explicit anti-pattern ban — no `toISOString()`/
+        `toLocaleString()`/`.slice()`/ad-hoc `Intl` for displayed instants.
+  - Skipped [#9, PLAUSIBLE]: `new Date(r.event_at)` offset-reliance — verified
+        not currently triggerable (columns are `timestamptz`, always offset-carrying);
+        speculative hardening not warranted.
+  - Verified: `tsc` clean; ESLint clean; Prettier clean; affected suites 14/14
+        (login-page + brand-logo). Seed integration path not run here (needs the
+        disposable test DB).
+
+- **DONE — README install/admin rewrite + migrations doc §4 correction**
+  (`context/_change-readme-install-and-admin-plan.md`, D15). DOCUMENTATION ONLY,
+  implemented per §3:
+  - [x] §3.1 Intro reworded (from-scratch-rebuild → install + operate).
+  - [x] §3.2 Part 0 deleted; the port-3000 process-kill salvaged into Troubleshooting;
+        both `down -v` lines + the `git clean -fdx` dropped.
+  - [x] §3.3 Part A/B/C → Part 1/2/3; volume-persistence caution lines added to steps
+        5 (roles+passwords) and 6 (billing grant patch); in-body "Part A/B" refs (steps
+        7, 13, and the intro SSO note) retargeted to Part 1/2.
+  - [x] §3.4 Teardown replaced by "Running the stack day to day" (Start / Stop / Check /
+        After-pulling / Troubleshooting); Verify-a-real-execution folded in as the deep
+        health check; Credentials & endpoints moved below the new admin section.
+  - [x] §3.5 Useful scripts extended (`db:migrate`, `docker compose ps`, health curl).
+  - [x] R5 / §4 `db/migrations/README.md`: already reads the corrected "silently
+        skipped" form (timestamp-not-hash comparison) — NO change needed; the "wrong"
+        parenthetical the plan targeted was corrected in a prior change.
+  - Deviation from the plan's specified text (flagged): §3.4's line "`/api/health`
+    returning OK means the app is up **and** its database connection is live" is
+    FALSE — `app/api/health/route.ts` intentionally does no DB query (um30 liveness
+    probe; `/api/health/db` reserved, unimplemented). Rewrote the sentence + the
+    Useful-scripts label to say "app liveness (no DB query)" rather than ship the
+    incorrect claim.
+  - Open questions Q1 (one-sentence "how to start over" pointer) and Q2 (Windows-first
+    framing) left as-is — flagged in the plan for review, not part of the §3 spec.
+  - Verification: grep of README + wider repo for `Part 0`/`Part A/B/C` → zero README
+    hits (remaining hits are unrelated accounting-management specs referencing their
+    own plans); step numbering stays contiguous 1–14; all referenced npm scripts
+    (`db:migrate`/`db:setup`/`db:seed-sample`/`db:bootstrap-roles`) and `/api/health`
+    exist.
+
+- **DONE (code-complete, verified) — Landing Homepage, top-bar chrome, and
+  permission-filtered navigation** (`context/_change-homepage-topbar-nav-rbac-plan.md`).
+  Platform-level chrome change (authorized by the plan under `ai-workflow-rules.md`
+  §2.8). All seven units implemented exactly as specified:
+  - [x] U1 — `lib/nav-registry.ts` (`NAV_REGISTRY` via `as const satisfies` so
+        `NavHref` stays a literal union; `visibleSections` fail-closed) +
+        `components/nav-icons.ts` (`Record<NavHref, LucideIcon>`) +
+        `tests/lib/nav-registry.test.ts` + the §6.3 guardrail gate
+        (`tests/guardrails/nav-registry-guard.test.ts`: registry↔guard parity,
+        orphan check w/ `UNLISTED_BY_DESIGN`, icon exhaustiveness, no locked residue).
+  - [x] U2 — Accounts Settings guard EDIT→READ (D7); `canEdit` threaded to the five
+        mutation controls (disabled + `--action-disabled-bg` + title; wizard inputs
+        readOnly); `route-level-accounts-settings` guard assertion flipped to READ +
+        canEdit; new `accounts-settings-can-edit` test. Actions unchanged (still EDIT).
+  - [x] U3 — `admin-nav.tsx` reads `visibleSections` + `NAV_ICONS`; locked-item
+        branch + `Lock`/`hasLevel` deleted (D2/D6); divider count follows visible
+        sections; nav + accounts-context tests rewritten. Fixes the 8 unguarded links.
+  - [x] U4 — `app-shell.tsx` + `app-topbar.tsx` (new), `brand-logo.tsx` (topbar in;
+        nav/nav-collapsed/Monogram out), `admin-sidebar.tsx` slimmed to controlled
+        nav-only, `lib/sidebar.ts` `DEFAULT_SIDEBAR_COLLAPSED`+`resolveSidebarCollapsed`
+        (D9), `(app)/layout.tsx` renders `<AppShell>` in a flex-col shell. Tests moved
+        to app-topbar/app-shell; admin-layout/admin-sidebar/brand-logo rewritten.
+  - [x] U5 — `app/page.tsx` → `app/(app)/page.tsx` (Homepage directory, empty state,
+        redirect-preamble verbatim); `lib/root-redirect.ts` simplified to
+        `(session) → "/login" | "/set-password" | null`; `ROUTE_ORDER`/`RouteOrderEntry`
+        deleted; eslint `root-page` carve-out moved to `app/\(app\)/page.tsx` (escaped
+        parens) so the preamble keeps its db access; `home-page`/`root-redirect` tests.
+  - [x] U6 — `app_name` 40-char cap: `0005` description edited in place (D14),
+        `lib/config-limits.ts` (`APP_NAME_MAX_LENGTH`), write-service `VALUE_TOO_LONG`
+        + action passthrough, `ConfigEditDialog` `maxLength`+live counter+field error
+        (no `watch()` — tracked via field onChange), `db/migrations/README.md` §4
+        corrected (edited applied migration = silently *skipped*, not re-applied),
+        `migration.integration.test` description assertion + new write-length test.
+        **NOTE:** the one-off `UPDATE` for already-migrated environments + README
+        install/admin rewrite are **D15 — tracked in `_change-readme-install-and-admin-plan.md`**
+        (not this change); README.md untouched here.
+  - [x] U7 — §7 doc amendments: `architecture.md` §2 components/lib rows + §5 `/`
+        session-gated exception; `usrmgmt-architecture.md` `/` Homepage row + ROUTE_ORDER
+        retired + zero-grant-lands-on-Homepage; `acctmgmt-ui-context.md` + `ac15`/`ac17`
+        READ-with-disabled-controls; `ui-context.md` `--surface-topbar` in use + 40-char
+        budget; `ai-workflow-rules.md` new-page rule gains NAV_REGISTRY+NAV_ICONS;
+        `um28` records `app_logo_mark_path` as orphaned (D10). AGENTS.md already points here.
+
+  Verification: `tsc --noEmit` clean; full `eslint .` clean; Prettier clean on all
+  changed files; `npm run build` passes (`/` now served through the `(app)` shell).
+  Affected unit tests green: 143/143 across the 17 touched/new files. Full unit suite
+  = only the 5 PRE-EXISTING failing files remain (4 order/subscription action files +
+  `config.test.ts` env-artifact, all fail at HEAD, outside this blast radius) — one
+  self-introduced `grep-gates` regression (the `carriesAccountsContext` flag moved to
+  the registry) was caught and fixed. Integration assertions (`migration.integration`)
+  updated but not run here (need the disposable test DB).
+
+  Post-review fixes (xhigh code-review, all applied + verified — tsc/eslint/prettier
+  clean, build passes, affected suites green, full unit suite = same 5 pre-existing
+  failures only):
+  - [x] [authz] Homepage admitted a PENDING session (status check only rejected
+        DISABLED/DELETED), diverging from `getActiveUser`/Inv #4. Now, after the
+        force-password gate, a non-ACTIVE session is deleted + bounced to `/login`
+        (a PENDING SSO user whose activation never completed no longer sees the
+        directory). New `home-page` test covers it.
+  - [x] [perf] Moving `/` into `(app)` double-resolved the permission map + session +
+        user (layout + page). Added request-scoped `React.cache` wrappers in
+        `auth/guard.ts` (`loadSessionUser`, `getEffectivePermissions`) used by the
+        layout + Homepage; resolver stays uncached/framework-agnostic (note clarified).
+  - [x] [ux] `ConfigEditDialog`: clear the stale `VALUE_TOO_LONG` field error on edit;
+        count the app_name cap in Unicode code points (counter + write service) so
+        emoji/astral names aren't miscounted; counter reflects the trimmed/stored
+        value; dropped the UTF-16 `maxLength` (it can't count code points). New
+        emoji-safe write-service test.
+  - [x] [types] `visibleSections` now returns `VisibleNavSection` (href narrowed to
+        `NavHref`), so `NAV_ICONS[item.href]` needs no `as NavHref` cast — a missing
+        icon is a compile error end-to-end.
+  - [x] [hardening/cleanup] slugify Homepage section ids (`aria-labelledby`); shared
+        `EDIT_DISABLED_TITLE` (`components/accounts/edit-access.ts`) replacing the
+        triplicated constant; broadened `admin-layout.test` mock to cover non-admin
+        sections.
+  - Left as plan-intended (noted, not "fixed"): `markSrc` read (§7.9 deferral),
+    sign-out reuse (§3.5), gradient empty-state (ui-context §4), brand+Home dual
+    `/` link (§3.5).
+
+  Post-delivery UI adjustments (user request, applied + verified):
+  - [x] Top bar shares the sidebar color (`--surface-nav`, unified chrome separated
+        by the `--color-primary-900` hairline); `--surface-topbar` now defined-but-unused
+        (ui-context token note updated).
+  - [x] Nav + Homepage section order → **Billing, Customer, Accounts, Products,
+        Administration** (reordered once in `NAV_REGISTRY`; both consumers follow;
+        section-order tests realigned).
+  - [x] Homepage tiles: horizontal chips (icon beside label, not stacked), squeezed
+        icon (24→18), 5 side by side at every width (`grid-cols-5`; labels wrap within
+        the chip when narrow). (A responsive `sm:3 md:4 lg:5` was tried first but
+        yielded only 3–4 per row below the lg viewport — forced to 5.)
+
 - **DONE (code-complete, verified) — Dynamic application name** (`context/_change-dynamic-app-name-plan.md`).
   Drive the wordmark / monogram / `<title>` from the existing `app`/`app_name`
   `system_config` row (um28 open item #2). FRONTEND-only: one new `getAppName()`

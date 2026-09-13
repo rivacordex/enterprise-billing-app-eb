@@ -3,6 +3,70 @@
 Update this file after every meaningful implementation change.
 
 > **Pending restructure — `context/workflow-management/specs/wfm01-engine-restructure.md`.** Path references below (`flows/billrun/…`) record the **current** on-disk layout and stay accurate until `wfm01` executes in the code repo. After that move they become function-first: `workflow-management/flows/bill-run-processor/…` and `workflow-management/flows/bill-run-distributor/…`. Do not rewrite historical entries pre-emptively.
+>
+> **~~Pending~~ — `wfm01` HAS executed (commit `0b31f50`, on `dev1`).** The note
+> above is retained as history: `rating-engine/` is now `workflow-management/`
+> and the function-first flow paths it describes are the live layout. Historical
+> entries below are deliberately NOT rewritten, per that note — read any
+> `rating-engine/…` or `flows/billrun/…` path below as its
+> `workflow-management/…` equivalent.
+
+> **2026-09-11 — local dev stack re-provisioned and verified on the post-`wfm01`
+> layout.** Brought up from a full `down -v` with:
+>
+> ```
+> docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml up -d --build
+> ```
+>
+> Seven services: `db` (:5432), `setup`, `app` (:3000), `azurite` (:10000),
+> `kestra-setup`, `workflow-engine` (Kestra 1.3.35, :8085) and the new one-shot
+> `flow-deploy`. There is **no Caddy/`engine-tls` service** — the local TLS
+> proxy was an unpushed experiment and is not needed; the app talks to the
+> engine over plain HTTP locally.
+>
+> Verified facts (supersede any "not applied"/"never started"/"no local Postgres"
+> wording below):
+>
+> - **39 migrations applied**; **9 `partman.part_config` parents** registered
+>   (`core.audit_log`, the six `billing.*`, `rating.process_log`,
+>   `rating.udr_rated`); `cron.job` holds `audit-log-partman-maintenance`.
+> - **Every seed ran** (admin, RBAC/14 permissions, product, customer, accounts,
+>   ordering, billing, rating catalog). `azurite` is serving, and Kestra is
+>   actively using its `kestra-internal` blob container.
+> - **The `billrun` namespace now exists.** `flow-deploy` deployed all six flows
+>   idempotently (`--no-delete`): `rating.{ran-usage-rating, completeness-check,
+>   log-sweep, stranded-batch-reconcile}` and `billrun.{bill_run_processing,
+>   bill_run_distribution}`. This closes the "no `billrun` namespace / no flows"
+>   half of bm16/bm20's live-Kestra smoke gate; the gate itself still needs a
+>   real triggered run asserted end to end.
+>
+> **Three bring-up fixes applied (they had existed only in an uncommitted working
+> tree and were lost in a reset, so the committed stack could not start):**
+>
+> 1. `docker-compose.dev.yml` — `setup` ran `db:setup && db:setup-partman`, but
+>    `db:setup` already chains `db:setup-partman{,-billing,-rating}`. The
+>    trailing call is removed.
+> 2. `workflow-management/dev/docker-compose.dev.yml` — `kestra-setup` had no
+>    `depends_on` and raced both `db` and `setup`. It and `setup` share the
+>    `node_modules` volume and both run `npm install`; the concurrent installs
+>    corrupted it (observed: `ENOTEMPTY … rmdir '/app/node_modules/rolldown/dist'`
+>    in `setup`, `TAR_ENTRY_ERROR` in `kestra-setup`), which needs a `down -v` to
+>    recover. Now gated on `db` healthy + `setup` completed.
+> 3. `db/bootstrap/{audit,billing,rating}-partman-setup.sql` — all nine
+>    `create_parent` calls are wrapped in an
+>    `IF NOT EXISTS (SELECT 1 FROM partman.part_config …)` guard. `create_parent`
+>    is not idempotent (it aborts with
+>    `duplicate key value violates unique constraint "part_config_parent_table_pkey"`),
+>    so **any** `setup` re-run against a persisted `pgdata` failed the whole
+>    bootstrap and blocked `app` on `service_completed_successfully`. Verified
+>    after the fix: a plain `down` + `up -d` on preserved volumes re-ran `setup`
+>    to **exit 0** with all data intact. A `down -v` is no longer required to
+>    restart the stack.
+>
+> Still genuinely outstanding: a real posted run, `db:seed-sample`'s checklist,
+> the DB-gated integration suites, and bm18's Chromium-in-container render. The
+> DB-gated suites must **NOT** be pointed at this stack's `DATABASE_URL` — they
+> `DROP SCHEMA … CASCADE` and would wipe the seed data just provisioned.
 
 _Compressed 2026-08-26 — build plan is complete; per-unit narrative and test-file
 enumerations were trimmed to key facts + decisions. Full history:

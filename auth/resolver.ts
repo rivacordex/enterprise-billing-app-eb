@@ -25,9 +25,14 @@ export async function findActiveUserById(
 }
 
 // The single effective-permission resolver (Invariant #5). Pure query +
-// computation: never caches, never writes, never throws a redirect.
-// Framework-agnostic — no `next/*` or `app/**` import — so it can be called
-// from both page guards and future action/handler guards.
+// computation: never writes, never throws a redirect, and never caches ACROSS
+// requests (Inv #15/#20 — evaluated against the live principal every time).
+// Framework-agnostic — no `next/*`/`react`/`app/**` import — so it can be
+// called from both page guards and action/handler guards. A request-scoped
+// `React.cache` wrapper (`getEffectivePermissions` in `auth/guard.ts`) dedupes
+// repeat calls WITHIN one RSC render (e.g. the `/` shell layout + Homepage);
+// that is per-request memoization, not a cross-request cache, so the invariant
+// holds — this function stays the uncached source of truth.
 export async function resolveEffectivePermissions(
   userId: string,
 ): Promise<EffectivePermissionMap> {

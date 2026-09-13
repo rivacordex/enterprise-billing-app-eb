@@ -4,6 +4,8 @@ This file extends the shared `context/ui-context.md` — all brand scales, neutr
 
 **No AI features in this module** (architecture §5): `--ai-*` tokens and `--gradient-ai` must not appear on any `/accounts/**` or accounts-settings surface.
 
+**Accounts Settings is READ-with-disabled-controls (D7, homepage-topbar-nav change).** `/administration/accounts-settings` guards at `accounts_config:READ` (not EDIT), so the role allowed to read the linked `/flows` reference can reach it. Its five mutation controls (`AddReasonCodeButton`, `ReasonCodeActions`, `AddBillCycleButton`, `BillCycleActions`, `WizardDefaultsForm`) take a `canEdit` boolean and render disabled — trigger buttons on `--action-disabled-bg` with a "Requires accounts configuration edit access" `title`; `WizardDefaultsForm` inputs `readOnly`, submit disabled — unless the viewer holds `:EDIT`. Disabled controls stay in the DOM (a greyed control reads as "not yours to change"; a missing one reads as broken). The backing Server Actions still re-check `:EDIT`, so greying is UX only (Inv. #3).
+
 ---
 
 ## 1. Module Color Aliases

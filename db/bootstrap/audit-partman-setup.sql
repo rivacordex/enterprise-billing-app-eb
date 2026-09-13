@@ -45,14 +45,27 @@ END $$;
 -- default behaviour (p_default_table := true) would try to CREATE+ATTACH its own
 -- audit_log_default and fail with "already a partition". We keep the migration's
 -- default and tell pg_partman not to manage one.
-SELECT partman.create_parent(
-  p_parent_table  := 'core.audit_log',
-  p_control       := 'created_datetime',
-  p_interval      := '1 month',
-  p_type          := 'range',
-  p_premake       := 4,           -- keep 4 future months pre-created
-  p_default_table := false
-);
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'core.audit_log') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'core.audit_log',
+      p_control       := 'created_datetime',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,           -- keep 4 future months pre-created
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
 --> statement-breakpoint
 
 -- 7-year retention; drop (not detach) out-of-window partitions.

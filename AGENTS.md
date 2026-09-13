@@ -11,7 +11,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 Read the following files in order before implementing
 or making any architectural decision related to the change required
 
-1. `context/_change-dynamic-app-name-plan.md` 
+1. `context/_change-homepage-topbar-nav-rbac-plan.md` 
 2. `context/architecture.md` 
 
  <!--

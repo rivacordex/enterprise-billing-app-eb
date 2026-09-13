@@ -646,10 +646,14 @@ describe("grep gate — inv. #17: selection context is URL-derived and nav-prese
   });
 
   it("the Accounts nav section carries the selection context onto every link (D7)", () => {
+    // The flag is declared once in the shared nav registry (homepage-topbar-nav
+    // plan §3.1) and consumed by admin-nav, which builds each Accounts link from
+    // the parsed context; parseAccountsContext remains the sole parser
+    // (code-standards §3.1).
+    const registry = read("lib/nav-registry.ts");
+    expect(registry).toContain("carriesAccountsContext: true");
+
     const nav = read("components/admin-nav.tsx");
-    // The Accounts section is flagged and its links are built from the parsed
-    // context; parseAccountsContext remains the sole parser (code-standards §3.1).
-    expect(nav).toContain("carriesAccountsContext: true");
     expect(nav).toContain("parseAccountsContext");
     expect(nav).toMatch(/carriesAccountsContext && ctxQuery/);
   });
