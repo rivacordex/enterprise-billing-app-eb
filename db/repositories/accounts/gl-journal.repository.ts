@@ -138,7 +138,7 @@ export const glJournalRepository = {
       account_id: string;
       account_name: string;
       amount: string;
-      event_at: Date;
+      event_at: string;
       doc_id: string | null;
     }>(sql`
       SELECT
@@ -167,7 +167,11 @@ export const glJournalRepository = {
       accountId: r.account_id,
       accountName: r.account_name,
       amount: r.amount,
-      eventAt: r.event_at,
+      // Raw `db.execute` bypasses Drizzle's `timestamp({ mode: "date" })`
+      // mapping, so `event_at` arrives as a string; coerce to honour the `Date`
+      // return type (else `Intl.DateTimeFormat().format()` throws
+      // `RangeError: Invalid time value`).
+      eventAt: new Date(r.event_at),
       docId: r.doc_id,
     }));
 
