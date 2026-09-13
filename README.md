@@ -3,11 +3,11 @@
 Next.js + Drizzle + PostgreSQL billing platform, with a **Kestra** workflow
 engine (the shared `workflow-engine`) for the rating and bill-run pipelines.
 
-This README is the **complete, from-scratch build/installation guide for the
-local development environment** — how to wipe any existing local setup and
-rebuild the database, the app, and the workflow-management (Kestra) layer
-exactly as it runs today. The sequence below is the one that was last executed
-end-to-end, so following it top-to-bottom reproduces a working stack.
+This README is the **complete installation and operations guide for the local
+development environment** — how to set up the database, the app, and the
+workflow-management (Kestra) layer from nothing, and how to run them day to day.
+The sequence in Parts 1–2 is the one that was last executed end-to-end, so
+following it top-to-bottom on a clean machine produces a working stack.
 
 The topology it produces:
 
@@ -36,9 +36,12 @@ Container Apps ingress provides HTTPS and the flag is left unset — see
 
 > **Design note — host-based, least-privilege.** The DB runs in Docker but the
 > app runs on the host and connects as the least-privilege `app_runtime` role
-> (not the `postgres` superuser). The superuser connection
-> (`BOOTSTRAP_DATABASE_URL`) is used only for provisioning (migrations, roles,
-> partman). This mirrors production, where the app never has DDL rights.
+> (not the `postgres` superuser). The superuser is used only for provisioning:
+> `db:bootstrap-roles` and partman setup read `BOOTSTRAP_DATABASE_URL` directly,
+> while migrations run as the superuser via a one-off `DATABASE_URL` override
+> (Part 1 step 4 / "After pulling new commits") — `db:migrate` itself always
+> reads `DATABASE_URL`. This mirrors production, where the app never has DDL
+> rights.
 >
 > A fully-containerized alternative exists (`docker compose -f
 > docker-compose.dev.yml up`) that runs everything in Docker as `postgres` — but
@@ -60,35 +63,7 @@ Container Apps ingress provides HTTPS and the flag is left unset — see
 
 ---
 
-## Part 0 — Wipe any existing local setup (clean slate)
-
-Skip this on a first-ever install. Run it to **rebuild from scratch** — it
-tears down the `enterprise-billing-app` containers and **wipes the DB, Kestra,
-and Azurite data volumes**, so Part A + Part B below start completely fresh.
-Only the `enterprise-billing-app` project is touched; unrelated Docker
-containers are left alone.
-
-```powershell
-# 1. Stop the host dev server if one is running (frees port 3000). Find + kill:
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -match 'next dev' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-
-# 2. Tear down every container + named volume across all three compose files.
-docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml down -v --remove-orphans
-docker compose down -v --remove-orphans
-
-# 3. Clear the ephemeral Kestra drop-zone / log artifacts (keeps tracked
-#    .gitkeep + README.md — git clean only removes untracked/ignored files).
-git clean -fdx workflow-management/dev/logs workflow-management/dev/landing workflow-management/dev/archive workflow-management/dev/error
-```
-
-> Bash: same commands, minus the PowerShell process-kill (use your own
-> `pkill -f "next dev"`).
-
----
-
-## Part A — Database + app
+## Part 1 — Database + app
 
 ### 1. Install dependencies
 
@@ -107,7 +82,7 @@ Copy-Item .env.example .env
 Then set the local-dev values in `.env`. The full working set is below —
 **every value here is a dummy local-dev credential** (see the banner at the
 top). Entra SSO is optional and left blank (local email/password sign-in is
-unaffected); the bill-run engine block is wired in Part B.
+unaffected); the bill-run engine block is wired in Part 2.
 
 ```dotenv
 NODE_ENV=development
@@ -187,6 +162,10 @@ docker exec -e PGPASSWORD=postgres enterprise-billing-app-db-1 `
   -c "ALTER ROLE app_migrate WITH PASSWORD 'apprun_local_dev_pw';"
 ```
 
+> ⓘ These roles and passwords live in the Postgres **data volume**, not in a
+> migration — they are created once here and persist for the life of the volume.
+> If the volume is ever removed, re-run this step.
+
 ### 6. Grant `app_runtime` the bm-era billing tables ⚠️ required
 
 Because the initial migrate ran as the superuser in one shot (not incrementally
@@ -214,6 +193,10 @@ docker exec -e PGPASSWORD=apprun_local_dev_pw enterprise-billing-app-db-1 `
   psql -U app_runtime -d enterprise_billing -tAc "SELECT count(*) FROM billing.bill_run;"
 ```
 
+> ⓘ These grants live in the Postgres **data volume**, not in a migration — they
+> are applied once here and persist for the life of the volume. If the volume is
+> ever removed, re-run this step.
+
 ### 7. Run the app
 
 ```powershell
@@ -223,12 +206,12 @@ npm run dev
 Open http://localhost:3000 and log in with `BOOTSTRAP_ADMIN_EMAIL` /
 `BOOTSTRAP_ADMIN_PASSWORD` (default `admin@billing.com` / `16Chars-Password`).
 
-At this point the app runs against the stub bill-run engine — Part B below wires
+At this point the app runs against the stub bill-run engine — Part 2 below wires
 it to a real Kestra.
 
 ---
 
-## Part B — Workflow management (Kestra) + rating/bill-run flows
+## Part 2 — Workflow management (Kestra) + rating/bill-run flows
 
 > **Local topology.** The base deployment runs all functions on **one** shared
 > Kestra instance (`workflow-engine`), hosting both the `rating` and `billrun`
@@ -335,7 +318,7 @@ so a UI-triggered run gets a real Kestra `executionId` (and "Check status" /
 
 ---
 
-## Part C — Optional: the `_SAMPLE_` bill-run demo scenario
+## Part 3 — Optional: the `_SAMPLE_` bill-run demo scenario
 
 Seeds an unmistakably-fake `_SAMPLE_` customer + charges so you can click a bill
 run through the UI end-to-end (real Kestra `executionId`, placeholder badge).
@@ -363,7 +346,7 @@ real). Invoice-PDF rendering also needs Chromium on the host once:
 `db:seed-sample` writes `_SAMPLE_` rows into `rating.udr_rated`, and the
 least-privilege `app_runtime` role deliberately has **no INSERT on rating
 tables** (only `rating_runtime` writes rated usage — architecture role
-boundary). So run it with the superuser `DATABASE_URL`, exactly like the Part A
+boundary). So run it with the superuser `DATABASE_URL`, exactly like the Part 1
 baseline seeds:
 
 ```powershell
@@ -387,6 +370,115 @@ won't advance the run to `PROCESSED`.
 
 ---
 
+## Running the stack day to day
+
+After Part 1 (and Part 2, if you need the workflow engine), this is all you need.
+
+### Start
+
+```powershell
+# 1. Database — always needed
+docker compose start db
+
+# 2. Workflow engine + blob store — only for rating / bill-run work
+docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml start workflow-engine azurite
+
+# 3. App (host)
+npm run dev
+```
+
+First run of the day, or after a Docker Desktop restart, `start` may report the
+containers don't exist — use `up -d` instead of `start` for the same services;
+it reuses the existing volumes and data.
+
+### Stop
+
+```powershell
+# App: Ctrl-C in the dev-server terminal
+docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml stop azurite workflow-engine
+docker compose stop db
+```
+
+`stop` halts the containers and **keeps all data**. Restart with the Start
+block above; nothing needs re-seeding, re-granting, or re-migrating.
+
+### Check what's running
+
+```powershell
+docker compose ps
+curl.exe http://localhost:3000/api/health
+```
+
+`/api/health` returning OK means the app process is up and serving. It is a
+pure liveness probe and deliberately does **no** DB query (so a transient DB
+blip can't trip it into a restart loop) — a dedicated DB-connectivity check
+(`/api/health/db`) is reserved but not yet implemented. For a deeper check that
+the workflow engine is genuinely reachable and executing, trigger a real
+execution:
+
+```powershell
+$U = "workflow-ops@billing.ops"; $P = "kestra_dev_dummy_Password1"
+curl.exe -u "${U}:${P}" -X POST -F 'ban_ids=["BAN0001","BAN0002"]' `
+  http://localhost:8085/api/v1/main/executions/billrun/bill_run_processing
+```
+
+### After pulling new commits
+
+```powershell
+npm install          # if package.json changed
+
+# New migrations are DDL — they must run as the superuser/owner, because the
+# app_runtime DATABASE_URL in your .env has no DDL rights. Override it for this
+# one command (same idiom as Part 1 step 4), then clear the override so the app
+# reconnects as app_runtime:
+$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/enterprise_billing'
+npm run db:migrate   # if db/migrations/ gained a file
+Remove-Item Env:DATABASE_URL
+
+npm run dev
+```
+
+Migrations are forward-only and idempotent — running `db:migrate` when there is
+nothing new applies nothing. If a pulled migration adds a **new schema**, also
+re-run `npm run db:bootstrap-roles` (Part 1 step 5) so `app_runtime` picks up its
+grants on the new objects.
+
+> **Config-row descriptions and already-migrated databases.** Drizzle's migrator
+> applies a migration only when its journal timestamp is newer than the last one
+> applied; it does not re-check file hashes. So if a _previously applied_
+> migration's SQL is edited, your existing database silently skips it — only a
+> brand-new database picks the change up. When that happens for a `system_config`
+> row (as it did for `app`/`app_name`'s description), bring an existing
+> environment level with one statement:
+>
+> ```sql
+> UPDATE core.system_config
+>    SET description = 'Application display name — drives the top-bar wordmark, the sign-in page and browser tab titles. Maximum 40 characters; longer values are truncated with an ellipsis in the top bar.'
+>  WHERE config_group = 'app' AND config_key = 'app_name';
+> ```
+
+### Troubleshooting
+
+**Port 3000 is already in use.** A stray `next dev` is still running. On Windows:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -match 'next dev' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+Bash: `pkill -f "next dev"`.
+
+**The app starts but every page 500s.** The database container is stopped, or
+the app is connecting as a role whose password was never set — re-run Part 1
+step 5.
+
+**Kestra is up but executions never start.** Check the app is pointed at it
+(Part 2 step 11) and that `BILLRUN_ENGINE_LOOPBACK=true` is set in `.env`;
+without it `lib/config.ts` rejects the plain-HTTP loopback engine URL.
+
+---
+
 ## Credentials & endpoints (local dev)
 
 All values below are **local-only dummies** — never used in any real
@@ -402,26 +494,6 @@ environment (production sources them from Key Vault via Managed Identity).
 | `kestra_engine` | `kestra_dev_password` |
 | Azurite blob | Microsoft's published well-known dev account/key (`devstoreaccount1`) |
 
-## Verify a real execution
-
-```powershell
-$U = "workflow-ops@billing.ops"; $P = "kestra_dev_dummy_Password1"
-curl.exe -u "${U}:${P}" -X POST -F 'ban_ids=["BAN0001","BAN0002"]' `
-  http://localhost:8085/api/v1/main/executions/billrun/bill_run_processing
-```
-
-## Teardown
-
-```powershell
-# stop app: Ctrl-C the dev server (or kill it — see Part 0 step 1)
-docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml stop azurite workflow-engine
-docker compose stop db          # keep data
-```
-
-To **fully wipe and rebuild**, run **Part 0** (which `down -v`'s every volume),
-then repeat Part A + Part B — including the step-6 grant patch and the step-8
-role passwords, which do not survive a volume wipe.
-
 ---
 
 ## Useful scripts
@@ -432,8 +504,11 @@ role passwords, which do not survive a volume wipe.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | unit + integration suites |
 | `npm run db:setup` | migrate + partman + full baseline seed |
-| `npm run db:seed-sample` | `_SAMPLE_*` bill-run demo scenario — run as **superuser**, see Part C |
+| `npm run db:migrate` | apply any new forward migrations (idempotent) |
+| `npm run db:seed-sample` | `_SAMPLE_*` bill-run demo scenario — run as **superuser**, see Part 3 |
 | `npm run db:bootstrap-roles` | create `app_runtime`/`app_migrate` + grants |
+| `docker compose ps` | what's running, and on which ports |
+| `curl http://localhost:3000/api/health` | app liveness (no DB query) |
 
 ## Learn more
 

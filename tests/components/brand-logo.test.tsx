@@ -37,3 +37,32 @@ describe("BrandLogo — image (logo present)", () => {
     );
   });
 });
+
+// Regression: an extremely wide SVG (viewBox-only, no intrinsic size) must not
+// escape its bounded parent. Both the plate (a centered flex item) and the
+// <img> carry `max-w-full min-w-0` so the logo shrinks to fit rather than
+// overflowing the login card / top-bar brand slot.
+describe("BrandLogo — wide-logo width constraints", () => {
+  const WIDE_LOGO: BrandingLogo = {
+    // A 2000x40 viewBox with no width/height — the exact wide, intrinsically
+    // unsized case the sizing classes guard against.
+    src: "/brand/wide-banner.svg",
+    alt: "Extremely Wide Banner Logo",
+  };
+
+  it.each(["login", "topbar"] as const)(
+    "keeps the %s img constrained (max-w-full + min-w-0)",
+    (variant) => {
+      render(
+        <BrandLogo variant={variant} logo={WIDE_LOGO} appName="Ignored" />,
+      );
+      const img = screen.getByRole("img", {
+        name: "Extremely Wide Banner Logo",
+      });
+      expect(img).toHaveClass("max-w-full", "min-w-0", "object-contain");
+
+      // The plate wrapper is the flex item that must not expand past its parent.
+      expect(img.parentElement).toHaveClass("max-w-full", "min-w-0");
+    },
+  );
+});

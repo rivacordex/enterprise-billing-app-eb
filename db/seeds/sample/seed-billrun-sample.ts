@@ -50,39 +50,52 @@ const SAMPLE_OFFERING_NAME = "_SAMPLE_ 5G Demo Plan";
 const SAMPLE_PRICE_NAME = "_SAMPLE_ Monthly Recurring Charge";
 const SAMPLE_RECURRING_AMOUNT = "199.00";
 
+const NON_PROD_HOSTS = new Set(["localhost", "127.0.0.1", "db", "postgres"]);
+
+// Deliberate waiver of the non-prod host check, for a non-local demo box. It
+// applies to EVERY connection this seed touches — the app `DATABASE_URL` and the
+// privileged `BOOTSTRAP_DATABASE_URL` teardown connection alike.
+function isSampleSeedOverride(): boolean {
+  return process.env.ALLOW_SAMPLE_SEED === "true";
+}
+
+// Refuses a connection string that looks like a production target. Used for BOTH
+// `DATABASE_URL` and the privileged `BOOTSTRAP_DATABASE_URL`: the latter drives a
+// destructive `DELETE FROM billing.pgledger_accounts`, and is read only via raw
+// `process.env` (never in `lib/config`), so it must clear the same gate rather
+// than slip past a guard that only ever inspected `DATABASE_URL`.
+function assertNonProductionUrl(url: string, label: string): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error(
+      `db:seed-sample refused: ${label} could not be parsed as a URL.`,
+    );
+  }
+
+  if (!NON_PROD_HOSTS.has(host) || config.NODE_ENV === "production") {
+    throw new Error(
+      `db:seed-sample refused: ${label} looks like a production target ` +
+        `(host="${host}", NODE_ENV="${config.NODE_ENV}"). This seed writes and ` +
+        `deletes unmistakably-fake "_SAMPLE_" data and must never run against ` +
+        `production. Set ALLOW_SAMPLE_SEED=true to override for a deliberate ` +
+        `non-local demo box.`,
+    );
+  }
+}
+
 // bm15-spec §Design — the two hard rules that make this data impossible to
 // ship to prod: never in `db:setup`, and refuses to run against a production
 // target. Aborts loudly, before any write.
 function assertNonProductionTarget(): void {
-  if (process.env.ALLOW_SAMPLE_SEED === "true") {
+  if (isSampleSeedOverride()) {
     logger.warn(
       "db:seed-sample: ALLOW_SAMPLE_SEED=true — proceeding without the non-prod host check.",
     );
     return;
   }
-
-  const NON_PROD_HOSTS = new Set(["localhost", "127.0.0.1", "db", "postgres"]);
-  let host: string;
-  try {
-    host = new URL(config.DATABASE_URL).hostname;
-  } catch {
-    throw new Error(
-      "db:seed-sample refused: DATABASE_URL could not be parsed as a URL.",
-    );
-  }
-
-  const isNonProdHost = NON_PROD_HOSTS.has(host);
-  const isNonProdEnv = config.NODE_ENV !== "production";
-
-  if (!isNonProdHost || !isNonProdEnv) {
-    throw new Error(
-      `db:seed-sample refused: this looks like a production target ` +
-        `(host="${host}", NODE_ENV="${config.NODE_ENV}"). This seed writes ` +
-        `unmistakably-fake "_SAMPLE_" billing data and must never run ` +
-        `against production. Set ALLOW_SAMPLE_SEED=true to override for a ` +
-        `deliberate non-local demo box.`,
-    );
-  }
+  assertNonProductionUrl(config.DATABASE_URL, "DATABASE_URL");
 }
 
 // bm15-spec §Design "Idempotent + re-runnable" — purges any prior _SAMPLE_*
@@ -90,15 +103,24 @@ function assertNonProductionTarget(): void {
 // order before rebuilding, so a re-run is clean. A no-op on the first run.
 async function purgeSampleGraph(): Promise<void> {
   // pgledger accounts provisioned for the prior run's FAs/BANs during
-  // onboarding. Collected inside the teardown transaction and deleted through a
-  // privileged connection *after* it commits (see deleteOrphanedLedgerAccounts):
-  // `app_runtime` (this seed's connection) has no privileges on
-  // `billing.pgledger_accounts` by design (Inv. #18 — the ledger is write-only
-  // via SECURITY DEFINER functions), so deleting only the `ledger_binding` rows
-  // would strand these accounts as "unmapped" in `gl_resolution_view` on every
-  // re-run — the exact defect this guards against.
-  let orphanLedgerAccountIds: string[] = [];
-  await db.transaction(async (tx) => {
+  // onboarding. Collected inside the teardown transaction; `app_runtime` (this
+  // seed's connection) has no privileges on `billing.pgledger_accounts` by
+  // design (Inv. #18 — the ledger is write-only via SECURITY DEFINER functions),
+  // so they are deleted through a privileged connection. That connection is
+  // opened + probed *inside* the transaction (before its deletes commit), so a
+  // bad/missing/prod BOOTSTRAP_DATABASE_URL rolls the teardown back instead of
+  // stranding the accounts as "unmapped" in `gl_resolution_view`; the open
+  // handle is then reused for the delete once the transaction commits.
+  // The teardown transaction returns the orphaned pgledger account ids it
+  // collected plus the privileged connection it opened + probed — the caller
+  // deletes through that connection after commit, then closes it.
+  const { orphanLedgerAccountIds, admin } = await db.transaction(async (tx) => {
+    let orphanLedgerAccountIds: string[] = [];
+    // Privileged teardown connection: opened by openPrivilegedConnection() once
+    // we know orphaned accounts exist (before these deletes commit) and reused
+    // for the delete after commit. On a mid-teardown throw it is dropped by the
+    // process exit in main()'s catch.
+    let admin: postgres.Sql | null = null;
     const [org] = await tx
       .select({ organizationId: organization.organizationId })
       .from(organization)
@@ -159,6 +181,14 @@ async function purgeSampleGraph(): Promise<void> {
                   "prior _SAMPLE_ customer.",
               );
             }
+
+            // Open + probe the privileged connection NOW, before the destructive
+            // deletes below commit, so a missing / production / unreachable
+            // BOOTSTRAP_DATABASE_URL rolls the whole teardown back instead of
+            // stranding these accounts "unmapped" forever (the organization row
+            // this purge keys on is deleted below, so no re-run could reach
+            // them). The open handle is reused for the delete after commit.
+            admin = await openPrivilegedConnection();
           }
         }
 
@@ -275,48 +305,85 @@ async function purgeSampleGraph(): Promise<void> {
           eq(productOffering.productOfferingId, offering.productOfferingId),
         );
     }
+
+    return { orphanLedgerAccountIds, admin };
   });
 
-  // The app-side teardown has committed; the collected accounts are now
-  // unbound and (guarded above) carry no entries. Remove them through the
-  // privileged connection so a re-run starts from a clean ledger.
-  if (orphanLedgerAccountIds.length > 0) {
-    await deleteOrphanedLedgerAccounts(orphanLedgerAccountIds);
+  // The app-side teardown has committed; the collected accounts are now unbound
+  // and (guarded above) carry no entries. Delete them through the already-open,
+  // already-probed privileged connection, then close it.
+  if (orphanLedgerAccountIds.length > 0 && admin) {
+    try {
+      await deleteOrphanedLedgerAccounts(admin, orphanLedgerAccountIds);
+    } finally {
+      await admin.end();
+    }
   }
 }
 
-// Deletes now-unbound pgledger accounts left by a prior sample run. Uses
-// BOOTSTRAP_DATABASE_URL (the same privileged connection db:migrate uses)
-// because `app_runtime` has no DML on `billing.pgledger_accounts` (Inv. #18).
-// Safe: callers pass only accounts that are unbound and free of ledger entries,
-// so each has a zero balance and no transfer/entry rows reference it.
-async function deleteOrphanedLedgerAccounts(
-  accountIds: string[],
-): Promise<void> {
-  const adminUrl = process.env.BOOTSTRAP_DATABASE_URL;
-  if (!adminUrl) {
+// Opens AND probes the privileged connection used to delete orphaned pgledger
+// accounts (`app_runtime` has no DML on `billing.pgledger_accounts`, Inv. #18).
+// Called inside the teardown transaction, before its destructive deletes commit,
+// so a missing / production / unreachable BOOTSTRAP_DATABASE_URL throws here and
+// rolls the teardown back — rather than committing the binding + organization
+// deletes and only then discovering the pgledger accounts can't be removed
+// (which would strand them "unmapped" forever, the org key being deleted too).
+//
+// BOOTSTRAP_DATABASE_URL is the superuser/owner DSN used to provision the
+// database (the same one `db:setup` and `db:bootstrap-roles` use) — NOT the
+// least-privilege app_runtime `DATABASE_URL` that `db:migrate` reads.
+async function openPrivilegedConnection(): Promise<postgres.Sql> {
+  const url = process.env.BOOTSTRAP_DATABASE_URL;
+  if (!url) {
     throw new Error(
-      "db:seed-sample: BOOTSTRAP_DATABASE_URL is not set. Tearing down a prior " +
-        "sample run requires deleting its pgledger accounts through a privileged " +
-        "connection (app_runtime has no privileges on billing.pgledger_accounts " +
-        "by design). Set BOOTSTRAP_DATABASE_URL to the same superuser/app_migrate " +
-        "connection string db:migrate uses.",
+      "db:seed-sample: tearing down a prior _SAMPLE_ run requires " +
+        "BOOTSTRAP_DATABASE_URL — its pgledger accounts must be deleted through a " +
+        "privileged connection (app_runtime has no privileges on " +
+        "billing.pgledger_accounts by design, Inv. #18). Set it to the " +
+        "superuser/owner DSN used to provision the database (the same one " +
+        "db:setup and db:bootstrap-roles use), then re-run.",
     );
+  }
+  if (!isSampleSeedOverride()) {
+    assertNonProductionUrl(url, "BOOTSTRAP_DATABASE_URL");
   }
 
-  const admin = postgres(adminUrl, { max: 1 });
+  const admin = postgres(url, { max: 1 });
   try {
-    const deleted = await admin<{ name: string }[]>`
-      DELETE FROM billing.pgledger_accounts
-      WHERE id IN ${admin(accountIds)}
-      RETURNING name
-    `;
-    logger.info(
-      `db:seed-sample: removed ${deleted.length} orphaned pgledger account(s) from the prior _SAMPLE_ run.`,
-    );
-  } finally {
+    // Fail fast on an unreachable / bad-credential / wrong-database DSN while the
+    // teardown can still roll back; also proves this connection can reach the
+    // table it is about to delete from.
+    await admin`SELECT 1 FROM billing.pgledger_accounts WHERE false`;
+  } catch (err) {
     await admin.end();
+    throw new Error(
+      "db:seed-sample: could not reach billing.pgledger_accounts through " +
+        "BOOTSTRAP_DATABASE_URL to tear down the prior _SAMPLE_ run (the teardown " +
+        "was rolled back — nothing deleted). Check the DSN points at this same " +
+        "database with sufficient privileges. Underlying error: " +
+        (err instanceof Error ? err.message : String(err)),
+    );
   }
+  return admin;
+}
+
+// Deletes now-unbound pgledger accounts left by a prior sample run, through the
+// pre-opened, pre-probed privileged connection (openPrivilegedConnection). Safe:
+// callers pass only accounts that are unbound and free of ledger entries, so each
+// has a zero balance and no transfer/entry rows reference it. The caller owns the
+// connection lifecycle (it is reused from the teardown probe, then closed).
+async function deleteOrphanedLedgerAccounts(
+  admin: postgres.Sql,
+  accountIds: string[],
+): Promise<void> {
+  const deleted = await admin<{ name: string }[]>`
+    DELETE FROM billing.pgledger_accounts
+    WHERE id IN ${admin(accountIds)}
+    RETURNING name
+  `;
+  logger.info(
+    `db:seed-sample: removed ${deleted.length} orphaned pgledger account(s) from the prior _SAMPLE_ run.`,
+  );
 }
 
 // A dedicated `_SAMPLE_` offering — the seeded catalog offerings

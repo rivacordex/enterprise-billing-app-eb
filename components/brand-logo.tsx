@@ -30,6 +30,14 @@ interface BrandLogoProps {
 const PLATE_BASE =
   "inline-flex items-center justify-center rounded-sm border bg-[color:var(--surface-card)] p-1.5";
 
+// Login-variant wordmark typography. Shared so the logo-absent fallback here and
+// the app-name shown beneath a present logo on the login page (which appends its
+// own top margin) stay in lockstep — edit the treatment in one place.
+// `max-w-full truncate`: an over-long admin-set app_name clips with an ellipsis
+// rather than overflowing the login card.
+export const LOGIN_WORDMARK_CLASS =
+  "max-w-full truncate text-h4 font-semibold text-foreground";
+
 export function BrandLogo({
   logo,
   variant,
@@ -40,13 +48,7 @@ export function BrandLogo({
   // this fires only when an admin clears the path or sets an invalid one.
   if (logo === null) {
     if (variant === "login") {
-      // `max-w-full truncate`: an over-long admin-set app_name is clipped with
-      // an ellipsis rather than overflowing the login card.
-      return (
-        <span className="max-w-full truncate text-h4 font-semibold text-foreground">
-          {appName}
-        </span>
-      );
+      return <span className={LOGIN_WORDMARK_CLASS}>{appName}</span>;
     }
     // topbar: the wordmark on dark chrome (the treatment the outgoing "nav"
     // variant used). `min-w-0 truncate`: shrink+ellipsize inside the bounded
@@ -67,19 +69,21 @@ export function BrandLogo({
   // `viewBox` and no width/height (e.g. Adobe Illustrator output) has an aspect
   // ratio but NO intrinsic size, so a max-height can't size it and the image
   // collapses to ~zero. A fixed height + `w-auto` resolves the width from the
-  // viewBox ratio. `max-w-full`/`object-contain` then keep a wide logo inside
-  // its slot (the top-bar brand slot is max-w-[320px]) without distortion.
+  // viewBox ratio. `max-w-full min-w-0`/`object-contain` then keep a wide logo
+  // inside its slot (the top-bar brand slot is max-w-[320px]; the login card is
+  // max-w-[440px]) without distortion — `min-w-0` lets the img flex-shrink below
+  // its intrinsic width instead of overflowing.
   const imgSizeClass =
     variant === "login"
-      ? "h-12 w-auto max-w-full object-contain"
-      : "h-8 w-auto max-w-full object-contain";
+      ? "h-12 w-auto max-w-full min-w-0 object-contain"
+      : "h-8 w-auto max-w-full min-w-0 object-contain";
   return (
     <span
-      className={cn(
-        PLATE_BASE,
-        borderClass,
-        variant === "topbar" && "max-w-full min-w-0",
-      )}
+      // `max-w-full min-w-0` on the plate itself (both variants): the plate is a
+      // centered flex item, so without these an extremely wide SVG would grow it
+      // past its bounded parent — the img's `max-w-full` is relative to the
+      // plate, so the plate must be the one capped.
+      className={cn(PLATE_BASE, borderClass, "max-w-full min-w-0")}
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- plain <img> is deliberate (um28-spec §2.3): next/image blocks SVG without dangerouslyAllowSVG (a CSP concern) and buys nothing for a local /public asset; this keeps next.config.ts untouched. */}
       <img src={logo.src} alt={logo.alt} className={imgSizeClass} />
