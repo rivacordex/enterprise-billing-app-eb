@@ -232,8 +232,8 @@ export const ledgerRepository = {
       to_account_id: string;
       to_account_name: string;
       amount: string;
-      event_at: Date;
-      created_at: Date;
+      event_at: string;
+      created_at: string;
       metadata: Record<string, unknown> | null;
     }>(sql`
       SELECT
@@ -259,8 +259,13 @@ export const ledgerRepository = {
         toAccountId: r.to_account_id,
         toAccountName: r.to_account_name,
         amount: r.amount,
-        eventAt: r.event_at,
-        createdAt: r.created_at,
+        // Raw `db.execute` bypasses Drizzle's `timestamp({ mode: "date" })`
+        // mapping, so pgledger's timestamptz columns arrive as strings. Convert
+        // here to honour the `Date` return type — a downstream
+        // `Intl.DateTimeFormat().format()` on the raw string throws
+        // `RangeError: Invalid time value`.
+        eventAt: new Date(r.event_at),
+        createdAt: new Date(r.created_at),
         metadata: r.metadata,
       })),
     };
@@ -278,8 +283,8 @@ export const ledgerRepository = {
       to_account_id: string;
       to_account_name: string;
       amount: string;
-      event_at: Date;
-      created_at: Date;
+      event_at: string;
+      created_at: string;
       metadata: Record<string, unknown> | null;
     }>(sql`
       SELECT
@@ -302,8 +307,8 @@ export const ledgerRepository = {
       toAccountId: row.to_account_id,
       toAccountName: row.to_account_name,
       amount: row.amount,
-      eventAt: row.event_at,
-      createdAt: row.created_at,
+      eventAt: new Date(row.event_at),
+      createdAt: new Date(row.created_at),
       metadata: row.metadata,
     };
   },
@@ -326,8 +331,8 @@ export const ledgerRepository = {
       to_account_id: string;
       to_account_name: string;
       amount: string;
-      event_at: Date;
-      created_at: Date;
+      event_at: string;
+      created_at: string;
       metadata: Record<string, unknown> | null;
     }>(sql`
       SELECT
@@ -350,8 +355,8 @@ export const ledgerRepository = {
         toAccountId: row.to_account_id,
         toAccountName: row.to_account_name,
         amount: row.amount,
-        eventAt: row.event_at,
-        createdAt: row.created_at,
+        eventAt: new Date(row.event_at),
+        createdAt: new Date(row.created_at),
         metadata: row.metadata,
       });
     }

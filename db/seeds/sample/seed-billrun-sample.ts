@@ -1,4 +1,5 @@
-import { eq, inArray, and } from "drizzle-orm";
+import { eq, inArray, and, sql } from "drizzle-orm";
+import postgres from "postgres";
 
 import { db } from "@/db/client";
 import { config } from "@/lib/config";
@@ -88,6 +89,15 @@ function assertNonProductionTarget(): void {
 // graph (keyed on the sample customer's registration number) in FK-safe
 // order before rebuilding, so a re-run is clean. A no-op on the first run.
 async function purgeSampleGraph(): Promise<void> {
+  // pgledger accounts provisioned for the prior run's FAs/BANs during
+  // onboarding. Collected inside the teardown transaction and deleted through a
+  // privileged connection *after* it commits (see deleteOrphanedLedgerAccounts):
+  // `app_runtime` (this seed's connection) has no privileges on
+  // `billing.pgledger_accounts` by design (Inv. #18 — the ledger is write-only
+  // via SECURITY DEFINER functions), so deleting only the `ledger_binding` rows
+  // would strand these accounts as "unmapped" in `gl_resolution_view` on every
+  // re-run — the exact defect this guards against.
+  let orphanLedgerAccountIds: string[] = [];
   await db.transaction(async (tx) => {
     const [org] = await tx
       .select({ organizationId: organization.organizationId })
@@ -114,6 +124,43 @@ async function purgeSampleGraph(): Promise<void> {
           .from(financialAccount)
           .where(eq(financialAccount.refPartyRoleId, role.partyRoleId));
         const faIds = fas.map((f) => f.financialAccountId);
+
+        // Ledger accounts bound to this sample's FAs/BANs. Owner ids are
+        // globally unique (BAN* vs FIN* prefixes), so one lookup covers both.
+        const ownerIds = [...banIds, ...faIds];
+        if (ownerIds.length > 0) {
+          const bound = await tx
+            .select({ pgledgerAccountId: ledgerBinding.pgledgerAccountId })
+            .from(ledgerBinding)
+            .where(inArray(ledgerBinding.ownerId, ownerIds));
+          orphanLedgerAccountIds = bound.map((b) => b.pgledgerAccountId);
+
+          // A double-entry ledger is immutable: if a bill run has posted
+          // against the prior sample, these accounts carry entries that cannot
+          // be torn down without a reversing posting. Refuse (this throw rolls
+          // the whole teardown back) rather than silently orphan or corrupt
+          // balances.
+          if (orphanLedgerAccountIds.length > 0) {
+            const [posted] = await tx.execute<{ cnt: string }>(sql`
+              SELECT COUNT(*)::text AS cnt
+              FROM billing.pgledger_entries_view
+              WHERE account_id = ANY(ARRAY[${sql.join(
+                orphanLedgerAccountIds.map((id) => sql`${id}`),
+                sql`, `,
+              )}]::text[])
+            `);
+            if (Number(posted?.cnt ?? 0) > 0) {
+              throw new Error(
+                "db:seed-sample: the prior _SAMPLE_ run's ledger accounts already " +
+                  "carry posted entries (a bill run was executed against them). A " +
+                  "double-entry ledger is immutable, so this seed will not tear them " +
+                  "down in place — reversing posted entries is itself a posting. " +
+                  "Re-seed on a database where no bill run has posted against the " +
+                  "prior _SAMPLE_ customer.",
+              );
+            }
+          }
+        }
 
         if (banIds.length > 0) {
           await tx
@@ -229,6 +276,47 @@ async function purgeSampleGraph(): Promise<void> {
         );
     }
   });
+
+  // The app-side teardown has committed; the collected accounts are now
+  // unbound and (guarded above) carry no entries. Remove them through the
+  // privileged connection so a re-run starts from a clean ledger.
+  if (orphanLedgerAccountIds.length > 0) {
+    await deleteOrphanedLedgerAccounts(orphanLedgerAccountIds);
+  }
+}
+
+// Deletes now-unbound pgledger accounts left by a prior sample run. Uses
+// BOOTSTRAP_DATABASE_URL (the same privileged connection db:migrate uses)
+// because `app_runtime` has no DML on `billing.pgledger_accounts` (Inv. #18).
+// Safe: callers pass only accounts that are unbound and free of ledger entries,
+// so each has a zero balance and no transfer/entry rows reference it.
+async function deleteOrphanedLedgerAccounts(
+  accountIds: string[],
+): Promise<void> {
+  const adminUrl = process.env.BOOTSTRAP_DATABASE_URL;
+  if (!adminUrl) {
+    throw new Error(
+      "db:seed-sample: BOOTSTRAP_DATABASE_URL is not set. Tearing down a prior " +
+        "sample run requires deleting its pgledger accounts through a privileged " +
+        "connection (app_runtime has no privileges on billing.pgledger_accounts " +
+        "by design). Set BOOTSTRAP_DATABASE_URL to the same superuser/app_migrate " +
+        "connection string db:migrate uses.",
+    );
+  }
+
+  const admin = postgres(adminUrl, { max: 1 });
+  try {
+    const deleted = await admin<{ name: string }[]>`
+      DELETE FROM billing.pgledger_accounts
+      WHERE id IN ${admin(accountIds)}
+      RETURNING name
+    `;
+    logger.info(
+      `db:seed-sample: removed ${deleted.length} orphaned pgledger account(s) from the prior _SAMPLE_ run.`,
+    );
+  } finally {
+    await admin.end();
+  }
 }
 
 // A dedicated `_SAMPLE_` offering — the seeded catalog offerings
