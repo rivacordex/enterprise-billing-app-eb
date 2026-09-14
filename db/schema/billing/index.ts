@@ -4,6 +4,7 @@ export * from "@/db/schema/billing/bill-run";
 export * from "@/db/schema/billing/bill-run-account";
 export * from "@/db/schema/billing/bill-run-account-stage";
 export * from "@/db/schema/billing/customer-bill";
+export * from "@/db/schema/billing/customer-bill-line";
 export * from "@/db/schema/billing/customer-bill-tax-item";
 export * from "@/db/schema/billing/bill-run-invoices";
 export * from "@/db/schema/billing/catalogs";

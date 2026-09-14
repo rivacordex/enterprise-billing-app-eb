@@ -23,12 +23,18 @@ function redirectError(target: string): Error & { digest: string } {
   return error;
 }
 
+// Relative to "now" (UTC YYYY-MM-DD) so it never drifts past the shared
+// inclusiveBilledDateSchema backdating tolerance (BACKDATING_TOLERANCE_DAYS),
+// matching the convention in insert-price.action.test.ts. A hardcoded literal
+// silently rots into a VALIDATION_ERROR once it ages past the tolerance.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 const VALID_INPUT = {
   customerPartyRoleId: "PTRL00000001",
   billingAccountId: "BAN00000001",
   productOfferingId: "PRDOFR00000001",
   quantity: 1,
-  startDate: "2026-08-12",
+  startDate: TODAY,
 };
 
 beforeEach(() => {
