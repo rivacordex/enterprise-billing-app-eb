@@ -21,6 +21,11 @@ export interface SampleChargeSpec {
   ratedPrice: string; // 2dp money string
   currency: string;
   status?: "RATED" | "BILL_NOTUSED";
+  // bm26-spec §Implementation §1 — usage is the only thing udr_rated carries
+  // into billing now (Inv #1). Recurring is billing compute (bm29), derived
+  // from inventory.product_inventory, never rated — so this defaults to
+  // 'RAN_USAGE' and SUBSCRIPTION_RECURRING is retired from the factory.
+  udrType?: string;
   sequence: number; // disambiguates udr_key across rows for the same account/period
 }
 
@@ -52,7 +57,7 @@ export function buildSampleUdrRatedRow(
 
   return {
     partitionPeriod: sql`rating.period_of(${spec.startDatetime.toISOString()}::timestamptz)`,
-    udrType: "SUBSCRIPTION_RECURRING",
+    udrType: spec.udrType ?? "RAN_USAGE",
     startDatetime: spec.startDatetime,
     endDatetime: spec.endDatetime,
     status: spec.status ?? "RATED",
@@ -67,9 +72,14 @@ export function buildSampleUdrRatedRow(
     udrRoundingMode: "HALF_UP",
     udrCurrency: spec.currency,
     udrPriceRef: spec.priceRef,
-    // Unclaimed (bm15-spec §Implementation §2): ban is set so the processor's
-    // Collection stage can find it, ref/attempt stay NULL until claimed.
-    billrunBanId: spec.ban,
+    // Fully unclaimed & unattributed (bm26-spec §Implementation §1) — all FOUR
+    // billrun_* columns NULL, byte-for-byte the shape rl.py's build_chunk_rows
+    // leaves (it writes none of them; they default NULL). billrun_ban_id was
+    // the account id under bm15; NULLing it is the single change that unblocks
+    // bm27 Collection — a row Collection can resolve is one that does not
+    // already carry its account. Collection re-derives the account by joining
+    // udr_subscriber_ref_id → inventory.product_inventory → billing_account_id.
+    billrunBanId: null,
     billrunRefId: null,
     billrunAttempt: null,
     billrunChecksum: null,
