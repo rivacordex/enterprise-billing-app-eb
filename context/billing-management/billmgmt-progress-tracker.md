@@ -257,6 +257,19 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Outstanding (environmental only — not a build unit)
 
+> **Largely SUPERSEDED by the bm22 DB-gate run (2026-09-14) — see Current Phase
+> (bm22).** The first two bullets below are now PROVEN, not pending: migrations
+> `0033`/`0035`–`0038` **apply cleanly** on a fresh Postgres and the DB-gated
+> suites (materialize/trigger/partman/billing-schema/billrun-db-roles/E2E-happy-
+> path) were **executed green** against a disposable Postgres 17 + pg_partman +
+> pg_cron + Azurite (7 suites / 59 tests). `db:setup-partman-billing` registers
+> the six billing parents. What genuinely REMAINS environmental: the app/worker
+> **image `docker build`** render + `kestra plugins list` smoke, the
+> **live-Kestra** smoke against a real engine, and `db:seed-sample` end-to-end.
+> The `flows/billrun/…` "separate repo / owner / deploy step TBD" notes below are
+> **stale** — resolved by `wfm01` (co-located `workflow-management/`, deployed by
+> the `flow-deploy` one-shot / the `deploy_workflow_flows` CI stage).
+
 - Migrations `0033_customer_bill_finalization_guard.sql` (bm13 — DB trigger
   enforcing the `ref_inv_document_id` finalization latch),
   `0035_bill_run_two_executions.sql` (bm16 — the `workflow_*` → `processing_*`
