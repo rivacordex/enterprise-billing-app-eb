@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm17-spec §Design "Reject model (b)" / §Implementation §2. The reject
-// transaction: AUDIT FIRST (before any write), `udr-status.markRejected`
-// flips the rejected accounts' claim to REJECTED, their unposted trial bills
+// bm17-spec §Design "Reject model (b)" / §Implementation §2, semantics
+// updated by bm24-spec §Implementation §1/§2. The reject transaction: AUDIT
+// FIRST (before any write), `udr-status.markRejected` now RELEASES the
+// rejected accounts' claimed rows back to RATED (was `→ REJECTED`, D21 — so a
+// rejected account's charges return to the claimable pool for the operator's
+// rerun once Collection narrows to RATED, bm27), their unposted trial bills
 // are deleted, and each account's latest (current-attempt) stage row is
-// stamped with the REJECTED_PENDING_REPROCESS marker. `bill_run_account`'s
-// status is never touched — the run stays PROCESSED throughout.
+// stamped with the REJECTED_PENDING_REPROCESS marker (which — not
+// `udr_status` — is what bars approval until reprocessed). `bill_run_account`'s
+// status is never touched — the run stays PROCESSED throughout. `markRejected`
+// is mocked here, so this suite proves the call/ordering contract; the actual
+// `BILL_DRAFT → RATED` write is proven in the DB-gated claim-release suite.
 
 const txStub = {};
 vi.mock("@/db/client", () => ({
