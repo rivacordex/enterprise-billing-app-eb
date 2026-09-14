@@ -3,6 +3,7 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
@@ -18,11 +19,16 @@ import type { RerunStage } from "@/validation/billing/rerun-run.schema";
 //   3. Invalidate later stages — implicit: `bill_run_account_stage` is keyed by
 //      `attempt`, so the bumped attempt makes every new signal from the chosen
 //      stage onward land on a fresh row; prior-attempt rows stay as history.
-//   4. Claim release/re-claim — the processor's concern (T6, bm16-spec review
-//      folds): the re-triggered `bill_run_processing` execution is the SOLE
-//      re-claimer, re-claiming `RATED`/`REJECTED` → `BILL_DRAFT` and
-//      re-stamping `billrun_attempt` to the new attempt itself — this service
-//      no longer re-derives a trial bill inline (bm08's `aggregateBill`/
+//   4. RELEASE the prior attempt's claimed rows back to `RATED` BEFORE the
+//      re-trigger (bm24-spec §Implementation §3, Inv #19 / D21). The old
+//      "release is the processor's concern" no-op is replaced by an explicit
+//      `release(tx, runId, banIds)` between the attempt bump and the engine
+//      trigger: Collection re-claims `RATED` only (bm27), so any `BILL_DRAFT`
+//      row stranded by an abandoned / partial-`PROCESSING_FAILED` prior
+//      attempt must be drained here so the re-triggered processor re-claims
+//      the COMPLETE set. Ordering is the invariant — release AFTER a
+//      re-trigger races the processor's fresh claim. Trial-bill
+//      re-derivation stays the processor's concern (bm08's `aggregateBill`/
 //      `taxBill` delta-refresh is retired: phase 2 moves that write into the
 //      processor, as `billrun_runtime` — a second app-side writer would
 //      violate the two-writer boundary, architecture Inv. #2).
@@ -137,15 +143,20 @@ export async function rerunRun(
         newAttempt,
       );
 
-      // 4. Claim release/re-claim + trial-bill re-derivation are the
-      // re-triggered processor's concern now (bm16-spec Fork B / T6) — the
-      // re-triggered execution re-claims RATED/REJECTED → BILL_DRAFT under the
-      // new attempt and re-aggregates/re-taxes as it re-validates each account
-      // through the single `handle-stage-signal` path. Nothing to do here.
-      //
+      // 4. Release the prior attempt's claimed rows back to RATED BEFORE the
+      // re-trigger (bm24-spec §Implementation §3 / Inv #19 / D21) — Collection
+      // re-claims RATED only (bm27), so any BILL_DRAFT stranded by an
+      // abandoned / partial-`PROCESSING_FAILED` prior attempt must be drained
+      // here, never left for (or raced by) the re-triggered processor. The
+      // re-triggered execution then re-claims RATED → BILL_DRAFT under the new
+      // attempt and re-aggregates/re-taxes as it re-validates each account
+      // through the single `handle-stage-signal` path. Trial-bill
+      // re-derivation stays the processor's concern (bm16-spec Fork B / T6).
+      await udrStatusRepository.release(tx, run.billRunId, banIds);
+
       // bm17-spec §Implementation §4 / Phase-2 review fold T6 — a rejected
-      // account's `REJECTED_PENDING_REPROCESS` marker (bm17) also needs no
-      // explicit clear: it lives on the OLD attempt's stage row, and the
+      // account's `REJECTED_PENDING_REPROCESS` marker (bm17) needs no explicit
+      // clear: it lives on the OLD attempt's stage row, and the
       // `no_rejected_pending` check only matches a marker on the account's
       // CURRENT attempt (`bill_run_account_stage_repository
       // .listRejectedPendingForRun`'s attempt-keyed join). The attempt bump

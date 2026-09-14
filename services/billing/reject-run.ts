@@ -15,7 +15,13 @@ import type { RejectScope } from "@/validation/billing/reject-run.schema";
 //      same "audit-first" discipline as rerun (bm08) — committed before any
 //      of the writes below.
 //   2. `udr-status.markRejected` → the run's claimed `BILL_DRAFT` rows for
-//      the rejected accounts flip to `REJECTED` (parked, not-live).
+//      the rejected accounts are RELEASED back to `RATED` with the four claim
+//      columns NULLed (bm24-spec §Implementation §1/§2, D21 — was the old
+//      `→ REJECTED` flip). Collection narrows to `RATED` only (bm27), so a
+//      rejected account's charges must return to the claimable pool for the
+//      operator's rerun to re-claim the complete set (Inv #19); the
+//      `REJECTED_PENDING_REPROCESS` marker (step 4), not `udr_status`, is what
+//      bars approval until then.
 //   3. Delete the rejected accounts' UNPOSTED trial `customer_bill` rows
 //      (tax items cascade, bm06) — the finalization latch still protects any
 //      posted row.
@@ -86,7 +92,8 @@ export async function rejectRun(
       afterData: { accounts: banIds, reason: params.reason },
     });
 
-    // 2 + 3. Flip the claim to REJECTED and drop the unposted trial bills.
+    // 2 + 3. Release the claim back to RATED (bm24-spec §1) and drop the
+    // unposted trial bills.
     await udrStatusRepository.markRejected(tx, run.billRunId, banIds);
     await customerBillRepository.deleteUnpostedForAccounts(
       tx,

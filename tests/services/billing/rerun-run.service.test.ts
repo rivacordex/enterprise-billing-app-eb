@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // bm08-spec §Design/§Implementation §1/§5, revised bm16-spec §Design "Fork B".
 // The rerun transaction: AUDIT FIRST (before re-trigger), attempt_count SET
 // to one uniform new attempt for the SELECTED accounts (back to PROCESSING),
-// later stages invalidated via the attempt-keyed latch, then the engine
-// re-triggered scoped to the rerun accounts. Trial-bill re-derivation is now
-// the re-triggered processor's concern (bm16 Fork B) — this service no
-// longer calls `aggregateBill`/`taxBill` inline. `db.transaction` runs its
-// callback with a stub tx (trigger-run.service.test.ts precedent).
+// later stages invalidated via the attempt-keyed latch, then — bm24-spec
+// §Implementation §3 — the prior attempt's claimed rows RELEASED back to
+// RATED (Inv #19 / D21) BEFORE the engine re-trigger scoped to the rerun
+// accounts. Trial-bill re-derivation is the re-triggered processor's concern
+// (bm16 Fork B) — this service no longer calls `aggregateBill`/`taxBill`
+// inline. `db.transaction` runs its callback with a stub tx
+// (trigger-run.service.test.ts precedent).
 
 const txStub = {};
 vi.mock("@/db/client", () => ({
@@ -33,6 +35,9 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
     sumTotalsForAccounts: vi.fn(),
   },
 }));
+vi.mock("@/db/repositories/billing/udr-status.repository", () => ({
+  udrStatusRepository: { release: vi.fn() },
+}));
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
@@ -43,6 +48,7 @@ vi.mock("@/services/billing/engine-registry", () => ({
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { rerunRun } from "@/services/billing/rerun-run";
@@ -56,6 +62,7 @@ const mockListForRerun = vi.mocked(billRunAccountRepository.listForRerun);
 const mockSetAttempt = vi.mocked(billRunAccountRepository.setAttemptForRerun);
 const mockListPosted = vi.mocked(customerBillRepository.listPostedAccountIds);
 const mockSumTotals = vi.mocked(customerBillRepository.sumTotalsForAccounts);
+const mockRelease = vi.mocked(udrStatusRepository.release);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockTrigger = vi.mocked(engineRegistry.trigger);
 
@@ -150,6 +157,25 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
       "bill_run_processing",
       expect.objectContaining({ ban_ids: ["BAN00000001"], attempt: 2 }),
     );
+  });
+
+  it("[CRITICAL] releases the selected accounts' prior-attempt claimed rows to RATED BEFORE re-triggering the engine (bm24-spec §3 / Inv #19)", async () => {
+    await rerunRun(params(), "user-1");
+
+    // Scoped to exactly the eligible rerun accounts (not run-wide).
+    expect(mockRelease).toHaveBeenCalledWith(txStub, "BRN00000001", [
+      "BAN00000001",
+      "BAN00000002",
+    ]);
+
+    // Ordering is the invariant: release must precede the engine re-trigger —
+    // a release AFTER the re-trigger races the processor's fresh claim.
+    const releaseOrder = mockRelease.mock.invocationCallOrder[0];
+    const engineOrder = mockTrigger.mock.invocationCallOrder[0];
+    expect(releaseOrder).toBeLessThan(engineOrder as number);
+    // …and after the attempt bump (drains the just-invalidated prior attempt).
+    const attemptOrder = mockSetAttempt.mock.invocationCallOrder[0];
+    expect(attemptOrder).toBeLessThan(releaseOrder as number);
   });
 
   it("[CRITICAL] never touches a finalized (posted) account — dropped from the eligible set", async () => {
@@ -282,10 +308,12 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     const result = await rerunRun(params(), "user-1");
 
     expect(result).toEqual({ ok: false, code: "ENGINE_UNREACHABLE" });
-    // The audit + attempt bump ran inside the (rolled-back) txn; the run is
-    // never marked PROCESSING because the engine failed first.
+    // The audit + attempt bump + claim release (bm24-spec §3) all ran inside
+    // the (rolled-back) txn; the run is never marked PROCESSING because the
+    // engine failed first, so the whole abandon-and-release is undone together.
     expect(mockInsertAuditEvent).toHaveBeenCalled();
     expect(mockSetAttempt).toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalled();
     expect(mockMarkRerunProcessing).not.toHaveBeenCalled();
   });
 
