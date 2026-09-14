@@ -13,6 +13,7 @@ import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { billRun } from "@/db/schema/billing/bill-run";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 import type { triggerRun as TriggerRun } from "@/services/billing/trigger-run";
 
 // bm03-spec §Design/§9 — live-DB proof of the trigger transaction: the
@@ -175,7 +176,11 @@ describe.skipIf(!databaseUrl)(
       expect(updated?.status).toBe("PROCESSING");
       expect(updated?.glEventAt).toBe("2026-07-01");
       expect(updated?.triggeredBy).toBe(actorId);
-      expect(updated?.processingExecutionId).toBe(`stub-exec-${runId}`);
+      // bm16/bm20 — the stub execution id is `stub-exec-<flowId>-<runId>`
+      // (the flowId was added when the engine gained a second flow).
+      expect(updated?.processingExecutionId).toBe(
+        `stub-exec-${PROCESSING_FLOW_ID}-${runId}`,
+      );
 
       const snapshotRows = await db
         .select()
@@ -205,16 +210,25 @@ describe.skipIf(!databaseUrl)(
       const first = await triggerRun(runId, actorId, "2026-08-01");
       expect(first.ok).toBe(true);
 
-      const second = await triggerRun(runId, actorId, "2026-08-01");
-      expect(second).toEqual({ ok: false, code: "NOT_OPERABLE" });
-
-      const snapshotRows = await db
+      // The scoping snapshot the first (successful) trigger wrote for THIS run.
+      // The suite shares one cycle across cases, so its active-account count is
+      // not fixed — assert the DELTA (the rejected second call adds nothing),
+      // not a hard-coded 1.
+      const afterFirst = await db
         .select()
         .from(billRunAccount)
         .where(eq(billRunAccount.refBillRunId, runId));
-      // Exactly the first trigger's one-account snapshot — the rejected second
-      // call wrote nothing further.
-      expect(snapshotRows).toHaveLength(1);
+      expect(afterFirst.length).toBeGreaterThanOrEqual(1);
+
+      const second = await triggerRun(runId, actorId, "2026-08-01");
+      expect(second).toEqual({ ok: false, code: "NOT_OPERABLE" });
+
+      const afterSecond = await db
+        .select()
+        .from(billRunAccount)
+        .where(eq(billRunAccount.refBillRunId, runId));
+      // The rejected second call wrote nothing further.
+      expect(afterSecond).toHaveLength(afterFirst.length);
     });
 
     it("returns NO_ELIGIBLE_ACCOUNTS and writes no snapshot rows when the cycle has no active accounts", async () => {

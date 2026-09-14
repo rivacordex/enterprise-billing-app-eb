@@ -351,7 +351,10 @@ describe.skipIf(!databaseUrl)(
         await sql.unsafe('DROP DATABASE IF EXISTS "kestra" WITH (FORCE)');
         await sql.end();
       }
-    });
+      // Teardown drops nine CASCADE schemas + the kestra database; under load
+      // (the whole billing suite running sequentially) this can exceed the
+      // default 10s hook timeout, so give it the same headroom as beforeAll.
+    }, 120_000);
 
     // ---- customer_bill: column boundary (Step 5) ---------------------------
     describe("customer_bill — column boundary (Step 5)", () => {
@@ -461,8 +464,15 @@ describe.skipIf(!databaseUrl)(
           SELECT customer_bill_id FROM billing.customer_bill WHERE customer_bill_id = ${id}
         `;
         expect(remaining).toHaveLength(1);
-        // clean up the finalized row directly (superuser bypasses the ACL).
-        await sql`DELETE FROM billing.customer_bill WHERE customer_bill_id = ${id}`;
+        // Clean up the finalized row. NOTE: superuser bypasses GRANTs but NOT
+        // triggers — migration 0033's finalization guard blocks DELETE of any
+        // ref_inv_document_id-set row regardless of role (that immutability is
+        // the whole point of the latch). Disable user triggers for this one
+        // teardown delete via session_replication_role (superuser-only, txn-scoped).
+        await sql.begin(async (tx) => {
+          await tx`SET LOCAL session_replication_role = replica`;
+          await tx`DELETE FROM billing.customer_bill WHERE customer_bill_id = ${id}`;
+        });
       });
     });
 

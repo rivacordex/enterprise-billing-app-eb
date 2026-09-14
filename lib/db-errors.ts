@@ -9,18 +9,24 @@ import type { PostgresError } from "postgres";
 // original `PostgresError` on `.cause` rather than throwing it directly —
 // only caught by the real-DB integration test, not the mocked-repository
 // unit test, so both `err` and `err.cause` are checked here.
+//
+// `constraintName` is OPTIONAL. When given, the match is exact (a caller on a
+// non-partitioned table that must distinguish one constraint from another).
+// When OMITTED, any SQLSTATE 23505 matches — REQUIRED for PARTITIONED tables:
+// Postgres reports the violated LEAF-partition index name (e.g.
+// `bill_run_account_stage_default_..._key`), NEVER the parent constraint name,
+// so an exact-name match can never succeed there. Callers whose insert can only
+// realistically hit one unique constraint (the M2M idempotency latches) use the
+// no-name form.
 export function isUniqueViolation(
   err: unknown,
-  constraintName: string,
+  constraintName?: string,
 ): boolean {
   for (const candidate of [err, (err as { cause?: unknown } | null)?.cause]) {
     const pgError = candidate as Partial<PostgresError> | null | undefined;
-    if (
-      pgError?.code === "23505" &&
-      pgError.constraint_name === constraintName
-    ) {
-      return true;
-    }
+    if (pgError?.code !== "23505") continue;
+    if (constraintName === undefined) return true;
+    if (pgError.constraint_name === constraintName) return true;
   }
   return false;
 }

@@ -150,6 +150,9 @@ describe.skipIf(!databaseUrl)(
       CRN: "document_crn_seq",
       DBN: "document_dbn_seq",
       ADJ: "document_adj_seq",
+      // bm09 — INV documents post from the bill run; its per-type sequence
+      // (migration 0031) mirrors document.repository.ts's DOC_SEQUENCE_NAME.INV.
+      INV: "document_inv_seq",
     };
 
     async function nextDocumentId(docType: string): Promise<string> {

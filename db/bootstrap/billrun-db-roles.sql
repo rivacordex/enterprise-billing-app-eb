@@ -118,6 +118,18 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "billing"."customer_bill_tax_item"
 -- Taxation into the flow (worker-owned above), so revoke app_runtime's as-built
 -- write grant, keeping SELECT — the two-writer boundary is grant-enforced, not
 -- "unused by convention".
+--
+-- The SELECT is GRANTed EXPLICITLY here rather than assumed: bootstrap-db-roles.sql
+-- enumerates app_runtime's `billing` grants to the ac01-era tables only and sets
+-- NO `ALTER DEFAULT PRIVILEGES` for the schema, so a bill-run table created by a
+-- later migration receives no app_runtime grant on a from-scratch DB (the
+-- "scratch setup billing grant gap"). Granting SELECT first makes "keeping SELECT"
+-- true regardless of how migrations were applied; the REVOKE then removes only the
+-- writes. (The other bill-run tables app_runtime reads/writes — customer_bill,
+-- bill_run*, bill_run_invoices, bill_run_distribution — have the same underlying
+-- gap; closing it schema-wide is tracked separately, see billmgmt-known-issues.)
+GRANT SELECT ON TABLE "billing"."customer_bill_tax_item" TO app_runtime;
+--> statement-breakpoint
 REVOKE INSERT, UPDATE, DELETE ON TABLE "billing"."customer_bill_tax_item" FROM app_runtime;
 --> statement-breakpoint
 
