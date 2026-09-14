@@ -1,6 +1,6 @@
 # Bill Run — Build Plan (Units, in build order)
 
-Decomposition of the Billing Management (Bill Run) module into build units. Source of truth: `billmgmt-project-overview.md`, `billmgmt-architecture.md` (20 Invariants), `billmgmt-code-standards.md` (file tree §7, permission map §8, guardrail tests §9), `billmgmt-ai-workflow-rules.md` (unit discipline), `billmgmt-ui-context.md` (tokens), and for **Phase 2** `_updatemodule-billing-billrun-phase2-plan.md` (+ decisions §15) and `billmgmt-update-overview.md`. Stack per `context/architecture.md` §1 and `billmgmt-architecture.md` §1.
+Decomposition of the Billing Management (Bill Run) module into build units. Source of truth: `billmgmt-project-overview.md`, `billmgmt-architecture.md` (28 Module Invariants §6; #15 is a retired tombstone), `billmgmt-code-standards.md` (file tree §7, permission map §8, guardrail tests §9), `billmgmt-ai-workflow-rules.md` (unit discipline), `billmgmt-ui-context.md` (tokens), and for **Phase 2** `_updatemodule-billing-billrun-phase2-plan.md` (+ decisions §15) and `billmgmt-update-overview.md`. Stack per `context/architecture.md` §1 and `billmgmt-architecture.md` §1.
 
 **Decomposition rules applied:** each unit produces **one visible result**; each stays within **one system boundary**; **dependencies land just-in-time** (schema/infra is built by the first unit that needs it, never earlier); units **always done together are merged** (e.g. Scoping into Trigger, Claim into Draft-bill); units with **no standalone visible result are merged** into the adjacent unit that surfaces them (e.g. the stub-mode banner, the counters cache, the completion transition).
 
@@ -17,6 +17,13 @@ Decomposition of the Billing Management (Bill Run) module into build units. Sour
 > **Phase 2 (Units 14–21, Phases F–I) is NEW this session** — the workflow-management wiring, rendering & distribution update (`_updatemodule-billing-billrun-phase2-plan.md`). These are the units to build next; they build **on top of** the delivered Phase 1 and rewire the pipeline to run in the `billrun` Kestra engine (B-fat).
 >
 > **Phase-2 external prerequisites (beyond Phase 1's):** the **rating** module's `rating.udr_rated` schema (rm01) and its bootstrap incl. `REVOKE CONNECT … FROM PUBLIC` (rm03) — `billrun_runtime` is created **after** it (D15); a `udr_rated` **row-factory** exposed by rating for the `_SAMPLE_*` seed (D28); a deployed **`billrun` Kestra engine** (shared with rating or its own instance — deploy-time, D25) able to run the `bill_run_processing` / `bill_run_distribution` flows.
+>
+> **Phase 3 (Units 22–35, specs `bm22`–`bm35`) is NEW** — the real compute plane over `customer_bill_line` (see `context/billing-management/billmgmt-ai-workflow-rules.md` §2 for the unit table). **Unit 22 (`bm22`, Environmental Gate) lands first and blocks all phase-3 logic** (D17/D29).
+>
+> **Phase-3 external prerequisites (beyond Phase 2's), owned by `bm22`:**
+> - **Worker-image Kestra plugins — AUTHORED (`bm22` §6).** `fs.sftp.Upload` pinned in `workflow-management/worker/workflow-engine/Dockerfile` (`plugin-fs:2.11.1` — the version the non-slim `kestra/kestra:v1.3.35` base already bundles; plugin versions are decoupled from core, there is no `1.3.x`). `azure.storage.blob.Download` + `core.http.Request` likewise carried by the base. Image rebuild + `kestra plugins list` smoke pending a container runtime.
+> - **SFTP endpoint — AUTHORED (`bm22` §7).** Net-new `sftp` dev service (`atmoz/sftp:alpine`, key-auth, host-key verification on, `sftp_upload` named volume, client remote base `/upload`). Engine SFTP env: local dev in `workflow-management/dev/.env.example`; deployed in `workflow-engine-container-app.bicep` behind a default-off `enableSftpDistribution` param (NOT `infra/env/*.template`, which are app-container env). SFTP transport proven this pass via a throwaway ephemeral round-trip (put/verify/remove, host-key verification) — PASS; atmoz/Kestra-plugin reachability smoke pending a container runtime.
+> - **Runtime verification** (migrations apply, partman register, DB-gated suites on a disposable DB, Chromium image render, Azurite round-trip, live-Kestra `SCHEDULED → COMPLETED`) remains pending execution against real infrastructure — see `billmgmt-progress-tracker.md` **Current Phase / Outstanding**.
 
 ---
 

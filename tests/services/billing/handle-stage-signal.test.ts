@@ -6,7 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // → record-and-advance (no app-side compute, no write side effect) → run
 // recompute under the already-held row lock.
 
-const txStub = {};
+// The stage-row insert runs inside a SAVEPOINT (`tx.transaction`) so a real
+// unique violation rolls back only the insert, not the outer tx — the mock
+// passes the callback straight through with the same stub.
+const txStub: { transaction: (cb: (sp: unknown) => unknown) => unknown } = {
+  transaction: (cb) => cb(txStub),
+};
 vi.mock("@/db/client", () => ({
   db: { transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(txStub)) },
 }));

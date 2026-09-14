@@ -74,6 +74,256 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase J — **bm23 (`customer_bill_line` Schema, Partitions &
+  Grants) — DELIVERED and DB-VERIFIED against a disposable Postgres
+  (2026-09-14).** See
+  `context/billing-management/specs/bm23-customer-bill-line-schema.md`.
+  Schema-boundary unit — **no repository, flow task, or UI**
+  (`billmgmt-ai-workflow-rules.md` §4.2). Landed this pass:
+  - **`db/migrations/0039_customer_bill_line.sql`** (new, hand-authored,
+    partitioned) — the bill's charge record at `(product_offering_id, udr_type)`
+    grain (Inv #3, the §0 reversal): `BLN` id sequence, composite PK
+    `(customer_bill_line_id, period_partition)`, composite FK
+    `(ref_customer_bill_id, period_partition) → customer_bill ON DELETE CASCADE`
+    (D22, mirrors `customer_bill_tax_item`/0030, NOT the RESTRICT of
+    `bill_run_invoices`), the three money columns
+    (`gross_amount`/`discount_amount default 0.00`/`net_amount`), the
+    `udr_rated`-shaped discount columns, `udr_count` + `grouping_key`, the four
+    RECURRING price-snapshot columns, `currency char(3)`, and the
+    `source`/`line_type`/`discount_type` CHECKs (admitting forward-compat `OCC`
+    + `discount`/`adjustment`). **No row trigger** (D27 — the header
+    finalization guard already makes a finalized bill un-deletable) and **no
+    business UNIQUE** on `(bill, offering, udr_type)` (Inv #16 — exactly-once is
+    the whole-account replace, not a constraint). `ref_product_offering_id`
+    carries no cross-schema FK (reserved-ref pattern). **Two btree indexes**
+    (`..._ref_customer_bill_id_idx`, `..._period_partition_idx`) matching the
+    0029/0030 precedent — Postgres does not auto-index the FK child side, so the
+    `ON DELETE CASCADE` from the whole-account replace (bm28) would otherwise
+    seq-scan (added per code-review finding #1; spec §1 SQL block updated to
+    match). Journal entry idx 39 added to `db/migrations/meta/_journal.json`.
+  - **`db/schema/billing/customer-bill-line.ts`** (new) — Drizzle query-typing
+    only, mirroring `customer-bill.ts` with the "do not `drizzle-kit push`"
+    header; sequence + columns declared (no composite PK/FK/partition — the
+    physical DDL of record is 0039). Added to the `db/schema/billing` barrel
+    after `customer-bill`.
+  - **`db/bootstrap/billing-partman-setup.sql`** — registers
+    `billing.customer_bill_line` as the **seventh** `pg_partman` parent
+    (monthly, 7-year detach-and-archive, premake 4), idempotent guard identical
+    to the other six; the "six/seven parents" tally comments updated.
+  - **`db/bootstrap/billrun-db-roles.sql`** — Step 4 gains
+    `GRANT USAGE ON SEQUENCE customer_bill_line_seq`; new **Step 5a**
+    (`billrun_runtime` SELECT + column-scoped INSERT over all 24 columns, **no**
+    table DELETE, **no** UPDATE — re-derivation is the whole-account replace via
+    the `billrun_delete_trial_bill` SECURITY DEFINER cascade, never per-line) and
+    **Step 5b** (`app_runtime` SELECT granted, `INSERT/UPDATE/DELETE` revoked —
+    the ADP auto-grant from `bootstrap-db-roles.sql` line 200 is grant-revoked
+    back to SELECT-only, bm14 Step 6a precedent). **NOTE:** `bootstrap-db-roles.sql`
+    DOES set `ALTER DEFAULT PRIVILEGES … IN SCHEMA "billing" … TO app_runtime`
+    (line 200) — the bm14 Step 6a comment and a bm22 tracker note claiming "NO
+    ADP for the schema" are inaccurate; bm23's premise (spec §Design) is the
+    correct one. Left the stale bm14 comment untouched (out of scope; protected
+    file) — flagged here for a future cleanup.
+  - **Guardrail suites extended** (DB-gated, `describe.skipIf(!databaseUrl)`):
+    `tests/db/billrun-db-roles.integration.test.ts` gains a `customer_bill_line`
+    block (tests 25–29: worker INSERT+SELECT; worker refused UPDATE/DELETE;
+    `app_runtime` SELECT-only, refused INSERT/UPDATE/DELETE; cascade delete via
+    `billrun_delete_trial_bill`; finalized-parent-survives, the D27/D22
+    interaction). `tests/db/billing-partman-setup.integration.test.ts` gains the
+    seventh-parent registration assertion + a future-month routing check (a
+    next-month row lands in its own partition, not `customer_bill_line_default`).
+  - **Statically verified:** `tsc --noEmit` clean, `eslint` clean on all
+    changed files, `prettier --check` clean.
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman v5 + pg_cron +
+    Azurite** (git-ignored `docker-compose.test.yml`, project `ebill-test`,
+    :5434/:10001; torn down `down -v` after). Ran via
+    `vitest.integration.config.ts` with `--env-file=.env.test`:
+    - `billrun-db-roles` — **32/32 green**, incl. bm23 tests 25–29:
+      `billrun_runtime` INSERTs a `BLN…` line + SELECTs it; is refused a direct
+      `UPDATE` **and** `DELETE` (`permission denied for table
+      customer_bill_line`); `app_runtime` can SELECT but is refused
+      INSERT/UPDATE/DELETE (the Step 5b revoke held); `billrun_delete_trial_bill`
+      **cascades** a non-finalized bill's lines away (D22); a finalized parent
+      (and thus its line) **cannot** be deleted (D27/D22).
+    - `billing-partman-setup` — **5/5 green**, incl. `customer_bill_line`
+      registered as the seventh parent (`period_partition`, 7-year detach), a
+      next-month row routing to its own partition (not `_default`), and the two
+      FK/partition-key indexes present.
+    - Regression check: `migration` / `billing-schema` / `billing-e2e-happy-path`
+      — **25/25 green** (migration `0039` applies cleanly as the 40th migration
+      on a fresh DB; no downstream suite regressed).
+  - **Code-review fixes applied (xhigh review, 2026-09-14), re-verified green:**
+    - #1 (efficiency) — added the two FK/partition-key indexes above.
+    - #2 (test efficacy) — `billrun-db-roles` test 27 rewritten to
+      grant `app_runtime` the write DML first (simulating the production ADP
+      auto-grant that never fires under the superuser-owned test migration),
+      then re-run `billrun-db-roles.sql` and assert its Step 5b REVOKE strips
+      the writes — so it now genuinely proves the REVOKE, not just "the grant
+      never existed."
+    - #3/#4 — replaced the vacuous "default empty" partman test with a real
+      index-existence assertion, and documented the routing test's superuser
+      requirement (`session_replication_role = replica`) in the file header.
+    - #5 — sequence given explicit `MAXVALUE 9223372036854775807` for parity.
+    - Re-ran the disposable-Postgres suites: `billrun-db-roles` 32/32,
+      `billing-partman-setup` 5/5, plus `migration`/`billing-schema`/
+      `billing-e2e-happy-path` 25/25 — **62/62 green across five suites**.
+  - **DB-free unit-test failures — all FIXED this pass (307 files / 3051 tests
+    green with `--env-file=.env`).** None were bm23-caused; fixed as cross-cutting
+    hygiene at the user's request:
+    - `actions/{create-order,resume-,suspend-,terminate-subscription}` (14
+      failures) — stale hardcoded fixture dates (`2026-08-1x`) had drifted past
+      the shared `inclusiveBilledDateSchema` backdating tolerance
+      (`BACKDATING_TOLERANCE_DAYS = 3`), so `VALID_INPUT` was rejected before the
+      mocked service ran. Product code correct; switched fixtures to a relative
+      `new Date().toISOString().slice(0,10)` (the `insert-price.action.test.ts`
+      convention) so they never re-rot.
+    - `config.test.ts` env-pollution flake — `ENV_KEYS` omitted
+      `BILLRUN_PLACEHOLDER_MODE`, so `loadConfigWithEnv` didn't neutralize it and
+      an ambient value leaked into the exact-match assertion. Added the key.
+    - `grep-gates` pgledger gate — a **real** Inv #4 / code-standards §6.3
+      violation: bm15's `db/seeds/sample/seed-billrun-sample.ts` read
+      `billing.pgledger_entries_view` via raw SQL outside
+      `db/repositories/accounts/`. Fixed at the right altitude: added
+      `ledgerRepository.countEntriesForAccounts()` and routed the seed's
+      teardown entry-count probe through it (matching the compliant
+      `seed-sys-accounts.ts` sibling). NOTE: the seed still deletes
+      `billing.pgledger_accounts` (the base table) via a privileged non-Drizzle
+      teardown connection — a deliberate Inv #18 pattern the gate's regex does
+      not flag; left as-is.
+    - Bare `vitest run` (no `--env-file`) still surfaces a pre-existing
+      module-load error for config-importing services (documented repo behavior
+      — DB-free tests require `--env-file=.env`); not a test defect.
+- Phase 3 · Phase J — **bm22 (Environmental Gate) — IN PROGRESS (authored
+  artifacts landed; runtime gates pending real infra).** See
+  `context/billing-management/specs/bm22-environmental-gate.md`. Infra-only
+  unit — **no application code, no schema authored** (`ai-workflow-rules` §1.4).
+  Its whole authorable "diff" (spec §Design: two net-new infra pieces + their
+  env/docs) is landed this pass:
+  - **§6 — worker-image SFTP plugin (D0).**
+    `workflow-management/worker/workflow-engine/Dockerfile` explicitly
+    `kestra plugins install io.kestra.plugin:plugin-fs:2.11.1`, so
+    `fs.sftp.Upload` presence is a build-time gate (a rebuilt image artifact —
+    ACA has no Docker daemon to add one at deploy time).
+    **Correction (post-review, verified against the real image):** the earlier
+    "fs is absent / net-new plugin at version `1.3.35`" framing was WRONG on two
+    counts — (1) Kestra plugin versions are DECOUPLED from core (there is no
+    plugin-fs `1.3.x`; `plugin-fs:1.3.35` does not exist on Maven Central, so the
+    original pin would have **hard-failed `docker build`**); (2) the non-slim
+    `kestra/kestra:v1.3.35` base **already bundles** `plugin-fs` — inspecting the
+    pinned image shows `/app/plugins/io_kestra_plugin__plugin-fs__2_11_1.jar`
+    (alongside the azure-blob + core-http plugins §6 already relied on). So the
+    line now pins that SAME bundled version `2.11.1` (idempotent re-install, no
+    classpath clash) — a loud build-time assertion of presence rather than a
+    net-new add. Re-resolve by inspecting `/app/plugins/` when bumping the base.
+  - **§7 — net-new SFTP dev endpoint + env surface.** A `sftp` service
+    (`atmoz/sftp:alpine`) added to
+    `workflow-management/dev/docker-compose.dev.yml`: **key-auth only** (empty
+    password ⇒ OpenSSH `PermitEmptyPasswords=no`), user `billrun`. Delivered
+    artifacts live in the **`sftp_upload` named volume** (NOT a host bind mount —
+    atmoz does not chown bind mounts, so a bind mount is unwritable by the
+    chrooted uid-1001 user on Linux); a committed `sftp/init/00-init-dirs.sh`
+    (mounted to `/etc/sftp.d/`) seeds the `invoices/` + `reports/` subtree.
+    **Chroot-correct remote base:** atmoz chroots `billrun` to `/home/billrun`,
+    so the client-visible `{remote_base}` is **`/upload`** (`SFTP_REMOTE_BASE`),
+    not the server path `/home/billrun/upload` — matching architecture §3's
+    `invoices/{YYYY-MM}/` + `reports/{YYYY-MM}/`. Host-published on
+    `${SFTP_HOST_PORT:-2222}` (a distinct name from the engine's in-network
+    `SFTP_PORT=22`, so the two never alias). **Publish-safe (repo memory:
+    open-source prep):** no key material committed — the developer generates a
+    throwaway dev keypair into the gitignored `workflow-management/dev/sftp/keys/`,
+    and captures the server host key via `ssh-keyscan` (host-key verification ON).
+    New `workflow-management/dev/sftp/README.md` documents keygen/capture/smoke.
+    **Env placement (post-review fix):** SFTP is engine config, so —
+    - **local dev:** `workflow-management/dev/.env.example` (in-network
+      `SFTP_HOST=sftp`/`22`, `SFTP_REMOTE_BASE=/upload`; key + known_hosts as
+      unset `SECRET_SFTP_*` placeholders, base64 Kestra `secret()`);
+    - **deployed:** wired in
+      `infra/bicep/modules/workflow-engine-container-app.bicep` behind a
+      default-off `enableSftpDistribution` param (non-secret coordinates as env;
+      key + known_hosts as `sftp-private-key`/`sftp-known-hosts` Key Vault →
+      Kestra Secret refs, gated so current deploys stay byte-identical until
+      bm34 flips the flag + provisions the KV secrets + real target);
+    - SFTP was **removed** from `infra/env/*.template` — those are app-container
+      env (the engine is a separate Container App); a pointer comment records
+      where engine SFTP config now lives. The repo-root `.env.example` keeps the
+      vars as commented inventory only (the app never reads them).
+  - **SFTP transport VERIFIED (throwaway round-trip, this session).** Since no
+    Docker/atmoz is reachable here, the transport was proven against a throwaway
+    ephemeral SFTP server (paramiko, transient temp-dir install — repo untouched)
+    driven by the real OpenSSH client: ephemeral ed25519 keypair → key-auth →
+    **host-key verification** (`StrictHostKeyChecking=yes`, pinned known_hosts) →
+    `put` a 19,815-byte invoice PDF to `invoices/2026-09/` → md5 integrity match
+    on readback → `rm` (server-side file gone) → teardown. **RESULT: PASS.** This
+    proves the SFTP mechanics + the config shape (key-only auth, host-key verify,
+    `invoices/{YYYY-MM}/` layout); it does NOT exercise atmoz or Kestra's
+    `fs.sftp.Upload` (those still need the built worker image + a running stack).
+  - **Resolved (spec §8): the `flows/billrun/README.md` `_TBD_` lines are
+    already moot.** The wfm01 restructure (commit `0b31f50`) resolved the
+    "separate repo / owning team / deploy step" questions — the flows are
+    co-located under `workflow-management/` and deployed by the `flow-deploy`
+    one-shot locally / the `deploy_workflow_flows` CI stage; the function-first
+    READMEs carry no `_TBD_` markers (grep-clean).
+  - **DB-gated suites EXECUTED against a disposable DB (§1–§3, §5) — ALL GREEN
+    (7 suites / 59 tests).** Docker was in fact available (the earlier probe
+    misfired on PATH); brought up the git-ignored `docker-compose.test.yml`
+    throwaway Postgres 17 + pg_partman + pg_cron (project `ebill-test`, :5434)
+    **plus a new disposable Azurite** (added to that compose, :10001) and ran
+    `migration` / `billing-partman-setup` / `billing-schema` / `materialize-runs`
+    / `trigger-run` / `billrun-db-roles` / `billing-e2e-happy-path`. This proves
+    for real: §1 all 39 migrations apply on a fresh DB; §2 partman registers the
+    six billing parents + a future-month partition; §3 the two-writer grant
+    boundary + the full ship-gate journey (materialize → trigger → stages →
+    PROCESSED → reject → rerun → approve four-eyes → **post (real INV + ledger)**
+    → **DISTRIBUTING** → DISTRIBUTION_FAILED (D10 safety net) → retry-render →
+    rerun-distribution → **COMPLETED**); §5 a real Azurite blob round-trip
+    (invoice PDF render+store + the run-report CSV). Chromium **is** present
+    (`renderFinalInvoice` succeeds). The suites had **never** run against real
+    Postgres before; doing so surfaced 8 failures — **all pre-existing, none from
+    bm22's infra diff** — now fixed:
+    - **[REAL BUG, bm04/bm20] M2M idempotency broken on partitioned tables.**
+      `lib/db-errors.isUniqueViolation` did an exact parent-constraint-name
+      match, but Postgres reports the *leaf-partition* index name, so a duplicate
+      stage-signal / distribution-outcome returned **500 instead of the 200
+      replay** (Inv #5, code-standards §9.2). Compounded by a missing
+      **SAVEPOINT** — a real unique violation aborts the whole transaction, so
+      catching it and returning can't commit. Fixed both idempotency paths
+      (`handle-stage-signal.ts`, `distribute-run.ts`): a nested `tx.transaction`
+      savepoint around the insert-first + `isUniqueViolation(err)` (constraint
+      name now optional; no-name = any 23505, required for partitioned tables).
+    - **[REAL GAP, bm14/bootstrap] `app_runtime` never granted on bill-run
+      tables.** `bootstrap-db-roles.sql` enumerates app_runtime's `billing`
+      grants to the ac01 tables only + no billing default-privileges, so bm14's
+      Step 6a "keeping SELECT" was never true on a from-scratch DB (the "scratch
+      setup billing grant gap"). Added an explicit `GRANT SELECT` on
+      `customer_bill_tax_item` in `billrun-db-roles.sql`; the schema-wide gap
+      (customer_bill, bill_run*, …) is flagged there for a follow-up.
+    - **[FIXTURE GAP, e2e] posting parked** — the e2e built the FA via raw
+      inserts, skipping the per-FA pgledger accounts + `ledger_binding` rows real
+      onboarding creates and posting requires ("unapplied_cash binding not
+      found"). Added them to the fixture (matching `onboardCustomerAccounts`
+      2c/2d).
+    - **[TEST-DESIGN, bm21 T8] e2e distribution tail** asserted render-pending
+      (only true *without* a blob store) yet distribution *needs* one — it could
+      never pass as written. Now forces render-pending **deterministically**
+      (removes banBilled's stored-invoice row via `session_replication_role`,
+      bypassing the 0036 immutability trigger), preserving the D10 coverage
+      environment-independently.
+    - **Stale tests / fixtures / isolation:** trigger-run stub-exec id
+      (`stub-exec-<flowId>-<run>`, bm16/20); billing-schema INV doc_type
+      sequence (bm09); billrun-db-roles #7 teardown (0033 finalization guard
+      fires even for superuser — the guard is *correct*, the teardown assumed
+      otherwise); trigger-run double-trigger (delta assertion vs a shared-cycle
+      account count); materialize `scheduled_run_date = period_end + 1` (day 28,
+      valid every month — `currentDuePeriod` clamps correctly in production);
+      billrun-db-roles `afterAll` hook-timeout under load.
+    - Verified after fixes: **7/7 suites green (59 tests)**; **321 billing unit
+      tests green** (mock `tx` taught the savepoint); `tsc` clean. The throwaway
+      stack was torn down (`down -v`).
+  - **Still NOT executed this session** (need a container image build / live
+    engine): §4 the app-image `docker build` render proof (the render path was
+    exercised via the app's own `renderFinalInvoice` against Azurite, but not
+    from the built `node:22-bookworm-slim` image); §6 the worker-image plugin
+    **smoke** (`kestra plugins list` on the rebuilt image); §8 the live-Kestra
+    smoke against a real engine. These stay pending; not marked passed.
 - Phase 2 · Phase I — **bm21 (Phase-2 Ship Gate) — delivered** (audit +
   cross-cutting closures; DB-gated proof still environmental, see
   Outstanding). See
@@ -124,6 +374,19 @@ enumerations were trimmed to key facts + decisions. Full history:
   generated/reviewed but **not applied** — see Outstanding.
 
 ## Outstanding (environmental only — not a build unit)
+
+> **Largely SUPERSEDED by the bm22 DB-gate run (2026-09-14) — see Current Phase
+> (bm22).** The first two bullets below are now PROVEN, not pending: migrations
+> `0033`/`0035`–`0038` **apply cleanly** on a fresh Postgres and the DB-gated
+> suites (materialize/trigger/partman/billing-schema/billrun-db-roles/E2E-happy-
+> path) were **executed green** against a disposable Postgres 17 + pg_partman +
+> pg_cron + Azurite (7 suites / 59 tests). `db:setup-partman-billing` registers
+> the six billing parents. What genuinely REMAINS environmental: the app/worker
+> **image `docker build`** render + `kestra plugins list` smoke, the
+> **live-Kestra** smoke against a real engine, and `db:seed-sample` end-to-end.
+> The `flows/billrun/…` "separate repo / owner / deploy step TBD" notes below are
+> **stale** — resolved by `wfm01` (co-located `workflow-management/`, deployed by
+> the `flow-deploy` one-shot / the `deploy_workflow_flows` CI stage).
 
 - Migrations `0033_customer_bill_finalization_guard.sql` (bm13 — DB trigger
   enforcing the `ref_inv_document_id` finalization latch),

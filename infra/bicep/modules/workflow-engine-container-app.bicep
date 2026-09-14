@@ -64,6 +64,28 @@ param corporateIpAllowList array = []
 param minReplicas int = 1
 param maxReplicas int = 1
 
+// bm22 §7 / bm34 — SFTP distribution wiring for the deployed engine. DEFAULT
+// OFF: when false, no SFTP env vars or secrets are added and deploys are
+// byte-identical to today. bm34 (the consumer, bill_run_distribution) flips
+// this true once the real SFTP target exists AND the two Key Vault secrets
+// below are provisioned — turning it on without them fails the deploy (a missing
+// keyVaultUrl reference), which is the intended fail-closed behavior. The
+// non-secret host/port/user/remote-base are supplied per environment at deploy
+// time; the private key + known_hosts are Key Vault → Kestra `secret()`
+// (base64-encoded values, like rating-usage-webhook-key) with host-key
+// verification ON. SFTP_REMOTE_BASE is the CLIENT-visible chroot path (`/upload`
+// on the atmoz dev endpoint), not a server-absolute path.
+@description('bm22/bm34 — enable SFTP distribution wiring on the engine. Requires the sftp-private-key + sftp-known-hosts Key Vault secrets to exist. Default false (no SFTP config added).')
+param enableSftpDistribution bool = false
+@description('bm34 — SFTP distribution target host. Required (non-empty) when enableSftpDistribution is true.')
+param sftpHost string = ''
+@description('bm34 — SFTP distribution target port.')
+param sftpPort string = '22'
+@description('bm34 — SFTP distribution username.')
+param sftpUser string = 'billrun'
+@description('bm34 — client-visible SFTP remote base (chroot-relative), e.g. /upload.')
+param sftpRemoteBase string = '/upload'
+
 // Extracted to a var — a for-expression can't sit inline inside a ternary
 // property value (BCP disallows it there even though it's allowed as a
 // property value directly).
@@ -187,6 +209,26 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
                 identity: workflowEngineManagedIdentityId
               }
             ]
+          : [],
+        enableSftpDistribution
+          ? [
+              // bm22 §7 / bm34 — the SFTP private key + known_hosts the
+              // distribution flow reads via `{{ secret('SFTP_PRIVATE_KEY') }}` /
+              // `{{ secret('SFTP_KNOWN_HOSTS') }}`. Both are genuine Kestra
+              // `secret()` lookups, so the Key Vault VALUES MUST BE BASE64-
+              // ENCODED (Kestra OSS env-secret backend base64-decodes
+              // `SECRET_<NAME>` — same rule as rating-usage-webhook-key above).
+              {
+                name: 'sftp-private-key'
+                keyVaultUrl: '${keyVaultUri}secrets/sftp-private-key'
+                identity: workflowEngineManagedIdentityId
+              }
+              {
+                name: 'sftp-known-hosts'
+                keyVaultUrl: '${keyVaultUri}secrets/sftp-known-hosts'
+                identity: workflowEngineManagedIdentityId
+              }
+            ]
           : []
       )
       // No `traffic` block on either ingress branch — activeRevisionsMode
@@ -213,7 +255,7 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'workflow-engine'
           image: imageName
-          env: [
+          env: concat([
             // D6 — resolved per row by a task, never per batch (Inv #12).
             { name: 'RATING_ENGINE_VERSION', value: workflowEngineVersion }
 
@@ -298,7 +340,19 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // backend base64-DECODES this value — the KV secret must hold the
             // BASE64-encoded key (see the rating-usage-webhook-key secret above).
             { name: 'SECRET_RATING_USAGE_WEBHOOK_KEY', secretRef: 'rating-usage-webhook-key' }
-          ]
+          ],
+          // bm22 §7 / bm34 — SFTP distribution config (default-off). Non-secret
+          // target coordinates as plain env; the private key + known_hosts as
+          // Kestra `secret()` refs (base64 KV values). SFTP_REMOTE_BASE is the
+          // client-visible chroot path (e.g. /upload), not a server-absolute one.
+          enableSftpDistribution ? [
+            { name: 'SFTP_HOST', value: sftpHost }
+            { name: 'SFTP_PORT', value: sftpPort }
+            { name: 'SFTP_USER', value: sftpUser }
+            { name: 'SFTP_REMOTE_BASE', value: sftpRemoteBase }
+            { name: 'SECRET_SFTP_PRIVATE_KEY', secretRef: 'sftp-private-key' }
+            { name: 'SECRET_SFTP_KNOWN_HOSTS', secretRef: 'sftp-known-hosts' }
+          ] : [])
           volumeMounts: [
             {
               volumeName: 'landing'

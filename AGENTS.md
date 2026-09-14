@@ -6,21 +6,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
-## Change Configuration
+## Billing Module Update Context
 
 Read the following files in order before implementing
-or making any architectural decision related to the change required
+or making any architectural decision related to Billing Module:
 
-1. `context/_change-homepage-topbar-nav-rbac-plan.md` 
-2. `context/architecture.md` 
-
- <!--
-## Billing Module Building Context
-
-Read the following files in order before implementing
-or making any architectural decision related to Billing Module update for Bill Run:
-
-1. `context/billing-management/billmgmt-project-overview.md` — product definition, goals, features, and scope
+1. `context/billing-management/billmgmt-update-overview.md` — definition, goals, features, and scope
 2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
 3. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
 4. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
@@ -28,4 +19,9 @@ or making any architectural decision related to Billing Module update for Bill R
 6. `context/billing-management/billmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
 
 Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
- -->
+
+Read also the general context document to support the changes as referenced by the context files above:
+1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  
+2. `context/code-standards.md`— implementation rules and conventions
+3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+4. `context/ui-context.md` — theme, colors, typography, and component conventions

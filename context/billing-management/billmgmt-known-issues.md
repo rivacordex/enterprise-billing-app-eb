@@ -161,6 +161,19 @@ dates to the month's real last day (fixes 4a), and (2) fix the trigger test's
 per-case isolation (fixes 4b). Both are date/fixture issues, unrelated to the
 approve/post work.
 
+> **RESOLVED (bm22 DB-gate run, 2026-09-14).** Both turned out to be **test**
+> issues, not production bugs. **4a** — `currentDuePeriod`
+> (`services/billing/derive-periods.ts`) already clamps correctly via `Date.UTC`;
+> the invalid `2026-02-29` came from `materialize-runs.integration.test.ts`'s own
+> fixture hand-building calendar strings. Fixed the fixture to
+> `period_end = day 27`, `scheduled_run_date = day 28` (`= period_end + 1`, the
+> `bill_run_oncycle_schedule_check`, valid in every month). **4b** — the
+> `trigger-run.integration.test.ts` double-trigger case now asserts the snapshot
+> **delta** (the rejected second trigger writes nothing) instead of a hard-coded
+> count that broke on the suite's shared-cycle accumulated accounts. Both suites
+> green against a disposable Postgres. See `billmgmt-progress-tracker.md`
+> Current Phase (bm22).
+
 ---
 
 ## 5. ⚪ Approve-page & period-close query efficiency (deferred perf pass)

@@ -17,6 +17,8 @@ import { document } from "@/db/schema/billing/documents";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
+import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
+import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
 import { seedSysAccounts } from "@/db/seeds/accounts/seed-sys-accounts";
 import { seedCoa } from "@/db/seeds/accounts/seed-coa";
 import { seedGlMappings } from "@/db/seeds/accounts/seed-gl-mappings";
@@ -175,6 +177,48 @@ describe.skipIf(!databaseUrl)(
           lastEditedBy: triggerActorId,
         })
         .returning({ billingAccountId: billingAccount.billingAccountId });
+
+      // The per-FA/BAN pgledger accounts + ledger_binding rows that real
+      // onboarding (onboardCustomerAccounts steps 2c/2d) creates — the raw
+      // inserts above skip them, but posting resolves the FA's
+      // unapplied_cash/deposits + the BAN's receivables bindings, so an INV
+      // post parks with "unapplied_cash binding not found" without them.
+      const uc = await ledgerRepository.createAccount(
+        db,
+        `fa.${fa!.financialAccountId}.unapplied_cash`,
+        CURRENCY,
+      );
+      const dep = await ledgerRepository.createAccount(
+        db,
+        `fa.${fa!.financialAccountId}.deposits`,
+        CURRENCY,
+      );
+      const rec = await ledgerRepository.createAccount(
+        db,
+        `ban.${ban!.billingAccountId}.receivables`,
+        CURRENCY,
+      );
+      await ledgerBindingRepository.insert(db, {
+        ownerType: "financial_account",
+        ownerId: fa!.financialAccountId,
+        ledgerRole: "unapplied_cash",
+        pgledgerAccountId: uc.id,
+        lastEditedBy: triggerActorId,
+      });
+      await ledgerBindingRepository.insert(db, {
+        ownerType: "financial_account",
+        ownerId: fa!.financialAccountId,
+        ledgerRole: "deposits",
+        pgledgerAccountId: dep.id,
+        lastEditedBy: triggerActorId,
+      });
+      await ledgerBindingRepository.insert(db, {
+        ownerType: "billing_account",
+        ownerId: ban!.billingAccountId,
+        ledgerRole: "receivables",
+        pgledgerAccountId: rec.id,
+        lastEditedBy: triggerActorId,
+      });
       return ban!.billingAccountId;
     }
 
@@ -701,18 +745,34 @@ describe.skipIf(!databaseUrl)(
         expect(invoicedRun?.completedAt).toBeNull();
         expect(invoicedRun?.distributionExecutionId).toBeTruthy();
 
+        // ---- Deterministically force `banBilled` render-pending (bm21 T8's D10
+        // safety net). When a blob store (Azurite) AND Playwright Chromium are
+        // BOTH reachable — as in a full test/CI environment —
+        // `renderAndStoreInvoice` SUCCEEDS and stores a `bill_run_invoices` row
+        // before the automatic `triggerDistribution` runs. To keep proving the
+        // safety net (a posted-but-unrendered account must never silently
+        // COMPLETE) independent of whether Chromium/blob happen to be present,
+        // remove that row so the account is render-pending — the exact state the
+        // net guards. Migration 0036's immutability trigger blocks a normal
+        // DELETE even for the superuser, so disable user triggers for this one
+        // teardown write (session_replication_role, txn-scoped). Distribution
+        // outcomes below are all test-recorded rows, so the round-1 invoice the
+        // trigger may have launched leaves no outcome and does not affect the
+        // recompute.
+        await sql!.begin(async (tx) => {
+          await tx`SET LOCAL session_replication_role = replica`;
+          await tx`DELETE FROM billing.bill_run_invoices WHERE ref_bill_run_id = ${runId} AND ref_billing_account_id = ${banBilled}`;
+        });
+
         // ---- Drive distribution the same way the deployed
-        // `bill_run_distribution` flow would: record the loopback's
-        // DELIVERED outcome for every mandatory artifact the automatic
-        // trigger actually launched, then the flow's `finally` handler's
-        // terminal push (`recomputeDistributionStatus`, invoked by
+        // `bill_run_distribution` flow would: record the loopback's DELIVERED
+        // outcome for the per-run report CSV, then the flow's `finally`
+        // handler's terminal push (`recomputeDistributionStatus`, invoked by
         // `handle-status-push.ts` in production — called directly here since
-        // there is no live engine in this environment to fire the real
-        // push). This environment has no reachable blob store / Chromium
-        // (see the render-pending assertions below), so `banBilled`'s render
-        // never produced a `bill_run_invoices` row by the time
-        // `triggerDistribution` ran — the ONLY mandatory artifact it saw is
-        // the per-run report CSV.
+        // there is no live engine in this environment to fire the real push).
+        // `banBilled` is now render-pending (row removed above), so the report
+        // is the only delivered mandatory artifact and the D10 check must refuse
+        // to complete.
         const distributionAttempt = invoicedRun!.distributionAttempt ?? 1;
         const reportOutcome = await recordDistributionOutcome({
           runId,
@@ -858,14 +918,14 @@ describe.skipIf(!databaseUrl)(
         ).rejects.toThrow(/duplicate key value violates unique constraint/i);
 
         // ---- bm19-spec §Design D10 — the post-commit render/store step.
-        // This environment has neither a reachable blob store
-        // (BILLRUN_BLOB_CONNECTION_STRING/_ACCOUNT_URL unset here) nor
-        // Playwright's Chromium installed, so `renderAndStoreInvoice`'s
-        // internal try/catch swallows that failure exactly as designed — the
-        // account is left "render-pending": no `bill_run_invoices` row exists
-        // yet, self-documenting the tolerated, retryable gap (never a stored
-        // column, D10) — and, per the D10 safety net above, distribution is
-        // now stuck at DISTRIBUTION_FAILED rather than silently COMPLETED.
+        // `banBilled` is render-pending: either `renderAndStoreInvoice`'s
+        // internal try/catch swallowed a render/store failure (a degraded
+        // environment), or — as here, with blob + Chromium reachable — the
+        // stored row was removed above to force this state deterministically.
+        // Either way no `bill_run_invoices` row exists yet, self-documenting the
+        // tolerated, retryable gap (never a stored column, D10), and per the D10
+        // safety net distribution is stuck at DISTRIBUTION_FAILED rather than
+        // silently COMPLETED.
         const renderPendingRows = await db
           .select()
           .from(billRunInvoices)

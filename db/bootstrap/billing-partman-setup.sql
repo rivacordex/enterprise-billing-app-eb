@@ -261,12 +261,50 @@ SET retention            = '7 years',
 WHERE parent_table = 'billing.bill_run_distribution';
 --> statement-breakpoint
 
+-- bm23-spec §Implementation §3. Seventh parent registration in this same
+-- bootstrap file: billing.customer_bill_line (created by
+-- 0039_customer_bill_line.sql). Same monthly/7-year-detach shape as the six
+-- parents above — the charge record IS the bill's authoritative amounts
+-- (Inv #3), so its partition must never be dropped within the statutory window
+-- (it shares its parent bill's retention; the composite ON DELETE CASCADE FK
+-- means both partitions must survive together within the statutory life).
+DO $$
+BEGIN
+  -- Idempotent guard: partman.create_parent aborts with a part_config
+  -- primary-key violation if this parent is already registered, so a
+  -- re-run of db:setup against an already-provisioned database would
+  -- fail the whole bootstrap. Re-running must be a no-op instead: the
+  -- dev stack's one-shot `setup` service re-runs on every .env or
+  -- compose change, and CI/deploy provisioning is not guaranteed to see
+  -- a virgin database either.
+  IF NOT EXISTS (SELECT 1 FROM partman.part_config WHERE parent_table = 'billing.customer_bill_line') THEN
+    PERFORM partman.create_parent(
+      p_parent_table  := 'billing.customer_bill_line',
+      p_control       := 'period_partition',
+      p_interval      := '1 month',
+      p_type          := 'range',
+      p_premake       := 4,
+      p_default_table := false
+    );
+  END IF;
+END
+$$;
+--> statement-breakpoint
+
+UPDATE partman.part_config
+SET retention            = '7 years',
+    retention_keep_table = true,
+    premake              = 4,
+    infinite_time_partitions = true
+WHERE parent_table = 'billing.customer_bill_line';
+--> statement-breakpoint
+
 -- Materialise premake/forward partitions immediately on a fresh install
--- (covers all six parents registered above).
+-- (covers all seven parents registered above).
 CALL partman.run_maintenance_proc();
 
 -- No second cron job: the audit-log-partman-maintenance job
 -- (audit-partman-setup.sql) already calls partman.run_maintenance_proc()
 -- with no table argument, which sweeps every registered parent — including
--- every parent registered in this file (now six), once their create_parent
+-- every parent registered in this file (now seven), once their create_parent
 -- calls have run. Do not schedule a second `cron.schedule_in_database` here.

@@ -74,6 +74,55 @@ services:
     volumes:
       - azurite_data:/data
 
+  # bm22 §7 — NET-NEW local SFTP endpoint: the distribution transport target.
+  # bill_run_distribution (bm34) uploads each rendered invoice PDF + the run
+  # report here via `fs.sftp.Upload`. bm22 only STANDS IT UP — distribution is
+  # still the loopback placeholder, so nothing connects to it yet; it exists so
+  # bm34 has a real endpoint and the SFTP_* env surface is settled now.
+  #
+  # KEY-AUTH ONLY (no password), client-side HOST-KEY VERIFICATION on (bm34).
+  # All key material is LOCAL-ONLY and NEVER committed (the repo is publish-safe
+  # — repo memory: open-source prep): the developer generates a throwaway dev
+  # keypair, drops the PUBLIC half under ./sftp/keys/, and bm34 captures the
+  # server's host key with `ssh-keyscan` into its known_hosts / a Kestra Secret.
+  # Full steps + the {remote_base} layout: workflow-management/dev/sftp/README.md.
+  #
+  # atmoz/sftp is the standard OpenSSH-in-a-container image; `alpine` is its
+  # maintained tag (the older `alpine-3.7` pins a 2018 EOL OpenSSH). Host keys
+  # regenerate per container recreate (not persisted — persisting a private host
+  # key would mean committing one); re-run the ssh-keyscan capture after a
+  # `--build`/recreate. NOTE the chroot: atmoz chroots `billrun` to its home
+  # `/home/billrun`, so the writable dir `upload` — the SERVER path
+  # /home/billrun/upload — is addressable BY THE CLIENT as `/upload`. The client
+  # {remote_base} is therefore `/upload` (SFTP_REMOTE_BASE), matching
+  # architecture §3's {remote_base}/invoices/{YYYY-MM}/ + reports/{YYYY-MM}/.
+  sftp:
+    image: atmoz/sftp:alpine
+    # SFTP_USERS = "user:password:uid:gid:dir". The EMPTY password field forces
+    # key-only auth for `billrun` (OpenSSH default PermitEmptyPasswords=no).
+    command: billrun::1001:1001:upload
+    ports:
+      # SFTP_HOST_PORT is the HOST-published port (Compose interpolates it from
+      # the project-root .env/shell, NOT from a service env_file) — a distinct
+      # name from the engine's in-network SFTP_PORT=22 (set in dev/.env.example)
+      # so the two never alias. Default 2222.
+      - "${SFTP_HOST_PORT:-2222}:22"
+    volumes:
+      # Every *.pub dropped here is installed into billrun's authorized_keys at
+      # start (atmoz convention). Gitignored — only the .gitkeep is committed.
+      - ./workflow-management/dev/sftp/keys:/home/billrun/.ssh/keys:ro
+      # atmoz runs every executable in /etc/sftp.d/ after user setup — this
+      # seeds the invoices/ + reports/ subtree (the YYYY-MM dirs are created at
+      # delivery time by bm34) and chowns it to billrun.
+      - ./workflow-management/dev/sftp/init:/etc/sftp.d:ro
+      # NAMED volume (not a host bind mount): atmoz does not chown host
+      # bind-mounts, so a bind mount is unwritable by the chrooted uid-1001 user
+      # on a Linux host. A named volume is chowned to billrun on init → writable
+      # on every host. Inspect delivered files with
+      # `docker compose ... exec sftp ls -R /home/billrun/upload`.
+      - sftp_upload:/home/billrun/upload
+    restart: "no"
+
   # The shared workflow engine (wfm01) — same image, same process runner, same
   # kestra.yml as the deployed Container App; hosts BOTH the `rating` and
   # `billrun` namespaces (flows deployed by the flow-deploy one-shot below).
@@ -181,3 +230,7 @@ services:
 
 volumes:
   azurite_data:
+  # bm22 §7 — the SFTP delivered-artifact tree (invoices/ + reports/). A named
+  # volume so atmoz chowns it to the chrooted user on init (a host bind mount
+  # would be unwritable on Linux — atmoz does not chown bind mounts).
+  sftp_upload:

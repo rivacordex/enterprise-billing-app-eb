@@ -1,4 +1,4 @@
-import { eq, inArray, and, sql } from "drizzle-orm";
+import { eq, inArray, and } from "drizzle-orm";
 import postgres from "postgres";
 
 import { db } from "@/db/client";
@@ -163,15 +163,15 @@ async function purgeSampleGraph(): Promise<void> {
           // the whole teardown back) rather than silently orphan or corrupt
           // balances.
           if (orphanLedgerAccountIds.length > 0) {
-            const [posted] = await tx.execute<{ cnt: string }>(sql`
-              SELECT COUNT(*)::text AS cnt
-              FROM billing.pgledger_entries_view
-              WHERE account_id = ANY(ARRAY[${sql.join(
-                orphanLedgerAccountIds.map((id) => sql`${id}`),
-                sql`, `,
-              )}]::text[])
-            `);
-            if (Number(posted?.cnt ?? 0) > 0) {
+            // pgledger access goes through the accounts ledger repository — the
+            // sole sanctioned caller of the pgledger surface (Inv. #4, code-
+            // standards §6.3); never raw pgledger SQL from a seed.
+            const postedEntryCount =
+              await ledgerRepository.countEntriesForAccounts(
+                tx,
+                orphanLedgerAccountIds,
+              );
+            if (postedEntryCount > 0) {
               throw new Error(
                 "db:seed-sample: the prior _SAMPLE_ run's ledger accounts already " +
                   "carry posted entries (a bill run was executed against them). A " +

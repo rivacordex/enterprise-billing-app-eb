@@ -85,6 +85,10 @@ GRANT USAGE ON SEQUENCE "billing"."customer_bill_seq"          TO billrun_runtim
 --> statement-breakpoint
 GRANT USAGE ON SEQUENCE "billing"."customer_bill_tax_item_seq" TO billrun_runtime;
 --> statement-breakpoint
+-- bm23-spec §Implementation §4. The BLN id sequence customer_bill_line INSERTs
+-- default through (its charge lines are worker-inserted, Step 5a below).
+GRANT USAGE ON SEQUENCE "billing"."customer_bill_line_seq"     TO billrun_runtime;
+--> statement-breakpoint
 
 -- Step 5 — customer_bill: the trial columns only. INSERT and UPDATE are
 -- column-scoped to EXCLUDE the three posting stamps (ref_inv_document_id,
@@ -109,6 +113,44 @@ GRANT UPDATE (
 ) ON TABLE "billing"."customer_bill" TO billrun_runtime;
 --> statement-breakpoint
 
+-- Step 5a — customer_bill_line (bm23-spec §Implementation §4). The charge
+-- record's two-writer boundary, again (Inv #3): billrun_runtime INSERTs and
+-- reads; app_runtime reads only. billrun_runtime gets SELECT + a column-scoped
+-- INSERT covering every column, but NO table DELETE and NO UPDATE:
+--   * No DELETE — re-derivation is the whole-account replace (Inv #16, D22),
+--     which deletes the trial `customer_bill` header through the scoped
+--     SECURITY DEFINER `billrun_delete_trial_bill` (Step 6b); the ON DELETE
+--     CASCADE FK (0039) removes the lines under the function OWNER's rights, not
+--     the caller's — so a caller DELETE grant is neither needed nor wanted (it
+--     could not be predicate-scoped, T10 precedent).
+--   * No UPDATE — a line is never patched in place; re-derivation is
+--     delete-then-insert, never a per-line upsert (Inv #16).
+GRANT SELECT ON TABLE "billing"."customer_bill_line" TO billrun_runtime;
+--> statement-breakpoint
+GRANT INSERT (
+  "customer_bill_line_id","ref_customer_bill_id","period_partition","line_no",
+  "source","line_type","ref_product_offering_id","udr_type","description",
+  "quantity","unit","gross_amount","discount_amount","net_amount",
+  "discount_type","discount_rate","discount_amount_raw","udr_count",
+  "grouping_key","currency","snapshot_price_ref","snapshot_unit_price",
+  "snapshot_quantity","snapshot_effective_date"
+) ON TABLE "billing"."customer_bill_line" TO billrun_runtime;
+--> statement-breakpoint
+
+-- Step 5b — app_runtime reads customer_bill_line but never writes it (Inv #3).
+-- bootstrap-db-roles.sql's `ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN
+-- SCHEMA "billing" GRANT SELECT, INSERT, UPDATE, DELETE ... TO app_runtime`
+-- auto-grants app_runtime FULL DML on every NEW billing table, so this one must
+-- be EXPLICITLY revoked back to SELECT-only — the boundary is grant-enforced,
+-- not "unused by convention" (bm14 Step 6a precedent for customer_bill_tax_item).
+-- GRANT SELECT first (idempotent, and closes the "scratch setup billing grant
+-- gap" where the default-priv may not have fired on a from-scratch DB), then
+-- REVOKE only the writes.
+GRANT SELECT ON TABLE "billing"."customer_bill_line" TO app_runtime;
+--> statement-breakpoint
+REVOKE INSERT, UPDATE, DELETE ON TABLE "billing"."customer_bill_line" FROM app_runtime;
+--> statement-breakpoint
+
 -- Step 6 — customer_bill_tax_item: fully worker-owned in phase 2 (Taxation moved
 -- to the flow); the app writes none of it.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "billing"."customer_bill_tax_item" TO billrun_runtime;
@@ -118,6 +160,18 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "billing"."customer_bill_tax_item"
 -- Taxation into the flow (worker-owned above), so revoke app_runtime's as-built
 -- write grant, keeping SELECT — the two-writer boundary is grant-enforced, not
 -- "unused by convention".
+--
+-- The SELECT is GRANTed EXPLICITLY here rather than assumed: bootstrap-db-roles.sql
+-- enumerates app_runtime's `billing` grants to the ac01-era tables only and sets
+-- NO `ALTER DEFAULT PRIVILEGES` for the schema, so a bill-run table created by a
+-- later migration receives no app_runtime grant on a from-scratch DB (the
+-- "scratch setup billing grant gap"). Granting SELECT first makes "keeping SELECT"
+-- true regardless of how migrations were applied; the REVOKE then removes only the
+-- writes. (The other bill-run tables app_runtime reads/writes — customer_bill,
+-- bill_run*, bill_run_invoices, bill_run_distribution — have the same underlying
+-- gap; closing it schema-wide is tracked separately, see billmgmt-known-issues.)
+GRANT SELECT ON TABLE "billing"."customer_bill_tax_item" TO app_runtime;
+--> statement-breakpoint
 REVOKE INSERT, UPDATE, DELETE ON TABLE "billing"."customer_bill_tax_item" FROM app_runtime;
 --> statement-breakpoint
 

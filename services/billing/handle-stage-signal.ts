@@ -47,9 +47,6 @@ export interface StageSignalResult {
   runStatus: RunStatus;
 }
 
-const IDEMPOTENCY_CONSTRAINT =
-  "bill_run_account_stage_run_ban_stage_attempt_period_unique";
-
 // bm04-spec §Design/§1 resolved ambiguity — unchanged by bm16 (spec
 // §Implementation §4: "verification remains the terminal processing stage
 // until distribution stages land in bm20"). The last of the six stages this
@@ -156,23 +153,37 @@ export async function handleStageSignal(
     };
 
     try {
-      await billRunAccountStageRepository.insertStageRow(tx, {
-        refBillRunId: input.runId,
-        refBillingAccountId: input.banId,
-        periodPartition,
-        stage: input.stage,
-        attempt: input.attempt,
-        status: effective.status,
-        // A completion signal carries no real start time — record only the
-        // end. Fabricating startedAt = now implies a false zero duration.
-        startedAt: null,
-        endedAt: new Date(),
-        errorClass: effective.errorClass,
-        errorCode: effective.errorCode,
-        errorDetail: effective.errorDetail,
+      // SAVEPOINT (nested transaction): a real Postgres unique violation aborts
+      // the ENTIRE transaction, so the insert must be isolated — otherwise the
+      // caught duplicate leaves the outer tx poisoned and its COMMIT re-raises
+      // the 23505 (a 500, not the 200 replay Inv. #5 promises). The savepoint
+      // rolls back just this insert on a duplicate, leaving the outer tx healthy
+      // to return the replay result and commit cleanly.
+      await tx.transaction(async (sp) => {
+        await billRunAccountStageRepository.insertStageRow(sp, {
+          refBillRunId: input.runId,
+          refBillingAccountId: input.banId,
+          periodPartition,
+          stage: input.stage,
+          attempt: input.attempt,
+          status: effective.status,
+          // A completion signal carries no real start time — record only the
+          // end. Fabricating startedAt = now implies a false zero duration.
+          startedAt: null,
+          endedAt: new Date(),
+          errorClass: effective.errorClass,
+          errorCode: effective.errorCode,
+          errorDetail: effective.errorDetail,
+        });
       });
     } catch (err) {
-      if (isUniqueViolation(err, IDEMPOTENCY_CONSTRAINT)) {
+      // Idempotency replay: a duplicate on the partitioned
+      // bill_run_account_stage latch (ref_bill_run_id, ref_billing_account_id,
+      // stage, attempt, period_partition). Match ANY 23505 — on a partitioned
+      // table Postgres reports the leaf-partition index name, not the parent
+      // constraint name, and this insert can only realistically violate that one
+      // latch (the surrogate PK id comes from a sequence and never collides).
+      if (isUniqueViolation(err)) {
         // A duplicate of the current attempt — the account was read above under
         // the same lock; nothing has moved it since, so reuse that snapshot.
         return {
