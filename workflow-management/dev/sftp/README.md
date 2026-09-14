@@ -51,8 +51,10 @@ docker compose -f docker-compose.dev.yml \
 #    (default 2222) — set it in your shell/project .env if you changed it.
 ssh-keyscan -p "${SFTP_HOST_PORT:-2222}" -t ed25519 localhost > /tmp/sftp_known_hosts
 
-# 4. Smoke it — put/verify/remove against /upload (no password prompt)
-printf 'put %s /upload/invoices/2026-09/test.pdf\nls -l /upload/invoices/2026-09\nrm /upload/invoices/2026-09/test.pdf\n' \
+# 4. Smoke it — put/verify/remove against /upload (no password prompt). The
+#    init script seeds /upload/invoices, but not the per-run YYYY-MM subdir, so
+#    create it first (`-mkdir` ignores the error if it already exists).
+printf -- '-mkdir /upload/invoices/2026-09\nput %s /upload/invoices/2026-09/test.pdf\nls -l /upload/invoices/2026-09\nrm /upload/invoices/2026-09/test.pdf\n' \
   workflow-management/dev/sftp/keys/billrun_dev.pub > /tmp/sftp_batch
 sftp -P "${SFTP_HOST_PORT:-2222}" \
   -i workflow-management/dev/sftp/keys/billrun_dev \
