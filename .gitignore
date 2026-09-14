@@ -82,6 +82,14 @@ workflow-management/dev/archive/*
 !workflow-management/dev/archive/.gitkeep
 !workflow-management/dev/archive/README.md
 
+# bm22 §7 — local SFTP dev endpoint. Key material is LOCAL-ONLY and must never
+# be committed (publish-safe repo): the developer's generated dev keypair drops
+# its *.pub under sftp/keys/. Keep only the committed .gitkeep placeholder.
+# (The delivered-artifact tree lives in the `sftp_upload` named volume, not on
+# the host, so there is no upload/ dir to ignore.)
+workflow-management/dev/sftp/keys/*
+!workflow-management/dev/sftp/keys/.gitkeep
+
 # Brand assets (public/brand/): keep the committed placeholder `logo.svg`;
 # ignore every other file dropped here so a real/company-specific logo never
 # lands in the (open-source) repo. Point `app_logo_path` at the ignored file

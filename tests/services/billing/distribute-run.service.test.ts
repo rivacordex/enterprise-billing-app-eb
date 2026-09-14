@@ -6,7 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // guard), recompute COMPLETED/DISTRIBUTION_FAILED from the recorded set, and
 // T11's force-complete/abandon escape hatch.
 
-const txStub = {};
+// The outcome insert runs inside a SAVEPOINT (`tx.transaction`) so a real
+// unique violation rolls back only the insert, not the outer tx — the mock
+// passes the callback straight through with the same stub (so `insertOutcome`
+// is still invoked with `txStub`).
+const txStub: { transaction: (cb: (sp: unknown) => unknown) => unknown } = {
+  transaction: (cb) => cb(txStub),
+};
 vi.mock("@/db/client", () => ({
   db: { transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(txStub)) },
 }));

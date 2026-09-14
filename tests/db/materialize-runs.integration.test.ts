@@ -77,7 +77,12 @@ describe.skipIf(!databaseUrl)(
           {
             refBillCycleId: cycleId,
             periodStart: `2026-${month}-01`,
-            periodEnd: `2026-${month}-28`,
+            // period_end day 27 so scheduled_run_date = period_end + 1 = day 28
+            // is valid in EVERY month (the loop spans Jan–Apr, incl. non-leap
+            // Feb where day 29 does not exist). scheduled = period_end + 1 is the
+            // on-cycle `bill_run_oncycle_schedule_check`; production derives this
+            // in `currentDuePeriod`.
+            periodEnd: `2026-${month}-27`,
             scheduledRunDate: `2026-${month}-28`,
           },
         ];

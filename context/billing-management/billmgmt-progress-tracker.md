@@ -74,6 +74,138 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase J — **bm22 (Environmental Gate) — IN PROGRESS (authored
+  artifacts landed; runtime gates pending real infra).** See
+  `context/billing-management/specs/bm22-environmental-gate.md`. Infra-only
+  unit — **no application code, no schema authored** (`ai-workflow-rules` §1.4).
+  Its whole authorable "diff" (spec §Design: two net-new infra pieces + their
+  env/docs) is landed this pass:
+  - **§6 — worker-image SFTP plugin (D0).**
+    `workflow-management/worker/workflow-engine/Dockerfile` explicitly
+    `kestra plugins install io.kestra.plugin:plugin-fs:2.11.1`, so
+    `fs.sftp.Upload` presence is a build-time gate (a rebuilt image artifact —
+    ACA has no Docker daemon to add one at deploy time).
+    **Correction (post-review, verified against the real image):** the earlier
+    "fs is absent / net-new plugin at version `1.3.35`" framing was WRONG on two
+    counts — (1) Kestra plugin versions are DECOUPLED from core (there is no
+    plugin-fs `1.3.x`; `plugin-fs:1.3.35` does not exist on Maven Central, so the
+    original pin would have **hard-failed `docker build`**); (2) the non-slim
+    `kestra/kestra:v1.3.35` base **already bundles** `plugin-fs` — inspecting the
+    pinned image shows `/app/plugins/io_kestra_plugin__plugin-fs__2_11_1.jar`
+    (alongside the azure-blob + core-http plugins §6 already relied on). So the
+    line now pins that SAME bundled version `2.11.1` (idempotent re-install, no
+    classpath clash) — a loud build-time assertion of presence rather than a
+    net-new add. Re-resolve by inspecting `/app/plugins/` when bumping the base.
+  - **§7 — net-new SFTP dev endpoint + env surface.** A `sftp` service
+    (`atmoz/sftp:alpine`) added to
+    `workflow-management/dev/docker-compose.dev.yml`: **key-auth only** (empty
+    password ⇒ OpenSSH `PermitEmptyPasswords=no`), user `billrun`. Delivered
+    artifacts live in the **`sftp_upload` named volume** (NOT a host bind mount —
+    atmoz does not chown bind mounts, so a bind mount is unwritable by the
+    chrooted uid-1001 user on Linux); a committed `sftp/init/00-init-dirs.sh`
+    (mounted to `/etc/sftp.d/`) seeds the `invoices/` + `reports/` subtree.
+    **Chroot-correct remote base:** atmoz chroots `billrun` to `/home/billrun`,
+    so the client-visible `{remote_base}` is **`/upload`** (`SFTP_REMOTE_BASE`),
+    not the server path `/home/billrun/upload` — matching architecture §3's
+    `invoices/{YYYY-MM}/` + `reports/{YYYY-MM}/`. Host-published on
+    `${SFTP_HOST_PORT:-2222}` (a distinct name from the engine's in-network
+    `SFTP_PORT=22`, so the two never alias). **Publish-safe (repo memory:
+    open-source prep):** no key material committed — the developer generates a
+    throwaway dev keypair into the gitignored `workflow-management/dev/sftp/keys/`,
+    and captures the server host key via `ssh-keyscan` (host-key verification ON).
+    New `workflow-management/dev/sftp/README.md` documents keygen/capture/smoke.
+    **Env placement (post-review fix):** SFTP is engine config, so —
+    - **local dev:** `workflow-management/dev/.env.example` (in-network
+      `SFTP_HOST=sftp`/`22`, `SFTP_REMOTE_BASE=/upload`; key + known_hosts as
+      unset `SECRET_SFTP_*` placeholders, base64 Kestra `secret()`);
+    - **deployed:** wired in
+      `infra/bicep/modules/workflow-engine-container-app.bicep` behind a
+      default-off `enableSftpDistribution` param (non-secret coordinates as env;
+      key + known_hosts as `sftp-private-key`/`sftp-known-hosts` Key Vault →
+      Kestra Secret refs, gated so current deploys stay byte-identical until
+      bm34 flips the flag + provisions the KV secrets + real target);
+    - SFTP was **removed** from `infra/env/*.template` — those are app-container
+      env (the engine is a separate Container App); a pointer comment records
+      where engine SFTP config now lives. The repo-root `.env.example` keeps the
+      vars as commented inventory only (the app never reads them).
+  - **SFTP transport VERIFIED (throwaway round-trip, this session).** Since no
+    Docker/atmoz is reachable here, the transport was proven against a throwaway
+    ephemeral SFTP server (paramiko, transient temp-dir install — repo untouched)
+    driven by the real OpenSSH client: ephemeral ed25519 keypair → key-auth →
+    **host-key verification** (`StrictHostKeyChecking=yes`, pinned known_hosts) →
+    `put` a 19,815-byte invoice PDF to `invoices/2026-09/` → md5 integrity match
+    on readback → `rm` (server-side file gone) → teardown. **RESULT: PASS.** This
+    proves the SFTP mechanics + the config shape (key-only auth, host-key verify,
+    `invoices/{YYYY-MM}/` layout); it does NOT exercise atmoz or Kestra's
+    `fs.sftp.Upload` (those still need the built worker image + a running stack).
+  - **Resolved (spec §8): the `flows/billrun/README.md` `_TBD_` lines are
+    already moot.** The wfm01 restructure (commit `0b31f50`) resolved the
+    "separate repo / owning team / deploy step" questions — the flows are
+    co-located under `workflow-management/` and deployed by the `flow-deploy`
+    one-shot locally / the `deploy_workflow_flows` CI stage; the function-first
+    READMEs carry no `_TBD_` markers (grep-clean).
+  - **DB-gated suites EXECUTED against a disposable DB (§1–§3, §5) — ALL GREEN
+    (7 suites / 59 tests).** Docker was in fact available (the earlier probe
+    misfired on PATH); brought up the git-ignored `docker-compose.test.yml`
+    throwaway Postgres 17 + pg_partman + pg_cron (project `ebill-test`, :5434)
+    **plus a new disposable Azurite** (added to that compose, :10001) and ran
+    `migration` / `billing-partman-setup` / `billing-schema` / `materialize-runs`
+    / `trigger-run` / `billrun-db-roles` / `billing-e2e-happy-path`. This proves
+    for real: §1 all 39 migrations apply on a fresh DB; §2 partman registers the
+    six billing parents + a future-month partition; §3 the two-writer grant
+    boundary + the full ship-gate journey (materialize → trigger → stages →
+    PROCESSED → reject → rerun → approve four-eyes → **post (real INV + ledger)**
+    → **DISTRIBUTING** → DISTRIBUTION_FAILED (D10 safety net) → retry-render →
+    rerun-distribution → **COMPLETED**); §5 a real Azurite blob round-trip
+    (invoice PDF render+store + the run-report CSV). Chromium **is** present
+    (`renderFinalInvoice` succeeds). The suites had **never** run against real
+    Postgres before; doing so surfaced 8 failures — **all pre-existing, none from
+    bm22's infra diff** — now fixed:
+    - **[REAL BUG, bm04/bm20] M2M idempotency broken on partitioned tables.**
+      `lib/db-errors.isUniqueViolation` did an exact parent-constraint-name
+      match, but Postgres reports the *leaf-partition* index name, so a duplicate
+      stage-signal / distribution-outcome returned **500 instead of the 200
+      replay** (Inv #5, code-standards §9.2). Compounded by a missing
+      **SAVEPOINT** — a real unique violation aborts the whole transaction, so
+      catching it and returning can't commit. Fixed both idempotency paths
+      (`handle-stage-signal.ts`, `distribute-run.ts`): a nested `tx.transaction`
+      savepoint around the insert-first + `isUniqueViolation(err)` (constraint
+      name now optional; no-name = any 23505, required for partitioned tables).
+    - **[REAL GAP, bm14/bootstrap] `app_runtime` never granted on bill-run
+      tables.** `bootstrap-db-roles.sql` enumerates app_runtime's `billing`
+      grants to the ac01 tables only + no billing default-privileges, so bm14's
+      Step 6a "keeping SELECT" was never true on a from-scratch DB (the "scratch
+      setup billing grant gap"). Added an explicit `GRANT SELECT` on
+      `customer_bill_tax_item` in `billrun-db-roles.sql`; the schema-wide gap
+      (customer_bill, bill_run*, …) is flagged there for a follow-up.
+    - **[FIXTURE GAP, e2e] posting parked** — the e2e built the FA via raw
+      inserts, skipping the per-FA pgledger accounts + `ledger_binding` rows real
+      onboarding creates and posting requires ("unapplied_cash binding not
+      found"). Added them to the fixture (matching `onboardCustomerAccounts`
+      2c/2d).
+    - **[TEST-DESIGN, bm21 T8] e2e distribution tail** asserted render-pending
+      (only true *without* a blob store) yet distribution *needs* one — it could
+      never pass as written. Now forces render-pending **deterministically**
+      (removes banBilled's stored-invoice row via `session_replication_role`,
+      bypassing the 0036 immutability trigger), preserving the D10 coverage
+      environment-independently.
+    - **Stale tests / fixtures / isolation:** trigger-run stub-exec id
+      (`stub-exec-<flowId>-<run>`, bm16/20); billing-schema INV doc_type
+      sequence (bm09); billrun-db-roles #7 teardown (0033 finalization guard
+      fires even for superuser — the guard is *correct*, the teardown assumed
+      otherwise); trigger-run double-trigger (delta assertion vs a shared-cycle
+      account count); materialize `scheduled_run_date = period_end + 1` (day 28,
+      valid every month — `currentDuePeriod` clamps correctly in production);
+      billrun-db-roles `afterAll` hook-timeout under load.
+    - Verified after fixes: **7/7 suites green (59 tests)**; **321 billing unit
+      tests green** (mock `tx` taught the savepoint); `tsc` clean. The throwaway
+      stack was torn down (`down -v`).
+  - **Still NOT executed this session** (need a container image build / live
+    engine): §4 the app-image `docker build` render proof (the render path was
+    exercised via the app's own `renderFinalInvoice` against Azurite, but not
+    from the built `node:22-bookworm-slim` image); §6 the worker-image plugin
+    **smoke** (`kestra plugins list` on the rebuilt image); §8 the live-Kestra
+    smoke against a real engine. These stay pending; not marked passed.
 - Phase 2 · Phase I — **bm21 (Phase-2 Ship Gate) — delivered** (audit +
   cross-cutting closures; DB-gated proof still environmental, see
   Outstanding). See

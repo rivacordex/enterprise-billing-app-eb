@@ -26,6 +26,23 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
+# bm22 §6 / D0 — the distribution transport plugin. bill_run_distribution
+# (bm34) uploads each rendered invoice PDF + the run report over SFTP with
+# `io.kestra.plugin.fs.sftp.Upload`; the download-by-blob_ref and
+# outcome-POST steps use `azure.storage.blob.Download` + `core.http.Request`,
+# All three task types are already carried by the plain (non-slim, with-plugins)
+# base tag above — verified by inspecting the pinned image, which ships
+# `/app/plugins/io_kestra_plugin__plugin-fs__2_11_1.jar`. We pin that SAME
+# version EXPLICITLY (D0 — plugin presence is an image-build-time gate, a
+# rebuilt artifact, since ACA has no Docker daemon to add one at deploy time),
+# so the build fails loudly if a future base ever drops it.
+# NOTE: Kestra plugin versions are DECOUPLED from the core version — there is no
+# plugin-fs `1.3.x`; the version `kestra/kestra:v1.3.35` actually bundles is
+# `2.11.1`. Re-resolve by inspecting `/app/plugins/` in the image when bumping
+# the base digest. Re-installing the already-bundled version is idempotent
+# (identical jar, same /app/plugins path the `server standalone` process loads).
+RUN /app/kestra plugins install io.kestra.plugin:plugin-fs:2.11.1
+
 # The Kestra image already ships CPython 3.12 in a uv-managed venv at
 # /app/.venv (first on PATH — the interpreter Kestra's Python script/commands
 # tasks resolve) plus `uv` at /usr/bin/uv, so there is NO pip bootstrap to do.

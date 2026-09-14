@@ -37,9 +37,6 @@ const LOOPBACK_TARGET = "loopback";
 // idempotency key stays stable across a rerun's fresh blob write.
 export const REPORT_ARTIFACT_REF = "REPORT";
 
-const IDEMPOTENCY_CONSTRAINT =
-  "bill_run_distribution_run_target_artifact_attempt_period_unique";
-
 // Internal-only signal — thrown inside `db.transaction` so an engine failure
 // rolls the whole trigger/rerun back (bm03/bm08 pattern), while the outer
 // call still returns a typed result instead of rejecting.
@@ -545,19 +542,31 @@ export async function recordDistributionOutcome(
     await billRunRepository.bumpHeartbeat(tx, input.runId);
 
     try {
-      await billRunDistributionRepository.insertOutcome(tx, {
-        refBillRunId: input.runId,
-        target: input.target,
-        artifactRef: input.artifactRef,
-        artifactType: input.artifactType,
-        isMandatory: input.isMandatory,
-        outcome: input.outcome,
-        distributionAttempt: input.attempt,
-        periodPartition: firstOfMonth(run.periodStart),
+      // SAVEPOINT (nested transaction): a real Postgres unique violation aborts
+      // the ENTIRE transaction, so the idempotent insert must be isolated —
+      // otherwise the caught duplicate leaves the outer tx poisoned and its
+      // COMMIT re-raises the 23505 (a 500, not the 200 replay). The savepoint
+      // rolls back just this insert on a duplicate; the outer tx stays healthy.
+      await tx.transaction(async (sp) => {
+        await billRunDistributionRepository.insertOutcome(sp, {
+          refBillRunId: input.runId,
+          target: input.target,
+          artifactRef: input.artifactRef,
+          artifactType: input.artifactType,
+          isMandatory: input.isMandatory,
+          outcome: input.outcome,
+          distributionAttempt: input.attempt,
+          periodPartition: firstOfMonth(run.periodStart),
+        });
       });
       return { replayed: false };
     } catch (err) {
-      if (isUniqueViolation(err, IDEMPOTENCY_CONSTRAINT)) {
+      // Idempotency replay: a duplicate on the partitioned bill_run_distribution
+      // latch (ref_bill_run_id, target, artifact_ref, distribution_attempt,
+      // period_partition). Match ANY 23505 — on a partitioned table Postgres
+      // reports the leaf-partition index name, not the parent constraint name,
+      // and this insert can only realistically violate that one latch.
+      if (isUniqueViolation(err)) {
         return { replayed: true };
       }
       throw err;
