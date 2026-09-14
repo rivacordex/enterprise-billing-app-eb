@@ -43,6 +43,14 @@ describe("db:seed-sample marks every seeded udr_rated row _SAMPLE_* (bm15-spec �
     expect(row.ratingEngineVersion).toMatch(SAMPLE_MARKER);
   });
 
+  it("a default row is RAN_USAGE — the only udr_type udr_rated carries into billing (bm26-spec §Implementation §1, Inv #1)", () => {
+    const row = buildSampleUdrRatedRow(BASE_SPEC);
+    // Recurring is bm29 compute from product_inventory, never rated —
+    // SUBSCRIPTION_RECURRING is retired from the factory. This is byte-for-byte
+    // the udr_type rl.py's build_chunk_rows copies through for usage.
+    expect(row.udrType).toBe("RAN_USAGE");
+  });
+
   it("a BILL_NOTUSED row (bm15-spec's second seeded pair) is marked the same way", () => {
     const row = buildSampleUdrRatedRow({
       ...BASE_SPEC,
@@ -54,11 +62,27 @@ describe("db:seed-sample marks every seeded udr_rated row _SAMPLE_* (bm15-spec �
     expect(row.ratingEngineVersion).toMatch(SAMPLE_MARKER);
   });
 
-  it("every seeded row starts unclaimed — no bill-run reference until a real run claims it", () => {
+  it("every seeded row starts unclaimed AND unattributed — all four billrun_* columns NULL (bm26-spec §Implementation §1, matching rl.py)", () => {
     const row = buildSampleUdrRatedRow(BASE_SPEC);
+    // bm26 flip: billrun_ban_id is now NULL too (was the account id under
+    // bm15). rl.py's build_chunk_rows writes NONE of the four billrun_*
+    // columns; a freshly loaded usage row is unclaimed AND unattributed. This
+    // is the single change that unblocks bm27 Collection — a row Collection can
+    // resolve is one that does not already carry its account.
+    expect(row.billrunBanId).toBeNull();
     expect(row.billrunRefId).toBeNull();
     expect(row.billrunAttempt).toBeNull();
     expect(row.billrunChecksum).toBeNull();
-    expect(row.billrunBanId).toBe(BASE_SPEC.ban);
+  });
+
+  it("a BILL_NOTUSED row is equally unclaimed — all four billrun_* columns NULL", () => {
+    const row = buildSampleUdrRatedRow({
+      ...BASE_SPEC,
+      status: "BILL_NOTUSED",
+    });
+    expect(row.billrunBanId).toBeNull();
+    expect(row.billrunRefId).toBeNull();
+    expect(row.billrunAttempt).toBeNull();
+    expect(row.billrunChecksum).toBeNull();
   });
 });

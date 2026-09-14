@@ -74,6 +74,88 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase L — **bm26 (Sample Seed → `RAN_USAGE`, Unclaimed (`ci`
+  profile)) — DELIVERED and DB-VERIFIED against a disposable Postgres
+  (2026-09-15).** See
+  `context/billing-management/specs/bm26-sample-seed-ran-usage.md`. Boundary:
+  `db/seeds/sample` (`udr-rated-sample.ts`, `seed-billrun-sample.ts`) + the two
+  sample-seed guardrails. **No schema, service, flow, or UI.** Makes the seed's
+  usage rows indistinguishable from the real rating loader's output
+  (`rl.py build_chunk_rows`). Landed this pass:
+  - **`db/seeds/sample/udr-rated-sample.ts` — real-shaped factory.**
+    `SampleChargeSpec` gains an optional `udrType` (default `'RAN_USAGE'`); the
+    hardcoded `udrType: "SUBSCRIPTION_RECURRING"` is removed (recurring is bm29
+    compute derived from `inventory.product_inventory`, never rated — Inv #1).
+    `billrunBanId` flipped from `spec.ban` to **`null`** — so ALL FOUR
+    `billrun_*` columns are NULL, byte-for-byte the shape `rl.py` leaves (it
+    writes none of them). This is the single change that unblocks bm27
+    Collection — a row Collection can resolve is one that does not already carry
+    its account. Kept: `_SAMPLE_` provenance, `RATED`/`BILL_NOTUSED` status,
+    `rating.period_of(...)` partition, the usage columns; `udrSubscriberRefId`
+    stays the caller-supplied `product_inventory_id` so bm27 correlation
+    resolves.
+  - **`db/seeds/sample/seed-billrun-sample.ts` — the `ci` profile (six
+    scenarios), profile-selectable.** A `ScenarioSpec`-driven builder replaces
+    the fixed charge set: one BAN per scenario across (1) recurring + usage,
+    (2) multiple subscriptions of one offering + usage (Aggregation rolls into
+    one line, bm28), (3) recurring-only, (4) no charges at all, (5) partial
+    period (the `isFullPeriod:false` BAN), (6) a `BILL_NOTUSED` row. "Recurring"
+    is real `product_inventory` subscriptions via the existing
+    `createOrder → instantiateOrder` path — never a `udr_rated` row; the
+    `SUBSCRIPTION_RECURRING` emission is retired entirely. Each usage row's
+    `udr_subscriber_ref_id` is a real seeded `product_inventory_id`; a global
+    monotonic `sequence` keeps every `udr_key` distinct across the period (the
+    live-row uniqueness key excludes the account, and all rows share
+    `start_datetime`). Entry point selects `DEFAULT_PROFILE = "ci"` via
+    `resolveProfile` (`volume` reserved for bm35). **Purge rekeyed (idempotency
+    fix):** the prior teardown deleted `udr_rated` by `billrun_ban_id IN banIds`
+    — now NULL, so it would never match; the delete is rekeyed to
+    `udr_subscriber_ref_id IN (prior product_inventory_ids)` (which also catches
+    a prior bm15-shape run, whose rows set the same subscriber ref), preserving
+    the re-run-purges-and-rebuilds guarantee on `_SAMPLE_-BILLRUN-0001`.
+  - **Guardrails — extended, not loosened.**
+    `tests/guardrails/billing-sample-seed-marker.test.ts` flips the unclaimed
+    assertion (`billrunBanId` → `toBeNull()`), asserts a default row is
+    `udrType === "RAN_USAGE"`, and asserts a `BILL_NOTUSED` row is equally
+    unclaimed (all four `billrun_*` NULL); the `_SAMPLE_`-marker + `RATED`/
+    `BILL_NOTUSED` cases stay. `billing-sample-seed-boundary.test.ts` unchanged
+    (`db:seed-sample` stays declared, prod-guarded, absent from `db:setup`).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier
+    --check` clean on all changed files; guardrail suites green —
+    `billing-sample-seed-marker` + `billing-sample-seed-boundary` **9/9**, and
+    `tests/accounts/grep-gates.test.ts` **117/117** (no new raw-SQL / boundary
+    violation from the reworked seed).
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman v5 + pg_cron
+    (git-ignored `docker-compose.test.yml`, project `ebill-test`, :5434; torn
+    down `down -v` after).** Provisioned it like production `db:setup` (migrate
+    → the three partman setups → the seed chain), layering
+    `--env-file=.env --env-file=.env.test` so full app config loads while the DB
+    URLs point at the throwaway (`.env.test` alone fails `lib/config`'s eager
+    schema validation — missing `BETTER_AUTH_*` — a general gotcha for running
+    any `db:*` script against the test DB). Then ran `db:seed-sample` (`ci`)
+    **twice**:
+    - **Run 1 (exit 0):** six BANs across the six scenarios, `chargeCount = 6`,
+      demo period `2026-08-01..2026-08-31`. Direct SQL confirmed the checklist:
+      `rating.udr_rated` holds **5 `RAN_USAGE`/`RATED` + 1 `RAN_USAGE`/
+      `BILL_NOTUSED`**, **all four `billrun_*` columns NULL on every row**, and
+      **zero `SUBSCRIPTION_RECURRING`** — byte-for-byte `rl.py`'s shape. All 6
+      rows' `udr_subscriber_ref_id` resolve to a real
+      `inventory.product_inventory_id` (across 3 accounts), so bm27 correlation
+      is live. Per-scenario distribution verified exactly: recurring+usage
+      (1 sub / 2 usage), multiple-subscriptions (3 subs / 3 usage), recurring-only
+      (1 sub / 0), no-charges (0 / 0), partial-period (1 sub / 0),
+      bill-notused (1 sub / 1 BILL_NOTUSED).
+    - **Run 2 (exit 0) — idempotency:** counts identical before/after
+      (`udr_rated=6`, sample BANs=6, sample inventory=7). This is the live proof
+      of the **purge rekey** — the prior run's rows (now NULL `billrun_ban_id`)
+      were purged via `udr_subscriber_ref_id → product_inventory` and rebuilt
+      with **no collision** on the live-row uniqueness constraint
+      `(partition_period, start_datetime, udr_key, is_live)`, which every row
+      shares on the first three columns. Without the rekey this re-run would
+      have thrown a unique violation.
+  - **`volume` profile deferred to bm35** (its only visible result is a
+    performance characteristic that needs aggregation to exist).
+
 - Phase 3 · Phase K — **bm25 (Rating In-Flight Guard + `LOAD_BLOCKED_INFLIGHT`)
   — DELIVERED and DB-VERIFIED (pure-DB suites) against a disposable Postgres
   (2026-09-15).** See

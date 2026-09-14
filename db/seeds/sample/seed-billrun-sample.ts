@@ -49,6 +49,109 @@ const SAMPLE_CUSTOMER_NAME = "_SAMPLE_ Nusantara Demo Sdn Bhd";
 const SAMPLE_OFFERING_NAME = "_SAMPLE_ 5G Demo Plan";
 const SAMPLE_PRICE_NAME = "_SAMPLE_ Monthly Recurring Charge";
 const SAMPLE_RECURRING_AMOUNT = "199.00";
+// The per-row `RAN_USAGE` amount (distinct from the recurring 199.00 so the
+// two are visibly different in the demo). Recurring is bm29 compute derived
+// from product_inventory and is NOT rated through udr_rated any more; only
+// usage flows through udr_rated now (bm26-spec §Implementation §1, Inv #1).
+const SAMPLE_USAGE_AMOUNT = "12.50";
+
+// bm26-spec §Implementation §2 — the `ci` profile: six scenarios covering the
+// shapes Collection (bm27) / Aggregation (bm28) / recurring-derivation (bm29) /
+// exception surfacing (bm32) must handle. "Recurring" is represented by real
+// `product_inventory` subscriptions (via the createOrder → instantiateOrder
+// path), NOT by udr_rated rows. The `volume` profile is deferred to bm35 (its
+// only visible result is a performance characteristic that needs aggregation
+// to exist). The entry point is profile-selectable so bm35 can add `volume`
+// without disturbing the default `ci` demo.
+type SeedProfile = "ci";
+const DEFAULT_PROFILE: SeedProfile = "ci";
+
+type ScenarioKey =
+  | "recurring-and-usage"
+  | "multiple-subscriptions"
+  | "recurring-only"
+  | "no-charges"
+  | "partial-period"
+  | "bill-notused";
+
+interface ScenarioSpec {
+  key: ScenarioKey;
+  banName: string;
+  isFullPeriod: boolean;
+  // product_inventory subscriptions to instantiate on the account (the
+  // "recurring" surface — derived by bm29, never rated).
+  subscriptionCount: number;
+  // RAN_USAGE udr_rated rows per subscription (each wired to that
+  // subscription's product_inventory_id so bm27 correlation resolves).
+  usageRowsPerSubscription: number;
+  // BILL_NOTUSED udr_rated rows on the account (the per-record exception
+  // surface, bm32) — wired to the account's first subscription.
+  billNotUsedRows: number;
+}
+
+const CI_SCENARIOS: readonly ScenarioSpec[] = [
+  {
+    key: "recurring-and-usage",
+    banName: "_SAMPLE_ Billing Account 1 (Recurring + Usage)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 2,
+    billNotUsedRows: 0,
+  },
+  {
+    key: "multiple-subscriptions",
+    banName: "_SAMPLE_ Billing Account 2 (Multiple Subscriptions)",
+    isFullPeriod: true,
+    subscriptionCount: 3,
+    usageRowsPerSubscription: 1,
+    billNotUsedRows: 0,
+  },
+  {
+    key: "recurring-only",
+    banName: "_SAMPLE_ Billing Account 3 (Recurring-Only)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+  },
+  {
+    key: "no-charges",
+    banName: "_SAMPLE_ Billing Account 4 (No Charges)",
+    isFullPeriod: true,
+    subscriptionCount: 0,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+  },
+  {
+    key: "partial-period",
+    banName: "_SAMPLE_ Billing Account 5 (Partial Period)",
+    isFullPeriod: false,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+  },
+  {
+    key: "bill-notused",
+    banName: "_SAMPLE_ Billing Account 6 (BILL_NOTUSED)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 1,
+  },
+];
+
+function resolveProfile(profile: SeedProfile): readonly ScenarioSpec[] {
+  switch (profile) {
+    case "ci":
+      return CI_SCENARIOS;
+    default: {
+      const exhaustive: never = profile;
+      throw new Error(
+        `db:seed-sample: unknown profile "${String(exhaustive)}".`,
+      );
+    }
+  }
+}
 
 const NON_PROD_HOSTS = new Set(["localhost", "127.0.0.1", "db", "postgres"]);
 
@@ -193,16 +296,24 @@ async function purgeSampleGraph(): Promise<void> {
         }
 
         if (banIds.length > 0) {
-          await tx
-            .delete(udrRated)
-            .where(inArray(udrRated.billrunBanId, banIds));
-
           const inventories = await tx
             .select({ productInventoryId: productInventory.productInventoryId })
             .from(productInventory)
             .where(inArray(productInventory.billingAccountId, banIds));
           const inventoryIds = inventories.map((i) => i.productInventoryId);
+
+          // bm26: the seed's udr_rated rows now carry a NULL billrun_ban_id
+          // (they match rl.py's unclaimed shape), so they can no longer be
+          // purged by account. They ARE keyed to the prior run's subscriptions
+          // via udr_subscriber_ref_id (= product_inventory_id), which is what
+          // bm27 correlates on — so purge by that instead. This also catches a
+          // prior bm15-shape run (its rows set both billrun_ban_id AND the same
+          // subscriber ref), so the transition is clean. Delete BEFORE the
+          // product_inventory rows (no FK — Inv #17 — but the ids are needed).
           if (inventoryIds.length > 0) {
+            await tx
+              .delete(udrRated)
+              .where(inArray(udrRated.udrSubscriberRefId, inventoryIds));
             await tx
               .delete(inventoryStatusHistory)
               .where(
@@ -449,20 +560,29 @@ interface SampleAccount {
   billingAccountId: string;
   name: string;
   isFullPeriod: boolean;
+  scenario: ScenarioSpec;
 }
 
-// Customer + accounts (bm15-spec §Implementation §1 steps 3–4). BAN #1 is
-// onboarded through the real wizard path (`onboardCustomerAccounts`) so at
-// least one account is provably wired end-to-end through it; BAN #2/#3 are
-// self-provisioned the same way `ordering-inventory.ts` does for its own
-// story (no service exists for "add another billing account to an existing
-// financial account"), reusing FA #1's `unapplied_cash`/`deposits` bindings
-// and adding their own `receivables` binding.
-async function createSampleCustomerAndAccounts(actorId: string): Promise<{
+// Customer + accounts (bm26-spec §Implementation §2 — one BAN per `ci`
+// scenario). BAN #1 is onboarded through the real wizard path
+// (`onboardCustomerAccounts`) so at least one account is provably wired
+// end-to-end through it; the remaining BANs are self-provisioned the same way
+// `ordering-inventory.ts` does for its own story (no service exists for "add
+// another billing account to an existing financial account"), reusing FA #1's
+// `unapplied_cash`/`deposits` bindings and adding their own `receivables`
+// binding.
+async function createSampleCustomerAndAccounts(
+  actorId: string,
+  scenarios: readonly ScenarioSpec[],
+): Promise<{
   partyRoleId: string;
   financialAccountId: string;
   accounts: SampleAccount[];
 }> {
+  const [firstScenario, ...restScenarios] = scenarios;
+  if (!firstScenario) {
+    throw new Error("db:seed-sample: the selected profile has no scenarios.");
+  }
   const [cycle] = await db
     .select({ billCycleId: billCycle.billCycleId })
     .from(billCycle)
@@ -538,7 +658,7 @@ async function createSampleCustomerAndAccounts(actorId: string): Promise<{
     .where(eq(financialAccount.financialAccountId, financialAccountId));
   await db
     .update(billingAccount)
-    .set({ name: "_SAMPLE_ Billing Account 1 (Full Period)" })
+    .set({ name: firstScenario.banName })
     .where(eq(billingAccount.billingAccountId, banFull1));
 
   const activateResult = await transitionCustomerStatus(
@@ -556,8 +676,8 @@ async function createSampleCustomerAndAccounts(actorId: string): Promise<{
     );
   }
 
-  // BAN #2 (full-period) and #3 (partial-period) — self-provisioned onto the
-  // same FA (ac04's own step 2b–2d, `ordering-inventory.ts` precedent).
+  // Remaining scenario BANs — self-provisioned onto the same FA (ac04's own
+  // step 2b–2d, `ordering-inventory.ts` precedent).
   async function provisionAdditionalBan(name: string): Promise<string> {
     return db.transaction(async (tx) => {
       const ban = await billingAccountRepository.insert(tx, {
@@ -588,50 +708,44 @@ async function createSampleCustomerAndAccounts(actorId: string): Promise<{
     });
   }
 
-  const banFull2 = await provisionAdditionalBan(
-    "_SAMPLE_ Billing Account 2 (Full Period)",
-  );
-  const banPartial = await provisionAdditionalBan(
-    "_SAMPLE_ Billing Account 3 (Partial Period)",
-  );
+  const accounts: SampleAccount[] = [
+    {
+      billingAccountId: banFull1,
+      name: firstScenario.banName,
+      isFullPeriod: firstScenario.isFullPeriod,
+      scenario: firstScenario,
+    },
+  ];
+  for (const scenario of restScenarios) {
+    const billingAccountId = await provisionAdditionalBan(scenario.banName);
+    accounts.push({
+      billingAccountId,
+      name: scenario.banName,
+      isFullPeriod: scenario.isFullPeriod,
+      scenario,
+    });
+  }
 
-  return {
-    partyRoleId,
-    financialAccountId,
-    accounts: [
-      {
-        billingAccountId: banFull1,
-        name: "_SAMPLE_ Billing Account 1 (Full Period)",
-        isFullPeriod: true,
-      },
-      {
-        billingAccountId: banFull2,
-        name: "_SAMPLE_ Billing Account 2 (Full Period)",
-        isFullPeriod: true,
-      },
-      {
-        billingAccountId: banPartial,
-        name: "_SAMPLE_ Billing Account 3 (Partial Period)",
-        isFullPeriod: false,
-      },
-    ],
-  };
+  return { partyRoleId, financialAccountId, accounts };
 }
 
-interface Subscription {
-  billingAccountId: string;
-  productInventoryId: string;
-  startDate: string;
-  isFullPeriod: boolean;
+// The subscriptions instantiated on one account (bm26-spec §Implementation §2):
+// zero for the no-charges scenario, one for most, several of the same offering
+// for the multiple-subscriptions scenario (Aggregation must roll them into one
+// line, bm28). Each product_inventory_id is what a RAN_USAGE row's
+// udr_subscriber_ref_id points at so bm27's correlation resolves.
+interface AccountSubscriptions {
+  account: SampleAccount;
+  productInventoryIds: string[];
 }
 
-// Subscriptions (bm15-spec §Implementation §1 step 4). `createOrder` already
-// calls `instantiateOrder` internally for a no-override order, so one call
-// per account creates + activates the subscription. `now` is pinned to each
-// account's own start date (the service's documented injection seam,
-// pm28-spec) — a demo period is, by construction, older than the
-// `BACKDATING_TOLERANCE_DAYS` real-wall-clock window a live submission would
-// allow.
+// Subscriptions (bm26-spec §Implementation §2). `createOrder` already calls
+// `instantiateOrder` internally for a no-override order, so one call creates +
+// activates one subscription (one product_inventory row). The count per
+// account is scenario-driven. `now` is pinned to each account's own start date
+// (the service's documented injection seam, pm28-spec) — a demo period is, by
+// construction, older than the `BACKDATING_TOLERANCE_DAYS` real-wall-clock
+// window a live submission would allow.
 async function createSampleSubscriptions(
   accounts: SampleAccount[],
   partyRoleId: string,
@@ -639,8 +753,8 @@ async function createSampleSubscriptions(
   periodStart: string,
   partialStartDate: string,
   actorId: string,
-): Promise<Subscription[]> {
-  const subscriptions: Subscription[] = [];
+): Promise<AccountSubscriptions[]> {
+  const perAccount: AccountSubscriptions[] = [];
 
   for (const account of accounts) {
     const startDate = account.isFullPeriod ? periodStart : partialStartDate;
@@ -651,41 +765,45 @@ async function createSampleSubscriptions(
     ];
     const now = new Date(Date.UTC(y, m - 1, d));
 
-    const result = await createOrder(
-      {
-        customerPartyRoleId: partyRoleId,
-        billingAccountId: account.billingAccountId,
-        productOfferingId: offeringId,
-        quantity: 1,
-        startDate,
-      },
-      actorId,
-      () => now,
-    );
-    if (!result.ok || result.inventoryId === null) {
-      throw new Error(
-        `db:seed-sample: createOrder failed for ${account.billingAccountId} (code=${result.ok ? "NO_INVENTORY" : result.code})`,
+    const productInventoryIds: string[] = [];
+    for (let i = 0; i < account.scenario.subscriptionCount; i++) {
+      const result = await createOrder(
+        {
+          customerPartyRoleId: partyRoleId,
+          billingAccountId: account.billingAccountId,
+          productOfferingId: offeringId,
+          quantity: 1,
+          startDate,
+        },
+        actorId,
+        () => now,
       );
+      if (!result.ok || result.inventoryId === null) {
+        throw new Error(
+          `db:seed-sample: createOrder failed for ${account.billingAccountId} (code=${result.ok ? "NO_INVENTORY" : result.code})`,
+        );
+      }
+      productInventoryIds.push(result.inventoryId);
     }
 
-    subscriptions.push({
-      billingAccountId: account.billingAccountId,
-      productInventoryId: result.inventoryId,
-      startDate,
-      isFullPeriod: account.isFullPeriod,
-    });
+    perAccount.push({ account, productInventoryIds });
   }
 
-  return subscriptions;
+  return perAccount;
 }
 
-// Charges (bm15-spec §Implementation §1 step 5 / §2). Only the two
-// full-period accounts get `udr_rated` rows — the partial-period account
-// stays uncharged by design (it demonstrates Scoping `EXCLUDED`, not
-// Collection). One of the two full-period accounts also gets two
-// `BILL_NOTUSED` rows (the "deliberately not charged" surface, bm07).
+// Charges (bm26-spec §Implementation §1/§2). udr_rated now carries ONLY
+// `RAN_USAGE` (Inv #1) — recurring is NOT rated here (it is bm29 compute
+// derived from product_inventory). Every usage row is the exact shape rl.py
+// leaves: `udr_type = 'RAN_USAGE'`, `status = 'RATED'`, all four billrun_*
+// columns NULL, `_SAMPLE_`-marked, and `udr_subscriber_ref_id` = a real seeded
+// product_inventory_id (so bm27's correlation resolves it to the right
+// billing_account_id). The BILL_NOTUSED scenario seeds a `status='BILL_NOTUSED'`
+// row (the per-record exception surface, bm32), anchored to a real subscription
+// so its subscriber ref is equally correlatable. Driven entirely by each
+// account's scenario spec.
 async function seedSampleCharges(
-  subscriptions: Subscription[],
+  accountSubscriptions: AccountSubscriptions[],
   priceRef: string,
   periodStart: string,
   periodEnd: string,
@@ -703,45 +821,70 @@ async function seedSampleCharges(
   const startDatetime = new Date(Date.UTC(startY, startM - 1, startD));
   const endDatetime = new Date(Date.UTC(endY, endM - 1, endD, 23, 59, 59));
 
-  const fullPeriodSubs = subscriptions.filter((sub) => sub.isFullPeriod);
-
   const rows: SampleUdrRatedRow[] = [];
-  fullPeriodSubs.forEach((sub, accountIdx) => {
-    rows.push(
-      buildSampleUdrRatedRow({
-        ban: sub.billingAccountId,
-        subscriberRefId: sub.productInventoryId,
-        priceRef,
-        startDatetime,
-        endDatetime,
-        ratedPrice: SAMPLE_RECURRING_AMOUNT,
-        currency: CURRENCY,
-        status: "RATED",
-        sequence: accountIdx * 10 + 1,
-      }),
-    );
+  // A monotonic sequence keeps every seeded row's udr_key distinct across the
+  // WHOLE period: the live-row uniqueness key is (partition_period,
+  // start_datetime, udr_key, is_live) and does NOT include the account, yet
+  // every row here shares the same start_datetime — so the disambiguator must
+  // be global, not per-account.
+  let sequence = 0;
 
-    // Only the first full-period account also gets the BILL_NOTUSED pair.
-    if (accountIdx === 0) {
-      for (let i = 0; i < 2; i++) {
+  for (const { account, productInventoryIds } of accountSubscriptions) {
+    const { scenario } = account;
+
+    // RAN_USAGE rows: one batch per subscription, wired to that subscription's
+    // product_inventory_id.
+    for (const productInventoryId of productInventoryIds) {
+      for (let u = 0; u < scenario.usageRowsPerSubscription; u++) {
+        sequence += 1;
         rows.push(
           buildSampleUdrRatedRow({
-            ban: sub.billingAccountId,
-            subscriberRefId: sub.productInventoryId,
+            ban: account.billingAccountId,
+            subscriberRefId: productInventoryId,
+            priceRef,
+            startDatetime,
+            endDatetime,
+            ratedPrice: SAMPLE_USAGE_AMOUNT,
+            currency: CURRENCY,
+            status: "RATED",
+            sequence,
+          }),
+        );
+      }
+    }
+
+    // BILL_NOTUSED rows anchor to the account's first subscription so the
+    // subscriber ref stays a real product_inventory_id. A scenario asking for
+    // them without a subscription to anchor is a spec error.
+    if (scenario.billNotUsedRows > 0) {
+      const anchorInventoryId = productInventoryIds[0];
+      if (!anchorInventoryId) {
+        throw new Error(
+          `db:seed-sample: scenario "${scenario.key}" requests BILL_NOTUSED rows but has no subscription to anchor them.`,
+        );
+      }
+      for (let b = 0; b < scenario.billNotUsedRows; b++) {
+        sequence += 1;
+        rows.push(
+          buildSampleUdrRatedRow({
+            ban: account.billingAccountId,
+            subscriberRefId: anchorInventoryId,
             priceRef,
             startDatetime,
             endDatetime,
             ratedPrice: "0.00",
             currency: CURRENCY,
             status: "BILL_NOTUSED",
-            sequence: accountIdx * 10 + 2 + i,
+            sequence,
           }),
         );
       }
     }
-  });
+  }
 
-  await db.insert(udrRated).values(rows);
+  if (rows.length > 0) {
+    await db.insert(udrRated).values(rows);
+  }
   return rows.length;
 }
 
@@ -758,8 +901,12 @@ async function main(): Promise<void> {
 
   const { offeringId, priceId } = await ensureSampleOffering();
 
-  const { partyRoleId, accounts } =
-    await createSampleCustomerAndAccounts(actorId);
+  const scenarios = resolveProfile(DEFAULT_PROFILE);
+
+  const { partyRoleId, accounts } = await createSampleCustomerAndAccounts(
+    actorId,
+    scenarios,
+  );
 
   const today = todayInZone(new Date(), config.APP_TIMEZONE);
   const period = currentDuePeriod(1, today);
@@ -774,7 +921,7 @@ async function main(): Promise<void> {
     pm,
   ).padStart(2, "0")}-16`;
 
-  const subscriptions = await createSampleSubscriptions(
+  const accountSubscriptions = await createSampleSubscriptions(
     accounts,
     partyRoleId,
     offeringId,
@@ -784,15 +931,19 @@ async function main(): Promise<void> {
   );
 
   const chargeCount = await seedSampleCharges(
-    subscriptions,
+    accountSubscriptions,
     priceId,
     periodStart,
     periodEnd,
   );
 
   logger.info("db:seed-sample: _SAMPLE_ billrun scenario seeded.", {
+    profile: DEFAULT_PROFILE,
     partyRoleId,
-    accounts: accounts.map((a) => a.billingAccountId),
+    accounts: accounts.map((a) => ({
+      ban: a.billingAccountId,
+      scenario: a.scenario.key,
+    })),
     chargeCount,
     demoPeriod: { periodStart, periodEnd },
   });
