@@ -373,6 +373,69 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    // ---- The in-flight guard trigger (bm25 — rating.rating_status_guard) ----
+    // The widened rl.py pre-check is only a readable whole-batch refusal; the
+    // guarantee is this BEFORE UPDATE trigger, which refuses ANY rating_runtime
+    // UPDATE that would supersede/overwrite a row a bill run holds in flight
+    // (OLD.status IN ('BILL_DRAFT','BILL_APPROVED')). These assertions bypass the
+    // pre-check entirely — a direct rating_runtime UPDATE — so they prove the
+    // trigger, not the application code.
+    describe("in-flight guard trigger (bm25)", () => {
+      // Insert a RATED row, then park it at the given in-flight status as the
+      // superuser (session_user='postgres' bypasses the role-scoped guard).
+      async function inflightRow(
+        status: "BILL_DRAFT" | "BILL_APPROVED",
+      ): Promise<{ period: string; id: string }> {
+        const { period, id } = await insertRatedRow();
+        await sql.unsafe(
+          `UPDATE rating.udr_rated SET status = $3, billrun_ref_id = 'BR-INFLIGHT-1'
+             WHERE partition_period = $1 AND udr_id = $2`,
+          [period, id, status],
+        );
+        return { period, id };
+      }
+
+      it("40. rating_runtime cannot supersede a row held at BILL_DRAFT (the TOCTOU backstop)", async () => {
+        const { period, id } = await inflightRow("BILL_DRAFT");
+        await expect(
+          ratingRuntime.unsafe(
+            `UPDATE rating.udr_rated SET status = 'SUPERSEDED' WHERE partition_period = $1 AND udr_id = $2`,
+            [period, id],
+          ),
+        ).rejects.toThrow(/held in flight by a bill run/);
+      });
+
+      it("41. rating_runtime cannot supersede a row held at BILL_APPROVED either", async () => {
+        const { period, id } = await inflightRow("BILL_APPROVED");
+        await expect(
+          ratingRuntime.unsafe(
+            `UPDATE rating.udr_rated SET status = 'SUPERSEDED' WHERE partition_period = $1 AND udr_id = $2`,
+            [period, id],
+          ),
+        ).rejects.toThrow(/held in flight by a bill run/);
+      });
+
+      it("42. rating_runtime CAN still supersede a pristine RATED row (no false positive)", async () => {
+        const { period, id } = await insertRatedRow(); // status defaults to RATED
+        await expect(
+          ratingRuntime.unsafe(
+            `UPDATE rating.udr_rated SET status = 'SUPERSEDED' WHERE partition_period = $1 AND udr_id = $2`,
+            [period, id],
+          ),
+        ).resolves.toBeDefined();
+      });
+
+      it("43. the guard is role-scoped: app_runtime is NOT blocked from moving a BILL_DRAFT row on", async () => {
+        const { period, id } = await inflightRow("BILL_DRAFT");
+        await expect(
+          appRuntime.unsafe(
+            `UPDATE rating.udr_rated SET status = 'BILL_APPROVED' WHERE partition_period = $1 AND udr_id = $2`,
+            [period, id],
+          ),
+        ).resolves.toBeDefined();
+      });
+    });
+
     // ---- Partitioning (Inv #17a) ------------------------------------------
     describe("partitioning (Inv #17a)", () => {
       it("13. app_runtime updates a permitted column on a row in a partition, addressed through the parent — succeeds", async () => {

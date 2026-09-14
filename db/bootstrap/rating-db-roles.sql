@@ -91,6 +91,39 @@ GRANT SELECT, INSERT ON TABLE "rating"."udr_rated" TO rating_runtime;
 GRANT UPDATE ("status") ON TABLE "rating"."udr_rated" TO rating_runtime;
 --> statement-breakpoint
 
+-- Step 4a — the in-flight guarantee as a DATABASE TRIGGER (bm25-spec
+-- §Implementation §2; ratemgmt-ai-workflow-rules §1.4). The widened rl.py
+-- pre-check (status IN ('BILL_DRAFT','BILL_APPROVED')) is only a readable
+-- whole-batch refusal — it loses the check-then-claim race with the bill run's
+-- own claim. This trigger is the guarantee: for session_user='rating_runtime',
+-- it refuses ANY UPDATE that would supersede/overwrite a row a bill run holds in
+-- flight (OLD.status IN ('BILL_DRAFT','BILL_APPROVED')). rating_runtime's only
+-- write grant on udr_rated is UPDATE("status"), so in practice this blocks a
+-- rating supersession from retiring a claimed row out from under a running bill
+-- run, while leaving pristine RATED rows freely supersedable. app_runtime and
+-- billrun_runtime are untouched — the guard fires only for rating_runtime (the
+-- billing side moves the row on via its own six-column grant, gated by the
+-- separate `billrun_status_guard`). Authorized: Khek, rating module owner,
+-- 2026-09-13 (billmgmt-ai-workflow-rules §3.6). Created here (not a migration)
+-- so it ships with the role and grant surface it protects.
+CREATE OR REPLACE FUNCTION "rating".rating_status_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF session_user = 'rating_runtime'
+     AND OLD.status IN ('BILL_DRAFT','BILL_APPROVED') THEN
+    RAISE EXCEPTION 'rating_runtime may not supersede a row held in flight by a bill run (status=%, billrun_ref_id=%)', OLD.status, OLD.billrun_ref_id;
+  END IF;
+  RETURN NEW;
+END
+$$;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS rating_status_guard_trg ON "rating"."udr_rated";
+--> statement-breakpoint
+CREATE TRIGGER rating_status_guard_trg
+  BEFORE UPDATE ON "rating"."udr_rated"
+  FOR EACH ROW EXECUTE FUNCTION "rating".rating_status_guard();
+--> statement-breakpoint
+
 -- udr_batch: the claim row is inserted then progressed through its lifecycle.
 -- NOT granted UPDATE on batch_id, file_key, source_file, file_key_rule,
 -- udr_type, batch_run_num or received_at — the identity and claim columns, so

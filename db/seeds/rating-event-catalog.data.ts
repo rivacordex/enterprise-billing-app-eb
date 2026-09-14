@@ -16,6 +16,7 @@ export const RATING_EVENT_CODES = [
   "DB_WRITE_FAILURE",
   "RECON_IMBALANCE",
   "LOAD_BLOCKED_BILLED",
+  "LOAD_BLOCKED_INFLIGHT",
   "SHRINKING_REISSUE",
   "FILE_NOT_RECEIVED",
   "FILE_KEY_UNRESOLVED",
@@ -170,6 +171,23 @@ export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
       "A udr_batch row stuck at PROCESSING beyond the configured threshold — a worker was killed mid-load — was resolved (FAILED) by the stranded-batch reconcile, releasing the file's claim for reprocessing.",
   },
   // MINOR — degraded, but the unit completed.
+  {
+    // bm25-spec §Implementation §4. Mirrors LOAD_BLOCKED_BILLED but MINOR, not
+    // MAJOR: an in-flight bill run is recoverable (reject/rerun the run or wait,
+    // then reload), where a BILL_APPROVED collision is financial finality.
+    // `claimedRecordCollision` is the locally-defined cause (distinct from
+    // billed's `billedRecordCollision`); not auto-clearing (a human decides).
+    eventCode: "LOAD_BLOCKED_INFLIGHT",
+    component: "RL",
+    defaultSeverity: "MINOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "claimedRecordCollision",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "A batch was refused whole because one or more incoming records collide with a live BILL_DRAFT row held by an in-flight bill run.",
+  },
   {
     eventCode: "BATCH_PARTIAL",
     component: "RL",
