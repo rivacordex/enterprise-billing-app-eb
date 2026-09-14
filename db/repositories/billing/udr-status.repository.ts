@@ -13,9 +13,11 @@ import { udrRated } from "@/db/schema/rating/udr-rated";
 // inside the CALLER's transaction (approve/reject/cancel own the txn).
 //
 // The processor (as `billrun_runtime`) owns the ONE claim transition
-// (`RATED`/`REJECTED` → `BILL_DRAFT`, bm14's `billrun_status_guard` trigger
-// enforces this DB-side for that role); the app owns the three human-gate
-// transitions here and never claims.
+// (`RATED` → `BILL_DRAFT`, bm14's `billrun_status_guard` trigger enforces this
+// DB-side for that role — narrowed by bm25 from the former `RATED`/`REJECTED`
+// source set now that reject/rerun/cancel RELEASE to `RATED`, see line ~51 and
+// `billrun-db-roles.sql` Step 7b); the app owns the three human-gate transitions
+// here and never claims.
 export const udrStatusRepository = {
   // Approve — the run's claimed rows flip BILL_DRAFT → BILL_APPROVED. Scoped
   // to the run only (every claimed row is postable by the time approval is

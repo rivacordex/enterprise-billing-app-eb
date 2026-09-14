@@ -74,6 +74,107 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase K — **bm25 (Rating In-Flight Guard + `LOAD_BLOCKED_INFLIGHT`)
+  — DELIVERED and DB-VERIFIED (pure-DB suites) against a disposable Postgres
+  (2026-09-15).** See
+  `context/billing-management/specs/bm25-rating-inflight-guard.md`.
+  **Cross-module — rating** (`billmgmt-ai-workflow-rules.md` §3.6): built to
+  `ratemgmt-ai-workflow-rules.md`, one atomic change set (rating §3.3/§3.5), not
+  split. Refuses a usage-file load whole when its records collide with a bill
+  run's in-flight `BILL_DRAFT` rows, and backs the guarantee with a database
+  trigger so it survives a bypassed pre-check. Landed this pass:
+  - **`workflow-management/worker/workflow-engine/runtime/rl.py` — widened
+    pre-check + new event.** `_GUARD_SQL`'s filter widened
+    `status = 'BILL_APPROVED'` → `status IN ('BILL_DRAFT','BILL_APPROVED')` and
+    now returns `ur.status`; `find_bill_approved_collisions` renamed
+    `find_billed_or_inflight_collisions`. `scan_and_guard` classifies by status:
+    a `BILL_APPROVED` collision raises `LOAD_BLOCKED_BILLED` (`MAJOR`) **as soon
+    as seen** (billed always wins), while `BILL_DRAFT` collisions are
+    **accumulated across chunks** and raised as `LOAD_BLOCKED_INFLIGHT` (`MINOR`)
+    only after the whole batch is scanned — so a billed collision in any later
+    chunk still takes precedence. The inflight refusal names the blocking
+    `bill_run_id(s)` (`blocking_bill_run_ids` + bounded `collisions` sample) and
+    is raised before the currency assertion, matching the billed guard's prior
+    precedence. Module docstring step 2 rewritten to the billed/in-flight framing.
+  - **`db/bootstrap/rating-db-roles.sql` — the `rating.rating_status_guard`
+    trigger (rating §1.4, the guarantee).** New Step 4a alongside the `udr_rated`
+    grants: a `BEFORE UPDATE … FOR EACH ROW` trigger that, for
+    `session_user='rating_runtime'`, refuses any UPDATE while
+    `OLD.status IN ('BILL_DRAFT','BILL_APPROVED')` — so rating can't supersede a
+    row a bill run holds in flight even if `rl.py`'s pre-check loses the
+    check-then-claim TOCTOU race. `app_runtime`/`billrun_runtime` untouched
+    (role-scoped). `CREATE OR REPLACE FUNCTION` + `DROP TRIGGER IF EXISTS` +
+    `CREATE TRIGGER` (idempotent, mirrors `billrun_status_guard`).
+  - **`db/bootstrap/billrun-db-roles.sql` — `billrun_status_guard` narrowed to
+    `RATED → BILL_DRAFT` (the one billing-owned edit, coupling with bm24).** Both
+    clauses tightened: status transition `(RATED|REJECTED) → BILL_DRAFT` →
+    `RATED → BILL_DRAFT`, and the claim-column freeze `OLD.status NOT IN
+    ('RATED','REJECTED')` → `OLD.status <> 'RATED'`. Safe because bm24 stopped
+    producing `REJECTED` `udr_rated` rows (reject/rerun/cancel RELEASE to
+    `RATED`); the vestigial `REJECTED` re-claim allowance is retired. Comment
+    updated.
+  - **Event catalog — `LOAD_BLOCKED_INFLIGHT` (three parts, rating §3.3).** Seed
+    row (`MINOR`, `RL`, `probableCause: claimedRecordCollision`, not
+    auto-clearing) added to `db/seeds/rating-event-catalog.data.ts` and the code
+    to `RATING_EVENT_CODES` — the set-equality guardrail keeps them in lockstep.
+  - **Rating-module doc amendments (same change set, rating §3.5/§5.5, all
+    append-not-rewrite):** `ratemgmt-architecture.md` Inv #6 gains the in-flight
+    clause + authorization line beside its `BILL_APPROVED` text;
+    `rm02-event-catalog-seed.md` gains the register row + the D4 local cause
+    `claimedRecordCollision` + counts (17→18); `rm09` D2 gains the widened-guard
+    /trigger note; the rating progress tracker records the resolution.
+  - **Guardrail tests:** `tests/rating/grants.integration.test.ts` +4 (tests
+    40–43: rating_runtime refused superseding a `BILL_DRAFT`/`BILL_APPROVED` row,
+    still allowed on pristine `RATED`, and the guard is role-scoped so app_runtime
+    is unaffected); `tests/db/billrun-db-roles.integration.test.ts` 14/14b
+    rewritten to the narrowed `RATED`-only guard (REJECTED re-claim now refused);
+    `tests/rating/rm09-…` +2 (a `BILL_DRAFT` collision → `LOAD_BLOCKED_INFLIGHT`
+    naming the run; billed-precedence when both classes present);
+    `tests/rating/rm02-…` counts bumped 17→18 + `LOAD_BLOCKED_INFLIGHT` in the
+    non-auto-clearing list.
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS; `py_compile` clean on `rl.py`.
+  - **DB-VERIFIED against a disposable Postgres 17 (git-ignored
+    `docker-compose.test.yml`, project `ebill-test`, :5434; torn down `down -v`
+    after):** `grants` + `rm02` + `billrun-db-roles` integration suites **88/88
+    green** — proving the `rating_status_guard` trigger backstop (grants 40–43),
+    the narrowed `billrun_status_guard` (billrun-db-roles 14/14b), and the
+    18-code catalog. **Still environmental (unchanged rm06–rm10 gap):** rm09's
+    black-box `LOAD_BLOCKED_INFLIGHT`/precedence tests need a **Linux host +
+    python3/psycopg/polars** (this Windows host has neither python3 nor the POSIX
+    `file://` handling `rp.py` requires); they **skipped** loudly (rm09 static
+    half 3/3 green, 9 skipped) exactly as the whole rating loader chain does here.
+    Run them on a Linux/CI host before treating the inflight-refusal path as
+    end-to-end proven.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied:**
+    (a) `rl.py` — `scan_and_guard` no longer accumulates the full in-flight
+    collision list across chunks (it would grow to O(batch), reintroducing the
+    OOM the streaming guard/COPY exist to avoid); it now keeps a `count` + a
+    `set` of blocking run ids + a bounded sample (`_COLLISION_SAMPLE = 20`, shared
+    with the billed path). The refusal's `additional_info` shape is unchanged.
+    (b) `rl.py` — the `LOAD_BLOCKED_INFLIGHT` message now renders a clean fallback
+    when a colliding `BILL_DRAFT` row has no `billrun_ref_id` (was "held by bill
+    runs " with nothing after). (c) `db/repositories/billing/udr-status.repository.ts`
+    header comment corrected `RATED/REJECTED → BILL_DRAFT` → `RATED → BILL_DRAFT`
+    (was contradicting its own line 51). (d) bm16 §3 stub + bm17 T6 amended
+    (tombstone-style, originals preserved) to instruct the bm27 Collection
+    implementer to claim `RATED → BILL_DRAFT` only — the un-amended specs would
+    have steered bm27 into a `REJECTED → BILL_DRAFT` claim the narrowed guard now
+    refuses. Re-verified: `py_compile` clean, `tsc`/`eslint`/`prettier` clean.
+  - **Code-review finding #1 — DEFERRED to bm27/rm10 (owner decision, 2026-09-15),
+    documented in the spec.** The `rating_status_guard` trigger can fire during
+    `rl.py`'s legitimate rm10 supersede when a corrected-timestamp/shrinking
+    reissue's prior-run row is held in flight but is not in the incoming key set
+    (the pre-check keys on incoming `(start_datetime, udr_key)`; supersede keys on
+    prior-run `udr_ref_batch_id`). Result: a raw `psycopg` exception (not a
+    `BatchRefused`) → transaction rollback → batch stranded at `PROCESSING` for
+    rm11 to reap to `FAILED`. **Fail-closed-safe** (claim protected, nothing
+    superseded, no corruption) but **ungraceful**, and **fully latent until bm27**
+    (no real claim produces `BILL_DRAFT` rows before then). The fix (a symmetric
+    pre-supersede in-flight refusal) touches rm10's supersede path and can only be
+    tested end-to-end once claims are real — so it is a recorded **bm27/rm10
+    prerequisite** (bm25 spec §Implementation §2, Known-limitation note).
+
 - Phase 3 · Phase K — **bm24 (Claim Release on Reject, Cancel & Rerun) —
   DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
   `context/billing-management/specs/bm24-claim-release-reject-cancel-rerun.md`.

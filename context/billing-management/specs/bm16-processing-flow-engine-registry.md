@@ -73,6 +73,13 @@ tasks:
         #       billrun_attempt to inputs.attempt so posting's (run,ban,posted_attempt)
         #       read matches (T6). The flow is the SOLE re-claimer; the app NEVER
         #       claims — it only sets BILL_APPROVED/REJECTED/RATED-release (bm17).
+        # bm25 AMENDMENT (build to THIS, not the line above): the claimable source
+        #       set is now RATED ONLY — claim `status = 'RATED' -> BILL_DRAFT`.
+        #       After bm24, reject/rerun/cancel RELEASE claims back to RATED (no
+        #       REJECTED udr_rated row is produced any longer), and bm25 narrowed
+        #       `billrun_status_guard` to `RATED -> BILL_DRAFT`, so a
+        #       `REJECTED -> BILL_DRAFT` claim is now REFUSED at the DB. Do not
+        #       re-widen the guard. See bm25-rating-inflight-guard.md §Implementation §3.
       # --- aggregation (writes billing.customer_bill as billrun_runtime) ---
       - id: aggregation
         # STUB: sum the account's BILL_DRAFT udr_rated into ONE customer_bill row
