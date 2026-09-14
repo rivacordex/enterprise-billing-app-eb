@@ -38,6 +38,7 @@ const NON_AUTO_CLEARING = [
   "RECON_IMBALANCE",
   "SHRINKING_REISSUE",
   "LOAD_BLOCKED_BILLED",
+  "LOAD_BLOCKED_INFLIGHT",
   "FILE_KEY_UNRESOLVED",
   "CURRENCY_MISMATCH",
   "DUPLICATE_BATCH",
@@ -211,9 +212,9 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("catalog completeness", () => {
-      it("3. all seventeen codes are present after the seed runs", async () => {
+      it("3. all eighteen codes are present after the seed runs", async () => {
         const rows = await allRows();
-        expect(rows).toHaveLength(17);
+        expect(rows).toHaveLength(18);
       });
 
       it("4. RATING_EVENT_CODES and the seeded rows are the same set in both directions", async () => {
@@ -378,10 +379,10 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("idempotency", () => {
-      it("17. running the seed twice leaves seventeen rows, not thirty-four", async () => {
+      it("17. running the seed twice leaves eighteen rows, not thirty-six", async () => {
         await seedEventCatalog(db);
         const rows = await allRows();
-        expect(rows).toHaveLength(17);
+        expect(rows).toHaveLength(18);
       });
 
       it("18. changing a severity and re-running the upsert updates the existing row (DO UPDATE, not DO NOTHING)", async () => {

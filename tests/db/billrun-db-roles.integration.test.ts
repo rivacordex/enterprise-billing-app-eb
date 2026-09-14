@@ -750,7 +750,7 @@ describe.skipIf(!databaseUrl)(
         ).rejects.toThrow(/permission denied/);
       });
 
-      it("14. claim to BILL_DRAFT is allowed from RATED and from REJECTED (re-claim); other status writes are refused (Step 7b)", async () => {
+      it("14. claim to BILL_DRAFT is allowed only from RATED; the REJECTED re-claim is retired (bm25) and other status writes are refused (Step 7b)", async () => {
         // Pristine claim: RATED -> BILL_DRAFT.
         const rated = await insertRatedRow();
         await expect(
@@ -760,24 +760,15 @@ describe.skipIf(!databaseUrl)(
           ),
         ).resolves.toBeDefined();
 
-        // Re-claim after a reject: REJECTED -> BILL_DRAFT — the processor is the
-        // sole re-claimer of a rejected-then-reran account (bm16 Collection §3 /
-        // bm17 T6: "claims status IN ('RATED','REJECTED') -> BILL_DRAFT").
-        const rejected = await insertRatedRow({ status: "REJECTED" });
-        await expect(
-          billrunRuntime.unsafe(
-            `UPDATE rating.udr_rated SET status = 'BILL_DRAFT' WHERE partition_period = $1 AND udr_id = $2`,
-            [rejected.period, rejected.id],
-          ),
-        ).resolves.toBeDefined();
-
-        // The worker never writes the app-owned states (approve/reject are
-        // app_runtime's): BILL_APPROVED from either claimable state, and the
-        // reject flip RATED -> REJECTED, are all refused.
+        // bm25 narrowed the guard to RATED-only. After bm24 no billing path
+        // produces a REJECTED udr_rated row (reject/rerun/cancel RELEASE claimed
+        // rows back to RATED), so the vestigial REJECTED -> BILL_DRAFT re-claim
+        // allowance is retired and now REFUSED — alongside the app-owned state
+        // writes the worker never performs (BILL_APPROVED, the reject flip).
         for (const { from, target } of [
+          { from: "REJECTED", target: "BILL_DRAFT" },
           { from: "RATED", target: "BILL_APPROVED" },
           { from: "RATED", target: "REJECTED" },
-          { from: "REJECTED", target: "BILL_APPROVED" },
         ]) {
           const bad = await insertRatedRow({ status: from });
           await expect(
@@ -786,26 +777,27 @@ describe.skipIf(!databaseUrl)(
               [bad.period, bad.id],
             ),
           ).rejects.toThrow(
-            /billrun_runtime may only claim udr_rated to BILL_DRAFT from RATED or REJECTED/,
+            /billrun_runtime may only claim udr_rated to BILL_DRAFT from RATED/,
           );
         }
       });
 
-      it("14b. claim columns are rewritable while claimable (RATED/REJECTED) but frozen once BILL_DRAFT/BILL_APPROVED (Step 7b)", async () => {
-        // Re-claim re-stamps billrun_attempt while the row is still REJECTED
-        // (the worker writes the claim columns across several statements before
-        // the status flip) — allowed.
-        const reclaim = await insertRatedRow({ status: "REJECTED" });
+      it("14b. claim columns are rewritable while RATED but frozen once BILL_DRAFT/BILL_APPROVED/REJECTED (Step 7b, narrowed by bm25)", async () => {
+        // Re-stamp claim columns while the row is still RATED (the worker writes
+        // the claim columns across several statements before the status flip) —
+        // allowed.
+        const claimable = await insertRatedRow(); // RATED
         await expect(
           billrunRuntime.unsafe(
             `UPDATE rating.udr_rated SET billrun_attempt = 2, upsert_datetime = now() WHERE partition_period = $1 AND udr_id = $2`,
-            [reclaim.period, reclaim.id],
+            [claimable.period, claimable.id],
           ),
         ).resolves.toBeDefined();
 
-        // But once the row is committed to a run (BILL_DRAFT) or approved
-        // (BILL_APPROVED), the worker can no longer rewrite the claim columns.
-        for (const frozen of ["BILL_DRAFT", "BILL_APPROVED"]) {
+        // Once the row is committed to a run (BILL_DRAFT), approved
+        // (BILL_APPROVED), or rejected (REJECTED — no longer a claimable source
+        // after bm25), the worker can no longer rewrite the claim columns.
+        for (const frozen of ["BILL_DRAFT", "BILL_APPROVED", "REJECTED"]) {
           const { period, id } = await insertRatedRow({ status: frozen });
           for (const assignment of [
             "billrun_ref_id = 'BR-2'",

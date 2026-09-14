@@ -667,6 +667,115 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     });
 
     // -----------------------------------------------------------------
+    // bm25 — the BILL_DRAFT (in-flight) guard + billed-precedence.
+    // -----------------------------------------------------------------
+    // A live udr_rated row a bill run holds in flight, read straight from the
+    // rated Parquet so udr_key is never reimplemented (matching test #8).
+    const liveCollisionValues = (
+      src: Record<string, string | null>,
+      status: "BILL_DRAFT" | "BILL_APPROVED",
+      sentinel: string,
+      billrunRefId: string,
+    ) => ({
+      partitionPeriod: monthBucket(src.start_datetime as string),
+      udrType: src.udr_type as string,
+      startDatetime: new Date(src.start_datetime as string),
+      endDatetime: new Date(src.end_datetime as string),
+      status,
+      udrSubscriberRefId: src.udr_subscriber_ref_id as string,
+      udrKey: src.udr_key as string,
+      udrUsageQuantity: src.udr_usage_quantity as string,
+      udrUsageUnit: src.udr_usage_unit as string,
+      udrRateType: "FLAT" as const,
+      udrRatedPrice: src.udr_rated_price as string,
+      udrRatedPriceRaw: src.udr_rated_price_raw as string,
+      udrRoundingMode: src.udr_rounding_mode as string,
+      udrCurrency: src.udr_currency as string,
+      udrRefBatchId: sentinel,
+      udrSourceFile: "prior-run.csv",
+      ratingEngineVersion: ENGINE_VERSION,
+      ratingFlowRevision: 1,
+      billrunRefId,
+    });
+
+    it("bm25. a BILL_DRAFT collision refuses the whole batch: zero rows, REFUSED, LOAD_BLOCKED_INFLIGHT naming the bill run", async () => {
+      const { rpManifestUri, manifest, rated } = prepRated(
+        "20260210",
+        cleanRows("inflight"),
+      );
+      const batchId = manifest.batch_id as string;
+      // A live BILL_DRAFT row (an in-flight bill run holds the claim) colliding
+      // with one incoming record. The widened pre-check refuses the whole batch.
+      const collide = rated[0]!;
+      await db
+        .insert(udrRated)
+        .values(
+          liveCollisionValues(
+            collide,
+            "BILL_DRAFT",
+            "SENTINEL-DRAFT",
+            "BR-INFLIGHT-042",
+          ),
+        );
+
+      runRlExpectFail(rpManifestUri, "rl-inflight");
+
+      // Zero rows written for THIS batch (the whole batch refused).
+      expect(await ratedCount(batchId)).toBe(0);
+      const batch = await batchRow(batchId);
+      expect(batch.status).toBe("REFUSED");
+      // The raw file stays in landing/ (never archived on a refusal).
+      expect(batch.archiveFilePath).toBeNull();
+      expect(existsSync(join(landingDir, "RAN_USAGE_20260210.csv"))).toBe(true);
+      // LOAD_BLOCKED_INFLIGHT (MINOR) names the blocking bill_run_id.
+      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-inflight")));
+      expect(line.event_code).toBe("LOAD_BLOCKED_INFLIGHT");
+      expect(line.additional_info.blocking_bill_run_ids).toContain(
+        "BR-INFLIGHT-042",
+      );
+      const collisions = line.additional_info.collisions as {
+        udr_key: string;
+        billrun_ref_id: string;
+      }[];
+      expect(collisions[0]!.udr_key).toBe(collide.udr_key);
+      expect(collisions[0]!.billrun_ref_id).toBe("BR-INFLIGHT-042");
+    });
+
+    it("bm25. a BILL_APPROVED collision takes precedence over a BILL_DRAFT one (billed wins)", async () => {
+      const { rpManifestUri, manifest, rated } = prepRated(
+        "20260220",
+        cleanRows("precedence"),
+      );
+      const batchId = manifest.batch_id as string;
+      // Both classes present: an approved collision on the first record and an
+      // in-flight collision on the second. The billed refusal must win.
+      await db
+        .insert(udrRated)
+        .values([
+          liveCollisionValues(
+            rated[0]!,
+            "BILL_APPROVED",
+            "SENTINEL-APPROVED",
+            "BR-APPROVED-9",
+          ),
+          liveCollisionValues(
+            rated[1]!,
+            "BILL_DRAFT",
+            "SENTINEL-DRAFT",
+            "BR-INFLIGHT-9",
+          ),
+        ]);
+
+      runRlExpectFail(rpManifestUri, "rl-precedence");
+
+      expect(await ratedCount(batchId)).toBe(0);
+      const batch = await batchRow(batchId);
+      expect(batch.status).toBe("REFUSED");
+      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-precedence")));
+      expect(line.event_code).toBe("LOAD_BLOCKED_BILLED");
+    });
+
+    // -----------------------------------------------------------------
     // CURRENCY_MISMATCH (D3).
     // -----------------------------------------------------------------
     it("5. a resolved currency that differs from the billing account currency refuses the batch (CURRENCY_MISMATCH)", async () => {

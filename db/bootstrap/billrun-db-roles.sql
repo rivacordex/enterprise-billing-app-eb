@@ -209,34 +209,36 @@ GRANT UPDATE (
 ) ON TABLE "rating"."udr_rated" TO billrun_runtime;
 --> statement-breakpoint
 
--- Step 7b — role-aware transition guard (T4/D14). A column grant can't bind a
--- value to a role, so the six-column UPDATE alone would let billrun_runtime write
--- status='BILL_APPROVED'/'REJECTED', or rewrite the other five claim columns on
--- a row it no longer owns (e.g. an already-BILL_DRAFT/APPROVED row) since a
--- column grant doesn't scope by state. This trigger constrains ONLY
--- billrun_runtime (via session_user), via two independent checks: (1) status
--- may only move (RATED | REJECTED) -> BILL_DRAFT — the processor is the SOLE
--- re-claimer, and the claimable source set is BOTH pristine RATED rows AND
--- rows a prior reject parked as REJECTED that an operator rerun sends back to
--- reprocess (bm16 Collection §3 + bm17 §Design/T6: "claims status IN
--- ('RATED','REJECTED') -> BILL_DRAFT"); (2) the other five claim columns may
--- only change while the row is still claimable (RATED or REJECTED) — the
--- worker claims a row across several statements before flipping status last, so
--- the claim columns and the status flip are NOT required to change together in
--- one statement; only the row's CURRENT status at the time of each write is
--- constrained, which still forbids rewriting the claim of an already-committed
--- BILL_DRAFT/BILL_APPROVED row. app_runtime's approve/reject/release
--- transitions (incl. REJECTED -> RATED release) are untouched. Fires on all
--- six columns (not just status) so a claim-only write with status omitted from
--- the SET list still invokes validation. Created here in the billing bootstrap
--- so it ships with the role (no edit to rating's scripts — D15).
+-- Step 7b — role-aware transition guard (T4/D14; narrowed by bm25). A column
+-- grant can't bind a value to a role, so the six-column UPDATE alone would let
+-- billrun_runtime write status='BILL_APPROVED'/'REJECTED', or rewrite the other
+-- five claim columns on a row it no longer owns (e.g. an already-BILL_DRAFT/
+-- APPROVED row) since a column grant doesn't scope by state. This trigger
+-- constrains ONLY billrun_runtime (via session_user), via two independent
+-- checks: (1) status may only move RATED -> BILL_DRAFT — the processor is the
+-- SOLE re-claimer, and after bm24 the claimable source set is EXACTLY pristine
+-- RATED rows: reject/cancel/rerun now RELEASE claimed rows back to RATED (four
+-- claim columns NULLed) rather than parking them at REJECTED, so no billing path
+-- produces a REJECTED udr_rated row any longer. bm25 therefore retires the
+-- vestigial (RATED | REJECTED) allowance and narrows to RATED only (bm25-spec
+-- §Implementation §3); (2) the other five claim columns may only change while
+-- the row is still claimable (RATED) — the worker claims a row across several
+-- statements before flipping status last, so the claim columns and the status
+-- flip are NOT required to change together in one statement; only the row's
+-- CURRENT status at the time of each write is constrained, which still forbids
+-- rewriting the claim of an already-committed BILL_DRAFT/BILL_APPROVED row.
+-- app_runtime's approve/reject/release transitions (incl. the bm24
+-- BILL_DRAFT -> RATED release) are untouched. Fires on all six columns (not just
+-- status) so a claim-only write with status omitted from the SET list still
+-- invokes validation. Created here in the billing bootstrap so it ships with the
+-- role (no edit to rating's scripts — D15).
 CREATE OR REPLACE FUNCTION "rating".billrun_status_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   IF session_user = 'billrun_runtime' THEN
     IF NEW.status IS DISTINCT FROM OLD.status
-       AND NOT (OLD.status IN ('RATED','REJECTED') AND NEW.status = 'BILL_DRAFT') THEN
-      RAISE EXCEPTION 'billrun_runtime may only claim udr_rated to BILL_DRAFT from RATED or REJECTED (got % -> %)', OLD.status, NEW.status;
+       AND NOT (OLD.status = 'RATED' AND NEW.status = 'BILL_DRAFT') THEN
+      RAISE EXCEPTION 'billrun_runtime may only claim udr_rated to BILL_DRAFT from RATED (got % -> %)', OLD.status, NEW.status;
     END IF;
 
     IF (
@@ -246,8 +248,8 @@ BEGIN
          NEW.billrun_checksum IS DISTINCT FROM OLD.billrun_checksum OR
          NEW.upsert_datetime  IS DISTINCT FROM OLD.upsert_datetime
        )
-       AND OLD.status NOT IN ('RATED','REJECTED') THEN
-      RAISE EXCEPTION 'billrun_runtime may only change udr_rated claim columns while the row is claimable (RATED or REJECTED) (was %)', OLD.status;
+       AND OLD.status <> 'RATED' THEN
+      RAISE EXCEPTION 'billrun_runtime may only change udr_rated claim columns while the row is claimable (RATED) (was %)', OLD.status;
     END IF;
   END IF;
   RETURN NEW;

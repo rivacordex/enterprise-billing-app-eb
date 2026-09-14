@@ -10,6 +10,8 @@
 
 > **rm11 amendment.** `rm11-stranded-batch-recovery.md` D5 adds a **seventeenth** code, `BATCH_STRANDED` (`MAJOR`, component `SCHEDULER`) — the stranded-batch reconcile's resolution of a `udr_batch` row stuck at `PROCESSING` beyond the configured threshold. Added to the `MAJOR` table, the locally-defined-cause table (D4), the `RATING_EVENT_CODES` constant and the seed in the same change set (ai-workflow-rules §7.3); the counts below (sixteen → seventeen rows, seven → eight `BATCH_COMPLETE`-clearers) are updated in place rather than narrated as a diff, matching how this spec already reads as current state.
 
+> **bm25 amendment (cross-module, authorized — Khek, module owner, 2026-09-13).** `context/billing-management/specs/bm25-rating-inflight-guard.md` adds an **eighteenth** code, `LOAD_BLOCKED_INFLIGHT` (`MINOR`, component `RL`) — RL refuses a batch whole when incoming records collide with a live `BILL_DRAFT` row an in-flight bill run holds (the in-flight sibling of `LOAD_BLOCKED_BILLED`). Its probable cause `claimedRecordCollision` is locally-defined (D4). Added to the `MINOR` register table, the locally-defined-cause table (D4), the `RATING_EVENT_CODES` constant and the seed in the same change set (ai-workflow-rules §7.3); the counts below (seventeen → eighteen rows; the `BATCH_COMPLETE`-clearer count is **unchanged at eight** — `LOAD_BLOCKED_INFLIGHT` is not auto-clearing) are updated in place. Existing rows and structure are unchanged.
+
 ---
 
 ## Goal
@@ -106,6 +108,7 @@ Forcing a business-rule refusal into `equipmentMalfunction` would be worse than 
 | `incompleteRedelivery` | `SHRINKING_REISSUE` | A reissue carried fewer records than its predecessor |
 | `abandonedClaim` | `BATCH_STRANDED` | A batch's `PROCESSING` claim outlived the worker that held it (rm11) |
 | `billedRecordCollision` | `LOAD_BLOCKED_BILLED` | Incoming records collide with an approved invoice |
+| `claimedRecordCollision` | `LOAD_BLOCKED_INFLIGHT` | Incoming records collide with an in-flight bill run's `BILL_DRAFT` rows (bm25) |
 | `crossPeriodCorrection` | `CROSS_PERIOD_SUPERSEDE` | Supersession crossed a partition boundary |
 | `retrySucceeded` | `TASK_RETRY_OK` | Recovered on a later attempt |
 | `normalCompletion` | `BATCH_COMPLETE` | Clean run |
@@ -156,7 +159,7 @@ Seeds live in `db/seeds/`, are idempotent, and are re-runnable so an environment
 
 ### 1. The seed data — `db/seeds/rating-event-catalog.ts`
 
-Seventeen codes. Every column that the table declares appears here; `description` is `NOT NULL` and its text is given, not left to the implementer.
+Eighteen codes (bm25 added `LOAD_BLOCKED_INFLIGHT`). Every column that the table declares appears here; `description` is `NOT NULL` and its text is given, not left to the implementer.
 
 `component` values are drawn from the same set `process_log_component_check` allows — `PRP`, `RP`, `RL`, `LOG_SWEEP`, `SCHEDULER` — or `NULL` for "any component".
 
@@ -184,6 +187,7 @@ Seventeen codes. Every column that the table declares appears here; `description
 
 | `event_code` | `component` | `default_severity` | `event_type` | `probable_cause` | `is_auto_clearing` | `clear_event_code` | `description` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `LOAD_BLOCKED_INFLIGHT` | `RL` | `MINOR` | `processingErrorAlarm` | `claimedRecordCollision` | `false` | `NULL` | A batch was refused whole because one or more incoming records collide with a live `BILL_DRAFT` row held by an in-flight bill run. (bm25) |
 | `BATCH_PARTIAL` | `RL` | `MINOR` | `qualityOfServiceAlarm` | `thresholdCrossed` | `true` | `BATCH_COMPLETE` | A batch completed with some records rejected, below the configured threshold; the reject file names them. |
 | `TASK_RETRY_OK` | `NULL` | `MINOR` | `processingErrorAlarm` | `retrySucceeded` | `true` | `BATCH_COMPLETE` | A task failed and succeeded on a later attempt; the work completed but the underlying instability did not. |
 
@@ -207,7 +211,7 @@ Seventeen codes. Every column that the table declares appears here; `description
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `CLEARED` | `NULL` | `CLEARED` | `processingErrorAlarm` | `normalCompletion` | `false` | `NULL` | A previously raised alarm condition on this `alarm_key` no longer holds. |
 
-All seventeen rows carry `is_active = true`.
+All eighteen rows carry `is_active = true`.
 
 Descriptions state **the condition**, never the remediation. Remediation belongs in `ratemgmt-ops-context.md`, which changes far more often than the catalog does; a runbook step embedded here would go stale inside a migration nobody thinks to write.
 
@@ -218,9 +222,9 @@ Descriptions state **the condition**, never the remediation. Remediation belongs
 ```ts
 export const RATING_EVENT_CODES = [
   "DB_WRITE_FAILURE", "RECON_IMBALANCE", "LOAD_BLOCKED_BILLED",
-  "SHRINKING_REISSUE", "FILE_NOT_RECEIVED", "FILE_KEY_UNRESOLVED",
-  "PARSE_FAILURE", "LOOKUP_MISS", "CURRENCY_MISMATCH", "BATCH_STRANDED",
-  "BATCH_PARTIAL", "TASK_RETRY_OK", "FILE_LATE",
+  "LOAD_BLOCKED_INFLIGHT", "SHRINKING_REISSUE", "FILE_NOT_RECEIVED",
+  "FILE_KEY_UNRESOLVED", "PARSE_FAILURE", "LOOKUP_MISS", "CURRENCY_MISMATCH",
+  "BATCH_STRANDED", "BATCH_PARTIAL", "TASK_RETRY_OK", "FILE_LATE",
   "DUPLICATE_BATCH", "CROSS_PERIOD_SUPERSEDE", "BATCH_COMPLETE",
   "CLEARED",
 ] as const;
@@ -274,7 +278,7 @@ Add to whichever npm script the repo already uses for seeds (`db:seed` or equiva
 
 **Catalog completeness**
 
-3. All seventeen codes are present after the seed runs.
+3. All eighteen codes are present after the seed runs.
 4. `RATING_EVENT_CODES` and the seeded rows are the **same set**, asserted in both directions.
 5. Every row has a non-null `description`, `event_type`, `probable_cause` and `is_active`.
 6. Exactly one row — `BATCH_COMPLETE` — has `default_severity IS NULL`. `CLEARED` carries `'CLEARED'`, not NULL: a clear *is* an alarm-stream event.
@@ -284,7 +288,7 @@ Add to whichever npm script the repo already uses for seeds (`db:seed` or equiva
 
 8. **No row has `is_auto_clearing = true` with `clear_event_code IS NULL`, and none has `is_auto_clearing = false` with a non-null `clear_event_code`** — the two shapes in D5 are the only ones permitted.
 9. Every non-null `clear_event_code` names a code that **exists in the catalog** — asserted in the test, since there is deliberately no self-referencing FK.
-10. `RECON_IMBALANCE`, `SHRINKING_REISSUE`, `LOAD_BLOCKED_BILLED`, `FILE_KEY_UNRESOLVED`, `CURRENCY_MISMATCH`, `DUPLICATE_BATCH` and `CROSS_PERIOD_SUPERSEDE` are **not** auto-clearing.
+10. `RECON_IMBALANCE`, `SHRINKING_REISSUE`, `LOAD_BLOCKED_BILLED`, `LOAD_BLOCKED_INFLIGHT`, `FILE_KEY_UNRESOLVED`, `CURRENCY_MISMATCH`, `DUPLICATE_BATCH` and `CROSS_PERIOD_SUPERSEDE` are **not** auto-clearing.
 11. `BATCH_COMPLETE` and `CLEARED` are not themselves auto-cleared; no row names a clearer other than `BATCH_COMPLETE`; and **exactly eight** rows do name it (rm11 adds `BATCH_STRANDED`) — a count assertion, so adding a clearable code without revisiting D6 fails here.
 
 **Severity resolution (§A1 — the part that is easy to get backwards)**
@@ -297,7 +301,7 @@ Add to whichever npm script the repo already uses for seeds (`db:seed` or equiva
 
 **Idempotency**
 
-17. Running the seed twice leaves seventeen rows, not thirty-four.
+17. Running the seed twice leaves eighteen rows, not thirty-six.
 18. Changing a severity in the seed and re-running **updates** the existing row — proving `DO UPDATE`, not `DO NOTHING`.
 19. Changing a severity **to NULL** in the seed and re-running sets the stored value to NULL — a code can be downgraded out of the alarm stream, not only re-tuned within it.
 20. The seed does not delete or deactivate any code absent from its list — a code retired by a later migration stays retired.

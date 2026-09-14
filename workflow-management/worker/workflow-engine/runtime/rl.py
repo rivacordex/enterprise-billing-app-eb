@@ -13,13 +13,20 @@ In order (rm09-spec D1-D9):
    supersede hook (D8, rm10) and the ``COPY`` insert (D4) are one atomic unit or
    none of them happened — a single connection, ``BEGIN … COMMIT``. RL owns the
    transaction boundary; PRP → RP → RL share no transaction (§9.5).
-2. **The ``BILL_APPROVED`` guard (D2, Inv #6).** Before inserting, for every
-   incoming natural key query for a live ``BILL_APPROVED`` row. **Any** collision
-   → refuse the whole batch: zero rows, ``udr_batch.status = REFUSED``,
-   ``LOAD_BLOCKED_BILLED`` at ``MAJOR`` naming the colliding keys and their
-   ``billrun_ref_id``. A batch-level refusal — a deliberate exception to the
-   record-level default (§72). The check-then-insert race is closed by the
-   transaction and **backstopped by the live-row unique constraint** (Inv #3).
+2. **The billed/in-flight collision guard (D2, Inv #6, bm25).** Before inserting,
+   for every incoming natural key query for a live row a bill run owns —
+   ``BILL_APPROVED`` (billed) or ``BILL_DRAFT`` (in-flight). **Any** collision →
+   refuse the whole batch: zero rows, ``udr_batch.status = REFUSED``. A
+   ``BILL_APPROVED`` collision raises ``LOAD_BLOCKED_BILLED`` at ``MAJOR``
+   (financial finality); a ``BILL_DRAFT`` collision raises ``LOAD_BLOCKED_INFLIGHT``
+   at ``MINOR`` (recoverable — reject/rerun the run or wait, then reload), naming
+   the blocking ``bill_run_id``. A billed collision takes precedence when both are
+   present. A batch-level refusal — a deliberate exception to the record-level
+   default (§72). The check-then-claim race is closed by the transaction,
+   **backstopped by the live-row unique constraint** (Inv #3) and, for the
+   in-flight case, by the ``rating.rating_status_guard`` trigger (bm25) — a
+   widened pre-check alone would lose the TOCTOU race, so the trigger is the
+   guarantee and the pre-check only the readable error.
 3. **The ``CURRENCY_MISMATCH`` assertion (D3).** The resolved ``udr_currency``
    (from RP's price row) must equal ``billing_account.currency`` joined via
    ``product_inventory.billing_account_id``. Nothing in the schema constrains the
@@ -136,6 +143,12 @@ COPY_COLUMNS: tuple[str, ...] = (
     "rating_flow_revision",
     "rated_datetime",
 )
+
+# The bounded sample of colliding keys carried in a batch-level refusal's
+# additional_info (§7.7 — reference values, bounded). The refusal reports the
+# full collision COUNT but only ever samples this many rows, so the log line (and
+# the guard's peak memory) stay bounded regardless of collision volume.
+_COLLISION_SAMPLE = 20
 
 # The money/rate columns in the rated Parquet are exact Decimal STRINGS (rm07 D8,
 # rm08 D8, §5.9). RL parses them back to Decimal for the COPY so no float ever
@@ -281,7 +294,16 @@ def _opt_str(value: Any) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# The BILL_APPROVED guard (D2) — one set-based query over all incoming keys.
+# The in-flight/billed collision guard (D2, bm25) — one set-based query over all
+# incoming keys. Widened from the original BILL_APPROVED-only filter to also
+# catch a live BILL_DRAFT row a bill run holds in flight (bm25 §Implementation
+# §1): once bm24 releases reject/rerun claims back to RATED, a fresh load landing
+# mid-run would collide with the run's BILL_DRAFT rows. Returns each colliding
+# row's `status` so the caller can classify (billed vs in-flight) and name the
+# blocking run. The pre-check is only a readable whole-batch refusal; the
+# guarantee is `rating.rating_status_guard` (bm25 §2), which refuses a
+# rating_runtime UPDATE superseding an in-flight row even when this pre-check
+# loses the check-then-claim race.
 # ---------------------------------------------------------------------------
 _GUARD_SQL = """
 WITH _incoming AS (
@@ -290,20 +312,22 @@ WITH _incoming AS (
         %(udr_keys)s::text[]
     ) AS t(start_datetime, udr_key)
 )
-SELECT ur.start_datetime, ur.udr_key, ur.billrun_ref_id
+SELECT ur.start_datetime, ur.udr_key, ur.status, ur.billrun_ref_id
 FROM   rating.udr_rated ur
 JOIN   _incoming i
        ON i.start_datetime = ur.start_datetime AND i.udr_key = ur.udr_key
-WHERE  ur.is_live AND ur.status = 'BILL_APPROVED'
+WHERE  ur.is_live AND ur.status IN ('BILL_DRAFT','BILL_APPROVED')
 """
 
 
-def find_bill_approved_collisions(
+def find_billed_or_inflight_collisions(
     conn: psycopg.Connection, start_datetimes: list[datetime], udr_keys: list[str]
 ) -> list[dict[str, Any]]:
-    """Every incoming natural key (in one chunk) that collides with a live
-    ``BILL_APPROVED`` row (D2). A non-empty result refuses the whole batch.
-    Set-based, one query per chunk — never per record (Inv #10)."""
+    """Every incoming natural key (in one chunk) that collides with a live row a
+    bill run owns — either ``BILL_APPROVED`` (billed, D2/Inv #6) or ``BILL_DRAFT``
+    (in-flight, bm25). A non-empty result refuses the whole batch; the caller
+    partitions the rows by ``status`` to pick the event code (billed takes
+    precedence). Set-based, one query per chunk — never per record (Inv #10)."""
     return db.fetch(
         conn,
         _GUARD_SQL,
@@ -666,6 +690,19 @@ def scan_and_guard(
     the chunks (Inv #10 applies to reads too, not only writes)."""
     subscriber_currency: set[tuple[str, str]] = set()
     incoming_periods: set[tuple[str, date]] = set()
+    # bm25 — in-flight (BILL_DRAFT) collisions are counted + sampled across chunks
+    # and raised only after the whole batch has been scanned, so a BILL_APPROVED
+    # collision found in a LATER chunk still takes precedence (billed wins). A
+    # billed collision is raised immediately — it always wins, so nothing later
+    # could override it. Only a COUNT, the distinct blocking run ids, and a
+    # bounded sample (<= _COLLISION_SAMPLE) are kept — never the full collision
+    # list — so peak memory stays bounded to one chunk even when a whole large
+    # reload overlaps an in-flight run. Accumulating every colliding row would
+    # reintroduce the O(batch) Python structure the streaming guard/COPY passes
+    # exist precisely to avoid (see the module note above and Inv #10).
+    inflight_count = 0
+    inflight_run_ids: set[str] = set()
+    inflight_sample: list[dict[str, Any]] = []
     for chunk_uri in chunk_uris:
         frame = storage.read_frame(chunk_uri)
         if frame.height == 0:
@@ -674,12 +711,13 @@ def scan_and_guard(
         udr_keys = [str(v) for v in frame["udr_key"].to_list()]
         for key, start_dt in zip(udr_keys, start_dts, strict=True):
             incoming_periods.add((key, period_of(start_dt)))
-        collisions = find_bill_approved_collisions(conn, start_dts, udr_keys)
-        if collisions:
+        collisions = find_billed_or_inflight_collisions(conn, start_dts, udr_keys)
+        billed = [c for c in collisions if c["status"] == "BILL_APPROVED"]
+        if billed:
             raise BatchRefused(
                 event_code="LOAD_BLOCKED_BILLED",
                 specific_problem=(
-                    f"{len(collisions)} incoming record(s) collide with a live "
+                    f"{len(billed)} incoming record(s) collide with a live "
                     "BILL_APPROVED row; the whole batch is refused"
                 ),
                 additional_info={
@@ -691,15 +729,60 @@ def scan_and_guard(
                             "udr_key": c["udr_key"],
                             "billrun_ref_id": c["billrun_ref_id"],
                         }
-                        for c in collisions[:20]
+                        for c in billed[:_COLLISION_SAMPLE]
                     ],
-                    "collision_count": len(collisions),
+                    "collision_count": len(billed),
                 },
             )
+        for c in collisions:
+            if c["status"] != "BILL_DRAFT":
+                continue
+            inflight_count += 1
+            if c["billrun_ref_id"]:
+                inflight_run_ids.add(c["billrun_ref_id"])
+            if len(inflight_sample) < _COLLISION_SAMPLE:
+                inflight_sample.append(
+                    {
+                        "start_datetime": _iso(c["start_datetime"]),
+                        "udr_key": c["udr_key"],
+                        "billrun_ref_id": c["billrun_ref_id"],
+                    }
+                )
         for sub, ccy in zip(
             frame["udr_subscriber_ref_id"].to_list(), frame["udr_currency"].to_list()
         ):
             subscriber_currency.add((str(sub), str(ccy)))
+
+    # bm25 — no BILL_APPROVED collision anywhere, but at least one live BILL_DRAFT
+    # row a bill run holds in flight: refuse the whole batch as LOAD_BLOCKED_INFLIGHT
+    # (MINOR — recoverable: reject/rerun the run or wait, then reload), naming the
+    # blocking bill_run_id(s). Raised before the currency assertion so a collision
+    # with an in-flight run is reported ahead of a currency misconfiguration, the
+    # same precedence the billed guard already had.
+    if inflight_count:
+        blocking_run_ids = sorted(inflight_run_ids)
+        # A sanctioned claim always stamps billrun_ref_id while the row is still
+        # RATED and flips status to BILL_DRAFT last (billrun_status_guard), so a
+        # committed BILL_DRAFT row carries a ref; guard the anomalous NULL/empty
+        # case so the refusal still reads cleanly rather than "held by bill runs ".
+        if not blocking_run_ids:
+            run_phrase = "an in-flight bill run (bill_run_id unavailable)"
+        elif len(blocking_run_ids) == 1:
+            run_phrase = f"bill run {blocking_run_ids[0]}"
+        else:
+            run_phrase = f"bill runs {', '.join(blocking_run_ids)}"
+        raise BatchRefused(
+            event_code="LOAD_BLOCKED_INFLIGHT",
+            specific_problem=(
+                f"{inflight_count} incoming record(s) collide with a live "
+                f"BILL_DRAFT row held by {run_phrase}; the whole batch is refused"
+            ),
+            additional_info={
+                "blocking_bill_run_ids": blocking_run_ids,
+                "collision_count": inflight_count,
+                "collisions": inflight_sample,
+            },
+        )
 
     mismatches = find_currency_mismatches(conn, subscriber_currency)
     if mismatches:
@@ -1105,7 +1188,8 @@ def main(argv: list[str] | None = None) -> int:
                 specific_problem=refusal.specific_problem,
                 additional_info={"file_key": file_key, **refusal.additional_info},
                 alarm_key=f"{refusal.event_code}:{udr_type}:{file_key}",
-                # D2 — managed_object is the source file for LOAD_BLOCKED_BILLED.
+                # D2/bm25 — managed_object is the source file for the batch-level
+                # refusals (LOAD_BLOCKED_BILLED / LOAD_BLOCKED_INFLIGHT).
                 managed_object=source_file,
             )
             print(
