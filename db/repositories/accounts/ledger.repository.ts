@@ -398,6 +398,28 @@ export const ledgerRepository = {
     }));
   },
 
+  // db:seed-sample teardown guard — count of ledger entries across a set of
+  // pgledger accounts. The sample teardown refuses to drop accounts that already
+  // carry posted (immutable) double-entry rows; this is the sole sanctioned
+  // reader of `pgledger_entries_view` for that check, keeping pgledger access
+  // inside this repository (Module Inv. #4, code-standards §6.3). Views only.
+  async countEntriesForAccounts(
+    db: Database,
+    pgledgerAccountIds: string[],
+  ): Promise<number> {
+    if (pgledgerAccountIds.length === 0) return 0;
+    const idList = sql.join(
+      pgledgerAccountIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const [row] = await db.execute<{ cnt: string }>(sql`
+      SELECT COUNT(*)::text AS cnt
+      FROM billing.pgledger_entries_view
+      WHERE account_id = ANY(ARRAY[${idList}]::text[])
+    `);
+    return Number(row?.cnt ?? 0);
+  },
+
   // ac12-spec §2.4 — V5 health panel: count of pgledger accounts with no
   // resolved GL code (gl_resolution_view WHERE gl_code IS NULL). Run inside
   // a transaction after a provisional mapping/code change to implement the

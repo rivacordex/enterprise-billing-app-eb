@@ -476,6 +476,162 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    // ---- customer_bill_line: two-writer boundary + cascade (Step 5a/5b) -----
+    describe("customer_bill_line — two-writer boundary + cascade (bm23)", () => {
+      async function insertTrialBill(ban: string): Promise<string> {
+        const [row] = await billrunRuntime<{ customer_bill_id: string }[]>`
+          INSERT INTO billing.customer_bill ${billrunRuntime({
+            ref_bill_run_id: runId,
+            ref_billing_account_id: ban,
+            period_partition: periodPartition,
+            category: "trial",
+            state: "new",
+            billing_period_start: "2026-08-01",
+            billing_period_end: "2026-08-31",
+            subtotal: "100.00",
+            tax_total: "0.00",
+            total_amount: "100.00",
+            payment_due_date: "2026-09-15",
+          })}
+          RETURNING customer_bill_id
+        `;
+        return row!.customer_bill_id;
+      }
+
+      async function insertLine(
+        client: postgresjs.Sql,
+        billId: string,
+      ): Promise<string> {
+        const [row] = await client<{ customer_bill_line_id: string }[]>`
+          INSERT INTO billing.customer_bill_line ${client({
+            ref_customer_bill_id: billId,
+            period_partition: periodPartition,
+            line_no: 1,
+            source: "USAGE",
+            line_type: "charge",
+            ref_product_offering_id: "POF-1",
+            udr_type: "VOICE",
+            gross_amount: "100.00",
+            discount_amount: "0.00",
+            net_amount: "100.00",
+            grouping_key: "USAGE|POF-1|VOICE",
+            currency: "USD",
+          })}
+          RETURNING customer_bill_line_id
+        `;
+        return row!.customer_bill_line_id;
+      }
+
+      it("25. billrun_runtime INSERTs a line on the allowed columns and SELECTs it back", async () => {
+        const billId = await insertTrialBill(await newBan());
+        const lineId = await insertLine(billrunRuntime, billId);
+        expect(lineId).toMatch(/^BLN\d{8}$/);
+        const [row] = await billrunRuntime<{ net_amount: string }[]>`
+          SELECT net_amount FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}
+        `;
+        expect(row?.net_amount).toBe("100.00");
+      });
+
+      it("26. billrun_runtime is refused a direct UPDATE and DELETE on customer_bill_line (whole-account-replace discipline, Inv #16)", async () => {
+        const billId = await insertTrialBill(await newBan());
+        const lineId = await insertLine(billrunRuntime, billId);
+        await expect(
+          billrunRuntime`UPDATE billing.customer_bill_line SET net_amount = '1.00' WHERE customer_bill_line_id = ${lineId}`,
+        ).rejects.toThrow(/permission denied for table customer_bill_line/);
+        await expect(
+          billrunRuntime`DELETE FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}`,
+        ).rejects.toThrow(/permission denied for table customer_bill_line/);
+      });
+
+      it("27. Step 5b's REVOKE actively strips app_runtime's write DML (grant-then-rerun), leaving SELECT", async () => {
+        const billId = await insertTrialBill(await newBan());
+        const lineId = await insertLine(billrunRuntime, billId);
+
+        // In PRODUCTION the table is owned by app_migrate, so
+        // bootstrap-db-roles.sql's `ALTER DEFAULT PRIVILEGES … TO app_runtime`
+        // auto-grants app_runtime full DML on this new table, and Step 5b must
+        // revoke it. In THIS suite the table is owned by the superuser running the
+        // migrations, so that default-privilege never fired — meaning a naive
+        // "assert app_runtime is refused" test would pass even if Step 5b were
+        // deleted (the grant simply never existed). Simulate the production grant
+        // explicitly, then re-run billrun-db-roles.sql and prove its Step 5b
+        // REVOKE strips the writes while keeping SELECT.
+        await sql`GRANT INSERT, UPDATE, DELETE ON TABLE billing.customer_bill_line TO app_runtime`;
+        // Sanity: the grant took — app_runtime can UPDATE right now.
+        await expect(
+          appRuntime`UPDATE billing.customer_bill_line SET net_amount = net_amount WHERE customer_bill_line_id = ${lineId}`,
+        ).resolves.toBeDefined();
+
+        await runSqlFile(sql, BILLRUN_ROLES_SQL);
+
+        // SELECT still works…
+        await expect(
+          appRuntime`SELECT 1 FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}`,
+        ).resolves.toBeDefined();
+        // …but every write is refused again after the REVOKE.
+        await expect(
+          appRuntime`INSERT INTO billing.customer_bill_line ${appRuntime({
+            ref_customer_bill_id: billId,
+            period_partition: periodPartition,
+            line_no: 2,
+            source: "USAGE",
+            ref_product_offering_id: "POF-1",
+            gross_amount: "1.00",
+            net_amount: "1.00",
+            grouping_key: "gk2",
+            currency: "USD",
+          })}`,
+        ).rejects.toThrow(/permission denied for table customer_bill_line/);
+        await expect(
+          appRuntime`UPDATE billing.customer_bill_line SET net_amount = '1.00' WHERE customer_bill_line_id = ${lineId}`,
+        ).rejects.toThrow(/permission denied for table customer_bill_line/);
+        await expect(
+          appRuntime`DELETE FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}`,
+        ).rejects.toThrow(/permission denied for table customer_bill_line/);
+      });
+
+      it("28. deleting a non-finalized customer_bill via billrun_delete_trial_bill cascades its lines away (D22)", async () => {
+        const ban = await newBan();
+        const billId = await insertTrialBill(ban);
+        const lineId = await insertLine(billrunRuntime, billId);
+        const [result] = await billrunRuntime<
+          { billrun_delete_trial_bill: number }[]
+        >`SELECT billing.billrun_delete_trial_bill(${runId}, ${ban})`;
+        expect(result!.billrun_delete_trial_bill).toBe(1);
+        const remaining = await sql<{ customer_bill_line_id: string }[]>`
+          SELECT customer_bill_line_id FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}
+        `;
+        expect(remaining).toHaveLength(0);
+      });
+
+      it("29. a finalized customer_bill cannot be deleted, so its line survives (D27/D22 interaction)", async () => {
+        const ban = await newBan();
+        const billId = await insertTrialBill(ban);
+        const lineId = await insertLine(billrunRuntime, billId);
+        await sql`
+          UPDATE billing.customer_bill SET ref_inv_document_id = 'INV00000003' WHERE customer_bill_id = ${billId}
+        `;
+        const [result] = await billrunRuntime<
+          { billrun_delete_trial_bill: number }[]
+        >`SELECT billing.billrun_delete_trial_bill(${runId}, ${ban})`;
+        expect(result!.billrun_delete_trial_bill).toBe(0);
+        const remaining = await sql<{ customer_bill_line_id: string }[]>`
+          SELECT customer_bill_line_id FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}
+        `;
+        expect(remaining).toHaveLength(1);
+        // Clean up the finalized parent + its line. Superuser bypasses GRANTs but
+        // NOT triggers — 0033's finalization guard blocks DELETE of a
+        // ref_inv_document_id-set row regardless of role — and replica mode also
+        // suppresses the FK cascade, so delete the line explicitly first (mirrors
+        // test 7's session_replication_role teardown).
+        await sql.begin(async (tx) => {
+          await tx`SET LOCAL session_replication_role = replica`;
+          await tx`DELETE FROM billing.customer_bill_line WHERE customer_bill_line_id = ${lineId}`;
+          await tx`DELETE FROM billing.customer_bill WHERE customer_bill_id = ${billId}`;
+        });
+      });
+    });
+
     // ---- customer_bill_tax_item: worker-owned (Step 6/6a) ------------------
     describe("customer_bill_tax_item — worker-owned (Step 6/6a)", () => {
       it("8. billrun_runtime INSERTs/UPDATEs/DELETEs/SELECTs a tax item", async () => {

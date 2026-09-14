@@ -25,9 +25,14 @@ function redirectError(target: string): Error & { digest: string } {
   return error;
 }
 
+// Relative to "now" (UTC YYYY-MM-DD) so it never drifts past the shared
+// inclusiveBilledDateSchema backdating tolerance (BACKDATING_TOLERANCE_DAYS),
+// matching the convention in insert-price.action.test.ts.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 const VALID_INPUT = {
   inventoryId: "PRDINV00000001",
-  effectiveDate: "2026-08-13",
+  effectiveDate: TODAY,
 };
 
 beforeEach(() => {
@@ -64,7 +69,7 @@ describe("resumeSubscriptionAction", () => {
       LEVELS.EDIT,
     );
     expect(mockResumeSubscription).toHaveBeenCalledWith(
-      { inventoryId: "PRDINV00000001", effectiveDate: "2026-08-13" },
+      { inventoryId: "PRDINV00000001", effectiveDate: TODAY },
       "user-1",
     );
     expect(result).toEqual({
