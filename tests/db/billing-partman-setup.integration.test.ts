@@ -130,6 +130,7 @@ describe.skipIf(!databaseUrl || !bootstrapUrl)(
       `;
       expect(rows).toHaveLength(1);
       expect(rows[0]?.control).toBe("period_partition");
+      expect(rows[0]?.partition_interval).toBe("1 mon"); // monthly (pg_partman stores '1 month' canonicalised)
       expect(rows[0]?.retention).toBe("7 years");
       expect(rows[0]?.retention_keep_table).toBe(true); // detach, not drop (architecture §6.9)
     });

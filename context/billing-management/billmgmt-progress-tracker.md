@@ -137,7 +137,7 @@ enumerations were trimmed to key facts + decisions. Full history:
     Azurite** (git-ignored `docker-compose.test.yml`, project `ebill-test`,
     :5434/:10001; torn down `down -v` after). Ran via
     `vitest.integration.config.ts` with `--env-file=.env.test`:
-    - `billrun-db-roles` — **29/29 green**, incl. bm23 tests 25–29:
+    - `billrun-db-roles` — **32/32 green**, incl. bm23 tests 25–29:
       `billrun_runtime` INSERTs a `BLN…` line + SELECTs it; is refused a direct
       `UPDATE` **and** `DELETE` (`permission denied for table
       customer_bill_line`); `app_runtime` can SELECT but is refused
@@ -163,9 +163,9 @@ enumerations were trimmed to key facts + decisions. Full history:
       index-existence assertion, and documented the routing test's superuser
       requirement (`session_replication_role = replica`) in the file header.
     - #5 — sequence given explicit `MAXVALUE 9223372036854775807` for parity.
-    - Re-ran the disposable-Postgres suites: `billrun-db-roles` 29/29,
+    - Re-ran the disposable-Postgres suites: `billrun-db-roles` 32/32,
       `billing-partman-setup` 5/5, plus `migration`/`billing-schema`/
-      `billing-e2e-happy-path` — **62/62 green**.
+      `billing-e2e-happy-path` 25/25 — **62/62 green across five suites**.
   - **DB-free unit-test failures — all FIXED this pass (307 files / 3051 tests
     green with `--env-file=.env`).** None were bm23-caused; fixed as cross-cutting
     hygiene at the user's request:
