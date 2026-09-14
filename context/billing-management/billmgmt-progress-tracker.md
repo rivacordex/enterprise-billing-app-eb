@@ -74,6 +74,73 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase K — **bm24 (Claim Release on Reject, Cancel & Rerun) —
+  DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm24-claim-release-reject-cancel-rerun.md`.
+  Lifecycle-correctness unit that must land before bm27 narrows Collection's
+  claimable set to `RATED`; bm25 depends on it. Makes reject, cancel **and**
+  rerun all release claimed `udr_rated` rows back to `RATED` (four claim columns
+  NULLed) so no `BILL_DRAFT` row can survive an abandoned attempt (Inv #19 /
+  D21). No new table/schema/flow/UI — every write stays inside the six-column
+  write-boundary. Landed this pass:
+  - **`db/repositories/billing/udr-status.repository.ts` — `markRejected`
+    becomes an account-scoped RELEASE.** Body changed from the `→ REJECTED`
+    status flip to `status → RATED` + the four claim columns
+    (`billrunRefId`/`billrunBanId`/`billrunAttempt`/`billrunChecksum`) NULLed +
+    `upsertDatetime = now()`, still guarded by `status = 'BILL_DRAFT'`. Now
+    functionally identical to `release(tx, runId, banIds)`; the name is retained
+    for `reject-run.ts`'s call-site clarity and to leave the write-boundary
+    guardrail's assertion set untouched. **Consequence: no billing code writes
+    `udr_rated.status = 'REJECTED'` anymore** — the rating CHECK (rm01) still
+    admits it and `billrun_status_guard` still permits `REJECTED → BILL_DRAFT`,
+    but both are now vestigial. **Handed to bm25** to narrow the guard to
+    `RATED → BILL_DRAFT` and retire the unused allowance. `markApproved` /
+    `release` unchanged.
+  - **`services/billing/rerun-run.ts` — release BEFORE the re-trigger.** The
+    old "release is the processor's concern" no-op (step 4) is replaced by an
+    explicit `udrStatusRepository.release(tx, run.billRunId, banIds)` placed
+    **after** `setAttemptForRerun` and **before** `engineRegistry.trigger`,
+    inside the trigger transaction — an unreachable engine rolls the release
+    back with everything else (bm03 pattern). Drains any prior-attempt
+    `BILL_DRAFT` row (incl. one stranded by a partial `PROCESSING_FAILED`) so
+    the re-triggered Collection re-claims the COMPLETE set. Ordering is the
+    invariant — release after a re-trigger races the processor's fresh claim.
+  - **`services/billing/reject-run.ts` — no structural change**, comments
+    updated to the release semantics (§2 follows §1). A rejected account now
+    carries: rows at `RATED` (unclaimed), no trial bill, and the
+    `REJECTED_PENDING_REPROCESS` marker (the sole approval-gate signal); the run
+    stays `PROCESSED` (reject model (b)).
+  - **`services/billing/cancel-run.ts` — verified, unchanged.** Already calls
+    `release(tx, billRunId)` (whole-run) after `resetForCancel`; added to the
+    regression so all three abandon paths are proven together.
+  - **New DB-gated regression `tests/db/billrun-claim-release.integration.test.ts`**
+    (the happy-path E2E deliberately inserts no `rating.udr_rated` rows, so it
+    can't prove the actual release). Inserts real rated rows + simulates the
+    processor's Collection claim (`RATED → BILL_DRAFT` with the four claim
+    columns — the write `billrun_runtime` performs), each scenario on its OWN
+    cycle/account for isolation, then: **[CRITICAL]** a partial claim →
+    `PROCESSING_FAILED` → rerun leaves NO `BILL_DRAFT` row and the whole
+    3-charge set is re-claimable (not the partial 2); **reject** releases to
+    `RATED` (four columns NULL, not `REJECTED`), deletes the trial bill, and the
+    marker bars approval; **cancel** releases the whole run to `RATED`. Also
+    extended `tests/services/billing/rerun-run.service.test.ts` (asserts
+    `release` is scoped to the rerun accounts, ordered after the attempt bump
+    and before the engine trigger, and rolled back on an unreachable engine);
+    comment-updated `reject-run.service.test.ts`. The write-boundary guardrail
+    (`tests/guardrails/billing-rating-write-boundary.test.ts`) passes
+    **unchanged** — the new `markRejected` body stays within `ALLOWED_KEYS`,
+    no INSERT.
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier
+    --check` clean on all changed files.
+  - **DB-VERIFIED against a disposable Postgres 17 (git-ignored
+    `docker-compose.test.yml`, project `ebill-test`, :5434; torn down `down -v`
+    after).** `billrun-claim-release` **3/3 green**; regression:
+    `billing-e2e-happy-path` **1/1 green** (with the disposable Azurite up for
+    the distribution leg — the reject/rerun legs it drives are unaffected by
+    bm24 since that fixture has no `udr_rated` rows), `billrun-db-roles`
+    **32/32 green**. DB-free unit run: `rerun-run` + `reject-run` service tests
+    + write-boundary guardrail **27/27 green** (`--env-file=.env`).
+
 - Phase 3 · Phase J — **bm23 (`customer_bill_line` Schema, Partitions &
   Grants) — DELIVERED and DB-VERIFIED against a disposable Postgres
   (2026-09-14).** See

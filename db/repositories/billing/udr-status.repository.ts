@@ -32,9 +32,24 @@ export const udrStatusRepository = {
       );
   },
 
-  // Reject — BILL_DRAFT → REJECTED (parked, not-live), scoped to the
-  // rejected accounts only (whole-run reject resolves every postable account
-  // as `banIds` at the caller, never an unscoped run-wide write).
+  // Reject — bm24-spec §Implementation §1 (D21): an account-scoped RELEASE,
+  // `BILL_DRAFT → RATED` with the four claim columns NULLed (was the old
+  // `→ REJECTED` status flip). Once Collection narrows to `RATED` only (bm27),
+  // a `REJECTED` row would be unclaimable and silently strand the account's
+  // charges (Inv #19); releasing to `RATED` lets the operator's rerun re-claim
+  // the complete set. Functionally identical to `release(tx, runId, banIds)`
+  // for a NON-EMPTY `banIds` — but the two diverge on the empty case (this
+  // early-returns a no-op; `release([])` drops the `inArray` and releases the
+  // WHOLE run), so collapsing them (spec §1 flags it as optional later
+  // cleanup) must NOT be a blind call-swap. The name is retained for
+  // `reject-run.ts`'s call-site clarity and to leave the write-boundary
+  // guardrail's assertion set untouched. The
+  // `REJECTED_PENDING_REPROCESS` stage marker (bm17) — not `udr_status` — is
+  // what bars approval until the account is reprocessed. Scoped to the rejected
+  // accounts only (whole-run reject resolves every postable account as
+  // `banIds` at the caller, never an unscoped run-wide write). No billing code
+  // writes `udr_rated.status = 'REJECTED'` anymore (bm25 narrows the now-
+  // vestigial rating CHECK + `billrun_status_guard` allowance).
   async markRejected(
     tx: Database,
     billRunId: string,
@@ -43,7 +58,14 @@ export const udrStatusRepository = {
     if (banIds.length === 0) return;
     await tx
       .update(udrRated)
-      .set({ status: "REJECTED", upsertDatetime: sql`now()` })
+      .set({
+        status: "RATED",
+        billrunRefId: null,
+        billrunBanId: null,
+        billrunAttempt: null,
+        billrunChecksum: null,
+        upsertDatetime: sql`now()`,
+      })
       .where(
         and(
           eq(udrRated.billrunRefId, billRunId),

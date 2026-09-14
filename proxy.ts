@@ -20,6 +20,15 @@ const isProd = process.env.NODE_ENV === "production";
 // payloads), which that policy silently blocked, breaking hydration on
 // every page. `'strict-dynamic'` lets those nonce'd framework scripts load
 // their own dependents without listing every chunk by hash/origin.
+//
+// `frame-src 'self' blob:` is required by the invoice preview/stored-invoice
+// modals (components/billing/invoice-preview-modal.tsx): they fetch the PDF
+// route, wrap the bytes in a `blob:` object URL, and render it in an
+// `<iframe>`. `'self'` does NOT cover the `blob:` scheme, so without this the
+// iframe is blocked and Edge/Chromium paints its generic "This content is
+// blocked" placeholder — do NOT drop `blob:` here to satisfy a ZAP pass.
+// This is unrelated to `frame-ancestors 'none'`, which governs who may embed
+// *us*, not what *we* may embed.
 function buildCspHeader(nonce: string): string {
   return `
     default-src 'self';
@@ -28,6 +37,7 @@ function buildCspHeader(nonce: string): string {
     img-src 'self' data:;
     font-src 'self';
     connect-src 'self';
+    frame-src 'self' blob:;
     object-src 'none';
     base-uri 'self';
     form-action 'self';
