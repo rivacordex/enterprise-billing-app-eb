@@ -2,6 +2,8 @@
 
 This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run domain objects onto the shared token families; it **redefines no shared color, type, radius, or shadow token**. The one new hue it introduces is the module-scoped **Deep Petrol** featured-action accent (`--billrun-cta-*`) defined in §7 — a scoped accent that overrides no shared token, permitted under shared doc §3.4's module-accent allowance. Every hex in §§1–6 is an existing shared token shown for reference — wire badges to the semantic tokens, never to raw hex (code-standards §4.3). **This module ships no AI/ML features (architecture §5), so the `--ai-*` scale and `--gradient-ai` are not used here** — only the shared brand/status families.
 
+**Phase-3 delta (minimal):** one retirement — `PlaceholderBanner`/`PlaceholderBadge` and their warning mapping are **deleted** with `BILLRUN_PLACEHOLDER_MODE` (D31); one new mapping — `ChargeSource` onto the **existing** cyan/primary families (§6); one correction — `EXCLUDED` was missing from §2; plus `BLN` in the mono-ID list and the bill-line table's radius/tabular rules. **No new color, type, radius or shadow token is introduced, and the Deep Petrol CTA in §7 is unchanged.**
+
 **Rendering rule (shared §8):** every badge/pill renders the dark `-fg` text on the light `-bg` tint (never white-on-tint) and always pairs color with an icon **and** label, so meaning never depends on colour alone. Match the component names in `billmgmt-code-standards.md` §4.
 
 ---
@@ -36,7 +38,10 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 | `COMPLETED` | Success | `--color-success-500` `#1F9D57` | `--color-success-700` `#0F5C32` | `--color-success-50` `#E6F6EC` |
 | `PROCESSING_FAILED` | Danger | `--color-danger-500` `#D92D2D` | `--color-danger-700` `#8A1717` | `--color-danger-50` `#FDEAEA` |
 | `DISTRIBUTION_FAILED` | Danger | `--color-danger-500` `#D92D2D` | `--color-danger-700` `#8A1717` | `--color-danger-50` `#FDEAEA` |
-| `SKIPPED` | Neutral (muted — excluded, no charge) | `--text-disabled` `#99A1B0` | `--color-neutral-600` `#4C5462` | `--color-neutral-100` `#EEF0F4` |
+| `SKIPPED` | Neutral (muted — dropped at approval, no charge) | `--text-disabled` `#99A1B0` | `--color-neutral-600` `#4C5462` | `--color-neutral-100` `#EEF0F4` |
+| `EXCLUDED` | Neutral (muted — scoping-time exclusion, **not** a failure) | `--text-disabled` `#99A1B0` | `--color-neutral-600` `#4C5462` | `--color-neutral-100` `#EEF0F4` |
+
+`EXCLUDED` was missing from this table while `AccountStatusBadge` covered all ten values. It matters more from phase 3: an `EXCLUDED` account forgoes the month's recurring **and** usage (Inv #26), so it must never render in the danger family — it is a deliberate scoping outcome, not something that went wrong.
 
 ## 3. Stage status → token family (`StageStatus` → `StageStatusBadge`, on the `StageTimeline`)
 
@@ -64,16 +69,27 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 | `normal` (posted) | Success | `--color-success-500` `#1F9D57` | `--color-success-50` `#E6F6EC` |
 | `last` (closure/final bill — reserved, off-cycle) | Warning | `--color-warning-500` `#E08600` | `--color-warning-50` `#FEF4E6` |
 
-## 6. Placeholder mode (`PlaceholderBanner` / `PlaceholderBadge`)
+## 6. Charge source → token family (`ChargeSource` → `ChargeSourceBadge`, on `BillLineTable`)
 
-While `BILLRUN_PLACEHOLDER_MODE` is set (Inv. #15, renamed bm15-spec §Implementation §4), badge **every** run loudly — Warning family, never hidden:
+A bill line's **source** is a category, not a status — so it maps onto the **brand secondary families**, never onto success/warning/danger/info. Zero new hues.
 
-| Surface | Family | Tint bg / hex | Text / hex | Border / hex |
+| Domain value | Family | Base / hex | Text (`-fg`) / hex | Tint (`-bg`) / hex |
 |---|---|---|---|---|
-| `PlaceholderBanner` (persistent, every tab) | Warning | `--color-warning-50` `#FEF4E6` | `--color-warning-700` `#8A5200` | `--color-warning-500` `#E08600` |
-| `PlaceholderBadge` (list-row chip) | Warning (outline) | `--surface-card` `#FFFFFF` | `--color-warning-700` `#8A5200` | `--color-warning-500` `#E08600` |
+| `USAGE` (claimed from `rating.udr_rated`) | Cyan — "measured traffic" | `--color-cyan-500` `#00A9BC` | `--color-cyan-700` `#006975` | `--color-cyan-50` `#E2F8FA` |
+| `RECURRING` (derived from `product_inventory`) | Primary — "contractual, steady" | `--color-primary-500` `#2E45A9` | `--color-primary-700` `#1B2A68` | `--color-primary-50` `#EDF0FB` |
+| `OCC` | — | **Not rendered** — reserved enum value with no producer this phase (D30). |
 
-Copy (bm15 Phase-2 review fold D-T4 — names what's REAL, not just what isn't): **"Placeholder pipeline — the workflow engine runs the bill run, but the billing steps are placeholders and `udr_rated` is seeded `_SAMPLE_` test data. Approval, posting, invoice numbers, rendered PDFs and distribution are wired end-to-end and REAL."** Always paired with a warning icon.
+**§6 previously defined `PlaceholderBanner`/`PlaceholderBadge`. Both are RETIRED (D31)** along with `BILLRUN_PLACEHOLDER_MODE`; delete the components and their warning-family mapping. Nothing replaces them — see `billmgmt-code-standards.md` §4.2 for why a quieter "seeded data" badge is not substituted.
+
+## 6b. Bill line table & the per-record drill-down (`BillLineTable`)
+
+| Element | Treatment |
+|---|---|
+| Line rows | Data grid — `--radius-none` `0`, `--text-body-sm`, `font-variant-numeric: tabular-nums` on all three money columns |
+| `discount_amount` column | **Hidden while every line is `0.00`** — no discount is computed this phase, and an always-zero column implies a capability that is not built |
+| `udr_rated` drill-down (a `USAGE` row) | Collapsed native `<details>` disclosure on `--surface-sunken` `#EEF0F4`, fetched **on expand only** — a `volume`-profile account sits behind thousands of records |
+| Price snapshot (a `RECURRING` row) | Same disclosure slot, same sunken surface — the snapshot *is* that row's evidence; there is no per-record drill-down behind it |
+| Per-record exception surface (`BILL_NOTUSED`, unresolvable subscriber — D32) | **Info** family — `--color-info-500` `#1A73D9`, text `--color-info-700` `#0C4084`, tint `--color-info-50` `#E7F1FD`. Informational, never danger: nothing failed and approval is not blocked |
 
 ## 6c. Draft PRO-FORMA watermark & preview modal a11y (bm18, Phase-2 review folds T9/D-T2/D-T5)
 
@@ -136,8 +152,8 @@ empty frame.
 
 | Concern | Token | Rule |
 |---|---|---|
-| IDs — `BRN`/`BRA`/`BRS`/`CBL`/`CBT`/`BTV` and the posted invoice number (`INV…`) | `--text-mono` (`--font-mono`, IBM Plex Mono) | All run/account/bill/invoice IDs render mono, per shared §5. |
-| Money columns (subtotal, tax, totals, run total) | `--text-body` / `--text-body-sm` with `font-variant-numeric: tabular-nums` | Every currency/numeric column uses tabular figures so bill amounts align; format via `lib/` `formatCurrency` (code-standards §4.4). |
+| IDs — `BRN`/`BRA`/`BRS`/`CBL`/**`BLN`**/`CBT`/`BTV` and the posted invoice number (`INV…`) | `--text-mono` (`--font-mono`, IBM Plex Mono) | All run/account/bill/invoice IDs render mono, per shared §5. |
+| Money columns (line `gross`/`discount`/`net`, subtotal, tax, totals, run total) | `--text-body` / `--text-body-sm` with `font-variant-numeric: tabular-nums` | Every currency/numeric column uses tabular figures so bill amounts align; format via `lib/` `formatCurrency` (code-standards §4.4). |
 | Dates (`gl_event_at`, `period_*`, `payment_due_date`, timeline `*_at`) | `--text-body-sm` / `--text-caption` | Via `formatDatetime`; `<time dateTime>` stays ISO-8601 UTC. |
 | Table headers, badge labels | `--text-overline` | Unchanged from shared. |
 
@@ -145,10 +161,11 @@ empty frame.
 
 | Element | Token / value |
 |---|---|
-| Run list / account / uncharged / errors tables | `--radius-none` `0` (data grids stay square) |
+| Run list / account / uncharged / errors / **bill line** tables | `--radius-none` `0` (data grids stay square) |
 | Status/category badges & pills | `--radius-pill` `9999px` |
 | Run **action cards** (Current & Upcoming), pre-approval checklist panel | `--radius-md` `6px` (default) |
 | Trigger / Rerun / Cancel / Approve dialogs | `--radius-lg` `8px` |
-| Stub banner / stall banner | `--radius-sm` `4px` (full-width bar, minimal rounding) |
+| Stall banner | `--radius-sm` `4px` (full-width bar, minimal rounding) — the stub/placeholder banner is retired (D31) |
+| `udr_rated` drill-down disclosure panel | `--radius-sm` `4px` on `--surface-sunken` |
 
 No new radius, shadow, or elevation tokens — shared §6/§7 apply as-is.
