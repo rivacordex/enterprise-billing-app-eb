@@ -29,7 +29,7 @@ This document **extends `context/architecture.md`** (the platform-wide architect
 
 ## 1. Stack — module additions
 
-Everything in `architecture.md` §1 still holds (Next.js + Route Handlers/Server Actions over `services/`, Drizzle on Azure Flexible Server PG ≥ 16, Better-Auth, Container Apps, no cache/CDN). The Bill Run module adds:
+Everything in `architecture.md` §1 still holds (Next.js + Route Handlers/Server Actions over `services/`, Drizzle on Azure Flexible Server PG 17, Better-Auth, Container Apps, no cache/CDN). The Bill Run module adds:
 
 | Layer | Technology | Role |
 | --- | --- | --- |
