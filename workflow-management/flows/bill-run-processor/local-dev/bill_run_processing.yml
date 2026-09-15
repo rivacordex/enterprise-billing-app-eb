@@ -8,10 +8,13 @@
 # resolution against the `ci` seed; bm28 then replaced the `aggregation` no-op
 # Log with the REAL USAGE aggregation SQL (whole-account replace into
 # customer_bill + customer_bill_line at (product_offering_id, udr_type) grain);
-# `taxation` + `verification` stay no-op Logs until their units. This is the
-# "flow-double" the app-repo DB-gated correlation/claim + aggregation tests
-# mirror (bm21 pattern): the SAME billrun_runtime writes, testable without a
-# live Kestra. See ./README.md.
+# bm30 then replaced the `verification` no-op Log with the REAL bill↔charge
+# reconciliation (SOFT non-positive-total sanity + HARD USAGE reconciliation
+# replayed from grouping_key/udr_count, SELECT-only); `taxation` stays a no-op
+# Log until its unit. This is the "flow-double" the app-repo DB-gated
+# correlation/claim + aggregation + verification tests mirror (bm21 pattern): the
+# SAME billrun_runtime writes/reads, testable without a live Kestra. See
+# ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -559,9 +562,127 @@ tasks:
       - id: taxation
         type: io.kestra.plugin.core.log.Log
         message: "[{{ taskrun.value }}] taxation — STUB: one tax line, recompute tax_total/total in SQL"
+      # bm30 — REAL Verification: the detective control (Inv #3 corollary). Runs as
+      # billrun_runtime, SELECT-only — it writes NOTHING. It reads four tables, ALL
+      # already SELECT-granted (no new grant): billing.customer_bill_line + billing.
+      # customer_bill (bm23/bm14), rating.udr_rated (bm14) and inventory.product_
+      # inventory (bm27, the replay correlation). Two checks:
+      #  * HARD bill<->charge reconciliation: replay EVERY USAGE `charge` line from
+      #    its stored grouping_key + udr_count — re-select the account's claimed
+      #    BILL_DRAFT udr_rated rows (correlated udr_subscriber_ref_id ->
+      #    inventory.product_inventory -> product_offering_id, the SAME correlation
+      #    bm28 used to FORM the grouping_key), scoped to (billrun_ref_id,
+      #    billrun_ban_id, billrun_attempt), and assert SUM(udr_rated_price) =
+      #    line.gross_amount AND COUNT(*) = line.udr_count (compared null-safe via
+      #    IS DISTINCT FROM). The count guards a sum that matches by coincidence over
+      #    the wrong row set. Any mismatch (naming the account + line(s)) RAISEs
+      #    RECONCILIATION_MISMATCH — ON_ERROR_STOP=1 + `set -e` fail the task, so the
+      #    account never auto-passes to approval (on_error POSTs the HARD finding =>
+      #    PROCESSING_FAILED). RECURRING lines (no udr_rated source — their
+      #    correctness is the bm29 price snapshot) and non-`charge` line_types
+      #    (discount/adjustment, unbuilt) are EXCLUDED, coded forward-compat.
+      #  * SOFT non-positive-total sanity (only when reconciliation passes):
+      #    total_amount <= 0 => RAISE NOTICE (advisory, NEVER blocks — bm07
+      #    behaviour preserved), the stage still reaches DONE.
+      # Per-account inputs pass via GUCs (psql does NOT substitute :'var' inside a
+      # $$ block — the validation-task convention).
       - id: verification
-        type: io.kestra.plugin.core.log.Log
-        message: "[{{ taskrun.value }}] verification — STUB: sanity checks (non-negative total)"
+        type: io.kestra.plugin.scripts.shell.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker daemon
+        commands:
+          - |
+            set -eu
+            # POSIX `set -eu` (see validation task) — /bin/sh is dash here.
+            export PGHOST="${BILLRUN_DB_HOST:-db}"
+            export PGPORT="${BILLRUN_DB_PORT:-5432}"
+            export PGDATABASE="${BILLRUN_DB_NAME:-enterprise_billing}"
+            export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
+            export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
+            psql -v ON_ERROR_STOP=1 \
+              -v ban="{{ taskrun.value }}" \
+              -v run="{{ inputs.bill_run_id }}" \
+              -v attempt="{{ inputs.attempt }}" <<'SQL'
+            SELECT set_config('billrun.ban',     :'ban',     false),
+                   set_config('billrun.run',     :'run',     false),
+                   set_config('billrun.attempt', :'attempt', false);
+            DO $$
+            DECLARE
+              v_mismatch  int;
+              v_bad_lines text;
+              v_total     numeric(18,2);
+            BEGIN
+              -- HARD: replay each USAGE charge line from its stored grouping_key and
+              -- compare SUM(udr_rated_price)/COUNT to the line's gross_amount/udr_count.
+              -- `replay` re-resolves each claimed udr_rated row's product_offering_id
+              -- through product_inventory (the join bm28 used to form grouping_key).
+              -- SCOPE (line-anchored detective control): this replays the rows behind
+              -- each EXISTING USAGE line and catches a stored line that diverges from a
+              -- faithful re-sum (a corrupted/tampered gross_amount or udr_count). It is
+              -- NOT designed to catch a wholly-MISSING line, nor a systematic bug in the
+              -- shared grouping-key/correlation logic (the replay would reproduce it) —
+              -- those are covered by the aggregation unit's own tests (bm28), not here.
+              -- IS DISTINCT FROM (not <>) so a NULL udr_count on a USAGE line is itself
+              -- flagged rather than silently passing via SQL three-valued logic.
+              WITH replay AS (
+                SELECT (pi.product_offering_id || ':' || ur.udr_type) AS grouping_key,
+                       SUM(ur.udr_rated_price)::numeric(18,2)         AS replay_sum,
+                       count(*)::int                                  AS replay_count
+                FROM   rating.udr_rated ur
+                JOIN   inventory.product_inventory pi
+                       ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                WHERE  ur.billrun_ref_id  = current_setting('billrun.run')
+                  AND  ur.billrun_ban_id  = current_setting('billrun.ban')
+                  AND  ur.billrun_attempt = current_setting('billrun.attempt')::int
+                  AND  ur.status = 'BILL_DRAFT'
+                GROUP BY (pi.product_offering_id || ':' || ur.udr_type)
+              ),
+              mismatched AS (
+                SELECT l.customer_bill_line_id, l.grouping_key,
+                       l.gross_amount, l.udr_count,
+                       COALESCE(r.replay_sum, '0.00')::numeric(18,2) AS replay_sum,
+                       COALESCE(r.replay_count, 0)                   AS replay_count
+                FROM   billing.customer_bill_line l
+                JOIN   billing.customer_bill b
+                       ON b.customer_bill_id = l.ref_customer_bill_id
+                      AND b.period_partition = l.period_partition
+                LEFT   JOIN replay r ON r.grouping_key = l.grouping_key
+                WHERE  b.ref_bill_run_id = current_setting('billrun.run')
+                  AND  b.ref_billing_account_id = current_setting('billrun.ban')
+                  AND  l.source = 'USAGE' AND l.line_type = 'charge'
+                  AND  (COALESCE(r.replay_sum, '0.00')::numeric(18,2) IS DISTINCT FROM l.gross_amount
+                        OR COALESCE(r.replay_count, 0) IS DISTINCT FROM l.udr_count)
+              )
+              SELECT count(*),
+                     string_agg(
+                       customer_bill_line_id || ' (grouping ' || grouping_key
+                       || ': claimed gross ' || gross_amount
+                       || '/count ' || COALESCE(udr_count::text, 'NULL')
+                       || ' vs replay ' || replay_sum || '/' || replay_count || ')', '; ')
+                INTO   v_mismatch, v_bad_lines
+              FROM   mismatched;
+
+              -- Per-account trace (parity with the validation task's NOTICE), so the
+              -- run log shows verification ran for THIS account even on the pass path.
+              RAISE NOTICE 'verification ban=% mismatched_usage_lines=%',
+                current_setting('billrun.ban'), v_mismatch;
+
+              IF v_mismatch > 0 THEN
+                RAISE EXCEPTION 'RECONCILIATION_MISMATCH (HARD): account % has % USAGE line(s) that do not reconcile to their claimed udr_rated rows: %',
+                  current_setting('billrun.ban'), v_mismatch, v_bad_lines;
+              END IF;
+
+              -- SOFT: non-positive-total sanity (advisory, never blocks — bm07).
+              SELECT total_amount INTO v_total
+              FROM   billing.customer_bill
+              WHERE  ref_bill_run_id = current_setting('billrun.run')
+                AND  ref_billing_account_id = current_setting('billrun.ban');
+
+              IF v_total IS NOT NULL AND v_total <= 0 THEN
+                RAISE NOTICE 'NON_POSITIVE_TOTAL (SOFT): total_amount % <= 0 (advisory, non-blocking)', v_total;
+              END IF;
+            END $$;
+            SQL
   - id: done
     type: io.kestra.plugin.core.debug.Return
     format: "processed run={{ inputs.bill_run_id }} accounts={{ inputs.ban_ids }}"

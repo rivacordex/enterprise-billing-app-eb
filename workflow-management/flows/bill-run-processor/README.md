@@ -7,8 +7,8 @@ namespace **`billrun`**; writes `customer_bill` (+lines +tax) and the six
 
 | File | What it is |
 | --- | --- |
-| `bill_run_processing.template.yml` | **Non-deployable** contract skeleton (bm16) — key sections + commented activities. Not-yet-built steps are `# STUB:` markers; the `validation` + `collection` stages carry `# REAL (bm27):` contract text (correlate once + assert; claim `RATED → BILL_DRAFT`, stamping the resolved `billrun_ban_id`; the D32 orphan rule) and `aggregation` carries `# REAL (bm28):` (group claimed usage into `customer_bill_line` at `(product_offering_id, udr_type)` grain; whole-account replace; `subtotal = SUM(net_amount)`; deterministic `line_no`) plus `# REAL (bm29):` (the RECURRING price resolver — as-of flat price + override, × quantity, price snapshot read-not-re-resolved on rerun, and the D33 HARD-fail branch). Documents the app-side stage contract the M2M handler (`services/billing/handle-stage-signal.ts`) records against. |
-| `local-dev/bill_run_processing.yml` | **Deployable placeholder** for local dev. The `validation` + `collection` + `aggregation` steps are **REAL** (bm27/bm28/bm29) — the correlation + claim + USAGE-and-RECURRING aggregation SQL run as `billrun_runtime` via `psql` against the `ci` seed; `taxation` + `verification` stay no-op `Log`s. Deployed to `billrun` by the stand-up bootstrap (wfm01 §7b). |
+| `bill_run_processing.template.yml` | **Non-deployable** contract skeleton (bm16) — key sections + commented activities. Not-yet-built steps are `# STUB:` markers; the `validation` + `collection` stages carry `# REAL (bm27):` contract text (correlate once + assert; claim `RATED → BILL_DRAFT`, stamping the resolved `billrun_ban_id`; the D32 orphan rule), `aggregation` carries `# REAL (bm28):` (group claimed usage into `customer_bill_line` at `(product_offering_id, udr_type)` grain; whole-account replace; `subtotal = SUM(net_amount)`; deterministic `line_no`) plus `# REAL (bm29):` (the RECURRING price resolver — as-of flat price + override, × quantity, price snapshot read-not-re-resolved on rerun, and the D33 HARD-fail branch), and `verification` carries `# REAL (bm30):` (SOFT non-positive-total sanity + the HARD USAGE bill↔charge reconciliation). Documents the app-side stage contract the M2M handler (`services/billing/handle-stage-signal.ts`) records against. |
+| `local-dev/bill_run_processing.yml` | **Deployable placeholder** for local dev. The `validation` + `collection` + `aggregation` + `verification` steps are **REAL** (bm27/bm28/bm29/bm30) — the correlation + claim + USAGE-and-RECURRING aggregation + bill↔charge reconciliation SQL run as `billrun_runtime` via `psql` against the `ci` seed; `taxation` stays a no-op `Log`. Deployed to `billrun` by the stand-up bootstrap (wfm01 §7b). |
 
 **Collection & Validation are real (bm27).** The subscriber→account correlation
 (`udr_subscriber_ref_id → inventory.product_inventory → billing_account_id`,
@@ -43,7 +43,22 @@ flat override, fails the account **HARD** (`RECURRING_PRICE_NOT_FOUND` /
 every other account stays billable. The pricing reads use new SELECT grants
 (`product_offering_price`, `order_item_price_override`; USAGE on `ordering`).
 
-The remaining stages (taxation, verification) land in later units; until then the
-template is a shell for those so the `billrun` namespace and flow definitions exist
-ahead of them. Business logic in the flow ⇒ `processing_flow_revision` is stamped
-on `bill_run` (wfm-architecture §6).
+**Verification is real (bm30).** The detective control (Inv #3 corollary): the
+write boundary (bm14) and the checksum (bm31) are preventive/tamper-evident but
+cannot see that Aggregation summed the WRONG set. Verification replays each
+`USAGE` `charge` line's aggregation independently from its stored `grouping_key` +
+`udr_count` — re-selecting the account's claimed `BILL_DRAFT` `udr_rated` rows
+(correlated through `inventory.product_inventory`, scoped to `(billrun_ref_id,
+billrun_ban_id, billrun_attempt)`) — and asserts `SUM(udr_rated_price) =
+gross_amount` **and** `COUNT(*) = udr_count`. A mismatch fails the account **HARD**
+(`RECONCILIATION_MISMATCH` → `PROCESSING_FAILED`), so a mis-aggregated line is
+caught before approval; `RECURRING` and non-`charge` lines are excluded (their
+correctness is the bm29 snapshot, not a replay). A pre-existing non-positive total
+stays a **SOFT** advisory finding (bm07 behaviour). SELECT-only on
+`customer_bill_line` + `rating.udr_rated` (both already granted) — it writes
+nothing.
+
+The remaining stage (taxation) lands in a later unit; until then the template is a
+shell for it so the `billrun` namespace and flow definitions exist ahead of it.
+Business logic in the flow ⇒ `processing_flow_revision` is stamped on `bill_run`
+(wfm-architecture §6).

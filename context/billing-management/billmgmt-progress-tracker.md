@@ -74,6 +74,113 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase L — **bm30 (Verification + Bill↔Charge Reconciliation) —
+  DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm30-verification-reconciliation.md`.
+  Boundary: the processing flow's `verification` stage (run as `billrun_runtime`,
+  SELECT-only on four already-granted tables — `customer_bill_line` + `customer_bill`
+  (bm23/bm14), `rating.udr_rated` (bm14) and `inventory.product_inventory` (bm27,
+  the replay correlation); **no new grant**) — **no schema, grant, service, or UI
+  change**. Replaces the
+  `verification` `# STUB:`/no-op `Log` with the real detective control (Inv #3
+  corollary): the write boundary (bm14) and the checksum (bm31) are
+  preventive/tamper-evident but cannot see that Aggregation summed the WRONG set,
+  so Verification replays the aggregation independently. Landed this pass:
+  - **`bill_run_processing.template.yml` — the real `verification` contract.**
+    The `# STUB:` replaced with `# REAL (bm30):`: a HARD bill↔charge
+    reconciliation (for every `USAGE` `charge` line, replay the account's claimed
+    `BILL_DRAFT` `udr_rated` rows for the line's stored `grouping_key`
+    (`product_offering_id:udr_type`, re-resolved through
+    `inventory.product_inventory` — the SAME correlation bm28 used to FORM the
+    key), scoped to `(billrun_ref_id, billrun_ban_id, billrun_attempt)`, and
+    assert `SUM(udr_rated_price) = gross_amount` **and** `COUNT(*) = udr_count`;
+    the count guards a sum that matches by coincidence over the wrong row set) +
+    a SOFT non-positive-total sanity (advisory, never blocks). RECURRING lines
+    (no `udr_rated` source — their correctness is the bm29 snapshot) and
+    non-`charge` `line_type`s (`discount`/`adjustment`, unbuilt) are EXCLUDED,
+    coded forward-compat. Any mismatch → the account's `verification` stage
+    signals `FAILED`, `HARD`, `RECONCILIATION_MISMATCH` naming the line(s) →
+    `PROCESSING_FAILED`, never auto-passing to approval. Header note updated.
+  - **`local-dev/bill_run_processing.yml` — the real verification SQL.** The
+    `verification` no-op `Log` replaced with a `billrun_runtime` psql shell task
+    (SELECT-only; `set -eu`, `ON_ERROR_STOP=1`; per-account inputs via GUCs since
+    psql does not substitute `:'var'` inside `$$` — the validation-task
+    convention): a `DO` block runs the reconciliation and `RAISE`s
+    `RECONCILIATION_MISMATCH` (HARD) on any mismatched USAGE line, else
+    `RAISE NOTICE`s `NON_POSITIVE_TOTAL` (SOFT) when `total_amount <= 0`. Header
+    comment updated (`taxation` is now the only remaining no-op `Log`).
+  - **Taxation needs no unit** (spec §3): Taxation already SQL-recomputes
+    `tax_total`/`total_amount` from `customer_bill.subtotal`, which bm28 sets from
+    the lines, so it follows correct lines automatically.
+  - **Guardrail — the shared flow-double.** New
+    `tests/db/helpers/billrun-verify.ts` (`runVerification`) runs the SAME
+    `billrun_runtime` reconciliation SQL the flow's `verification` task runs — a
+    HARD mismatch rejects the promise (naming the lines), a non-positive total
+    returns an advisory `softFinding` without throwing — so the double never
+    drifts from the flow (the bm21/bm28/bm29 pattern). New DB-gated
+    `tests/db/billrun-verification-reconciliation.integration.test.ts` drives the
+    shared aggregation helper to produce lines, then `runVerification`: a
+    correctly aggregated USAGE bill reconciles (`DONE`, no finding); a
+    mis-aggregated line — `gross_amount` OR `udr_count` out of step with its
+    claimed rows — is caught HARD `RECONCILIATION_MISMATCH`; a RECURRING-only bill
+    passes `DONE` (excluded from reconciliation though its replay would be 0 vs
+    its gross); a zero-charge (0.00) bill reaches `DONE` with a SOFT finding
+    (bm07 behaviour preserved).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/YAML/MD; both flow YAMLs parse (`js-yaml`, five
+    per-account subtasks each); DB-free flow-boundary guardrails
+    (`billing-customer-bill-line-replace-boundary`,
+    `billing-rating-write-boundary`, `billing-trial-bill-compute-boundary`,
+    `billrun-inventory-write-boundary`) **21/21** — the SELECT-only verification
+    task trips none of them.
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron**
+    (git-ignored `docker-compose.test.yml`, project `ebill-test`, :5434; torn
+    down `down -v` after): `billrun-verification-reconciliation` **5/5**;
+    regressions `billrun-aggregation` **2/2** + `billrun-recurring-aggregation`
+    **8/8** = all green (the shared aggregation double is unchanged).
+  - **Closes the deferred reconciliation item** (`bm00-build-plan.md` Unit 30 /
+    the `TODOS.md` reconciliation the spec cites — no `TODOS.md` file exists in
+    the repo; recorded here per the spec's Verification checklist).
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified (DB suites bm30 6/6 + regressions green).**
+    - **(robustness) Null-safe mismatch predicate.** Both the flow SQL and the
+      double compared `COALESCE(replay,…) <> l.gross_amount / l.udr_count`; since
+      `customer_bill_line.udr_count` is a nullable `integer`, a USAGE line with a
+      NULL `udr_count` would evaluate the predicate to NULL (SQL three-valued
+      logic) and silently escape the mismatch set. Switched both comparisons to
+      `IS DISTINCT FROM` (and made the `string_agg`/JS detail render a NULL count
+      as `'NULL'`), so a NULL `udr_count` on a USAGE line is itself flagged. Latent
+      today (bm28 always writes `count(*)::int`), but a detective control must be
+      null-safe.
+    - **(observability) Findings name the account.** The HARD `RAISE EXCEPTION`
+      (and the double's thrown message) named the surrogate line id(s) but not the
+      BAN; the replaced no-op `Log` had carried a `[{{ taskrun.value }}]` account
+      prefix. The exception now leads with `account %` and a per-account
+      `RAISE NOTICE` (parity with the `validation` task) traces the pass path too,
+      so a multi-account run identifies which BAN failed.
+    - **(docs) Accurate read-set enumeration.** The template/local-dev contract
+      comments (and this tracker) said the stage "reads `customer_bill_line` +
+      `rating.udr_rated`"; the SQL also reads `customer_bill` + `product_inventory`.
+      All four are already SELECT-granted (bm14/bm23/bm27), so "no new grant"
+      holds, but the enumeration is now complete so a future grant change sees the
+      dependency.
+    - **(scope note)** Documented that the control is line-anchored — it catches a
+      stored line diverging from a faithful re-sum, NOT a wholly-missing line or a
+      systematic bug in the shared grouping/correlation logic (bm28's own tests
+      cover the latter).
+    - **(test) RECURRING-exclusion negative control.** Added a mixed
+      (reconciling USAGE line + a RECURRING line whose replay-0-vs-gross would
+      throw if included) case, so exclusion is proven load-bearing rather than
+      vacuously passing on an empty replay; and the gross-mismatch case now asserts
+      the finding names the account.
+    - **Reviewed and NOT changed (with rationale):** the SOFT non-positive-total
+      read is single-row by Inv #11 (one non-finalized bill per `(run, ban)`), so
+      no `period_partition` scoping needed; the flow-double can't exercise the psql
+      `ON_ERROR_STOP`/`on_error` wiring (the deferred live-Kestra gate, as for
+      bm27–29); the SOFT check overlapping `pre-approval-checks.checkPositiveTotals`
+      is the intended bm07-preserving early advisory; the cross-unit fixture
+      duplication is the established DB-gated-test pattern, out of bm30's boundary.
+
 - Phase 3 · Phase L — **bm29 (Real Aggregation (`RECURRING`) + Price Resolver)
   — DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
   `context/billing-management/specs/bm29-real-aggregation-recurring-price-resolver.md`.
