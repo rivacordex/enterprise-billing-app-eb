@@ -54,7 +54,7 @@ Retire the `SUBSCRIPTION_RECURRING` `udr_rated` emission entirely. Structure the
 
 ## Verification checklist
 
-- [ ] The factory emits `udr_type = 'RAN_USAGE'`, `status = 'RATED'`, and **all four** `billrun_*` columns NULL — byte-for-byte the shape `rl.py` writes; no `SUBSCRIPTION_RECURRING` row is produced.
+- [ ] The factory emits `udr_type = 'RAN_USAGE'` with **all four** `billrun_*` columns NULL and no `SUBSCRIPTION_RECURRING` row — byte-for-byte the shape `rl.py` writes. `status` **defaults to `'RATED'`**; the sole intentional exception is the `bill-notused` scenario, which seeds one `status = 'BILL_NOTUSED'` row (`billNotUsedRows: 1`) — so the `ci` profile yields **5 `RATED` + 1 `BILL_NOTUSED`**, all six equally unclaimed.
 - [ ] Each `RAN_USAGE` row's `udr_subscriber_ref_id` is a real seeded `product_inventory_id`, so bm27's correlation resolves it to the right `billing_account_id`.
 - [ ] `db:seed-sample` (`ci` profile) builds the six scenarios idempotently (re-run purges and rebuilds on `_SAMPLE_-BILLRUN-0001`).
 - [ ] `billing-sample-seed-marker.test.ts` passes with the flipped `billrunBanId` (NULL) assertion and the `RAN_USAGE` assertion; every seeded row is `_SAMPLE_`-marked and unclaimed.

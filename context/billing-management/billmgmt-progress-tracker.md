@@ -104,9 +104,10 @@ enumerations were trimmed to key facts + decisions. Full history:
     `createOrder → instantiateOrder` path — never a `udr_rated` row; the
     `SUBSCRIPTION_RECURRING` emission is retired entirely. Each usage row's
     `udr_subscriber_ref_id` is a real seeded `product_inventory_id`; a global
-    monotonic `sequence` keeps every `udr_key` distinct across the period (the
-    live-row uniqueness key excludes the account, and all rows share
-    `start_datetime`). Entry point selects `DEFAULT_PROFILE = "ci"` via
+    monotonic `sequence` keeps every `udr_key` distinct within a run (all rows
+    share the same `partition_period` and `start_datetime`, and the live-row
+    uniqueness key excludes the account, so `udr_key` is the only differentiator
+    left). Entry point selects `DEFAULT_PROFILE = "ci"` via
     `resolveProfile` (`volume` reserved for bm35). **Purge rekeyed (idempotency
     fix):** the prior teardown deleted `udr_rated` by `billrun_ban_id IN banIds`
     — now NULL, so it would never match; the delete is rekeyed to
@@ -148,11 +149,16 @@ enumerations were trimmed to key facts + decisions. Full history:
     - **Run 2 (exit 0) — idempotency:** counts identical before/after
       (`udr_rated=6`, sample BANs=6, sample inventory=7). This is the live proof
       of the **purge rekey** — the prior run's rows (now NULL `billrun_ban_id`)
-      were purged via `udr_subscriber_ref_id → product_inventory` and rebuilt
-      with **no collision** on the live-row uniqueness constraint
-      `(partition_period, start_datetime, udr_key, is_live)`, which every row
-      shares on the first three columns. Without the rekey this re-run would
-      have thrown a unique violation.
+      were purged via `udr_subscriber_ref_id → product_inventory` and rebuilt.
+      (Within a run, live rows share only `partition_period` and
+      `start_datetime` of the uniqueness key
+      `(partition_period, start_datetime, udr_key, is_live)`; the global
+      `sequence` makes `udr_key` the differentiator, so the fresh insert never
+      self-collides.) Without the rekey the prior run's rows — now NULL
+      `billrun_ban_id`, so invisible to the old account-keyed purge — would
+      instead **accumulate** each re-run (6 → 12 → 18…) as orphans pointing at
+      deleted inventory; the stable count of 6 is the proof the rekey purges
+      them.
   - **`volume` profile deferred to bm35** (its only visible result is a
     performance characteristic that needs aggregation to exist).
 
