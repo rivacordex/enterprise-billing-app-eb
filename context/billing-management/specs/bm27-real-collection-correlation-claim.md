@@ -31,7 +31,7 @@ A single query resolving the run's in-scope claimable rows to accounts, followin
 -- (Inv #24), shared by Validation and Collection. Rows that fail to resolve
 -- (LEFT JOIN NULL) are the D32 orphans — left untouched.
 WITH correlated AS (
-  SELECT ur.udr_id, ur.partition_period, ur.udr_currency,
+  SELECT ur.udr_id, ur.partition_period, ur.udr_currency, ur.start_datetime,
          pi.billing_account_id, ba.currency AS account_currency
   FROM   rating.udr_rated ur
   LEFT JOIN inventory.product_inventory pi
@@ -95,7 +95,7 @@ Rows not in `correlated` (unresolvable subscriber, or out-of-scope) are **not** 
 
 ## Verification checklist
 
-- [x] Correlation is one set-based query per run (Inv #24), shared by Validation and Collection; it follows the `_CURRENCY_SQL` join `udr_subscriber_ref_id → product_inventory → billing_account`.
+- [x] Correlation is the set-based `_CURRENCY_SQL` join `udr_subscriber_ref_id → product_inventory → billing_account`, projecting the fields Validation reads against it (incl. `start_datetime` for window coverage). **The "computed once and shared by Validation and Collection" optimization (Inv #24) is the real (external) flow's contract** (`bill_run_processing.template.yml`); the in-repo local-dev double and the DB-gated test run the correlation **per-stage** (Validation asserts, Collection claims) — an owner-accepted characteristic of the flow-double placeholder (2026-09-15). Inv #24 is satisfied by the real flow via either a shared set or folding the assertions into the claim; set reuse itself is not claimed delivered here.
 - [x] Collection claims `RATED → BILL_DRAFT` only, stamping the six columns incl. the **resolved** `billrun_ban_id`; the `billrun_status_guard` permits exactly this and refuses any other `billrun_runtime` transition.
 - [x] An unresolvable-subscriber row is left `RATED`, unclaimed and untouched (D32) — never filtered, never failing the account.
 - [x] Validation asserts currency + window coverage against the correlated set; a mismatch fails `HARD`; zero-claimable is a zero-charge `DONE`, not an error.

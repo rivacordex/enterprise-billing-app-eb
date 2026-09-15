@@ -38,12 +38,17 @@ tasks:
     type: io.kestra.plugin.core.flow.ForEach
     values: "{{ inputs.ban_ids }}"
     tasks:
-      # bm27 — REAL Validation: assert against the SHARED correlated set
-      # (Inv #24). Runs the `_CURRENCY_SQL`-shaped subscriber->account join once
-      # for this account and ENFORCES the two HARD checks: a currency mismatch
-      # (udr_currency <> account_currency) or an out-of-window row RAISEs, which
-      # (ON_ERROR_STOP=1 + `set -e`) FAILS the task so Collection never runs for
-      # the account — the local-dev analog of "signal FAILED, HARD finding".
+      # bm27 — REAL Validation: assert against the correlated set (the
+      # `_CURRENCY_SQL`-shaped subscriber->account join, Inv #24) and ENFORCE the
+      # two HARD checks: a currency mismatch (udr_currency <> account_currency)
+      # or an out-of-window row RAISEs, which (ON_ERROR_STOP=1 + `set -e`) FAILS
+      # the task so Collection never runs for the account — the local-dev analog
+      # of "signal FAILED, HARD finding".
+      # NOTE: as a deployable placeholder this task runs the correlation
+      # INDEPENDENTLY of Collection's claim task (separate psql / transaction) —
+      # the "computed once and shared" optimization (Inv #24) is the REAL flow's
+      # contract (../bill_run_processing.template.yml), which Inv #24 permits to
+      # be realized as either a shared set OR assertions folded into the claim.
       # Zero-claimable is a zero-charge exception (DONE), NOT an error. Connects
       # as billrun_runtime (the two-writer identity) via psql — SELECT-only here
       # (the read grant bm27 added: USAGE on `inventory` + SELECT on
