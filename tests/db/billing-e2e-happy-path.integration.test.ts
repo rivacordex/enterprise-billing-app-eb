@@ -574,11 +574,23 @@ describe.skipIf(!databaseUrl)(
         expect(bills[0]?.category).toBe("trial");
         expect(bills[0]?.taxItems.length).toBeGreaterThan(0);
 
+        // bm32 (Inv #22/#26) — Uncharged is now "scoped, non-EXCLUDED account
+        // with no customer_bill_line", NOT the EXCLUDED accounts. The failed
+        // account produced no line, so it is uncharged (NO_CHARGE_LINES); the
+        // EXCLUDED account is off this surface entirely (visible only via its
+        // status badge).
         const uncharged = await listUncharged(runId);
-        expect(uncharged).toHaveLength(1);
-        expect(uncharged[0]?.billingAccountId).toBe(banExcluded);
-        expect(uncharged[0]?.reason).toBe("PARTIAL_PERIOD");
-        expect(uncharged[0]?.indicativeValue).toBeNull();
+        const unchargedBans = uncharged.map((u) => u.billingAccountId);
+        expect(unchargedBans).toContain(banFailed);
+        expect(unchargedBans).not.toContain(banExcluded);
+        expect(unchargedBans).not.toContain(banBilled);
+        expect(
+          uncharged.find((u) => u.billingAccountId === banFailed)?.reason,
+        ).toBe("NO_CHARGE_LINES");
+        expect(
+          uncharged.find((u) => u.billingAccountId === banFailed)
+            ?.indicativeValue,
+        ).toBeNull();
 
         const errors = await listErrors(runId);
         expect(errors).toHaveLength(1);

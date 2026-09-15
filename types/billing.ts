@@ -259,13 +259,18 @@ export interface RatedLineRow {
   udrCurrency: string;
 }
 
-// bm07-spec §Design/§2. The Uncharged tab's read model — one row per
-// deliberately-not-billed account (`bill_run_account.status = 'EXCLUDED'`, a
-// scoping-time partial-period exclusion). `reason` is the `error_code`
-// (`PARTIAL_PERIOD` in v1); the uncharged window is the run period;
-// `indicativeValue` has no source in v1 (no rating) — always `null`, rendered
-// as "—". `financialAccountId` carries the account context for the deep link to
-// Accounts → Transactions.
+// bm07-spec §Design/§2, REDEFINED by bm32 §Design (Inv #22). The Uncharged
+// tab's read model — one row per scoped, non-`EXCLUDED` account that produced
+// **no `customer_bill_line`** (or whose lines net to zero) this run. The shape
+// is unchanged from bm07, but `reason` no longer carries the scoping
+// `error_code`: it is now a billing-outcome label — `NO_CHARGE_LINES` (no line
+// at all) or `NETS_TO_ZERO` (lines summing to zero). `EXCLUDED` accounts (a
+// scoping-time partial-period exclusion) belong to **neither** Uncharged nor
+// the exception surface (Inv #26) — they never reached a stage that could
+// produce a line, and stay visible only via their `AccountStatusBadge` on the
+// Workflow timeline. `indicativeValue` still has no source (always `null`,
+// rendered "—"); `financialAccountId` carries the account context for the deep
+// link to Accounts → Transactions.
 export interface UnchargedRow {
   billingAccountId: string;
   financialAccountId: string;
@@ -274,6 +279,29 @@ export interface UnchargedRow {
   windowStart: string;
   windowEnd: string;
   indicativeValue: string | null;
+}
+
+// bm32-spec §Design/§Implementation §2. The per-record exception surface — the
+// two "things not on the bill" that are records, not accounts (Info family,
+// never blocking): a `BILL_NOTUSED` rated usage row, or an `ORPHAN` (an
+// unclaimed live `RATED` `RAN_USAGE` row Collection left behind, Inv #25/D32).
+// A resolvable orphan shows its `accountName` (via `udr_subscriber_ref_id →
+// inventory.product_inventory → billing_account`); an **unresolvable** one (no
+// `product_inventory`) shows a `null` account and is identified by
+// `subscriberRef` — it is never dropped (revenue leakage). Money/usage fields
+// are `string` (code-standards §2.3).
+export const EXCEPTION_KINDS = ["BILL_NOTUSED", "ORPHAN"] as const;
+export type ExceptionKind = (typeof EXCEPTION_KINDS)[number];
+
+export interface ExceptionRow {
+  kind: ExceptionKind;
+  subscriberRef: string;
+  accountName: string | null;
+  udrType: string;
+  quantity: string;
+  unit: string;
+  ratedPrice: string;
+  currency: string;
 }
 
 // bm07-spec §Design/§2. The Errors tab's read model — one row per blocking
@@ -337,13 +365,21 @@ export const PRE_APPROVAL_CHECKS = [
   "four_eyes",
   "accounts_terminal",
   "no_rejected_pending",
+  // bm32-spec §Design/§Implementation §3 — the orphaned-usage-record count.
+  // INFORMATIONAL, never blocking (D32/Inv #25): it always `pass`es and is
+  // excluded from `approveRun`'s blocking gate.
+  "orphan_count",
 ] as const;
 export type PreApprovalCheckKey = (typeof PRE_APPROVAL_CHECKS)[number];
 
+// bm32 adds `informational` (default false/undefined). An informational check
+// ALWAYS `pass`es and never contributes to `approveRun`'s `CHECKS_FAILED` gate;
+// the checklist renders it as an Info line (no blocking remediation).
 export interface PreApprovalCheck {
   check: PreApprovalCheckKey;
   pass: boolean;
   remediation: string | null;
+  informational?: boolean;
 }
 
 // bm10 — the audit event types that record a run being (re)triggered. The

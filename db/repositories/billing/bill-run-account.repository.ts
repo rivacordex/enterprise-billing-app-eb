@@ -7,6 +7,7 @@ import { billRunAccountStage } from "@/db/schema/billing/bill-run-account-stage"
 import { billRun } from "@/db/schema/billing/bill-run";
 import { billingAccount } from "@/db/schema/billing/accounts";
 import { customerBill } from "@/db/schema/billing/customer-bill";
+import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import type { AccountStatus, ErrorClass, Stage } from "@/types/billing";
 
@@ -317,12 +318,24 @@ export const billRunAccountRepository = {
       .where(eq(billRunAccount.refBillRunId, billRunId));
   },
 
-  // bm07-spec §Design/§2 — the Uncharged tab read: the run's deliberately-not-
-  // billed accounts (`status = 'EXCLUDED'`, a scoping-time partial-period
-  // exclusion), joined to the account name/financial-account (for the deep
-  // link) and the run period (the uncharged window). No money — the indicative
-  // value has no source in v1. Ordered by account name for a stable list.
-  async listExcludedForRun(
+  // bm07-spec §Design/§2, REDEFINED by bm32 §Implementation §1 (Inv #22). The
+  // Uncharged tab read — no longer `status = 'EXCLUDED'`. Now: the run's scoped,
+  // NON-`EXCLUDED` accounts that produced **no `customer_bill_line`** (or whose
+  // lines net to zero). A recurring-only account has RECURRING lines → billed,
+  // absent here; an account that ran and produced no line → uncharged. EXCLUDED
+  // accounts are excluded (Inv #26 — they never reached a stage that could
+  // produce a line, and are surfaced only by their status badge).
+  //
+  // The account is LEFT JOINed to its `customer_bill` and (by the composite
+  // `(bill, period_partition)` key) that bill's `customer_bill_line` rows;
+  // `GROUP BY` the account (one bill per `(run, ban)` by Inv #11's unique key),
+  // then `HAVING` keeps a group when it has NO bill/line OR its lines
+  // `SUM(net_amount) = 0`. `lineCount` (0 ⇒ "no charge lines"; >0 ⇒ "nets to
+  // zero") lets the service label the reason without a second query. The account
+  // name/financial-account (deep link) and the run period (the uncharged
+  // window) come along; no money — the indicative value has no source. Ordered
+  // by account name for a stable list.
+  async listUnchargedForRun(
     db: Database,
     billRunId: string,
   ): Promise<
@@ -330,9 +343,9 @@ export const billRunAccountRepository = {
       billingAccountId: string;
       financialAccountId: string;
       accountName: string;
-      reason: string | null;
       windowStart: string;
       windowEnd: string;
+      lineCount: number;
     }[]
   > {
     return db
@@ -340,9 +353,9 @@ export const billRunAccountRepository = {
         billingAccountId: billRunAccount.refBillingAccountId,
         financialAccountId: billingAccount.refFinancialAccountId,
         accountName: billingAccount.name,
-        reason: billRunAccount.errorCode,
         windowStart: billRun.periodStart,
         windowEnd: billRun.periodEnd,
+        lineCount: sql<number>`count(${customerBillLine.customerBillLineId})::int`,
       })
       .from(billRunAccount)
       .innerJoin(
@@ -350,11 +363,39 @@ export const billRunAccountRepository = {
         eq(billRunAccount.refBillingAccountId, billingAccount.billingAccountId),
       )
       .innerJoin(billRun, eq(billRunAccount.refBillRunId, billRun.billRunId))
+      .leftJoin(
+        customerBill,
+        and(
+          eq(customerBill.refBillRunId, billRunAccount.refBillRunId),
+          eq(
+            customerBill.refBillingAccountId,
+            billRunAccount.refBillingAccountId,
+          ),
+        ),
+      )
+      .leftJoin(
+        customerBillLine,
+        and(
+          eq(customerBillLine.refCustomerBillId, customerBill.customerBillId),
+          eq(customerBillLine.periodPartition, customerBill.periodPartition),
+        ),
+      )
       .where(
         and(
           eq(billRunAccount.refBillRunId, billRunId),
-          eq(billRunAccount.status, "EXCLUDED"),
+          ne(billRunAccount.status, "EXCLUDED"),
         ),
+      )
+      .groupBy(
+        billRunAccount.refBillingAccountId,
+        billingAccount.refFinancialAccountId,
+        billingAccount.name,
+        billRun.periodStart,
+        billRun.periodEnd,
+        customerBill.customerBillId,
+      )
+      .having(
+        sql`${customerBill.customerBillId} IS NULL OR COALESCE(SUM(${customerBillLine.netAmount}), 0) = 0`,
       )
       .orderBy(billingAccount.name);
   },

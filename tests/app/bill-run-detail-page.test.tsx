@@ -24,6 +24,13 @@ vi.mock("@/services/billing/read/list-account-bills", () => ({
 vi.mock("@/services/billing/read/list-uncharged", () => ({
   listUncharged: vi.fn(),
 }));
+// bm32 — the Uncharged tab's per-record exception surface read; mocked (like
+// the other reads) because its import of db/client.ts needs the real
+// `config.DATABASE_URL` this test's `@/lib/config` mock doesn't provide. Only
+// `?tab=uncharged` calls it.
+vi.mock("@/services/billing/read/list-exceptions", () => ({
+  listExceptions: vi.fn(),
+}));
 vi.mock("@/services/billing/read/list-errors", () => ({
   listErrors: vi.fn(),
 }));

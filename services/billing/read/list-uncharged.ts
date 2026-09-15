@@ -2,27 +2,35 @@ import { db } from "@/db/client";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import type { UnchargedRow } from "@/types/billing";
 
-// bm07-spec §Design/§Implementation §2. The Uncharged tab's read — the run's
-// `EXCLUDED` accounts (a scoping-time partial-period exclusion, bm03), each
-// with its reason (`error_code`), the uncharged window (the run period), and
-// the indicative value (`null` in v1 — no rating source). Derived live, no
-// cache read. `EXCLUDED` accounts never reach any downstream stage, so this is
-// the only surface that lists them.
+// bm07-spec §Design/§Implementation §2, REDEFINED by bm32 §Implementation §1
+// (Inv #22). The Uncharged tab's read — no longer the run's `EXCLUDED` accounts.
+// "Uncharged" now means a **billing outcome**: a scoped, non-`EXCLUDED` account
+// that produced **no `customer_bill_line`** (or whose lines net to zero). A
+// recurring-only account with zero usage has RECURRING lines → it is BILLED and
+// absent here; an account that ran and produced no line → uncharged. EXCLUDED
+// accounts (a scoping-time partial-period exclusion) appear on NEITHER Uncharged
+// nor the exception surface (Inv #26) — visible only via their status badge.
+// Derived live, no cache read (architecture Inv. #12 idiom).
+//
+// The `reason` is a billing-outcome label derived from the line count:
+// `NO_CHARGE_LINES` (no line at all) or `NETS_TO_ZERO` (lines summing to zero).
+// The indicative value has no source — always `null`, rendered "—".
 export async function listUncharged(
   billRunId: string,
 ): Promise<UnchargedRow[]> {
-  const rows = await billRunAccountRepository.listExcludedForRun(db, billRunId);
+  const rows = await billRunAccountRepository.listUnchargedForRun(
+    db,
+    billRunId,
+  );
 
   return rows.map((row) => ({
     billingAccountId: row.billingAccountId,
     financialAccountId: row.financialAccountId,
     accountName: row.accountName,
-    // Every EXCLUDED row is stamped `PARTIAL_PERIOD` at scoping; fall back to a
-    // stable label if a future exclusion reason lands without a code.
-    reason: row.reason ?? "PARTIAL_PERIOD",
+    reason: row.lineCount > 0 ? "NETS_TO_ZERO" : "NO_CHARGE_LINES",
     windowStart: row.windowStart,
     windowEnd: row.windowEnd,
-    // Indicative value has no source in v1 (no rating) — rendered as "—".
+    // Indicative value has no source (no rating total exposed here) — "—".
     indicativeValue: null,
   }));
 }

@@ -46,7 +46,10 @@ export async function approveRun(
     if (fourEyes && !fourEyes.pass) {
       return { ok: false, code: "FOUR_EYES_VIOLATION" } as const;
     }
-    const failing = checks.filter((c) => !c.pass);
+    // bm32 — informational checks (the orphan count, D32/Inv #25) never block
+    // approval: they always `pass`, but exclude them explicitly so a future
+    // informational check that reports `pass: false` still can't gate the run.
+    const failing = checks.filter((c) => !c.pass && !c.informational);
     if (failing.length > 0) {
       // Return the COMPLETE re-check result (not just the failing subset) so the
       // panel can replace its checklist wholesale — a check that was failing at

@@ -28,6 +28,9 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
     countNonPositivePostable: vi.fn(),
   },
 }));
+vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
+  ratedLinesRepository: { countOrphansForWindow: vi.fn() },
+}));
 
 import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
@@ -35,6 +38,7 @@ import { auditLogRepository } from "@/db/repositories/audit-log.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
 import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
 
 const mockFindPeriod = vi.mocked(
@@ -57,6 +61,7 @@ const mockListTriggerActors = vi.mocked(
 const mockListRejectedPending = vi.mocked(
   billRunAccountStageRepository.listRejectedPendingForRun,
 );
+const mockCountOrphans = vi.mocked(ratedLinesRepository.countOrphansForWindow);
 
 const dbStub = {} as never;
 
@@ -64,6 +69,8 @@ function run(overrides: Record<string, unknown> = {}) {
   return {
     billRunId: "BRN00000001",
     glEventAt: "2026-07-01",
+    periodStart: "2026-07-01",
+    periodEnd: "2026-07-31",
     triggeredBy: "user-trigger",
     status: "PROCESSED",
     ...overrides,
@@ -91,17 +98,44 @@ beforeEach(() => {
     { billingAccountId: "BAN00000003", status: "EXCLUDED" },
   ] as never);
   mockListRejectedPending.mockResolvedValue([]); // no rejected accounts by default
+  mockCountOrphans.mockResolvedValue(0); // no orphans by default
 });
 
-describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th)", () => {
-  it("returns all six checks passing on a clean run", async () => {
+describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 7th)", () => {
+  it("returns all seven checks passing on a clean run", async () => {
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
-    expect(checks).toHaveLength(6);
+    expect(checks).toHaveLength(7);
     for (const c of checks) {
       expect(c.pass).toBe(true);
       expect(c.remediation).toBeNull();
     }
+  });
+
+  it("[bm32] orphan_count is informational, always passes, and never blocks", async () => {
+    mockCountOrphans.mockResolvedValue(3);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+    const orphan = byKey(checks, "orphan_count");
+
+    expect(orphan).toMatchObject({
+      check: "orphan_count",
+      pass: true,
+      informational: true,
+      remediation: expect.stringContaining("3 orphaned usage records"),
+    });
+  });
+
+  it("[bm32] orphan_count carries a null remediation when there are no orphans", async () => {
+    mockCountOrphans.mockResolvedValue(0);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "orphan_count")).toMatchObject({
+      pass: true,
+      informational: true,
+      remediation: null,
+    });
   });
 
   it("period_open fails when the accounting period is closed for a postable currency", async () => {

@@ -65,6 +65,21 @@ export function firstOfMonth(periodStart: string): string {
   return `${periodStart.slice(0, 7)}-01`;
 }
 
+// bm32 — the set of monthly `partition_period` buckets a run window spans. A
+// monthly run whose `cycle_day != 1` straddles two calendar months, so its
+// `rating.udr_rated` rows (bucketed by `period_of(start_datetime)`, the UTC month
+// of the usage) land in up to two partitions. Deduped so the common
+// calendar-month case yields a single bucket. Used to scope the exception-surface
+// reads by partition (pruning) alongside the exact `start_datetime` window check.
+export function periodPartitions(
+  periodStart: string,
+  periodEnd: string,
+): string[] {
+  return Array.from(
+    new Set([firstOfMonth(periodStart), firstOfMonth(periodEnd)]),
+  );
+}
+
 // bm05-spec §Design/§Implementation §4 — Aggregation's `payment_due_date`
 // calc: the run date (`scheduled_run_date`) plus the resolved payment-term
 // days. UTC `Date.UTC` math (the `currentDuePeriod` idiom above), never
