@@ -70,6 +70,43 @@ describe("bm28 customer_bill_line whole-account-replace boundary (spec §Impleme
     expect(offenders).toEqual([]);
   });
 
+  // ---- the bm29 pricing read grants (§3) ------------------------------------
+  it("grants billrun_runtime USAGE on the ordering schema (bm29)", () => {
+    const sql = readFileSync(ROLES_SQL, "utf8");
+    expect(sql).toMatch(
+      /GRANT\s+USAGE\s+ON\s+SCHEMA\s+"ordering"\s+TO\s+billrun_runtime/i,
+    );
+  });
+
+  it("grants billrun_runtime SELECT on the recurring-price reads — no write, no GRANT ALL (bm29)", () => {
+    for (const table of [
+      /"product"\."product_offering_price"/i,
+      /"ordering"\."order_item_price_override"/i,
+    ]) {
+      const grant = statements(ROLES_SQL)
+        .map(code)
+        .find((s) => table.test(s) && /\bGRANT\b/i.test(s));
+      expect(grant).toBeDefined();
+      expect(grant).toMatch(/\bGRANT\s+SELECT\b/i);
+      expect(grant).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i);
+      expect(grant).not.toMatch(/\bGRANT\s+ALL\b/i);
+    }
+  });
+
+  it("[CRITICAL] grants NO write privilege of any kind on the ordering schema (bm29)", () => {
+    const offenders = statements(ROLES_SQL)
+      .map(code)
+      .filter((s) => {
+        const touchesOrdering = /\bordering\b/i.test(s);
+        const isGrant = /\bGRANT\b/i.test(s);
+        const hasWriteVerb =
+          /\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i.test(s) ||
+          /\bGRANT\s+ALL\b/i.test(s);
+        return touchesOrdering && isGrant && hasWriteVerb;
+      });
+    expect(offenders).toEqual([]);
+  });
+
   // ---- billrun_runtime holds no DELETE/UPDATE on customer_bill_line ----------
   it("[CRITICAL] grants billrun_runtime no DELETE and no UPDATE on customer_bill_line", () => {
     const offenders = statements(ROLES_SQL)

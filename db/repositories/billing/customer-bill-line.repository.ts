@@ -40,6 +40,12 @@ export const customerBillLineRepository = {
         udrCount: customerBillLine.udrCount,
         groupingKey: customerBillLine.groupingKey,
         currency: customerBillLine.currency,
+        // bm29 — the RECURRING price snapshot (D19); NULL for USAGE. Rendered in
+        // the line's disclosure slot in place of the udr_rated drill-down.
+        snapshotPriceRef: customerBillLine.snapshotPriceRef,
+        snapshotUnitPrice: customerBillLine.snapshotUnitPrice,
+        snapshotQuantity: customerBillLine.snapshotQuantity,
+        snapshotEffectiveDate: customerBillLine.snapshotEffectiveDate,
       })
       .from(customerBillLine)
       .innerJoin(

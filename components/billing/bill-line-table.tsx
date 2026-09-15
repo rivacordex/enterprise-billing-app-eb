@@ -1,16 +1,19 @@
-// bm28-spec §Design/§Implementation §5, code-standards §4.1b — the bill's charge
-// record rendered as the invoice's face: one row per `customer_bill_line` at
-// `(product_offering_id, udr_type)` grain. Server component (mono ids,
-// tabular-nums money, `--radius-none` grid, ui-context §6); each USAGE row's
-// `udr_rated` drill-down is a client leaf (`UsageLineDrillDown`) fetched on
-// expand only, never eager, and scoped to that line's grain. `discount_amount`
-// is hidden while every value is `0.00` (D-delta, §4.1c — no discount is
-// computed this phase, so suppressing the column keeps the invoice honest). The
-// `ChargeSourceBadge` that labels a line's origin (USAGE vs RECURRING) lands with
-// recurring (bm29); every line here is USAGE. Each line carries its own
-// `currency` (char(3), NOT NULL), so money formats off `line.currency` directly.
+// bm28-spec §Design/§Implementation §5, extended by bm29 §Implementation §5,
+// code-standards §4.1b — the bill's charge record rendered as the invoice's face:
+// one row per `customer_bill_line` at `(product_offering_id, udr_type)` grain.
+// Server component (mono ids, tabular-nums money, `--radius-none` grid, ui-context
+// §6). Each line carries a `ChargeSourceBadge` labelling its origin (bm29): a
+// USAGE row's `udr_rated` drill-down is a client leaf (`UsageLineDrillDown`)
+// fetched on expand only, never eager, and scoped to that line's grain; a
+// RECURRING row has NO drill-down (a derived charge has no per-record source) —
+// its disclosure shows the stored price snapshot instead (D19/Inv #20), rendered
+// server-side from the row itself. `discount_amount` is hidden while every value
+// is `0.00` (D-delta, §4.1c — no discount is computed this phase, so suppressing
+// the column keeps the invoice honest). Each line carries its own `currency`
+// (char(3), NOT NULL), so money formats off `line.currency` directly.
 
-import { formatCurrency } from "@/lib/formatters";
+import { ChargeSourceBadge } from "@/components/billing/charge-source-badge";
+import { formatCalendarDate, formatCurrency } from "@/lib/formatters";
 import { UsageLineDrillDown } from "@/components/billing/usage-line-drill-down";
 import type { BillLineRow } from "@/types/billing";
 
@@ -108,14 +111,17 @@ function BillLineRows({
           {line.lineNo}
         </td>
         <td className="px-3 py-2">
-          <span className="font-medium text-foreground">
-            {line.description ?? line.refProductOfferingId}
-          </span>
-          {line.udrType && (
-            <span className="ms-2 font-mono text-mono text-muted-foreground">
-              {line.udrType}
+          <div className="flex items-center gap-2">
+            <ChargeSourceBadge source={line.source} />
+            <span className="font-medium text-foreground">
+              {line.description ?? line.refProductOfferingId}
             </span>
-          )}
+            {line.udrType && (
+              <span className="font-mono text-mono text-muted-foreground">
+                {line.udrType}
+              </span>
+            )}
+          </div>
         </td>
         <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
           {line.quantity !== null ? (
@@ -140,8 +146,8 @@ function BillLineRows({
         </td>
       </tr>
       {/* USAGE lines carry the lazy udr_rated drill-down; a RECURRING line has
-          no drill-down (its evidence is the price snapshot, rendered when
-          recurring lands in bm29). The drill-down row spans the columns after
+          no drill-down (its evidence is the stored price snapshot, rendered
+          server-side below, bm29). The disclosure row spans the columns after
           the leading line-no cell (Charge, Quantity, Gross, [Discount], Net). */}
       {line.source === "USAGE" && line.udrType && (
         <tr className="border-b border-[color:var(--border-subtle)] bg-[color:var(--surface-sunken)]">
@@ -158,6 +164,57 @@ function BillLineRows({
           </td>
         </tr>
       )}
+      {line.source === "RECURRING" && (
+        <tr className="border-b border-[color:var(--border-subtle)] bg-[color:var(--surface-sunken)]">
+          <td className="px-3 py-1" />
+          <td className="px-3 py-1" colSpan={showDiscount ? 5 : 4}>
+            <RecurringSnapshot line={line} locale={locale} />
+          </td>
+        </tr>
+      )}
     </>
+  );
+}
+
+// bm29-spec §Implementation §5 — a RECURRING line's evidence is its price
+// snapshot (D19/Inv #20), not a per-record `udr_rated` drill-down (a derived
+// recurring charge has none). Rendered server-side from the row (no fetch): the
+// resolved price ref, unit price, quantity and effective date the amount was
+// derived from — the same shape a rerun reads back rather than re-resolving.
+function RecurringSnapshot({
+  line,
+  locale,
+}: {
+  line: BillLineRow;
+  locale: string;
+}): React.JSX.Element {
+  return (
+    <details className="text-body-sm">
+      <summary className="cursor-pointer text-body-sm text-[color:var(--color-primary-600)] select-none hover:underline">
+        View price snapshot
+      </summary>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-caption">
+        <dt className="text-muted-foreground">Price ref</dt>
+        <dd className="font-mono text-mono text-foreground">
+          {line.snapshotPriceRef ?? "—"}
+        </dd>
+        <dt className="text-muted-foreground">Unit price</dt>
+        <dd className="text-foreground tabular-nums">
+          {line.snapshotUnitPrice !== null
+            ? formatCurrency(line.snapshotUnitPrice, line.currency, locale)
+            : "—"}
+        </dd>
+        <dt className="text-muted-foreground">Quantity</dt>
+        <dd className="text-foreground tabular-nums">
+          {line.snapshotQuantity ?? "—"}
+        </dd>
+        <dt className="text-muted-foreground">Effective date</dt>
+        <dd className="text-foreground">
+          {line.snapshotEffectiveDate !== null
+            ? formatCalendarDate(line.snapshotEffectiveDate)
+            : "—"}
+        </dd>
+      </dl>
+    </details>
   );
 }
