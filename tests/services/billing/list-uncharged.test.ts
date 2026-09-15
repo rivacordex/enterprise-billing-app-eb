@@ -1,33 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm07-spec §Design/§Implementation §2. The Uncharged read: maps the joined
-// EXCLUDED repository rows onto `UnchargedRow` — reason (`error_code`), the
-// uncharged window (run period), and a `null` indicative value in v1.
+// bm07-spec §Design/§Implementation §2, REDEFINED by bm32 §Implementation §1
+// (Inv #22). The Uncharged read now maps the joined "no charge line / nets to
+// zero" repository rows onto `UnchargedRow`: the reason is a billing-outcome
+// label derived from the line count (`NO_CHARGE_LINES` / `NETS_TO_ZERO`), the
+// uncharged window is the run period, and the indicative value is `null`.
 
 vi.mock("@/db/client", () => ({ db: {} }));
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
-  billRunAccountRepository: { listExcludedForRun: vi.fn() },
+  billRunAccountRepository: { listUnchargedForRun: vi.fn() },
 }));
 
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { listUncharged } from "@/services/billing/read/list-uncharged";
 
-const mockListExcluded = vi.mocked(billRunAccountRepository.listExcludedForRun);
+const mockListUncharged = vi.mocked(
+  billRunAccountRepository.listUnchargedForRun,
+);
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("listUncharged (bm07-spec §2)", () => {
-  it("maps each EXCLUDED row onto an UnchargedRow with reason, window, and null indicative value", async () => {
-    mockListExcluded.mockResolvedValue([
+describe("listUncharged (bm32-spec §1)", () => {
+  it("labels an account with no charge line NO_CHARGE_LINES", async () => {
+    mockListUncharged.mockResolvedValue([
       {
         billingAccountId: "BAN00000001",
         financialAccountId: "FIN00000001",
         accountName: "Acme Sdn Bhd",
-        reason: "PARTIAL_PERIOD",
         windowStart: "2026-07-01",
         windowEnd: "2026-07-31",
+        lineCount: 0,
       },
     ]);
 
@@ -38,7 +42,7 @@ describe("listUncharged (bm07-spec §2)", () => {
         billingAccountId: "BAN00000001",
         financialAccountId: "FIN00000001",
         accountName: "Acme Sdn Bhd",
-        reason: "PARTIAL_PERIOD",
+        reason: "NO_CHARGE_LINES",
         windowStart: "2026-07-01",
         windowEnd: "2026-07-31",
         indicativeValue: null,
@@ -46,24 +50,24 @@ describe("listUncharged (bm07-spec §2)", () => {
     ]);
   });
 
-  it("falls back to PARTIAL_PERIOD when the stored reason is null", async () => {
-    mockListExcluded.mockResolvedValue([
+  it("labels an account whose lines net to zero NETS_TO_ZERO", async () => {
+    mockListUncharged.mockResolvedValue([
       {
         billingAccountId: "BAN00000002",
         financialAccountId: "FIN00000001",
         accountName: "Globex",
-        reason: null,
         windowStart: "2026-07-01",
         windowEnd: "2026-07-31",
+        lineCount: 2,
       },
     ]);
 
     const [row] = await listUncharged("BRN00000001");
-    expect(row?.reason).toBe("PARTIAL_PERIOD");
+    expect(row?.reason).toBe("NETS_TO_ZERO");
   });
 
-  it("returns an empty array when nothing was excluded (positive empty state upstream)", async () => {
-    mockListExcluded.mockResolvedValue([]);
+  it("returns an empty array when every scoped account was billed", async () => {
+    mockListUncharged.mockResolvedValue([]);
     expect(await listUncharged("BRN00000001")).toEqual([]);
   });
 });

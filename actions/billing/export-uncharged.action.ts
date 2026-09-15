@@ -8,9 +8,12 @@ import { listUncharged } from "@/services/billing/read/list-uncharged";
 import type { UnchargedRow } from "@/types/billing";
 import { billRunIdSchema } from "@/validation/billing/run-id.schema";
 
-// bm07-spec §Implementation §3. CSV export of a run's Uncharged (EXCLUDED)
-// accounts, as a Server Action returning CSV text (NOT a Route Handler — the
-// bm02 export precedent, general code-standards §5). Re-checks
+// bm07-spec §Implementation §3, REDEFINED by bm32 (Inv #22). CSV export of a
+// run's Uncharged accounts — now the redefined set: scoped, non-EXCLUDED
+// accounts that produced no `customer_bill_line` (or lines netting to zero), so
+// the `Reason` column carries `NO_CHARGE_LINES`/`NETS_TO_ZERO` rather than the
+// old `PARTIAL_PERIOD`. A Server Action returning CSV text (NOT a Route Handler
+// — the bm02 export precedent, general code-standards §5). Re-checks
 // `billrun_view:READ` (the UI disabling is not the gate). A read-only export is
 // NOT audited. The client control builds a `Blob` and triggers the download.
 

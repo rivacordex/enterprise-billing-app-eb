@@ -4,6 +4,8 @@ import { auditLogRepository } from "@/db/repositories/audit-log.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
+import { periodPartitions } from "@/services/billing/derive-periods";
 import type { Database } from "@/db/client";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 import { TRIGGER_EVENT_TYPES } from "@/types/billing";
@@ -207,6 +209,37 @@ async function checkNoRejectedPending(
   return { check: "no_rejected_pending", pass: true, remediation: null };
 }
 
+// bm32-spec §Design/§Implementation §3 — the orphaned-usage-record count.
+// INFORMATIONAL, never blocking (D32/Inv #25): it always `pass`es (so it never
+// contributes to `approveRun`'s `CHECKS_FAILED` gate) and carries an Info-line
+// remediation naming the count, or a `null` remediation when there are none.
+// Counts the run window's unclaimed live `RATED` `RAN_USAGE` rows — the same
+// ORPHAN set the exception surface lists (`list-exceptions.ts`), scoped by the
+// same window (the ≤2 UTC-month partitions the run spans + the `start_datetime`
+// window), so the count equals what the operator sees there even for a
+// `cycle_day != 1` run. The count is surfaced so an operator sees it, but a run
+// bills fine with orphans present: the next run claims them once the inventory is
+// fixed (Inv #25).
+async function checkOrphanCount(
+  dbOrTx: Database,
+  run: BillRun,
+): Promise<PreApprovalCheck> {
+  const count = await ratedLinesRepository.countOrphansForWindow(dbOrTx, {
+    partitions: periodPartitions(run.periodStart, run.periodEnd),
+    periodStart: run.periodStart,
+    periodEnd: run.periodEnd,
+  });
+  return {
+    check: "orphan_count",
+    pass: true,
+    informational: true,
+    remediation:
+      count > 0
+        ? `${count} orphaned usage record${count === 1 ? "" : "s"} — informational, does not block approval`
+        : null,
+  };
+}
+
 export async function runPreApprovalChecks(
   dbOrTx: Database,
   run: BillRun,
@@ -219,6 +252,7 @@ export async function runPreApprovalChecks(
     fourEyes,
     accountsTerminal,
     noRejectedPending,
+    orphanCount,
   ] = await Promise.all([
     checkPeriodOpen(dbOrTx, run),
     checkGlMappingsResolvable(dbOrTx, run),
@@ -226,6 +260,7 @@ export async function runPreApprovalChecks(
     checkFourEyes(dbOrTx, run, approverId),
     checkAccountsTerminal(dbOrTx, run),
     checkNoRejectedPending(dbOrTx, run),
+    checkOrphanCount(dbOrTx, run),
   ]);
 
   return [
@@ -235,5 +270,6 @@ export async function runPreApprovalChecks(
     fourEyes,
     accountsTerminal,
     noRejectedPending,
+    orphanCount,
   ];
 }

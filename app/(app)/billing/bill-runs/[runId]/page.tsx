@@ -23,6 +23,7 @@ import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
 import { listAccountBills } from "@/services/billing/read/list-account-bills";
 import { listUncharged } from "@/services/billing/read/list-uncharged";
+import { listExceptions } from "@/services/billing/read/list-exceptions";
 import { listErrors } from "@/services/billing/read/list-errors";
 import { listRejectedPending } from "@/services/billing/read/list-rejected-pending";
 import { getDistribution } from "@/services/billing/read/get-distribution";
@@ -96,10 +97,17 @@ export default async function BillRunDetailPage({
       ? await listAccountBills(detail.billRunId)
       : [];
 
-  const uncharged =
+  // bm32 — the Uncharged tab now renders two Info-family sections: the redefined
+  // uncharged accounts (no `customer_bill_line`, Inv #22) AND the per-record
+  // exception surface (BILL_NOTUSED rows + orphans, Inv #25/D32). Both fetched
+  // only for the active tab (same idiom as every other tab below).
+  const [uncharged, exceptions] =
     parsedSearch.tab === "uncharged"
-      ? await listUncharged(detail.billRunId)
-      : [];
+      ? await Promise.all([
+          listUncharged(detail.billRunId),
+          listExceptions(detail.billRunId),
+        ])
+      : [[], []];
 
   const errors =
     parsedSearch.tab === "errors" ? await listErrors(detail.billRunId) : [];
@@ -259,6 +267,7 @@ export default async function BillRunDetailPage({
         timeline={timeline}
         customerBills={customerBills}
         uncharged={uncharged}
+        exceptions={exceptions}
         errors={errors}
         rejectedPending={rejectedPending}
         distribution={distribution}

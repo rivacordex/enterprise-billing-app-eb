@@ -74,6 +74,155 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase M — **bm32 (Uncharged Redefinition + Per-Record Exception
+  Surface) — DELIVERED and DB-VERIFIED against a disposable Postgres
+  (2026-09-15).** See
+  `context/billing-management/specs/bm32-uncharged-redefinition-exception-surface.md`.
+  Boundary: the run-detail read path — `services/billing/read/`
+  (`list-uncharged.ts`, new `list-exceptions.ts`),
+  `services/billing/pre-approval-checks.ts`,
+  `components/billing/uncharged-table.tsx` (+ an exceptions section),
+  `types/billing.ts`. **Read-only; no write, schema, flow, or grant change.**
+  Landed this pass:
+  - **Uncharged redefined (spec §1, Inv #22).**
+    `billRunAccountRepository.listExcludedForRun` replaced with
+    `listUnchargedForRun` — the run's scoped, **non-`EXCLUDED`** accounts LEFT
+    JOINed to their `customer_bill` and (by the composite `(bill,
+    period_partition)` key) that bill's `customer_bill_line` rows, `GROUP BY`
+    account with `HAVING (customer_bill_id IS NULL OR COALESCE(SUM(net_amount),0)
+    = 0)` — i.e. produced **no line, or lines netting to zero**. A `lineCount`
+    (`count(customer_bill_line_id)::int`) lets `list-uncharged.ts` label the
+    `reason` (`NO_CHARGE_LINES` vs `NETS_TO_ZERO`) without a second query. A
+    recurring-only account with RECURRING lines is now BILLED and absent; a
+    PROCESSING_FAILED account with no line is uncharged (only `EXCLUDED` is
+    carved out — spec SQL). `UnchargedRow` keeps its shape; the `financialAccountId`
+    deep link to Accounts → Transactions is preserved.
+  - **Per-record exception surface (spec §2, Inv #25/D32).** New
+    `services/billing/read/list-exceptions.ts` resolves the run's
+    `partition_period` (`firstOfMonth(periodStart)`, the bucket
+    `rating.udr_rated.partition_period` carries) and calls the new READ-ONLY
+    `ratedLinesRepository.listExceptionsForPeriod`: (a) `BILL_NOTUSED` rows
+    (`status = 'BILL_NOTUSED'`, period-scoped — deliberately **no** `is_live`
+    filter, since `is_live` is a GENERATED column that is NULL for every
+    non-`RATED`/`BILL_DRAFT`/`BILL_APPROVED` status and would drop every
+    BILL_NOTUSED row); (b) orphans (`status = 'RATED'`, `billrun_ban_id IS NULL`,
+    `is_live`, `udr_type = 'RAN_USAGE'`). Both `LEFT JOIN`
+    `udr_subscriber_ref_id → inventory.product_inventory → billing_account` so a
+    resolvable orphan shows its account and an unresolvable one a NULL account
+    (shown by `subscriberRef`) — never dropped. `ExceptionRow`/`EXCEPTION_KINDS`
+    added to `types/billing.ts`. No new grant (`app_runtime` already holds SELECT
+    on `rating.*`, `inventory.product_inventory`, `billing.*`); the
+    `billing-rating-write-boundary` guardrail is unaffected (both reads are
+    plain `SELECT`s, no `rating.*` write).
+  - **Informational orphan count (spec §3, D32).** `PreApprovalCheck` gains an
+    optional `informational` flag; `checkOrphanCount` (new, in
+    `pre-approval-checks.ts`) counts the period's orphans
+    (`ratedLinesRepository.countOrphansForPeriod` — the SAME ORPHAN scope the
+    surface lists) and ALWAYS returns `{ pass: true, informational: true }` with
+    an Info-line remediation ("N orphaned usage record(s) — informational, does
+    not block approval", or `null` when zero). `runPreApprovalChecks` appends it
+    (now 7 checks); `approveRun`'s blocking gate is
+    `checks.filter((c) => !c.pass && !c.informational)`, so an informational
+    check can never contribute to `CHECKS_FAILED` — approval proceeds with
+    orphans present. `"orphan_count"` added to `PRE_APPROVAL_CHECKS`.
+  - **UI (spec §4).** `UnchargedTable` now renders TWO Info-family sections —
+    (1) Uncharged accounts (redefined read, unchanged Info styling + the recovery
+    deep link) and (2) Exceptions (per-record `BILL_NOTUSED` + orphans,
+    `--color-info-*`, an unresolvable orphan shown by subscriber ref), each with
+    its own positive empty state. The page threads a new `exceptions` prop
+    (fetched only for `?tab=uncharged`, alongside `listUncharged`, via
+    `Promise.all`) through `RunDetailTabs`. `PreApprovalChecks` renders the
+    informational orphan line with an `Info` icon + info-toned text, distinct
+    from the danger accent. EXCLUDED accounts appear on NEITHER surface
+    (Inv #26) — visible only via their status badge.
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/TSX/MD; DB-free suites green — the full billing
+    DB-free set (`tests/services/billing` + `tests/components/billing` +
+    `tests/actions/billing` + `tests/app` + `tests/guardrails`) **748/748**
+    (incl. rewritten `list-uncharged`/`uncharged-table`, extended
+    `pre-approval-checks` (7 checks + the informational-orphan assertions), new
+    `list-exceptions.test.ts`, and `billing-rating-write-boundary` +
+    `grep-gates` 121/121 unaffected by the new rating reads).
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron +
+    Azurite** (git-ignored `docker-compose.test.yml`, project `ebill-test`,
+    :5434/:10001; torn down `down -v` after): new DB-gated
+    `tests/db/billrun-uncharged-exceptions.integration.test.ts` **2/2** —
+    Uncharged excludes a billed account and an EXCLUDED account, includes a
+    no-line account (`NO_CHARGE_LINES`), a no-bill account (`NO_CHARGE_LINES`)
+    and a nets-to-zero account (`NETS_TO_ZERO`); the exception surface lists a
+    BILL_NOTUSED row + a resolvable orphan (with account) + an unresolvable
+    orphan (NULL account, by subscriber ref), excludes a claimed row and a
+    non-`RAN_USAGE` row, and `countOrphansForWindow` = 2 (see the code-review
+    fold below — the read was re-scoped from a single partition to the run
+    window, and the DB-gated test now includes an offset-window scenario). The
+    e2e ship-gate
+    `billing-e2e-happy-path` **1/1** updated for the new semantics (its EXCLUDED
+    account is now OFF Uncharged, the failed no-line account is ON it as
+    `NO_CHARGE_LINES`) and stays green.
+  - **Scope note:** the spec SQL carves out only `EXCLUDED`, so a
+    PROCESSING_FAILED account with no line appears on BOTH Errors (blocking) and
+    Uncharged (revenue queue) — faithful to spec §1 ("scoped accounts with no
+    line, excluding EXCLUDED"); `EXCLUDED` alone is the "never reached a stage"
+    carve-out (Inv #26).
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified (DB-free 86/86 incl. affected suites; DB-gated bm32 2/2 + e2e
+    1/1 on a disposable Postgres, torn down after).**
+    - **(CORRECTNESS — the review's headline) Exception/orphan reads re-scoped to
+      the run WINDOW, not a single `partition_period`.** The initial reads scoped
+      `rating.udr_rated` by one `firstOfMonth(periodStart)` bucket, but
+      `udr_rated.partition_period = rating.period_of(start_datetime)` is the UTC
+      month of the USAGE timestamp — so for a `cycle_day != 1` cycle (the seeded
+      "Monthly – Day 15", window e.g. 2026-07-15..2026-08-14) the run straddles
+      TWO buckets: in-window rows in the second bucket were silently dropped and
+      first-bucket out-of-window rows wrongly included (violating Inv #25 "never
+      filter silently"; read-only/informational, never blocks approval or touches
+      money). Fixed: `listExceptionsForPeriod`/`countOrphansForPeriod` →
+      `listExceptionsForWindow`/`countOrphansForWindow`, scoped by
+      `partition_period IN periodPartitions(start,end)` (≤2 buckets, pruning) AND
+      `(start_datetime AT TIME ZONE 'UTC')::date BETWEEN periodStart AND periodEnd`
+      (the exact window, mirroring bm27 Validation). New
+      `periodPartitions(periodStart, periodEnd)` helper in `derive-periods.ts`.
+      The DB-gated test gains an OFFSET-window scenario proving in-window rows in
+      BOTH buckets surface while out-of-window rows in a scoped bucket, a claimed
+      row and a non-`RAN_USAGE` row do not; the `list-exceptions` unit test now
+      asserts the two-bucket window is passed (it previously codified the
+      single-partition bug as correct).
+    - **(altitude/maintainability) Orphan predicate + query unified.** The
+      BILL_NOTUSED and ORPHAN reads (two near-identical SELECTs) are now ONE query
+      with `kind` derived in SQL (`CASE`), and the ORPHAN predicate + window
+      predicate are single shared helpers (`orphanConditions`/`windowConditions`)
+      used by both the list and the count — so the checklist count can't drift
+      from the rows the surface lists. Ordering gains a `udrId` PK tiebreak
+      (deterministic for batch-rated rows sharing a timestamp). The repo return
+      type imports `ExceptionKind` instead of re-inlining the union.
+    - **(consistency) Exceptions money column uses `formatCurrency`.** The rated
+      value now renders through the shared `formatCurrency(amount, currency,
+      locale)` (as `usage-line-drill-down`/`bill-line-table` do) instead of a raw
+      `numeric`-string concat; `locale` is threaded `RunDetailTabs → UnchargedTable
+      → ExceptionsSection`. `UnchargedAccountsSection` no longer receives the dead
+      `exceptions` prop.
+    - **(#6 accepted + documented, owner ELI5'd) Orphan-count scan under the
+      approve lock.** `countOrphansForWindow` runs inside `approveRun`'s
+      `FOR UPDATE` transaction with no covering index (`udr_rated_orphan_idx` is
+      `WHERE is_live IS NULL`, the opposite). Left as-is (bm32 is read-only, no
+      schema change) — window-scoping prunes it to ≤2 partitions and the value is
+      informational; a partial index is a noted future migration if it gets hot.
+    - **(test infra) Integration test follows the dynamic-import pattern.** It now
+      `import type`s the read path and dynamic-imports the services/repo inside
+      `beforeAll` (after the `DATABASE_URL` skip guard), so `@/db/client` is never
+      evaluated at module load when the integration config leaves `DATABASE_URL`
+      unset — matching every other DB-gated suite.
+    - **(docs) `export-uncharged.action.ts`** header + its test fixture corrected
+      from the retired `PARTIAL_PERIOD` reason to the redefined
+      `NO_CHARGE_LINES`/`NETS_TO_ZERO` labels (functional before, but stale).
+    - **Reviewed and DEFERRED (documented, not fixed this pass):** cross-cycle
+      over-reporting for co-month runs (#2) — the orphan half is inherent (an
+      unclaimed row carries no run ref) and the spec deliberately scopes both
+      surfaces by period, not by the run's accounts; a partial index for #6; and
+      pure-cosmetic extractions (an `ExceptionKindBadge`, a shared Info-table
+      shell, table-driving the pre-approval check row, passing the orphan count as
+      data rather than a prose remediation string).
+
 - Phase 3 · Phase M — **bm31 (`charge_checksum` Re-anchored on
   `customer_bill_line`) — DELIVERED and DB-VERIFIED against a disposable
   Postgres (2026-09-15).** See
