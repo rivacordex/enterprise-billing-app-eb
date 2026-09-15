@@ -321,14 +321,13 @@ so a UI-triggered run gets a real Kestra `executionId` (and "Check status" /
 ## Part 3 — Optional: the `_SAMPLE_` bill-run demo scenario
 
 Seeds an unmistakably-fake `_SAMPLE_` customer + charges so you can click a bill
-run through the UI end-to-end (real Kestra `executionId`, placeholder badge).
+run through the UI end-to-end (real Kestra `executionId`).
 
-### 12. Turn on placeholder mode + point at the local blob store
+### 12. Point at the local blob store
 
 Add to `.env` and restart `npm run dev`:
 
 ```dotenv
-BILLRUN_PLACEHOLDER_MODE=true
 # Invoice-PDF store — the running Azurite container (Microsoft's published
 # well-known dev account/key; host app reaches it at 127.0.0.1:10000). REQUIRED
 # for posting to render+store invoice PDFs — without it the INV document still
@@ -336,9 +335,7 @@ BILLRUN_PLACEHOLDER_MODE=true
 BILLRUN_BLOB_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;
 ```
 
-Placeholder mode loudly badges every run in the UI as running placeholder
-billing logic over `_SAMPLE_` data (approval/posting/invoicing/distribution stay
-real). Invoice-PDF rendering also needs Chromium on the host once:
+Invoice-PDF rendering also needs Chromium on the host once:
 `npx playwright install chromium`.
 
 ### 13. Seed the sample scenario — **as the superuser** ⚠️
@@ -365,8 +362,8 @@ it is safe to re-run.
 Open the **Bill Runs** page (loading it lazily materializes the due
 `SCHEDULED` run). Trigger the run on the **"Monthly – Day 1"** cycle — that is
 the cycle the `_SAMPLE_` accounts are on. It hits real Kestra and returns a real
-execution id (badged placeholder). As noted above, the local placeholder flow
-won't advance the run to `PROCESSED`.
+execution id. As noted above, the local placeholder flow won't advance the run
+to `PROCESSED`.
 
 ---
 

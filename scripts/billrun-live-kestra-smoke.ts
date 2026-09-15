@@ -8,7 +8,7 @@ import { organization, partyRole } from "@/db/schema/customer";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { DEFAULT_BILL_CYCLE_NAME } from "@/db/seeds/accounts/seed-bill-cycles";
 import { getOrCreateAppUser } from "@/db/seeds/sample/get-or-create-appuser";
-import { config, isBillRunEngineConfigured } from "@/lib/config";
+import { isBillRunEngineConfigured } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { materializeDueRuns } from "@/services/billing/materialize-runs";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
@@ -25,9 +25,11 @@ import { getBusinessToday } from "@/services/billing/business-today";
 // `runBillrunLiveKestraSmoke` param, default false) that proves the trigger →
 // claim → PROCESSED path against a REALLY DEPLOYED `bill_run_processing` flow
 // on a real `billrun` Kestra engine — the one thing the CI-doubled E2E can
-// never prove. Refuses to "pass" against the stub engine client (fails loud,
-// not a silent skip) so a misconfigured run can never be mistaken for a met
-// exit criterion.
+// never prove. It runs against the REAL processing flow (there is no longer a
+// placeholder mode — bm33 D31); the `_SAMPLE_` seed provenance gates below are
+// the sole safety boundary keeping it off real billing data. Refuses to "pass"
+// against the stub engine client (fails loud, not a silent skip) so a
+// misconfigured run can never be mistaken for a met exit criterion.
 //
 // Prerequisite: `db:seed-sample` has already seeded the `_SAMPLE_*` scenario
 // (against the `DEFAULT_BILL_CYCLE_NAME` cycle) in the target database, and
@@ -103,25 +105,19 @@ async function main(): Promise<void> {
     );
   }
 
-  // Safety gate (bm21-spec §Implementation §1, code-standards §9 item 16) —
-  // this script triggers a REAL bill run against whatever DATABASE_URL points
-  // at, an irreversible mutation of that database. Before triggerRun, prove the
-  // run can only ever touch the unmistakably-fake `_SAMPLE_` seed graph (bm15):
-  //   1. the engine must be in placeholder mode,
-  //   2. every account the run would scope must belong to the seeded
+  // Safety gate (bm21-spec §Implementation §1, code-standards §9 item 16;
+  // rescoped bm33 D31) — this script triggers a REAL bill run against whatever
+  // DATABASE_URL points at, an irreversible mutation of that database, and the
+  // run now drives the REAL processing flow. With `BILLRUN_PLACEHOLDER_MODE`
+  // retired (bm33), seed provenance is the sole remaining safety boundary:
+  // before triggerRun, prove the run can only ever touch the unmistakably-fake
+  // `_SAMPLE_` seed graph (bm15):
+  //   1. every account the run would scope must belong to the seeded
   //      `_SAMPLE_-BILLRUN-0001` customer, and
-  //   3. every candidate `udr_rated` charge must carry the `_SAMPLE_`
+  //   2. every candidate `udr_rated` charge must carry the `_SAMPLE_`
   //      provenance markers.
   // Any deviation means DATABASE_URL is pointed at real billing data — abort
   // loudly without triggering, never process it.
-  if (!config.BILLRUN_PLACEHOLDER_MODE) {
-    throw new Error(
-      "billrun-live-kestra-smoke: BILLRUN_PLACEHOLDER_MODE is not set — this " +
-        "smoke gate only ever drives the _SAMPLE_ placeholder scenario and " +
-        "refuses to trigger a bill run against a non-placeholder engine.",
-    );
-  }
-
   const { pending, excluded } = await scopeAccounts(db, {
     billRunId: run.billRunId,
     refBillCycleId: cycle.billCycleId,

@@ -8,12 +8,9 @@ import { render } from "@testing-library/react";
 // page materializes due runs then renders the list. Asserts: the guard runs
 // first with billrun_view:READ; materialization runs BEFORE the list read; a
 // granted principal renders the list; /no-access and /login redirects
-// propagate; force-dynamic; and PlaceholderBanner shows iff
-// BILLRUN_PLACEHOLDER_MODE.
+// propagate; force-dynamic.
 // Server components can't be pixel-rendered under the App Router runtime in
 // vitest, so we render the returned element tree with mocked leaves.
-
-const configState = { placeholder: false };
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/materialize-runs", () => ({
@@ -27,16 +24,8 @@ vi.mock("@/services/billing/business-today", () => ({
   getBusinessToday: vi.fn(() => "2026-08-19"),
 }));
 vi.mock("@/lib/logger", () => ({ reportError: vi.fn() }));
-vi.mock("@/lib/config", () => ({
-  get isBillrunPlaceholderMode() {
-    return configState.placeholder;
-  },
-}));
 vi.mock("@/components/billing/bill-run-list", () => ({
   BillRunList: () => <div data-testid="bill-run-list" />,
-}));
-vi.mock("@/components/billing/placeholder-banner", () => ({
-  PlaceholderBanner: () => <div data-testid="placeholder-banner" />,
 }));
 
 import BillRunsPage from "@/app/(app)/billing/bill-runs/page";
@@ -63,7 +52,6 @@ function props(search: Record<string, string> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  configState.placeholder = false;
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -121,18 +109,6 @@ describe("BillRunsPage (bm02 — route × level matrix)", () => {
   it("propagates the /login redirect for an unauthenticated request", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/login"));
     await expect(BillRunsPage(props())).rejects.toThrow("NEXT_REDIRECT");
-  });
-
-  it("shows PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is on", async () => {
-    configState.placeholder = true;
-    const { queryByTestId } = render(await BillRunsPage(props()));
-    expect(queryByTestId("placeholder-banner")).not.toBeNull();
-  });
-
-  it("hides PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is off", async () => {
-    configState.placeholder = false;
-    const { queryByTestId } = render(await BillRunsPage(props()));
-    expect(queryByTestId("placeholder-banner")).toBeNull();
   });
 
   it("declares dynamic = 'force-dynamic' (authenticated, uncached — code-standards §3.6)", () => {

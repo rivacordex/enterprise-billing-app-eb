@@ -17,7 +17,6 @@ import { BillRunsPagination } from "@/components/billing/bill-runs-pagination";
 import { ExportRunsButton } from "@/components/billing/export-runs-button";
 import { RunActionCard } from "@/components/billing/run-action-card";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
-import { PlaceholderBadge } from "@/components/billing/placeholder-banner";
 import { formatCalendarDate } from "@/lib/formatters";
 import type { RunListPage, RunListRow } from "@/types/billing";
 
@@ -25,7 +24,6 @@ interface BillRunListProps {
   page: RunListPage;
   cycles: CycleOption[];
   hasCycles: boolean;
-  placeholderMode: boolean;
   // The active filters, so a tab switch preserves them (cycle applies to both
   // tabs; status is Historical-only). Page always resets to 1 (by omission).
   activeCycle: string | null;
@@ -55,7 +53,6 @@ export function BillRunList({
   page,
   cycles,
   hasCycles,
-  placeholderMode,
   activeCycle,
   activeStatus,
 }: BillRunListProps): React.JSX.Element {
@@ -93,13 +90,9 @@ export function BillRunList({
       />
 
       {page.tab === "current" ? (
-        <CurrentAndUpcoming
-          rows={page.rows}
-          hasCycles={hasCycles}
-          placeholderMode={placeholderMode}
-        />
+        <CurrentAndUpcoming rows={page.rows} hasCycles={hasCycles} />
       ) : (
-        <Historical page={page} placeholderMode={placeholderMode} />
+        <Historical page={page} />
       )}
     </div>
   );
@@ -129,11 +122,9 @@ function groupByCycle(rows: RunListRow[]): CycleGroup[] {
 function CurrentAndUpcoming({
   rows,
   hasCycles,
-  placeholderMode,
 }: {
   rows: RunListRow[];
   hasCycles: boolean;
-  placeholderMode: boolean;
 }): React.JSX.Element {
   if (rows.length === 0) {
     // Reuse the bm01 empty-state component for the "no runs" case
@@ -169,17 +160,10 @@ function CurrentAndUpcoming({
             <h2 className="text-body font-semibold text-foreground">
               {group.cycleName}
             </h2>
-            {operable && (
-              <RunActionCard run={operable} placeholderMode={placeholderMode} />
-            )}
+            {operable && <RunActionCard run={operable} />}
             {others.length > 0 && (
               <div className="overflow-hidden rounded-md bg-card shadow-sm">
-                <RunsTable
-                  rows={others}
-                  placeholderMode={placeholderMode}
-                  showCycle={false}
-                  showReason
-                />
+                <RunsTable rows={others} showCycle={false} showReason />
               </div>
             )}
           </section>
@@ -189,13 +173,7 @@ function CurrentAndUpcoming({
   );
 }
 
-function Historical({
-  page,
-  placeholderMode,
-}: {
-  page: RunListPage;
-  placeholderMode: boolean;
-}): React.JSX.Element {
+function Historical({ page }: { page: RunListPage }): React.JSX.Element {
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
@@ -209,12 +187,7 @@ function Historical({
         />
       ) : (
         <div className="overflow-hidden rounded-md bg-card shadow-sm">
-          <RunsTable
-            rows={page.rows}
-            placeholderMode={placeholderMode}
-            showCycle
-            showReason={false}
-          />
+          <RunsTable rows={page.rows} showCycle showReason={false} />
           {page.total > page.pageSize && (
             <div className="px-4 pb-4">
               <BillRunsPagination
@@ -232,12 +205,10 @@ function Historical({
 
 function RunsTable({
   rows,
-  placeholderMode,
   showCycle,
   showReason,
 }: {
   rows: RunListRow[];
-  placeholderMode: boolean;
   showCycle: boolean;
   showReason: boolean;
 }): React.JSX.Element {
@@ -288,7 +259,6 @@ function RunsTable({
             <td className="px-4 py-3">
               <div className="flex flex-wrap items-center gap-1.5">
                 <RunStatusBadge status={row.status} />
-                {placeholderMode && <PlaceholderBadge />}
               </div>
             </td>
             {showReason ? (

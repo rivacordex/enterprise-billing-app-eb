@@ -76,14 +76,6 @@ const envSchema = z
     // posture to `PASSWORD_MIN_LENGTH=abc`. Read once at boot, never at runtime
     // (Inv. #17 — the zone defines billing-period boundaries).
     APP_TIMEZONE: z.enum(SUPPORTED_TIMEZONES).default(DEFAULT_TIMEZONE),
-    // bm02-spec §2 / architecture Inv. #15, renamed bm15-spec §Implementation §4.
-    // While set, every bill run is loudly badged (the always-on
-    // `PlaceholderBanner`) as running placeholder billing logic over seeded
-    // `_SAMPLE_*` data (billmgmt-architecture.md §3). An environment flag,
-    // never a per-run column (code-standards §6.11). Defaults to `false` so
-    // production behavior is unchanged until a placeholder/UAT deployment
-    // opts in.
-    BILLRUN_PLACEHOLDER_MODE: booleanEnvSchema("false"),
     // bm03-spec §Design/§4, extended bm16-spec §Implementation §1. The outbound
     // workflow engine — treated as not-yet-deployed. URL/AUTH are both optional;
     // absence selects the stub engine client (`isEngineConfigured`,
@@ -178,11 +170,11 @@ const envSchema = z
       })
       .optional(),
     // bm20-spec §Design D20 — "one loopback target, FORCEABLE failure": the
-    // switch that exercises the DISTRIBUTION_FAILED → rerun-distribution path
-    // against the deployed placeholder flow. No UI control exists for it (the
-    // module has no target-catalog table, code-standards §6.11's "no
-    // udr_mode-style column" posture applies here too) — an environment flag,
-    // read only by `distribute-run.ts`, threaded into the trigger payload's
+    // switch that injects a `DISTRIBUTION_FAILED` outcome to exercise the
+    // rerun-distribution path. No UI control exists for it (the module has no
+    // target-catalog table, code-standards §6.11's "no udr_mode-style column"
+    // posture applies here too) — an environment flag, read only by
+    // `distribute-run.ts`, threaded into the trigger payload's
     // `targets[].force_fail`. Defaults to `false` so production/normal
     // deployments never force a failure.
     BILLRUN_DISTRIBUTION_FORCE_FAIL: booleanEnvSchema("false"),
@@ -273,7 +265,6 @@ function loadConfig(): Config {
     PASSWORD_REQUIRE_SPECIAL: process.env.PASSWORD_REQUIRE_SPECIAL,
     PASSWORD_SPECIAL_CHARS: process.env.PASSWORD_SPECIAL_CHARS,
     APP_TIMEZONE: process.env.APP_TIMEZONE,
-    BILLRUN_PLACEHOLDER_MODE: process.env.BILLRUN_PLACEHOLDER_MODE,
     BILLRUN_ENGINE_URL: process.env.BILLRUN_ENGINE_URL,
     BILLRUN_ENGINE_AUTH: process.env.BILLRUN_ENGINE_AUTH,
     BILLRUN_ENGINE_NAMESPACE: process.env.BILLRUN_ENGINE_NAMESPACE,
@@ -325,13 +316,6 @@ export const isSsoConfigured: boolean =
   !!entraConfig.tenantId &&
   !!entraConfig.clientId &&
   !!entraConfig.clientSecret;
-
-// bm02-spec §2 / architecture Inv. #15, renamed bm15-spec §Implementation §4.
-// Frozen boolean accessor for the placeholder-mode flag, threaded
-// server-side into the bill-run page as a prop and on to
-// `PlaceholderBanner`/`PlaceholderBadge` — never read from a client component.
-export const isBillrunPlaceholderMode: boolean =
-  config.BILLRUN_PLACEHOLDER_MODE;
 
 // bm03-spec §Design/§4, extended bm16-spec §Implementation §1. Raw connection
 // values for the `billrun` logical engine — read ONLY by

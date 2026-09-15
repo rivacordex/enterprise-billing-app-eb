@@ -12,12 +12,8 @@ import { RerunDialog } from "@/components/billing/rerun-dialog";
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
 import { StallBanner } from "@/components/billing/stall-banner";
-import { PlaceholderBanner } from "@/components/billing/placeholder-banner";
 import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
-import {
-  billRunStallThresholdMinutes,
-  isBillrunPlaceholderMode,
-} from "@/lib/config";
+import { billRunStallThresholdMinutes } from "@/lib/config";
 import { formatCalendarDate } from "@/lib/formatters";
 import { getRunDetail } from "@/services/billing/read/get-run-detail";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
@@ -248,8 +244,6 @@ export default async function BillRunDetailPage({
           {formatCalendarDate(detail.periodEnd)}
         </p>
       </header>
-
-      {isBillrunPlaceholderMode && <PlaceholderBanner />}
 
       {canOperate && stalled && (
         <StallBanner
