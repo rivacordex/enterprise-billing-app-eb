@@ -88,15 +88,17 @@ enumerations were trimmed to key facts + decisions. Full history:
   that the line IS the charge record (Inv #3). Landed this pass:
   - **`customer-bill-line.repository.ts` — the content checksum (spec §1).** New
     SQL-only `computeChargeChecksum(tx, customerBillId, periodPartition)`:
-    `md5(COALESCE(string_agg(source || '|' || ref_product_offering_id || '|' ||
-    COALESCE(udr_type,'') || '|' || line_type || '|' || gross_amount::text ||
-    '|' || discount_amount::text || '|' || net_amount::text, ',' ORDER BY
-    grouping_key), ''))` — ALL THREE money columns (so a `net`-preserving
-    discount shift still changes the hash — tamper-evidence can't be defeated by
-    a compensating pair), ordered by the deterministic `grouping_key` (the same
-    key `line_no` uses), never the auto-generated `customer_bill_line_id`
-    (Inv #3, D7a/D20). `numeric`→`text` in SQL, no JS float (§2.4); the COALESCE
-    makes an empty bill hash `md5('')` rather than NULL-poisoning. Header
+    `md5(COALESCE(string_agg(json_build_array(source, ref_product_offering_id,
+    COALESCE(udr_type,''), line_type, gross_amount::text, discount_amount::text,
+    net_amount::text)::text, ',' ORDER BY line_no), ''))` — ALL THREE money
+    columns (so a `net`-preserving discount shift still changes the hash —
+    tamper-evidence can't be defeated by a compensating pair), ordered by the
+    deterministic `line_no` (the total order bm29 assigns; see the code-review
+    fold below for why NOT `grouping_key`), encoded with `json_build_array`
+    (injective — a delimiter-laden `udr_type` can't forge a collision), never the
+    auto-generated `customer_bill_line_id` (Inv #3, D7a/D20). `numeric`→`text` in
+    SQL, no JS float (§2.4); the COALESCE makes an empty bill hash `md5('')`
+    rather than NULL-poisoning. Header
     comment updated to record the checksum now lives here.
   - **`post-run.ts` — switched to the line checksum (spec §2).** The
     `ratedLinesRepository.computeChargeChecksum(tx, run.billRunId,
@@ -177,15 +179,23 @@ enumerations were trimmed to key facts + decisions. Full history:
       do, so it's not even in play; the real reason (co-locate the hash with the
       lines it hashes) is stated. The method comment documents the
       no-`line_type`/`source` scope and the header-lock reliance.
+    - **(robustness, follow-up fold) Injective serialization.** The initial
+      checksum concatenated fields with raw `|`/`,` delimiters; because `udr_type`
+      is free text with no CHECK, a value containing a delimiter could forge a
+      colliding hash (two distinct line sets serializing identically). Switched
+      each line to `json_build_array(...)::text` (JSON quotes/escapes every field,
+      so distinct content always yields distinct text); ordering by `line_no` is
+      unchanged. New regression case: a two-line bill and a one-line bill whose
+      `udr_type` embeds the inter-field/inter-row delimiters — byte-identical
+      under the old raw concat — now hash DIFFERENTLY. Spec §Design/§Impl SQL and
+      the SQL description above updated to match.
     - **Reviewed and NOT changed (with rationale):** post-posting `udr_rated`
       tampering is no longer anchored by the checksum — intended per Inv #3 (the
       LINE is the charge record) and §Design's accepted "no post-posting
       re-verification" residual. RECURRING `snapshot_*` provenance columns sit
       outside both the checksum (spec lists 7 fields, snapshots not among them)
       and bm30 (USAGE-only) — a noted design gap, deferred (the money columns,
-      which ARE hashed, carry the charge amount). The `|`/`,` delimiters are
-      unescaped (hash not strictly injective) — latent (generated ids/udr_types
-      carry no delimiter), the same pattern the bm19 `udr_rated` checksum used.
+      which ARE hashed, carry the charge amount).
 
 - Phase 3 · Phase L — **bm30 (Verification + Bill↔Charge Reconciliation) —
   DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See

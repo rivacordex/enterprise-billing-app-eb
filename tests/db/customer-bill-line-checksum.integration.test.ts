@@ -260,5 +260,63 @@ describe.skipIf(!databaseUrl)(
       const s4 = await setMoney("110.00", "10.00", "95.00");
       expect(s4).not.toBe(s3);
     });
+
+    it("serialization is injective: a delimiter-laden udr_type cannot forge a colliding checksum", async () => {
+      // `udr_type` is free text with no CHECK, so it can contain the '|'/','
+      // characters a naive delimiter-based hash uses as separators. Craft the
+      // classic collision a raw `a||'|'||b || ',' || ...` concat is vulnerable
+      // to: bill A is TWO honest lines; bill B is ONE line whose udr_type embeds
+      // the exact inter-field/inter-row delimiters so the two RAW serializations
+      // are byte-identical. The json_build_array encoding keeps udr_type a single
+      // quoted string, so the two must hash DIFFERENTLY.
+      //
+      // Raw (vulnerable) form of both would be:
+      //   USAGE|OFR|U1|charge|1.00|0.00|1.00,USAGE|OFR|U2|charge|2.00|0.00|2.00
+      const twoLines: LineSpec[] = [
+        {
+          billId: "CBL-BM31-INJ-A",
+          lineNo: 1,
+          source: "USAGE",
+          offeringId: "OFR",
+          udrType: "U1",
+          gross: "1.00",
+          discount: "0.00",
+          net: "1.00",
+          groupingKey: "OFR:U1",
+        },
+        {
+          billId: "CBL-BM31-INJ-A",
+          lineNo: 2,
+          source: "USAGE",
+          offeringId: "OFR",
+          udrType: "U2",
+          gross: "2.00",
+          discount: "0.00",
+          net: "2.00",
+          groupingKey: "OFR:U2",
+        },
+      ];
+      const forgedSingleLine: LineSpec = {
+        billId: "CBL-BM31-INJ-B",
+        lineNo: 1,
+        source: "USAGE",
+        offeringId: "OFR",
+        // Embeds the delimiters that reconstruct bill A's raw serialization.
+        udrType: "U1|charge|1.00|0.00|1.00,USAGE|OFR|U2",
+        gross: "2.00",
+        discount: "0.00",
+        net: "2.00",
+        groupingKey: "OFR:forged",
+      };
+
+      for (const l of twoLines) await insertLine(l);
+      await insertLine(forgedSingleLine);
+
+      const honest = await checksum("CBL-BM31-INJ-A");
+      const forged = await checksum("CBL-BM31-INJ-B");
+      // Under a raw '|'/',' concat these are byte-identical (same md5); under the
+      // json_build_array encoding they must differ — the forgery is detectable.
+      expect(forged).not.toBe(honest);
+    });
   },
 );
