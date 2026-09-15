@@ -33,11 +33,13 @@ SELECT l.customer_bill_line_id, l.grouping_key, l.gross_amount, l.udr_count,
 FROM   billing.customer_bill_line l
 JOIN   billing.customer_bill b ON b.customer_bill_id = l.ref_customer_bill_id
                                AND b.period_partition = l.period_partition
-LEFT JOIN rating.udr_rated ur
+LEFT JOIN (rating.udr_rated ur
+           JOIN inventory.product_inventory pi
+             ON pi.product_inventory_id = ur.udr_subscriber_ref_id)
        ON ur.billrun_ref_id = %(bill_run_id)s
       AND ur.billrun_ban_id = %(ban)s
       AND ur.billrun_attempt = %(attempt)s
-      AND (ur.udr_rated.product_offering_via_inventory || ':' || ur.udr_type) = l.grouping_key
+      AND (pi.product_offering_id || ':' || ur.udr_type) = l.grouping_key
 WHERE  b.ref_bill_run_id = %(bill_run_id)s AND b.ref_billing_account_id = %(ban)s
   AND  l.source = 'USAGE' AND l.line_type = 'charge'
 GROUP BY l.customer_bill_line_id, l.grouping_key, l.gross_amount, l.udr_count
