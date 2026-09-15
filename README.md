@@ -312,9 +312,10 @@ npm run dev
 > engine in the clear. In Azure the flag is left unset (Container Apps ingress
 > provides HTTPS).
 
-**Caveat:** the placeholder flows do no billing work and send no M2M callbacks,
+**Caveat:** the local bill-run flows now run the real processing SQL, but their
+M2M status callbacks to `/api/billrun/*` are still stubbed (logged, not sent),
 so a UI-triggered run gets a real Kestra `executionId` (and "Check status" /
-"Cancel" hit real Kestra) but won't advance through its stages.
+"Cancel" hit real Kestra) but the app-side run won't advance past `PROCESSING`.
 
 ---
 
@@ -362,8 +363,8 @@ it is safe to re-run.
 Open the **Bill Runs** page (loading it lazily materializes the due
 `SCHEDULED` run). Trigger the run on the **"Monthly – Day 1"** cycle — that is
 the cycle the `_SAMPLE_` accounts are on. It hits real Kestra and returns a real
-execution id. As noted above, the local placeholder flow won't advance the run
-to `PROCESSED`.
+execution id. As noted in the caveat above, the local flow's status callbacks
+are still stubbed, so the run won't advance past `PROCESSING` locally.
 
 ---
 
