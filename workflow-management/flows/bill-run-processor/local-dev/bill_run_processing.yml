@@ -1,8 +1,14 @@
 # LOCAL-DEV DEPLOYABLE PLACEHOLDER — not the canonical contract doc
 # (../bill_run_processing.template.yml) and not the real flow (separate
 # workflow-management repo). This is a *valid, deployable* Kestra flow that
-# preserves the bm16 stage contract but replaces every real activity with a
-# no-op Log so it can run end-to-end on a local Kestra. See ./README.md.
+# preserves the bm16 stage contract. bm27 replaced the `validation` +
+# `collection` no-op Logs with the REAL correlation + claim SQL run as
+# `billrun_runtime` (via psql — the image ships postgresql-client, worker
+# Dockerfile D-B), so the local E2E exercises real subscriber->account
+# resolution against the `ci` seed; the other stages stay no-op Logs until their
+# units. This is the "flow-double" the app-repo DB-gated correlation/claim test
+# mirrors (bm21 pattern): the SAME billrun_runtime writes, testable without a
+# live Kestra. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -32,12 +38,140 @@ tasks:
     type: io.kestra.plugin.core.flow.ForEach
     values: "{{ inputs.ban_ids }}"
     tasks:
+      # bm27 — REAL Validation: assert against the correlated set (the
+      # `_CURRENCY_SQL`-shaped subscriber->account join, Inv #24) and ENFORCE the
+      # two HARD checks: a currency mismatch (udr_currency <> account_currency)
+      # or an out-of-window row RAISEs, which (ON_ERROR_STOP=1 + `set -e`) FAILS
+      # the task so Collection never runs for the account — the local-dev analog
+      # of "signal FAILED, HARD finding".
+      # NOTE: as a deployable placeholder this task runs the correlation
+      # INDEPENDENTLY of Collection's claim task (separate psql / transaction) —
+      # the "computed once and shared" optimization (Inv #24) is the REAL flow's
+      # contract (../bill_run_processing.template.yml), which Inv #24 permits to
+      # be realized as either a shared set OR assertions folded into the claim.
+      # Zero-claimable is a zero-charge exception (DONE), NOT an error. Connects
+      # as billrun_runtime (the two-writer identity) via psql — SELECT-only here
+      # (the read grant bm27 added: USAGE on `inventory` + SELECT on
+      # `product_inventory`).
       - id: validation
-        type: io.kestra.plugin.core.log.Log
-        message: "[{{ taskrun.value }}] validation — STUB: confirm claimable udr_rated consistency (currency, window coverage)"
+        type: io.kestra.plugin.scripts.shell.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker daemon
+        commands:
+          - |
+            set -eu
+            # POSIX `set -eu` (NOT `-o pipefail`): the shell Commands plugin
+            # defaults interpreter to /bin/sh, which is dash on this Ubuntu-based
+            # image — dash rejects `-o pipefail`. There are no pipes here anyway;
+            # psql's ON_ERROR_STOP=1 + `set -e` propagate any failure.
+            # Connect as billrun_runtime (the two-writer identity). PG* are read
+            # RAW from the container env (env_file), NOT via Kestra {{ envs }} —
+            # the same convention db.py uses for SECRET_RATING_RUNTIME_PASSWORD.
+            export PGHOST="${BILLRUN_DB_HOST:-db}"
+            export PGPORT="${BILLRUN_DB_PORT:-5432}"
+            export PGDATABASE="${BILLRUN_DB_NAME:-enterprise_billing}"
+            export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
+            export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
+            # Pass the per-account inputs via GUCs, not psql `:'var'` — psql does
+            # NOT substitute its variables inside a dollar-quoted ($$) block, so
+            # the DO block reads them with current_setting() instead.
+            psql -v ON_ERROR_STOP=1 \
+              -v ban="{{ taskrun.value }}" \
+              -v period_start="{{ inputs.period_start }}" \
+              -v period_end="{{ inputs.period_end }}" <<'SQL'
+            SELECT set_config('billrun.ban',          :'ban',          false),
+                   set_config('billrun.period_start', :'period_start', false),
+                   set_config('billrun.period_end',   :'period_end',   false);
+            DO $$
+            DECLARE
+              v_claimable        int;
+              v_currency_mismatch int;
+              v_out_of_window    int;
+            BEGIN
+              -- Correlate ONCE (Inv #24), the _CURRENCY_SQL join shape:
+              -- udr_subscriber_ref_id -> product_inventory -> billing_account.
+              -- `(start_datetime AT TIME ZONE 'UTC')::date` buckets the window in
+              -- UTC regardless of the runner's session TimeZone (no boundary drift).
+              WITH correlated AS (
+                SELECT ur.udr_currency, ur.start_datetime,
+                       ba.currency AS account_currency
+                FROM   rating.udr_rated ur
+                JOIN   inventory.product_inventory pi
+                       ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                JOIN   billing.billing_account ba
+                       ON ba.billing_account_id = pi.billing_account_id
+                WHERE  ur.is_live AND ur.status = 'RATED'
+                  AND  ur.udr_type = 'RAN_USAGE'
+                  AND  pi.billing_account_id = current_setting('billrun.ban')
+              )
+              SELECT count(*),
+                     count(*) FILTER (WHERE udr_currency <> account_currency),
+                     count(*) FILTER (
+                       WHERE (start_datetime AT TIME ZONE 'UTC')::date
+                               <  current_setting('billrun.period_start')::date
+                          OR (start_datetime AT TIME ZONE 'UTC')::date
+                               >  current_setting('billrun.period_end')::date)
+              INTO   v_claimable, v_currency_mismatch, v_out_of_window
+              FROM   correlated;
+
+              RAISE NOTICE 'validation ban=% claimable=% currency_mismatch=% out_of_window=%',
+                current_setting('billrun.ban'), v_claimable, v_currency_mismatch, v_out_of_window;
+
+              IF v_currency_mismatch > 0 THEN
+                RAISE EXCEPTION 'CURRENCY_MISMATCH (HARD): % correlated row(s) with udr_currency <> account_currency', v_currency_mismatch;
+              END IF;
+              IF v_out_of_window > 0 THEN
+                RAISE EXCEPTION 'WINDOW_COVERAGE (HARD): % correlated row(s) outside [%, %]',
+                  v_out_of_window, current_setting('billrun.period_start'), current_setting('billrun.period_end');
+              END IF;
+              -- v_claimable = 0 falls through: zero-charge DONE, not an error.
+            END $$;
+            SQL
+      # bm27 — REAL Collection: the claim. Whole-account, set-based, ONE
+      # statement, run as billrun_runtime. Claims RATED -> BILL_DRAFT ONLY (post
+      # bm24/bm25 — the old ('RATED','REJECTED') is dropped; billrun_status_guard
+      # permits exactly RATED -> BILL_DRAFT) and stamps the six claim columns,
+      # incl. billrun_ban_id = the account Collection JUST RESOLVED (NULL until
+      # now, bm26). A subscriber that resolves to no product_inventory (or to an
+      # out-of-scope account) is NOT in `correlated`, so its row is left RATED,
+      # unclaimed and untouched (D32/Inv #25) — never filtered, never failing.
       - id: collection
-        type: io.kestra.plugin.core.log.Log
-        message: "[{{ taskrun.value }}] collection — STUB: claim udr_rated (RATED|REJECTED)->BILL_DRAFT as billrun_runtime"
+        type: io.kestra.plugin.scripts.shell.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker daemon
+        commands:
+          - |
+            set -eu
+            # POSIX `set -eu` (see validation task) — /bin/sh is dash here.
+            export PGHOST="${BILLRUN_DB_HOST:-db}"
+            export PGPORT="${BILLRUN_DB_PORT:-5432}"
+            export PGDATABASE="${BILLRUN_DB_NAME:-enterprise_billing}"
+            export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
+            export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
+            psql -v ON_ERROR_STOP=1 \
+              -v ban="{{ taskrun.value }}" \
+              -v run="{{ inputs.bill_run_id }}" \
+              -v attempt="{{ inputs.attempt }}" <<'SQL'
+            WITH correlated AS (
+              SELECT ur.udr_id, ur.partition_period, pi.billing_account_id
+              FROM   rating.udr_rated ur
+              JOIN   inventory.product_inventory pi
+                     ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+              WHERE  ur.is_live AND ur.status = 'RATED'
+                AND  ur.udr_type = 'RAN_USAGE'
+                AND  pi.billing_account_id = :'ban'   -- in-scope account
+            )
+            UPDATE rating.udr_rated ur
+            SET    status           = 'BILL_DRAFT',
+                   billrun_ref_id   = :'run',
+                   billrun_ban_id   = c.billing_account_id,   -- the resolved account
+                   billrun_attempt  = :'attempt'::int,        -- quote+cast: robust if the render is unusual
+                   billrun_checksum = md5(ur.udr_id || '|' || :'run'),
+                   upsert_datetime  = now()
+            FROM   correlated c
+            WHERE  ur.udr_id = c.udr_id AND ur.partition_period = c.partition_period
+              AND  ur.status = 'RATED';                       -- claim from RATED only
+            SQL
       - id: aggregation
         type: io.kestra.plugin.core.log.Log
         message: "[{{ taskrun.value }}] aggregation — STUB: sum BILL_DRAFT into one customer_bill row"

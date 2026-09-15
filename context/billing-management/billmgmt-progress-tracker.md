@@ -74,6 +74,101 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase L — **bm27 (Real Collection: Correlation & Claim) —
+  DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm27-real-collection-correlation-claim.md`.
+  Boundary: `workflow-management/flows/bill-run-processor` (the `validation` +
+  `collection` stages, run as `billrun_runtime`) +
+  `db/bootstrap/billrun-db-roles.sql` (a new inventory read grant) + a boundary
+  guardrail. **The app is untouched** — `handle-stage-signal.ts` stays
+  record-only. First stage that computes against real data: resolves each
+  `RAN_USAGE` row's `udr_subscriber_ref_id → inventory.product_inventory →
+  billing_account_id` (set-based, once per run — Inv #24), asserts currency +
+  window coverage against that correlated set, and claims the resolved rows
+  `RATED → BILL_DRAFT` stamping the six claim columns (bm26's NULL
+  `billrun_ban_id` filled here). An unresolvable-subscriber row is left `RATED`,
+  unclaimed and untouched (D32, Inv #25). Landed this pass:
+  - **`db/bootstrap/billrun-db-roles.sql` — the inventory read grant.** Step 3
+    gains `GRANT USAGE ON SCHEMA "inventory"`; Step 8 extends the enumerated
+    read-context `GRANT SELECT` with `"inventory"."product_inventory"`. No
+    INSERT/UPDATE/DELETE/TRUNCATE grant of any kind on `inventory` anywhere in
+    the file — correlation reads inventory's truth, never mutates it.
+  - **`bill_run_processing.template.yml` — Validation + Collection contract
+    text.** Validation asserts currency + window coverage **against the shared
+    correlated set** (the `_CURRENCY_SQL` join, computed once, Inv #24); Collection
+    claims **`RATED → BILL_DRAFT`** only (dropped the stub's `('RATED','REJECTED')`
+    per bm24/bm25), stamping the resolved `billrun_ban_id`, with the D32
+    orphan-left-at-`RATED` rule. Header note + README updated (Collection/
+    Validation now real; other stages stay `# STUB:` shells).
+  - **`local-dev/bill_run_processing.yml` — the real correlation + claim SQL.**
+    The Validation/Collection no-op `Log`s replaced with `billrun_runtime` psql
+    DB tasks (`io.kestra.plugin.scripts.shell.Commands` + Process runner; the
+    worker image ships `postgresql-client`, Dockerfile D-B). Validation runs the
+    correlation SELECT + assertion counts; Collection runs the set-based
+    `RATED → BILL_DRAFT` claim. Connection env (`BILLRUN_DB_*` +
+    `SECRET_BILLRUN_RUNTIME_PASSWORD`) added to `workflow-management/dev/.env.example`,
+    mirroring the rating runtime's raw-env convention.
+  - **Guardrails.** New grep boundary `tests/guardrails/billrun-inventory-write-boundary.test.ts`
+    (billrun-db-roles.sql grants only USAGE + SELECT on `inventory`, never a
+    write; no `db/repositories/billing/**` or `services/billing/**` file writes
+    `product_inventory.billing_account_id`). New DB-gated
+    `tests/db/billrun-collection-correlation.integration.test.ts` — the flow-double
+    that performs the SAME `billrun_runtime` writes: a resolvable account's
+    previously-NULL rows are claimed to the RIGHT account (`BILL_DRAFT`,
+    resolved `billrun_ban_id`); an orphan + an out-of-scope account are left
+    `RATED`, unclaimed; a currency-mismatched account is flagged HARD; an
+    out-of-window row is flagged HARD; a zero-claimable account validates DONE
+    with no claim. `billrun-db-roles` integration suite gains 17d/17e (inventory
+    SELECT works; INSERT/UPDATE/DELETE refused).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS; both flow YAMLs parse; guardrail suites green
+    (`billrun-inventory-write-boundary` 4/4; full `tests/guardrails/` +
+    `grep-gates` **189/189**).
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron +
+    Azurite** (git-ignored `docker-compose.test.yml`, project `ebill-test`,
+    :5434/:10001; torn down `down -v` after): `billrun-collection-correlation`
+    **4/4** + `billrun-db-roles` **34/34** (incl. 17d/17e) = **38/38 green**;
+    regression `billrun-claim-release` **3/3 green**. Proves for real: the
+    `_CURRENCY_SQL`-shaped correlation resolves subscriber→account, the claim
+    fills the previously-NULL `billrun_ban_id` to the correct account, orphans/
+    out-of-scope rows are untouched (D32), and `billrun_runtime` can SELECT but
+    not write `inventory.product_inventory`.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified green.** (a) `local-dev/bill_run_processing.yml` — the psql shell
+    tasks used `set -euo pipefail`, but the shell Commands plugin's `interpreter`
+    defaults to `/bin/sh` (dash on the Ubuntu-based image), which aborts on
+    `-o pipefail`; switched to POSIX `set -eu` (no pipes exist; `ON_ERROR_STOP=1`
+    + `set -e` still propagate). (b) Validation was report-only; it now ENFORCES
+    the two HARD checks — a `set_config` + `DO` block RAISEs on currency mismatch
+    or out-of-window (psql does NOT substitute `:'var'` inside `$$…$$`, so the
+    block reads the per-account inputs via `current_setting()`), failing the task
+    so Collection never claims a bad account; zero-claimable falls through as a
+    zero-charge DONE. (c) Window comparison switched to
+    `(start_datetime AT TIME ZONE 'UTC')::date` (flow + test) so a midnight-UTC
+    boundary row never drifts a day on a non-UTC runner. (d) `billrun_attempt`
+    claim value hardened to `:'attempt'::int`. (e) `billrun-inventory-write-boundary`
+    guardrail — the ORM-write arm matched table-then-verb but Drizzle is
+    `db.update(productInventory)` (verb-then-table), so it was dead code; rewrote
+    to `\.(insert|update|delete)\(\s*productInventory`, added `GRANT ALL`
+    detection (a blanket grant confers writes without naming them), and guarded
+    `tsFilesRecursive` against a missing dir (ENOENT). Re-verified:
+    `billrun-inventory-write-boundary` 4/4, `tsc`/eslint/prettier clean, both
+    flow YAMLs parse, the validation `DO` block smoke-runs clean against a live
+    DB, and the disposable-Postgres suites still **38/38** (correlation 4/4 +
+    billrun-db-roles 34/34) with `billrun-claim-release` 3/3.
+  - **Two review items ACCEPTED as-is (owner decision, 2026-09-15), not fixed —
+    both out of bm27's boundary.** (1) The local-dev flow authenticates as
+    `billrun_runtime`, which the dev-stack bootstrap does not provision (`db:setup`
+    = migrate/partman/seeds; `kestra-setup` = kestra roles only) — **exactly the
+    rating flow's posture** (`rl.py`'s `db.py` likewise connects as the
+    unprovisioned `rating_runtime`), so running these compute flows end-to-end
+    locally stays under the existing deferred live-Kestra smoke gate; provisioning
+    runtime roles in the dev stack is a separate concern covering both flows.
+    (2) The correlation CTE is duplicated across the flow's validation + collection
+    tasks and the test (and mirrors `rl.py`'s `_CURRENCY_SQL`) — inherent to the
+    flow-double pattern; a single-source fix (a `billing.billrun_correlated` view
+    or a shared runtime module) is a schema/architecture change beyond this unit.
+
 - Phase 3 · Phase L — **bm26 (Sample Seed → `RAN_USAGE`, Unclaimed (`ci`
   profile)) — DELIVERED and DB-VERIFIED against a disposable Postgres
   (2026-09-15).** See

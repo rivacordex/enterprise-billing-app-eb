@@ -1,8 +1,10 @@
 # TEMPLATE ONLY — no business logic. The real bill_run_processing flow lives in
 # the separate workflow-management repo and is deployed to the `billrun` engine.
 # This skeleton documents (a) the stage contract the app records against and
-# (b) the key activities each stage must perform. Every real activity is a
-# `# STUB:` marker naming what replaces it. See ./README.md.
+# (b) the key activities each stage must perform. Not-yet-built activities are a
+# `# STUB:` marker naming what replaces them; the `validation` + `collection`
+# stages carry `# REAL (bm27):` contract text — the real correlation/claim SQL
+# ships in the separate workflow-management repo. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -17,19 +19,39 @@ tasks:
     type: io.kestra.plugin.core.flow.ForEach # fan-out per account (Inv: per account, per stage)
     values: "{{ inputs.ban_ids }}"
     tasks:
-      # --- validation ---
+      # --- validation (folded into the shared correlation — bm27) ---
       - id: validation
-        # STUB: confirm the account's claimable udr_rated is consistent (currency,
-        #       coverage in window); zero-claimable => zero-charge exception, not error.
-        #       Placeholder: pass. On done: POST the stage-complete signal (§4).
+        # REAL (bm27): assert against the SHARED correlated set (Inv #24) — the
+        #   ONE set-based subscriber->account resolution Collection computes,
+        #   following rl.py's _CURRENCY_SQL join (udr_subscriber_ref_id ->
+        #   inventory.product_inventory.product_inventory_id ->
+        #   product_inventory.billing_account_id -> billing_account.currency).
+        #   Validation never re-runs that join (heaviest in the pipeline, Inv #24).
+        #   - Currency: a correlated row with udr_currency <> account_currency ->
+        #     signal FAILED, HARD finding CURRENCY_MISMATCH (the _CURRENCY_SQL check).
+        #   - Window coverage: a correlated row whose start_datetime is outside
+        #     [period_start, period_end] -> HARD finding WINDOW_COVERAGE.
+        #   - Zero-claimable: NO correlated rows for the account -> signal DONE
+        #     (a zero-charge exception, NOT an error); Collection claims nothing,
+        #     Aggregation writes no usage line (recurring may still bill it, bm29).
+        #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
       # --- collection / claim (writes rating.udr_rated as billrun_runtime) ---
       - id: collection
-        # STUB: claim the account's in-scope udr_rated: UPDATE status
-        #       (status IN ('RATED','REJECTED')) -> BILL_DRAFT + stamp the six claim
-        #       cols (billrun_ref_id/ban_id/checksum/upsert_datetime), RE-STAMPING
-        #       billrun_attempt to inputs.attempt so posting's (run,ban,posted_attempt)
-        #       read matches (T6). The flow is the SOLE re-claimer — the app NEVER
-        #       claims — it only sets BILL_APPROVED/REJECTED/RATED-release (bm17).
+        # REAL (bm27): compute the correlation ONCE (set-based, per run, Inv #24)
+        #   and claim the resolved in-scope rows. UPDATE status = 'BILL_DRAFT'
+        #   from status = 'RATED' ONLY (post bm24/bm25: reject/cancel/rerun RELEASE
+        #   to RATED, and billrun_status_guard now permits only RATED -> BILL_DRAFT;
+        #   the stub's old ('RATED','REJECTED') is dropped) + stamp the six claim
+        #   cols: status, billrun_ref_id (the run), billrun_ban_id (THE ACCOUNT
+        #   COLLECTION JUST RESOLVED — NULL until now, bm26), billrun_attempt
+        #   (inputs.attempt, re-stamped so posting's (run,ban,posted_attempt) read
+        #   matches, T6), billrun_checksum, upsert_datetime. Whole-account, ONE
+        #   statement, never per-record. The flow is the SOLE re-claimer — the app
+        #   NEVER claims — it only sets BILL_APPROVED/RATED-release (bm17/bm24).
+        #   D32/Inv #25: a row whose udr_subscriber_ref_id resolves to no
+        #   product_inventory (or to an out-of-scope account) is NOT in `correlated`,
+        #   so it is left at RATED, unclaimed and UNTOUCHED — never filtered out
+        #   silently, never failing the account (it becomes bm32's orphan surface).
       # --- aggregation (writes billing.customer_bill as billrun_runtime) ---
       - id: aggregation
         # STUB: sum the account's BILL_DRAFT udr_rated into ONE customer_bill row
