@@ -114,8 +114,10 @@ tasks:
         #     for an already-reviewed period. ordering overrides are insert-only and
         #     are NOT the hazard.
         #   - D33 HARD-fail (Inv #28): a subscription whose offering INTENDS a
-        #     recurring charge but has NO as-of price (and no prior snapshot), or a
-        #     pricing_model='tiered' as-of price with no flat override, sends THIS
+        #     recurring charge but has NO as-of price (and no prior snapshot), a
+        #     pricing_model='tiered' as-of price with no flat override, or a price in
+        #     a currency other than the account's (RECURRING_CURRENCY_MISMATCH — the
+        #     recurring analog of bm27's USAGE currency assertion), sends THIS
         #     account only to PROCESSING_FAILED with a HARD
         #     finding and error_code RECURRING_PRICE_NOT_FOUND / _UNSUPPORTED — the
         #     transaction rolls back, so NO bill (not even the USAGE lines) is

@@ -78,6 +78,7 @@ export async function runAggregation(
                a.pricing_model                                          AS pricing_model,
                a.effective_date                                         AS effective_date,
                COALESCE(oipo.currency, a.currency)                      AS currency,
+               ba.currency                                             AS account_currency,
                pi.quantity::numeric(20,6)                              AS quantity,
                COALESCE(
                  (CASE bc.frequency
@@ -119,18 +120,23 @@ export async function runAggregation(
     await tx.unsafe(`
       DO $$
       DECLARE
-        v_unsupported int;
-        v_not_found   int;
+        v_unsupported       int;
+        v_not_found         int;
+        v_currency_mismatch int;
       BEGIN
         SELECT count(*) FILTER (WHERE unit_price IS NULL AND pricing_model = 'tiered'),
-               count(*) FILTER (WHERE unit_price IS NULL AND pricing_model IS DISTINCT FROM 'tiered')
-          INTO v_unsupported, v_not_found
+               count(*) FILTER (WHERE unit_price IS NULL AND pricing_model IS DISTINCT FROM 'tiered'),
+               count(*) FILTER (WHERE unit_price IS NOT NULL AND currency IS DISTINCT FROM account_currency)
+          INTO v_unsupported, v_not_found, v_currency_mismatch
         FROM   _bm29_resolved;
         IF v_unsupported > 0 THEN
           RAISE EXCEPTION 'RECURRING_PRICE_UNSUPPORTED (HARD): % subscription(s) priced tiered (D33/Inv #28)', v_unsupported;
         END IF;
         IF v_not_found > 0 THEN
           RAISE EXCEPTION 'RECURRING_PRICE_NOT_FOUND (HARD): % subscription(s) have no as-of recurring price (D33/Inv #28)', v_not_found;
+        END IF;
+        IF v_currency_mismatch > 0 THEN
+          RAISE EXCEPTION 'RECURRING_CURRENCY_MISMATCH (HARD): % subscription(s) priced in a currency other than the account currency (D33/Inv #28)', v_currency_mismatch;
         END IF;
       END $$;
     `);

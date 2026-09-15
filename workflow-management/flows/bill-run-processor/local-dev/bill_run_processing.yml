@@ -213,8 +213,9 @@ tasks:
       # SQL-recomputes tax from subtotal when it lands). Money is summed in SQL
       # (numeric), never JS float. D33 HARD-FAIL (Inv #28): a subscription whose
       # offering INTENDS a recurring charge but has no as-of price (and no prior
-      # snapshot), or a tiered as-of price with no flat override, RAISEs
-      # RECURRING_PRICE_NOT_FOUND / _UNSUPPORTED — ON_ERROR_STOP
+      # snapshot), a tiered as-of price with no flat override, or a price in a
+      # currency other than the account's, RAISEs RECURRING_PRICE_NOT_FOUND /
+      # _UNSUPPORTED / RECURRING_CURRENCY_MISMATCH — ON_ERROR_STOP
       # + set -e fail the task and roll the transaction back, so NO bill (not even
       # the USAGE lines) is produced for that account; on_error POSTs the HARD
       # finding, every other account stays billable. Runs as billrun_runtime; SELECT
@@ -318,6 +319,7 @@ tasks:
                      a.pricing_model                                          AS pricing_model,
                      a.effective_date                                         AS effective_date,
                      COALESCE(oipo.currency, a.currency)                      AS currency,
+                     ba.currency                                             AS account_currency,
                      pi.quantity::numeric(20,6)                              AS quantity,
                      -- cycle months / charge-period months; defaults to 1 when the
                      -- charge period is unspecified/unmappable (a flat price billed
@@ -365,24 +367,34 @@ tasks:
                      );
 
             -- 0c. bm29 / D33 (Inv #28): fail THIS account HARD if any freshly
-            --     resolved subscription has no as-of price (RECURRING_PRICE_NOT_FOUND)
-            --     or is tiered with no flat override (RECURRING_PRICE_UNSUPPORTED).
-            --     RAISE rolls the whole transaction back -> no bill produced. Never
-            --     substitute zero, never skip a subscription silently.
+            --     resolved subscription has no as-of price (RECURRING_PRICE_NOT_FOUND),
+            --     is tiered with no flat override (RECURRING_PRICE_UNSUPPORTED), or is
+            --     priced in a currency other than the account's
+            --     (RECURRING_CURRENCY_MISMATCH — the recurring analog of bm27's USAGE
+            --     currency assertion; v1 is single-currency and product_offering_price
+            --     /order_item_price_override currencies are not tied to the account,
+            --     so a foreign price must never be summed into the bill). RAISE rolls
+            --     the whole transaction back -> no bill produced. Never substitute
+            --     zero, never skip a subscription silently.
             DO $$
             DECLARE
-              v_unsupported int;
-              v_not_found   int;
+              v_unsupported       int;
+              v_not_found         int;
+              v_currency_mismatch int;
             BEGIN
               SELECT count(*) FILTER (WHERE unit_price IS NULL AND pricing_model = 'tiered'),
-                     count(*) FILTER (WHERE unit_price IS NULL AND pricing_model IS DISTINCT FROM 'tiered')
-                INTO v_unsupported, v_not_found
+                     count(*) FILTER (WHERE unit_price IS NULL AND pricing_model IS DISTINCT FROM 'tiered'),
+                     count(*) FILTER (WHERE unit_price IS NOT NULL AND currency IS DISTINCT FROM account_currency)
+                INTO v_unsupported, v_not_found, v_currency_mismatch
               FROM   _bm29_resolved;
               IF v_unsupported > 0 THEN
                 RAISE EXCEPTION 'RECURRING_PRICE_UNSUPPORTED (HARD): % subscription(s) priced tiered — the flat resolver cannot rate them (D33/Inv #28)', v_unsupported;
               END IF;
               IF v_not_found > 0 THEN
                 RAISE EXCEPTION 'RECURRING_PRICE_NOT_FOUND (HARD): % subscription(s) have no as-of recurring price (D33/Inv #28)', v_not_found;
+              END IF;
+              IF v_currency_mismatch > 0 THEN
+                RAISE EXCEPTION 'RECURRING_CURRENCY_MISMATCH (HARD): % subscription(s) priced in a currency other than the account currency (D33/Inv #28)', v_currency_mismatch;
               END IF;
             END $$;
 
