@@ -5,7 +5,7 @@ import { documentLineRepository } from "@/db/repositories/accounts/document-line
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
-import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
+import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import { postDocument } from "@/services/accounts/post-document";
 import type { PostDocumentResult } from "@/services/accounts/post-document";
@@ -330,12 +330,15 @@ export async function postAccount(
         );
       }
 
-      const chargeChecksum = await ratedLinesRepository.computeChargeChecksum(
-        tx,
-        run.billRunId,
-        billingAccountId,
-        bill.attemptCount,
-      );
+      // bm31-spec §Implementation §2 — the posting checksum now hashes the
+      // invoice's OWN `customer_bill_line` content (scoped by the bill, not the
+      // `udr_rated` claim), so a recurring-only bill no longer yields `md5('')`.
+      const chargeChecksum =
+        await customerBillLineRepository.computeChargeChecksum(
+          tx,
+          bill.customerBillId,
+          bill.periodPartition,
+        );
       const stamped = await customerBillRepository.stampPosted(
         tx,
         bill.customerBillId,

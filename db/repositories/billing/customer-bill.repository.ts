@@ -322,17 +322,15 @@ export const customerBillRepository = {
     return row ?? null;
   },
 
-  // bm19-spec §Design "Posting reads real udr_rated (Inv #3)" — the
-  // charge-checksum computation now lives in
-  // `db/repositories/billing/rated-lines.repository.ts`
-  // (`computeChargeChecksum` there), which reads the account's claimed
-  // rated-usage rows directly. It could not stay in THIS file: this
-  // repository already writes other tables below it, and the
-  // billing-rating-write-boundary guardrail treats any file that both
-  // touches the rating schema and writes anywhere as suspect, independent
-  // of which table the write targets. The other file stays read-only, so
-  // it is the sanctioned home for this read (same shape as its existing
-  // claimed-lines lookup).
+  // bm31-spec §Design (was bm19, Inv #3) — the charge-checksum computation
+  // lives in `db/repositories/billing/customer-bill-line.repository.ts`
+  // (`computeChargeChecksum` there), re-anchored onto the bill's OWN
+  // `customer_bill_line` content (all three money columns, ordered by `line_no`)
+  // rather than the claimed `udr_rated` rows — so a recurring-only bill (no
+  // `udr_rated`) no longer hashes to `md5('')`. It lives beside
+  // `customer_bill_line`'s read so the hash sits next to the rows it hashes;
+  // that file touches no `rating.*`, so (unlike the bm19 `udr_rated` home) the
+  // `billing-rating-write-boundary` guardrail is not even in play.
 
   // bm11-spec §Design/§Implementation §1 step 5 — the posting stamp: sets the
   // finalization latch (`ref_inv_document_id`, architecture Inv. #4) plus
