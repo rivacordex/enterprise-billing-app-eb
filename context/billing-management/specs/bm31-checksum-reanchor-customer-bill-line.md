@@ -12,7 +12,7 @@ Move the posting `charge_checksum` from the `udr_rated`-based `computeChargeChec
 
 **Structural decisions**
 
-- **Hash line content, ordered by `grouping_key`, never a surrogate id (Inv #3, D7a/D20).** The checksum concatenates `(source, ref_product_offering_id, udr_type, line_type, gross_amount, discount_amount, net_amount)` per line, ordered by the deterministic `grouping_key` (the same key `line_no` uses) — reproducible from an archived invoice, and independent of the auto-generated `customer_bill_line_id`.
+- **Hash line content, ordered by `line_no`, never a surrogate id (Inv #3, D7a/D20).** The checksum serializes `(source, ref_product_offering_id, udr_type, line_type, gross_amount, discount_amount, net_amount)` per line, ordered by the deterministic `line_no` — reproducible from an archived invoice, and independent of the auto-generated `customer_bill_line_id`. (Ordered by `line_no`, the total order bm29 assigns via `row_number() OVER (ORDER BY grouping_key, source)`, NOT `grouping_key` alone: `grouping_key` is not unique — a USAGE line whose free-text `udr_type` is literally `'RECURRING'` shares the `offering:RECURRING` key of a real RECURRING line — so ordering by it leaves a tied pair in an unspecified `string_agg` order, making the recompute non-deterministic.) Each line is encoded with `json_build_array(...)::text` rather than raw `|`/`,` delimiters, so a `udr_type` containing a delimiter cannot forge a colliding hash (injective serialization).
 - **All three money columns, not just `net` (Inv #3).** Hashing `gross_amount`, `discount_amount` **and** `net_amount` means a discount that preserves `net` (a future phase) still changes the checksum — tamper-evidence can't be defeated by a compensating pair.
 - **Recurring-only bills stop hashing to empty.** Because the anchor is the lines (which recurring derivation writes) rather than `udr_rated` (which recurring never touches), a recurring-only bill now has a real, content-derived checksum instead of `md5('')`.
 - **Scope by the bill, not the claim.** The new signature is `(tx, customerBillId, periodPartition)` — the checksum is over that bill's lines, matching how `post-run.ts` already holds `bill.customerBillId`/`bill.periodPartition`. The old `(billRunId, billingAccountId, postedAttempt)` `udr_rated` scoping retires with the old function.
@@ -34,11 +34,13 @@ async computeChargeChecksum(
   const [row] = await tx
     .select({
       checksum: sql<string>`md5(COALESCE(string_agg(
-        ${customerBillLine.source} || '|' || ${customerBillLine.refProductOfferingId} || '|' ||
-        COALESCE(${customerBillLine.udrType},'') || '|' || ${customerBillLine.lineType} || '|' ||
-        ${customerBillLine.grossAmount}::text || '|' || ${customerBillLine.discountAmount}::text || '|' ||
-        ${customerBillLine.netAmount}::text,
-        ',' ORDER BY ${customerBillLine.groupingKey}), ''))`,
+        json_build_array(
+          ${customerBillLine.source}, ${customerBillLine.refProductOfferingId},
+          COALESCE(${customerBillLine.udrType}, ''), ${customerBillLine.lineType},
+          ${customerBillLine.grossAmount}::text, ${customerBillLine.discountAmount}::text,
+          ${customerBillLine.netAmount}::text
+        )::text,
+        ',' ORDER BY ${customerBillLine.lineNo}), ''))`,
     })
     .from(customerBillLine)
     .where(
@@ -67,7 +69,7 @@ Remove `computeChargeChecksum` (moved to §1); keep `listClaimedForAccount` (the
 ## Guardrails (land with the unit — code-standards §9)
 
 - **Recurring-only bill ≠ `md5('')`:** a recurring-only account (lines, no claimed `udr_rated`) posts with a real content-derived checksum.
-- **Content-derived + reproducible:** the checksum recomputed from the archived line content (ordered by `grouping_key`) matches the stamped value.
+- **Content-derived + reproducible:** the checksum recomputed from the archived line content (ordered by `line_no`) matches the stamped value.
 - **All three money columns matter:** altering `gross_amount`, `discount_amount`, **or** `net_amount` on a posted line changes the recomputed checksum (tamper-evident); a `net`-preserving discount shift still changes it.
 - **Boundary intact:** `rated-lines.repository.ts` writes no `rating.*`; `customer-bill-line.repository.ts`'s checksum is `SELECT`-only.
 
@@ -78,7 +80,7 @@ Remove `computeChargeChecksum` (moved to §1); keep `listClaimedForAccount` (the
 
 ## Verification checklist
 
-- [ ] `post-run.ts` stamps a checksum computed over `customer_bill_line` content `(source, ref_product_offering_id, udr_type, line_type, gross_amount, discount_amount, net_amount)`, ordered by `grouping_key`, never by surrogate id.
+- [ ] `post-run.ts` stamps a checksum computed over `customer_bill_line` content `(source, ref_product_offering_id, udr_type, line_type, gross_amount, discount_amount, net_amount)`, ordered by `line_no`, never by surrogate id.
 - [ ] A recurring-only bill posts a non-empty, content-derived checksum (no more `md5('')`).
 - [ ] Altering `gross_amount`, `discount_amount`, or `net_amount` on a posted line changes the recomputed checksum.
 - [ ] `computeChargeChecksum` is gone from `rated-lines.repository.ts` (now only `listClaimedForAccount`, header corrected); it lives in `customer-bill-line.repository.ts`.

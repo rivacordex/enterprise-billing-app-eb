@@ -86,15 +86,22 @@ export const customerBillLineRepository = {
   // differ (a false tamper alarm). `line_no` is the deterministic total order the
   // spec intended, and being an integer it also sidesteps text-collation drift.
   //
-  // Computed ENTIRELY in SQL (`numeric`→`text`, no JS float — code-standards
-  // §2.4, or the tamper-evidence breaks); the `COALESCE(string_agg(...), '')`
-  // makes an empty bill hash `md5('')` rather than NULL-poisoning. Because the
-  // anchor is the lines (which recurring derivation writes) rather than
-  // `udr_rated` (which recurring never touches), a recurring-only bill now has a
-  // real, content-derived checksum. Reads the bill's lines unscoped by
-  // `line_type`/`source` — the whole charge record is the anchor — and relies on
-  // the caller holding `customer_bill`'s `FOR UPDATE` (bm28's whole-account
-  // replace cascades through the header) so the line set can't tear mid-read.
+  // Each line's fields are serialized with `json_build_array(...)::text` — an
+  // UNAMBIGUOUS (injective) encoding — rather than raw `|`/`,` delimiters: a
+  // free-text `udr_type` (no CHECK) may itself contain a `|` or `,`, and a
+  // delimiter-based concat would then let two DIFFERENT line sets serialize to
+  // the same string and collide on md5 (a tampered set escaping detection). JSON
+  // keeps every field a quoted, escaped string, so distinct content always
+  // yields distinct text. Computed ENTIRELY in SQL (`numeric`→`text`, no JS
+  // float — code-standards §2.4, or the tamper-evidence breaks); the
+  // `COALESCE(string_agg(...), '')` makes an empty bill hash `md5('')` rather
+  // than NULL-poisoning. Because the anchor is the lines (which recurring
+  // derivation writes) rather than `udr_rated` (which recurring never touches),
+  // a recurring-only bill now has a real, content-derived checksum. Reads the
+  // bill's lines unscoped by `line_type`/`source` — the whole charge record is
+  // the anchor — and relies on the caller holding `customer_bill`'s `FOR UPDATE`
+  // (bm28's whole-account replace cascades through the header) so the line set
+  // can't tear mid-read.
   async computeChargeChecksum(
     tx: Database,
     customerBillId: string,
@@ -103,10 +110,12 @@ export const customerBillLineRepository = {
     const [row] = await tx
       .select({
         checksum: sql<string>`md5(COALESCE(string_agg(
-        ${customerBillLine.source} || '|' || ${customerBillLine.refProductOfferingId} || '|' ||
-        COALESCE(${customerBillLine.udrType},'') || '|' || ${customerBillLine.lineType} || '|' ||
-        ${customerBillLine.grossAmount}::text || '|' || ${customerBillLine.discountAmount}::text || '|' ||
-        ${customerBillLine.netAmount}::text,
+        json_build_array(
+          ${customerBillLine.source}, ${customerBillLine.refProductOfferingId},
+          COALESCE(${customerBillLine.udrType}, ''), ${customerBillLine.lineType},
+          ${customerBillLine.grossAmount}::text, ${customerBillLine.discountAmount}::text,
+          ${customerBillLine.netAmount}::text
+        )::text,
         ',' ORDER BY ${customerBillLine.lineNo}), ''))`,
       })
       .from(customerBillLine)
