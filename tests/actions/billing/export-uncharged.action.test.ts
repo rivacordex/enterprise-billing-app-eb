@@ -24,7 +24,7 @@ function row(overrides: Partial<UnchargedRow> = {}): UnchargedRow {
     billingAccountId: "BAN00000001",
     financialAccountId: "FIN00000001",
     accountName: "Acme Sdn Bhd",
-    reason: "PARTIAL_PERIOD",
+    reason: "NO_CHARGE_LINES",
     windowStart: "2026-07-01",
     windowEnd: "2026-07-31",
     indicativeValue: null,
@@ -59,7 +59,7 @@ describe("exportUnchargedAction (bm07-spec §3)", () => {
     );
   });
 
-  it("returns a CSV with a header and one line per EXCLUDED account", async () => {
+  it("returns a CSV with a header and one line per uncharged account", async () => {
     mockListUncharged.mockResolvedValue([
       row(),
       row({ billingAccountId: "BAN00000002", accountName: "Globex" }),
@@ -76,7 +76,7 @@ describe("exportUnchargedAction (bm07-spec §3)", () => {
     expect(lines).toHaveLength(3); // header + 2 rows
     expect(lines[1]).toContain("BAN00000001");
     expect(lines[1]).toContain("Acme Sdn Bhd");
-    expect(lines[1]).toContain("PARTIAL_PERIOD");
+    expect(lines[1]).toContain("NO_CHARGE_LINES");
     expect(lines[2]).toContain("BAN00000002");
     expect(result.filename).toBe("uncharged-BRN00000001.csv");
   });

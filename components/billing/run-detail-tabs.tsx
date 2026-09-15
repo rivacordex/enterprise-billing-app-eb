@@ -20,6 +20,7 @@ import type {
   CustomerBillRow,
   DistributionView,
   ErrorRow,
+  ExceptionRow,
   RejectedPendingRow,
   StageTimelineRow,
   StageTimelineSummary,
@@ -44,6 +45,7 @@ export interface RunDetailTabsProps {
   };
   customerBills: CustomerBillRow[];
   uncharged: UnchargedRow[];
+  exceptions: ExceptionRow[];
   errors: ErrorRow[];
   rejectedPending: RejectedPendingRow[];
   distribution: DistributionView | null;
@@ -62,6 +64,7 @@ export function RunDetailTabs({
   timeline,
   customerBills,
   uncharged,
+  exceptions,
   errors,
   rejectedPending,
   distribution,
@@ -111,7 +114,9 @@ export function RunDetailTabs({
         <UnchargedTable
           runId={runId}
           rows={uncharged}
+          exceptions={exceptions}
           canRecover={canRecover}
+          locale={locale}
         />
       ) : activeTab === "errors" ? (
         <ErrorsTable
