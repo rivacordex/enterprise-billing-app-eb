@@ -5,9 +5,12 @@
 # `collection` no-op Logs with the REAL correlation + claim SQL run as
 # `billrun_runtime` (via psql — the image ships postgresql-client, worker
 # Dockerfile D-B), so the local E2E exercises real subscriber->account
-# resolution against the `ci` seed; the other stages stay no-op Logs until their
-# units. This is the "flow-double" the app-repo DB-gated correlation/claim test
-# mirrors (bm21 pattern): the SAME billrun_runtime writes, testable without a
+# resolution against the `ci` seed; bm28 then replaced the `aggregation` no-op
+# Log with the REAL USAGE aggregation SQL (whole-account replace into
+# customer_bill + customer_bill_line at (product_offering_id, udr_type) grain);
+# `taxation` + `verification` stay no-op Logs until their units. This is the
+# "flow-double" the app-repo DB-gated correlation/claim + aggregation tests
+# mirror (bm21 pattern): the SAME billrun_runtime writes, testable without a
 # live Kestra. See ./README.md.
 id: bill_run_processing
 namespace: billrun
@@ -172,9 +175,140 @@ tasks:
             WHERE  ur.udr_id = c.udr_id AND ur.partition_period = c.partition_period
               AND  ur.status = 'RATED';                       -- claim from RATED only
             SQL
+      # bm28 — REAL Aggregation: group the account's claimed BILL_DRAFT usage
+      # into billing.customer_bill_line at (product_offering_id, udr_type) grain,
+      # ROLLED UP ACROSS SUBSCRIPTIONS (Inv #3) — the offering id is the
+      # denormalized column on inventory.product_inventory, so 3 subs of one
+      # offering + 500 of another collapse to 2 lines, not 503. WHOLE-ACCOUNT
+      # REPLACE (Inv #16, D22): drop the non-finalized customer_bill via the
+      # scoped SECURITY DEFINER billrun_delete_trial_bill (its lines cascade,
+      # bm23) then re-INSERT the header + lines — never an ON CONFLICT DO UPDATE
+      # and never a bare DELETE against customer_bill_line (billrun_runtime holds
+      # no table DELETE on it). line_no is DETERMINISTIC (row_number ORDER BY
+      # grouping_key, NOT insertion order — Inv #21) so a rerun reproduces it.
+      # subtotal = SUM(net_amount) (Inv #3); tax_total='0.00'/total_amount=subtotal
+      # this phase (Taxation, still a stub below, SQL-recomputes tax from subtotal
+      # when it lands — no unit). Money is summed in SQL (numeric), never JS float.
+      # Reads the offering NAME from product.product_offering (bm28 read grant).
+      # Runs as billrun_runtime; SELECT+INSERT on customer_bill/_line + the reads,
+      # DELETE only through the SECURITY DEFINER.
+      # KNOWN LIMITATION (bm28, deferred): a scoped-in account with ZERO usage
+      # lines this phase (no BILL_DRAFT usage, and recurring is bm29) still gets a
+      # customer_bill with subtotal 0.00. Per Inv #22 a no-line account is
+      # "Uncharged" (no bill), and a 0.00 bill trips the approval gate
+      # (pre-approval-checks.ts checkPositiveTotals). Proper handling — treating a
+      # no-line account as Uncharged and keeping it off the postable/approval set
+      # — is the phase-3 Uncharged-tab rework (code-standards §4.7), a SEPARATE
+      # later unit; it is only reachable via the full live-Kestra E2E (deferred),
+      # not bm28's own tests. See billmgmt-progress-tracker.md (bm28 Known limitation).
       - id: aggregation
-        type: io.kestra.plugin.core.log.Log
-        message: "[{{ taskrun.value }}] aggregation — STUB: sum BILL_DRAFT into one customer_bill row"
+        type: io.kestra.plugin.scripts.shell.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker daemon
+        commands:
+          - |
+            set -eu
+            # POSIX `set -eu` (see validation task) — /bin/sh is dash here.
+            export PGHOST="${BILLRUN_DB_HOST:-db}"
+            export PGPORT="${BILLRUN_DB_PORT:-5432}"
+            export PGDATABASE="${BILLRUN_DB_NAME:-enterprise_billing}"
+            export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
+            export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
+            psql -v ON_ERROR_STOP=1 \
+              -v ban="{{ taskrun.value }}" \
+              -v run="{{ inputs.bill_run_id }}" \
+              -v attempt="{{ inputs.attempt }}" \
+              -v period_start="{{ inputs.period_start }}" \
+              -v period_end="{{ inputs.period_end }}" \
+              -v gl_event_at="{{ inputs.gl_event_at }}" <<'SQL'
+            BEGIN;
+            -- 1. Whole-account replace (Inv #16, D22): drop the non-finalized bill;
+            --    its customer_bill_line rows cascade (ON DELETE CASCADE, bm23).
+            SELECT billing.billrun_delete_trial_bill(:'run', :'ban');
+
+            -- 2-4. Group claimed BILL_DRAFT usage -> one line per
+            --      (product_offering_id, udr_type) rolled across subscriptions;
+            --      re-insert the trial header (subtotal = SUM(net_amount)) then
+            --      its lines with a deterministic line_no ordered on grouping_key.
+            WITH grp AS (
+              SELECT pi.product_offering_id                     AS product_offering_id,
+                     ur.udr_type                                AS udr_type,
+                     (pi.product_offering_id || ':' || ur.udr_type) AS grouping_key,
+                     SUM(ur.udr_rated_price)                    AS gross,
+                     SUM(ur.udr_usage_quantity)                 AS qty,
+                     min(ur.udr_usage_unit)                     AS unit,
+                     count(*)                                   AS udr_count,
+                     min(ur.udr_currency)                       AS currency
+              FROM   rating.udr_rated ur
+              JOIN   inventory.product_inventory pi
+                     ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+              WHERE  ur.billrun_ref_id  = :'run'
+                AND  ur.billrun_ban_id  = :'ban'
+                AND  ur.billrun_attempt = :'attempt'::int
+                AND  ur.status = 'BILL_DRAFT'
+              GROUP BY pi.product_offering_id, ur.udr_type
+            ),
+            ins_header AS (
+              -- subtotal/total inserted PROVISIONALLY as 0.00 (both NOT NULL);
+              -- step 4 below sets them from the lines' net_amount. payment_due_date
+              -- = gl_event_at + coalesce(account override, cycle default) — the
+              -- same term resolution the retired bm05 aggregate-bill.ts used.
+              INSERT INTO billing.customer_bill
+                (ref_bill_run_id, ref_billing_account_id, period_partition,
+                 category, state, billing_period_start, billing_period_end,
+                 subtotal, tax_total, total_amount, payment_due_date)
+              SELECT :'run', :'ban', date_trunc('month', :'period_start'::date)::date,
+                     'trial', 'new', :'period_start'::date, :'period_end'::date,
+                     '0.00', '0.00', '0.00',
+                     :'gl_event_at'::date
+                       + COALESCE(ba.payment_due_days_override, bc.payment_due_days)
+              FROM   billing.billing_account ba
+              JOIN   billing.bill_cycle bc ON bc.bill_cycle_id = ba.ref_bill_cycle_id
+              WHERE  ba.billing_account_id = :'ban'
+              RETURNING customer_bill_id, period_partition
+            )
+            INSERT INTO billing.customer_bill_line
+              (ref_customer_bill_id, period_partition, line_no, source, line_type,
+               ref_product_offering_id, udr_type, description, quantity, unit,
+               gross_amount, discount_amount, net_amount, udr_count, grouping_key, currency)
+            SELECT h.customer_bill_id, h.period_partition,
+                   row_number() OVER (ORDER BY grp.grouping_key) AS line_no,
+                   'USAGE', 'charge',
+                   grp.product_offering_id, grp.udr_type, po.name,
+                   grp.qty, grp.unit,
+                   grp.gross, '0.00', grp.gross,   -- net = gross (no discount this phase)
+                   grp.udr_count, grp.grouping_key, grp.currency
+            FROM   grp
+            JOIN   product.product_offering po
+                   ON po.product_offering_id = grp.product_offering_id
+            CROSS JOIN ins_header h;
+
+            -- Step 4 (spec §Impl §1 / Inv #3 / §9.5): customer_bill.subtotal =
+            -- SUM(net_amount) over the lines JUST WRITTEN, derived from the actual
+            -- net_amount (LEFT JOIN so a zero-line bill stays 0.00) — NOT the
+            -- pre-line gross, so it stays correct once a discount makes
+            -- net <> gross (bm29+). total_amount = subtotal + tax_total (Taxation,
+            -- still a stub, re-derives tax_total/total_amount when it lands).
+            WITH s AS (
+              SELECT cb.customer_bill_id, cb.period_partition, cb.tax_total,
+                     COALESCE(SUM(l.net_amount), '0.00')::numeric(18,2) AS net
+              FROM   billing.customer_bill cb
+              LEFT   JOIN billing.customer_bill_line l
+                     ON l.ref_customer_bill_id = cb.customer_bill_id
+                    AND l.period_partition = cb.period_partition
+              WHERE  cb.ref_bill_run_id = :'run'
+                AND  cb.ref_billing_account_id = :'ban'
+                AND  cb.period_partition = date_trunc('month', :'period_start'::date)::date
+              GROUP BY cb.customer_bill_id, cb.period_partition, cb.tax_total
+            )
+            UPDATE billing.customer_bill cb
+            SET    subtotal = s.net,
+                   total_amount = s.net + s.tax_total
+            FROM   s
+            WHERE  cb.customer_bill_id = s.customer_bill_id
+              AND  cb.period_partition = s.period_partition;
+            COMMIT;
+            SQL
       - id: taxation
         type: io.kestra.plugin.core.log.Log
         message: "[{{ taskrun.value }}] taxation — STUB: one tax line, recompute tax_total/total in SQL"

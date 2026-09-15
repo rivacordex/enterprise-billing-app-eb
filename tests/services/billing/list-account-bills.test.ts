@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm05-spec §Implementation §5, extended by bm06 §Implementation §4 — the
-// Customers & Bills tab's read: maps the joined repository rows onto
-// `CustomerBillRow`, grouping each bill's tax items onto it. Derived live.
+// bm05-spec §Implementation §5, extended by bm06 §Implementation §4 and bm28
+// §Implementation §4 — the Customers & Bills tab's read: maps the joined
+// repository rows onto `CustomerBillRow`, grouping each bill's tax items AND its
+// `customer_bill_line` charge lines (bm28) onto it. Derived live.
 
 const txStub = {};
 vi.mock("@/db/client", () => ({
-  // Both reads run inside one repeatable-read snapshot (bm06 hardening) — the
+  // All reads run inside one repeatable-read snapshot (bm06 hardening) — the
   // mock just invokes the callback with a stub tx and returns its result.
   db: { transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(txStub)) },
 }));
@@ -16,19 +17,25 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
 vi.mock("@/db/repositories/billing/customer-bill-tax-item.repository", () => ({
   customerBillTaxItemRepository: { listForRun: vi.fn() },
 }));
+vi.mock("@/db/repositories/billing/customer-bill-line.repository", () => ({
+  customerBillLineRepository: { listForRun: vi.fn() },
+}));
 
 import { db } from "@/db/client";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
+import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
 import { listAccountBills } from "@/services/billing/read/list-account-bills";
 
 const mockTransaction = vi.mocked(db.transaction);
 const mockListForRun = vi.mocked(customerBillRepository.listForRun);
 const mockListTaxItems = vi.mocked(customerBillTaxItemRepository.listForRun);
+const mockListLines = vi.mocked(customerBillLineRepository.listForRun);
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockListTaxItems.mockResolvedValue([]);
+  mockListLines.mockResolvedValue([]);
 });
 
 describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
@@ -71,10 +78,86 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
         totalAmount: "116.10",
         paymentDueDate: "2026-08-31",
         taxItems: [{ category: "GST", rate: "8.00", amount: "8.60" }],
+        lines: [],
         invoiceId: null,
         hasStoredInvoice: false,
       },
     ]);
+  });
+
+  it("groups charge lines to their own bill only (bm28-spec §4)", async () => {
+    mockListForRun.mockResolvedValue([
+      {
+        customerBillId: "CBL00000001",
+        billingAccountId: "BAN00000001",
+        accountName: "Acme",
+        currency: "MYR",
+        category: "trial",
+        subtotal: "30.00",
+        taxTotal: "0.00",
+        totalAmount: "30.00",
+        paymentDueDate: "2026-08-31",
+        refInvDocumentId: null,
+        hasStoredInvoice: false,
+      },
+      {
+        customerBillId: "CBL00000002",
+        billingAccountId: "BAN00000002",
+        accountName: "Globex",
+        currency: "MYR",
+        category: "trial",
+        subtotal: "20.00",
+        taxTotal: "0.00",
+        totalAmount: "20.00",
+        paymentDueDate: "2026-08-31",
+        refInvDocumentId: null,
+        hasStoredInvoice: false,
+      },
+    ]);
+    const line = (over: {
+      refCustomerBillId: string;
+      customerBillLineId: string;
+      netAmount: string;
+    }) => ({
+      lineNo: 1,
+      source: "USAGE" as const,
+      lineType: "charge" as const,
+      refProductOfferingId: "PRDOFR00000001",
+      udrType: "RAN_USAGE",
+      description: "Data",
+      quantity: "1.000000",
+      unit: "EA",
+      grossAmount: over.netAmount,
+      discountAmount: "0.00",
+      groupingKey: "PRDOFR00000001:RAN_USAGE",
+      currency: "MYR",
+      udrCount: 1,
+      ...over,
+    });
+    mockListLines.mockResolvedValue([
+      line({
+        refCustomerBillId: "CBL00000001",
+        customerBillLineId: "BLN00000001",
+        netAmount: "30.00",
+      }),
+      line({
+        refCustomerBillId: "CBL00000002",
+        customerBillLineId: "BLN00000002",
+        netAmount: "20.00",
+      }),
+    ]);
+
+    const rows = await listAccountBills("BRN00000001");
+
+    expect(rows[0]?.lines.map((l) => l.customerBillLineId)).toEqual([
+      "BLN00000001",
+    ]);
+    expect(rows[1]?.lines.map((l) => l.customerBillLineId)).toEqual([
+      "BLN00000002",
+    ]);
+    // `refCustomerBillId` is the grouping key only — it must not leak into the
+    // read model's `BillLineRow`.
+    expect(rows[0]?.lines[0]).not.toHaveProperty("refCustomerBillId");
   });
 
   it("attaches an empty tax-item array to a bill that has not been taxed yet", async () => {
@@ -226,7 +309,9 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
 
     const billTx = mockListForRun.mock.calls[0]?.[0];
     const taxTx = mockListTaxItems.mock.calls[0]?.[0];
+    const lineTx = mockListLines.mock.calls[0]?.[0];
     expect(billTx).toBe(taxTx);
+    expect(billTx).toBe(lineTx);
 
     // ...and that snapshot is opened `repeatable read`, `read only` — the two
     // isolation guarantees that make the shared handle a consistent, side-effect-
