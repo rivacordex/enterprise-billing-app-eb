@@ -74,10 +74,16 @@ END
 $$;
 --> statement-breakpoint
 
--- Step 3 — schema USAGE (confers no table access on its own).
-GRANT USAGE ON SCHEMA "billing" TO billrun_runtime;
+-- Step 3 — schema USAGE (confers no table access on its own). `inventory` is
+-- added by bm27 (§Implementation §5): Collection resolves a RAN_USAGE row's
+-- subscriber ref to a billing account through `inventory.product_inventory`
+-- (Inv #24), so the read-context set (Step 8) now spans it — USAGE only, never
+-- a write privilege of any kind on `inventory` (bm27 guardrail; Inv #25/D32).
+GRANT USAGE ON SCHEMA "billing"   TO billrun_runtime;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA "rating"  TO billrun_runtime;
+GRANT USAGE ON SCHEMA "rating"    TO billrun_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SCHEMA "inventory" TO billrun_runtime;
 --> statement-breakpoint
 
 -- Step 4 — the id sequences the trial-bill INSERTs default through.
@@ -267,12 +273,18 @@ CREATE TRIGGER billrun_status_guard_trg
 --> statement-breakpoint
 
 -- Step 8 — read-only context the flow resolves the bill from. Enumerated per
--- table, never ON ALL TABLES.
+-- table, never ON ALL TABLES. bm27 adds `inventory.product_inventory` (§5): the
+-- subscriber→account correlation reads inventory's truth (product_inventory_id
+-- → billing_account_id) but NEVER mutates it — SELECT only, and no INSERT/
+-- UPDATE/DELETE grant on `inventory` exists anywhere in this file (Step 3 grants
+-- schema USAGE only; a guardrail asserts nothing on the billing/flow side writes
+-- product_inventory.billing_account_id — Inv #25/D32).
 GRANT SELECT ON TABLE
   "billing"."bill_run",
   "billing"."bill_run_account",
   "billing"."billing_account",
-  "billing"."bill_cycle"
+  "billing"."bill_cycle",
+  "inventory"."product_inventory"
 TO billrun_runtime;
 --> statement-breakpoint
 

@@ -862,6 +862,31 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    // ---- inventory.product_inventory — read-only correlation input (bm27) ---
+    describe("inventory.product_inventory — read-only correlation input (Step 3/8, bm27)", () => {
+      it("17d. billrun_runtime SELECTs inventory.product_inventory (schema USAGE + table SELECT granted)", async () => {
+        // Empty fixture ⇒ zero rows, but the query resolving at all proves both
+        // the schema USAGE (Step 3) and the table SELECT (Step 8) — a missing
+        // USAGE fails "permission denied for schema inventory", a missing SELECT
+        // "permission denied for table product_inventory".
+        await expect(
+          billrunRuntime`SELECT 1 FROM inventory.product_inventory WHERE false`,
+        ).resolves.toBeDefined();
+      });
+
+      it("17e. [CRITICAL] billrun_runtime is refused INSERT/UPDATE/DELETE on inventory.product_inventory — read-only, never writes billing_account_id (Inv #25/D32)", async () => {
+        await expect(
+          billrunRuntime`INSERT INTO inventory.product_inventory DEFAULT VALUES`,
+        ).rejects.toThrow(/permission denied for table product_inventory/);
+        await expect(
+          billrunRuntime`UPDATE inventory.product_inventory SET billing_account_id = billing_account_id WHERE false`,
+        ).rejects.toThrow(/permission denied for table product_inventory/);
+        await expect(
+          billrunRuntime`DELETE FROM inventory.product_inventory WHERE false`,
+        ).rejects.toThrow(/permission denied for table product_inventory/);
+      });
+    });
+
     // ---- bill_run_invoices — no access at all (bm19) ------------------------
     describe("bill_run_invoices — app-only, no billrun_runtime grant (bm19)", () => {
       it("17b. billrun_runtime is refused SELECT/INSERT/UPDATE/DELETE on bill_run_invoices — no ALTER DEFAULT PRIVILEGES was ever added for it (Step 11)", async () => {
