@@ -70,8 +70,8 @@ function UnchargedAccountsSection({
           </h2>
           <p className="text-body-sm text-muted-foreground">
             {rows.length === 0
-              ? "Every scoped account produced at least one charge line this run."
-              : `${rows.length} account${rows.length === 1 ? "" : "s"} produced no charge line this run — recover each via a manual DBN/ADJ against the account.`}
+              ? "No scoped accounts were left uncharged this run."
+              : `${rows.length} account${rows.length === 1 ? "" : "s"} left uncharged this run (no charge lines, or lines netting to zero) — recover each via a manual DBN/ADJ against the account.`}
           </p>
         </div>
         <ExportUnchargedButton runId={runId} />
@@ -87,7 +87,7 @@ function UnchargedAccountsSection({
             No uncharged accounts
           </p>
           <p className="mt-1 text-body-sm text-muted-foreground">
-            Nothing was left without a charge line this run.
+            Nothing was left uncharged this run.
           </p>
         </div>
       ) : (
