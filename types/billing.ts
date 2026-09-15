@@ -210,13 +210,16 @@ export type ChargeSource = (typeof CHARGE_SOURCES)[number];
 export const LINE_TYPES = ["charge", "discount", "adjustment"] as const;
 export type LineType = (typeof LINE_TYPES)[number];
 
-// bm28-spec §Design/§Implementation §4, code-standards §2.8. One
-// `customer_bill_line` row — the invoice's face (`CustomerBillView` now composes
-// these, not `rating.udr_rated` rows; the `udr_rated` per-record drill-down is
-// reached by `groupingKey` on demand). Money fields are `string`
-// (code-standards §2.3); `udrType` is set for `USAGE` lines and `null` for
-// `RECURRING`; `quantity`/`unit`/`udrCount`/`description` are nullable to admit
-// both sources. Ordered by `lineNo` (deterministic, Inv #21).
+// bm28-spec §Design/§Implementation §4, extended by bm29 §Implementation §5,
+// code-standards §2.8. One `customer_bill_line` row — the invoice's face
+// (`CustomerBillView` now composes these, not `rating.udr_rated` rows; the
+// `udr_rated` per-record drill-down is reached by `groupingKey` on demand). Money
+// fields are `string` (code-standards §2.3); `udrType` is set for `USAGE` lines
+// and `null` for `RECURRING`; `quantity`/`unit`/`udrCount`/`description` are
+// nullable to admit both sources. A `RECURRING` line carries its price snapshot
+// (`snapshot*`, D19/Inv #20) — the reviewer's evidence in place of a `udr_rated`
+// drill-down (a derived recurring charge has no per-record source); all four are
+// `null` for `USAGE`. Ordered by `lineNo` (deterministic, Inv #21).
 export interface BillLineRow {
   customerBillLineId: string;
   lineNo: number;
@@ -233,6 +236,10 @@ export interface BillLineRow {
   udrCount: number | null;
   groupingKey: string;
   currency: string;
+  snapshotPriceRef: string | null;
+  snapshotUnitPrice: string | null;
+  snapshotQuantity: string | null;
+  snapshotEffectiveDate: string | null;
 }
 
 // bm28-spec §Design "the udr_rated drill-down". One claimed `rating.udr_rated`

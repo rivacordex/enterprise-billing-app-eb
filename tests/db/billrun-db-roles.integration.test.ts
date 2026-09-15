@@ -887,6 +887,48 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    // ---- recurring pricing reads — read-only resolver inputs (bm29) ----------
+    describe("product_offering_price + order_item_price_override — read-only pricing (Step 3/8, bm29)", () => {
+      it("17f. billrun_runtime SELECTs product.product_offering_price + ordering.order_item_price_override (schema USAGE + table SELECT granted)", async () => {
+        // Resolving at all proves the schema USAGE (Step 3 — `product`/`ordering`)
+        // and the table SELECT (Step 8). The recurring resolver reads the flat
+        // catalog price as-of + COALESCEs an order-item override over it (Inv #20).
+        await expect(
+          billrunRuntime`SELECT 1 FROM product.product_offering_price WHERE false`,
+        ).resolves.toBeDefined();
+        await expect(
+          billrunRuntime`SELECT 1 FROM ordering.order_item_price_override WHERE false`,
+        ).resolves.toBeDefined();
+      });
+
+      it("17g. [CRITICAL] billrun_runtime is refused INSERT/UPDATE/DELETE on the pricing reads — no write on product/ordering (Inv #20/#28)", async () => {
+        await expect(
+          billrunRuntime`INSERT INTO product.product_offering_price DEFAULT VALUES`,
+        ).rejects.toThrow(/permission denied for table product_offering_price/);
+        await expect(
+          billrunRuntime`UPDATE product.product_offering_price SET amount = amount WHERE false`,
+        ).rejects.toThrow(/permission denied for table product_offering_price/);
+        await expect(
+          billrunRuntime`DELETE FROM product.product_offering_price WHERE false`,
+        ).rejects.toThrow(/permission denied for table product_offering_price/);
+        await expect(
+          billrunRuntime`INSERT INTO ordering.order_item_price_override DEFAULT VALUES`,
+        ).rejects.toThrow(
+          /permission denied for table order_item_price_override/,
+        );
+        await expect(
+          billrunRuntime`UPDATE ordering.order_item_price_override SET amount = amount WHERE false`,
+        ).rejects.toThrow(
+          /permission denied for table order_item_price_override/,
+        );
+        await expect(
+          billrunRuntime`DELETE FROM ordering.order_item_price_override WHERE false`,
+        ).rejects.toThrow(
+          /permission denied for table order_item_price_override/,
+        );
+      });
+    });
+
     // ---- bill_run_invoices — no access at all (bm19) ------------------------
     describe("bill_run_invoices — app-only, no billrun_runtime grant (bm19)", () => {
       it("17b. billrun_runtime is refused SELECT/INSERT/UPDATE/DELETE on bill_run_invoices — no ALTER DEFAULT PRIVILEGES was ever added for it (Step 11)", async () => {

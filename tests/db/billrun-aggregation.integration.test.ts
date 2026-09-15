@@ -16,6 +16,7 @@ import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
 
 // bm28-spec §Implementation §6 / Verification checklist — the DB-gated
 // aggregation regression. This is the app-repo "flow-double" (bm21 pattern): it
@@ -197,89 +198,24 @@ describe.skipIf(!databaseUrl)(
       return row!.udr_id;
     }
 
-    // The flow-double: the whole-account replace (Inv #16) — drop the
-    // non-finalized bill via the scoped SECURITY DEFINER (lines cascade), then
-    // re-insert the header + lines, then set subtotal = SUM(net_amount) (spec
-    // step 4). The SAME shape as the local-dev flow's aggregation SQL, and — like
-    // that flow's BEGIN;...COMMIT; — run inside ONE transaction (`sql.begin`) so
-    // the delete + inserts + subtotal update commit or roll back together.
+    // The flow-double: drive the SHARED aggregation helper (tests/db/helpers/
+    // billrun-aggregate.ts) — the SAME billrun_runtime SQL the flow runs (USAGE
+    // rollup + the bm29 RECURRING resolver). These fixtures use usage-only
+    // offerings (no recurring price), so the recurring path resolves to nothing
+    // (a usage-only offering is not a D33 failure) and the result is the pure
+    // USAGE rollup this suite asserts.
     async function aggregate(
       runId: string,
       ban: string,
       attempt: number,
     ): Promise<void> {
-      await sql.begin(async (tx) => {
-        await tx`SELECT billing.billrun_delete_trial_bill(${runId}, ${ban})`;
-        await tx`
-          WITH grp AS (
-            SELECT pi.product_offering_id                        AS product_offering_id,
-                   ur.udr_type                                   AS udr_type,
-                   (pi.product_offering_id || ':' || ur.udr_type) AS grouping_key,
-                   SUM(ur.udr_rated_price)                        AS gross,
-                   SUM(ur.udr_usage_quantity)                     AS qty,
-                   min(ur.udr_usage_unit)                         AS unit,
-                   count(*)                                       AS udr_count,
-                   min(ur.udr_currency)                           AS currency
-            FROM   rating.udr_rated ur
-            JOIN   inventory.product_inventory pi
-                   ON pi.product_inventory_id = ur.udr_subscriber_ref_id
-            WHERE  ur.billrun_ref_id  = ${runId}
-              AND  ur.billrun_ban_id  = ${ban}
-              AND  ur.billrun_attempt = ${attempt}
-              AND  ur.status = 'BILL_DRAFT'
-            GROUP BY pi.product_offering_id, ur.udr_type
-          ),
-          ins_header AS (
-            INSERT INTO billing.customer_bill
-              (ref_bill_run_id, ref_billing_account_id, period_partition,
-               category, state, billing_period_start, billing_period_end,
-               subtotal, tax_total, total_amount, payment_due_date)
-            SELECT ${runId}, ${ban}, date_trunc('month', ${PERIOD_START}::date)::date,
-                   'trial', 'new', ${PERIOD_START}::date, ${PERIOD_END}::date,
-                   '0.00', '0.00', '0.00',
-                   ${GL_EVENT_AT}::date
-                     + COALESCE(ba.payment_due_days_override, bc.payment_due_days)
-            FROM   billing.billing_account ba
-            JOIN   billing.bill_cycle bc ON bc.bill_cycle_id = ba.ref_bill_cycle_id
-            WHERE  ba.billing_account_id = ${ban}
-            RETURNING customer_bill_id, period_partition
-          )
-          INSERT INTO billing.customer_bill_line
-            (ref_customer_bill_id, period_partition, line_no, source, line_type,
-             ref_product_offering_id, udr_type, description, quantity, unit,
-             gross_amount, discount_amount, net_amount, udr_count, grouping_key, currency)
-          SELECT h.customer_bill_id, h.period_partition,
-                 row_number() OVER (ORDER BY grp.grouping_key) AS line_no,
-                 'USAGE', 'charge',
-                 grp.product_offering_id, grp.udr_type, po.name,
-                 grp.qty, grp.unit,
-                 grp.gross, '0.00', grp.gross,
-                 grp.udr_count, grp.grouping_key, grp.currency
-          FROM   grp
-          JOIN   product.product_offering po
-                 ON po.product_offering_id = grp.product_offering_id
-          CROSS JOIN ins_header h
-        `;
-        await tx`
-          WITH s AS (
-            SELECT cb.customer_bill_id, cb.period_partition, cb.tax_total,
-                   COALESCE(SUM(l.net_amount), '0.00')::numeric(18,2) AS net
-            FROM   billing.customer_bill cb
-            LEFT   JOIN billing.customer_bill_line l
-                   ON l.ref_customer_bill_id = cb.customer_bill_id
-                  AND l.period_partition = cb.period_partition
-            WHERE  cb.ref_bill_run_id = ${runId}
-              AND  cb.ref_billing_account_id = ${ban}
-              AND  cb.period_partition = date_trunc('month', ${PERIOD_START}::date)::date
-            GROUP BY cb.customer_bill_id, cb.period_partition, cb.tax_total
-          )
-          UPDATE billing.customer_bill cb
-          SET    subtotal = s.net,
-                 total_amount = s.net + s.tax_total
-          FROM   s
-          WHERE  cb.customer_bill_id = s.customer_bill_id
-            AND  cb.period_partition = s.period_partition
-        `;
+      await runAggregation(sql, {
+        runId,
+        ban,
+        attempt,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        glEventAt: GL_EVENT_AT,
       });
     }
 

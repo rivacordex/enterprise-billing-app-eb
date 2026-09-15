@@ -84,6 +84,12 @@ $$;
 -- `product.product_offering` (the grain id itself is denormalized on
 -- `product_inventory` and needs no product read). USAGE only — no write of any
 -- kind on `product` anywhere in this file (bm28 guardrail).
+-- `ordering` is added by bm29 (§Implementation §3): the recurring price resolver
+-- COALESCEs an `ordering.order_item_price_override` over the catalog
+-- `product.product_offering_price` (Step 8). USAGE only — no write of any kind on
+-- `ordering` anywhere in this file (bm29 guardrail). (`product_order_item` needs
+-- no read: the override joins on `product_inventory.product_order_item_id`, which
+-- is denormalized on the inventory row already read for correlation.)
 GRANT USAGE ON SCHEMA "billing"   TO billrun_runtime;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA "rating"    TO billrun_runtime;
@@ -91,6 +97,8 @@ GRANT USAGE ON SCHEMA "rating"    TO billrun_runtime;
 GRANT USAGE ON SCHEMA "inventory" TO billrun_runtime;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA "product"   TO billrun_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SCHEMA "ordering"  TO billrun_runtime;
 --> statement-breakpoint
 
 -- Step 4 — the id sequences the trial-bill INSERTs default through.
@@ -288,13 +296,19 @@ CREATE TRIGGER billrun_status_guard_trg
 -- product_inventory.billing_account_id — Inv #25/D32). bm28 adds
 -- `product.product_offering` (§3): Aggregation reads the offering NAME for a
 -- USAGE line's `description` — SELECT only, no write on `product` anywhere here.
+-- bm29 adds `product.product_offering_price` + `ordering.order_item_price_override`
+-- (§3): the recurring price resolver reads the flat catalog price as-of the run
+-- period and COALESCEs an order-item override over it — SELECT only, no write on
+-- `product` or `ordering` anywhere in this file (bm29 guardrail; Inv #20/#28).
 GRANT SELECT ON TABLE
   "billing"."bill_run",
   "billing"."bill_run_account",
   "billing"."billing_account",
   "billing"."bill_cycle",
   "inventory"."product_inventory",
-  "product"."product_offering"
+  "product"."product_offering",
+  "product"."product_offering_price",
+  "ordering"."order_item_price_override"
 TO billrun_runtime;
 --> statement-breakpoint
 

@@ -132,6 +132,10 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
       groupingKey: "PRDOFR00000001:RAN_USAGE",
       currency: "MYR",
       udrCount: 1,
+      snapshotPriceRef: null,
+      snapshotUnitPrice: null,
+      snapshotQuantity: null,
+      snapshotEffectiveDate: null,
       ...over,
     });
     mockListLines.mockResolvedValue([
