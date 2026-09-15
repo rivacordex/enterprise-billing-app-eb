@@ -141,11 +141,14 @@ describe.skipIf(!databaseUrl)(
       return off!.productOfferingId;
     }
 
-    // A flat recurring catalog price effective from `startIso` (monthly period).
+    // A flat recurring catalog price effective from `startIso` (monthly period);
+    // `currency` defaults to the account currency (MYR) — pass a different code to
+    // exercise the RECURRING_CURRENCY_MISMATCH HARD check.
     async function newRecurringPrice(
       offeringId: string,
       amount: string,
       startIso: string,
+      currency = "MYR",
     ): Promise<string> {
       const [row] = await sql<{ product_offering_price_id: string }[]>`
         INSERT INTO product.product_offering_price
@@ -153,7 +156,7 @@ describe.skipIf(!databaseUrl)(
            recurring_charge_period_type, amount, currency, pricing_model, start_date_time)
         VALUES
           (${offeringId}, 'BM29 Recurring', 'recurring', 1, 'months',
-           ${amount}, 'MYR', 'flat', ${startIso}::timestamptz)
+           ${amount}, ${currency}, 'flat', ${startIso}::timestamptz)
         RETURNING product_offering_price_id
       `;
       return row!.product_offering_price_id;
@@ -598,6 +601,31 @@ describe.skipIf(!databaseUrl)(
           /RECURRING_PRICE_NOT_FOUND/,
         );
         expect(await readBill(missingRun, missingBan)).toBeUndefined();
+      },
+      120_000,
+    );
+
+    it(
+      "[CRITICAL] a recurring price in a currency other than the account currency " +
+        "fails HARD (RECURRING_CURRENCY_MISMATCH) and produces no bill — a foreign " +
+        "price is never summed into the bill (Inv #28)",
+      async () => {
+        const ban = await newAccount("Currency"); // account currency MYR
+        const off = await newOffering("Foreign-Priced Offering");
+        const runId = "BRN-BM29-09";
+        await newRecurringPrice(off, "20.00", "2026-01-01T00:00:00Z", "USD"); // != MYR
+        await newRun(runId);
+        await newInventory({
+          piId: "PRDINV-BM29-C0",
+          ban,
+          offeringId: off,
+          quantity: 1,
+          orderItemId: "_bm29-oi-C0",
+        });
+        await expect(aggregate(runId, ban, 1)).rejects.toThrow(
+          /RECURRING_CURRENCY_MISMATCH/,
+        );
+        expect(await readBill(runId, ban)).toBeUndefined();
       },
       120_000,
     );

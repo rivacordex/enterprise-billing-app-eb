@@ -183,6 +183,16 @@ enumerations were trimmed to key facts + decisions. Full history:
     - **(docs) Flow/template comments corrected** — the resolver window is NOT
       filtered to `pricing_model='flat'` (it must SEE a current `tiered` price so
       D33 can fail it); the header now says so.
+    - **(robustness) RECURRING currency assertion (owner-requested review, 2026-09-15).**
+      The resolver stamped the resolved price currency on the line and summed
+      amounts into `subtotal` but never compared it to `billing_account.currency`
+      (catalog/override currencies are free 3-char fields, not tied to the account)
+      — unlike the USAGE path, which bm27 Validation already guards. Added a HARD
+      check in the D33 `DO` block (`RECURRING_CURRENCY_MISMATCH`) that rolls the
+      account back when a resolved recurring price's currency differs from the
+      account's, alongside the missing/tiered checks; the shared flow-double carries
+      it and a new regression case (a USD price on an MYR account fails HARD, no
+      bill) covers it. DB suites now bm29 **8/8**.
     - **Accepted as documented limitations (owner decision):** on rerun the prior
       RECURRING line is reused at offering grain (frozen qty/price) — the specified
       snapshot-authority behavior (Inv #20); a same-period add/cancel is mitigated
