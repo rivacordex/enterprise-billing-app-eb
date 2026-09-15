@@ -3,10 +3,12 @@
 # This skeleton documents (a) the stage contract the app records against and
 # (b) the key activities each stage must perform. Not-yet-built activities are a
 # `# STUB:` marker naming what replaces them; the `validation` + `collection`
-# stages carry `# REAL (bm27):` contract text and `aggregation` carries
+# stages carry `# REAL (bm27):` contract text, `aggregation` carries
 # `# REAL (bm28):` (the real USAGE aggregation into customer_bill_line) plus
-# `# REAL (bm29):` (the RECURRING price resolver + its D33 HARD-fail branch) —
-# the real SQL ships in the separate workflow-management repo. See ./README.md.
+# `# REAL (bm29):` (the RECURRING price resolver + its D33 HARD-fail branch), and
+# `verification` carries `# REAL (bm30):` (SOFT non-positive-total sanity + the
+# HARD USAGE bill↔charge reconciliation) — the real SQL ships in the separate
+# workflow-management repo. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -134,9 +136,40 @@ tasks:
       - id: taxation
         # STUB: write one tax line (configured single rate) + recompute
         #       tax_total/total_amount IN SQL. REAL: jurisdiction/category tax rules.
-      # --- verification ---
+      # --- verification (reads customer_bill_line + rating.udr_rated; billrun_runtime) ---
       - id: verification
-        # STUB: sanity checks (e.g. non-negative total => SOFT finding). Placeholder: pass.
+        # REAL (bm30): the detective control (Inv #3 corollary). The write boundary
+        #   (bm14) and the checksum (bm31) are preventive/tamper-evident — neither can
+        #   see that Aggregation summed the WRONG set. Verification replays the
+        #   aggregation independently and compares. SELECT-only, writes nothing; it
+        #   reads four tables, ALL already SELECT-granted (no new grant):
+        #   customer_bill_line + customer_bill (bm23/bm14), rating.udr_rated (bm14) and
+        #   inventory.product_inventory (bm27, the replay correlation).
+        #   - HARD bill<->charge reconciliation: for EVERY USAGE `charge` line, replay
+        #     the account's claimed BILL_DRAFT udr_rated rows for the line's stored
+        #     grouping_key (product_offering_id:udr_type, re-resolved through
+        #     inventory.product_inventory — the SAME correlation bm28 used to form the
+        #     grouping_key), scoped to (billrun_ref_id, billrun_ban_id,
+        #     billrun_attempt), and assert SUM(udr_rated_price) = line.gross_amount AND
+        #     COUNT(*) = line.udr_count (compared null-safe via IS DISTINCT FROM). The
+        #     count guards against a sum that matches by coincidence over the wrong row
+        #     set. Any mismatch => the account's verification stage signals FAILED,
+        #     error_class='HARD', error_code='RECONCILIATION_MISMATCH', error_detail
+        #     naming the account + line(s) => PROCESSING_FAILED, surfaced on the Errors
+        #     tab for rerun; it must NEVER auto-pass to approval (a mismatch means the
+        #     bill is provably wrong).
+        #   - SCOPE (line-anchored): this catches a stored line that diverges from a
+        #     faithful re-sum of its rows. It does NOT catch a wholly-MISSING line, nor
+        #     a systematic bug in the shared grouping/correlation logic (the replay
+        #     would reproduce it) — those are the aggregation unit's own tests (bm28).
+        #   - USAGE `charge` lines ONLY. RECURRING lines have no udr_rated source
+        #     (their correctness is the bm29 price snapshot, not a reconciliation);
+        #     non-`charge` line_types (discount/adjustment, unbuilt this phase) are
+        #     EXCLUDED, coded forward-compat.
+        #   - SOFT non-positive-total sanity (runs only when reconciliation passes):
+        #     customer_bill.total_amount <= 0 => stage DONE + a SOFT finding
+        #     (advisory, NEVER blocks — bm07 behaviour preserved); otherwise DONE.
+        #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
 errors:
   - id: on_error
     # STUB: POST a terminal per-account/run failure to the app status endpoint.
