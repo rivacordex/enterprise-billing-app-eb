@@ -8,20 +8,15 @@
 import Link from "next/link";
 
 import { RunStatusBadge } from "@/components/billing/run-status-badge";
-import { PlaceholderBadge } from "@/components/billing/placeholder-banner";
 import { TriggerRunDialog } from "@/components/billing/trigger-run-dialog";
 import { formatCalendarDate } from "@/lib/formatters";
 import type { RunListRow } from "@/types/billing";
 
 export interface RunActionCardProps {
   run: RunListRow;
-  placeholderMode: boolean;
 }
 
-export function RunActionCard({
-  run,
-  placeholderMode,
-}: RunActionCardProps): React.JSX.Element {
+export function RunActionCard({ run }: RunActionCardProps): React.JSX.Element {
   return (
     <div className="rounded-md border border-[color:var(--color-primary-200)] bg-card p-4 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -34,7 +29,6 @@ export function RunActionCard({
               {run.billRunId}
             </Link>
             <RunStatusBadge status={run.status} />
-            {placeholderMode && <PlaceholderBadge />}
           </div>
           <div className="text-body-sm text-muted-foreground">
             Period{" "}

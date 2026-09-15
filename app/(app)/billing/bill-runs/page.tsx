@@ -3,8 +3,6 @@ import type { Metadata } from "next";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { BillRunList } from "@/components/billing/bill-run-list";
-import { PlaceholderBanner } from "@/components/billing/placeholder-banner";
-import { isBillrunPlaceholderMode } from "@/lib/config";
 import { reportError } from "@/lib/logger";
 import { listActiveBillCycles } from "@/services/accounts/bill-cycle";
 import { getBusinessToday } from "@/services/billing/business-today";
@@ -83,13 +81,10 @@ export default async function BillRunsPage({
         </p>
       </div>
 
-      {isBillrunPlaceholderMode && <PlaceholderBanner />}
-
       <BillRunList
         page={page}
         cycles={cycles.map((c) => ({ id: c.billCycleId, name: c.name }))}
         hasCycles={cycles.length > 0}
-        placeholderMode={isBillrunPlaceholderMode}
         activeCycle={parsed.cycle}
         activeStatus={parsed.status}
       />

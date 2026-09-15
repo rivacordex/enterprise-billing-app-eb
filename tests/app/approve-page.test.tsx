@@ -10,8 +10,6 @@ import { render } from "@testing-library/react";
 // merely hidden); an invalid or unknown run resolves to `notFound()`;
 // force-dynamic.
 
-const configState = { placeholder: false };
-
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/get-approve-preview", () => ({
   getApprovePreview: vi.fn(),
@@ -23,19 +21,11 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn(),
   getAppTimezone: vi.fn(),
 }));
-vi.mock("@/lib/config", () => ({
-  get isBillrunPlaceholderMode() {
-    return configState.placeholder;
-  },
-}));
 vi.mock("@/components/billing/approve-and-post-panel", () => ({
   ApproveAndPostPanel: () => <div data-testid="approve-panel" />,
 }));
 vi.mock("@/components/billing/posting-progress-view", () => ({
   PostingProgressView: () => <div data-testid="posting-progress-view" />,
-}));
-vi.mock("@/components/billing/placeholder-banner", () => ({
-  PlaceholderBanner: () => <div data-testid="placeholder-banner" />,
 }));
 
 import ApproveAndPostPage from "@/app/(app)/billing/bill-runs/[runId]/approve/page";
@@ -87,7 +77,6 @@ const PREVIEW = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  configState.placeholder = false;
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -142,17 +131,6 @@ describe("ApproveAndPostPage (bm10-spec §Implementation §3)", () => {
   it("propagates the /login redirect for an unauthenticated request", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/login"));
     await expect(ApproveAndPostPage(props())).rejects.toThrow("NEXT_REDIRECT");
-  });
-
-  it("shows PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is on", async () => {
-    configState.placeholder = true;
-    const { queryByTestId } = render(await ApproveAndPostPage(props()));
-    expect(queryByTestId("placeholder-banner")).not.toBeNull();
-  });
-
-  it("hides PlaceholderBanner when BILLRUN_PLACEHOLDER_MODE is off", async () => {
-    const { queryByTestId } = render(await ApproveAndPostPage(props()));
-    expect(queryByTestId("placeholder-banner")).toBeNull();
   });
 
   it("renders PostingProgressView (not the approve panel) once the run is APPROVED", async () => {

@@ -5,8 +5,6 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { ApproveAndPostPanel } from "@/components/billing/approve-and-post-panel";
 import { PostingProgressView } from "@/components/billing/posting-progress-view";
-import { PlaceholderBanner } from "@/components/billing/placeholder-banner";
-import { isBillrunPlaceholderMode } from "@/lib/config";
 import { formatCurrency, formatDatetime } from "@/lib/formatters";
 import { getApprovePreview } from "@/services/billing/read/get-approve-preview";
 import { getPostingProgress } from "@/services/billing/read/get-posting-progress";
@@ -63,7 +61,6 @@ export default async function ApproveAndPostPage({
     }
     return (
       <main className="space-y-6 p-6">
-        {isBillrunPlaceholderMode && <PlaceholderBanner />}
         <PostingProgressView
           progress={progress}
           cycleName={preview.cycleName}
@@ -89,7 +86,6 @@ export default async function ApproveAndPostPage({
 
   return (
     <main className="space-y-6 p-6">
-      {isBillrunPlaceholderMode && <PlaceholderBanner />}
       <ApproveAndPostPanel
         preview={preview}
         triggeredAtDisplay={triggeredAtDisplay}

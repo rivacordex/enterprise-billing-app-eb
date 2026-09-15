@@ -74,6 +74,104 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase M — **bm33 (Retire `BILLRUN_PLACEHOLDER_MODE`) —
+  DELIVERED (2026-09-15).** See
+  `context/billing-management/specs/bm33-retire-placeholder-mode.md`.
+  App-side cleanup; no schema, flow, or grant change. The bill-run screens no
+  longer carry a warning that contradicts what the real pipeline (bm30) now
+  does; seed provenance + the prod guard remain. **The third §0 reversal;
+  architecture Inv #15 stays a retired tombstone — the number is never
+  reused.** Landed this pass:
+  - **Flag + accessor deleted (`lib/config.ts`, Inv #15 tombstone).**
+    `BILLRUN_PLACEHOLDER_MODE` removed from the env schema and `loadConfig`,
+    the `isBillrunPlaceholderMode` accessor deleted, the `.env.example` block
+    removed, and the `BILLRUN_PLACEHOLDER_MODE` case dropped from
+    `tests/lib/config.test.ts`. `BILLRUN_DISTRIBUTION_FORCE_FAIL`'s doc comment
+    corrected (no longer "against the deployed placeholder flow"; now the
+    `DISTRIBUTION_FAILED` injection switch) — **the flag itself stays** (bm34
+    uses it to force a mandatory-target failure).
+  - **Banner/badge + every call site deleted.**
+    `components/billing/placeholder-banner.tsx` (`PlaceholderBanner` +
+    `PlaceholderBadge`) removed; the `placeholderMode` prop stripped from
+    `bill-run-list.tsx`/`run-action-card.tsx`; the imports/renders removed from
+    the three pages (`bill-runs/page.tsx`, `[runId]/page.tsx`,
+    `[runId]/approve/page.tsx`) — `[runId]/page.tsx` keeps its
+    `billRunStallThresholdMinutes` config import; the stale `PlaceholderBanner`
+    comment in `bill-runs-empty-state.tsx` corrected. Component/page tests
+    (`run-action-card.test.tsx`, `bill-run-detail-page.test.tsx`,
+    `bill-runs-page.test.tsx`, `approve-page.test.tsx`) drop the prop, the
+    banner mock, and the two placeholder-banner assertions each; the two page
+    tests that no longer import `@/lib/config` drop that mock entirely. **No
+    replacement banner** (code-standards §4.2 — no quieter "seeded data"
+    badge).
+  - **Smoke script: flag gate dropped, `_SAMPLE_` gates kept (D31).**
+    `scripts/billrun-live-kestra-smoke.ts` no longer requires
+    `BILLRUN_PLACEHOLDER_MODE=true`; the fail-closed `_SAMPLE_` provenance
+    gates (every scoped account under `_SAMPLE_-BILLRUN-0001`, every candidate
+    charge `_SAMPLE_`-marked) remain and are now the SOLE safety boundary
+    against real data, since the run drives the real flow. Header + safety-gate
+    comments updated; the now-unused `config` import dropped (only
+    `isBillRunEngineConfigured` kept).
+  - **Guardrails.** §9.8 (non-production ledger isolation) and §9.16 (seed
+    provenance + prod guard) were already rescoped off the flag in
+    `billmgmt-code-standards.md`; `billing-sample-seed-marker.test.ts` +
+    `billing-sample-seed-boundary.test.ts` are unchanged and green. New static
+    gate `tests/guardrails/billrun-placeholder-retirement.test.ts` scans the
+    source tree (comments stripped) and asserts no live reference to any of the
+    five retired identifiers remains, the component file is deleted, and
+    `lib/config.ts` no longer defines the flag/accessor (while
+    `BILLRUN_DISTRIBUTION_FORCE_FAIL` stays).
+  - **Docs.** `billmgmt-ui-context.md` §6 and `billmgmt-code-standards.md`
+    §4.2/§9.8/§9.16 already record the retirement (phase-3 planning);
+    architecture Inv #15 is already the tombstone (D31). `README.md`'s flag
+    mention (Part 3 "Turn on placeholder mode" step + the placeholder-badge
+    prose) removed; the `.env.example` sample-seed note reworded from "in
+    placeholder mode" to "against the real flow".
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier
+    --check` clean on all changed TS/TSX/MD; DB-free suites green —
+    `tests/lib/config.test.ts` **55/55**, and `tests/guardrails` +
+    `tests/components/billing` + `tests/app` **353/353** (incl. the new
+    retirement gate and the unchanged seed-marker/boundary gates). No
+    schema/flow/grant change, so no DB-gated run needed.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified (gate + seed guardrails 14/14; tsc/eslint/prettier clean).**
+    The retirement refactor itself (config/components/pages/smoke-script logic)
+    reviewed clean; every finding was in the NEW grep gate or a stale comment.
+    - **(gate correctness) `stripLineComments` made cross-line.** The initial
+      stripper reset its string/template state per line, so a `//` on a
+      continuation line of a multiline template literal (e.g. a `://` URL)
+      wrongly truncated the line — a latent false negative that could hide a
+      reintroduced identifier. Replaced with the proven cross-line state
+      machine (mode/stringChar/interpDepth persisted across lines) that the
+      accounts grep gates established; the "same precedent" comment is now
+      accurate.
+    - **(gate scope) `types/` + `auth/` added to `SCAN_DIRS`.** The deleted
+      `placeholderMode` prop rode on shared billing types; the scan omitted
+      `types/` and `auth/`, so a reintroduction confined to a bare type field
+      would have escaped. Both roots now scanned (gate still green — neither
+      holds a retired identifier).
+    - **(gate vacuity) per-root non-empty guard added.** The `> 100` aggregate
+      floor is dominated by `tests/` and would stay green if a code root
+      silently collected zero files (rename/casing/collector regression). A new
+      assertion requires every `SCAN_DIR` to contribute ≥1 file, so a per-root
+      scan collapse now fails loudly.
+    - **(stale comment) `billing-sample-seed-marker.test.ts` header corrected.**
+      Its comment still cited `BILLRUN_PLACEHOLDER_MODE` and the per-page badge
+      tests this unit deleted (a now-false cross-reference); reworded to the
+      surviving seed-provenance half (the flag/badge half is retired, D31). The
+      test's assertions are unchanged.
+    - **Reviewed and NOT changed (with rationale):** the `collectFiles`/source-
+      scan machinery duplicates an unexported helper already forked across ~8
+      guardrail files — the established module convention, out of bm33's
+      boundary to unify; the eager full-tree `readFileSync` is a single O(n)
+      pass (~tens of ms, ~6 MB) serving the offender scan, not worth a lazy
+      rewrite; the two `.not.toContain` config negatives are technically
+      subsumed by the tree scan but kept as readable file-pinned assertions
+      (and are marginally stricter — plain substring vs `\b`-bounded); the
+      README "local placeholder flow" prose and the smoke-script header/gate
+      rationale overlap are about the Kestra flow (out of scope) or benign
+      accurate repetition.
+
 - Phase 3 · Phase M — **bm32 (Uncharged Redefinition + Per-Record Exception
   Surface) — DELIVERED and DB-VERIFIED against a disposable Postgres
   (2026-09-15).** See
