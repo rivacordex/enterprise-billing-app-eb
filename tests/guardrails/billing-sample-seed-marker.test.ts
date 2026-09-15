@@ -6,17 +6,17 @@ import {
   type SampleChargeSpec,
 } from "@/db/seeds/sample/udr-rated-sample";
 
-// bm21-spec §Implementation §1, code-standards §9 item 16 — "Placeholder
-// isolation, phase-2 additions (bm15): while BILLRUN_PLACEHOLDER_MODE is
-// set, every run is badged [already asserted per-page, e.g.
-// tests/app/bill-runs-page.test.tsx] AND seeded udr_rated is
-// `_SAMPLE_*`-marked". The badge half already had page-level coverage; this
-// closes the second half, which had none — a pure, DB-free assertion against
-// the D28 stand-in factory `buildSampleUdrRatedRow` (db/seeds/sample/
+// bm21-spec §Implementation §1, code-standards §9 item 16 (rescoped phase 3 by
+// bm33 D31) — seed provenance. The former "badge half" is GONE:
+// `BILLRUN_PLACEHOLDER_MODE` and the per-page placeholder-badge assertions were
+// retired by bm33 (the flag's copy is false once the real flow deploys). What
+// survives, and what this asserts, is the seed-provenance half: every seeded
+// `rating.udr_rated` row is `_SAMPLE_*`-marked. A pure, DB-free assertion
+// against the D28 stand-in factory `buildSampleUdrRatedRow` (db/seeds/sample/
 // udr-rated-sample.ts) that `db:seed-sample` uses to build every unclaimed
-// `rating.udr_rated` charge it seeds. Never a live-DB round trip: the
-// factory is a pure function, and the marker is a property of its OUTPUT
-// SHAPE, not of anything only Postgres could tell us.
+// charge it seeds. Never a live-DB round trip: the factory is a pure function,
+// and the marker is a property of its OUTPUT SHAPE, not of anything only
+// Postgres could tell us.
 const SAMPLE_MARKER = /^_SAMPLE_/;
 
 const BASE_SPEC: SampleChargeSpec = {

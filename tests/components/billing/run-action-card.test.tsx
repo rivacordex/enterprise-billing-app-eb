@@ -39,7 +39,7 @@ const row: RunListRow = {
 
 describe("bill-run list drill-in link", () => {
   it("RunActionCard renders the run id as a link to the run detail page", () => {
-    render(<RunActionCard run={row} placeholderMode={false} />);
+    render(<RunActionCard run={row} />);
 
     const link = screen.getByRole("link", { name: "BRN00000001" });
     expect(link.getAttribute("href")).toBe("/billing/bill-runs/BRN00000001");
@@ -61,7 +61,6 @@ describe("bill-run list drill-in link", () => {
         page={historical}
         cycles={[]}
         hasCycles
-        placeholderMode={false}
         activeCycle={null}
         activeStatus={null}
       />,
