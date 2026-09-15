@@ -3,8 +3,9 @@
 # This skeleton documents (a) the stage contract the app records against and
 # (b) the key activities each stage must perform. Not-yet-built activities are a
 # `# STUB:` marker naming what replaces them; the `validation` + `collection`
-# stages carry `# REAL (bm27):` contract text — the real correlation/claim SQL
-# ships in the separate workflow-management repo. See ./README.md.
+# stages carry `# REAL (bm27):` contract text and `aggregation` carries
+# `# REAL (bm28):` (the real USAGE aggregation into customer_bill_line) — the
+# real SQL ships in the separate workflow-management repo. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -52,13 +53,39 @@ tasks:
         #   product_inventory (or to an out-of-scope account) is NOT in `correlated`,
         #   so it is left at RATED, unclaimed and UNTOUCHED — never filtered out
         #   silently, never failing the account (it becomes bm32's orphan surface).
-      # --- aggregation (writes billing.customer_bill as billrun_runtime) ---
+      # --- aggregation (writes billing.customer_bill + customer_bill_line as billrun_runtime) ---
       - id: aggregation
-        # STUB: sum the account's BILL_DRAFT udr_rated into ONE customer_bill row
-        #       (category=trial, subtotal=SUM(amount), period from inputs). Placeholder
-        #       aggregation only — REAL: correlation, discounts, bundles, adjustments.
-        #       Rerun-safe: re-derive via billing.billrun_delete_trial_bill(run,ban)
-        #       (scoped SECURITY DEFINER — bm14 T10) + INSERT; never a direct DELETE.
+        # REAL (bm28): group the account's claimed BILL_DRAFT usage into
+        #   billing.customer_bill_line at (product_offering_id, udr_type) grain,
+        #   ROLLED UP ACROSS SUBSCRIPTIONS (Inv #3) — product_offering_id is the
+        #   denormalized column on inventory.product_inventory
+        #   (udr_subscriber_ref_id -> product_inventory.product_offering_id), so an
+        #   account with 3 subscriptions of one offering and 500 of another shows
+        #   2 charge lines, NOT 503. Each line stores udr_count (rows rolled in) +
+        #   the grouping_key, gross/net = SUM(udr_rated_price), quantity =
+        #   SUM(udr_usage_quantity), currency = the account's usage currency, and
+        #   line_type='charge', source='USAGE'. discount_amount = '0.00' this phase
+        #   (no discount computed), so net_amount = gross_amount.
+        #   - line_no is DETERMINISTIC (Inv #21): row_number() OVER (ORDER BY
+        #     grouping_key), NEVER insertion order — a rerun reproduces identical
+        #     line_no values (the checksum ordering anchor bm31 + reconciliation
+        #     replay bm30 both depend on this).
+        #   - customer_bill.subtotal = SUM(customer_bill_line.net_amount) (Inv #3);
+        #     tax_total='0.00'/total_amount=subtotal this phase (Taxation SQL-
+        #     recomputes tax_total/total_amount from subtotal, no unit).
+        #   - WHOLE-ACCOUNT REPLACE (Inv #16, D22): re-derive via
+        #     billing.billrun_delete_trial_bill(run,ban) (scoped SECURITY DEFINER —
+        #     bm14 T10; lines cascade via ON DELETE CASCADE, bm23) + re-INSERT the
+        #     customer_bill header + its lines. NEVER an ON CONFLICT DO UPDATE and
+        #     NEVER a bare DELETE against customer_bill_line (billrun_runtime holds
+        #     no table DELETE on it — the guardrail asserts this).
+        #   - Money is summed in SQL (numeric), never JS float.
+        #   KNOWN LIMITATION (deferred): a zero-usage account (no lines this phase;
+        #   recurring is bm29) still gets a subtotal-0.00 customer_bill. Per Inv #22
+        #   a no-line account is Uncharged (no bill), and a 0.00 bill trips the
+        #   approval gate; treating it as Uncharged is the phase-3 Uncharged-tab
+        #   rework (code-standards §4.7), a SEPARATE later unit.
+        #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
       # --- taxation (writes billing.customer_bill_tax_item as billrun_runtime) ---
       - id: taxation
         # STUB: write one tax line (configured single rate) + recompute

@@ -183,12 +183,73 @@ export interface CustomerBillRow {
   totalAmount: string;
   paymentDueDate: string;
   taxItems: CustomerBillTaxItemRow[];
+  // bm28-spec §Implementation §4/§5 — the bill's `customer_bill_line` rows
+  // (the invoice's face), ordered by `lineNo`. Replaces bm05's synthetic
+  // "Stub charges (fixture)" line; an empty array means Aggregation wrote no
+  // usage line for this account (a zero-usage bill this phase).
+  lines: BillLineRow[];
   invoiceId: string | null;
   // bm19-spec §Implementation §5 — true once the posted INV's final artifact
   // is rendered + stored. `invoiceId` set but this `false` is the tolerated
   // render-pending state (D10); the tab must not offer `StoredInvoiceModal`
   // then (it would 404) — retry lives on the Posting progress view.
   hasStoredInvoice: boolean;
+}
+
+// bm28-spec §Design/§Implementation §4, code-standards §2.1. The phase-3
+// `customer_bill_line` domain unions — the typed mirror of the schema CHECKs
+// (db/migrations/0039), and the FIRST consumer of `customer_bill_line`. Every
+// line bm28 produces is `USAGE`/`charge`; `RECURRING` (bm29) and the reserved
+// `OCC` (unbuilt, Inv #16/D30), plus `discount`/`adjustment`, exist so a later
+// source or a bundle-level discount lands without a migration against a posted
+// table. The `ChargeSourceBadge` that renders `ChargeSource` first distinguishes
+// something in bm29 — bm28 introduces the union, not the badge.
+export const CHARGE_SOURCES = ["USAGE", "RECURRING", "OCC"] as const;
+export type ChargeSource = (typeof CHARGE_SOURCES)[number];
+
+export const LINE_TYPES = ["charge", "discount", "adjustment"] as const;
+export type LineType = (typeof LINE_TYPES)[number];
+
+// bm28-spec §Design/§Implementation §4, code-standards §2.8. One
+// `customer_bill_line` row — the invoice's face (`CustomerBillView` now composes
+// these, not `rating.udr_rated` rows; the `udr_rated` per-record drill-down is
+// reached by `groupingKey` on demand). Money fields are `string`
+// (code-standards §2.3); `udrType` is set for `USAGE` lines and `null` for
+// `RECURRING`; `quantity`/`unit`/`udrCount`/`description` are nullable to admit
+// both sources. Ordered by `lineNo` (deterministic, Inv #21).
+export interface BillLineRow {
+  customerBillLineId: string;
+  lineNo: number;
+  source: ChargeSource;
+  lineType: LineType;
+  refProductOfferingId: string;
+  udrType: string | null;
+  description: string | null;
+  quantity: string | null;
+  unit: string | null;
+  grossAmount: string;
+  discountAmount: string;
+  netAmount: string;
+  udrCount: number | null;
+  groupingKey: string;
+  currency: string;
+}
+
+// bm28-spec §Design "the udr_rated drill-down". One claimed `rating.udr_rated`
+// record behind a USAGE line's lazily-fetched `<details>` disclosure — the
+// per-record drill-down (`ratedLinesRepository.listClaimedForAccount`), fetched
+// on expand only (the bm18 fetch-on-open pattern), never eager: a volume account
+// can sit behind thousands of records. Timeline fields are ISO strings over the
+// server-action wire (a plain object, not a `Date` — it crosses to the client).
+export interface RatedLineRow {
+  udrId: string;
+  udrType: string;
+  startDatetime: string;
+  endDatetime: string;
+  udrUsageQuantity: string;
+  udrUsageUnit: string;
+  udrRatedPrice: string;
+  udrCurrency: string;
 }
 
 // bm07-spec §Design/§2. The Uncharged tab's read model — one row per

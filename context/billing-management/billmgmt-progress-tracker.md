@@ -74,6 +74,116 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase L — **bm28 (Real Aggregation (`USAGE`) + `BillLineTable`) —
+  DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm28-real-aggregation-usage-billlinetable.md`.
+  Boundary: the processing flow's `aggregation` stage (run as `billrun_runtime`)
+  + `db/bootstrap/billrun-db-roles.sql` (a `product` read grant) + the Customers
+  & Bills read path (`components/billing/bill-line-table.tsx`, a
+  `customer_bill_line` read + service, `types/billing.ts` unions). Turns bm27's
+  claimed `BILL_DRAFT` usage into the bill's charge record — one
+  `customer_bill_line` per `(product_offering_id, udr_type)` rolled up **across**
+  subscriptions (3 subs of one offering + 500 of another → **2** lines, not 503),
+  `customer_bill.subtotal = SUM(net_amount)`, re-derived via the whole-account
+  replace (`billrun_delete_trial_bill` + INSERT, never a per-line upsert or bare
+  DELETE), deterministic `line_no` ordered on `grouping_key`; and adds
+  `BillLineTable` to the Customers & Bills tab with the `udr_rated` drill-down
+  behind a lazily-fetched `<details>` disclosure. **The app stays record-only**
+  (`handle-stage-signal.ts` untouched) — the flow writes `customer_bill` +
+  `customer_bill_line` as `billrun_runtime`. Landed this pass:
+  - **`aggregation` stage — the real USAGE aggregation SQL.**
+    `bill_run_processing.template.yml` `aggregation` STUB replaced with the
+    `# REAL (bm28):` contract; `local-dev/bill_run_processing.yml` `aggregation`
+    no-op Log replaced with the real psql task (whole-account replace via
+    `billrun_delete_trial_bill`, then a single WITH-CTE `INSERT` — group claimed
+    `BILL_DRAFT` usage per `(product_offering_id, udr_type)` across subscriptions
+    with `row_number() OVER (ORDER BY grouping_key)` for `line_no`, insert the
+    trial header (`subtotal = SUM(net_amount)`, `tax_total='0.00'`,
+    `total_amount=subtotal`, `payment_due_date = gl_event_at +
+    coalesce(account override, cycle default)`), then its lines). Money summed in
+    SQL (`numeric`), `discount_amount='0.00'` so `net = gross`. `taxation` +
+    `verification` stay no-op Logs. README updated.
+  - **`db/bootstrap/billrun-db-roles.sql` — the product read grant.** Step 3
+    gains `GRANT USAGE ON SCHEMA "product"`; Step 8 extends the enumerated
+    read-context `GRANT SELECT` with `"product"."product_offering"` (the line
+    `description`). No INSERT/UPDATE/DELETE on `product` anywhere in the file.
+  - **Read path.** New `db/repositories/billing/customer-bill-line.repository.ts`
+    (`listForRun`, joined to its header, ordered by `line_no`);
+    `services/billing/read/list-account-bills.ts` composes the lines per bill in
+    the SAME repeatable-read snapshot as the bill + tax reads;
+    `types/billing.ts` gains `ChargeSource`/`LineType` (typed CHECK mirrors) +
+    `BillLineRow`/`RatedLineRow` read models, and `CustomerBillRow` gains
+    `lines[]`. The drill-down read is `services/billing/read/list-rated-lines.ts`
+    (reuses the read-only `ratedLinesRepository.listClaimedForAccount`) behind
+    the session-guarded `actions/billing/fetch-rated-lines.action.ts`
+    (`billrun_view:READ`, unaudited).
+  - **UI.** New `components/billing/bill-line-table.tsx` (server component — one
+    row per `customer_bill_line`, tabular-nums money, square radius; the
+    `discount_amount` column hidden while every value is `0.00`, §4.1c) + the
+    client `components/billing/usage-line-drill-down.tsx` (a native `<details>`
+    that fetches its `udr_rated` rows on expand only, the bm18 fetch-on-open
+    pattern). Wired into `CustomerBillTable`'s expander (replacing bm05's
+    synthetic "Stub charges (fixture)" line), `timezone` threaded through
+    `RunDetailTabs`. No new route/page/permission (the tab stays
+    `billrun_view:READ`, code-standards §8).
+  - **Guardrails.** New static grep boundary
+    `tests/guardrails/billing-customer-bill-line-replace-boundary.test.ts` (the
+    product read grant is SELECT-only, no write on `product`; billrun_runtime has
+    no DELETE/UPDATE on `customer_bill_line`; the flow re-derives via
+    `billrun_delete_trial_bill`, with NO `ON CONFLICT` and NO bare `DELETE`
+    against `customer_bill_line` — §9.9). New DB-gated flow-double
+    `tests/db/billrun-aggregation.integration.test.ts` (the SAME `billrun_runtime`
+    aggregation SQL): 3 subs of offering A + 20 of B → **exactly 2 lines** (§9.4)
+    with rolled-up `udr_count`; `SUM(net_amount) = subtotal`, `net = gross`
+    (§9.5); a re-run is a whole-account replace (fresh `customer_bill`, still 2
+    lines not 4, identical deterministic `line_no`, Inv #21). Extended
+    `tests/services/billing/list-account-bills.test.ts` (mocks the new line repo;
+    lines grouped to their own bill; shared snapshot).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/TSX/MD; both flow YAMLs parse (`js-yaml`).
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron
+    (git-ignored `docker-compose.test.yml`, project `ebill-test`, :5434; torn
+    down `down -v` after):** `billrun-aggregation` **2/2** (grain 2-lines, SUM,
+    whole-account-replace determinism); `billrun-db-roles` **34/34** (the
+    bootstrap incl. the new `product` grant applies cleanly) + regression
+    `billrun-collection-correlation` **4/4** = **38/38 green**. DB-free:
+    guardrails **77/77** (incl. the new replace-boundary + grep-gates 117/117),
+    `list-account-bills` **8/8**, and the full billing service+action suite
+    **388/388 green**.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified.** (a) **subtotal now derived from `SUM(net_amount)`** of the
+    written lines (spec §Impl step 4 / Inv #3 / §9.5), not the pre-line
+    `SUM(gross)` — a final `UPDATE … SET subtotal = SUM(net_amount),
+    total_amount = subtotal + tax_total` (LEFT JOIN so a zero-line bill stays
+    0.00) replaces the `tot` gross CTE, so it stays correct once a discount makes
+    `net <> gross` (bm29+); the DB-gated double mirrors it inside one `sql.begin`
+    transaction (matching the flow's `BEGIN;…COMMIT;`). (b) **The `udr_rated`
+    drill-down is now scoped per line grain** `(product_offering_id, udr_type)`
+    via a new `ratedLinesRepository.listClaimedForLine` (joins
+    `inventory.product_inventory` to resolve the offering; `app_runtime` already
+    holds SELECT there) — the prior account-level reuse + client `udrType` filter
+    showed every offering's records under every line (all bm28 usage is
+    `RAN_USAGE`) and re-fetched the whole account per line; the action/service/
+    component thread `productOfferingId` and the client filter is gone. (c)
+    **Guardrail hardened** — the "no bare DELETE" assertion now also matches the
+    partitioned-table `DELETE FROM ONLY …` form + `TRUNCATE`, and strips in-line
+    `--` SQL comments from the flow heredoc (symmetric with the ROLES_SQL path).
+    (d) **Dead `currency` prop/fallback removed** from `BillLineTable` (each line
+    carries its own NOT NULL `currency`); `colSpan` derived from `showDiscount`
+    (dropped the redundant `columnCount` prop).
+  - **Known limitation (deferred, owner decision 2026-09-15).** A scoped-in
+    account with ZERO usage lines this phase (recurring is bm29) still gets a
+    `customer_bill` with `subtotal 0.00`; per Inv #22 a no-line account is
+    Uncharged (no bill), and a 0.00 bill trips the approval gate
+    (`pre-approval-checks.ts` `checkPositiveTotals`). Simply skipping the header
+    would strand the account at posting (`postAccount` throws "no postable
+    customer_bill"). Proper handling — treating a no-line account as Uncharged
+    and keeping it off the postable/approval set — is the **phase-3 Uncharged-tab
+    rework (code-standards §4.7), a SEPARATE later unit**. It is only reachable
+    via the full live-Kestra E2E (deferred), not bm28's own tests. Documented in
+    the flow (`bill_run_processing.template.yml` + `local-dev/…yml` aggregation
+    comment).
+
 - Phase 3 · Phase L — **bm27 (Real Collection: Correlation & Claim) —
   DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
   `context/billing-management/specs/bm27-real-collection-correlation-claim.md`.

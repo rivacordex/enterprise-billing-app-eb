@@ -1,13 +1,16 @@
 // bm05-spec §Visual — the Customers & Bills tab: one row per trial
-// `customer_bill`, expandable to a single synthetic "Stub charges (fixture)"
-// line equal to the subtotal (real itemized lines arrive with the rating
-// engine — spec §Design "One synthetic stub line in v1"). bm06-spec §Visual
-// adds the Tax section to the expander (each `customer_bill_tax_item` as
-// `{category} @ {rate}% → {amount}`) and the tax-inclusive total. Server
-// component: the expander is a native `<details>` disclosure, so no client-side
-// state (and no `'use client'` leaf) is needed for it (code-standards §3.7).
+// `customer_bill`, expandable to its charges. bm06-spec §Visual adds the Tax
+// section to the expander (each `customer_bill_tax_item` as
+// `{category} @ {rate}% → {amount}`) and the tax-inclusive total. bm28-spec
+// §Implementation §5 replaces the phase-2 synthetic "Stub charges (fixture)"
+// line with `BillLineTable` — the real `customer_bill_line` charge record (the
+// invoice's face, Inv #3), each USAGE row's `udr_rated` drill-down fetched on
+// expand. Server component: the outer expander is a native `<details>`
+// disclosure (no `'use client'`); only the drill-down leaf is a client
+// component (code-standards §3.7).
 
 import { BillCategoryBadge } from "@/components/billing/bill-category-badge";
+import { BillLineTable } from "@/components/billing/bill-line-table";
 import {
   InvoicePreviewModal,
   StoredInvoiceModal,
@@ -19,12 +22,14 @@ export interface CustomerBillTableProps {
   billRunId: string;
   rows: CustomerBillRow[];
   locale: string;
+  timezone: string;
 }
 
 export function CustomerBillTable({
   billRunId,
   rows,
   locale,
+  timezone,
 }: CustomerBillTableProps): React.JSX.Element {
   if (rows.length === 0) {
     return (
@@ -80,18 +85,17 @@ export function CustomerBillTable({
                     </span>
                   </summary>
                   <div className="mt-2 rounded-sm border border-dashed border-border bg-[color:var(--surface-sunken)] p-2">
-                    <p className="flex items-center justify-between gap-4 tabular-nums">
-                      <span className="text-body-sm text-muted-foreground">
-                        Stub charges (fixture)
-                      </span>
-                      <span className="font-mono text-mono text-foreground">
-                        {formatCurrency(row.subtotal, row.currency, locale)}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-caption text-muted-foreground">
-                      No rating source yet — itemized charges arrive with the
-                      rating engine.
-                    </p>
+                    {/* bm28 — the invoice's face: one row per customer_bill_line
+                        (the stored charge record, Inv #3), each USAGE row's
+                        udr_rated drill-down fetched on expand. Replaces bm05's
+                        synthetic "Stub charges (fixture)" line. */}
+                    <BillLineTable
+                      billRunId={billRunId}
+                      billingAccountId={row.billingAccountId}
+                      lines={row.lines}
+                      locale={locale}
+                      timezone={timezone}
+                    />
                     {row.taxItems.length > 0 && (
                       <div className="mt-2 border-t border-dashed border-border pt-2">
                         {row.taxItems.map((item, index) => (

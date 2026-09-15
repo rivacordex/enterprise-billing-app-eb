@@ -79,11 +79,18 @@ $$;
 -- subscriber ref to a billing account through `inventory.product_inventory`
 -- (Inv #24), so the read-context set (Step 8) now spans it — USAGE only, never
 -- a write privilege of any kind on `inventory` (bm27 guardrail; Inv #25/D32).
+-- `product` is added by bm28 (§Implementation §3): Aggregation reads the
+-- offering NAME for a USAGE line's human-readable `description` from
+-- `product.product_offering` (the grain id itself is denormalized on
+-- `product_inventory` and needs no product read). USAGE only — no write of any
+-- kind on `product` anywhere in this file (bm28 guardrail).
 GRANT USAGE ON SCHEMA "billing"   TO billrun_runtime;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA "rating"    TO billrun_runtime;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA "inventory" TO billrun_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SCHEMA "product"   TO billrun_runtime;
 --> statement-breakpoint
 
 -- Step 4 — the id sequences the trial-bill INSERTs default through.
@@ -278,13 +285,16 @@ CREATE TRIGGER billrun_status_guard_trg
 -- → billing_account_id) but NEVER mutates it — SELECT only, and no INSERT/
 -- UPDATE/DELETE grant on `inventory` exists anywhere in this file (Step 3 grants
 -- schema USAGE only; a guardrail asserts nothing on the billing/flow side writes
--- product_inventory.billing_account_id — Inv #25/D32).
+-- product_inventory.billing_account_id — Inv #25/D32). bm28 adds
+-- `product.product_offering` (§3): Aggregation reads the offering NAME for a
+-- USAGE line's `description` — SELECT only, no write on `product` anywhere here.
 GRANT SELECT ON TABLE
   "billing"."bill_run",
   "billing"."bill_run_account",
   "billing"."billing_account",
   "billing"."bill_cycle",
-  "inventory"."product_inventory"
+  "inventory"."product_inventory",
+  "product"."product_offering"
 TO billrun_runtime;
 --> statement-breakpoint
 
