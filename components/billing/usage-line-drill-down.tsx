@@ -48,22 +48,32 @@ export function UsageLineDrillDown({
     if (!event.currentTarget.open || loadedRef.current) return;
     loadedRef.current = true;
     setState("loading");
-    const result = await fetchRatedLinesAction({
-      runId: billRunId,
-      billingAccountId,
-      productOfferingId,
-      udrType,
-    });
-    if (!result.ok) {
-      // Allow a retry on failure — a forbidden/invalid read shouldn't wedge
-      // the disclosure permanently closed to its own data.
+    try {
+      const result = await fetchRatedLinesAction({
+        runId: billRunId,
+        billingAccountId,
+        productOfferingId,
+        udrType,
+      });
+      if (!result.ok) {
+        // Allow a retry on failure — a forbidden/invalid read shouldn't wedge
+        // the disclosure permanently closed to its own data.
+        loadedRef.current = false;
+        setState(result.code === "FORBIDDEN" ? "forbidden" : "error");
+        return;
+      }
+      // Already scoped to this line's (offering, udr_type) server-side.
+      setRows(result.rows);
+      setState("ready");
+    } catch {
+      // The server action REJECTED (an unexpected server/DB error, or a
+      // non-redirect throw from the permission guard) rather than returning a
+      // typed { ok: false }. Reset loadedRef so re-opening the disclosure
+      // retries, and surface the error state instead of a frame stuck on
+      // "loading" forever.
       loadedRef.current = false;
-      setState(result.code === "FORBIDDEN" ? "forbidden" : "error");
-      return;
+      setState("error");
     }
-    // Already scoped to this line's (offering, udr_type) server-side.
-    setRows(result.rows);
-    setState("ready");
   }
 
   return (
