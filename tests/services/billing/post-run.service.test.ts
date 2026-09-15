@@ -36,8 +36,11 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
     findForAccount: vi.fn(),
   },
 }));
-vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
-  ratedLinesRepository: { computeChargeChecksum: vi.fn() },
+// bm31 — the posting `charge_checksum` moved off `ratedLinesRepository` (the
+// `udr_rated` claim) onto `customerBillLineRepository.computeChargeChecksum`
+// (the bill's own `customer_bill_line` content).
+vi.mock("@/db/repositories/billing/customer-bill-line.repository", () => ({
+  customerBillLineRepository: { computeChargeChecksum: vi.fn() },
 }));
 vi.mock("@/db/repositories/accounts/document.repository", () => ({
   documentRepository: { insert: vi.fn() },
@@ -77,7 +80,7 @@ vi.mock("@/services/billing/distribute-run", () => ({
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
-import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
+import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
 import { postDocument } from "@/services/accounts/post-document";
@@ -98,7 +101,7 @@ const mockListStatusesForRun = vi.mocked(
 const mockUpdateStatus = vi.mocked(billRunAccountRepository.updateStatus);
 const mockLockBill = vi.mocked(customerBillRepository.lockBillForPosting);
 const mockComputeChecksum = vi.mocked(
-  ratedLinesRepository.computeChargeChecksum,
+  customerBillLineRepository.computeChargeChecksum,
 );
 const mockStampPosted = vi.mocked(customerBillRepository.stampPosted);
 const mockFindForAccount = vi.mocked(customerBillRepository.findForAccount);
@@ -298,11 +301,12 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
       "INV00000001",
       "user-1",
     );
+    // bm31 — the checksum is now scoped by the bill (its own line content),
+    // not the (run, ban, attempt) `udr_rated` claim.
     expect(mockComputeChecksum).toHaveBeenCalledWith(
       txStub,
-      "BRN00000001",
-      "BAN00000001",
-      1,
+      "CBL00000001",
+      "2026-07-01",
     );
     expect(mockStampPosted).toHaveBeenCalledWith(
       txStub,

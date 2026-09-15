@@ -12,6 +12,7 @@ import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
+import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { customerBillTaxItem } from "@/db/schema/billing/customer-bill-tax-item";
 import { document } from "@/db/schema/billing/documents";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
@@ -254,6 +255,26 @@ describe.skipIf(!databaseUrl)(
           customerBillId: customerBill.customerBillId,
           periodPartition: customerBill.periodPartition,
         });
+      // bm31 — the finalized bill's `charge_checksum` is now hashed over
+      // `customer_bill_line` content (not `udr_rated`), so this synthetic
+      // aggregation must write at least one line or the posted checksum degrades
+      // to `md5('')` — the exact regression bm31 eliminates. One USAGE charge
+      // line whose net matches the header `subtotal` (100.00).
+      await db.insert(customerBillLine).values({
+        refCustomerBillId: row!.customerBillId,
+        periodPartition: row!.periodPartition,
+        lineNo: 1,
+        source: "USAGE",
+        lineType: "charge",
+        refProductOfferingId: "_E2E-OFFERING",
+        udrType: "RAN_USAGE",
+        grossAmount: "100.00",
+        discountAmount: "0.00",
+        netAmount: "100.00",
+        udrCount: 1,
+        groupingKey: "_E2E-OFFERING:RAN_USAGE",
+        currency: "MYR",
+      });
       return row!;
     }
 
@@ -833,20 +854,19 @@ describe.skipIf(!databaseUrl)(
           .where(eq(document.refBillingAccountId, banExcluded));
         expect(excludedDocs).toHaveLength(0);
 
-        // No billing-side charge copy (Inv. #3): the finalized bill carries
-        // only the checksum anchor, never a copy of the charge lines. FAILED
-        // and EXCLUDED accounts never got a customer_bill row at all.
+        // bm31-spec §Design (was bm19, Inv #3) — the finalized bill carries only
+        // the checksum ANCHOR, not a duplicate of the charge lines on the
+        // customer_bill header; the lines themselves live in
+        // `customer_bill_line`, which IS the charge record. FAILED and EXCLUDED
+        // accounts never got a customer_bill row at all.
         //
-        // bm19-spec §Design "Posting reads real udr_rated (Inv #3)" — the
-        // checksum is now `md5(...)` over the account's claimed
-        // `rating.udr_rated` rows for `(run, ban, posted_attempt)`, computed
-        // in SQL. This fixture never inserts any `rating.udr_rated` rows for
-        // `banBilled` (no rating-engine fixture exists in this synthetic
-        // journey), so the claimed set is empty and the checksum degrades to
-        // `md5('')` — still a deterministic, truthy 32-char hex string, so
-        // the `toBeTruthy()` assertion below is unaffected either way; this
-        // is NOT a proof that the checksum tracks real charge lines (that
-        // proof belongs to a rating-integrated fixture once one exists).
+        // The `charge_checksum` is `md5(...)` over this bill's OWN
+        // `customer_bill_line` content (bm31, re-anchored off `udr_rated`).
+        // `simulateProcessorAggregation` above writes one USAGE line, so the
+        // checksum is a REAL content-derived hash — assert it is not the `md5('')`
+        // empty-bill sentinel (the regression bm31 kills). The exhaustive
+        // content/ordering/tamper proofs live in
+        // customer-bill-line-checksum.integration.test.ts.
         const billedBillRows = await db
           .select()
           .from(customerBill)
@@ -855,7 +875,10 @@ describe.skipIf(!databaseUrl)(
         const finalizedBill = billedBillRows[0]!;
         expect(finalizedBill.category).toBe("normal");
         expect(finalizedBill.refInvDocumentId).toBe(billedDocs[0]?.documentId);
-        expect(finalizedBill.chargeChecksum).toBeTruthy();
+        expect(finalizedBill.chargeChecksum).toMatch(/^[0-9a-f]{32}$/);
+        expect(finalizedBill.chargeChecksum).not.toBe(
+          "d41d8cd98f00b204e9800998ecf8427e",
+        );
 
         const failedBillRows = await db
           .select()

@@ -74,6 +74,129 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase M — **bm31 (`charge_checksum` Re-anchored on
+  `customer_bill_line`) — DELIVERED and DB-VERIFIED against a disposable
+  Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm31-checksum-reanchor-customer-bill-line.md`.
+  Boundary: `db/repositories/billing`
+  (`customer-bill-line.repository.ts`, `rated-lines.repository.ts`) +
+  `services/billing/post-run.ts`. **App-side only; no schema, flow, or grant
+  change.** Moves the posting `charge_checksum` off the `udr_rated`-based
+  `computeChargeChecksum` (which yielded `md5('')` for a recurring-only bill —
+  recurring is derived, never claimed, so there are no `udr_rated` rows to hash)
+  onto a SQL-only checksum over the bill's OWN `customer_bill_line` content, now
+  that the line IS the charge record (Inv #3). Landed this pass:
+  - **`customer-bill-line.repository.ts` — the content checksum (spec §1).** New
+    SQL-only `computeChargeChecksum(tx, customerBillId, periodPartition)`:
+    `md5(COALESCE(string_agg(json_build_array(source, ref_product_offering_id,
+    COALESCE(udr_type,''), line_type, gross_amount::text, discount_amount::text,
+    net_amount::text)::text, ',' ORDER BY line_no), ''))` — ALL THREE money
+    columns (so a `net`-preserving discount shift still changes the hash —
+    tamper-evidence can't be defeated by a compensating pair), ordered by the
+    deterministic `line_no` (the total order bm29 assigns; see the code-review
+    fold below for why NOT `grouping_key`), encoded with `json_build_array`
+    (injective — a delimiter-laden `udr_type` can't forge a collision), never the
+    auto-generated `customer_bill_line_id` (Inv #3, D7a/D20). `numeric`→`text` in
+    SQL, no JS float (§2.4); the COALESCE makes an empty bill hash `md5('')`
+    rather than NULL-poisoning. Header
+    comment updated to record the checksum now lives here.
+  - **`post-run.ts` — switched to the line checksum (spec §2).** The
+    `ratedLinesRepository.computeChargeChecksum(tx, run.billRunId,
+    billingAccountId, bill.attemptCount)` call replaced with
+    `customerBillLineRepository.computeChargeChecksum(tx, bill.customerBillId,
+    bill.periodPartition)` — scoped by the bill, matching the fields
+    `postAccount` already holds; the `stampPosted({ refInvDocumentId,
+    postedAttempt, chargeChecksum })` write is unchanged.
+  - **`rated-lines.repository.ts` — trimmed to the read (spec §3).**
+    `computeChargeChecksum` removed (the unused `sql` import dropped); keeps only
+    the read-only drill-down (`listClaimedForAccount`/`listClaimedForLine`).
+    Header comment corrected to describe a read-only drill-down repository that
+    no longer owns the posting checksum; still writes no `rating.*` (the
+    `billing-rating-write-boundary` guardrail unaffected). The stale comment in
+    `customer-bill.repository.ts` (which pointed at rated-lines as the checksum's
+    home) is updated to point at `customer-bill-line.repository.ts`.
+  - **No new re-verification path (accepted residual, spec §Design).** bm31
+    re-anchors *what* is hashed; it does not add post-posting re-verification
+    (the checksum is still computed once at posting, D27 — no line trigger).
+    "Detectable" means the stamped value no longer matches a recomputation over
+    altered content.
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/MD; DB-free suites green — `tests/guardrails`
+    **80/80** (incl. `billing-rating-write-boundary` 4/4), `post-run.service`
+    **25/25** (checksum-call assertion re-pointed to `(tx, customerBillId,
+    periodPartition)`; the mock re-pointed to `customerBillLineRepository`),
+    `list-account-bills` **8/8**.
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron +
+    Azurite** (git-ignored `docker-compose.test.yml`, project `ebill-test`,
+    :5434/:10001; torn down `down -v` after). New DB-gated
+    `tests/db/customer-bill-line-checksum.integration.test.ts` **3/3**: a
+    recurring-only bill (RECURRING lines, no `udr_rated`) hashes non-empty and
+    ≠ `md5('')` (an empty bill is the only thing that hashes to `md5('')`); the
+    SAME line content under DIFFERENT auto-generated `customer_bill_line_id`s
+    yields the SAME checksum (content-derived, surrogate-independent) and a
+    recompute over unchanged content matches; altering `gross_amount` — and a
+    `net`-preserving `(gross +10, discount +10, net unchanged)` shift — each
+    change the checksum. Regressions `billrun-aggregation` **2/2** +
+    `billrun-recurring-aggregation` **8/8** stayed green (the shared
+    `customer_bill_line` writer is untouched).
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified (DB suites: checksum 3/3 + aggregation regressions 10/10 + e2e
+    happy-path 1/1; DB-free service+boundary 29/29).**
+    - **(CORRECTNESS) Checksum now orders by `line_no`, not `grouping_key`.** The
+      spec text said "ordered by the same `grouping_key` that assigns `line_no`",
+      but bm29 assigns `line_no` via `row_number() OVER (ORDER BY grouping_key,
+      source)` — the `source` tiebreaker exists because `grouping_key` is NOT a
+      total order (a USAGE line whose free-text `udr_type` is literally
+      'RECURRING' collides with a real RECURRING line's `offering:RECURRING` key).
+      `ORDER BY grouping_key` alone left that tied pair in a `string_agg` order
+      Postgres does not specify, so the stamp-time value and a later recompute
+      over identical content could differ (a false tamper alarm) — defeating the
+      "reproducible" guarantee. Switched to `ORDER BY line_no` (the deterministic
+      total order the spec intended); being an integer it also sidesteps
+      text-collation drift on an archived-invoice recompute.
+    - **(test) Tie + surrogate-independence coverage.** The checksum suite now
+      builds two bills from the SAME `(line_no, content)` set inserted in
+      OPPOSITE order — including a `grouping_key` TIE (USAGE `udr_type='RECURRING'`
+      + a real RECURRING line for the same offering) — and asserts equal
+      checksums, proving the hash follows `line_no`, not the auto-generated
+      `customer_bill_line_id` or physical insert order. The money test now
+      isolates EACH of `gross`/`discount`/`net` with single-column updates (a
+      gross+discount-only hash that silently dropped `net` would have passed the
+      old test), and asserts affected-row counts on every insert/update so a
+      silent zero-row fixture regression can't pass vacuously. RECURRING fixtures
+      use the realistic `offering:RECURRING` key shape.
+    - **(test) E2E ship-gate now exercises the re-anchor.**
+      `billing-e2e-happy-path` — `simulateProcessorAggregation` wrote only the
+      `customer_bill` header (no lines), so post-bm31 the posted checksum degraded
+      to `md5('')` and the `toBeTruthy()` assertion masked it (the exact
+      regression bm31 kills). It now writes one USAGE `customer_bill_line` and
+      asserts the finalized `charge_checksum` is a real 32-hex value `!=` the
+      `md5('')` sentinel; the stale `udr_rated`-anchor comment is corrected.
+    - **(docs) Stale rationale corrected.** `customer-bill.repository.ts`'s
+      relocated comment no longer cites the `billing-rating-write-boundary`
+      guardrail as the reason the checksum can't live there — that boundary is
+      about touching `rating.*`, which `customer-bill-line.repository.ts` doesn't
+      do, so it's not even in play; the real reason (co-locate the hash with the
+      lines it hashes) is stated. The method comment documents the
+      no-`line_type`/`source` scope and the header-lock reliance.
+    - **(robustness, follow-up fold) Injective serialization.** The initial
+      checksum concatenated fields with raw `|`/`,` delimiters; because `udr_type`
+      is free text with no CHECK, a value containing a delimiter could forge a
+      colliding hash (two distinct line sets serializing identically). Switched
+      each line to `json_build_array(...)::text` (JSON quotes/escapes every field,
+      so distinct content always yields distinct text); ordering by `line_no` is
+      unchanged. New regression case: a two-line bill and a one-line bill whose
+      `udr_type` embeds the inter-field/inter-row delimiters — byte-identical
+      under the old raw concat — now hash DIFFERENTLY. Spec §Design/§Impl SQL and
+      the SQL description above updated to match.
+    - **Reviewed and NOT changed (with rationale):** post-posting `udr_rated`
+      tampering is no longer anchored by the checksum — intended per Inv #3 (the
+      LINE is the charge record) and §Design's accepted "no post-posting
+      re-verification" residual. RECURRING `snapshot_*` provenance columns sit
+      outside both the checksum (spec lists 7 fields, snapshots not among them)
+      and bm30 (USAGE-only) — a noted design gap, deferred (the money columns,
+      which ARE hashed, carry the charge amount).
+
 - Phase 3 · Phase L — **bm30 (Verification + Bill↔Charge Reconciliation) —
   DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
   `context/billing-management/specs/bm30-verification-reconciliation.md`.
