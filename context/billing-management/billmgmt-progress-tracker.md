@@ -74,6 +74,243 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase L — **bm29 (Real Aggregation (`RECURRING`) + Price Resolver)
+  — DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm29-real-aggregation-recurring-price-resolver.md`.
+  Boundary: the processing flow's `aggregation` stage (recurring path, run as
+  `billrun_runtime`) + `db/bootstrap/billrun-db-roles.sql` (pricing read grants)
+  + the Customers & Bills read path (`ChargeSourceBadge`, `BillLineTable`). Adds
+  a **new** recurring price resolver to the flow (NOT rating's `rp.py`) that runs
+  in the SAME whole-account-replace transaction as bm28's USAGE rollup: it
+  resolves each ACTIVE subscription's flat `product_offering_price`
+  (`price_type='recurring'`) as-of the run period via the `lead(start_date_time)`
+  window, `COALESCE`s an `ordering.order_item_price_override` over the catalog
+  amount, maps the recurring charge period onto the account's bill-cycle
+  frequency, × `product_inventory.quantity`, and writes one `RECURRING`
+  `customer_bill_line` per `(product_offering_id)` (`udr_type` NULL) rolled across
+  the account's subscriptions. Landed this pass:
+  - **`aggregation` stage — the RECURRING resolver (the big change).**
+    `local-dev/bill_run_processing.yml` aggregation task rewritten to assemble
+    BOTH sources: (0a) capture prior `RECURRING` lines into a `TEMP` table
+    **before** the whole-account replace (Inv #20); (0b) as-of resolve fresh
+    recurring prices per subscription into a `TEMP` table, **only** for offerings
+    with no prior line (`period_factor` = cycle-months / charge-period-months,
+    defaulting to 1 for the built monthly=monthly case — proration/multi-frequency
+    out of scope); (0c) a `DO` block that **RAISEs D33 HARD** on an unresolvable
+    (`RECURRING_PRICE_NOT_FOUND`) or `tiered`-without-override
+    (`RECURRING_PRICE_UNSUPPORTED`) subscription; (1) `billrun_delete_trial_bill`;
+    (2-3) one INSERT of ALL lines — `usage_lines ∪ recurring_prior ∪
+    recurring_fresh` — with a **single deterministic `line_no`** =
+    `row_number() OVER (ORDER BY grouping_key)` across BOTH sources (Inv #21);
+    (4) `subtotal = SUM(net_amount)` spanning both sources. A rerun **reuses the
+    prior line verbatim** (gross/net/snapshot read directly, never re-resolved),
+    so a backdated `product_offering_price` reproduces the ORIGINAL amounts
+    (Inv #20/D19). `bill_run_processing.template.yml` gains the matching
+    `# REAL (bm29):` contract; README updated.
+  - **`db/bootstrap/billrun-db-roles.sql` — the pricing read grants.** Step 3
+    gains `GRANT USAGE ON SCHEMA "ordering"`; Step 8 extends the enumerated
+    read-context `GRANT SELECT` with `"product"."product_offering_price"` +
+    `"ordering"."order_item_price_override"`. No INSERT/UPDATE/DELETE on `product`
+    or `ordering` anywhere in the file (the override join reads
+    `product_inventory.product_order_item_id`, denormalized, so no
+    `product_order_item` read needed).
+  - **Read path.** `types/billing.ts` `BillLineRow` gains the four `snapshot*`
+    fields; `customer-bill-line.repository.ts` selects them (they flow through
+    `list-account-bills.ts`'s `...line` spread unchanged).
+  - **UI.** New `components/billing/charge-source-badge.tsx` (`cva`, mirroring
+    `bill-category-badge.tsx`: `USAGE` → info/cyan, `RECURRING` → primary; `OCC`
+    reserved → renders nothing). `BillLineTable` renders it on every row and, for
+    a `RECURRING` row, a server-rendered price-snapshot disclosure (ref, unit
+    price, quantity, effective date) in place of the `udr_rated` drill-down (a
+    derived charge has no per-record source).
+  - **Guardrails.** `billing-customer-bill-line-replace-boundary.test.ts` gains
+    bm29 grant assertions (ordering USAGE; `product_offering_price` +
+    `order_item_price_override` SELECT-only, no write; no write of any kind on the
+    `ordering` schema). New DB-gated
+    `tests/db/billrun-recurring-aggregation.integration.test.ts` (the flow-double,
+    SAME `billrun_runtime` SQL): recurring-only account bills × quantity rolled
+    across subs + stores the snapshot + no usage line; a mixed account (same
+    offering, usage + recurring) → exactly 2 lines with one deterministic
+    `line_no` across sources and `subtotal = SUM(net)`; a rerun after a backdated
+    price reproduces the ORIGINAL amounts; an override wins over the catalog; a
+    `tiered` price fails HARD (`RECURRING_PRICE_UNSUPPORTED`, no bill), a missing
+    price fails HARD (`RECURRING_PRICE_NOT_FOUND`, no bill).
+    `billrun-db-roles.integration.test.ts` gains 17f/17g (`billrun_runtime`
+    SELECTs the two pricing tables; is refused INSERT/UPDATE/DELETE on both).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/TSX/MD/YAML; both flow YAMLs parse (`js-yaml`);
+    DB-free suites green — full `tests/guardrails/` **80/80** (incl. the extended
+    replace-boundary), `list-account-bills` **8/8**.
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron +
+    Azurite** (git-ignored `docker-compose.test.yml`, project `ebill-test`,
+    :5434/:10001; torn down `down -v` after): `billrun-recurring-aggregation`
+    **5/5** (the recurring resolver, snapshot rerun authority, override, and both
+    D33 HARD fails), `billrun-db-roles` **36/36** (the bootstrap incl. the new
+    grants applies cleanly + 17f/17g), regressions `billrun-aggregation`
+    **2/2** + `billrun-collection-correlation` **4/4** = all green.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified (DB suites 49/49, guardrails+service 88/88).**
+    - **(CRITICAL) Usage-only subscription no longer HARD-fails the account.** The
+      resolver required a `recurring` price for EVERY active subscription, so an
+      account holding a usage-only (metered) offering — valid: `product_offering`
+      has no rule that a `recurring` price exists — tripped D33
+      `RECURRING_PRICE_NOT_FOUND` and produced NO bill (regressing bm28's usage
+      accounts, violating Inv #22). `_bm29_resolved` now includes a subscription
+      ONLY if its offering INTENDS recurring (a `price_type='recurring'`
+      `product_offering_price` exists, or an `order_item_price_override`); a
+      usage-only offering yields no recurring line and never trips D33. D33
+      `NOT_FOUND` now means "offering intends recurring but no as-of price"
+      (e.g. a future-dated price). New tests: a usage-only account bills its usage
+      with no failure; a mixed (usage-only + recurring) account bills both.
+    - **(perf) As-of window scan pruned to the account's offerings.** The `asof`
+      `lead()` window scanned the ENTIRE `product_offering_price` table per
+      account; now `... AND product_offering_id IN (the account's ACTIVE inventory
+      offerings)` so the offering index prunes it (cost ∝ subscriptions, not
+      catalog × accounts).
+    - **(determinism) `line_no` tie-breaker.** `row_number() OVER (ORDER BY
+      grouping_key)` → `(grouping_key, source)`, so a USAGE line whose free-text
+      `udr_type` is literally `'RECURRING'` (no CHECK on `udr_type`) can't share an
+      ambiguous ordinal with a real recurring line (Inv #21).
+    - **(provenance) `snapshot_unit_price` stores the raw resolved unit price**
+      (`min(unit_price)`, not `net/qty`), so it equals `snapshot_price_ref`'s
+      catalog amount and no longer bakes in `period_factor` (was self-inconsistent
+      for non-monthly cycles).
+    - **(test fidelity) Shared flow-double.** Extracted the aggregation SQL to
+      `tests/db/helpers/billrun-aggregate.ts`; both `billrun-aggregation` (bm28
+      USAGE) and `billrun-recurring-aggregation` (bm29) now drive the ONE copy, so
+      the doubles never drift from each other or the flow (the prior bm28 double
+      embedded stale pre-bm29 SQL).
+    - **(docs) Flow/template comments corrected** — the resolver window is NOT
+      filtered to `pricing_model='flat'` (it must SEE a current `tiered` price so
+      D33 can fail it); the header now says so.
+    - **(robustness) RECURRING currency assertion (owner-requested review, 2026-09-15).**
+      The resolver stamped the resolved price currency on the line and summed
+      amounts into `subtotal` but never compared it to `billing_account.currency`
+      (catalog/override currencies are free 3-char fields, not tied to the account)
+      — unlike the USAGE path, which bm27 Validation already guards. Added a HARD
+      check in the D33 `DO` block (`RECURRING_CURRENCY_MISMATCH`) that rolls the
+      account back when a resolved recurring price's currency differs from the
+      account's, alongside the missing/tiered checks; the shared flow-double carries
+      it and a new regression case (a USD price on an MYR account fails HARD, no
+      bill) covers it. DB suites now bm29 **8/8**.
+    - **Accepted as documented limitations (owner decision):** on rerun the prior
+      RECURRING line is reused at offering grain (frozen qty/price) — the specified
+      snapshot-authority behavior (Inv #20); a same-period add/cancel is mitigated
+      by Inv #26 (partial-period → EXCLUDED). A rolled line spanning >1 distinct
+      price stores representative `min()` provenance (net stays authoritative). The
+      badge/disclosure markup shares the repo's existing per-badge `cva` convention.
+
+
+- Phase 3 · Phase L — **bm28 (Real Aggregation (`USAGE`) + `BillLineTable`) —
+  DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
+  `context/billing-management/specs/bm28-real-aggregation-usage-billlinetable.md`.
+  Boundary: the processing flow's `aggregation` stage (run as `billrun_runtime`)
+  + `db/bootstrap/billrun-db-roles.sql` (a `product` read grant) + the Customers
+  & Bills read path (`components/billing/bill-line-table.tsx`, a
+  `customer_bill_line` read + service, `types/billing.ts` unions). Turns bm27's
+  claimed `BILL_DRAFT` usage into the bill's charge record — one
+  `customer_bill_line` per `(product_offering_id, udr_type)` rolled up **across**
+  subscriptions (3 subs of one offering + 500 of another → **2** lines, not 503),
+  `customer_bill.subtotal = SUM(net_amount)`, re-derived via the whole-account
+  replace (`billrun_delete_trial_bill` + INSERT, never a per-line upsert or bare
+  DELETE), deterministic `line_no` ordered on `grouping_key`; and adds
+  `BillLineTable` to the Customers & Bills tab with the `udr_rated` drill-down
+  behind a lazily-fetched `<details>` disclosure. **The app stays record-only**
+  (`handle-stage-signal.ts` untouched) — the flow writes `customer_bill` +
+  `customer_bill_line` as `billrun_runtime`. Landed this pass:
+  - **`aggregation` stage — the real USAGE aggregation SQL.**
+    `bill_run_processing.template.yml` `aggregation` STUB replaced with the
+    `# REAL (bm28):` contract; `local-dev/bill_run_processing.yml` `aggregation`
+    no-op Log replaced with the real psql task (whole-account replace via
+    `billrun_delete_trial_bill`, then a single WITH-CTE `INSERT` — group claimed
+    `BILL_DRAFT` usage per `(product_offering_id, udr_type)` across subscriptions
+    with `row_number() OVER (ORDER BY grouping_key)` for `line_no`, insert the
+    trial header (`subtotal = SUM(net_amount)`, `tax_total='0.00'`,
+    `total_amount=subtotal`, `payment_due_date = gl_event_at +
+    coalesce(account override, cycle default)`), then its lines). Money summed in
+    SQL (`numeric`), `discount_amount='0.00'` so `net = gross`. `taxation` +
+    `verification` stay no-op Logs. README updated.
+  - **`db/bootstrap/billrun-db-roles.sql` — the product read grant.** Step 3
+    gains `GRANT USAGE ON SCHEMA "product"`; Step 8 extends the enumerated
+    read-context `GRANT SELECT` with `"product"."product_offering"` (the line
+    `description`). No INSERT/UPDATE/DELETE on `product` anywhere in the file.
+  - **Read path.** New `db/repositories/billing/customer-bill-line.repository.ts`
+    (`listForRun`, joined to its header, ordered by `line_no`);
+    `services/billing/read/list-account-bills.ts` composes the lines per bill in
+    the SAME repeatable-read snapshot as the bill + tax reads;
+    `types/billing.ts` gains `ChargeSource`/`LineType` (typed CHECK mirrors) +
+    `BillLineRow`/`RatedLineRow` read models, and `CustomerBillRow` gains
+    `lines[]`. The drill-down read is `services/billing/read/list-rated-lines.ts`
+    (reuses the read-only `ratedLinesRepository.listClaimedForAccount`) behind
+    the session-guarded `actions/billing/fetch-rated-lines.action.ts`
+    (`billrun_view:READ`, unaudited).
+  - **UI.** New `components/billing/bill-line-table.tsx` (server component — one
+    row per `customer_bill_line`, tabular-nums money, square radius; the
+    `discount_amount` column hidden while every value is `0.00`, §4.1c) + the
+    client `components/billing/usage-line-drill-down.tsx` (a native `<details>`
+    that fetches its `udr_rated` rows on expand only, the bm18 fetch-on-open
+    pattern). Wired into `CustomerBillTable`'s expander (replacing bm05's
+    synthetic "Stub charges (fixture)" line), `timezone` threaded through
+    `RunDetailTabs`. No new route/page/permission (the tab stays
+    `billrun_view:READ`, code-standards §8).
+  - **Guardrails.** New static grep boundary
+    `tests/guardrails/billing-customer-bill-line-replace-boundary.test.ts` (the
+    product read grant is SELECT-only, no write on `product`; billrun_runtime has
+    no DELETE/UPDATE on `customer_bill_line`; the flow re-derives via
+    `billrun_delete_trial_bill`, with NO `ON CONFLICT` and NO bare `DELETE`
+    against `customer_bill_line` — §9.9). New DB-gated flow-double
+    `tests/db/billrun-aggregation.integration.test.ts` (the SAME `billrun_runtime`
+    aggregation SQL): 3 subs of offering A + 20 of B → **exactly 2 lines** (§9.4)
+    with rolled-up `udr_count`; `SUM(net_amount) = subtotal`, `net = gross`
+    (§9.5); a re-run is a whole-account replace (fresh `customer_bill`, still 2
+    lines not 4, identical deterministic `line_no`, Inv #21). Extended
+    `tests/services/billing/list-account-bills.test.ts` (mocks the new line repo;
+    lines grouped to their own bill; shared snapshot).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/TSX/MD; both flow YAMLs parse (`js-yaml`).
+  - **DB-VERIFIED against a disposable Postgres 17 + pg_partman + pg_cron
+    (git-ignored `docker-compose.test.yml`, project `ebill-test`, :5434; torn
+    down `down -v` after):** `billrun-aggregation` **2/2** (grain 2-lines, SUM,
+    whole-account-replace determinism); `billrun-db-roles` **34/34** (the
+    bootstrap incl. the new `product` grant applies cleanly) + regression
+    `billrun-collection-correlation` **4/4** = **38/38 green**. DB-free:
+    guardrails **77/77** (incl. the new replace-boundary + grep-gates 117/117),
+    `list-account-bills` **8/8**, and the full billing service+action suite
+    **388/388 green**.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-15) — applied and
+    re-verified.** (a) **subtotal now derived from `SUM(net_amount)`** of the
+    written lines (spec §Impl step 4 / Inv #3 / §9.5), not the pre-line
+    `SUM(gross)` — a final `UPDATE … SET subtotal = SUM(net_amount),
+    total_amount = subtotal + tax_total` (LEFT JOIN so a zero-line bill stays
+    0.00) replaces the `tot` gross CTE, so it stays correct once a discount makes
+    `net <> gross` (bm29+); the DB-gated double mirrors it inside one `sql.begin`
+    transaction (matching the flow's `BEGIN;…COMMIT;`). (b) **The `udr_rated`
+    drill-down is now scoped per line grain** `(product_offering_id, udr_type)`
+    via a new `ratedLinesRepository.listClaimedForLine` (joins
+    `inventory.product_inventory` to resolve the offering; `app_runtime` already
+    holds SELECT there) — the prior account-level reuse + client `udrType` filter
+    showed every offering's records under every line (all bm28 usage is
+    `RAN_USAGE`) and re-fetched the whole account per line; the action/service/
+    component thread `productOfferingId` and the client filter is gone. (c)
+    **Guardrail hardened** — the "no bare DELETE" assertion now also matches the
+    partitioned-table `DELETE FROM ONLY …` form + `TRUNCATE`, and strips in-line
+    `--` SQL comments from the flow heredoc (symmetric with the ROLES_SQL path).
+    (d) **Dead `currency` prop/fallback removed** from `BillLineTable` (each line
+    carries its own NOT NULL `currency`); `colSpan` derived from `showDiscount`
+    (dropped the redundant `columnCount` prop).
+  - **Known limitation (deferred, owner decision 2026-09-15).** A scoped-in
+    account with ZERO usage lines this phase (recurring is bm29) still gets a
+    `customer_bill` with `subtotal 0.00`; per Inv #22 a no-line account is
+    Uncharged (no bill), and a 0.00 bill trips the approval gate
+    (`pre-approval-checks.ts` `checkPositiveTotals`). Simply skipping the header
+    would strand the account at posting (`postAccount` throws "no postable
+    customer_bill"). Proper handling — treating a no-line account as Uncharged
+    and keeping it off the postable/approval set — is the **phase-3 Uncharged-tab
+    rework (code-standards §4.7), a SEPARATE later unit**. It is only reachable
+    via the full live-Kestra E2E (deferred), not bm28's own tests. Documented in
+    the flow (`bill_run_processing.template.yml` + `local-dev/…yml` aggregation
+    comment).
+
 - Phase 3 · Phase L — **bm27 (Real Collection: Correlation & Claim) —
   DELIVERED and DB-VERIFIED against a disposable Postgres (2026-09-15).** See
   `context/billing-management/specs/bm27-real-collection-correlation-claim.md`.

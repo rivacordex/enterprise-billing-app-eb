@@ -105,6 +105,7 @@ export function RunDetailTabs({
           billRunId={runId}
           rows={customerBills}
           locale={locale}
+          timezone={timezone}
         />
       ) : activeTab === "uncharged" ? (
         <UnchargedTable

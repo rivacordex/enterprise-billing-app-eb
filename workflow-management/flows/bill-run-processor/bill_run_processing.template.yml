@@ -3,8 +3,10 @@
 # This skeleton documents (a) the stage contract the app records against and
 # (b) the key activities each stage must perform. Not-yet-built activities are a
 # `# STUB:` marker naming what replaces them; the `validation` + `collection`
-# stages carry `# REAL (bm27):` contract text — the real correlation/claim SQL
-# ships in the separate workflow-management repo. See ./README.md.
+# stages carry `# REAL (bm27):` contract text and `aggregation` carries
+# `# REAL (bm28):` (the real USAGE aggregation into customer_bill_line) plus
+# `# REAL (bm29):` (the RECURRING price resolver + its D33 HARD-fail branch) —
+# the real SQL ships in the separate workflow-management repo. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -52,13 +54,82 @@ tasks:
         #   product_inventory (or to an out-of-scope account) is NOT in `correlated`,
         #   so it is left at RATED, unclaimed and UNTOUCHED — never filtered out
         #   silently, never failing the account (it becomes bm32's orphan surface).
-      # --- aggregation (writes billing.customer_bill as billrun_runtime) ---
+      # --- aggregation (writes billing.customer_bill + customer_bill_line as billrun_runtime) ---
       - id: aggregation
-        # STUB: sum the account's BILL_DRAFT udr_rated into ONE customer_bill row
-        #       (category=trial, subtotal=SUM(amount), period from inputs). Placeholder
-        #       aggregation only — REAL: correlation, discounts, bundles, adjustments.
-        #       Rerun-safe: re-derive via billing.billrun_delete_trial_bill(run,ban)
-        #       (scoped SECURITY DEFINER — bm14 T10) + INSERT; never a direct DELETE.
+        # REAL (bm28): group the account's claimed BILL_DRAFT usage into
+        #   billing.customer_bill_line at (product_offering_id, udr_type) grain,
+        #   ROLLED UP ACROSS SUBSCRIPTIONS (Inv #3) — product_offering_id is the
+        #   denormalized column on inventory.product_inventory
+        #   (udr_subscriber_ref_id -> product_inventory.product_offering_id), so an
+        #   account with 3 subscriptions of one offering and 500 of another shows
+        #   2 charge lines, NOT 503. Each line stores udr_count (rows rolled in) +
+        #   the grouping_key, gross/net = SUM(udr_rated_price), quantity =
+        #   SUM(udr_usage_quantity), currency = the account's usage currency, and
+        #   line_type='charge', source='USAGE'. discount_amount = '0.00' this phase
+        #   (no discount computed), so net_amount = gross_amount.
+        #   - line_no is DETERMINISTIC (Inv #21): row_number() OVER (ORDER BY
+        #     grouping_key), NEVER insertion order — a rerun reproduces identical
+        #     line_no values (the checksum ordering anchor bm31 + reconciliation
+        #     replay bm30 both depend on this).
+        #   - customer_bill.subtotal = SUM(customer_bill_line.net_amount) (Inv #3);
+        #     tax_total='0.00'/total_amount=subtotal this phase (Taxation SQL-
+        #     recomputes tax_total/total_amount from subtotal, no unit).
+        #   - WHOLE-ACCOUNT REPLACE (Inv #16, D22): re-derive via
+        #     billing.billrun_delete_trial_bill(run,ban) (scoped SECURITY DEFINER —
+        #     bm14 T10; lines cascade via ON DELETE CASCADE, bm23) + re-INSERT the
+        #     customer_bill header + its lines. NEVER an ON CONFLICT DO UPDATE and
+        #     NEVER a bare DELETE against customer_bill_line (billrun_runtime holds
+        #     no table DELETE on it — the guardrail asserts this).
+        #   - Money is summed in SQL (numeric), never JS float.
+        # REAL (bm29): AFTER the USAGE rollup, in the SAME whole-account-replace
+        #   transaction, resolve each subscription's RECURRING charge and write one
+        #   RECURRING line per (product_offering_id) (udr_type NULL), rolled ACROSS
+        #   the account's subscriptions of that offering. subtotal = SUM(net_amount)
+        #   now spans BOTH sources; line_no is a single deterministic sequence over
+        #   the shared grouping_key across USAGE + RECURRING (Inv #21).
+        #   - Applies ONLY to a subscription whose offering INTENDS a recurring
+        #     charge (a price_type='recurring' product_offering_price exists, or an
+        #     order_item_price_override). A USAGE-ONLY subscription (offering with
+        #     neither) yields NO recurring line and does NOT fail — recurring is not
+        #     mandatory (Inv #22: a usage-only account still bills its usage).
+        #   - As-of resolution (Inv #20 / D19): resolve
+        #     product.product_offering_price WHERE price_type='recurring' as-of the
+        #     run period via the lead(start_date_time) OVER (PARTITION BY offering
+        #     ORDER BY start_date_time) [eff_from, eff_to) window. The window is NOT
+        #     filtered to pricing_model='flat' — a current 'tiered' price must be
+        #     SEEN so D33 can fail it, not masked behind an older flat row; the
+        #     resolver rates 'flat' and D33-fails a 'tiered' as-of price. COALESCE an
+        #     ordering.order_item_price_override (price_type='recurring', keyed by
+        #     product_order_item_id) over the catalog amount. Map
+        #     recurring_charge_period_length/_type onto the account's bill-cycle
+        #     frequency, then multiply by product_inventory.quantity (>= 1).
+        #   - Price snapshot, read-not-re-resolved on rerun (Inv #20/D19): each
+        #     RECURRING line stores its snapshot (snapshot_price_ref/_unit_price/
+        #     _quantity/_effective_date, bm23). The resolver READS any existing
+        #     RECURRING line for the account BEFORE the whole-account replace
+        #     deletes it and REUSES it verbatim; as-of resolution runs ONLY where no
+        #     prior line exists (first derivation, or a reject that dropped the
+        #     bill). So a rerun after a backdated product_offering_price insert
+        #     reproduces the ORIGINAL amounts — the lead() window is never re-walked
+        #     for an already-reviewed period. ordering overrides are insert-only and
+        #     are NOT the hazard.
+        #   - D33 HARD-fail (Inv #28): a subscription whose offering INTENDS a
+        #     recurring charge but has NO as-of price (and no prior snapshot), a
+        #     pricing_model='tiered' as-of price with no flat override, or a price in
+        #     a currency other than the account's (RECURRING_CURRENCY_MISMATCH — the
+        #     recurring analog of bm27's USAGE currency assertion), sends THIS
+        #     account only to PROCESSING_FAILED with a HARD
+        #     finding and error_code RECURRING_PRICE_NOT_FOUND / _UNSUPPORTED — the
+        #     transaction rolls back, so NO bill (not even the USAGE lines) is
+        #     produced for it. Never substitute zero, never skip a subscription
+        #     silently. Every other account stays billable; fixing the catalog + a
+        #     rerun re-derives it.
+        #   KNOWN LIMITATION (deferred): a zero-charge account (no USAGE and no
+        #   RECURRING lines) still gets a subtotal-0.00 customer_bill. Per Inv #22
+        #   a no-line account is Uncharged (no bill), and a 0.00 bill trips the
+        #   approval gate; treating it as Uncharged is the phase-3 Uncharged-tab
+        #   rework (code-standards §4.7), a SEPARATE later unit.
+        #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
       # --- taxation (writes billing.customer_bill_tax_item as billrun_runtime) ---
       - id: taxation
         # STUB: write one tax line (configured single rate) + recompute
