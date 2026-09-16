@@ -1,14 +1,18 @@
-# TEMPLATE ONLY — no business logic. The real bill_run_processing flow lives in
-# the separate workflow-management repo and is deployed to the `billrun` engine.
-# This skeleton documents (a) the stage contract the app records against and
-# (b) the key activities each stage must perform. Not-yet-built activities are a
-# `# STUB:` marker naming what replaces them; the `validation` + `collection`
-# stages carry `# REAL (bm27):` contract text, `aggregation` carries
-# `# REAL (bm28):` (the real USAGE aggregation into customer_bill_line) plus
-# `# REAL (bm29):` (the RECURRING price resolver + its D33 HARD-fail branch), and
-# `verification` carries `# REAL (bm30):` (SOFT non-positive-total sanity + the
-# HARD USAGE bill↔charge reconciliation) — the real SQL ships in the separate
-# workflow-management repo. The SIGNAL-BACK is `# REAL (bm36):` — the per-stage
+# CONTRACT DOC ONLY — non-deployable (tasks omit `type:`, so `kestra flow` never
+# ingests it). The deployed bill_run_processing flow is the repo's sibling
+# `local-dev/bill_run_processing.yml` (bm38 — there is NO separate
+# workflow-management flow repo): `deploy_workflow_flows` pushes
+# `bill-run-processor/local-dev` to the `billrun` namespace on the shared
+# (collapsed-topology) workflow-engine. This skeleton documents (a) the stage
+# contract the app records against and (b) the key activities each stage must
+# perform. Not-yet-built activities are a `# STUB:` marker naming what replaces
+# them; the `validation` + `collection` stages carry `# REAL (bm27):` contract
+# text, `aggregation` carries `# REAL (bm28):` (the real USAGE aggregation into
+# customer_bill_line) plus `# REAL (bm29):` (the RECURRING price resolver + its
+# D33 HARD-fail branch), and `verification` carries `# REAL (bm30):` (SOFT
+# non-positive-total sanity + the HARD USAGE bill↔charge reconciliation) — the
+# real SQL lives in the `local-dev` flow. The SIGNAL-BACK is `# REAL (bm36):` —
+# the per-stage
 # `DONE` POSTs, the per-account HARD `FAILED` POST, and the run-level terminal
 # `PROCESSING_FAILED` (`errors`/`finally`) are real `core.http.Request` callbacks
 # (at parity with the distributor, bm34); the only remaining `# STUB:` is the

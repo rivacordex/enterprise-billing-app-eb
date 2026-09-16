@@ -315,6 +315,12 @@ module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' 
     kestraInternalContainerName: workflowEngineStorage!.outputs.kestraInternalContainerName
     enableEasyAuthIngress: deployEasyAuth
     corporateIpAllowList: corporateIpAllowList
+    // bm38 §1 — the collapsed engine hosts BOTH namespaces, so it carries the
+    // `billrun_runtime` DB credential wiring (billrun-runtime-db-password secret
+    // + SECRET_BILLRUN_RUNTIME_PASSWORD / BILLRUN_DB_* env). Set explicitly true:
+    // defaultNamespace stays `rating` here even though the engine hosts
+    // `billrun`, so it cannot be derived from the namespace default.
+    hostsBillrunNamespace: true
     // bm34 — this collapsed instance hosts the `billrun` namespace, so it carries
     // the distribution SFTP wiring, flipped by the SAME knob that sets the app's
     // BILLRUN_DISTRIBUTION_TARGETS above (split-brain-proof).
@@ -372,6 +378,9 @@ module workflowEngineRatingContainerApp 'modules/workflow-engine-container-app.b
     // wfm01 leaves it internal/disabled.
     enableEasyAuthIngress: false
     corporateIpAllowList: []
+    // bm38 §1 — the split RATING instance hosts only the `rating` namespace, so
+    // it gets NO billrun_runtime DB wiring (the billrun instance below does).
+    hostsBillrunNamespace: false
   }
 }
 
@@ -398,6 +407,11 @@ module workflowEngineBillrunContainerApp 'modules/workflow-engine-container-app.
     defaultNamespace: 'billrun'
     enableEasyAuthIngress: false
     corporateIpAllowList: []
+    // bm38 §1 — the split-topology billrun instance hosts the `billrun`
+    // namespace, so it carries the `billrun_runtime` DB credential wiring
+    // (billrun-runtime-db-password secret + SECRET_BILLRUN_RUNTIME_PASSWORD /
+    // BILLRUN_DB_* env).
+    hostsBillrunNamespace: true
     // bm34 — the split-topology billrun instance carries the distribution SFTP
     // wiring, flipped by the SAME knob that sets the app's
     // BILLRUN_DISTRIBUTION_TARGETS above (split-brain-proof). The rating instance

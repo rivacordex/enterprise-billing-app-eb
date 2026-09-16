@@ -27,10 +27,12 @@
 #     here is to a Container App Managed Identity, not this pipeline's own
 #     service connection principal); flagged, not assumed.
 #   - bm21's billrun_live_kestra_smoke stage (off by default) reads
-#     `pg-connection-string-app` (existing) plus two NOT YET CREATED Key
-#     Vault secrets, `billrun-engine-url`/`billrun-engine-auth` — see
-#     workflow-management/flows/bill-run-processor/README.md's phase-2 exit criterion. Same "flagged, not
-#     assumed" access-grant caveat as the line above.
+#     `pg-connection-string-app` (existing) plus `billrun-engine-url`/
+#     `billrun-engine-auth` — the app→engine URL + Basic-Auth secrets, a NAMED
+#     cutover prerequisite provisioned out-of-band (infra/docs/
+#     db-role-verification.md "Production cutover"; `billrun-engine-auth`'s
+#     username half MUST be `workflow-ops@billing.ops` — the coupled triple).
+#     Same "flagged, not assumed" access-grant caveat as the line above.
 #
 # rm13 (the rating module's ship gate) adds two OFF-BY-DEFAULT stages
 # branching off test_scan, neither of which is part of the mandatory five-
@@ -99,21 +101,23 @@ parameters:
 
   # bm21-spec §Implementation §3/Phase-2 review fold T3 — the billing
   # module's analogue of runRatingFanoutGate/scanRatingEngineDast: proves
-  # `scripts/billrun-live-kestra-smoke.ts`'s trigger -> claim -> PROCESSED
-  # path against a REALLY DEPLOYED `bill_run_processing` flow on a real
-  # `billrun` Kestra engine — something the CI-doubled DB-gated E2E
+  # `scripts/billrun-live-kestra-smoke.ts`'s full SCHEDULED -> COMPLETED
+  # journey (bm37) against a REALLY DEPLOYED `bill_run_processing` flow on a
+  # real `billrun` Kestra engine — something the CI-doubled DB-gated E2E
   # (tests/db/billing-e2e-happy-path.integration.test.ts) can never prove.
-  # Defaults to false for the SAME reason as the rating gates above: the
-  # separate workflow-management repo that builds/deploys the real flow, its
-  # owning team, and its deploy step are still TBD (workflow-management/flows/bill-run-processor/README.md)
-  # — there is normally no real engine for this to target. Queue manually
-  # (or via a scheduled trigger configured with this parameter set to true
-  # in the Azure DevOps UI's Scheduled Triggers, once a nightly cadence is
-  # wanted — T3 asks for "non-CI / nightly", and Azure DevOps schedules
-  # support per-schedule parameter overrides there) once a real engine is
-  # deployed and reachable.
+  # Defaults to false for the SAME reason as the rating gates above: no real
+  # engine is deployed until the gated cutover (deployWorkflowEngine +
+  # deployRatingFlows, both off by default), so there is normally nothing for
+  # this to target. The deployed flow is the repo's
+  # `bill-run-processor/local-dev` flow pushed to the collapsed engine by
+  # deploy_workflow_flows (bm38 — there is no separate workflow-management flow
+  # repo). Queue manually (or via a scheduled trigger configured with this
+  # parameter set to true in the Azure DevOps UI's Scheduled Triggers, once a
+  # nightly cadence is wanted — T3 asks for "non-CI / nightly", and Azure
+  # DevOps schedules support per-schedule parameter overrides there) once a
+  # real engine is deployed and reachable.
   - name: runBillrunLiveKestraSmoke
-    displayName: Run the bm21 live-Kestra smoke gate (trigger -> claim -> PROCESSED) against the deployed billrun engine (engine must be deployed first)
+    displayName: Run the bm21 live-Kestra smoke gate (SCHEDULED -> COMPLETED) against the deployed billrun engine (engine must be deployed first)
     type: boolean
     default: false
 
@@ -859,25 +863,29 @@ stages:
   # bm21-spec §Implementation §3/Phase-2 review fold T3 — the billing
   # module's live-Kestra smoke gate (see the runBillrunLiveKestraSmoke
   # parameter above for the gating rationale). Unlike rating_fanout_gate,
-  # this does NOT stand up a local/disposable engine — the real
-  # `bill_run_processing` flow is built and deployed from a separate
-  # workflow-management repo (workflow-management/flows/bill-run-processor/README.md), so this targets an
-  # ALREADY-DEPLOYED engine + an already-migrated/seeded real database
-  # (same "targets a deployed environment" shape as zap-scan-workflow-engine-
-  # stage.yml, not rating_fanout_gate's local docker-compose stack).
+  # this does NOT stand up a local/disposable engine — the deployed
+  # `bill_run_processing` flow is the repo's `bill-run-processor/local-dev`
+  # flow, pushed to the `billrun` namespace on the shared (collapsed)
+  # workflow-engine by deploy_workflow_flows (bm38 — no separate
+  # workflow-management flow repo), so this targets an ALREADY-DEPLOYED engine
+  # + an already-migrated/seeded real database (same "targets a deployed
+  # environment" shape as zap-scan-workflow-engine-stage.yml, not
+  # rating_fanout_gate's local docker-compose stack).
   #
   # Required Key Vault secrets (KEYVAULT_NAME, um30-infra variable group):
   # `pg-connection-string-app` (the existing app-runtime DB connection — the
   # SAME database the deployed engine's `billrun_runtime` role connects to)
-  # and two NOT YET CREATED secrets, `billrun-engine-url`/
-  # `billrun-engine-auth` (the real BILLRUN_ENGINE_URL/_AUTH once a `billrun`
-  # namespace is deployed — flagged, not assumed, same posture as
-  # deploy_workflow_flows's `kestra-basic-auth-password` note above). Also
-  # requires `db:seed-sample` to have already been run against that database
-  # (out of band — this stage does not run it, to avoid silently reseeding a
-  # shared environment on every smoke run).
+  # plus `billrun-engine-url`/`billrun-engine-auth` (the real
+  # BILLRUN_ENGINE_URL/_AUTH) — a NAMED cutover prerequisite provisioned
+  # out-of-band (infra/docs/db-role-verification.md "Production cutover";
+  # `billrun-engine-auth`'s username half MUST be `workflow-ops@billing.ops`),
+  # same flagged-not-assumed access posture as deploy_workflow_flows's
+  # `kestra-basic-auth-password` note above. Also requires `db:seed-sample` to
+  # have already been run against that database (out of band — this stage does
+  # not run it, to avoid silently reseeding a shared environment on every
+  # smoke run).
   - stage: billrun_live_kestra_smoke
-    displayName: Billing ship gate — live-Kestra smoke (bm21, trigger -> claim -> PROCESSED)
+    displayName: Billing ship gate — live-Kestra smoke (bm21, SCHEDULED -> COMPLETED)
     dependsOn: test_scan
     condition: and(succeeded(), eq(${{ parameters.runBillrunLiveKestraSmoke }}, true))
     pool:
@@ -931,4 +939,4 @@ stages:
               # around a real secret.
               BETTER_AUTH_SECRET: "ci-placeholder-secret-min-32-characters-long"
               BETTER_AUTH_URL: "https://localhost"
-            displayName: Trigger -> claim -> PROCESSED against the real billrun engine
+            displayName: SCHEDULED -> COMPLETED against the real billrun engine

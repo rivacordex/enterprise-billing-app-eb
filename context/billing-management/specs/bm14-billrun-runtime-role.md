@@ -258,6 +258,8 @@ Add, alongside `db:bootstrap-rating-roles`:
 - Extend `infra/docs/db-role-verification.md` with the `billrun_runtime` `ALTER ROLE … PASSWORD` step (from Key Vault), the **provisioning order** (`roles → rating-roles → billrun-roles`), and the connection-string env var the app/engine uses for this role (`BILLRUN_RUNTIME_DATABASE_URL`, added to `.env.example` with a dummy value; the real value in Key Vault).
 - The role's password is a **third credential** (after the app bearer token and the outbound engine Basic-Auth) — record it in the phase-2 credentials list (`billmgmt-architecture.md` §4 / plan §9).
 
+> **Superseded by bm38 (2026-09-16).** The `BILLRUN_RUNTIME_DATABASE_URL` full-URL env var this unit introduced was never consumed by any code or flow — the deployed `bill_run_processing.yml` connects with the same split shape as the rating worker (bare password via `SECRET_BILLRUN_RUNTIME_PASSWORD` + `BILLRUN_DB_HOST/PORT/NAME/USER`). bm38 wired the engine credential in that split shape (Key Vault secret `billrun-runtime-db-password`), and removed the orphaned `BILLRUN_RUNTIME_DATABASE_URL` from `.env.example`. This bullet records bm14's original intent; the live shape is in `infra/docs/db-role-verification.md` §1/§2 and `bm38-production-deploy-wiring.md` §1 (Review correction).
+
 ### 5. Guardrail test — `tests/db/billrun-db-roles.integration.test.ts` (new)
 
 DB-gated (skips loudly under `DATABASE_URL` unset), connecting **as `billrun_runtime`** (its own connection string), asserting the boundary per column/table — the phase-2 analogue of the rating role test:
@@ -272,7 +274,7 @@ DB-gated (skips loudly under `DATABASE_URL` unset), connecting **as `billrun_run
 ## Dependencies
 
 - **No new npm packages.** Reuses `postgres`/`tsx` and the existing bootstrap-runner pattern.
-- **Env:** `BOOTSTRAP_DATABASE_URL` (exists, superuser/owner) to run the bootstrap; `BILLRUN_RUNTIME_DATABASE_URL` (new — the `billrun_runtime` connection string, dummy in `.env.example`, real in Key Vault).
+- **Env:** `BOOTSTRAP_DATABASE_URL` (exists, superuser/owner) to run the bootstrap; the `billrun_runtime` credential the engine consumes — a bare password (`SECRET_BILLRUN_RUNTIME_PASSWORD`, from Key Vault `billrun-runtime-db-password`) plus the `BILLRUN_DB_HOST`/`PORT`/`NAME`/`USER` coordinates (bm38 split shape; superseded the original single `BILLRUN_RUNTIME_DATABASE_URL` — see the §4 note).
 - **External prerequisites (must already exist):**
   - The **rating** module's `rating.udr_rated` table (rm01) and `rating-db-roles.sql` **already run** in the target environment — its `REVOKE CONNECT … FROM PUBLIC` must precede this unit (D15).
   - Phase-1 `billing.customer_bill` / `customer_bill_tax_item` / `bill_run*` and the pgledger `SECURITY DEFINER` functions (bm05/bm06/bm09) — already delivered.
