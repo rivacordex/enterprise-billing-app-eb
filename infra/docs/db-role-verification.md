@@ -128,17 +128,22 @@ ALTER ROLE rating_runtime WITH PASSWORD '<generated>';
 generate a fourth strong random password and run it directly against `psql`,
 **never** in a source-controlled file. This is the phase-2 credential's third
 member (after the app bearer token and the outbound engine Basic-Auth — see
-`billmgmt-architecture.md` §4 / plan §9). The value is intended for Key Vault,
-consumed as `BILLRUN_RUNTIME_DATABASE_URL` (bm14-spec) — **not yet wired to a
-deployed consumer**: no Container App/Job currently reads this secret (the
-workflow-management bill run processor/distributor bicep hasn't shipped). Add
-its Key Vault secret name and consumer mapping to §2 below when it does.
+`billmgmt-architecture.md` §4 / plan §9). It is deployed with the **same split
+shape as `rating_runtime`** (bare password + separate connection coordinates,
+NOT a full connection string): the password goes to Key Vault as the
+`billrun-runtime-db-password` secret, exposed to the engine as
+`SECRET_BILLRUN_RUNTIME_PASSWORD`, and the flows build their own connection from
+the non-secret `BILLRUN_DB_HOST/PORT/NAME/USER` env vars (bm38 — the
+`hostsBillrunNamespace` branch in `workflow-engine-container-app.bicep`; see §2
+below for the secret name + consumer mapping). Under the collapsed topology the
+consumer is the single `workflow-engine` instance that hosts the `billrun`
+namespace; under split-by-module it is the `workflow-engine-billrun` instance.
 
-Generate the password from a **URI-safe alphabet only** (letters, digits, and
-`-._~`) or percent-encode it before building the connection string — an
-unescaped `@`, `:`, `/`, `?`, `#`, or `%` in the password corrupts the
-`postgresql://user:password@host/db` URL and can silently authenticate as, or
-connect to, the wrong thing:
+The flow reads the password via `PGPASSWORD` (`bill_run_processing.yml`), not
+by embedding it in a `postgresql://` URL, so URL-escaping is not required — but
+still prefer a **URI-safe alphabet** (letters, digits, `-._~`) so the same value
+drops cleanly into any hand-built connection string (e.g. the disposable/CI
+test DB) without an unescaped `@`/`:`/`/`/`?`/`#`/`%` corrupting it:
 
 ```sql
 ALTER ROLE billrun_runtime WITH PASSWORD '<generated>';
@@ -166,17 +171,30 @@ connection — and store them as:
 - `pg-connection-string-migrate` → consumed as `DATABASE_URL` by the
   migration Container Apps Job only (`app_migrate` role).
 
-`rating_runtime` and `kestra_engine` are deployed differently: their
-connection details are split into separate `RATING_DB_HOST`/`PORT`/`NAME`/
-`USER` env vars plus a bare-password Key Vault secret (`rating-runtime-db-password`,
-`kestra-engine-db-password` — see `workflow-engine-container-app.bicep`), not a
-full `postgresql://` URL.
+`rating_runtime`, `kestra_engine` and `billrun_runtime` are deployed
+differently: their connection details are split into separate
+`*_DB_HOST`/`PORT`/`NAME`/`USER` env vars plus a **bare-password** Key Vault
+secret (never a full `postgresql://` URL). The engine's flows/worker build the
+connection themselves from the coordinates and read the password from the
+`SECRET_*` env var:
 
-`billrun_runtime`'s `BILLRUN_RUNTIME_DATABASE_URL` has **no Key Vault secret
-name or consumer mapping defined yet** — no Container App/Job currently reads
-it. Define both here once the workflow-management bill run processor/
-distributor is deployed; until then, treat the `.env.example` entry as a
-local-dev-only placeholder.
+- `rating-runtime-db-password` → `SECRET_RATING_RUNTIME_PASSWORD` (the rating
+  worker's `db.py` reads it + `RATING_DB_HOST/PORT/NAME/USER`).
+- `kestra-engine-db-password` → the Kestra datasource password (`KESTRA_DATASOURCES_POSTGRES_*`).
+- `billrun-runtime-db-password` → `SECRET_BILLRUN_RUNTIME_PASSWORD`, consumed by
+  the shared **`workflow-engine` Container App** (bm38). The
+  `hostsBillrunNamespace` param in `workflow-engine-container-app.bicep` gates
+  the secret ref + the `BILLRUN_DB_HOST/PORT/NAME/USER` env vars onto the
+  billrun-hosting engine only (the collapsed instance, or the
+  `workflow-engine-billrun` split instance); a rating-only engine gets neither.
+  `BILLRUN_DB_HOST` is the Flexible Server FQDN (shared with the `kestra` DB —
+  only the DB **name** differs), `BILLRUN_DB_NAME` is `enterprise_billing`. The
+  flows connect via `psql`/`PGPASSWORD` — note they do **not** currently set
+  `PGSSLMODE`, so authenticated-TLS enforcement for the flow's DB hop is a
+  separate follow-up (the same gap applies to the rating worker), not wired by
+  bm38.
+
+All three are `see workflow-engine-container-app.bicep`.
 
 ## Verification SQL
 
@@ -275,6 +293,94 @@ SELECT count(*) FROM pg_auth_members m
   WHERE r.rolname = 'billrun_runtime';                                                        -- 0 (no role membership to inherit through)
 SELECT rolconnlimit FROM pg_roles WHERE rolname = 'billrun_runtime';                           -- 20
 ```
+
+Not yet verified against a live cluster in this session — see
+`billmgmt-progress-tracker.md`.
+
+## Production cutover — the `billrun` module (bm38)
+
+The bill-run deploy path is **deployable and reviewable, with the actual cloud
+cutover gated**. The shared `workflow-engine` bicep, its `billrun` secret wiring
+(`billrun-runtime-db-password`, `hostsBillrunNamespace`), the SFTP shape
+(`enableSftpDistribution`), and the pipeline stages that deploy flows / run the
+live smoke all exist — but every deploy flag is **off by default** and the real
+engine/DB/SFTP endpoints are provisioned out-of-band. This section is the
+order-of-operations runbook for the operator who performs the cutover; nothing
+here runs automatically.
+
+**Topology.** Prod runs the **collapsed** topology (`prod.bicepparam`:
+`topology = 'collapsed'`): ONE `workflow-engine` Container App hosts BOTH the
+`rating` and `billrun` namespaces — there is **no** separate processor or
+distributor container. The deployed processing/distribution flows ARE the
+repo's `workflow-management/flows/bill-run-processor/local-dev` and
+`bill-run-distributor/local-dev` flows (there is no separate
+workflow-management flow repo); `deploy_workflow_flows` pushes both to the
+`billrun` namespace on that shared engine.
+
+### Order of operations
+
+1. **Provision the DB role + password.** Run the provisioning sequence above
+   (`db:bootstrap-roles → …-rating-roles → …-billrun-roles`) on the
+   superuser/owner connection, then `ALTER ROLE billrun_runtime WITH PASSWORD`
+   from a **URI-safe alphabet** (§1) — the flow reads it via `PGPASSWORD`, but a
+   URI-safe value also drops cleanly into any hand-built connection string.
+   **After pulling grant-file changes, re-run
+   `db:bootstrap-billrun-roles`** — it is idempotent, and the
+   `billrun_status_guard` it installs now permits the `REJECTED → BILL_DRAFT`
+   re-claim; a stale bootstrap 403s the reject-then-reprocess path.
+2. **Store the Key Vault secrets (out-of-band, never in git):**
+   - `billrun-runtime-db-password` — the BARE `billrun_runtime` password (§2),
+     exposed to the `workflow-engine` container as
+     `SECRET_BILLRUN_RUNTIME_PASSWORD` via `hostsBillrunNamespace` (the
+     connection coordinates `BILLRUN_DB_HOST/PORT/NAME/USER` are non-secret env,
+     wired in the bicep — `BILLRUN_DB_HOST` = the Flexible Server FQDN). Same
+     split shape as `rating-runtime-db-password`; NOT a full connection string.
+   - `billrun-engine-url` — `https://<engine-fqdn>` the app calls
+     (`BILLRUN_ENGINE_URL`).
+   - `billrun-engine-auth` — the app→engine Basic-Auth `username:password`
+     (`BILLRUN_ENGINE_AUTH`). **Its username half MUST be
+     `workflow-ops@billing.ops`** — the coupled triple: (1) the engine's
+     `KESTRA_SERVER_BASIC_AUTH_USERNAME` in
+     `workflow-engine-container-app.bicep`, (2) `deploy_workflow_flows`'s
+     `--user` in `azure-pipelines.yml`, and (3) this out-of-band secret. (1)
+     and (2) are in git and change together; (3) is here. Rotate all three in
+     lockstep — a mismatch 401s every app→engine call (trigger / check-status /
+     cancel / reconcile) after deploy.
+   - (SFTP only, see step 5) `sftp-private-key` / `sftp-known-hosts` — the PEM
+     private key and the pinned host key(s), **base64-encoded** (Kestra's OSS
+     env-secret backend base64-decodes `SECRET_<NAME>`), with host-key
+     verification ON (never `StrictHostKeyChecking=no`).
+3. **Deploy the engine.** Set `deployWorkflowEngine = true` (main.bicep) and
+   apply. Under collapsed topology `hostsBillrunNamespace` is already `true`
+   for this instance, so the `billrun-runtime-db-password` secret ref +
+   `SECRET_BILLRUN_RUNTIME_PASSWORD` / `BILLRUN_DB_*` env vars deploy with it;
+   the loopback distribution sink (`enableLocalDistributionSink`, default true)
+   mounts at `/distribution`.
+4. **Deploy the flows + run the smoke.** Queue the pipeline with
+   `deployRatingFlows = true` (merge-to-main only) so `deploy_workflow_flows`
+   pushes `rating-engine → rating`, `bill-run-processor/local-dev → billrun`,
+   and `bill-run-distributor/local-dev → billrun`. Then queue with
+   `runBillrunLiveKestraSmoke = true` (reads `pg-connection-string-app`,
+   `billrun-engine-url`, `billrun-engine-auth`; requires `db:seed-sample` to
+   have been run out-of-band against that database) to drive the full
+   `SCHEDULED → COMPLETED` journey against the real engine.
+5. **Flip SFTP only when a real endpoint exists.** The default distribution
+   target is `loopback` (writes to the mounted `/distribution` sink — no SSH,
+   no keys). Turn on real SFTP by setting `enableSftpDistribution = true` +
+   `sftpHost=<endpoint>` (main.bicep flips BOTH the engine's SFTP wiring and
+   the app's `BILLRUN_DISTRIBUTION_TARGETS='sftp'` from the one knob, so they
+   can never split-brain) — but only once `sftp-private-key`/`sftp-known-hosts`
+   are provisioned (step 2), or the deploy fails closed on the missing secret
+   reference.
+
+### Taxation — `0.00` interim (recorded)
+
+Taxation is a ratified **no-op** this phase: the processing flow's `taxation`
+stage computes nothing and `customer_bill.tax_total = 0.00`
+(`total_amount = subtotal`). This is deliberate, not a cutover gap — see
+`billmgmt-known-issues.md` §10 and the flow's no-op `taxation` stage. Real
+jurisdiction/category tax rules are a later unit; the cutover does not wait on
+them.
 
 Not yet verified against a live cluster in this session — see
 `billmgmt-progress-tracker.md`.

@@ -7,7 +7,7 @@ subdivides). Writes nothing to the DB.
 
 | File | What it is |
 | --- | --- |
-| `local-dev/bill_run_distribution.yml` | **The real flow (bm34)** for local dev — per-`(target, artifact)` fan-out that downloads each artifact from Azure Blob by `blob_ref` (`azure.storage.blob.Download`) and SFTP-uploads it (`fs.sftp.Upload`) to the target's per-artifact path, then POSTs a per-artifact `DELIVERED`/`FAILED` outcome (`core.http.Request`). Deployed to `billrun` by the stand-up bootstrap (wfm01 §7b). |
+| `local-dev/bill_run_distribution.yml` | **The deployed distribution flow (bm34)** — for both local dev AND production; there is no separate "real" flow in another repo (bm38). Per-`(target, artifact)` fan-out that downloads each artifact from Azure Blob by `blob_ref` (`azure.storage.blob.Download`) and SFTP-uploads it (`fs.sftp.Upload`) — or `fs.local.Upload` for the default `loopback` target — to the target's per-artifact path, then POSTs a per-artifact `DELIVERED`/`FAILED` outcome (`core.http.Request`). `deploy_workflow_flows` pushes `bill-run-distributor/local-dev` to the `billrun` namespace on the shared (collapsed-topology) workflow-engine — the SAME flow the local stand-up bootstrap deploys (wfm01 §7b). |
 
 ## What the flow does (bm34)
 
