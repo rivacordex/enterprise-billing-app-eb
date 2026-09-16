@@ -3,8 +3,10 @@
 Living record of known-but-not-yet-fixed issues in the Bill Run module, captured
 from the bm09–bm11 multi-agent code review (see also
 `billmgmt-progress-tracker.md`). Each entry has a technical description, an
-**ELI5** plain-language summary, and a recommendation. Nothing here is a blocker
-for the current release; they are logged so they are not silently forgotten.
+**ELI5** plain-language summary, and a recommendation. Most entries are not blockers
+for the current release; they are logged so they are not silently forgotten. The
+end-to-end blocker in §9 (processor signal-back) is the exception — it is tracked
+in full in `billmgmt-gap-assessment.md` and is the focus of Phase 4.
 
 > **Status legend:** 🟡 deferred (conscious decision) · 🔴 real bug, out of
 > current scope · ⚪ cosmetic / low priority.
@@ -161,19 +163,6 @@ dates to the month's real last day (fixes 4a), and (2) fix the trigger test's
 per-case isolation (fixes 4b). Both are date/fixture issues, unrelated to the
 approve/post work.
 
-> **RESOLVED (bm22 DB-gate run, 2026-09-14).** Both turned out to be **test**
-> issues, not production bugs. **4a** — `currentDuePeriod`
-> (`services/billing/derive-periods.ts`) already clamps correctly via `Date.UTC`;
-> the invalid `2026-02-29` came from `materialize-runs.integration.test.ts`'s own
-> fixture hand-building calendar strings. Fixed the fixture to
-> `period_end = day 27`, `scheduled_run_date = day 28` (`= period_end + 1`, the
-> `bill_run_oncycle_schedule_check`, valid in every month). **4b** — the
-> `trigger-run.integration.test.ts` double-trigger case now asserts the snapshot
-> **delta** (the rejected second trigger writes nothing) instead of a hard-coded
-> count that broke on the suite's shared-cycle accumulated accounts. Both suites
-> green against a disposable Postgres. See `billmgmt-progress-tracker.md`
-> Current Phase (bm22).
-
 ---
 
 ## 5. ⚪ Approve-page & period-close query efficiency (deferred perf pass)
@@ -280,3 +269,49 @@ the write path.
   `CHECKS_FAILED` calls `setChecks`), so `four_eyes` still renders green with the
   button enabled. Cosmetic — the service still refuses. Refresh the checklist on
   `FOUR_EYES_VIOLATION` to fix.
+
+---
+
+## 9. 🔴 Processor signal-back is stubbed — blocks a self-driving end-to-end run
+
+**Where:** `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`
+(per-stage completion + `on_error`/`on_finally`); the non-deployable
+`bill_run_processing.template.yml` documents the same as `# STUB:`.
+
+**Technical.** The processing flow does all its real SQL (correlation/claim,
+aggregation, verification) but never signals the app: it contains **zero**
+`io.kestra.plugin.core.http.Request` tasks — the per-stage
+`/api/billrun/{runId}/stage/{stage}/complete` POSTs and the terminal
+`/api/billrun/{runId}/status` POST are `io.kestra.plugin.core.log.Log` stubs. So a
+triggered run's accounts never auto-reach `PROCESSED`
+(`TERMINAL_STAGE = 'verification'` in `services/billing/handle-stage-signal.ts`),
+the run stays `PROCESSING`, and Approve → Post → Distribute → `COMPLETED` is
+unreachable without an out-of-band signal replay (which bypasses the stall gate
+and is not an acceptable operator path). The app-side receiver is fully real, and
+the sibling `bill_run_distribution` flow (bm34) already does the real callbacks —
+the fix is to mirror that pattern.
+
+**ELI5.** The bill processor does the work but never phones home to say "done," so
+the app waits forever and you can never press Approve.
+
+**Recommendation.** Phase 4, PU-1: add the real per-stage completion POSTs **and**
+the terminal `on_error`/`on_finally` `/status` POST (incl. `FAILED` settlement) to
+the processing flow, mirroring bm34. Full diagnosis and scope in
+`billmgmt-gap-assessment.md` / `billmgmt-update-overview.md`.
+
+---
+
+## 10. 🟡 Taxation stage is a no-op — every bill is zero-tax
+
+**Where:** `bill_run_processing.yml` `taxation` stage (a `Log` placeholder).
+
+**Technical.** The `taxation` stage computes nothing: `customer_bill.tax_total` is
+always `"0.00"` and `total_amount = subtotal`. The `customer_bill_tax_item` table
+and the single-rate `BILLRUN_TAX_RATE` config exist (bm06) but no tax line is
+written by the real flow.
+
+**ELI5.** The processor doesn't calculate tax yet — every invoice shows zero tax.
+
+**Recommendation.** Ratified as the intended interim (Phase 4 decision) — invoices
+show `total = subtotal`. Implement a real (flat-rate SST, then jurisdictional)
+taxation stage in a later unit if RevOps needs a tax line on the reviewed invoice.

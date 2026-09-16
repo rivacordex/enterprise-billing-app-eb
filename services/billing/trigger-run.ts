@@ -5,6 +5,7 @@ import { billingAccountRepository } from "@/db/repositories/accounts/billing-acc
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
+import { billRunProcessingForceFail } from "@/lib/config";
 import { getBusinessToday } from "@/services/billing/business-today";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
@@ -144,6 +145,11 @@ export async function triggerRun(
             ban_ids: banIds,
             attempt,
             gl_event_at: run.scheduledRunDate,
+            // bm36-spec §Implementation §4 — the deploy-time/test force-fail
+            // toggle (default false → unchanged behaviour). Read only here,
+            // never by a UI/action; when true the flow drives the first scoped
+            // account (`ban_ids[0]`) to a synthetic HARD failure at aggregation.
+            force_fail: billRunProcessingForceFail,
           },
         );
       } catch (err) {

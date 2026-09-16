@@ -220,7 +220,7 @@ db/repositories/billing/
 db/bootstrap/
   billrun-db-roles.sql         # billrun_runtime grants + rating.billrun_status_guard
   rating-db-roles.sql          # + rating.rating_status_guard (phase 3)
-db/migrations/…                # billing tables + partition_management rows + billrun_* PERMISSIONS + INV additions
+db/migrations/…                # billing tables + partition_management rows + billrun_* PERMISSIONS + Billing Viewer role + INV additions
 workflow-management/flows/        # wfm-architecture.md §4 — function-first; spin-off subdirectory
   bill-run-processor/
     bill_run_processing.template.yml   # the contract doc (non-deployable)
@@ -241,7 +241,7 @@ validation/billing/
 tests/…                        # mirrors source; route × level matrix for the three pages + the two M2M handlers
 ```
 
-1. **The single rating write is isolated in `db/repositories/billing/udr-status.repository.ts`** — the only file in the module that issues an `UPDATE rating.udr_rated` (the app's four out-of-claim transitions; the claim itself is the flow's). No other repository writes the `rating` schema (Inv. #2), which makes the boundary greppable and testable. *(Phase-1 planning named this `rating-claim.ts`; renamed as-built — see §6 and the file tree above.)*
+1. **The single rating write is isolated in `db/repositories/billing/udr-status.repository.ts`** — the only file in the module that issues an `UPDATE rating.udr_rated`. No other repository writes the `rating` schema (Inv. #2), which makes the boundary greppable and testable.
 2. **`services/billing/**` is framework-agnostic** (no `next/*`), and the ingest handlers and Server Actions call the **same** service functions (§1.2) — never a duplicated code path.
 3. **The workflow-engine HTTP client (`services/billing/engine-client.ts`) is wrapped by `services/billing/engine-registry.ts`** (bm16), which resolves a logical engine name ("billrun") to a connection + a stable identity string sourced from Key Vault/config, and is the ONLY caller of the client's real/stub implementations. `trigger-run.ts`/`reconcile-run.ts`/`cancel-run.ts` call the registry, never the client directly, and no page/component/Route Handler calls either.
 4. **Do not fork the nav** — the Billing section is a `NAV_SECTIONS` entry, not a new nav component.
@@ -480,6 +480,18 @@ Authoritative; mirrors `billmgmt-architecture.md` §4. New pages/actions are app
   exercising the `DISTRIBUTION_FAILED` path against the deployed placeholder
   flow. No new permission.
 
+- **bm36 — `BILLRUN_PROCESSING_FORCE_FAIL` (env flag, phase 4).** The processing
+  analog of `BILLRUN_DISTRIBUTION_FORCE_FAIL`, with the **same posture**: a
+  deploy-time/test toggle, **read only by `services/billing/trigger-run.ts`**
+  (threaded onto the processing trigger payload's `force_fail`), **no UI control**
+  (no target-catalog analogue — §6.13's no-`udr_mode`-style-column posture applies
+  here too), default `false` so normal deployments never force a failure. When
+  `true` the processing flow drives its **first scoped account** (`ban_ids[0]`) to
+  a synthetic HARD failure at `aggregation`, exercising the terminal
+  `PROCESSING_FAILED` signal path deterministically for the bm37 gate with no seed
+  change. A grep guardrail asserts no UI/action reads it, mirroring the
+  distribution flag. No new permission.
+
 ---
 
 ## 9. Module Guardrail Tests (CI gate, general §10.4)
@@ -489,7 +501,7 @@ The general test-suite gate includes this module's guardrails; each ships with t
 ### Phase 1 (bm01–bm13)
 
 1. **Authz matrix** — the three pages × role/level, incl. the `operate` ≠ `approve` split (an `operate`-only principal cannot approve/post; four-eyes: approver == final trigger actor → reject).
-2. **M2M auth** — missing/invalid bearer → 401; valid stage signal advances `bill_run_account_stage` in one txn; **replay `(run,ban,stage,attempt,period_partition)` → 200 no-op**; signal after `APPROVED` → 409; charge fields in body → rejected; **the stage signal writes NO per-signal `core.AUDIT_LOG` row** — the appended `bill_run_account_stage` row is the sole stage audit surface (§1.10). Land this assertion with the M2M-handler unit that introduces the signal path.
+2. **M2M auth** — missing/invalid bearer → 401; valid stage signal advances `bill_run_account_stage` in one txn; **replay `(run,ban,stage,attempt,period_partition)` → 200 no-op**; signal after `APPROVED` → 409; charge fields in body → rejected; **the stage signal writes NO per-signal `core.AUDIT_LOG` row** — the appended `bill_run_account_stage` row is the sole stage audit surface (§1.11). Land this assertion with the M2M-handler unit that introduces the signal path.
 3. **Claim correctness** — a UDR already claimed by another run is never re-claimed; rerun releases then re-claims; release refused for rows on a posted invoice; the claim is the only `rating.*` write (asserted structurally against `db/repositories/billing/`).
 4. **Finalization latch** — a `customer_bill` with `ref_inv_document_id` set cannot be deleted or invalidated; posting retry skips already-`INVOICED` accounts; a crash between INV-number consumption and the stamp commit does not double-post.
 5. **No billing charge copy** — no table in `db/schema/billing/` stores charge amounts; `charge_checksum` detects a change to a posted invoice's `rating` lines.
@@ -510,8 +522,6 @@ The general test-suite gate includes this module's guardrails; each ships with t
 17. **Phase-1 guardrails still green (bm21)** — the bm13 set (items 1–8 above) re-run unchanged; no regression from any phase-2 unit.
 18. **Reject → reprocess (bm17, proven end-to-end by bm21)** — reject blocks approval (`no_rejected_pending`) until the rejected account is rerun; the marker lives on the rejected attempt's stage row and is implicitly cleared by the rerun's attempt bump, never an explicit clear write. Proven in `tests/db/billing-e2e-happy-path.integration.test.ts`.
 
-**bm35 (the phase-3 ship gate) assembles and verifies items 19–32 the same way bm21 did for phase 2** (§9.33 Concurrency is proposed/unbuilt, so it is out of the assembled set) — it audits that each already shipped with its unit (bm23–bm34) and is CI-wired, rather than rebuilding. The assembly manifest is `tests/guardrails/billrun-phase3-ship-gate.test.ts` (each phase-3 guardrail is present on disk and routed into a Vitest project; the `volume` seed profile is wired). bm35 adds only what no single unit owns: the `volume` seed profile (`db/seeds/sample`, `SAMPLE_SEED_PROFILE=volume`), its set-based-aggregation assertion (`tests/db/billrun-volume-aggregation.integration.test.ts`), and the phase-3 full journey (`tests/db/billrun-phase3-journey.integration.test.ts`). The against-real-infra run of the journey (real Kestra/blob/SFTP, bm22's environment) is the deferred live smoke; the CI double drives the shared flow-doubles.
-
 ### Phase 3 (real processing, charge lines, SFTP distribution)
 
 19. **[CRITICAL] Correlation (D1)** — a seeded `udr_rated` row with `billrun_ban_id` NULL is claimed to the right account through `inventory.product_inventory`; two subscriptions of different offerings land on different lines; an unresolvable `udr_subscriber_ref_id` follows the stated policy and never vanishes silently (§1.14, Inv. #25). A guardrail also asserts **no code path writes `product_inventory.billing_account_id`**, so resolve-at-bill-run-time stays safe.
@@ -526,7 +536,7 @@ The general test-suite gate includes this module's guardrails; each ships with t
 28. **SFTP transport** — each invoice PDF lands at its own remote path and logs a `DELIVERED` outcome; one transient failure is retried once then delivered; an upload that fails twice still POSTs `FAILED` rather than terminating silently (the outcome POST is the deliverable, not the upload); host-key verification is on and the key comes from a Kestra Secret.
 29. **Uncharged semantics (D14/Inv. #22)** — a recurring-only account with zero usage is **billed**, not Uncharged; an account with no charge lines **is**; an `EXCLUDED` account appears on neither (Inv. #26); a `BILL_NOTUSED` row appears on the per-record exception surface only.
 30. **Partition registration** — `customer_bill_line` has a `partition_management` row and its monthly partitions are created by `pg_partman`; a row for a future month does not land in the default partition.
-31. **`volume` profile** — Aggregation issues a bounded number of statements rather than one per record, and line count tracks product footprint rather than record count. Run deliberately, not on every commit — but on a schedule someone watches, or a per-record regression surfaces only in production. *(Shipped by bm35: the `volume` seed profile in `db/seeds/sample` (`SAMPLE_SEED_PROFILE=volume`, same `buildSampleUdrRatedRow` factory as `ci`) + `tests/db/billrun-volume-aggregation.integration.test.ts`, which drives the shared aggregation flow-double at high cardinality and asserts both — line count = (offering × udr_type) footprint, and a statement count INVARIANT to record count via a postgres.js `debug` counter.)*
+31. **`volume` profile** — Aggregation issues a bounded number of statements rather than one per record, and line count tracks product footprint rather than record count. Run deliberately, not on every commit — but on a schedule someone watches, or a per-record regression surfaces only in production.
 32. **Exception policies (D32/D33)** — a `udr_rated` row with an unresolvable subscriber stays `RATED` and unclaimed, appears on the exception surface, and does **not** block approval; the next run claims it once inventory is fixed. A subscription whose recurring price is missing or `tiered` sends its account to `PROCESSING_FAILED` with the right code, produces no bill, and leaves every other account billable.
 33. **Concurrency (P3, proposed)** — two-tab reject-vs-approve, and a double-trigger attempt while `DISTRIBUTING`.
 

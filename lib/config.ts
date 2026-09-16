@@ -195,6 +195,16 @@ const envSchema = z
     // `targets[].force_fail`. Defaults to `false` so production/normal
     // deployments never force a failure.
     BILLRUN_DISTRIBUTION_FORCE_FAIL: booleanEnvSchema("false"),
+    // bm36-spec §Design/§Implementation §4 — the processing analog of
+    // BILLRUN_DISTRIBUTION_FORCE_FAIL (same bm20/D20 posture): a deploy-time/
+    // test toggle read ONLY by `services/billing/trigger-run.ts`, which threads
+    // it onto the processing trigger payload's `force_fail`. When `true` the
+    // flow drives its FIRST scoped account to a synthetic HARD failure at
+    // aggregation, exercising the terminal PROCESSING_FAILED path
+    // deterministically for the bm37 gate — with no seed change and no UI
+    // control (there is no target-catalog analogue, Inv #11 posture). Defaults
+    // to `false` so production/normal deployments never force a failure.
+    BILLRUN_PROCESSING_FORCE_FAIL: booleanEnvSchema("false"),
     // bm34-spec §Design D8/D25, §Implementation §2-3. The environment-selected
     // known-target set — a comma-separated list of the names in
     // `KNOWN_DISTRIBUTION_TARGET_NAMES` (loopback local / sftp deployed; both
@@ -341,6 +351,7 @@ function loadConfig(): Config {
     BILLRUN_BLOB_ACCOUNT_URL: process.env.BILLRUN_BLOB_ACCOUNT_URL,
     BILLRUN_DISTRIBUTION_FORCE_FAIL:
       process.env.BILLRUN_DISTRIBUTION_FORCE_FAIL,
+    BILLRUN_PROCESSING_FORCE_FAIL: process.env.BILLRUN_PROCESSING_FORCE_FAIL,
     BILLRUN_DISTRIBUTION_TARGETS: process.env.BILLRUN_DISTRIBUTION_TARGETS,
   });
 
@@ -427,6 +438,14 @@ export const billRunBlobConfig = {
 // `targets[].force_fail` — never read directly by a UI component or action.
 export const billRunDistributionForceFail: boolean =
   config.BILLRUN_DISTRIBUTION_FORCE_FAIL;
+
+// bm36-spec §Design/§Implementation §4. Read ONLY by
+// `services/billing/trigger-run.ts`, which threads it into the processing
+// trigger payload's `force_fail` — never read directly by a UI component or
+// action (same single-reader posture as `billRunDistributionForceFail`). A
+// grep guardrail asserts no other live source reads it.
+export const billRunProcessingForceFail: boolean =
+  config.BILLRUN_PROCESSING_FORCE_FAIL;
 
 // bm34-spec §Design/§Implementation §2-3. The resolved known-target set (see
 // the `KNOWN_DISTRIBUTION_TARGET_NAMES` note above). Read ONLY by

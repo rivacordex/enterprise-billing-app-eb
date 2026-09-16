@@ -26,6 +26,14 @@ export interface ProcessingTriggerPayload {
   ban_ids: string[];
   attempt: number;
   gl_event_at: string;
+  // bm36-spec §Implementation §4 — the deploy-time/test force-fail toggle,
+  // threaded from `billRunProcessingForceFail` by `trigger-run.ts` ONLY (mirrors
+  // `DistributionTargetInput.force_fail`). Optional because `trigger-run.ts` is
+  // the sole reader of the flag: `rerun-run.ts` omits it so a rerun always
+  // RECOVERS (never re-forces the failure), and the flow input defaults `false`
+  // when absent. `false`/absent in every normal deployment; when `true` the flow
+  // drives its first scoped account to a synthetic HARD failure at aggregation.
+  force_fail?: boolean;
 }
 
 // bm20-spec §Implementation §2/§3. The distribution execution's trigger

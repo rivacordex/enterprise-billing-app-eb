@@ -8,7 +8,11 @@
 # `# REAL (bm29):` (the RECURRING price resolver + its D33 HARD-fail branch), and
 # `verification` carries `# REAL (bm30):` (SOFT non-positive-total sanity + the
 # HARD USAGE bill↔charge reconciliation) — the real SQL ships in the separate
-# workflow-management repo. See ./README.md.
+# workflow-management repo. The SIGNAL-BACK is `# REAL (bm36):` — the per-stage
+# `DONE` POSTs, the per-account HARD `FAILED` POST, and the run-level terminal
+# `PROCESSING_FAILED` (`errors`/`finally`) are real `core.http.Request` callbacks
+# (at parity with the distributor, bm34); the only remaining `# STUB:` is the
+# taxation compute. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -22,6 +26,20 @@ tasks:
   - id: per_account
     type: io.kestra.plugin.core.flow.ForEach # fan-out per account (Inv: per account, per stage)
     values: "{{ inputs.ban_ids }}"
+    # REAL (bm36) — SIGNAL-BACK contract. The account's stage sequence is wrapped
+    # in a Sequential (allowFailure) so a HARD stage failure is contained to this
+    # account and siblings keep processing. After EACH stage's real work, a
+    # `core.http.Request` POSTs a record-only stage-complete `DONE` to
+    # POST /api/billrun/{runId}/stage/{stage}/complete
+    #   body { ban_id, attempt, status: "DONE" } (verification may add
+    #   error_class: "SOFT" + error_code/error_detail for a SOFT finding),
+    # Bearer BILLRUN_APP_TOKEN, retry PT5S×2, allowFailure (a lost callback must
+    # not crash a run — the reconcile/stall gate is the backstop). The terminal
+    # `verification` DONE is what flips the account to PROCESSED. On a HARD stage
+    # failure the wrapper's `errors` handler POSTs a stage-complete FAILED for
+    # (ban, failing-stage) with error_class: "HARD", error_code, error_detail —
+    # the account recomputes to PROCESSING_FAILED. A stale-attempt straggler is a
+    # receiver-side no-op (the `attempt` echoed on every body).
     tasks:
       # --- validation (folded into the shared correlation — bm27) ---
       - id: validation
@@ -171,8 +189,21 @@ tasks:
         #     (advisory, NEVER blocks — bm07 behaviour preserved); otherwise DONE.
         #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
 errors:
+  # REAL (bm36): POST a run-level terminal PROCESSING_FAILED to
+  # POST /api/billrun/{runId}/status { status: "PROCESSING_FAILED" }
+  # (Bearer BILLRUN_APP_TOKEN, retry PT5S×2, NO allowFailure — this settlement
+  # must land) so a flow that errored before every account signalled settles the
+  # run instead of hanging on the stall gate. A per-account HARD stage failure is
+  # signalled separately by the per-account stage group's own `errors` handler.
   - id: on_error
-    # STUB: POST a terminal per-account/run failure to the app status endpoint.
 finally:
+  # REAL (bm36): POST the terminal PROCESSING_FAILED ONLY on a KILL
+  # (execution.state.current == 'KILLED' — the one terminal state that fires
+  # `finally` but not `errors`). NOT `!= 'SUCCESS'`: a WARNING execution (a
+  # contained per-account HARD failure) derives PROCESSED by the module contract
+  # (compute-run-status.ts / pre-approval-checks.ts — the failed account is
+  # skippable/rerunnable), so force-pushing PROCESSING_FAILED there would 409 or
+  # wrongly flip a healthy run. Processing self-completes via the per-account DONE
+  # signals — there is NO run-level PROCESSING_FINISHED recompute push (unlike
+  # distribution's DISTRIBUTION_FINISHED).
   - id: on_finally
-    # STUB: always POST a terminal status so a killed/partial run still reports (Inv #1 obligation).
