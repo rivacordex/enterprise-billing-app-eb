@@ -191,6 +191,13 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
     expect(mockBumpHeartbeat).not.toHaveBeenCalled();
   });
 
+  // bm37-spec §Implementation §3 "Reconcile alignment" — this is the targeted
+  // unit assertion the live-Kestra smoke (`scripts/billrun-live-kestra-smoke.ts`)
+  // defers the wedge-guarantee to: a SUCCESS engine state over a non-terminal
+  // account grain must yield `mismatch: true` with NO forced status and NO
+  // heartbeat bump, so a real wedge still surfaces the StallBanner. The smoke
+  // asserts only the complementary healthy-run direction (mismatch never true /
+  // never STALLED while signals flow).
   it("SUCCESS with an account still in progress: surfaces a mismatch, no status write, and leaves the run flagged (no heartbeat bump)", async () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockGetExecutionStatus.mockResolvedValue({ state: "SUCCESS" });

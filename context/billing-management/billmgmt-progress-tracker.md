@@ -31,9 +31,12 @@ detail: `context/billing-management/specs/bm*.md`._
   (Bearer token, retry PT5S×2), replacing the `Log` stubs, at parity with the
   distributor (bm34). So a triggered run now drives itself to `PROCESSED` and a
   HARD-failing account settles via the signal (not the stall gate). Taxation
-  stays a no-op (`tax_total = 0.00`), ratified as interim. **Remaining Phase 4:**
-  the live-Kestra `SCHEDULED → COMPLETED` assertion (bm37) and production deploy
-  wiring — see `billmgmt-update-overview.md` and `billmgmt-gap-assessment.md`.
+  stays a no-op (`tax_total = 0.00`), ratified as interim.
+- **The live-Kestra `SCHEDULED → COMPLETED` assertion is real (bm37, Phase 4).**
+  `scripts/billrun-live-kestra-smoke.ts` now drives the WHOLE operator journey
+  against the real deployed flows and closes the bm16/bm20 live-Kestra gate.
+  **Remaining Phase 4:** production deploy wiring — see
+  `billmgmt-update-overview.md` and `billmgmt-gap-assessment.md`.
 
 ## Delivered units
 
@@ -146,15 +149,44 @@ detail: `context/billing-management/specs/bm*.md`._
   HARD at aggregation for the bm37 gate. Template contract + `billmgmt-architecture`
   (changelog #15, processing↔distribution terminal-asymmetry note, **no new
   invariant**) + `billmgmt-code-standards` synced. No new schema, no migration.
+- **bm37** — Local end-to-end assertion + reconcile alignment: rewrote
+  `scripts/billrun-live-kestra-smoke.ts` (superseding the bm21 "trigger → claim →
+  PROCESSED" gate) to drive and assert the FULL `SCHEDULED → COMPLETED` operator
+  journey against the real deployed flows on the `_SAMPLE_` `ci` seed —
+  processing force-fail settlement (forced account `PROCESSING_FAILED`, run
+  recomputes to `PROCESSED` per **decision (a)**) + rerun recovery, reject →
+  blocked approval (`no_rejected_pending`) → reprocess, four-eyes approve (a
+  second seeded actor), post → `INVOICED`, distribution force-fail →
+  `rerunDistribution` → `COMPLETED`. Because the two force-fail toggles
+  (`BILLRUN_PROCESSING_FORCE_FAIL`/`BILLRUN_DISTRIBUTION_FORCE_FAIL`) resolve to
+  process-global `const`s (fixed at config import), the script **re-spawns itself
+  as three sequenced leg processes** (`proc-fail` → `drive` → `redist`), each
+  with its own force-fail env, handing the run id off via a temp file; the whole
+  journey runs on the SINGLE due `ci` period (not two calendar-distinct runs),
+  with the failure injections sequenced so no run is ever simultaneously
+  reject-blocked and processing-failed. Adds the reconcile-alignment healthy-run
+  asserts (`mismatch: false` and `isStalled` false on every poll while signals
+  flow); the complementary wedge-guarantee (SUCCESS-but-non-terminal grain →
+  `mismatch: true`, no forced status, no heartbeat bump) is the pre-existing
+  targeted unit in `reconcile-run.service.test.ts` (bm37 cross-ref added). The
+  `_SAMPLE_`-only safety gate now re-runs at the head of every mutating leg. **No
+  flow/compute/receiver change** (`reconcile-run.ts` unchanged — asserted, not
+  touched); no new schema, no migration.
+  - **Review hardening (2026-09-16):** the safety gate's charge check was inert
+    (it keyed on `billrun_ban_id`/`status='RATED'`, which never matches the
+    unclaimed-NULL seed shape) — re-derived to correlate candidate charges via the
+    real `udr_subscriber_ref_id → product_inventory → billing_account_id` path
+    (mirrors `rated-lines.repository.ts`), so the second boundary now has teeth.
+    Post → distribution now fails fast if the run is left at `INVOICED`/`POSTING`
+    (swallowed auto-trigger / parked account) instead of polling into a 10-min
+    timeout; "no due SCHEDULED run" now distinguishes never-seeded from a
+    non-resumable prior run left mid-lifecycle (points at re-seed); the reject leg
+    steers away from the just-recovered forced account; handoff-file read + the
+    `--env-file` execArgv filter hardened. No behavioural change to the proven
+    lifecycle.
 
 ## Outstanding / Next (Phase 4)
 
-- **End-to-end lifecycle assertion (bm37, the blocker close-out)** — with bm36's
-  signal-back real, assert `SCHEDULED → COMPLETED` on the `ci` seed (incl. reject →
-  re-rate → reprocess, forced processing-failure → settle, and distribution +
-  forced dist-failure → rerun) via `billrun:live-kestra-smoke`; confirm the
-  stall/reconcile gate no longer fires on a healthy run. Scope + decisions in
-  `billmgmt-update-overview.md`.
 - **Production deployable + wired** — provision `BILLRUN_RUNTIME_DATABASE_URL`,
   `billrun-engine-auth`/`-url`, and SFTP Key Vault secrets + consumer mapping into
   the shared `workflow-engine` bicep (collapsed topology; no separate container);
@@ -206,17 +238,20 @@ detail: `context/billing-management/specs/bm*.md`._
 
 ## Open questions
 
-- **bm37 — reconcile the failure-path terminal wording (from a bm36 code
-  review).** The bm36 spec's verification checklist says a per-account HARD
-  failure makes "the run recompute to `PROCESSING_FAILED`", but the established,
-  tested module contract derives **`PROCESSED`** for a mixed
-  `PROCESSED`/`PROCESSING_FAILED` terminal set (`compute-run-status.test.ts`), with
-  the failed account `SKIPPED` at approval and the run rerunnable. bm36 keeps the
-  established contract (run stays `PROCESSED`; only a whole-execution `FAILED`/`KILL`
-  yields run `PROCESSING_FAILED`). bm37 should either (a) accept/redocument the
-  `PROCESSED`-with-failed-account terminal, or (b) if a per-account failure must
-  fail the whole run, change `computeRunStatus` (a receiver change bm36 forbade)
-  and re-check approve/reconcile/pre-approval module-wide — its own decision.
+- **bm37 — reconcile the failure-path terminal wording (RESOLVED 2026-09-16,
+  option (a)).** The bm36 spec's checklist and bm37 §2 both wrote that a
+  per-account HARD failure makes "the run recompute to `PROCESSING_FAILED`", but
+  the established, tested contract derives **`PROCESSED`** for a mixed
+  `PROCESSED`/`PROCESSING_FAILED` terminal set (`compute-run-status`), with the
+  failed account `SKIPPED` at approval and the run rerunnable — and on the
+  multi-account `ci` seed `BILLRUN_PROCESSING_FORCE_FAIL` only fails the FIRST
+  scoped account (contained WARNING → engine `SUCCESS`), so the run cannot reach
+  run-level `PROCESSING_FAILED` without a whole-execution `FAILED`/`KILL`.
+  **Decision: option (a)** — keep the tested contract. bm37's Run-B leg asserts
+  the forced account settles to `PROCESSING_FAILED` via the terminal signal and
+  the RUN stays `PROCESSED`; the rerun (force-fail off) recovers it, then the run
+  carries through approve → post → `COMPLETED`. No `computeRunStatus`/receiver/
+  flow change.
 - **Receiver hardening deferred (out of bm36 scope — "no receiver change").** The
   run-level `PROCESSING_FAILED` `/status` push has no `attempt`/execution-stale
   guard (unlike the `DISTRIBUTION_*` pushes), so a superseded execution's late
