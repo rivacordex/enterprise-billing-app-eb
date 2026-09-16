@@ -73,6 +73,9 @@ workflow-management/dev/landing/*
 workflow-management/dev/logs/*
 workflow-management/dev/error/*
 workflow-management/dev/archive/*
+# bm34 — the loopback distribution sink bind mount (fs.local.Upload writes
+# delivered invoice PDFs + the register CSV here); runtime output, not source.
+workflow-management/dev/distribution/*
 !workflow-management/dev/landing/.gitkeep
 !workflow-management/dev/landing/README.md
 !workflow-management/dev/logs/.gitkeep
@@ -81,6 +84,8 @@ workflow-management/dev/archive/*
 !workflow-management/dev/error/README.md
 !workflow-management/dev/archive/.gitkeep
 !workflow-management/dev/archive/README.md
+!workflow-management/dev/distribution/.gitkeep
+!workflow-management/dev/distribution/README.md
 
 # bm22 §7 — local SFTP dev endpoint. Key material is LOCAL-ONLY and must never
 # be committed (publish-safe repo): the developer's generated dev keypair drops
