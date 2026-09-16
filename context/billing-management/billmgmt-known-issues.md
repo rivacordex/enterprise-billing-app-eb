@@ -6,9 +6,12 @@ from the bm09–bm11 multi-agent code review (see also
 **ELI5** plain-language summary, and a recommendation. Most entries are not blockers
 for the current release; they are logged so they are not silently forgotten. The
 end-to-end blocker in §9 (processor signal-back) has been **RESOLVED by bm36** —
-the signal-back is now real; the remaining Phase 4 work is the bm37 live-Kestra
-lifecycle validation and production deploy wiring (see `billmgmt-gap-assessment.md`
-and `billmgmt-update-overview.md`).
+the signal-back is now real. Phase 4 is delivered: bm37 added the local
+`SCHEDULED → COMPLETED` live-Kestra lifecycle assertion, bm38 made the production
+deploy path deployable + wired (still gated), and **bm39 audited the assembled
+phase against its guardrails and signed it off** (§9 resolved, §10 ratified, no new
+schema). The cloud cutover itself remains a gated ops step (see
+`billmgmt-update-overview.md` and `billmgmt-progress-tracker.md`).
 
 > **Status legend:** 🟡 deferred (conscious decision) · 🔴 real bug, out of
 > current scope · ⚪ cosmetic / low priority.
@@ -301,10 +304,13 @@ HARD `FAILED` from the account stage group's `errors` handler (to a fixed
 contract), and only a whole-execution `FAILED`/`KILL` settles the run
 `PROCESSING_FAILED`.
 
-**Remaining (Phase 4).** bm37 asserts the full `SCHEDULED → COMPLETED` lifecycle
-on the `ci` seed (incl. reject → reprocess and the forced-failure path) via the
-live-Kestra smoke, plus production deploy wiring. Scope in
-`billmgmt-gap-assessment.md` / `billmgmt-update-overview.md`.
+**Delivered (Phase 4, closed).** bm37 asserts the full `SCHEDULED → COMPLETED`
+lifecycle on the `ci` seed (incl. reject → reprocess and the forced-failure path)
+via the live-Kestra smoke; bm38 wired the production deploy path (deployable +
+gated); bm39 audited the assembled phase (guardrails green, receivers unchanged, no
+new schema) and signed it off. The live cloud cutover — flipping the deploy flags
+and running the smoke against a real engine + SFTP — remains a gated ops step. Scope
+in `billmgmt-update-overview.md`.
 
 ---
 

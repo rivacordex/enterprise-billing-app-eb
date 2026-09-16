@@ -9,6 +9,39 @@ detail: `context/billing-management/specs/bm*.md`._
 
 ## Current state (2026-09-16)
 
+- **bm39 — Phase-4 ship gate: DELIVERED (2026-09-16).** Audited the assembled
+  Phase-4 boundary against its guardrails (audit, don't rebuild — bm21/bm35
+  discipline), confirmed no new schema, and synced the owning docs. **All guardrails
+  green:** the processing flow (`bill-run-processor/local-dev/bill_run_processing.yml`)
+  carries real `http.Request` callbacks — the five per-stage `DONE` POSTs + the
+  per-account HARD `FAILED` handler + the run-level `on_error`/`afterExecution:on_killed`
+  terminal `/status` POSTs — with **no** remaining signal `Log` stub (`start` and the
+  `taxation` no-op stage are the only Logs, neither a signal). **The audit surfaced a
+  gap and bm39 closed it (bm13/bm21 "fix what the audit finds"):** the signal-back had
+  no CI regression guard — a callback reverted to a `Log` stub would pass every test —
+  so bm39 added the static, DB-free `tests/guardrails/billrun-processing-signal-back.test.ts`
+  (asserts the five DONE POSTs + per-account HARD `FAILED` + two terminal `/status`
+  POSTs, and exactly 8 `http.Request` / 2 non-signal `Log` tasks), making
+  code-standards §9 item 34 a true CI-wired guardrail alongside item 35's flag test.
+  `BILLRUN_PROCESSING_FORCE_FAIL` defaults `false` and its accessor is read only by
+  `trigger-run.ts` (guardrail test); the M2M **receivers are unchanged**
+  (`handle-stage-signal.ts`/`handle-status-push.ts`/`reconcile-run.ts` last touched
+  at/before bm22/bm20, not by bm36–bm38); **no new schema/migration** (`_journal.json`
+  ends at idx 39 = `0039_customer_bill_line`, bm23 — no `0040+`); bm38's bicep secret
+  wiring is reviewable with the deploy flags gated off by default. `tsc`, `eslint`, and
+  the DB-free vitest suite pass. Docs synced: `billmgmt-code-standards.md` §9 gains the
+  two Phase-4 guardrails (items 34–35); `billmgmt-known-issues.md` §9 stays resolved
+  (bm36), §10 the ratified taxation-`0.00` interim; `billmgmt-project-overview.md`'s
+  signal-back "remaining" callout is dropped and success-criterion 9 folded into the
+  delivered narrative. **The full-journey live-Kestra proof (bm37's
+  `billrun:live-kestra-smoke` to `COMPLETED`) is the gated live-stack step** — it runs
+  against the provisioned real Postgres/Kestra/blob/SFTP stack (not up in this session;
+  the DB-gated E2E must target a disposable/CI Postgres, never the shared dev DB), and
+  is CI-doubled by `tests/db/billing-e2e-happy-path.integration.test.ts`. **Note:** the
+  spec's doc-sync item for `billmgmt-gap-assessment.md` is moot — no such file exists in
+  the repo (the diagnostic was never committed under that name); its intent is subsumed
+  by this closeout. See `specs/bm39-phase4-ship-gate.md`.
+
 - **Phases 1–3 (bm01–bm35) are implemented in the codebase.** Phase 1 (bm01–bm13)
   built the control plane; Phase 2 (bm14–bm21) the two-writer boundary, rendering,
   posting-on-real-charges, distribution, and the ship gate; Phase 3 (bm22–bm35) the
@@ -238,8 +271,33 @@ detail: `context/billing-management/specs/bm*.md`._
     carry a "separate workflow-management repo" line; the bm38 spec scoped the
     fiction-correction to the template + READMEs only, so these were left —
     fold into a later flow-touching unit.
+- **bm39** — Phase-4 ship gate (Phase O). Audit + sign-off; no rebuild, but the
+  audit surfaced one genuine gap and closed it in-boundary (bm13/bm21 "fix what the
+  audit finds"; the unit's boundary is cross-cutting tests + docs/tracker). Confirmed
+  every Phase-4 behaviour present + green per boundary: bm36's real `http.Request`
+  signal-back (five per-stage `DONE` POSTs + per-account HARD `FAILED` + run-level
+  `on_error`/`on_killed` terminal `/status`, no signal `Log` stub);
+  `BILLRUN_PROCESSING_FORCE_FAIL` default `false` + single reader (`trigger-run.ts`);
+  receivers unchanged; distribution real (bm34); bm38's bicep secret wiring reviewable
+  with deploy flags gated off. **No new schema/migration** (migrations set unchanged
+  since bm23's `0039_customer_bill_line`; `_journal.json` ends at idx 39).
+  **Gap closed:** the signal-back had no CI regression guard (a callback reverted to a
+  `Log` stub would pass every existing test), so bm39 added the static, DB-free
+  `tests/guardrails/billrun-processing-signal-back.test.ts` (4 asserts, green),
+  promoting code-standards §9 item 34 from a described audit-grep to a real CI-wired
+  guardrail beside item 35's flag test. `tsc`/`eslint`/DB-free vitest green (incl. the
+  new test). Doc closeout: `billmgmt-code-standards.md` §9 items 34–35 added;
+  `billmgmt-known-issues.md` §9 resolved (bm36) / §10 ratified interim;
+  `billmgmt-project-overview.md` signal-back callout dropped + SC9 folded delivered
+  (with the live-smoke gated-step caveat). **The live-Kestra full-journey proof is the
+  gated live-stack step** (bm37's `billrun:live-kestra-smoke` against the provisioned
+  real stack — not up in this session), CI-doubled by
+  `tests/db/billing-e2e-happy-path.integration.test.ts`. One new test file; no
+  app/flow/schema change.
+  `billmgmt-gap-assessment.md` (a spec-referenced doc-sync target) does not exist in
+  the repo — its intent is subsumed by this closeout. See `specs/bm39-phase4-ship-gate.md`.
 
-## Outstanding / Next (Phase 4)
+## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step, NOT wiring)** — the bicep/pipeline/doc wiring
   landed in bm38. What remains is the operator action: provision the out-of-band

@@ -30,17 +30,21 @@ earlier phases has been retired; the pipeline runs against real Postgres, real
 Kestra, a real blob store and a real SFTP endpoint.
 
 > **Current state (2026-09-16).** The compute, posting, rendering and distribution
-> planes are all built and real (Phases 1–3, bm01–bm35), and **the processor
-> signal-back is now real (bm36):** `bill_run_processing.yml` POSTs a per-stage
-> `DONE` after each stage, a per-account HARD `FAILED`, and a run-level terminal
-> `PROCESSING_FAILED` for a whole-execution failure (`errors: on_error` on `FAILED`,
-> `afterExecution: on_killed` on a KILL) — all real `http.Request`, mirroring the
-> distributor (bm34). A triggered run now reaches `PROCESSED` on its own; a
-> contained per-account HARD failure leaves the run `PROCESSED` with the failed
-> account skippable/rerunnable. **Remaining before the whole path is proven
-> end-to-end:** the bm37 live-Kestra lifecycle assertion and production deploy
-> wiring — **Phase 4** (see `billmgmt-update-overview.md` and
-> `billmgmt-gap-assessment.md`). Taxation is a ratified `0.00` interim.
+> planes are all built and real (Phases 1–3, bm01–bm35), and **Phase 4 is
+> delivered (bm36–bm39):** the processor signal-back is real (bm36 —
+> `bill_run_processing.yml` POSTs a per-stage `DONE` after each stage, a per-account
+> HARD `FAILED`, and a run-level terminal `PROCESSING_FAILED` for a whole-execution
+> failure via `errors: on_error` on `FAILED` / `afterExecution: on_killed` on a
+> KILL, all real `http.Request` mirroring the distributor, bm34); the full local
+> `SCHEDULED → COMPLETED` lifecycle is asserted end-to-end on the `ci` seed by the
+> live-Kestra smoke (bm37); the production deploy path is deployable + wired, still
+> gated (bm38); and bm39 audited the assembled phase and signed it off. A triggered
+> run now drives itself `SCHEDULED → COMPLETED` on its own with no out-of-band calls;
+> a contained per-account HARD failure leaves the run `PROCESSED` with the failed
+> account skippable/rerunnable. **The one remaining item is the cloud cutover** —
+> flipping the deploy flags and running the smoke against a real engine + SFTP — a
+> gated ops step, not a module-build gap (see `billmgmt-update-overview.md`).
+> Taxation is a ratified `0.00` interim.
 
 ## Lifecycle
 
@@ -217,6 +221,14 @@ from `bill_run_account`, never by incrementing a counter.
    never log the token.
 8. The two-writer grant boundary holds per column/table; `typecheck`, `lint`, and the
    vitest suite pass; the docs conventions and progress tracker are kept current.
-9. **[Phase 4]** A freshly triggered run drives itself `SCHEDULED → COMPLETED` with
-   no out-of-band calls (real processor signal-back incl. terminal `FAILED`
-   settlement), asserted by the live-Kestra E2E on the `ci` seed.
+9. A freshly triggered run drives itself `SCHEDULED → COMPLETED` with no out-of-band
+   calls — real processor signal-back (per-stage `DONE` + terminal `FAILED`
+   settlement) makes accounts auto-reach `PROCESSED`, the Workflow timeline fills, and
+   Approve appears with no stall banner; post → store → SFTP distribute → `COMPLETED`
+   all follow. **Delivered (Phase 4, bm36–bm39):** the signal-back, self-driving
+   lifecycle and prod-wiring are built and CI-guarded (the DB-free flow guardrail
+   `tests/guardrails/billrun-processing-signal-back.test.ts` and the DB-gated E2E
+   double `tests/db/billing-e2e-happy-path.integration.test.ts`, which run on every
+   CI). The full live-Kestra `billrun:live-kestra-smoke` run on the `ci` seed is a
+   **gated live-stack step** against the provisioned real Postgres/Kestra/blob/SFTP
+   stack, and the cloud cutover is a further separate gated ops step.
