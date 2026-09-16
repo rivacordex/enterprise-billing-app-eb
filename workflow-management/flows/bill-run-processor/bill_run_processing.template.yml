@@ -192,18 +192,22 @@ errors:
   # REAL (bm36): POST a run-level terminal PROCESSING_FAILED to
   # POST /api/billrun/{runId}/status { status: "PROCESSING_FAILED" }
   # (Bearer BILLRUN_APP_TOKEN, retry PT5S×2, NO allowFailure — this settlement
-  # must land) so a flow that errored before every account signalled settles the
-  # run instead of hanging on the stall gate. A per-account HARD stage failure is
-  # signalled separately by the per-account stage group's own `errors` handler.
+  # must land) so a flow that ERRORED (FAILED execution) before every account
+  # signalled settles the run instead of hanging on the stall gate. Fires only on
+  # a FAILED execution (a contained per-account failure is a WARNING and does not
+  # trigger `errors`); a per-account HARD stage failure is signalled separately by
+  # the per-account stage group's own `errors` handler.
   - id: on_error
-finally:
+afterExecution:
   # REAL (bm36): POST the terminal PROCESSING_FAILED ONLY on a KILL
-  # (execution.state.current == 'KILLED' — the one terminal state that fires
-  # `finally` but not `errors`). NOT `!= 'SUCCESS'`: a WARNING execution (a
+  # (runIf `execution.state == 'KILLED'`). It lives in `afterExecution`, NOT
+  # `finally`, because only `afterExecution` sees the settled terminal state —
+  # `finally` runs while the execution is still RUNNING, so a state-conditional
+  # guard there never matches. NOT `!= 'SUCCESS'`: a WARNING execution (a
   # contained per-account HARD failure) derives PROCESSED by the module contract
   # (compute-run-status.ts / pre-approval-checks.ts — the failed account is
   # skippable/rerunnable), so force-pushing PROCESSING_FAILED there would 409 or
-  # wrongly flip a healthy run. Processing self-completes via the per-account DONE
-  # signals — there is NO run-level PROCESSING_FINISHED recompute push (unlike
-  # distribution's DISTRIBUTION_FINISHED).
-  - id: on_finally
+  # wrongly flip a healthy run; FAILED is already handled by `on_error`. Processing
+  # self-completes via the per-account DONE signals — there is NO run-level
+  # PROCESSING_FINISHED recompute push (unlike distribution's DISTRIBUTION_FINISHED).
+  - id: on_killed

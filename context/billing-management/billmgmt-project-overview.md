@@ -30,14 +30,16 @@ earlier phases has been retired; the pipeline runs against real Postgres, real
 Kestra, a real blob store and a real SFTP endpoint.
 
 > **Current state (2026-09-16).** The compute, posting, rendering and distribution
-> planes are all built and real (Phases 1–3, bm01–bm35). **One gap remains before a
-> triggered run completes end-to-end on its own:** the processor flow's
-> **signal-back** is still stubbed — `bill_run_processing.yml` `Log`-stubs its
-> per-stage stage-complete POSTs and its terminal `on_error`/`on_finally` `/status`
-> POST, so accounts never auto-reach `PROCESSED` and the run wedges in `PROCESSING`.
-> The app-side receiver and the sibling distributor's callbacks (bm34) are real.
-> Closing this — plus production deploy wiring and asserting the whole path
-> end-to-end — is **Phase 4** (see `billmgmt-update-overview.md` and
+> planes are all built and real (Phases 1–3, bm01–bm35), and **the processor
+> signal-back is now real (bm36):** `bill_run_processing.yml` POSTs a per-stage
+> `DONE` after each stage, a per-account HARD `FAILED`, and a run-level terminal
+> `PROCESSING_FAILED` for a whole-execution failure (`errors: on_error` on `FAILED`,
+> `afterExecution: on_killed` on a KILL) — all real `http.Request`, mirroring the
+> distributor (bm34). A triggered run now reaches `PROCESSED` on its own; a
+> contained per-account HARD failure leaves the run `PROCESSED` with the failed
+> account skippable/rerunnable. **Remaining before the whole path is proven
+> end-to-end:** the bm37 live-Kestra lifecycle assertion and production deploy
+> wiring — **Phase 4** (see `billmgmt-update-overview.md` and
 > `billmgmt-gap-assessment.md`). Taxation is a ratified `0.00` interim.
 
 ## Lifecycle

@@ -5,8 +5,10 @@ from the bm09–bm11 multi-agent code review (see also
 `billmgmt-progress-tracker.md`). Each entry has a technical description, an
 **ELI5** plain-language summary, and a recommendation. Most entries are not blockers
 for the current release; they are logged so they are not silently forgotten. The
-end-to-end blocker in §9 (processor signal-back) is the exception — it is tracked
-in full in `billmgmt-gap-assessment.md` and is the focus of Phase 4.
+end-to-end blocker in §9 (processor signal-back) has been **RESOLVED by bm36** —
+the signal-back is now real; the remaining Phase 4 work is the bm37 live-Kestra
+lifecycle validation and production deploy wiring (see `billmgmt-gap-assessment.md`
+and `billmgmt-update-overview.md`).
 
 > **Status legend:** 🟡 deferred (conscious decision) · 🔴 real bug, out of
 > current scope · ⚪ cosmetic / low priority.
@@ -272,31 +274,36 @@ the write path.
 
 ---
 
-## 9. 🔴 Processor signal-back is stubbed — blocks a self-driving end-to-end run
+## 9. 🟢 RESOLVED (bm36) — Processor signal-back is real
 
 **Where:** `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`
-(per-stage completion + `on_error`/`on_finally`); the non-deployable
-`bill_run_processing.template.yml` documents the same as `# STUB:`.
+(per-stage completion + terminal `errors`/`afterExecution`); the non-deployable
+`bill_run_processing.template.yml` documents the same contract.
 
-**Technical.** The processing flow does all its real SQL (correlation/claim,
-aggregation, verification) but never signals the app: it contains **zero**
+**Was.** The processing flow did all its real SQL (correlation/claim, aggregation,
+verification) but never signalled the app: it contained **zero**
 `io.kestra.plugin.core.http.Request` tasks — the per-stage
 `/api/billrun/{runId}/stage/{stage}/complete` POSTs and the terminal
-`/api/billrun/{runId}/status` POST are `io.kestra.plugin.core.log.Log` stubs. So a
-triggered run's accounts never auto-reach `PROCESSED`
+`/api/billrun/{runId}/status` POST were `io.kestra.plugin.core.log.Log` stubs, so a
+triggered run's accounts never auto-reached `PROCESSED`
 (`TERMINAL_STAGE = 'verification'` in `services/billing/handle-stage-signal.ts`),
-the run stays `PROCESSING`, and Approve → Post → Distribute → `COMPLETED` is
-unreachable without an out-of-band signal replay (which bypasses the stall gate
-and is not an acceptable operator path). The app-side receiver is fully real, and
-the sibling `bill_run_distribution` flow (bm34) already does the real callbacks —
-the fix is to mirror that pattern.
+the run wedged in `PROCESSING`, and Approve → Post → Distribute → `COMPLETED` was
+unreachable without an out-of-band signal replay.
 
-**ELI5.** The bill processor does the work but never phones home to say "done," so
-the app waits forever and you can never press Approve.
+**Now (bm36).** The flow POSTs a per-stage `DONE` after each stage, a per-account
+HARD `FAILED` from the account stage group's `errors` handler (to a fixed
+`verification` stage so it always lands), and a run-level terminal
+`PROCESSING_FAILED` for a whole-execution failure only — `errors: on_error` on a
+`FAILED` execution, `afterExecution: on_killed` on a KILL. All real
+`http.Request`, mirroring the distributor (bm34). A triggered run now reaches
+`PROCESSED` on its own; a contained per-account HARD failure leaves the run
+`PROCESSED` with the failed account skippable/rerunnable (the tested run-status
+contract), and only a whole-execution `FAILED`/`KILL` settles the run
+`PROCESSING_FAILED`.
 
-**Recommendation.** Phase 4, PU-1: add the real per-stage completion POSTs **and**
-the terminal `on_error`/`on_finally` `/status` POST (incl. `FAILED` settlement) to
-the processing flow, mirroring bm34. Full diagnosis and scope in
+**Remaining (Phase 4).** bm37 asserts the full `SCHEDULED → COMPLETED` lifecycle
+on the `ci` seed (incl. reject → reprocess and the forced-failure path) via the
+live-Kestra smoke, plus production deploy wiring. Scope in
 `billmgmt-gap-assessment.md` / `billmgmt-update-overview.md`.
 
 ---

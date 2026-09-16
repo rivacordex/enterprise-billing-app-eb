@@ -44,7 +44,7 @@ function collectFiles(dir: string, extensions: RegExp): string[] {
 describe("BILLRUN_PROCESSING_FORCE_FAIL single-reader posture (bm36)", () => {
   it("is read by trigger-run.ts (the sole reader)", () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, SOLE_READER), "utf8");
-    expect(src).toContain(ACCESSOR);
+    expect(IMPORT_RE.test(src)).toBe(true);
   });
 
   it("is never read by a UI component or a Server Action", () => {
