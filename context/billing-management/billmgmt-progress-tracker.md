@@ -74,6 +74,84 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase N — **bm35 (Phase-3 Ship Gate) — DELIVERED (2026-09-16).**
+  See `context/billing-management/specs/bm35-phase3-ship-gate.md`. Boundary:
+  cross-cutting — tests / CI + the `volume` seed profile (`db/seeds/sample`). **No
+  new page, permission, table, grant, migration, or feature.** **Audit, don't
+  rebuild (bm21/bm13 discipline):** every phase-3 correctness guardrail already
+  shipped with its unit (bm23–bm34); this unit assembles + CI-wires them, adds
+  only what no single unit owns (the `volume` profile, its set-based assertion,
+  the full-journey E2E), and confirms the three §0 reversals have no surviving
+  citation. Landed this pass:
+  - **`volume` seed profile + profile switch (`db/seeds/sample/seed-billrun-sample.ts`,
+    spec §1).** `SeedProfile` widened to `"ci" | "volume"`; a new
+    `SAMPLE_SEED_PROFILE` env switch (`resolveSelectedProfile`, default `ci`,
+    unknown value fails loud before any write) selects the profile;
+    `resolveProfile` gains the `volume` case. `VOLUME_SCENARIOS` is generated (12
+    accounts × 5 subscriptions × 40 usage rows = 2,400 `RAN_USAGE` rows) on the
+    ONE `_SAMPLE_` offering — **no new factory shape**, the SAME
+    `buildSampleUdrRatedRow` (every row still `_SAMPLE_`-marked, unclaimed,
+    `RAN_USAGE`, `billrun_ban_id` NULL), so §9.16's marker assertions cover both
+    profiles by construction. `.env.example` documents the switch.
+  - **`volume` set-based assertion (`tests/db/billrun-volume-aggregation.integration.test.ts`,
+    spec §4 / §9.31).** Drives the SHARED aggregation flow-double
+    (`tests/db/helpers/billrun-aggregate.ts`) at high cardinality and proves both
+    of the profile's visible results: (a) LINE COUNT TRACKS FOOTPRINT — 1000
+    `RAN_USAGE` rows across 5 subscriptions of one offering → exactly ONE USAGE
+    line (`udr_count` 1000), 3 offerings → 3 lines, never one-per-record; (b)
+    SET-BASED — a postgres.js `debug`-hook statement counter shows the aggregation
+    issues an IDENTICAL, bounded statement count across a ~750× record difference
+    (invariant to cardinality, the GROUP-BY signature). Superuser connection
+    (aggregation LOGIC, not grants — bm28 precedent).
+  - **Phase-3 guardrail assembly manifest (`tests/guardrails/billrun-phase3-ship-gate.test.ts`,
+    spec §2).** DB-free. Maps every code-standards §9 phase-3 item (19–32) + the
+    cross-cutting gates (compute/rating-write boundaries, the reversal-#3
+    retirement gate, seed integrity, the full journey, the three M2M handlers) to
+    the test file(s) that ship it, and asserts each is PRESENT on disk and
+    CI-WIRED (routed into one of the two Vitest projects the `test` script runs).
+    Also statically asserts the `volume` profile is wired (union + switch + case)
+    and reuses the shared factory. A rename/move/deletion of any phase-3 guardrail
+    now fails the build here instead of silently dropping coverage.
+  - **Phase-3 full journey E2E (`tests/db/billrun-phase3-journey.integration.test.ts`,
+    spec §3).** The one journey no single unit owns: materialise → trigger → REAL
+    correlation + claim → REAL two-source Aggregation (USAGE + RECURRING) into
+    `customer_bill_line` → tax → REAL Verification (reconciliation) → PROCESSED →
+    review (2 lines, subtotal spanning both sources; an unresolvable orphan on the
+    exception surface via `listExceptions`) → reject → rerun → re-rate/reprocess
+    (attempt 2) → approve (four-eyes) → post (INV + a content-derived
+    `charge_checksum` ≠ `md5('')`) → INVOICED → distribute (forced
+    DISTRIBUTION_FAILED → retry-render + rerun) → COMPLETED, with the **D33 tiered
+    account SKIPPED** (aggregation HARD-fails `RECURRING_PRICE_UNSUPPORTED` →
+    PROCESSING_FAILED → SKIPPED, consumes no INV). Drives the SHARED flow-doubles
+    (`runAggregation`/`runVerification`) write-then-signal before each M2M stage
+    signal + the real app services for the operator legs; the fragile
+    render-pending/D10 distribution tail is reused verbatim from the proven
+    `billing-e2e-happy-path`.
+  - **Reversed-rule sweep (spec §5).** Grep-swept `context/**`, code comments, and
+    tests for the three §0 reversals (old Inv #3 "no billing-side charge table";
+    "no service computes a charge amount"; `BILLRUN_PLACEHOLDER_MODE`) — **no
+    surviving WRONG citation** (all corrected in bm31/bm33; the only matches are
+    deliberate reversal notes / the tombstone table / the retirement guardrail
+    itself). The durable guards for each reversal already ship
+    (`billrun-placeholder-retirement`, `billing-trial-bill-compute-boundary`, the
+    customer_bill_line schema/checksum suites) and are enumerated by the manifest;
+    no new brittle grep gate added (it would false-positive on the legit reversal
+    notes).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/MD; DB-free `tests/guardrails` **127/127** (incl. the
+    new assembly manifest + `volume`-profile source assertions, and every prior
+    phase-1/2/3 guardrail unchanged).
+  - **Deferred (established phase-3 pattern — no live infra in this environment;
+    memory: DB-gated suites must NOT be pointed at the dev stack).** The two new
+    DB-gated suites (`billrun-volume-aggregation`, `billrun-phase3-journey`) are
+    written to the disposable-Postgres convention (`describe.skipIf(!DATABASE_URL)`,
+    superuser drop/migrate/teardown) but their EXECUTION — and the §3 run against
+    real Postgres/Kestra/blob/SFTP (bm22's environment) + the §5 SAST/ZAP DAST
+    green on the drill-down/exception/distribution surfaces — is the deferred live
+    verification, exactly as bm27–bm34 deferred their live-Kestra/real-SFTP legs.
+    Run both on the DB-gated schedule (§9.31 "run deliberately, not on every
+    commit") before sign-off.
+
 - Phase 3 · Phase N — **bm34 (Real Distribution: SFTP Transport + Multi-Target)
   — DELIVERED (2026-09-15).** See
   `context/billing-management/specs/bm34-real-distribution-sftp-multitarget.md`.

@@ -59,12 +59,31 @@ const SAMPLE_USAGE_AMOUNT = "12.50";
 // shapes Collection (bm27) / Aggregation (bm28) / recurring-derivation (bm29) /
 // exception surfacing (bm32) must handle. "Recurring" is represented by real
 // `product_inventory` subscriptions (via the createOrder → instantiateOrder
-// path), NOT by udr_rated rows. The `volume` profile is deferred to bm35 (its
-// only visible result is a performance characteristic that needs aggregation
-// to exist). The entry point is profile-selectable so bm35 can add `volume`
-// without disturbing the default `ci` demo.
-type SeedProfile = "ci";
+// path), NOT by udr_rated rows.
+//
+// bm35-spec §Implementation §1 — the `volume` profile: from the SAME factory as
+// `ci` (`buildSampleUdrRatedRow`, no new factory shape — just higher
+// cardinality), a realistic RAN_USAGE load — many usage rows spread across
+// accounts, each holding several subscriptions of the ONE `_SAMPLE_` offering.
+// Its only visible result is a performance characteristic that needs aggregation
+// (bm28) to exist: Aggregation issues a BOUNDED statement count (set-based, not
+// one-per-record), and the produced line count tracks product footprint
+// (offerings × udr_types) — here a single USAGE line per account — NOT the
+// udr_rated record count (bm35-spec §Implementation §4, code-standards §9.31).
+// Selected by the profile switch alongside `ci`; every seeded row is still
+// `_SAMPLE_`-marked, unclaimed, `RAN_USAGE`, `billrun_ban_id` NULL.
+type SeedProfile = "ci" | "volume";
 const DEFAULT_PROFILE: SeedProfile = "ci";
+const SEED_PROFILES: readonly SeedProfile[] = ["ci", "volume"];
+
+// The `volume` profile's shape (bm35-spec §Implementation §1). Kept modest
+// enough to seed quickly yet large enough to make "line count tracks footprint,
+// not record count" unmistakable: 12 accounts × 5 subscriptions × 40 usage rows
+// = 2,400 RAN_USAGE rows, all on the ONE sample offering, so Aggregation rolls
+// each account's 200 rows into exactly ONE USAGE line.
+const VOLUME_ACCOUNTS = 12;
+const VOLUME_SUBSCRIPTIONS_PER_ACCOUNT = 5;
+const VOLUME_USAGE_ROWS_PER_SUBSCRIPTION = 40;
 
 type ScenarioKey =
   | "recurring-and-usage"
@@ -140,10 +159,29 @@ const CI_SCENARIOS: readonly ScenarioSpec[] = [
   },
 ];
 
+// bm35-spec §Implementation §1 — the `volume` load, generated (not hand-listed):
+// N accounts, each with the same several subscriptions of the ONE sample
+// offering and many usage rows per subscription. No BILL_NOTUSED rows and every
+// account full-period — the point of this profile is aggregation cardinality,
+// not the exception/partial shapes the `ci` profile already covers.
+const VOLUME_SCENARIOS: readonly ScenarioSpec[] = Array.from(
+  { length: VOLUME_ACCOUNTS },
+  (_unused, i): ScenarioSpec => ({
+    key: "multiple-subscriptions",
+    banName: `_SAMPLE_ Volume Billing Account ${i + 1}`,
+    isFullPeriod: true,
+    subscriptionCount: VOLUME_SUBSCRIPTIONS_PER_ACCOUNT,
+    usageRowsPerSubscription: VOLUME_USAGE_ROWS_PER_SUBSCRIPTION,
+    billNotUsedRows: 0,
+  }),
+);
+
 function resolveProfile(profile: SeedProfile): readonly ScenarioSpec[] {
   switch (profile) {
     case "ci":
       return CI_SCENARIOS;
+    case "volume":
+      return VOLUME_SCENARIOS;
     default: {
       const exhaustive: never = profile;
       throw new Error(
@@ -151,6 +189,24 @@ function resolveProfile(profile: SeedProfile): readonly ScenarioSpec[] {
       );
     }
   }
+}
+
+// The profile switch (bm35-spec §Implementation §1). Selected by
+// `SAMPLE_SEED_PROFILE` (default `ci`); an unknown value fails loud before any
+// write rather than silently seeding the default.
+function resolveSelectedProfile(): SeedProfile {
+  const raw = process.env.SAMPLE_SEED_PROFILE;
+  if (raw === undefined || raw === "") {
+    return DEFAULT_PROFILE;
+  }
+  const match = SEED_PROFILES.find((p) => p === raw);
+  if (!match) {
+    throw new Error(
+      `db:seed-sample: unknown SAMPLE_SEED_PROFILE "${raw}". ` +
+        `Valid profiles: ${SEED_PROFILES.join(", ")}.`,
+    );
+  }
+  return match;
 }
 
 const NON_PROD_HOSTS = new Set(["localhost", "127.0.0.1", "db", "postgres"]);
@@ -882,8 +938,13 @@ async function seedSampleCharges(
     }
   }
 
-  if (rows.length > 0) {
-    await db.insert(udrRated).values(rows);
+  // Insert in chunks so a high-cardinality profile (`volume`, bm35) cannot hit
+  // postgres.js's ~65k bind-parameter ceiling as the profile is tuned up — each
+  // row carries ~two dozen bound values, so a single `.values(rows)` for the
+  // whole set would wall out somewhere past ~2,700 rows. `ci` fits in one chunk.
+  const INSERT_CHUNK = 1000;
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    await db.insert(udrRated).values(rows.slice(i, i + INSERT_CHUNK));
   }
   return rows.length;
 }
@@ -901,7 +962,8 @@ async function main(): Promise<void> {
 
   const { offeringId, priceId } = await ensureSampleOffering();
 
-  const scenarios = resolveProfile(DEFAULT_PROFILE);
+  const selectedProfile = resolveSelectedProfile();
+  const scenarios = resolveProfile(selectedProfile);
 
   const { partyRoleId, accounts } = await createSampleCustomerAndAccounts(
     actorId,
@@ -938,7 +1000,7 @@ async function main(): Promise<void> {
   );
 
   logger.info("db:seed-sample: _SAMPLE_ billrun scenario seeded.", {
-    profile: DEFAULT_PROFILE,
+    profile: selectedProfile,
     partyRoleId,
     accounts: accounts.map((a) => ({
       ban: a.billingAccountId,
