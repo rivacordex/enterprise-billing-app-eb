@@ -30,6 +30,7 @@ const ENV_KEYS = [
   "BILLRUN_BLOB_CONNECTION_STRING",
   "BILLRUN_BLOB_ACCOUNT_URL",
   "BILLRUN_DISTRIBUTION_FORCE_FAIL",
+  "BILLRUN_PROCESSING_FORCE_FAIL",
   "BILLRUN_DISTRIBUTION_TARGETS",
 ] as const;
 
@@ -90,6 +91,7 @@ describe("config", () => {
       BILLRUN_TAX_CATEGORY: "GST",
       BILLRUN_STALL_THRESHOLD_MINUTES: 30,
       BILLRUN_DISTRIBUTION_FORCE_FAIL: false,
+      BILLRUN_PROCESSING_FORCE_FAIL: false,
       BILLRUN_DISTRIBUTION_TARGETS: ["loopback"],
     });
   });
@@ -685,6 +687,29 @@ describe("billRunDistributionForceFail (bm20)", () => {
       BILLRUN_DISTRIBUTION_FORCE_FAIL: "true",
     });
     expect(billRunDistributionForceFail).toBe(true);
+  });
+});
+
+// bm36-spec §Design/§Implementation §4 — the processing force-fail switch, read
+// only by `trigger-run.ts`. Defaults false so a normal deployment never forces a
+// failure; the flow drives its first scoped account HARD when set true.
+describe("billRunProcessingForceFail (bm36)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to false when unset", async () => {
+    const { billRunProcessingForceFail } =
+      await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(billRunProcessingForceFail).toBe(false);
+  });
+
+  it("reads true when explicitly set", async () => {
+    const { billRunProcessingForceFail } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_PROCESSING_FORCE_FAIL: "true",
+    });
+    expect(billRunProcessingForceFail).toBe(true);
   });
 });
 

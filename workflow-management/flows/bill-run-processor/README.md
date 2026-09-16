@@ -58,6 +58,28 @@ stays a **SOFT** advisory finding (bm07 behaviour). SELECT-only on
 `customer_bill_line` + `rating.udr_rated` (both already granted) — it writes
 nothing.
 
+**Signal-back is real (bm36).** The `local-dev` flow no longer `Log`-stubs its
+callbacks: after each stage a `core.http.Request` POSTs a record-only
+stage-complete `DONE` to `/api/billrun/{runId}/stage/{stage}/complete`; the
+account's stage group is wrapped in an `allowFailure` Sequential whose `errors`
+handler POSTs a per-account HARD `FAILED` (so a HARD-failing account settles to
+`PROCESSING_FAILED` while siblings keep processing — the run itself stays
+`PROCESSED` for the healthy accounts, the module's established contract, and the
+failed account is skippable/rerunnable); and the flow POSTs a run-level terminal
+`PROCESSING_FAILED` to `/api/billrun/{runId}/status` for a whole-execution failure
+only — `errors: on_error` on a `FAILED` execution, and `afterExecution: on_killed`
+(`runIf: execution.state == 'KILLED'`) on a KILL — never on a mere `WARNING` (a
+contained per-account failure). The KILL handler is in `afterExecution`, not
+`finally`, because only `afterExecution` sees the settled terminal state
+(`finally` runs while the execution is still `RUNNING`, so a state-conditional
+guard there never matches). Processing self-completes via the per-account `DONE`
+signals (no run-level `PROCESSING_FINISHED` push, unlike the distributor). All
+callbacks carry
+`Bearer BILLRUN_APP_TOKEN` + `retry PT5S×2`, mirroring the distributor (bm34). A
+deploy-time `BILLRUN_PROCESSING_FORCE_FAIL` (threaded onto the `force_fail` input
+by `trigger-run.ts`) drives the first scoped account down the FAILED path for the
+bm37 gate.
+
 The remaining stage (taxation) lands in a later unit; until then the template is a
 shell for it so the `billrun` namespace and flow definitions exist ahead of it.
 Business logic in the flow ⇒ `processing_flow_revision` is stamped on `bill_run`

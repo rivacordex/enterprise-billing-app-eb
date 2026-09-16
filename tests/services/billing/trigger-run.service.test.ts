@@ -155,6 +155,9 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       ban_ids: ["BAN00000001"],
       attempt: 1,
       gl_event_at: "2026-08-01",
+      // bm36 — force-fail toggle threaded from billRunProcessingForceFail
+      // (default false; env unset in the test).
+      force_fail: false,
     });
     expect(mockMarkProcessing).toHaveBeenCalledWith(txStub, "BRN00000001", {
       glEventAt: "2026-08-01",

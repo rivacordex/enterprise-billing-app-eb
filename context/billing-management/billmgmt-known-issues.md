@@ -3,8 +3,12 @@
 Living record of known-but-not-yet-fixed issues in the Bill Run module, captured
 from the bm09–bm11 multi-agent code review (see also
 `billmgmt-progress-tracker.md`). Each entry has a technical description, an
-**ELI5** plain-language summary, and a recommendation. Nothing here is a blocker
-for the current release; they are logged so they are not silently forgotten.
+**ELI5** plain-language summary, and a recommendation. Most entries are not blockers
+for the current release; they are logged so they are not silently forgotten. The
+end-to-end blocker in §9 (processor signal-back) has been **RESOLVED by bm36** —
+the signal-back is now real; the remaining Phase 4 work is the bm37 live-Kestra
+lifecycle validation and production deploy wiring (see `billmgmt-gap-assessment.md`
+and `billmgmt-update-overview.md`).
 
 > **Status legend:** 🟡 deferred (conscious decision) · 🔴 real bug, out of
 > current scope · ⚪ cosmetic / low priority.
@@ -161,19 +165,6 @@ dates to the month's real last day (fixes 4a), and (2) fix the trigger test's
 per-case isolation (fixes 4b). Both are date/fixture issues, unrelated to the
 approve/post work.
 
-> **RESOLVED (bm22 DB-gate run, 2026-09-14).** Both turned out to be **test**
-> issues, not production bugs. **4a** — `currentDuePeriod`
-> (`services/billing/derive-periods.ts`) already clamps correctly via `Date.UTC`;
-> the invalid `2026-02-29` came from `materialize-runs.integration.test.ts`'s own
-> fixture hand-building calendar strings. Fixed the fixture to
-> `period_end = day 27`, `scheduled_run_date = day 28` (`= period_end + 1`, the
-> `bill_run_oncycle_schedule_check`, valid in every month). **4b** — the
-> `trigger-run.integration.test.ts` double-trigger case now asserts the snapshot
-> **delta** (the rejected second trigger writes nothing) instead of a hard-coded
-> count that broke on the suite's shared-cycle accumulated accounts. Both suites
-> green against a disposable Postgres. See `billmgmt-progress-tracker.md`
-> Current Phase (bm22).
-
 ---
 
 ## 5. ⚪ Approve-page & period-close query efficiency (deferred perf pass)
@@ -280,3 +271,54 @@ the write path.
   `CHECKS_FAILED` calls `setChecks`), so `four_eyes` still renders green with the
   button enabled. Cosmetic — the service still refuses. Refresh the checklist on
   `FOUR_EYES_VIOLATION` to fix.
+
+---
+
+## 9. 🟢 RESOLVED (bm36) — Processor signal-back is real
+
+**Where:** `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`
+(per-stage completion + terminal `errors`/`afterExecution`); the non-deployable
+`bill_run_processing.template.yml` documents the same contract.
+
+**Was.** The processing flow did all its real SQL (correlation/claim, aggregation,
+verification) but never signalled the app: it contained **zero**
+`io.kestra.plugin.core.http.Request` tasks — the per-stage
+`/api/billrun/{runId}/stage/{stage}/complete` POSTs and the terminal
+`/api/billrun/{runId}/status` POST were `io.kestra.plugin.core.log.Log` stubs, so a
+triggered run's accounts never auto-reached `PROCESSED`
+(`TERMINAL_STAGE = 'verification'` in `services/billing/handle-stage-signal.ts`),
+the run wedged in `PROCESSING`, and Approve → Post → Distribute → `COMPLETED` was
+unreachable without an out-of-band signal replay.
+
+**Now (bm36).** The flow POSTs a per-stage `DONE` after each stage, a per-account
+HARD `FAILED` from the account stage group's `errors` handler (to a fixed
+`verification` stage so it always lands), and a run-level terminal
+`PROCESSING_FAILED` for a whole-execution failure only — `errors: on_error` on a
+`FAILED` execution, `afterExecution: on_killed` on a KILL. All real
+`http.Request`, mirroring the distributor (bm34). A triggered run now reaches
+`PROCESSED` on its own; a contained per-account HARD failure leaves the run
+`PROCESSED` with the failed account skippable/rerunnable (the tested run-status
+contract), and only a whole-execution `FAILED`/`KILL` settles the run
+`PROCESSING_FAILED`.
+
+**Remaining (Phase 4).** bm37 asserts the full `SCHEDULED → COMPLETED` lifecycle
+on the `ci` seed (incl. reject → reprocess and the forced-failure path) via the
+live-Kestra smoke, plus production deploy wiring. Scope in
+`billmgmt-gap-assessment.md` / `billmgmt-update-overview.md`.
+
+---
+
+## 10. 🟡 Taxation stage is a no-op — every bill is zero-tax
+
+**Where:** `bill_run_processing.yml` `taxation` stage (a `Log` placeholder).
+
+**Technical.** The `taxation` stage computes nothing: `customer_bill.tax_total` is
+always `"0.00"` and `total_amount = subtotal`. The `customer_bill_tax_item` table
+and the single-rate `BILLRUN_TAX_RATE` config exist (bm06) but no tax line is
+written by the real flow.
+
+**ELI5.** The processor doesn't calculate tax yet — every invoice shows zero tax.
+
+**Recommendation.** Ratified as the intended interim (Phase 4 decision) — invoices
+show `total = subtotal`. Implement a real (flat-rate SST, then jurisdictional)
+taxation stage in a later unit if RevOps needs a tax line on the reviewed invoice.
