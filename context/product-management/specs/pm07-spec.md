@@ -241,10 +241,10 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 - [ ] `npm run lint` and `npm run format:check` green (no `next/*` server import misuse; no inline hex — tokens only).
 - [ ] `npm run test` green — both vitest configs; only the one intended assertion edit changes (§3.5), every other pre-existing assertion unchanged.
 
-**Behavior — the point of the unit**
+**Behavior — the point of the unit** (the demo verification rows below require `npm run db:seed-demo` first — they are no longer part of `db:setup`)
 
-- [ ] Signed in with `products : READ`, selecting `TOREMOVE-Template-5G-Nationwide-Service-Plan` shows Section 3 with two spec cards: `Network Slice eMBB` (mono `PRDSMD…` eyebrow, `Mandatory` + `Default` badges, `SST_ID: 01` / `SD_ID: A0C4E2` chips) and `QoS Profile` (`Default value: standard` row, `5QI: 9` / `ARP: 8` chips).
-- [ ] Selecting `TOREMOVE-Template-Enterprise-IoT-Access` shows its `Network Slice mMTC` spec card (`SST_ID: 03` / `SD_ID: B1D2E3`).
+- [ ] Signed in with `products : READ`, selecting `Demo — 5G Nationwide Service Plan` shows Section 3 with two spec cards: `Network Slice eMBB` (mono `PRDSMD…` eyebrow, `Mandatory` + `Default` badges, `SST_ID: 01` / `SD_ID: A0C4E2` chips) and `QoS Profile` (`Default value: standard` row, `5QI: 9` / `ARP: 8` chips).
+- [ ] Selecting `Demo — Enterprise IoT Access` shows its `Network Slice mMTC` spec card (`SST_ID: 03` / `SD_ID: B1D2E3`).
 - [ ] **Badges**: a mandatory spec shows the "Mandatory" badge; a default spec shows the "Default" badge; an optional non-default spec shows neither.
 - [ ] **Default value**: a spec with `default_value` shows the "Default value" row with that text; a spec with `default_value = NULL` shows no such row (independent of the Default badge).
 - [ ] **Chips**: each `product_spec_characteristics` pair renders as a `CharacteristicChip` (key overline, value mono) in seeded key order; a spec with `{}` characteristics renders its card without a chip row.

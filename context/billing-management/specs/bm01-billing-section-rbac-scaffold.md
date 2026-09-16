@@ -12,7 +12,9 @@
 
 ## Goal
 
-Stand up the **Billing** navigation section and its permission-gated **Bill Runs** page (empty state) so that a user with `billrun_view` can open `/billing/bill-runs`, a user without it is blocked at `/no-access`, and all three `billrun_*` permissions plus a new **Billing Viewer** role are seeded and grantable in the Roles admin UI — with zero domain tables and no new dependencies.
+Stand up the **Billing** navigation section and its permission-gated **Bill Runs** page (empty state) so that a user with `billrun_view` can open `/billing/bill-runs`, a user without it is blocked at `/no-access`, and all three `billrun_*` permissions are seeded and grantable in the Roles admin UI — with zero domain tables and no new dependencies.
+
+> **Record amended (seed-refactor change, 2026-09-16).** bm01 originally seeded a dedicated **Billing Viewer** role (framed for Finance/Internal Audit) carrying `billrun_view` alone. That framing is withdrawn: bill-run read access is ordinary Revenue Ops work, so `billrun_view:READ` is now carried by the standard **MANAGER** and **USER** roles and the dedicated viewer role is retired. The passages below are updated to reflect this; `billrun_operate`/`billrun_approve` remain ADMIN-only, unchanged.
 
 ---
 
@@ -21,7 +23,7 @@ Stand up the **Billing** navigation section and its permission-gated **Bill Runs
 ### Structural decisions
 - **Three separate permissions, not one with levels** (`billrun_view`, `billrun_operate`, `billrun_approve`) — required by segregation of duties (four-eyes: operate and approve must be grantable to different people). This mirrors the existing Accounts module (`accounts_view/transactions/config`), so it is a precedented pattern, not a new one.
 - **Permission *rows* land in a migration; *grants* land in a seed** — the established split (`0023_ordering_inventory_permissions.sql` seeds rows via `INSERT … ON CONFLICT DO NOTHING`; `db:seed-ordering` applies role grants). bm01 follows it exactly.
-- **Billing Viewer is a seeded (non-deletable) role** — added to `SEEDED_ROLE_NAMES` so `isSeededRole` protects it from deletion in the Roles UI, alongside ADMIN/MANAGER/USER. Created and granted `billrun_view` by the billing seed; ADMIN is granted all three billing permissions in the same seed (so the platform admin can operate the module out of the box).
+- **Bill-run read access is Revenue Ops work, carried by the standard roles** — `billrun_view:READ` is granted to **MANAGER** and **USER** by the billing seed (no dedicated viewer role; `SEEDED_ROLE_NAMES` stays `ADMIN/MANAGER/USER`). ADMIN is granted all three billing permissions in the same seed (so the platform admin can operate the module out of the box).
 - **The page is a scaffold** — after the guard it renders a static empty state. No `bill_run` table, no data fetch, no materialization (that is bm02). `loading.tsx`/`error.tsx` ship anyway (every route segment provides them, general code-standards §3.11).
 - **Nav item locks, never hides** — the item sets `requiredPermission: { name: "billrun_view", level: "READ" }`, so a user without the grant sees it rendered in the disabled/lock state (the current `components/admin-nav.tsx` fail-closed convention used by Customer/Accounts), and the page guard is the real boundary.
 
@@ -58,18 +60,18 @@ export const PERMISSIONS = {
 These are additive; `tsc` enforces that the constant values are members of `PermissionName`.
 
 ### 2. Seeded role type (`types/rbac.ts`)
-Add the Billing Viewer role to the seeded set so it is protected from deletion:
+No change. Bill-run read access is carried by the existing seeded roles, so `SEEDED_ROLE_NAMES` stays as-is:
 ```ts
-export const SEEDED_ROLE_NAMES = ["ADMIN", "MANAGER", "USER", "BILLING_VIEWER"] as const;
+export const SEEDED_ROLE_NAMES = ["ADMIN", "MANAGER", "USER"] as const;
 ```
-`isSeededRole("BILLING_VIEWER")` now returns `true`; no other code change needed (the Roles UI reads `isSeededRole` to disable delete). This is the **one core-type file** bm01 touches — additive only.
+(bm01 originally added a `BILLING_VIEWER` member here; the seed-refactor change withdrew it — the Revenue Ops rollup needs no new seeded role.)
 
 ### 3. Migration — permission rows (`db/migrations/NNNN_billrun_permissions.sql`)
 Create a **custom** SQL migration (registers in the journal): `npx drizzle-kit generate --custom --name=billrun_permissions`, then fill it in — mirroring `0023`:
 ```sql
 -- bm01-spec §3: Permission registry entries for the Bill Runs page and the
 -- operate/approve capabilities (segregation of duties — three grants, not one).
--- Role grants (ADMIN : all three; BILLING_VIEWER : billrun_view READ) are applied
+-- Role grants (ADMIN : all three; MANAGER + USER : billrun_view READ) are applied
 -- by `db:seed-billing` (accounts/ordering precedent — grants live in the seed).
 -- ON CONFLICT DO NOTHING keeps a manual re-run safe against permission_name unique.
 INSERT INTO "core"."permissions" ("permission_name", "permission_info")
@@ -83,10 +85,10 @@ No `db/schema` change and no table in this unit — permissions are core data, n
 
 ### 4. Module seed — role + grants (`db/seeds/billing.ts` + npm script)
 New standalone seed (pattern from `db/seeds/seed-rbac.ts` — idempotent pre-check, one transaction; grant rows guarded by the `role_permission_assign` unique index). It must:
-1. Create the **BILLING_VIEWER** role (skip if it already exists — the idempotency pre-check).
-2. Grant **BILLING_VIEWER → `billrun_view` : READ**.
+1. Grant **MANAGER → `billrun_view` : READ** (look up the MANAGER role id).
+2. Grant **USER → `billrun_view` : READ** (look up the USER role id).
 3. Grant **ADMIN →** `billrun_view` : READ, `billrun_operate` : EDIT, `billrun_approve` : EDIT (look up the ADMIN role id and the three permission ids inserted by the migration).
-Use `.onConflictDoNothing()` on the `role_permission_assign` inserts (unique on `ref_role_id, ref_permission_id`) so a re-run is safe. Grants target the levels the guards check (view=READ, operate=EDIT, approve=EDIT — there is no DELETE level in billing v1).
+Use an atomic upsert on the `role_permission_assign` inserts (unique on `ref_role_id, ref_permission_id`) so a re-run is safe. Grants target the levels the guards check (view=READ, operate=EDIT, approve=EDIT — there is no DELETE level in billing v1).
 
 Wire the script into `package.json`:
 ```jsonc
@@ -162,14 +164,14 @@ Build & types
 
 Migration & seed (run `npm run db:migrate` then `npm run db:seed-billing`)
 - [ ] The migration inserts exactly three `core.permissions` rows (`billrun_view/operate/approve`); re-running it changes nothing (`ON CONFLICT DO NOTHING`).
-- [ ] The seed creates the `BILLING_VIEWER` role once; re-running it is a no-op (idempotent pre-check + `onConflictDoNothing` on grants).
-- [ ] After seeding: `BILLING_VIEWER` has `billrun_view:READ`; `ADMIN` has `billrun_view:READ`, `billrun_operate:EDIT`, `billrun_approve:EDIT`.
+- [ ] The seed grants are idempotent (atomic upsert on `role_permission_assign`); re-running it is a no-op.
+- [ ] After seeding: `MANAGER` and `USER` each have `billrun_view:READ`; `ADMIN` has `billrun_view:READ`, `billrun_operate:EDIT`, `billrun_approve:EDIT`.
 
 Authorization (the visible result)
 - [ ] A user with `billrun_view` opens `/billing/bill-runs` and sees the empty state; the "Bill Runs" nav item is active/enabled.
 - [ ] A user **without** `billrun_view` is redirected to `/no-access` when hitting `/billing/bill-runs` directly (server-enforced, not just hidden), and the nav item renders **locked**.
 - [ ] An unauthenticated request to `/billing/bill-runs` redirects to `/login`.
-- [ ] The three billing permissions and the Billing Viewer role are **grantable/visible in the Roles admin UI**; `BILLING_VIEWER` shows as non-deletable (`isSeededRole`).
+- [ ] The three billing permissions are **grantable/visible in the Roles admin UI**; `MANAGER` and `USER` carry `billrun_view:READ` as Revenue Ops roles.
 
 Route × level matrix test (`tests/…`, mirrors the existing admin-page matrix)
 - [ ] `/billing/bill-runs`: `billrun_view:READ` granted → renders; no grant → `/no-access`; unauthenticated → `/login`. This test exists and passes before the unit is done.

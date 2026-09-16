@@ -19,12 +19,7 @@ export type PermissionName = (typeof PERMISSION_NAMES)[number];
 export const PERMISSION_TYPES = ["READ", "EDIT", "DELETE"] as const;
 export type PermissionType = (typeof PERMISSION_TYPES)[number];
 
-export const SEEDED_ROLE_NAMES = [
-  "ADMIN",
-  "MANAGER",
-  "USER",
-  "BILLING_VIEWER",
-] as const;
+export const SEEDED_ROLE_NAMES = ["ADMIN", "MANAGER", "USER"] as const;
 export type SeededRoleName = (typeof SEEDED_ROLE_NAMES)[number];
 
 // Guards role deletion (um21-spec §21.1, Invariant #22) — seeded roles are

@@ -66,7 +66,7 @@ describe("visibleSections — role shapes", () => {
     );
   });
 
-  it("BILLING_VIEWER-shaped (billrun_view:READ only) sees just the Billing section", () => {
+  it("a principal whose only grant is billrun_view:READ sees just the Billing section", () => {
     const sections = visibleSections(permissionMap({ billrun_view: "READ" }));
     expect(sections.map((s) => s.caption)).toEqual(["Billing"]);
     expect(hrefsOf(sections)).toEqual(["/billing/bill-runs"]);

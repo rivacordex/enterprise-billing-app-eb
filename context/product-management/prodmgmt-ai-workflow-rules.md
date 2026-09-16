@@ -79,7 +79,7 @@ The general doc §5 list applies in full. Module-specific detail and additions �
 5. **`tsconfig` strict flags, ESLint/Prettier, CI (`infra/**`)** — including the rename-invariance CI check; never weaken a gate to pass.
 6. **Lockfiles/dependencies** — no DB extensions are needed for this module; any npm dependency change is its own requested unit.
 7. **Existing Administration routes, URLs, and authz results** — must stay byte-identical (Inv. #12).
-8. **`TOREMOVE-Template-*` seed rows** — keep the prefix; never make production code depend on them; replacing them is a go-live data-migration task, not module code.
+8. **`Demo — *` seed rows** (opt-in `db:seed-demo`, `db/seeds/demo/`) — keep the `Demo — ` prefix; never make production code depend on them; replacing them is a go-live data-migration task, not module code. _(Seed-refactor change, 2026-09-16: renamed from the former `TOREMOVE-Template-*` prefix and moved out of `db:setup`.)_
 9. **The price repository's exported surface** — adding `update*`/`delete*` price functions is forbidden permanently (Inv. #1).
 10. **The `family_offering_id` linkage convention** (`NULL` = root, non-null always resolves to the root in one hop) — changing it would silently corrupt every family's version lineage. Touching it requires stopping and getting explicit confirmation.
 11. **`app/(app)/products/product-offering/**` and its existing components** — may only be touched for nav label / page `H1` text; any other edit is out of bounds without stopping to explain why (View Product's read-only guarantee is structurally enforced and guardrail-tested).

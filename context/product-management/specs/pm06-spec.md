@@ -205,9 +205,9 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 - [ ] `npm run lint` and `npm run format:check` green (no `next/*` server import misuse; no inline hex — tokens only).
 - [ ] `npm run test` green — both vitest configs; only the two intended assertion edits change (§3.5), every other pre-existing assertion unchanged.
 
-**Behavior — the point of the unit**
+**Behavior — the point of the unit** (the demo verification rows below require `npm run db:seed-demo` first — they are no longer part of `db:setup`)
 
-- [ ] Signed in with `products : READ`, clicking a row (e.g. `TOREMOVE-Template-5G-…`) shows Section 2 populated: mono ID eyebrow, name, `LifecycleBadge`, `version` (mono), `Last Modified` (formatted in the app locale/timezone), `Last Edited By` (`—` for the seeded NULL editor).
+- [ ] Signed in with `products : READ`, clicking a row (e.g. `Demo — 5G …`) shows Section 2 populated: mono ID eyebrow, name, `LifecycleBadge`, `version` (mono), `Last Modified` (formatted in the app locale/timezone), `Last Edited By` (`—` for the seeded NULL editor).
 - [ ] **Flags**: an offering with `is_bundle=true` shows the "Bundle" chip; `billing_only=true` shows "Billing only"; `is_sellable=true` shows "Sellable"; each false flag shows nothing.
 - [ ] **Not-sellable warning**: an `ACTIVE` offering with `is_sellable=false` shows the warning "Not sellable" chip; a non-ACTIVE not-sellable offering shows no sellable chip.
 - [ ] **Deep link**: opening `?offering=PRDOFR000001` in a fresh session renders the same populated detail (pm05 selection wiring + pm06 fields).

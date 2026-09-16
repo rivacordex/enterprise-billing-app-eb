@@ -126,8 +126,9 @@ export default async function BillRunDetailPage({
 
   // The Uncharged tab's per-row "Manual DBN/ADJ" deep link lands on
   // /accounts/transactions, which is guarded by `accounts_transactions:READ`.
-  // A billrun_view-only principal (e.g. the Billing Viewer role) can't reach it,
-  // so gate the link on that permission (show/hide only — the target route
+  // A billrun_view-only principal (e.g. a MANAGER/USER whose only billing grant
+  // is billrun_view:READ) can't reach it, so gate the link on that permission
+  // (show/hide only — the target route
   // re-checks server-side); otherwise it renders as a plain, non-linking hint.
   const canRecover = meetsLevel(
     permissionMap[PERMISSIONS.ACCOUNTS_TRANSACTIONS],

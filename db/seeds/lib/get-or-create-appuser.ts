@@ -3,9 +3,9 @@ import { eq } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
 
-// `ordering-inventory.ts` precedent — a get-or-create app user, used here as
-// the actor id for the sample seed's `createCustomer`/`onboardCustomerAccounts`/
-// `createOrder` service calls and every audit row they write.
+// Shared across the opt-in seeds (sample billrun, demo ordering) — a
+// get-or-create app user used as the actor id for the seed's service calls and
+// every audit row they write. (ordering-inventory.ts precedent.)
 export async function getOrCreateAppUser(
   db: Database,
   userName: string,
