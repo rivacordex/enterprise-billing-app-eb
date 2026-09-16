@@ -280,6 +280,22 @@
   html {
     @apply font-sans;
   }
+
+  /* Suppress the browser's native password-reveal icon (Edge/IE ::-ms-reveal,
+     Chrome/Safari autofill credentials icon) so it doesn't double up with our
+     custom show/hide toggle button on password fields. */
+  input[type="password"]::-ms-reveal,
+  input[type="password"]::-ms-clear {
+    display: none;
+  }
+  input[type="password"]::-webkit-credentials-auto-fill-button,
+  input[type="password"]::-webkit-strong-password-auto-fill-button {
+    display: none !important;
+    visibility: hidden;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+  }
 }
 
 /* Toaster (sonner) theming vars — moved here from components/ui/sonner.tsx's
