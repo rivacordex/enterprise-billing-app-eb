@@ -50,15 +50,23 @@ describe("bm36 processor signal-back is real (code-standards §9 item 34)", () =
 
   it("[CRITICAL] POSTs a per-stage stage-complete DONE for all five contract stages", () => {
     for (const stage of STAGES) {
-      // Each stage's completion is a real http.Request to its own route; a
-      // stage reverted to a `Log` stub loses this URI (Log has no `uri:`).
+      // Each stage's completion is a real http.Request to its own route whose
+      // body carries `"status": "DONE"` — asserted TOGETHER, bounded to the
+      // same task (the match may not cross a sibling `- id:`), so a stage
+      // cannot pass with its route present but a missing or FAILED body. A
+      // stage reverted to a `Log` stub loses the URI (Log has no `uri:`); a
+      // body corrupted to FAILED/removed loses the paired DONE inside the task.
+      // (For `verification` the DONE task precedes the per-account FAILED
+      // handler that reuses the same route, so the first match is the DONE.)
       expect(
         executable,
-        `missing stage-complete callback for the "${stage}" stage`,
-      ).toMatch(new RegExp(`/api/billrun/[^"']*/stage/${stage}/complete`));
+        `stage "${stage}" is missing a DONE stage-complete callback (route present without a "status": "DONE" body in the same task)`,
+      ).toMatch(
+        new RegExp(
+          `/api/billrun/[^"']*/stage/${stage}/complete"(?:(?!- id:)[\\s\\S])*?"status":\\s*"DONE"`,
+        ),
+      );
     }
-    // The DONE body the receiver records (handle-stage-signal.ts).
-    expect(executable).toMatch(/"status":\s*"DONE"/);
   });
 
   it("[CRITICAL] POSTs a per-account HARD FAILED from the account errors handler to the fixed verification stage", () => {
