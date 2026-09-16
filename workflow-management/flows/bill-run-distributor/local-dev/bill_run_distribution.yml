@@ -179,6 +179,14 @@ finally:
   # wedges in DISTRIBUTING even if a transport step failed.
   - id: on_finally_status
     type: io.kestra.plugin.core.http.Request
+    # One retry (matching the per-artifact outcome callback): this terminal push
+    # triggers the app's COMPLETED/DISTRIBUTION_FAILED recompute, so a transient
+    # failure with no retry would leave the run un-recomputed until stall
+    # detection — the retry makes the "never wedge" guarantee robust to a blip.
+    retry:
+      type: constant
+      interval: PT5S
+      maxAttempt: 2
     uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/status"
     method: POST
     contentType: application/json
