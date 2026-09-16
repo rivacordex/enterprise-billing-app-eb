@@ -84,7 +84,7 @@ Read the actual generated file and confirm: (a) it's a plain `ALTER TABLE ADD CO
 
 ### 3.4 Seeds — no change
 
-`db/seeds/product.ts`'s two existing `Demo — *` offerings need no edit. `family_offering_id` is nullable and defaults to `NULL`, which is exactly correct for two pre-existing, standalone offerings that have no other version — they're each trivially the root of a one-row family. Confirm this after migrating (§5) rather than adding an explicit `family_offering_id: null` to the seed data (redundant with the column default).
+`db/seeds/demo/product-demo.ts`'s two existing `Demo — *` offerings need no edit. `family_offering_id` is nullable and defaults to `NULL`, which is exactly correct for two pre-existing, standalone offerings that have no other version — they're each trivially the root of a one-row family. Confirm this after migrating (§5) rather than adding an explicit `family_offering_id: null` to the seed data (redundant with the column default).
 
 ## 4. Dependencies
 

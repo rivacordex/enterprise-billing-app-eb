@@ -20,7 +20,10 @@ function readPackageJson(): PackageJson {
   return JSON.parse(raw) as PackageJson;
 }
 
-const DEMO_SEED_INVOCATION = /\bdb:seed-demo\b/;
+// Matches BOTH the npm-script alias (`db:seed-demo`) and a direct file-path
+// invocation (`node ... db/seeds/demo/seed-demo.ts`) — a mandatory chain could
+// wire the demo seed in either form, so the boundary gate must catch both.
+const DEMO_SEED_INVOCATION = /\bdb:seed-demo\b|db\/seeds\/demo\/seed-demo\.ts/;
 
 describe("grep gate — db:seed-demo is opt-in only, never part of the mandatory db:setup chain (seed-refactor D2)", () => {
   it("package.json declares a db:seed-demo script pointing at the demo seed orchestrator", () => {
