@@ -34,7 +34,7 @@ Decomposition of the Billing Management (Bill Run) module into build units. Sour
 ### Unit 1 — Billing section & RBAC scaffold
 
 - **Boundary:** auth/RBAC + app shell.
-- **Builds:** the three `billrun_*` permissions (`view`/`operate`/`approve`) + the **Billing Viewer** role, seeded by migration; typed constants in `auth/` (`PERMISSIONS.BILLRUN_VIEW/_OPERATE/_APPROVE`); a `NAV_SECTIONS` "Billing" entry; the `/billing/bill-runs` route with its `billrun_view` guard, `loading.tsx`/`error.tsx`, and an empty state.
+- **Builds:** the three `billrun_*` permissions (`view`/`operate`/`approve`), with `billrun_view:READ` seeded onto the MANAGER/USER (Revenue Ops) roles; typed constants in `auth/` (`PERMISSIONS.BILLRUN_VIEW/_OPERATE/_APPROVE`); a `NAV_SECTIONS` "Billing" entry; the `/billing/bill-runs` route with its `billrun_view` guard, `loading.tsx`/`error.tsx`, and an empty state. _(Seed-refactor change, 2026-09-16: the originally-planned dedicated Billing Viewer role was retired — the rollup uses the standard Revenue Ops roles.)_
 - **Visible result:** a permission-gated **Billing → Bill Runs** page renders; a user without `billrun_view` is blocked; the three permissions are grantable in Administration.
 - **Depends on:** platform auth/RBAC + nav (exist).
 
@@ -206,7 +206,7 @@ Decomposition of the Billing Management (Bill Run) module into build units. Sour
 
 | #   | Unit                                                                            | Boundary                       | Key just-in-time dependency introduced                                     |
 | --- | ------------------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------- |
-| 1   | Billing section & RBAC scaffold                                                 | auth/RBAC + shell              | `billrun_*` perms, Billing Viewer role                                     |
+| 1   | Billing section & RBAC scaffold                                                 | auth/RBAC + shell              | `billrun_*` perms, `billrun_view:READ` on MANAGER/USER                     |
 | 2   | Bill Runs list + lazy materialization                                           | `billing` schema + read        | `bill_run` table; stub-mode flag                                           |
 | 3   | Trigger (+ Scoping + outbound engine)                                           | operate + outbound M2M         | `bill_run_account` (+partition); engine client                             |
 | 4   | M2M ingest + stage timeline                                                     | M2M handlers + detail read     | `bill_run_account_stage` (+UNIQUE); inbound token                          |

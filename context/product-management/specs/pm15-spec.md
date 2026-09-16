@@ -362,7 +362,7 @@ This is the exact same shape as this file's own `productOfferingRepository` asse
 - [ ] Result is `{ ok: true, offeringId: draftId, productOfferingPriceId: <newId>, branched: false, backdated: <matches the case> }`.
 
 **Backend correctness — branch-first path**
-- [ ] Calling `insertPrice` against an `ACTIVE` offering (e.g. the seed's `TOREMOVE-Template-5G-Nationwide-Service-Plan`) leaves that row and every one of its existing specification/price rows byte-identical afterward (re-fetch and compare against a pre-call snapshot).
+- [ ] Calling `insertPrice` against an `ACTIVE` offering (e.g. the demo seed's `Demo — 5G Nationwide Service Plan`, seeded by `npm run db:seed-demo`) leaves that row and every one of its existing specification/price rows byte-identical afterward (re-fetch and compare against a pre-call snapshot).
 - [ ] The call produces exactly one new sibling `DRAFT` row (via `branchOfferingAsDraft`) whose prices are the source's original set **plus** the newly added one; the new price's `product_offering_id` points at the new draft, not the source.
 - [ ] The audit row's `target_id` is the new price's id (which belongs to the new draft), `after_data.offeringId` equals the new draft's id, and `after_data.branchedFromOfferingId` equals the source `ACTIVE` offering's id.
 - [ ] Result is `{ ok: true, offeringId: <newDraftId>, productOfferingPriceId: <newPriceId>, branched: true, backdated: <matches the case> }` where `<newDraftId>` differs from the source id.

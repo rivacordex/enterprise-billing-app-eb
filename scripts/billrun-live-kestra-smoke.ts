@@ -7,7 +7,7 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { organization, partyRole } from "@/db/schema/customer";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { DEFAULT_BILL_CYCLE_NAME } from "@/db/seeds/accounts/seed-bill-cycles";
-import { getOrCreateAppUser } from "@/db/seeds/sample/get-or-create-appuser";
+import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import { isBillRunEngineConfigured } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { materializeDueRuns } from "@/services/billing/materialize-runs";

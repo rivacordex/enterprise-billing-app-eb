@@ -9,7 +9,7 @@
 
 ## 1. Goal
 
-Create the module's entire data layer in one unit: the `product` schema with its three tables (`product_offering`, `product_specifications`, `product_offering_price`), sequences, enum, and constraints via Drizzle migration `0006_product` (which also inserts the `products` PERMISSIONS row); the `validation/product/` Zod schemas (offering-list searchParams, per-`pricing_model` price characteristics, spec characteristics); the `TOREMOVE-Template-*` seeds passed through those schemas; and the guardrail tests proving that a duplicate same-type `start_date_time` fails at the DB and that Zod rejects tier gaps/overlaps and `amount` XOR violations. Visible result: a seeded catalog queryable in psql, and deliberately bad data provably failing.
+Create the module's entire data layer in one unit: the `product` schema with its three tables (`product_offering`, `product_specifications`, `product_offering_price`), sequences, enum, and constraints via Drizzle migration `0006_product` (which also inserts the `products` PERMISSIONS row); the `validation/product/` Zod schemas (offering-list searchParams, per-`pricing_model` price characteristics, spec characteristics); the `Demo — *` seeds passed through those schemas; and the guardrail tests proving that a duplicate same-type `start_date_time` fails at the DB and that Zod rejects tier gaps/overlaps and `amount` XOR violations. Visible result: a seeded catalog queryable in psql, and deliberately bad data provably failing.
 
 ## 2. Design
 
@@ -180,23 +180,26 @@ export type OfferingListSearchParams = z.infer<typeof offeringListSearchParamsSc
 
 Page size is a pm03 service constant, not a URL param. RETIRED-hiding is **service** behavior (pm03); the schema only carries `status: null`.
 
-### 3.7 Seeds — `db/seeds/product.ts` (new) + npm script
+### 3.7 Seeds — mandatory grant (`db/seeds/product.ts`) + opt-in demo catalog (`db/seeds/demo/product-demo.ts`)
 
-Standalone idempotent script following `seed-rbac.ts` exactly: `postgres` + `drizzle` with `max: 1`, skip-if-seeded pre-check (any `product_offering` row exists → log + return), everything in **one transaction**, `logger` not `console`, `process.exit(1)` on failure. Runs **after** `db:seed-rbac` (needs the ADMIN role). Every JSONB/price payload is `.parse()`d through §3.6 schemas before insert (code-standards §1.7) — a bad payload throws and nothing lands.
+Two responsibilities, two scripts (split by the seed-refactor change, 2026-09-16):
 
-Seed data (all names keep the `TOREMOVE-Template-` prefix — protected, workflow §6.8; fixed UTC ISO datetimes, not `now()`, so pm03 tests are deterministic; `last_edited_by: null`; `version: 1`; currency `MYR` per `SYSTEM_CONFIG.default_currency`):
+- **Mandatory grant — `db/seeds/product.ts`** (`db:seed-product`, part of `db:setup`): grants `products:DELETE → ADMIN` (idempotent check-then-insert), one transaction, `logger` not `console`, `process.exit(1)` on failure. Runs **after** `db:seed-rbac` (needs the ADMIN role). Seeds **no** catalog rows.
+- **Opt-in demo catalog — `db/seeds/demo/product-demo.ts`** (run only by `npm run db:seed-demo`, never in `db:setup`; prod-guarded via the `db/seeds/demo/seed-demo.ts` orchestrator): seeds the `Demo — *` offerings/specs/prices below. Standalone idempotent script following `seed-rbac.ts`'s shape: skip-if-seeded pre-check (the demo `Demo — 5G Nationwide Service Plan` offering exists → log + return), everything in **one transaction**. Every JSONB/price payload is `.parse()`d through §3.6 schemas before insert (code-standards §1.7) — a bad payload throws and nothing lands.
 
-**Offering 1 — `TOREMOVE-Template-5G-Nationwide-Service-Plan`** (ACTIVE, sellable, not bundle, not billing-only)
-- Specs: `TOREMOVE-Template-Network-Slice-eMBB` (mandatory, default, characteristics `{ "SST_ID": "01", "SD_ID": "A0C4E2" }`); `TOREMOVE-Template-QoS-Profile` (optional, `default_value: "standard"`, characteristics `{ "5QI": "9", "ARP": "8" }`).
+Seed data (all names use the human-readable `Demo — ` prefix; seeded only via the opt-in `npm run db:seed-demo` script — no longer part of `db:setup`; fixed UTC ISO datetimes, not `now()`, so pm03 tests are deterministic; `last_edited_by: null`; `version: 1`; currency `MYR` per `SYSTEM_CONFIG.default_currency`):
+
+**Offering 1 — `Demo — 5G Nationwide Service Plan`** (ACTIVE, sellable, not bundle, not billing-only)
+- Specs: `Demo — Network Slice eMBB` (mandatory, default, characteristics `{ "SST_ID": "01", "SD_ID": "A0C4E2" }`); `Demo — QoS Profile` (optional, `default_value: "standard"`, characteristics `{ "5QI": "9", "ARP": "8" }`).
 - Prices:
-  1. `TOREMOVE-Template-Monthly-Recurring-Charge` — recurring, flat, amount `"5000.00"`, period 1 / `months`, `gl_code "GL-4100"`, start `2026-01-01T00:00:00Z`.
-  2. `TOREMOVE-Template-Monthly-Recurring-Charge-2027` — recurring, flat, amount `"5500.00"`, start `2027-01-01T00:00:00Z` — a **future-dated successor** of the same `price_type`, giving pm03 its derived-effectivity fixture (current price ends when successor starts; successor is open-ended).
-  3. `TOREMOVE-Template-Activation-Fee` — once, flat, amount `"1000.00"`, start `2026-01-01T00:00:00Z`.
-  4. `TOREMOVE-Template-Data-Overage` — usage, **tiered**, `amount: null`, `unit_of_measure "GB"`, `gl_code "GL-4200"`, tiers `[{from: 0, to: 1000, rate: "0.05"}, {from: 1000, to: 10000, rate: "0.04"}, {from: 10000, to: null, rate: "0.03"}]`, start `2026-01-01T00:00:00Z`.
+  1. `Demo — Monthly Recurring Charge` — recurring, flat, amount `"5000.00"`, period 1 / `months`, `gl_code "GL-4100"`, start `2026-01-01T00:00:00Z`.
+  2. `Demo — Monthly Recurring Charge (2027)` — recurring, flat, amount `"5500.00"`, start `2027-01-01T00:00:00Z` — a **future-dated successor** of the same `price_type`, giving pm03 its derived-effectivity fixture (current price ends when successor starts; successor is open-ended).
+  3. `Demo — Activation Fee` — once, flat, amount `"1000.00"`, start `2026-01-01T00:00:00Z`.
+  4. `Demo — Data Overage` — usage, **tiered**, `amount: null`, `unit_of_measure "GB"`, `gl_code "GL-4200"`, tiers `[{from: 0, to: 1000, rate: "0.05"}, {from: 1000, to: 10000, rate: "0.04"}, {from: 10000, to: null, rate: "0.03"}]`, start `2026-01-01T00:00:00Z`.
 
-**Offering 2 — `TOREMOVE-Template-Enterprise-IoT-Access`** (ACTIVE, sellable, not bundle, not billing-only)
-- Spec: `TOREMOVE-Template-Network-Slice-mMTC` (mandatory, default, `{ "SST_ID": "03", "SD_ID": "B1D2E3" }`).
-- Prices: `TOREMOVE-Template-Monthly-Recurring-Charge` — recurring, flat, `"1200.00"`, period 1 / `months`, `gl_code "GL-4100"`, start `2026-01-01T00:00:00Z`; `TOREMOVE-Template-Data-Usage` — usage, **flat**, `"0.02"` per `GB`, `gl_code "GL-4200"`, start `2026-01-01T00:00:00Z` (flat-usage variant).
+**Offering 2 — `Demo — Enterprise IoT Access`** (ACTIVE, sellable, not bundle, not billing-only)
+- Spec: `Demo — Network Slice mMTC` (mandatory, default, `{ "SST_ID": "03", "SD_ID": "B1D2E3" }`).
+- Prices: `Demo — Monthly Recurring Charge` — recurring, flat, `"1200.00"`, period 1 / `months`, `gl_code "GL-4100"`, start `2026-01-01T00:00:00Z`; `Demo — Data Usage` — usage, **flat**, `"0.02"` per `GB`, `gl_code "GL-4200"`, start `2026-01-01T00:00:00Z` (flat-usage variant).
 
 **ADMIN grant (Design #7):** in the same transaction, look up the `ADMIN` role and the `products` permission; if the `role_permission_assign` row is absent, insert it with `permission_type: 'DELETE'` (highest wins ⊃ EDIT ⊃ READ). Missing ADMIN role → throw `"ADMIN role not found. Run db:seed-rbac first."` (mirrors seed-rbac's precondition style). No `AUDIT_LOG` row — deployment-time infrastructure operation, same rationale as seed-rbac.
 

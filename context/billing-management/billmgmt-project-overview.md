@@ -86,7 +86,7 @@ The primary flow — RevOps runs, reviews, and posts the July bill run for the E
 
 ### Access control and audit
 - Three permissions: `billrun_view` (list, drill down, export), `billrun_operate` (trigger, rerun, cancel), `billrun_approve` (approve and post). Operate and approve imply view.
-- New **Billing Viewer** role carrying `billrun_view` alone, for Finance and Internal Audit.
+- Bill-run read access (`billrun_view`) is standard Revenue Ops work, carried by the platform's existing **MANAGER** and **USER** roles — no dedicated viewer role. _(Amended by the seed-refactor change, 2026-09-16; the earlier "Billing Viewer role for Finance and Internal Audit" framing is withdrawn.)_
 - Four-eyes enforced in the service layer: approver ≠ the user who triggered the final attempt.
 - Machine-to-machine ingest endpoints carry no session semantics: bearer service token, constant-time compare, never logged, Zod-validated, HTTPS only, rejected unless the run is `PROCESSING`.
 - Audit events for materialization, trigger, rerun, approval, and cancellation; per-account **stage completion** is recorded as the append-only `bill_run_account_stage` row (the drill-down/audit surface), **not** a per-signal `core.AUDIT_LOG` event (code-standards §1.10).
@@ -101,7 +101,7 @@ The primary flow — RevOps runs, reviews, and posts the July bill run for the E
 - Server actions for trigger, rerun, cancel, approve, and post, each wrapping validate → mutate → audit in one transaction. Materialization is not a server action — it is the write performed on the Bill Runs list page's server render (the single materialization entry point).
 - Monthly on-cycle runs, recurring subscription charges only.
 - Workflow-engine deployment (namespace, definition, private-network placement, secret wiring) and the pipeline orchestration, including injectable HARD/SOFT/INFRA failures and on-demand stalling for testing.
-- RBAC permission rows and the Billing Viewer role seed.
+- RBAC permission rows and the `billrun_view:READ` grant onto the MANAGER/USER (Revenue Ops) roles.
 - Unit and integration tests (vitest) plus one end-to-end journey.
 
 ## Out of scope

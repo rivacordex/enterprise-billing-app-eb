@@ -4,6 +4,101 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE (code-complete, verified) — Seed refactor: mandatory/demo split,
+  de-TOREMOVE, retire BILLING_VIEWER**
+  (`context/_change-database-seeds-refactor-plan.md`). Implemented §3 (the stated
+  boundary: seeds + package.json + RBAC types/tests) + the §4 doc updates. Seed-
+  only, fresh-install scope (D3) — no migrations for already-seeded environments.
+  - [x] §3.1 Split the two mixed files. `db/seeds/product.ts` → mandatory
+        `products:DELETE→ADMIN` grant only; `db/seeds/ordering-inventory.ts` →
+        `grantOrderingPermissions` only (PREFIX + `seedStory` removed). Both stay
+        wired in `db:setup` (chain **unchanged**).
+  - [x] §3.2 New `db/seeds/demo/` tree (accounts-orchestrator pattern):
+        `product-demo.ts` (`seedProductDemo`), `ordering-demo.ts`
+        (`seedOrderingDemo`, looks the offering up by its new name via the shared
+        `DEMO_5G_OFFERING_NAME` export), `seed-demo.ts` (orchestrator, one txn,
+        product→ordering order). Prod guard mirrors `sample/seed-billrun-sample.ts`:
+        refuses unless `DATABASE_URL` host ∈ {localhost,127.0.0.1,db,postgres} and
+        `NODE_ENV !== production`; `ALLOW_DEMO_SEED=true` overrides. Idempotency
+        scoped to demo data (5G offering by name; demo BAN's orders) so a `_SAMPLE_`
+        offering can't false-trip the skip.
+  - [x] §3.3 `package.json` — added `db:seed-demo`; `db:setup` untouched.
+  - [x] §3.4 Rename map applied — demo rows now `Demo — *` (spaces + em-dash),
+        emails `demo-order-*@example.invalid`. `TOREMOVE` gone from `db/seeds/**`.
+  - [x] §3.5 Retired `BILLING_VIEWER`: `billing.ts` now grants `billrun_view:READ`
+        to MANAGER + USER (Revenue Ops rollup) via the existing atomic-upsert
+        `grant()`; ADMIN_GRANTS unchanged; header comment de-Finance/Audit'd.
+        `types/rbac.ts` `SEEDED_ROLE_NAMES` → `["ADMIN","MANAGER","USER"]`. Tests:
+        `rbac.test.ts`/`roles-write.service.test.ts` `it.each` dropped the role;
+        `nav-registry.test.ts` case renamed (assertion unchanged). `0024` comment
+        de-BILLING_VIEWER'd (comment-only; safe — repo rebuilds from 0000).
+  - [x] §4 docs: `bm01` spec (record amended per D5), `billmgmt-project-overview`,
+        `billmgmt-progress-tracker`, product specs pm02/03/05/06/07/08/10 (renames
+        + `db:seed-demo`-first verification note, via subagent).
+  - Verified: `tsc` clean; ESLint clean; Prettier clean (code + all edited docs);
+        affected unit suites green — rbac/roles-write/nav-registry + the
+        nav-registry-guard guardrail = 51/51. §5 acceptance greps confirmed:
+        `TOREMOVE` gone from `db/seeds/**`; `BILLING_VIEWER` gone from `db/seeds/**`,
+        `types/rbac.ts`, `tests/**`; `db:setup` chain byte-identical; `db:seed-demo`
+        present.
+  - Deviations / judgment calls (flagged):
+    - **Three §4 doc targets do not exist in this repo** —
+      `_assessment-seed-files-strategy.md`, `_newmodule-billing-billrun-plan.md`,
+      `_change-homepage-topbar-nav-rbac-plan.md` (the last is referenced as an
+      already-consumed plan in this tracker). The plan was drafted against a
+      superset; these were NOT fabricated. Their intended edits (assessment §2
+      correction, the two BILLING_VIEWER strikes) have no target here.
+    - **Extended beyond §4's explicit list for correctness** (the change directly
+      invalidated these): the prefix-convention *rules*
+      `prodmgmt-code-standards.md` §8 + file-map, `prodmgmt-ai-workflow-rules.md`
+      §8 (which literally said "keep the `TOREMOVE-Template-` prefix"),
+      `prodmgmt-project-overview.md` go-live line, pm11/pm15 concrete row refs,
+      `bm00-build-plan.md` (×2), `billmgmt-code-standards.md` file-map, and a now-
+      false **code comment** in `app/(app)/billing/bill-runs/[runId]/page.tsx`
+      (named "the Billing Viewer role"). All retargeted to `Demo — `/Revenue-Ops.
+    - **DB acceptance test NOT run** (§5 steps 1/2/5 — `db:setup` clean-baseline,
+      `db:seed-demo` idempotency + prod-guard, MANAGER/USER UI smoke). These need a
+      fresh/disposable DB; running against the shared dev DB is destructive (repo
+      convention). Run on CI / the disposable test DB for end-to-end proof.
+  - Post-review fixes (xhigh multi-agent code-review, applied + verified). The
+    review found **no correctness bugs** (mostly verbatim moves); the substantive
+    findings were a test gap, reuse, and a misleading test name:
+    - [x] [test gap] Added `tests/guardrails/demo-seed-boundary.test.ts` — a
+          DB-free grep gate asserting `db:seed-demo` points at the demo
+          orchestrator and never appears in `db:setup` (or any other chain),
+          mirroring the sibling `billing-sample-seed-boundary.test.ts`. Enforces
+          D2 (demo is opt-in-only), which previously nothing tested.
+    - [x] [reuse + altitude, D-user-approved: full shared-lib rollup] New
+          `db/seeds/lib/`: `non-prod-guard.ts` (`NON_PROD_HOSTS` +
+          `assertNonProductionUrl(url,label,ctx)` — single source of truth for the
+          safety-critical prod-write guard) and `get-or-create-appuser.ts` (moved
+          out of `sample/`). Rewired **both** the demo seed AND the shipped
+          `sample/seed-billrun-sample.ts` (plus `scripts/billrun-live-kestra-smoke.ts`)
+          to consume them; deleted the duplicated guard bodies and the old
+          `sample/get-or-create-appuser.ts`. The sample seed was fenced off by the
+          plan (§4) — user explicitly authorized touching it for this dedup. Guard
+          behavior preserved (messages parameterized per-seed via the ctx; sample's
+          dual DATABASE_URL + BOOTSTRAP_DATABASE_URL checks both pass `SAMPLE_GUARD`).
+    - [x] [test clarity] Retitled the nav-registry case from "MANAGER/USER with
+          billrun_view:READ … sees just the Billing section" to "a principal whose
+          only grant is billrun_view:READ …" — a real MANAGER/USER also holds the
+          ordering grants and would see more sections; the body tests a synthetic
+          billrun_view-only map. (Deviates from the plan's literal rename string,
+          which was itself the source of the imprecision.)
+    - Not changed (evaluated, judged WAI/inherited/out-of-scope): the grant helper
+      reconciling MANAGER/USER `billrun_view` back to READ on re-run (by-design
+      "seed is source of truth", unchanged from original); the prod-guard host
+      allowlist accepting tunneled localhost/`db`/`postgres` and `ALLOW_*_SEED`
+      bypassing the NODE_ENV check (specified by the plan, copied from the sample
+      precedent — now shared, so any future hardening lands once); the
+      receivables-binding self-heal leaving the mandatory path (D3 — already-seeded
+      envs out of scope).
+    - Verified: `tsc` clean; ESLint clean; Prettier clean; 59/59 across the demo +
+      both sample guardrails, nav-registry, rbac, roles-write (both sample
+      guardrails green confirms the sample-seed rewiring did not regress).
+
+- **DONE — xhigh code-review fixes**
+
 - **DONE — xhigh code-review fixes** (uncommitted changes + last 2 commits;
   multi-agent review, 15 findings). Fixed by criticality, evaluated against specs:
   - [x] [#2, CONFIRMED] GL-journal drill-down rendered `event_at` via raw

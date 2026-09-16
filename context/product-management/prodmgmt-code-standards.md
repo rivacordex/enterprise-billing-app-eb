@@ -17,7 +17,7 @@
 5. **Additive-only held, with one disclosed exception.** The original schema, repositories, `services/product`, and Zod schemas were written so the CRUD fast-follow could add functions and actions without renaming, re-typing, or re-shaping what shipped first. That held for specifications and prices without exception. For offerings, it held with **one disclosed exception**: `family_offering_id` is a genuinely new column, not a reshaping of anything — reviewed and accepted, not a defect.
 6. **The `(admin)` → `(app)` route-group rename changed no URL** (module Inv. #12, Decision #10, pm01 — historical). Every existing Administration URL and authz-matrix result stays byte-identical.
 7. **Seeds obey the same validation as every other write.** Seed scripts pass `pricing_characteristics` through the per-`pricing_model` Zod schema and must trip the overlap constraint if wrong — no `INSERT` that bypasses validation, even in seed code (module Inv. #4).
-8. **Template seed rows keep the `TOREMOVE-Template-` name prefix** so the go-live data migration can find and replace them; no production code may depend on these rows existing.
+8. **Demo seed rows use the human-readable `Demo — ` name prefix** and live in the opt-in `db:seed-demo` chain (`db/seeds/demo/`), never in the mandatory `db:setup`; the go-live data migration finds and replaces them by that prefix, and no production code may depend on these rows existing. _(Seed-refactor change, 2026-09-16: superseded the former `TOREMOVE-Template-` prefix, which lived inline in `db/seeds/product.ts`.)_
 9. **`is_bundle` is never user-editable, in any form, ever.** Neither `create-offering.schema.ts` nor `update-offering.schema.ts` includes an `isBundle` field. `insertOffering` hardcodes `isBundle: false`. `branchOfferingAsDraft` copies whatever value the source row already has — the value survives cloning, but no code path lets a user set it.
 10. **Editing an `ACTIVE` offering never mutates it in place.** Any write targeting an `ACTIVE` offering's own fields, its specifications, or its prices routes through `branchOfferingAsDraft` first (Inv. #14); there is no service function that `UPDATE`s an `ACTIVE` `product_offering` row's content columns.
 11. **Discard and Retire are the same repository call with different audit events.** `retireOffering(tx, offeringId)` sets `lifecycle_status = RETIRED` regardless of the row's prior status; the calling service logs `PRODUCT_OFFERING_DISCARDED` when the source was `DRAFT` and `PRODUCT_OFFERING_RETIRED` when it was `ACTIVE`. Do not fork this into two repository methods — the DB-level operation is identical, only the audit semantics differ.
@@ -162,7 +162,12 @@ db/repositories/
   product-specification.ts   # finders + insertSpecification, updateSpecification, deleteSpecification
   product-offering-price.ts  # finders + insertPrice (only write, ever)
 db/migrations/…             # schema + `products` PERMISSIONS seed row + family_offering_id migration
-db/seeds/product.ts         # TOREMOVE-Template-* rows, validated via Zod
+db/seeds/product.ts         # mandatory products:DELETE→ADMIN grant (db:seed-product, in db:setup)
+db/seeds/ordering-inventory.ts  # mandatory ordering permission grants (db:seed-ordering, in db:setup)
+db/seeds/demo/
+  product-demo.ts           # opt-in `Demo — *` catalog rows, validated via Zod
+  ordering-demo.ts          # opt-in demo ordering/inventory story (references the demo offering)
+  seed-demo.ts              # db:seed-demo orchestrator (product-demo → ordering-demo, prod-guarded)
 validation/product/
   offering-list.schema.ts           # searchParams: q/status/sort/page/offering
   pricing-characteristics.schema.ts # per-pricing_model discriminated schemas

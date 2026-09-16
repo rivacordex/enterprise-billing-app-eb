@@ -589,7 +589,7 @@ describe("deleteRole", () => {
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });
 
-  it.each(["ADMIN", "MANAGER", "USER", "BILLING_VIEWER"])(
+  it.each(["ADMIN", "MANAGER", "USER"])(
     "returns SEEDED_ROLE for '%s' without deleting or auditing",
     async (roleName) => {
       mockFindRoleById.mockResolvedValue({ ...CUSTOM_ROLE, roleName });
