@@ -134,9 +134,11 @@ detail: `context/billing-management/specs/bm*.md`._
   in an `allowFailure` Sequential so siblings keep processing; its `errors`
   handler POSTs FAILED to a FIXED `verification` stage — collision-free and always
   a valid `Stage` enum, so the signal never 422s/wedges), and run-level terminal
-  `PROCESSING_FAILED` for a whole-execution failure only (`on_error` on `FAILED`;
-  `on_finally` **only on a KILL**, not `WARNING` — a contained per-account failure
-  derives `PROCESSED` per the tested run-status contract) in
+  `PROCESSING_FAILED` for a whole-execution failure only (`errors: on_error` on
+  `FAILED`; `afterExecution: on_killed` on a KILL — in `afterExecution`, not
+  `finally`, since only `afterExecution` sees the settled terminal state — never on
+  `WARNING`, a contained per-account failure derives `PROCESSED` per the tested
+  run-status contract) in
   `bill_run_processing.yml` — real `http.Request`, mirroring bm34, replacing the
   `Log` stubs. `BILLRUN_PROCESSING_FORCE_FAIL` (deploy-time/
   test toggle, read only by `trigger-run.ts`, no UI) threads onto the
@@ -218,7 +220,7 @@ detail: `context/billing-management/specs/bm*.md`._
 - **Receiver hardening deferred (out of bm36 scope — "no receiver change").** The
   run-level `PROCESSING_FAILED` `/status` push has no `attempt`/execution-stale
   guard (unlike the `DISTRIBUTION_*` pushes), so a superseded execution's late
-  `on_error`/`on_finally` could force-fail an in-flight rerun; and
+  `on_error`/`on_killed` could force-fail an in-flight rerun; and
   `handle-status-push.ts`'s 409 messages are inverted relative to the run's actual
   state. Both live in `handle-status-push.ts`/`status-push.schema.ts`; fold into a
   receiver-touching unit (bm37 or later).

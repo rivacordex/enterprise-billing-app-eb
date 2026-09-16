@@ -878,14 +878,21 @@ tasks:
 # (compute-run-status.ts, pre-approval-checks.ts) such a run derives PROCESSED
 # (all accounts terminal, the failed one skippable/rerunnable) — it must NOT be
 # force-pushed to PROCESSING_FAILED. So:
-#   * on_error (execution FAILED) POSTs PROCESSING_FAILED — an uncontained flow
-#     crash while the run is still PROCESSING. NO allowFailure: it must land.
-#   * on_finally fires ONLY on a KILL (`execution.state.current == 'KILLED'`),
-#     the one terminal state that fires `finally` but NOT `errors`. It is NOT
-#     `!= 'SUCCESS'`: that would also fire on WARNING (every contained per-account
-#     failure), force-pushing PROCESSING_FAILED and either 409ing a run already
-#     recomputed to PROCESSED or racing ahead of the last DONE to WRONGLY flip a
-#     healthy run to PROCESSING_FAILED — corrupting the intended PROCESSED status.
+#   * on_error (`errors`, fires only on a FAILED execution) POSTs
+#     PROCESSING_FAILED — an uncontained flow crash while the run is still
+#     PROCESSING. NO allowFailure: it must land. It carries no state guard because
+#     the `errors` block itself IS the "execution failed" condition (a WARNING
+#     from a contained per-account failure does NOT trigger `errors`).
+#   * on_killed (`afterExecution`, runIf `execution.state == 'KILLED'`) covers a
+#     KILL — the one terminal state that fires neither `errors` nor a completed
+#     run's signals. It lives in `afterExecution`, NOT `finally`, because ONLY
+#     `afterExecution` can see the settled terminal state: `finally` runs while
+#     the execution is still RUNNING, so a state-conditional guard there is
+#     meaningless (`execution.state` reads RUNNING, never KILLED/FAILED). The
+#     guard is `== 'KILLED'`, NOT `!= 'SUCCESS'`: a WARNING execution (a contained
+#     per-account failure) derives PROCESSED per the module contract and must not
+#     be force-failed; and FAILED is already handled by `on_error`, so excluding
+#     it here avoids a double PROCESSING_FAILED push.
 # A WARNING run needs no run-level push: the per-account DONE/FAILED signals
 # already drove it to a correct terminal (PROCESSED). A lost callback that leaves
 # an account non-terminal is the reconcile/stall gate's job (Inv #10/#12), not a
@@ -907,13 +914,14 @@ errors:
       Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
     body: |
       {{ { "status": "PROCESSING_FAILED" } }}
-finally:
-  - id: on_finally
+afterExecution:
+  - id: on_killed
     type: io.kestra.plugin.core.http.Request
-    # KILL only — the terminal state that fires `finally` but not `errors`. NOT
-    # `!= 'SUCCESS'`: a WARNING run (a contained per-account failure) derives
-    # PROCESSED per the module contract and must not be force-failed here.
-    runIf: "{{ execution.state.current == 'KILLED' }}"
+    # KILL only, and in `afterExecution` (not `finally`) so `execution.state` is
+    # the settled terminal state (`finally` sees RUNNING). NOT `!= 'SUCCESS'`: a
+    # WARNING run (a contained per-account failure) derives PROCESSED per the
+    # module contract and must not be force-failed; FAILED is handled by on_error.
+    runIf: "{{ execution.state == 'KILLED' }}"
     retry:
       type: constant
       interval: PT5S

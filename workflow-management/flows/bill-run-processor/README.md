@@ -65,13 +65,16 @@ account's stage group is wrapped in an `allowFailure` Sequential whose `errors`
 handler POSTs a per-account HARD `FAILED` (so a HARD-failing account settles to
 `PROCESSING_FAILED` while siblings keep processing — the run itself stays
 `PROCESSED` for the healthy accounts, the module's established contract, and the
-failed account is skippable/rerunnable); and the flow's `errors`/`finally` POST a
-run-level terminal `PROCESSING_FAILED` to `/api/billrun/{runId}/status` for a
-whole-execution failure only — `on_error` on a `FAILED` execution, `on_finally`
-**only on a KILL** (`execution.state.current == 'KILLED'`), never on a mere
-`WARNING` (a contained per-account failure), since processing self-completes via
-the per-account `DONE` signals (no run-level `PROCESSING_FINISHED` push, unlike
-the distributor). All callbacks carry
+failed account is skippable/rerunnable); and the flow POSTs a run-level terminal
+`PROCESSING_FAILED` to `/api/billrun/{runId}/status` for a whole-execution failure
+only — `errors: on_error` on a `FAILED` execution, and `afterExecution: on_killed`
+(`runIf: execution.state == 'KILLED'`) on a KILL — never on a mere `WARNING` (a
+contained per-account failure). The KILL handler is in `afterExecution`, not
+`finally`, because only `afterExecution` sees the settled terminal state
+(`finally` runs while the execution is still `RUNNING`, so a state-conditional
+guard there never matches). Processing self-completes via the per-account `DONE`
+signals (no run-level `PROCESSING_FINISHED` push, unlike the distributor). All
+callbacks carry
 `Bearer BILLRUN_APP_TOKEN` + `retry PT5S×2`, mirroring the distributor (bm34). A
 deploy-time `BILLRUN_PROCESSING_FORCE_FAIL` (threaded onto the `force_fail` input
 by `trigger-run.ts`) drives the first scoped account down the FAILED path for the
