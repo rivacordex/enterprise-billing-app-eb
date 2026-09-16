@@ -238,6 +238,22 @@ async function assertSampleOnlyScope(
       eq(productInventory.productInventoryId, udrRated.udrSubscriberRefId),
     )
     .where(inArray(productInventory.billingAccountId, banIds));
+  // Make the charge boundary a POSITIVE assertion, not a vacuous pass: a scoped
+  // _SAMPLE_ set with ZERO correlatable charges is anomalous — the ci seed always
+  // carries USAGE/BILL_NOTUSED udr_rated rows for its accounts (and posting/reject
+  // never removes them), so an empty result means an incomplete seed or a
+  // DATABASE_URL that is not the seeded sample database. Refuse before any write
+  // rather than reach triggerRun/rejectRun/rerunRun/rerunDistribution having
+  // verified no charge at all.
+  if (candidateCharges.length === 0) {
+    throw new Error(
+      "billrun-live-kestra-smoke: no candidate udr_rated charge correlates to " +
+        "any scoped account (udr_subscriber_ref_id → product_inventory → " +
+        "billing_account_id) — the _SAMPLE_ ci seed always carries usage, so an " +
+        "empty result means the seed is incomplete or DATABASE_URL is not the " +
+        "seeded sample database. Refusing to operate.",
+    );
+  }
   const nonSampleCharge = candidateCharges.find(
     (c) =>
       !SAMPLE_MARKER.test(c.udrSourceFile) ||
