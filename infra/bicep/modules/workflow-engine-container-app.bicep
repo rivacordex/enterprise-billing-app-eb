@@ -47,6 +47,22 @@ param landingEnvStorageName string = 'rating-landing'
 @description('wfm01 §4b — Kestra default namespace for UNqualified flow deploys. Flows are namespace-qualified, so this only affects an unqualified deploy; the split billrun instance sets it to `billrun`.')
 param defaultNamespace string = 'rating'
 
+// bm38 §1 — this engine instance hosts the `billrun` namespace (the collapsed
+// engine, which carries BOTH `rating` and `billrun`; or the split-by-module
+// `billrun` instance). When true, the `billrun_runtime` DB credential is wired
+// EXACTLY like the rating one: a bare-password Key Vault secret exposed as
+// `SECRET_BILLRUN_RUNTIME_PASSWORD` + the non-secret `BILLRUN_DB_HOST/PORT/NAME/
+// USER` connection coordinates — the shape the bill-run processor/distributor
+// flows actually read (`bill_run_processing.yml`: `export PGPASSWORD=...`,
+// `PGHOST=$BILLRUN_DB_HOST`, …), NOT a full connection string. Default false so
+// a rating-ONLY engine (the split rating instance) gets none of it. Distinct
+// from `defaultNamespace`: the collapsed engine keeps `defaultNamespace =
+// 'rating'` yet still hosts `billrun`, so this cannot be derived from the
+// namespace default — it is set explicitly at the billrun-hosting call sites in
+// main.bicep.
+@description('bm38 §1 — true when this engine hosts the `billrun` namespace (collapsed engine, or the split billrun instance). Wires the billrun-runtime-db-password Key Vault secret + SECRET_BILLRUN_RUNTIME_PASSWORD / BILLRUN_DB_* env vars. Default false (rating-only engine gets neither).')
+param hostsBillrunNamespace bool = false
+
 @description('true = ingress fully internal to the Container Apps Environment (no external DNS at all); false = disabled (D8 default until rm05).')
 param internalIngress bool = false
 
@@ -224,6 +240,27 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             identity: workflowEngineManagedIdentityId
           }
         ],
+        hostsBillrunNamespace
+          ? [
+              // bm38 §1 — the dedicated `billrun_runtime` password (bm14), the DB
+              // identity the bill-run processor/distributor flows connect as. SAME
+              // shape as the `rating-runtime-db-password` secret above: a BARE
+              // password, NOT a full connection string. Each flow's psql task
+              // builds its own connection from the BILLRUN_DB_HOST/PORT/NAME/USER
+              // env vars (set below) and reads this password via
+              // `PGPASSWORD=${SECRET_BILLRUN_RUNTIME_PASSWORD}`
+              // (`bill_run_processing.yml`) — the direct analog of the rating
+              // worker's SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* convention.
+              // The value is provisioned out-of-band (never in git) — the
+              // `ALTER ROLE billrun_runtime WITH PASSWORD` step in
+              // infra/docs/db-role-verification.md §1.
+              {
+                name: 'billrun-runtime-db-password'
+                keyVaultUrl: '${keyVaultUri}secrets/billrun-runtime-db-password'
+                identity: workflowEngineManagedIdentityId
+              }
+            ]
+          : [],
         enableEasyAuthIngress
           ? [
               // rm05 D8 — the workflow-engine Entra registration's client
@@ -368,6 +405,26 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // BASE64-encoded key (see the rating-usage-webhook-key secret above).
             { name: 'SECRET_RATING_USAGE_WEBHOOK_KEY', secretRef: 'rating-usage-webhook-key' }
           ],
+          // bm38 §1 — the billrun processor/distributor flows connect to Postgres
+          // as `billrun_runtime` (bm14), mirroring the rating worker's split
+          // convention exactly: the bare password via SECRET_BILLRUN_RUNTIME_PASSWORD
+          // + the connection coordinates as plain env. Like SECRET_RATING_RUNTIME_PASSWORD
+          // above, the password is read RAW from the container env by the flow's
+          // shell task (`export PGPASSWORD=...`), NOT via Kestra `{{ secret() }}`,
+          // so it is stored/passed plain and is NOT base64-decoded. BILLRUN_DB_HOST
+          // reuses postgresServerFqdn — the billing (`enterprise_billing`) database
+          // lives on the SAME Flexible Server as the `kestra` DB, only the DB NAME
+          // differs. BILLRUN_DB_NAME is the fixed `enterprise_billing` convention
+          // (every .env + the migrate job's connection string); promote it to a
+          // param if an environment ever renames the billing DB. Only added on a
+          // billrun-hosting engine; a rating-only instance never sees it.
+          hostsBillrunNamespace ? [
+            { name: 'SECRET_BILLRUN_RUNTIME_PASSWORD', secretRef: 'billrun-runtime-db-password' }
+            { name: 'BILLRUN_DB_HOST', value: postgresServerFqdn }
+            { name: 'BILLRUN_DB_PORT', value: '5432' }
+            { name: 'BILLRUN_DB_NAME', value: 'enterprise_billing' }
+            { name: 'BILLRUN_DB_USER', value: 'billrun_runtime' }
+          ] : [],
           // bm22 §7 / bm34 — SFTP distribution config (default-off). Non-secret
           // target coordinates as plain env; the private key + known_hosts as
           // Kestra `secret()` refs (base64 KV values). SFTP_REMOTE_BASE is the

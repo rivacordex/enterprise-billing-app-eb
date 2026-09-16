@@ -13,7 +13,7 @@ The Billing Management module is where the Revenue Operations team runs monthly 
 3. Make a triggered run reach `PROCESSED` on its own — accounts auto-advance, the Workflow stage timeline fills, and Approve appears on a healthy run with no stall banner and no out-of-band signal replay.
 4. Assert the full lifecycle locally on the `ci` seed: `SCHEDULED → PROCESSING → PROCESSED → APPROVED → POSTING → INVOICED → DISTRIBUTING → COMPLETED`, including reject → re-rate → reprocess, a forced processing failure that settles, and distribution with a forced mandatory failure → `DISTRIBUTION_FAILED` → rerun.
 5. Confirm the stall/reconcile gate no longer fires on a healthy run and still catches a genuinely wedged one; close the bm16/bm20 live-Kestra gate locally.
-6. Make production deployable-and-wired: provision the `BILLRUN_RUNTIME_DATABASE_URL`, `billrun-engine-auth`/`-url`, and SFTP Key Vault secrets and their consumer mapping into the shared `workflow-engine` Container App bicep, ready the (still-gated) deploy flags, and correct the `template.yml` "separate repo, TBD owner" fiction.
+6. Make production deployable-and-wired: provision the `billrun_runtime` DB credential (bm38: the `billrun-runtime-db-password` bare-password secret + `BILLRUN_DB_*` coords, the split shape the flow actually reads — not the superseded `BILLRUN_RUNTIME_DATABASE_URL` URL), `billrun-engine-auth`/`-url`, and SFTP Key Vault secrets and their consumer mapping into the shared `workflow-engine` Container App bicep, ready the (still-gated) deploy flags, and correct the `template.yml` "separate repo, TBD owner" fiction.
 7. Mirror bm34's distributor callback pattern verbatim — reachability (`host.docker.internal` / internal ingress), `Bearer` token auth, retry/`allowFailure`, and the `attempt` guard that swallows a superseded round's straggler POST.
 
 ## Core user flow
@@ -40,7 +40,7 @@ The Billing Management module is where the Revenue Operations team runs monthly 
 - Verify the stall/reconcile gate does not fire on a healthy run and still catches a wedged one; close the bm16/bm20 live-Kestra gate locally.
 
 ### Production wiring (deployable, gated)
-- Key Vault secrets + consumer mapping into `infra/bicep/modules/workflow-engine-container-app.bicep`: `BILLRUN_RUNTIME_DATABASE_URL`, `billrun-engine-auth`/`-url`, SFTP key/known-hosts; the `billrun_runtime` password provisioning step.
+- Key Vault secrets + consumer mapping into `infra/bicep/modules/workflow-engine-container-app.bicep`: `billrun-runtime-db-password` (+ `BILLRUN_DB_*` coords), `billrun-engine-auth`/`-url`, SFTP key/known-hosts; the `billrun_runtime` password provisioning step.
 - No new container — the shared `workflow-engine` (collapsed topology) already hosts the `billrun` namespace; the `local-dev` flow is promoted as the production flow.
 - Deploy flags (`deployWorkflowEngine`, `deployRatingFlows`, the billrun flow deploy, `runBillrunLiveKestraSmoke`) readied but left gated for the ops cutover; the `template.yml` "separate repo, TBD owner" text corrected; the taxation-`0.00` interim and the cutover runbook recorded.
 
@@ -70,5 +70,5 @@ The Billing Management module is where the Revenue Operations team runs monthly 
 2. A HARD-failing account reaches `PROCESSING_FAILED` via its per-account `FAILED` stage-complete POST (not the stall timeout); the run derives `PROCESSED` (mixed terminal set) with the failed account `SKIPPED` at approval and remains rerunnable. A whole-execution `FAILED`/KILL settles the run itself to `PROCESSING_FAILED` (via `on_error`/`on_killed`).
 3. A forced mandatory distribution failure yields `DISTRIBUTION_FAILED` and reruns only the failed artifacts to `COMPLETED`; a duplicate or stale-attempt outcome is a 200 no-op.
 4. The stall/reconcile gate does not fire on a healthy run and still catches a genuinely wedged one; the bm16/bm20 live-Kestra gate closes locally.
-5. Production is deployable-and-wired: `BILLRUN_RUNTIME_DATABASE_URL`, engine, and SFTP secrets plus their consumer mapping are present in the `workflow-engine` bicep, the deploy flags are readied (still gated), the `template.yml` fiction is corrected, and the cutover runbook is recorded — with no new migration introduced.
+5. Production is deployable-and-wired: the `billrun_runtime` DB credential (`billrun-runtime-db-password` + `BILLRUN_DB_*`), engine, and SFTP secrets plus their consumer mapping are present in the `workflow-engine` bicep, the deploy flags are readied (still gated), the `template.yml` fiction is corrected, and the cutover runbook is recorded — with no new migration introduced.
 6. `npm run typecheck`, `npm run lint`, and the full vitest suite pass; `billmgmt-progress-tracker.md` records Phase 4 delivery.

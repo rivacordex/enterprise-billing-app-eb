@@ -35,8 +35,15 @@ detail: `context/billing-management/specs/bm*.md`._
 - **The live-Kestra `SCHEDULED → COMPLETED` assertion is real (bm37, Phase 4).**
   `scripts/billrun-live-kestra-smoke.ts` now drives the WHOLE operator journey
   against the real deployed flows and closes the bm16/bm20 live-Kestra gate.
-  **Remaining Phase 4:** production deploy wiring — see
-  `billmgmt-update-overview.md` and `billmgmt-gap-assessment.md`.
+- **Production deploy path is deployable + wired (bm38, Phase 4 · Phase O,
+  2026-09-16).** The `billrun_runtime` DB URL + engine/SFTP Key Vault secrets
+  and their consumer mapping are wired into the shared `workflow-engine` bicep,
+  the deploy flags are readied (still off by default), the `local-dev` flow is
+  promoted as the production flow (the "separate repo, TBD owner" fiction is
+  gone), and the cutover runbook + taxation-`0.00` interim are recorded. **The
+  actual cloud cutover — flipping the flags and running the live smoke against a
+  real engine + SFTP — remains a later gated ops step.** See
+  `specs/bm38-production-deploy-wiring.md`.
 
 ## Delivered units
 
@@ -184,14 +191,59 @@ detail: `context/billing-management/specs/bm*.md`._
     steers away from the just-recovered forced account; handoff-file read + the
     `--env-file` execArgv filter hardened. No behavioural change to the proven
     lifecycle.
+- **bm38** — Production deployable + wired (Phase O). Infra + doc only (no app
+  code, no schema, no migration). (1) `workflow-engine-container-app.bicep`
+  gained a `hostsBillrunNamespace` param that gates the `billrun_runtime` DB
+  credential onto the billrun-hosting engine only, wired **exactly like the
+  rating one** (review fix — the deployed `bill_run_processing.yml` reads split
+  coords + a bare password via `PGPASSWORD`, NOT a full URL): a
+  `billrun-runtime-db-password` Key Vault secret exposed as
+  `SECRET_BILLRUN_RUNTIME_PASSWORD` + the non-secret `BILLRUN_DB_HOST`
+  (= `postgresServerFqdn`)`/PORT/NAME`(=`enterprise_billing`)`/USER` env vars.
+  `main.bicep` passes the param `true` at the collapsed + split-billrun call
+  sites, `false` at the split-rating instance. (The initial bm38 pass wired a
+  `billrun-runtime-db-url` full-URL secret + `BILLRUN_RUNTIME_DATABASE_URL` env
+  per the stale bm14 spec text; a code review caught that NO code/flow consumes
+  that var — the flow would hard-abort on the unset `SECRET_BILLRUN_RUNTIME_PASSWORD`
+  — so it was re-wired to the split shape and the orphaned
+  `BILLRUN_RUNTIME_DATABASE_URL` was dropped from `.env.example`.) (2)
+  `db-role-verification.md` §1/§2 now fold `billrun_runtime` into the
+  rating/kestra split-shape group (bare-password secret + `*_DB_*` coords) and
+  name its consumer (the `workflow-engine` container), superseding the "not yet
+  wired" note, and a new **Production
+  cutover** runbook records the order of operations (provision role/password →
+  store KV secrets → deploy engine → deploy flows → run smoke → flip SFTP), the
+  `billrun-engine-auth` username = `workflow-ops@billing.ops` coupled-triple
+  rotation, the re-run-`db:bootstrap-billrun-roles`-after-grant-pulls note, and
+  the ratified taxation-`0.00` interim. (3) `azure-pipelines.yml` resolved the
+  `billrun-engine-url`/`-auth` NOT-YET-CREATED flags to a NAMED
+  out-of-band cutover prerequisite and dropped the "separate workflow-management
+  repo / TBD owner" framing; the deploy flags (`deployWorkflowEngine`,
+  `deployRatingFlows`, `runBillrunLiveKestraSmoke`) stay off by default and
+  `deploy_workflow_flows` still maps `bill-run-processor/local-dev` +
+  `bill-run-distributor/local-dev` → `billrun`. (4) `bill_run_processing.template.yml`
+  + both `bill-run-*/README.md` now name the repo's `local-dev` flow as THE
+  deployed flow (no separate repo); `billmgmt-architecture.md` §5 states the
+  collapsed-topology shared engine hosts the `billrun` namespace with no
+  separate processor/distributor container. `az bicep build` clean on
+  `main.bicep` + the module. **Not done here:** the real cloud cutover (flag
+  flips + live smoke against a real engine/SFTP) — a gated ops step.
+  - **Residual (out of bm38's enumerated boundary):** the deployable
+    `bill-run-processor/local-dev/bill_run_processing.yml` and
+    `bill-run-distributor/local-dev/bill_run_distribution.yml` headers still
+    carry a "separate workflow-management repo" line; the bm38 spec scoped the
+    fiction-correction to the template + READMEs only, so these were left —
+    fold into a later flow-touching unit.
 
 ## Outstanding / Next (Phase 4)
 
-- **Production deployable + wired** — provision `BILLRUN_RUNTIME_DATABASE_URL`,
-  `billrun-engine-auth`/`-url`, and SFTP Key Vault secrets + consumer mapping into
-  the shared `workflow-engine` bicep (collapsed topology; no separate container);
-  ready the off-by-default deploy flags; correct the `template.yml` "separate repo,
-  TBD owner" fiction. Cloud cutover is a later gated ops step.
+- **Cloud cutover (gated ops step, NOT wiring)** — the bicep/pipeline/doc wiring
+  landed in bm38. What remains is the operator action: provision the out-of-band
+  Key Vault secrets (`billrun-runtime-db-password`, `billrun-engine-url`/`-auth`, and
+  SFTP if used), flip `deployWorkflowEngine` → deploy the collapsed engine →
+  `deployRatingFlows` → `runBillrunLiveKestraSmoke` against the real engine, then
+  `enableSftpDistribution` only when a real SFTP endpoint exists. Full order of
+  operations: `infra/docs/db-role-verification.md` "Production cutover".
 - **Before any prod deploy:** rotate `billrun-engine-auth` so its username half
   matches `workflow-ops@billing.ops` (coupled triple — engine, pipeline `--user`,
   and this out-of-band Key Vault secret), or every app→engine call 401s.
