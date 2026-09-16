@@ -13,7 +13,7 @@ Replace the placeholder distribution flow with a real one — Azure Blob `Downlo
 **Structural decisions**
 
 - **Transport-only, D-push, unchanged spine (bm20).** The flow still renders/computes nothing — it delivers already-stored artifacts and signals outcomes. The `bill_run_distribution` table, the outcome handler, the idempotency UNIQUE `(run, target, artifact_ref, distribution_attempt, period)`, the stale-attempt swallow, and `INVOICED`-keyed next-cycle operability (Inv #16) are all reused as-is — no schema change.
-- **Real SFTP transport (bm22's plugins).** Per `(target, artifact)`: `azure.storage.blob.Download` by `blob_ref` (the plugin bm22 verified), then `fs.sftp.Upload` (the plugin bm22 added) to `{remote_base}/invoices/{YYYY-MM}/{INV}.pdf` (invoice PDFs) and `{remote_base}/reports/{YYYY-MM}/{bill_run_id}-report.csv` (the register CSV). **SSH key auth from a Kestra Secret** (`SECRET_SFTP_SSH_KEY`, mirroring the rating flows' `SECRET_*` pattern), **host-key verification on** (no `StrictHostKeyChecking=no`).
+- **Real SFTP transport (bm22's plugins).** Per `(target, artifact)`: `azure.storage.blob.Download` by `blob_ref` (the plugin bm22 verified), then `fs.sftp.Upload` (the plugin bm22 added) to `{remote_base}/invoices/{YYYY-MM}/{INV}.pdf` (invoice PDFs) and `{remote_base}/reports/{YYYY-MM}/{bill_run_id}-report.csv` (the register CSV). **SSH key auth from a Kestra Secret** (`SECRET_SFTP_PRIVATE_KEY` — the name bm22 established and the flow reads via `{{ secret('SFTP_PRIVATE_KEY') }}`; mirrors the rating flows' `SECRET_*` pattern), **host-key verification on** (no `StrictHostKeyChecking=no`).
 - **Outcome always reported (`allowFailure` + one retry).** Each upload has **one retry**; whether it succeeds or fails twice, the flow POSTs an outcome (`DELIVERED`/`FAILED`) via `core.http.Request` — `allowFailure` on the upload guarantees the outcome step always runs, so a run never wedges on a silent transport failure. `force_fail` (kept from bm33's `BILLRUN_DISTRIBUTION_FORCE_FAIL`) is honored for any target to exercise the `DISTRIBUTION_FAILED` path.
 - **`loopback` / `sftp` selected by environment (D25).** Local dev uses the loopback target; deployed uses the SFTP target(s). Both can be live in one run (D25) — the identity check and status recompute are target-set-aware, not single-target.
 - **App-side widening — inseparable from the flow.** `isLaunchedDistributionIdentity` moves from `target === LOOPBACK_TARGET` to membership in the run's **known-target set** (the targets the trigger launched, resolved from config/environment). `recomputeDistributionStatus` scales `expected` by the **mandatory-target count** (`expected = mandatory_targets × artifacts`, deduped on `(target, artifact_ref)`, latest attempt wins) — completion requires **every** mandatory `(target, artifact)` pair `DELIVERED`. `triggerDistribution`/`rerunDistribution` build the `targets` list from the known set instead of the single hardcoded `loopback`.
@@ -40,7 +40,7 @@ tasks:
             type: io.kestra.plugin.fs.sftp.Upload                # to {remote_base}/... (bm22)
             allowFailure: true                                    # outcome always reported
             retry: { type: constant, interval: PT5S, maxAttempt: 2 }  # one retry
-            host: "{{ ... }}"; keyFile/privateKey: "{{ secret('SFTP_SSH_KEY') }}"
+            host: "{{ ... }}"; keyFile/privateKey: "{{ secret('SFTP_PRIVATE_KEY') }}"
             # host-key verification ON; force_fail honoured per target
           - id: outcome
             type: io.kestra.plugin.core.http.Request              # POST outcome (bm22)
@@ -61,7 +61,7 @@ Invoice PDFs upload to `{remote_base}/invoices/{YYYY-MM}/{INV}.pdf`; the registe
 ### 3. Flow files, secret, config
 
 - **`local-dev/bill_run_distribution.yml`** + the external flow — the real transport above; **`README.md`** updated (real flow, `_TBD_` lines resolved as bm22 stood the endpoint up).
-- **Kestra Secret** `SECRET_SFTP_SSH_KEY` (+ host/known-hosts) added to the worker env (bm22's `SFTP_*` templates) and referenced as `{{ secret('SFTP_SSH_KEY') }}`.
+- **Kestra Secret** `SECRET_SFTP_PRIVATE_KEY` (+ host/known-hosts) added to the worker env (bm22's `SFTP_*` templates) and referenced as `{{ secret('SFTP_PRIVATE_KEY') }}`.
 - **`lib/config.ts`** — the known-target set / SFTP target config, selected by environment; `BILLRUN_DISTRIBUTION_FORCE_FAIL` kept (bm33) as the injection switch.
 
 ### 4. Guardrails (land with the unit — code-standards §9)
