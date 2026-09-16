@@ -74,6 +74,201 @@ enumerations were trimmed to key facts + decisions. Full history:
 
 ## Current Phase
 
+- Phase 3 · Phase N — **bm34 (Real Distribution: SFTP Transport + Multi-Target)
+  — DELIVERED (2026-09-15).** See
+  `context/billing-management/specs/bm34-real-distribution-sftp-multitarget.md`.
+  Boundary: the real `bill_run_distribution` flow
+  (`workflow-management/flows/bill-run-distributor/local-dev/bill_run_distribution.yml`
+  + the external repo) + `services/billing/distribute-run.ts` (target assembly,
+  `isLaunchedDistributionIdentity`, `recomputeDistributionStatus`) +
+  `lib/config.ts` (the known-target set). **App-side + flow; no schema, grant,
+  migration, or M2M-contract change.** Replaces the bm20 loopback placeholder
+  flow with real transport and widens the app off the hardcoded `loopback`
+  identity — the two halves are one unit (either alone is non-working). Landed
+  this pass:
+  - **The real flow (`local-dev/bill_run_distribution.yml`).** Nested per-target
+    × per-artifact `ForEach`: `azure.storage.blob.Download` by `blob_ref` (the
+    `invoices/`-prefixed path split into container + `name`) → `fs.sftp.Upload`
+    to the target's per-artifact path (`{remote_base}/invoices/{YYYY-MM}/{INV}.pdf`,
+    the register CSV to `.../reports/...` — separate subtrees) with SSH **key
+    auth** from `{{ secret('SFTP_PRIVATE_KEY') }}`, `allowFailure: true` + `retry`
+    constant `maxAttempt: 2` (one retry) → `core.http.Request` per-artifact
+    outcome POST (`DELIVERED` iff the upload produced a path, else `FAILED`). A
+    target's `force_fail` (bm33's switch, honoured for ANY target) skips the
+    upload via `runIf`, driving `FAILED`. Flow-level `errors` POSTs
+    `DISTRIBUTION_FAILED`; `finally` always POSTs `DISTRIBUTION_FINISHED` so the
+    app recomputes from the recorded outcomes and a run never wedges in
+    DISTRIBUTING. **Host-key verification:** the `fs.sftp.Upload` plugin (the
+    plugin the spec names, bm22) authenticates by key but exposes no known-hosts
+    property, so verification is enforced by the DEPLOYED flow + engine config
+    (bicep, `SECRET_SFTP_KNOWN_HOSTS`) — this placeholder never sets
+    `StrictHostKeyChecking=no` (the local endpoint's host key regenerates per
+    recreate). Parses under `js-yaml` (3 tasks / 2 error / 1 finally).
+  - **`services/billing/distribute-run.ts` — the inseparable app widening.**
+    `LOOPBACK_TARGET` hardcode removed. `triggerDistribution` builds `targets`
+    from the new `billRunDistributionTargets` (a `buildTriggerTargets` helper,
+    each `{ name, is_mandatory, force_fail }`). `isLaunchedDistributionIdentity`
+    replaced `target === LOOPBACK_TARGET` with membership in the known set AND
+    `configured.isMandatory === input.isMandatory` (§5.6 — a mandatory target
+    reported advisory 409s), keeping the report-ref / stored-invoice artifact
+    checks. `recomputeDistributionStatus` scales `expected` from
+    `storedInvoices + 1` to **mandatory-target count × (storedInvoices + 1)**
+    (dedup on `(target, artifact_ref)`, latest attempt wins — a two-mandatory-
+    target run completes only when BOTH took every artifact, Inv #27).
+    `rerunDistribution`'s never-attempted scan is now per `(target,
+    artifact_ref)` across the mandatory targets, and the engine `artifacts`
+    payload is deduped by `(type, ref)` (the flow crosses targets × artifacts,
+    so a ref failed for >1 target is sent once). The report-outcome-lost
+    re-attempt (bm21 B1) is preserved per-target.
+  - **`lib/config.ts` — the environment-selected known-target set.** New
+    `KNOWN_DISTRIBUTION_TARGET_NAMES` (`loopback`/`sftp`) + `DistributionTarget`
+    type; `BILLRUN_DISTRIBUTION_TARGETS` env var (comma-separated, default
+    `loopback`, order-preserving + deduped, unknown/empty name fails loud at
+    boot); `billRunDistributionTargets` frozen accessor (every entry mandatory
+    this phase — `is_mandatory` is a per-target property so a future
+    invoice-only target can be non-mandatory without a code change).
+    `BILLRUN_DISTRIBUTION_FORCE_FAIL` kept.
+  - **Flow files, secrets, docs.** Distributor `README.md` rewritten (real flow,
+    host-key posture, secret inventory). `workflow-management/dev/.env.example`
+    gains `SECRET_AZURE_STORAGE_CONNECTION_STRING` (base64 of the published
+    Azurite emulator string) + `SECRET_BILLRUN_APP_TOKEN` (base64 dummy; must
+    equal the app's `BILLRUN_APP_TOKEN`); the SFTP `SECRET_*` were already bm22's.
+    Repo-root `.env.example` documents `BILLRUN_DISTRIBUTION_TARGETS` (an
+    app-read var, unlike `SFTP_*`).
+  - **Statically verified:** `tsc --noEmit` clean; `eslint` + `prettier --check`
+    clean on all changed TS/YAML/MD; the flow YAML parses (`js-yaml`); DB-free
+    suites green — `tests/lib/config.test.ts` **59/59** (incl. the new
+    known-target-set default/parse/dedup/fail-loud cases), and
+    `tests/app/api` + `tests/services/billing` + `tests/guardrails` **470/470**
+    (the extended `distribute-run.service` adds two-mandatory-target trigger /
+    identity (sftp accepted, advisory-for-mandatory 409) / recompute
+    (incomplete-until-both, complete-when-both) / rerun (only the failed
+    `(target, artifact_ref)` pair, deduped) cases; every prior loopback-default
+    case unchanged).
+  - **Deferred (established pattern, bm27–30):** the live-Kestra + real SFTP
+    endpoint end-to-end (the §4 guardrails against the bm22 endpoint) — the
+    local-dev flow is a valid/parseable deployable analog; the app-side widening
+    is fully unit-tested. The DB-gated `billing-e2e-happy-path` is unaffected —
+    it records a `loopback` outcome and the default target set is loopback-only,
+    so its recompute semantics are unchanged.
+  - **Code-review folds (xhigh multi-agent review, 2026-09-16) — applied and
+    re-verified (tsc clean; distribute-run + config **92/92**; app/api + billing
+    + guardrails + config **529/529**; flow parses).** The app-side widening
+    (config/identity/recompute) reviewed clean; every CONFIRMED bug was in the
+    new flow YAML.
+    - **(CRITICAL) Terminal status pushes were missing `attempt`.** The flow's
+      `finally`/`errors` `/status` POSTs sent `{ status }` only, but
+      `statusPushBodySchema` `.refine`s `attempt` as REQUIRED for any
+      `DISTRIBUTION_*` status → 422 → the app never ran the terminal recompute →
+      the run wedged in DISTRIBUTING forever (the exact failure the `finally`
+      hook exists to prevent). Added `"attempt": inputs.attempt`.
+    - **(CRITICAL) SFTP `from` read the wrong Download output.** `azure.storage.
+      blob.Download` exposes its internal-storage URI at `outputs.download.blob.uri`,
+      not `outputs.download.uri`; the blank `from` failed every upload (→ every
+      outcome FAILED, no run ever COMPLETED). Fixed to `.blob.uri`.
+    - **(CRITICAL) Nested-ForEach target read the wrong parent.** Kestra
+      `parents` counts from innermost, so `parents[0]` is the enclosing
+      `per_artifact` loop (the artifact), not `per_target`; the target/
+      `is_mandatory`/`force_fail` were read from the artifact object (undefined
+      fields → identity 409s, force_fail never honoured). Fixed the three reads
+      to `parents[1]`.
+    - **(HIGH) The per-artifact `outcome` POST lacked `allowFailure`.**
+      `core.http.Request` fails the task on any non-2xx, so one transient app
+      hiccup (or a legit 409/422) on a single outcome POST aborted the ForEach
+      and dragged the whole run to failure — the opposite of the "outcome always
+      runs" guarantee. Added `allowFailure: true` + one retry; a dropped outcome
+      now just leaves that pair unrecorded (rerun re-attempts it).
+    - **(HIGH) `errors` + `finally` double terminal push raced/forced status.**
+      The `errors` hook forced `DISTRIBUTION_FAILED` while `finally` always
+      posts `DISTRIBUTION_FINISHED` (which DERIVES the terminal from the recorded
+      outcomes) — a race that could mask a result and violates Inv #12
+      (distribution status derived, never forced; force_fail's all-FAILED set
+      already recomputes to DISTRIBUTION_FAILED). Dropped the forced push; kept
+      the diagnostic `on_error` Log — an incomplete crash stays DISTRIBUTING and
+      is caught by stall detection (the designed recovery).
+    - **(MEDIUM) Rerun per-target `is_mandatory` sourced from stale rows.**
+      `rerunDistribution` built `targets[].is_mandatory` from the stored FAILED
+      row's flag, but `isLaunchedDistributionIdentity` validates the echoed flag
+      against CURRENT config (`configured.isMandatory === input.isMandatory`) — a
+      drift would 409 every redelivered outcome. Now sourced from
+      `billRunDistributionTargets`.
+    - **Documented (not code-changed):** (a) multi-target rerun over-delivery —
+      the flow crosses targets × artifacts, so non-rectangular cross-target
+      failures re-send already-DELIVERED pairs (force_fail/whole-target outages
+      are clean rectangles; a per-pair contract is the follow-up); (b) no
+      per-target endpoint routing — all targets share the one SFTP `host`/`to`
+      (distinct per-target endpoints need per-target coordinates on the target
+      definition, beyond bm20's fixed target shape); (c) recompute/identity read
+      LIVE config, not the run's launched set (config-drift between trigger and
+      terminal); (d) `mandatoryTargetCount = 0` → `expected = 0` would never
+      complete (not triggerable — every configured target is mandatory this
+      phase); the stale `computeExpectedMandatoryArtifactCount` comment was
+      corrected.
+    - **Split-brain deployment gap — FIXED (owner decision, 2026-09-16: wire it
+      active).** The deployed **app** container had no `BILLRUN_DISTRIBUTION_TARGETS`
+      wired, so enabling the engine's SFTP would leave the app on its `loopback`
+      default and 409 every real `sftp` outcome (the app target set gates outcome
+      acceptance + completion scaling — a disagreement wedges the run). Made
+      **split-brain-proof by a single orchestrator knob**: `main.bicep` gains
+      `param enableSftpDistribution` (+ `sftpHost`/`sftpPort`/`sftpUser`/
+      `sftpRemoteBase`) and passes it to BOTH sides — the app module
+      (`container-app.bicep` new `distributionTargets` param →
+      `BILLRUN_DISTRIBUTION_TARGETS`, derived `'sftp'` when on else `'loopback'`)
+      AND the two billrun-hosting engine module calls (collapsed +
+      split-by-module; the rating-only instance never distributes, left off).
+      The engine self-references the `sftp-private-key`/`sftp-known-hosts` Key
+      Vault secrets (provisioned separately, fail-closed). The three
+      `infra/env/*.template` notes were corrected (they claimed distribution was
+      engine-only; now they point at the single `enableSftpDistribution` knob and
+      say NOT to set a var in the template). `az bicep build main.bicep` clean.
+    - **Initial-deploy `loopback` sink — the engine's own mountpoint (owner
+      decision, 2026-09-16).** So a deployed run can be exercised end-to-end
+      before any downstream SFTP endpoint exists, the default `loopback` target
+      now delivers to the workflow-engine's OWN mounted share. **Investigated the
+      requested "SFTP back to a mountpoint" and hit a blocker:** `atmoz/sftp`
+      chroots + `chown`s its upload dir to the sftp uid, which an Azure Files SMB
+      mount cannot do (the exact reason local dev uses a named volume, not a bind
+      mount — `dev/sftp/README.md`). So the loopback sink uses
+      **`io.kestra.plugin.fs.local.Upload`** to `/distribution/...` (no SSH, no
+      keys, no chroot) — owner-chosen over an emptyDir sidecar / Azure Files NFS.
+      - **Flow:** the single `upload` task became TWO `runIf`-selected uploads —
+        `upload_local` (`fs.local.Upload`, runs when target ≠ `sftp`) and
+        `upload_sftp` (the real endpoint, runs when target = `sftp`) — as sibling
+        children of `per_artifact` (so `parents[1]` stays the target, no `If`
+        nesting). The `outcome` reports DELIVERED iff whichever ran produced its
+        output (`outputs.upload_local.uri` or `outputs.upload_sftp.to`); both
+        `allowFailure` + the force_fail skip preserved.
+      - **Engine config:** `kestra.yml` gains a `plugins.configurations`
+        `io.kestra.plugin.fs.local.Upload` `allowed-paths: [/distribution]` (D0
+        caveat noted — confirm the config path/grain against the pinned engine).
+      - **Infra:** `workflow-engine-container-app.bicep` gains
+        `enableLocalDistributionSink` — an inline Azure Files share +
+        `managedEnvironments/storages` + a `/distribution` volume mount (via
+        `concat`), materialised only for the billrun-hosting instance;
+        `main.bicep` adds the param (**default true** — `loopback` is the default
+        target and needs the sink to deliver) and passes it to the collapsed +
+        split-billrun engine calls. `az bicep build main.bicep` clean.
+      - **Local dev:** `docker-compose.dev.yml` binds
+        `workflow-management/dev/distribution/` → `/distribution` on the engine
+        (gitignored contents + `.gitkeep`/README, mirroring `landing`/`archive`);
+        delivered artifacts are inspectable on the host.
+      - The real external `sftp` target is unchanged and still gated by
+        `enableSftpDistribution` + `BILLRUN_DISTRIBUTION_TARGETS=sftp`; host-key
+        verification applies to it only (the loopback write has no SSH hop). All
+        flow/kestra/compose YAML parse; app-side unchanged (still transport-
+        agnostic — 529/529).
+    - **Multi-target rerun over-delivery — DEFERRED for v1 (owner decision).**
+      Architecture §4 scopes v1 to a single internal SFTP destination and the
+      rectangular failure cases (force_fail, whole-target outage) are unaffected,
+      so the documented cross-product limitation stands; a per-pair redelivery
+      contract (a bm20 engine-client payload + flow change) is the follow-up.
+    - **No change (evaluated against spec):** per-target endpoint routing — the
+      shared SFTP `host` matches architecture §4's single-internal-destination
+      scope (per-customer targets are explicitly future); `mandatoryTargetCount=0`
+      wedge — not triggerable (every configured target is mandatory, env requires
+      ≥1); recompute/identity reading live config — inherent to no per-run stored
+      target set (same posture as `force_fail`), no schema change this unit.
+
 - Phase 3 · Phase M — **bm33 (Retire `BILLRUN_PLACEHOLDER_MODE`) —
   DELIVERED (2026-09-15).** See
   `context/billing-management/specs/bm33-retire-placeholder-mode.md`.

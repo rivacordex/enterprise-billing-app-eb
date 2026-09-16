@@ -20,6 +20,23 @@ function booleanEnvSchema(defaultValue: "true" | "false") {
     .transform((value) => value === "true");
 }
 
+// bm34-spec §Design/§Implementation §2-3. The KNOWN distribution targets a run
+// may launch, selected per environment via `BILLRUN_DISTRIBUTION_TARGETS`
+// (loopback in local dev, sftp when deployed; both can be live in one run —
+// D25). Every known target is MANDATORY this phase — no advisory target is
+// built — but `is_mandatory` is a per-target property (architecture §4/Inv #27)
+// so a future invoice-only per-customer target can be non-mandatory without a
+// code change here. A distribution outcome for a target OUTSIDE this set is
+// rejected (`isLaunchedDistributionIdentity`), and `recomputeDistributionStatus`
+// scales the expected mandatory-artifact count by the mandatory-target count.
+export const KNOWN_DISTRIBUTION_TARGET_NAMES = ["loopback", "sftp"] as const;
+export type DistributionTargetName =
+  (typeof KNOWN_DISTRIBUTION_TARGET_NAMES)[number];
+export interface DistributionTarget {
+  readonly name: DistributionTargetName;
+  readonly isMandatory: boolean;
+}
+
 const envSchema = z
   .object({
     NODE_ENV: z
@@ -178,6 +195,51 @@ const envSchema = z
     // `targets[].force_fail`. Defaults to `false` so production/normal
     // deployments never force a failure.
     BILLRUN_DISTRIBUTION_FORCE_FAIL: booleanEnvSchema("false"),
+    // bm34-spec §Design D8/D25, §Implementation §2-3. The environment-selected
+    // known-target set — a comma-separated list of the names in
+    // `KNOWN_DISTRIBUTION_TARGET_NAMES` (loopback local / sftp deployed; both
+    // may appear). Defaults to `loopback` so local dev/test behaviour is
+    // unchanged from bm20 (the D8 loopback that keeps `force_fail` working).
+    // An unknown or empty name fails loud at boot (fail-fast), never a silent
+    // fallback that would 409 every real outcome or mis-scale completion.
+    // Order-preserving + deduped; each resolved target is mandatory this phase.
+    BILLRUN_DISTRIBUTION_TARGETS: z
+      .string()
+      .default("loopback")
+      .transform((raw, ctx) => {
+        const names = raw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        if (names.length === 0) {
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "BILLRUN_DISTRIBUTION_TARGETS must name at least one known target.",
+          });
+          return z.NEVER;
+        }
+        const seen = new Set<string>();
+        const out: DistributionTargetName[] = [];
+        for (const name of names) {
+          if (
+            !(KNOWN_DISTRIBUTION_TARGET_NAMES as readonly string[]).includes(
+              name,
+            )
+          ) {
+            ctx.addIssue({
+              code: "custom",
+              message: `Unknown distribution target "${name}" — known targets: ${KNOWN_DISTRIBUTION_TARGET_NAMES.join(", ")}.`,
+            });
+            return z.NEVER;
+          }
+          if (!seen.has(name)) {
+            seen.add(name);
+            out.push(name as DistributionTargetName);
+          }
+        }
+        return out;
+      }),
   })
   .superRefine((data, ctx) => {
     // bm03-spec §Design/§4. A partial engine config (one of URL/AUTH set,
@@ -279,6 +341,7 @@ function loadConfig(): Config {
     BILLRUN_BLOB_ACCOUNT_URL: process.env.BILLRUN_BLOB_ACCOUNT_URL,
     BILLRUN_DISTRIBUTION_FORCE_FAIL:
       process.env.BILLRUN_DISTRIBUTION_FORCE_FAIL,
+    BILLRUN_DISTRIBUTION_TARGETS: process.env.BILLRUN_DISTRIBUTION_TARGETS,
   });
 
   if (!parsed.success) {
@@ -364,6 +427,22 @@ export const billRunBlobConfig = {
 // `targets[].force_fail` — never read directly by a UI component or action.
 export const billRunDistributionForceFail: boolean =
   config.BILLRUN_DISTRIBUTION_FORCE_FAIL;
+
+// bm34-spec §Design/§Implementation §2-3. The resolved known-target set (see
+// the `KNOWN_DISTRIBUTION_TARGET_NAMES` note above). Read ONLY by
+// `services/billing/distribute-run.ts`: `triggerDistribution`/
+// `rerunDistribution` build the trigger payload's `targets` from it,
+// `isLaunchedDistributionIdentity` gates a pushed outcome's target against it,
+// and `recomputeDistributionStatus` scales `expected` by the mandatory subset.
+// Every entry is mandatory this phase (see the note); the frozen array keeps
+// callers from mutating the shared config.
+export const billRunDistributionTargets: readonly DistributionTarget[] =
+  Object.freeze(
+    config.BILLRUN_DISTRIBUTION_TARGETS.map((name) => ({
+      name,
+      isMandatory: true,
+    })),
+  );
 
 // um25-spec §"Policy source". The single LOCAL password policy object —
 // `validation/password.ts` and `services/password.ts` take this as an

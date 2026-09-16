@@ -162,6 +162,12 @@ services:
       - ./workflow-management/dev/archive:/data/archive
       - ./workflow-management/dev/error:/data/error
       - ./workflow-management/dev/logs:/data/logs
+      # bm34 — the `loopback` distribution sink: fs.local.Upload in
+      # bill_run_distribution writes delivered artifacts here (the flow's `to` +
+      # kestra.yml allowed-paths both use /distribution). The local analog of the
+      # deployed billrun engine's mounted Azure Files share; inspectable on the
+      # host under workflow-management/dev/distribution/{invoices,reports}/.
+      - ./workflow-management/dev/distribution:/distribution
       # Deliberately NOT present: "- /var/run/docker.sock:/var/run/docker.sock" (D9).
     ports:
       - "${RATING_ENGINE_PORT:-8085}:8080"

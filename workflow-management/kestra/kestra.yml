@@ -93,6 +93,20 @@ kestra:
     tmp-dir:
       path: /tmp/kestra-wd/tmp
 
+  # bm34 — allow fs.local.Upload (the `loopback` distribution sink,
+  # bill_run_distribution) to write under /distribution: the mounted Azure Files
+  # share on the deployed billrun engine (enableLocalDistributionSink) / the
+  # compose volume in local dev. Without an allowed-paths entry the plugin denies
+  # every write. D0 CAVEAT: confirm the exact config location
+  # (kestra.plugins.configurations here vs a top-level `plugins:` block) and the
+  # `type` grain against the pinned engine before first deploy.
+  plugins:
+    configurations:
+      - type: io.kestra.plugin.fs.local.Upload
+        values:
+          allowed-paths:
+            - /distribution
+
   # namespace default for flow deploys (D7). STAYS `rating` — every flow under
   # workflow-management/flows/<function>/ is namespace-qualified (`namespace:` in
   # the flow), so this default only affects an UNqualified deploy. The stand-up

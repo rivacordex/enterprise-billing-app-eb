@@ -42,6 +42,16 @@ param microsoftClientId string = ''
 // UTC, matching the app's DEFAULT_TIMEZONE (behavior-preserving).
 param appTimezone string = 'UTC'
 
+// bm34 — the distribution target set the app launches and accepts
+// (BILLRUN_DISTRIBUTION_TARGETS): a comma-separated list of known targets
+// (loopback|sftp). It gates the trigger payload's targets,
+// isLaunchedDistributionIdentity, and the mandatory-target completion scaling.
+// main.bicep DERIVES this from the single `enableSftpDistribution` knob it also
+// passes to the engine module ('sftp' when on, 'loopback' when off), so the app
+// and engine can never split-brain — the app never launches/accepts `loopback`
+// while the engine delivers over SFTP (which would 409 every real outcome).
+param distributionTargets string = 'loopback'
+
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
@@ -103,6 +113,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
               { name: 'APP_URL', value: appBaseUrl }
               { name: 'NEXT_PUBLIC_APP_URL', value: appBaseUrl }
               { name: 'APP_TIMEZONE', value: appTimezone }
+              { name: 'BILLRUN_DISTRIBUTION_TARGETS', value: distributionTargets }
             ],
             // Emitted only when supplied — see the param note above.
             empty(microsoftClientId)

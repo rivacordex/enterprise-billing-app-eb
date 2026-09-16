@@ -54,7 +54,14 @@ const renderSemaphore = createSemaphore(MAX_CONCURRENT_RENDERS);
 // default timeouts) has no built-in bound; a wedged Chromium could hang it
 // forever, holding the render permit and — since post-run.ts awaits the render
 // inside the sequential posting loop — stalling the whole run. Cap it.
-const BROWSER_CLOSE_TIMEOUT_MS = 10_000;
+//
+// On some hosts (observed: Windows dev) the headless shutdown does not resolve
+// promptly, so every render otherwise paid the full cap — the PDF is already
+// produced by this point, so the close is pure cleanup we don't need to block
+// the response on. We abandon the WAIT after this bound; the underlying
+// close() keeps running in the background and completes (no process leak
+// observed), so the render returns in ~1s instead of ~cap seconds.
+const BROWSER_CLOSE_TIMEOUT_MS = 1_500;
 
 export async function renderDraftInvoice({
   runId,
@@ -176,13 +183,16 @@ function renderPdfFromHtml(html: string): Promise<Buffer> {
     } finally {
       // Bound the close and swallow any rejection: a hung close must not wedge
       // the permit/loop, and a close failure must not mask the real render
-      // error propagating from the try block.
+      // error propagating from the try block. The `.catch` is attached to
+      // close() itself (not just the race) so a rejection arriving AFTER the
+      // timeout has already won the race can't surface as an unhandled
+      // rejection once we've stopped awaiting it.
       await Promise.race([
-        browser.close(),
+        browser.close().catch(() => {}),
         new Promise<void>((resolve) =>
           setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS),
         ),
-      ]).catch(() => {});
+      ]);
     }
   });
 }

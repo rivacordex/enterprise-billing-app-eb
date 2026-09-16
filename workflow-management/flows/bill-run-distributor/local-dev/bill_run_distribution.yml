@@ -1,5 +1,37 @@
-# LOCAL-DEV DEPLOYABLE PLACEHOLDER — the bm20 distribution sibling. Valid,
-# deployable Kestra flow with no-op stages; not the real flow. See ./README.md.
+# LOCAL-DEV DEPLOYABLE — the REAL bill_run_distribution flow (bm34), replacing
+# the bm20 loopback placeholder. Transport only, writes nothing to the DB. Per
+# (target, artifact): download the stored artifact from Azure Blob by blob_ref
+# (bm22 plugin), DELIVER it to the target's per-artifact path, then POST a
+# per-artifact DELIVERED/FAILED outcome to the app. Delivery is chosen by target
+# name: `loopback` (the DEFAULT / initial-deploy target) writes to the
+# workflow-engine's OWN mounted sink (/distribution/...) via fs.local.Upload — no
+# SSH, no host key, no chroot; `sftp` (enabled later) uploads to a real external
+# endpoint via fs.sftp.Upload. Each upload has `allowFailure: true` (sftp also
+# ONE retry), so the outcome step ALWAYS runs and a run never wedges on a silent
+# transport failure (spec §Design). `force_fail` is honoured per target (bm33's
+# DISTRIBUTION_FAILED injection switch) via `runIf`. The truly-real flow lives in
+# the separate workflow-management repo; this is the deployable local-dev analog
+# + the flow-double the app-side tests mirror.
+#
+# WHY LOOPBACK = LOCAL WRITE (not SFTP-to-self): an atmoz/sftp sink chroots and
+# chowns its upload dir to the sftp uid, which an Azure Files SMB mount cannot do
+# (the same reason local dev uses a named volume, not a bind mount — see
+# dev/sftp/README.md). fs.local.Upload writes straight to the mounted share, so
+# the initial deploy needs no SSH server, keypair, or host-key ceremony. The
+# engine mounts the sink at /distribution and kestra.yml's
+# `io.kestra.plugin.fs.local` allowed-paths lists it.
+#
+# HOST-KEY VERIFICATION (the `sftp` target only): architecture §4/§5 require it
+# ON. `fs.sftp.Upload` authenticates by key but exposes no known-hosts property,
+# so verification is enforced by the DEPLOYED flow + engine config (bicep, bm22)
+# reading SECRET_SFTP_KNOWN_HOSTS. The loopback local write has no SSH hop, so
+# host-key verification does not apply to it.
+#
+# SECRETS/ENV (workflow-management/dev/.env.example, base64 per Kestra's env
+# secret backend): SECRET_SFTP_PRIVATE_KEY (PEM key, sftp target),
+# SECRET_SFTP_KNOWN_HOSTS (host-key material, deployed sftp target),
+# SECRET_AZURE_STORAGE_CONNECTION_STRING (Azurite/Blob),
+# SECRET_BILLRUN_APP_TOKEN (the M2M bearer the app validates). See ./README.md.
 id: bill_run_distribution
 namespace: billrun
 inputs:
@@ -18,22 +50,141 @@ inputs:
 tasks:
   - id: start
     type: io.kestra.plugin.core.log.Log
-    message: "bill_run_distribution START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} artifacts={{ inputs.artifacts }}"
+    message: "bill_run_distribution START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} targets={{ inputs.targets }} artifacts={{ inputs.artifacts }}"
+  # Cross-product: each target × each artifact (D25 — loopback and sftp can both
+  # be live in one run). From the innermost tasks: the artifact object is the
+  # immediate loop value (`taskrun.value`); the target object is the OUTER loop,
+  # reached as `parents[1].taskrun.value` — `parents` counts from innermost, so
+  # `parents[0]` is the enclosing per_artifact loop (the artifact again) and
+  # `parents[1]` is per_target. Both are JSON objects, read with `fromJson(...)`.
   - id: per_target
     type: io.kestra.plugin.core.flow.ForEach
     values: "{{ inputs.targets }}"
     tasks:
-      - id: dispatch
-        type: io.kestra.plugin.core.log.Log
-        message: "[{{ taskrun.value }}] dispatch — STUB: deliver artifacts to target; honor is_mandatory + force_fail (D20 loopback)"
+      - id: per_artifact
+        type: io.kestra.plugin.core.flow.ForEach
+        values: "{{ inputs.artifacts }}"
+        tasks:
+          # 1. Download the already-stored artifact from Azure Blob by its
+          #    blob_ref (bm19 wrote it; the app never proxies bytes). blob_ref is
+          #    the container-qualified path `invoices/<YYYY-MM>/<file>`; the
+          #    plugin takes the container (`invoices`) + the container-relative
+          #    `name`, so strip the leading `invoices/`. allowFailure so a
+          #    missing/unreadable blob still reaches the outcome step (reported
+          #    FAILED) rather than aborting the iteration silently.
+          - id: download
+            type: io.kestra.plugin.azure.storage.blob.Download
+            allowFailure: true
+            endpoint: "http://azurite:10000/devstoreaccount1"
+            connectionString: "{{ secret('AZURE_STORAGE_CONNECTION_STRING') }}"
+            container: invoices
+            name: "{{ fromJson(taskrun.value).blob_ref | replace({'invoices/': ''}) }}"
+          # 2. Deliver the artifact to its target (architecture §3), selected by
+          #    the TARGET's name (`parents[1]` — the outer per_target loop). Only
+          #    the matching task runs (runIf on the name); the other is SKIPPED
+          #    (its output undefined). Both allowFailure so the outcome step always
+          #    runs; runIf also honours the target's force_fail (both skipped →
+          #    outcome FAILED, exercising the DISTRIBUTION_FAILED path). Per-artifact
+          #    paths mirror architecture §3: invoice PDFs under
+          #    .../invoices/<YYYY-MM>/<INV>.pdf, the register CSV under
+          #    .../reports/<YYYY-MM>/<run>-report.csv (separate subtrees, §4).
+          #
+          #  2a. `loopback` (the DEFAULT / initial-deploy target): write the bytes
+          #      to the workflow-engine's OWN mounted distribution sink
+          #      (/distribution/...) via fs.local.Upload — no SSH, no host key, no
+          #      chroot. The engine mounts an Azure Files share there (local dev: a
+          #      compose volume), and kestra.yml's `io.kestra.plugin.fs.local`
+          #      `allowed-paths` includes /distribution. This is the artifacts-land-
+          #      on-a-mountpoint-of-the-engine initial-deploy sink.
+          - id: upload_local
+            type: io.kestra.plugin.fs.local.Upload
+            allowFailure: true
+            runIf: "{{ fromJson(parents[1].taskrun.value).name != 'sftp' and not fromJson(parents[1].taskrun.value).force_fail }}"
+            from: "{{ outputs.download.blob.uri }}"
+            to: "{{ '/distribution/' ~ (fromJson(taskrun.value).type == 'report_csv' ? 'reports/' : 'invoices/') ~ (fromJson(taskrun.value).blob_ref | replace({'invoices/': ''})) }}"
+          #  2b. `sftp` (enabled later, via the app's BILLRUN_DISTRIBUTION_TARGETS
+          #      + the engine's enableSftpDistribution): upload to the real external
+          #      endpoint, key auth from a Kestra Secret, ONE retry. `host` is the
+          #      local `sftp` service here; the deployed real-endpoint host is wired
+          #      when a downstream target exists (not exercised by the loopback
+          #      initial deploy).
+          - id: upload_sftp
+            type: io.kestra.plugin.fs.sftp.Upload
+            allowFailure: true
+            runIf: "{{ fromJson(parents[1].taskrun.value).name == 'sftp' and not fromJson(parents[1].taskrun.value).force_fail }}"
+            retry:
+              type: constant
+              interval: PT5S
+              maxAttempt: 2
+            host: sftp
+            port: "22"
+            username: billrun
+            keyfile: "{{ secret('SFTP_PRIVATE_KEY') }}"
+            from: "{{ outputs.download.blob.uri }}"
+            to: "{{ '/upload/' ~ (fromJson(taskrun.value).type == 'report_csv' ? 'reports/' : 'invoices/') ~ (fromJson(taskrun.value).blob_ref | replace({'invoices/': ''})) }}"
+          # 3. POST the per-artifact outcome (§4 record-only M2M — no charge
+          #    payload). DELIVERED iff WHICHEVER upload ran produced its output
+          #    (local `uri` or sftp `to`); otherwise FAILED (upload failed twice,
+          #    was force-failed/skipped, or the download failed). Idempotent
+          #    app-side on (run, target, artifact_ref, distribution_attempt).
+          - id: outcome
+            type: io.kestra.plugin.core.http.Request
+            # allowFailure + one retry so a transient app hiccup (or a legitimate
+            # 409/422 on one POST) never aborts the ForEach and drags the whole
+            # run to DISTRIBUTION_FAILED via the errors hook. A dropped outcome
+            # simply leaves that (target, artifact) unrecorded — the finally
+            # recompute then leaves the run unresolved (→ stall → operator rerun,
+            # which re-attempts the never-recorded pair), never a false failure.
+            allowFailure: true
+            retry:
+              type: constant
+              interval: PT5S
+              maxAttempt: 2
+            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/distribution/outcome"
+            method: POST
+            contentType: application/json
+            headers:
+              Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
+            body: |
+              {{ {
+                "target": fromJson(parents[1].taskrun.value).name,
+                "artifact_ref": fromJson(taskrun.value).ref,
+                "artifact_type": fromJson(taskrun.value).type,
+                "is_mandatory": fromJson(parents[1].taskrun.value).is_mandatory,
+                "outcome": (outputs.upload_local.uri is defined or outputs.upload_sftp.to is defined ? "DELIVERED" : "FAILED"),
+                "attempt": inputs.attempt
+              } }}
   - id: done
     type: io.kestra.plugin.core.debug.Return
     format: "distributed run={{ inputs.bill_run_id }} targets={{ inputs.targets }}"
 errors:
+  # A catastrophic flow failure (not a per-artifact upload/outcome failure —
+  # those are allowFailure'd and reported inline above). Deliberately does NOT
+  # force a DISTRIBUTION_FAILED status push: the `finally` DISTRIBUTION_FINISHED
+  # below always runs and makes the app DERIVE the terminal from the recorded
+  # outcomes (architecture Inv #12 — distribution status is derived, never
+  # forced; force_fail's all-FAILED outcomes already recompute to
+  # DISTRIBUTION_FAILED). A blunt forced push here would also RACE that finally
+  # push and could mask a genuine result. A crash that leaves outcomes
+  # incomplete stays DISTRIBUTING and is caught by stall detection (→ operator
+  # rerun/force-complete), the designed recovery path.
   - id: on_error
     type: io.kestra.plugin.core.log.Log
-    message: "on_error — STUB: POST distribution outcome failure to app /api/billrun/{{ inputs.bill_run_id }}/distribution/outcome"
+    message: "bill_run_distribution ERROR run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }}"
 finally:
-  - id: on_finally
-    type: io.kestra.plugin.core.log.Log
-    message: "on_finally — STUB: always POST a terminal distribution outcome"
+  # Always POST the terminal DISTRIBUTION_FINISHED (the allowFailure guarantee):
+  # the app recomputes COMPLETED / DISTRIBUTION_FAILED from the recorded
+  # per-artifact outcomes — every mandatory (target, artifact) DELIVERED →
+  # COMPLETED, any mandatory FAILED → DISTRIBUTION_FAILED. A run therefore never
+  # wedges in DISTRIBUTING even if a transport step failed.
+  - id: on_finally_status
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/status"
+    method: POST
+    contentType: application/json
+    headers:
+      Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
+    # `attempt` is REQUIRED for a DISTRIBUTION_* status push (statusPushBodySchema)
+    # — it also lets the app swallow a straggler push from a superseded round.
+    body: |
+      {{ { "status": "DISTRIBUTION_FINISHED", "attempt": inputs.attempt } }}
