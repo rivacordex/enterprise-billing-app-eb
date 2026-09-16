@@ -30,6 +30,7 @@ const ENV_KEYS = [
   "BILLRUN_BLOB_CONNECTION_STRING",
   "BILLRUN_BLOB_ACCOUNT_URL",
   "BILLRUN_DISTRIBUTION_FORCE_FAIL",
+  "BILLRUN_DISTRIBUTION_TARGETS",
 ] as const;
 
 const VALID_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/db";
@@ -89,6 +90,7 @@ describe("config", () => {
       BILLRUN_TAX_CATEGORY: "GST",
       BILLRUN_STALL_THRESHOLD_MINUTES: 30,
       BILLRUN_DISTRIBUTION_FORCE_FAIL: false,
+      BILLRUN_DISTRIBUTION_TARGETS: ["loopback"],
     });
   });
 
@@ -683,5 +685,51 @@ describe("billRunDistributionForceFail (bm20)", () => {
       BILLRUN_DISTRIBUTION_FORCE_FAIL: "true",
     });
     expect(billRunDistributionForceFail).toBe(true);
+  });
+});
+
+// bm34-spec §Implementation §3 — the environment-selected known-target set,
+// read only by `distribute-run.ts`. Defaults to a single mandatory loopback
+// (bm20 parity); order-preserving + deduped; unknown/empty names fail loud.
+describe("billRunDistributionTargets (bm34)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to a single mandatory loopback target when unset", async () => {
+    const { billRunDistributionTargets } =
+      await loadConfigWithEnv(VALID_REQUIRED_ENV);
+    expect(billRunDistributionTargets).toEqual([
+      { name: "loopback", isMandatory: true },
+    ]);
+  });
+
+  it("parses a comma-separated list, order-preserving and deduped, each mandatory", async () => {
+    const { billRunDistributionTargets } = await loadConfigWithEnv({
+      ...VALID_REQUIRED_ENV,
+      BILLRUN_DISTRIBUTION_TARGETS: " sftp , loopback , sftp ",
+    });
+    expect(billRunDistributionTargets).toEqual([
+      { name: "sftp", isMandatory: true },
+      { name: "loopback", isMandatory: true },
+    ]);
+  });
+
+  it("fails loud on an unknown target name", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_DISTRIBUTION_TARGETS: "loopback,portal",
+      }),
+    ).rejects.toMatchObject({ code: "INTERNAL" });
+  });
+
+  it("fails loud when the list is empty", async () => {
+    await expect(
+      loadConfigWithEnv({
+        ...VALID_REQUIRED_ENV,
+        BILLRUN_DISTRIBUTION_TARGETS: " , ",
+      }),
+    ).rejects.toMatchObject({ code: "INTERNAL" });
   });
 });

@@ -10,7 +10,10 @@ import type { BillRun } from "@/db/schema/billing/bill-run";
 import { buildCsv } from "@/lib/csv";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { conflict, notFound } from "@/lib/errors";
-import { billRunDistributionForceFail } from "@/lib/config";
+import {
+  billRunDistributionForceFail,
+  billRunDistributionTargets,
+} from "@/lib/config";
 import {
   DISTRIBUTION_FLOW_ID,
   type DistributionArtifactInput,
@@ -31,11 +34,26 @@ import type {
 // `rerun-run.ts`'s "engine call inside the transaction, throw on failure to
 // roll the whole thing back" shape (bm03/bm08 precedent).
 
-const LOOPBACK_TARGET = "loopback";
 // The one transient report_csv artifact's ref — a fixed constant, not a
 // stored id (D21: the report gets no `bill_run_output` row), so its
 // idempotency key stays stable across a rerun's fresh blob write.
 export const REPORT_ARTIFACT_REF = "REPORT";
+
+// bm34-spec §Implementation §2. Build the trigger payload's `targets` from the
+// environment's known-target set (loopback local / sftp deployed, D25) —
+// replacing bm20's single hardcoded `loopback`. `force_fail` is threaded from
+// config onto every target (bm33's `DISTRIBUTION_FAILED` injection switch,
+// honoured for ANY target). The identity check and status recompute read the
+// SAME `billRunDistributionTargets`, so the set the trigger launches, the set
+// an outcome is validated against, and the set completion is scaled by can
+// never drift apart.
+function buildTriggerTargets(): DistributionTargetInput[] {
+  return billRunDistributionTargets.map((t) => ({
+    name: t.name,
+    is_mandatory: t.isMandatory,
+    force_fail: billRunDistributionForceFail,
+  }));
+}
 
 // Internal-only signal — thrown inside `db.transaction` so an engine failure
 // rolls the whole trigger/rerun back (bm03/bm08 pattern), while the outer
@@ -166,13 +184,7 @@ export async function triggerDistribution(
           blob_ref: reportBlobRef,
         },
       ];
-      const targets: DistributionTargetInput[] = [
-        {
-          name: LOOPBACK_TARGET,
-          is_mandatory: true,
-          force_fail: billRunDistributionForceFail,
-        },
-      ];
+      const targets: DistributionTargetInput[] = buildTriggerTargets();
 
       let executionRef;
       try {
@@ -271,50 +283,66 @@ export async function rerunDistribution(
       const attemptedRefs = new Set(
         everAttempted.map((r) => `${r.target}::${r.artifactRef}`),
       );
-      const neverAttemptedInvoices = allInvoices.filter(
-        (inv) =>
-          !attemptedRefs.has(`${LOOPBACK_TARGET}::${inv.billRunInvoiceId}`),
-      );
-      // The report_csv is mandatory and part of EVERY round's payload
-      // (`triggerDistribution`), yet it is neither a `bill_run_invoices` row
-      // (so `neverAttemptedInvoices` can't cover it) nor — if its round-1
-      // outcome was lost entirely — a `FAILED` row (so `failed` can't either).
-      // Left out, a run whose report outcome never landed can never re-attempt
-      // it, so `recomputeDistributionStatus` (expected = invoices + 1) can
-      // never reach COMPLETED and the run wedges. Re-attempt it whenever NO
-      // outcome for it was ever recorded (a genuine FAILED report is already in
-      // `failed`; a DELIVERED one has a row and is correctly left alone).
-      const reportNeverAttempted = !attemptedRefs.has(
-        `${LOOPBACK_TARGET}::${REPORT_ARTIFACT_REF}`,
-      );
 
-      if (
-        failed.length === 0 &&
-        neverAttemptedInvoices.length === 0 &&
-        !reportNeverAttempted
-      ) {
+      // bm34-spec §Implementation §2 — the never-attempted scan is per
+      // `(target, artifact_ref)` across the run's MANDATORY known-target set,
+      // not against a single hardcoded `loopback`. For each mandatory target,
+      // any stored invoice — and the report_csv — that never got an outcome row
+      // for THAT target must be (re-)attempted. The report is mandatory and in
+      // every round's payload, yet it is neither a `bill_run_invoices` row (so
+      // the invoice scan can't cover it) nor — if its outcome was lost — a
+      // `FAILED` row; left out, a run whose report outcome never landed for a
+      // target can never reach COMPLETED (expected scales by mandatory-target
+      // count) and wedges. A genuine FAILED is already in `failed`; a DELIVERED
+      // one has an attempted ref and is correctly left alone.
+      const mandatoryTargets = billRunDistributionTargets.filter(
+        (t) => t.isMandatory,
+      );
+      const neverAttempted: {
+        target: string;
+        artifactRef: string;
+        artifactType: DistributionArtifactType;
+        isMandatory: boolean;
+      }[] = [];
+      for (const t of mandatoryTargets) {
+        for (const inv of allInvoices) {
+          if (!attemptedRefs.has(`${t.name}::${inv.billRunInvoiceId}`)) {
+            neverAttempted.push({
+              target: t.name,
+              artifactRef: inv.billRunInvoiceId,
+              artifactType: "invoice_pdf",
+              isMandatory: t.isMandatory,
+            });
+          }
+        }
+        if (!attemptedRefs.has(`${t.name}::${REPORT_ARTIFACT_REF}`)) {
+          neverAttempted.push({
+            target: t.name,
+            artifactRef: REPORT_ARTIFACT_REF,
+            artifactType: "report_csv",
+            isMandatory: t.isMandatory,
+          });
+        }
+      }
+
+      if (failed.length === 0 && neverAttempted.length === 0) {
         return { ok: false, code: "NO_FAILED_ARTIFACTS" } as const;
       }
       const newAttempt = priorAttempt + 1;
 
-      const toRedeliver = [
-        ...failed,
-        ...neverAttemptedInvoices.map((inv) => ({
-          target: LOOPBACK_TARGET,
-          artifactRef: inv.billRunInvoiceId,
-          artifactType: "invoice_pdf" as const,
-          isMandatory: true,
+      const toRedeliver: {
+        target: string;
+        artifactRef: string;
+        artifactType: DistributionArtifactType;
+        isMandatory: boolean;
+      }[] = [
+        ...failed.map((f) => ({
+          target: f.target,
+          artifactRef: f.artifactRef,
+          artifactType: f.artifactType,
+          isMandatory: f.isMandatory,
         })),
-        ...(reportNeverAttempted
-          ? [
-              {
-                target: LOOPBACK_TARGET,
-                artifactRef: REPORT_ARTIFACT_REF,
-                artifactType: "report_csv" as const,
-                isMandatory: true,
-              },
-            ]
-          : []),
+        ...neverAttempted,
       ];
 
       // Resolve blob refs: an invoice PDF is looked up from the immutable
@@ -340,8 +368,17 @@ export async function rerunDistribution(
           .blobRef;
       }
 
+      // The engine payload's `artifacts` is DISTINCT by `(type, ref)` — the
+      // flow crosses `targets × artifacts`, so a ref that failed for more than
+      // one mandatory target must appear ONCE, or the flow would upload it
+      // per-target more than once. `targets` (built below from `toRedeliver`)
+      // carries the target dimension; here we only resolve each unique
+      // artifact's blob once.
       const artifacts: DistributionArtifactInput[] = [];
+      const seenArtifacts = new Set<string>();
       for (const f of toRedeliver) {
+        const artifactKey = `${f.artifactType}::${f.artifactRef}`;
+        if (seenArtifacts.has(artifactKey)) continue;
         const blobRef =
           f.artifactType === "report_csv"
             ? reportBlobRef
@@ -361,6 +398,7 @@ export async function rerunDistribution(
           );
           continue;
         }
+        seenArtifacts.add(artifactKey);
         artifacts.push({
           ref: f.artifactRef,
           type: f.artifactType,
@@ -375,16 +413,29 @@ export async function rerunDistribution(
         return { ok: false, code: "NO_FAILED_ARTIFACTS" } as const;
       }
 
-      const targetIsMandatory = new Map(
-        toRedeliver.map((f) => [f.target, f.isMandatory]),
-      );
-      const targets: DistributionTargetInput[] = [...targetIsMandatory].map(
-        ([name, isMandatory]) => ({
-          name,
-          is_mandatory: isMandatory,
-          force_fail: billRunDistributionForceFail,
-        }),
-      );
+      // Distinct targets among the pairs to redeliver. `is_mandatory` is sourced
+      // from the CURRENT known-target config, NOT the stored FAILED row's flag:
+      // the flow echoes this flag back on each outcome and
+      // `isLaunchedDistributionIdentity` requires it to EQUAL the configured
+      // value, so a stale per-row flag would 409 every redelivered outcome.
+      // (A target no longer in config falls back to mandatory; its outcome 409s
+      // regardless — the config-drift case.)
+      //
+      // Multi-target limitation: the flow delivers targets × artifacts, so when
+      // failures span DIFFERENT targets (e.g. INV-1 failed only on sftp, INV-2
+      // only on loopback) the cross product re-sends already-DELIVERED pairs
+      // under the new attempt. `force_fail` and whole-target outages fail every
+      // artifact of a target together (a clean rectangle), so this only bites on
+      // independent per-artifact cross-target transport failures — a documented
+      // v1 limitation (a per-pair redelivery contract is the follow-up).
+      const targetNames = [...new Set(toRedeliver.map((f) => f.target))];
+      const targets: DistributionTargetInput[] = targetNames.map((name) => ({
+        name,
+        is_mandatory:
+          billRunDistributionTargets.find((t) => t.name === name)
+            ?.isMandatory ?? true,
+        force_fail: billRunDistributionForceFail,
+      }));
 
       let executionRef;
       try {
@@ -413,17 +464,14 @@ export async function rerunDistribution(
         targetEntity: "BILL_RUN",
         targetId: billRunId,
         beforeData: {
-          // bm21 T8 — `toRedeliver` (and thus the engine payload) is the union
-          // of the prior round's genuine failures, the never-attempted
-          // mandatory invoices, AND a never-attempted report_csv; the audit
-          // must record ALL THREE so it reflects every artifact actually sent
-          // for redelivery, not just the failed subset. Kept in lockstep with
-          // `toRedeliver` above.
-          failedArtifacts: [
-            ...failed.map((f) => f.artifactRef),
-            ...neverAttemptedInvoices.map((inv) => inv.billRunInvoiceId),
-            ...(reportNeverAttempted ? [REPORT_ARTIFACT_REF] : []),
-          ],
+          // bm21 T8 / bm34 §2 — `toRedeliver` (and thus the engine payload) is
+          // the union of the prior round's genuine failures and the
+          // never-attempted mandatory `(target, artifact_ref)` pairs (invoices
+          // AND the report_csv, per mandatory target); the audit records the
+          // distinct artifact refs actually sent for redelivery, kept in
+          // lockstep with `toRedeliver` above (deduped so a ref failed for more
+          // than one target is listed once).
+          failedArtifacts: [...new Set(toRedeliver.map((f) => f.artifactRef))],
         },
         afterData: {
           attempt: newAttempt,
@@ -449,15 +497,18 @@ export async function rerunDistribution(
   }
 }
 
-// The identity check backing `recordDistributionOutcome`: v1 ships exactly
-// one target (`LOOPBACK_TARGET`, always mandatory, D20), so a pushed outcome
-// can only ever legitimately describe that target plus one of the artifacts
-// this run actually has — the stored final invoices (bm19) or the one fixed
-// report ref. Rejecting anything else stops a malformed or malicious M2M
-// push from fabricating an artifact/target `recomputeDistributionStatus`
-// would otherwise count toward "all mandatory delivered", or from smuggling
-// `is_mandatory: false` past the FAILED-blocks-completion check for a target
-// this run never actually configured as advisory.
+// The identity check backing `recordDistributionOutcome` (bm34-spec
+// §Implementation §2, code-standards §5.6). A pushed outcome can only ever
+// legitimately describe a target in the run's KNOWN target set
+// (`billRunDistributionTargets` — loopback local / sftp deployed, D25; both may
+// be live) plus one of the artifacts this run actually has — the stored final
+// invoices (bm19) or the one fixed report ref. Rejecting anything else stops a
+// malformed or malicious M2M push from fabricating an artifact/target
+// `recomputeDistributionStatus` would otherwise count toward "all mandatory
+// delivered", or from smuggling a wrong `is_mandatory` past the
+// FAILED-blocks-completion check — the pushed flag must MATCH how the run
+// configured the target (§5.6: never accept `is_mandatory: false` for a target
+// the run configured as mandatory).
 async function isLaunchedDistributionIdentity(
   tx: Database,
   input: Pick<
@@ -465,7 +516,10 @@ async function isLaunchedDistributionIdentity(
     "runId" | "target" | "artifactRef" | "artifactType" | "isMandatory"
   >,
 ): Promise<boolean> {
-  if (input.target !== LOOPBACK_TARGET || !input.isMandatory) return false;
+  const configured = billRunDistributionTargets.find(
+    (t) => t.name === input.target,
+  );
+  if (!configured || configured.isMandatory !== input.isMandatory) return false;
   if (input.artifactType === "report_csv") {
     return input.artifactRef === REPORT_ARTIFACT_REF;
   }
@@ -590,9 +644,9 @@ export interface RecomputeDistributionStatusResult {
 // `distribution_attempt` (a `FAILED` from round 1 that round 2 redelivers as
 // `DELIVERED` must supersede it, never be double-counted):
 //   - Any mandatory artifact's latest outcome is FAILED → DISTRIBUTION_FAILED.
-//   - Every expected mandatory artifact (bm19 stored invoices + the report,
-//     computeExpectedMandatoryArtifactCount) DELIVERED (at its latest attempt)
-//     → COMPLETED.
+//   - Every expected mandatory artifact — (bm19 stored invoices + the report)
+//     × the mandatory-target count (computed inline below) — DELIVERED (at its
+//     latest attempt) → COMPLETED.
 //   - Otherwise → no change (heartbeat bumped only) — the recorded set is
 //     still incomplete; never force a status the outcome set doesn't support
 //     (architecture Inv. #12's "derived, never forced" discipline).
@@ -631,8 +685,19 @@ export async function recomputeDistributionStatus(
     return { status: "DISTRIBUTION_FAILED" };
   }
 
-  // Every stored final invoice + the one always-triggered report_csv.
-  const expected = storedInvoiceCount + 1;
+  // bm34-spec §Implementation §2 / architecture Inv #27 — completion is per
+  // `(target, artifact_ref)` and scales with the MANDATORY-target count: the
+  // expected mandatory-artifact count is (stored invoices + the one
+  // always-triggered report_csv) MULTIPLIED BY the number of mandatory targets.
+  // `mandatoryRows` above already deduped to the latest outcome per
+  // `(target, artifact_ref)`, so `delivered` counts a `(target, artifact)` pair
+  // at most once. A run with two mandatory targets is COMPLETED only when BOTH
+  // have taken every artifact — the single-target `+ 1` count would wrongly
+  // mark it COMPLETED as soon as one target finished.
+  const mandatoryTargetCount = billRunDistributionTargets.filter(
+    (t) => t.isMandatory,
+  ).length;
+  const expected = mandatoryTargetCount * (storedInvoiceCount + 1);
   const delivered = mandatoryRows.filter(
     (r) => r.outcome === "DELIVERED",
   ).length;

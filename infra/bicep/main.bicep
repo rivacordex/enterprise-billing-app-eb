@@ -72,6 +72,38 @@ param deployWorkloads bool = true
 @description('Gates the workflow-engine Container App + storage (rm04). Leave false until the D0 process-runner spike has passed on a real environment.')
 param deployWorkflowEngine bool = false
 
+// bm34 — a SINGLE knob drives BOTH sides of distribution so they can never
+// split-brain: it flips the billrun engine's SFTP wiring (the flow uploads over
+// SFTP, reading the sftp-private-key/sftp-known-hosts Key Vault secrets) AND the
+// app's distribution target set (BILLRUN_DISTRIBUTION_TARGETS — 'sftp' when on,
+// 'loopback' when off; derived below). The app gates which outcomes it accepts
+// and how completion scales on that set, so if the two ever disagreed the app
+// would 409 every real SFTP outcome and the run would never complete. Leaving
+// this false keeps both at the dev-only loopback target (no real Azure endpoint,
+// so a deployed run only actually delivers once this is true — which also
+// requires sftpHost below and the two Key Vault secrets, fail-closed otherwise).
+@description('bm34 — enable real SFTP distribution end-to-end (billrun engine SFTP wiring + the app target set, flipped together). Requires sftpHost and the sftp-private-key/sftp-known-hosts Key Vault secrets. Default false.')
+param enableSftpDistribution bool = false
+@description('bm34 — SFTP distribution target host (required non-empty when enableSftpDistribution is true).')
+param sftpHost string = ''
+@description('bm34 — SFTP distribution target port.')
+param sftpPort string = '22'
+@description('bm34 — SFTP distribution username.')
+param sftpUser string = 'billrun'
+@description('bm34 — client-visible SFTP remote base (chroot-relative), e.g. /upload.')
+param sftpRemoteBase string = '/upload'
+
+// bm34 — the loopback distribution sink: an Azure Files share mounted at
+// /distribution on the billrun-hosting engine, where bill_run_distribution's
+// default `loopback` target writes delivered artifacts (fs.local.Upload — no
+// SFTP/keys). Defaults TRUE because `loopback` is the DEFAULT distribution
+// target (until enableSftpDistribution flips the app+engine to a real SFTP
+// endpoint), so without the sink a deployed run's distribution has nowhere to
+// land. Only passed to the billrun-hosting instances below; the rating-only
+// instance never distributes.
+@description('bm34 — provision the loopback distribution sink (Azure Files share at /distribution) on the billrun engine. Default true — the default `loopback` target needs it to deliver.')
+param enableLocalDistributionSink bool = true
+
 // wfm01 §4b / wfm-architecture §5 — logical→physical engine topology, a single
 // deploy parameter. `collapsed` (default): ONE `workflow-engine` instance hosting
 // both the `rating` and `billrun` namespaces (the base deployment; carries the
@@ -231,6 +263,9 @@ module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
     entraTenantId: entraTenantId
     microsoftClientId: microsoftClientId
     appTimezone: appTimezone
+    // bm34 — derived from the SAME knob passed to the billrun engine module(s)
+    // below, so the app's target set and the engine's SFTP wiring flip together.
+    distributionTargets: enableSftpDistribution ? 'sftp' : 'loopback'
   }
 }
 
@@ -280,6 +315,15 @@ module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' 
     kestraInternalContainerName: workflowEngineStorage!.outputs.kestraInternalContainerName
     enableEasyAuthIngress: deployEasyAuth
     corporateIpAllowList: corporateIpAllowList
+    // bm34 — this collapsed instance hosts the `billrun` namespace, so it carries
+    // the distribution SFTP wiring, flipped by the SAME knob that sets the app's
+    // BILLRUN_DISTRIBUTION_TARGETS above (split-brain-proof).
+    enableSftpDistribution: enableSftpDistribution
+    sftpHost: sftpHost
+    sftpPort: sftpPort
+    sftpUser: sftpUser
+    sftpRemoteBase: sftpRemoteBase
+    enableLocalDistributionSink: enableLocalDistributionSink
   }
 }
 
@@ -354,6 +398,16 @@ module workflowEngineBillrunContainerApp 'modules/workflow-engine-container-app.
     defaultNamespace: 'billrun'
     enableEasyAuthIngress: false
     corporateIpAllowList: []
+    // bm34 — the split-topology billrun instance carries the distribution SFTP
+    // wiring, flipped by the SAME knob that sets the app's
+    // BILLRUN_DISTRIBUTION_TARGETS above (split-brain-proof). The rating instance
+    // (workflowEngineRatingContainerApp) never distributes, so it is left off.
+    enableSftpDistribution: enableSftpDistribution
+    sftpHost: sftpHost
+    sftpPort: sftpPort
+    sftpUser: sftpUser
+    sftpRemoteBase: sftpRemoteBase
+    enableLocalDistributionSink: enableLocalDistributionSink
   }
 }
 

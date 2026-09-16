@@ -54,7 +54,21 @@ vi.mock("@/services/billing/engine-registry", () => ({
 vi.mock("@/services/billing/blob-store", () => ({
   blobStore: { putReport: vi.fn() },
 }));
-vi.mock("@/lib/config", () => ({ billRunDistributionForceFail: false }));
+// bm34 — the known-target set is read live by distribute-run.ts (target
+// assembly, identity, status recompute). A mutable array (mutated IN PLACE in
+// tests, reset per-test in beforeEach) so a test can switch to two mandatory
+// targets without re-mocking the module. `vi.hoisted` makes it available to the
+// hoisted vi.mock factory without hitting the temporal-dead-zone.
+const { mockDistributionTargets } = vi.hoisted(() => ({
+  mockDistributionTargets: [{ name: "loopback", isMandatory: true }] as {
+    name: string;
+    isMandatory: boolean;
+  }[],
+}));
+vi.mock("@/lib/config", () => ({
+  billRunDistributionForceFail: false,
+  billRunDistributionTargets: mockDistributionTargets,
+}));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
@@ -115,8 +129,18 @@ function run(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
+// Replace the known-target set in place (see the mock above). Default is a
+// single mandatory loopback (bm20 parity); tests needing two mandatory targets
+// call this with both.
+function setDistributionTargets(
+  targets: { name: string; isMandatory: boolean }[],
+): void {
+  mockDistributionTargets.splice(0, mockDistributionTargets.length, ...targets);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  setDistributionTargets([{ name: "loopback", isMandatory: true }]);
   mockListInvoicesForRun.mockResolvedValue([
     { billRunInvoiceId: "BRI00000001", blobRef: "invoices/2026-07/INV1.pdf" },
   ]);
@@ -227,6 +251,28 @@ describe("triggerDistribution", () => {
 
     expect(result).toEqual({ ok: false, code: "ENGINE_UNREACHABLE" });
     expect(mockMarkDistributing).not.toHaveBeenCalled();
+  });
+
+  it("builds the targets payload from the environment's known-target set (two mandatory targets)", async () => {
+    setDistributionTargets([
+      { name: "loopback", isMandatory: true },
+      { name: "sftp", isMandatory: true },
+    ]);
+    mockFindByIdForUpdate.mockResolvedValue(run());
+
+    const result = await triggerDistribution("BRN00000001", null);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockTrigger).toHaveBeenCalledWith(
+      "billrun",
+      "bill_run_distribution",
+      expect.objectContaining({
+        targets: [
+          { name: "loopback", is_mandatory: true, force_fail: false },
+          { name: "sftp", is_mandatory: true, force_fail: false },
+        ],
+      }),
+    );
   });
 });
 
@@ -341,6 +387,43 @@ describe("recordDistributionOutcome", () => {
     );
     await expect(
       recordDistributionOutcome({ ...input, target: "portal" }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(mockInsertOutcome).not.toHaveBeenCalled();
+  });
+
+  it("accepts an outcome for the sftp target once it is in the known-target set", async () => {
+    setDistributionTargets([
+      { name: "loopback", isMandatory: true },
+      { name: "sftp", isMandatory: true },
+    ]);
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "DISTRIBUTING", distributionAttempt: 1 }),
+    );
+    // clearAllMocks does not reset implementations — a prior test's
+    // unique-violation reject would otherwise leak in and force a replay.
+    mockInsertOutcome.mockResolvedValue(undefined as never);
+
+    const result = await recordDistributionOutcome({
+      ...input,
+      target: "sftp",
+    });
+
+    expect(result).toEqual({ replayed: false });
+    expect(mockInsertOutcome).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({ target: "sftp", artifactRef: "BRI00000001" }),
+    );
+  });
+
+  it("rejects a mandatory target reported as advisory (is_mandatory:false)", async () => {
+    // §5.6 — the flow must report the target's TRUE mandatory-ness; accepting
+    // is_mandatory:false for a mandatory target would let a FAILED slip past the
+    // completion gate.
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "DISTRIBUTING", distributionAttempt: 1 }),
+    );
+    await expect(
+      recordDistributionOutcome({ ...input, isMandatory: false }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(mockInsertOutcome).not.toHaveBeenCalled();
   });
@@ -553,6 +636,88 @@ describe("recomputeDistributionStatus", () => {
 
     expect(result).toEqual({ status: "COMPLETED" });
     expect(mockMarkDistributionFailed).not.toHaveBeenCalled();
+    expect(mockCompleteDistribution).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+    );
+  });
+
+  // bm34-spec §Implementation §2 / Inv #27 — a run with TWO mandatory targets
+  // completes only when BOTH have taken every artifact; expected scales by the
+  // mandatory-target count (2 targets × (1 invoice + 1 report) = 4).
+  it("with two mandatory targets, stays unresolved until BOTH have delivered every artifact", async () => {
+    setDistributionTargets([
+      { name: "loopback", isMandatory: true },
+      { name: "sftp", isMandatory: true },
+    ]);
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]); // 1 stored invoice
+    // Only loopback has delivered both artifacts; sftp has nothing yet.
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "BRI00000001",
+        artifactType: "invoice_pdf",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      {
+        billRunDistributionId: "BRD00000002",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+    ]);
+
+    const result = await recomputeDistributionStatus(txStub as never, {
+      billRunId: "BRN00000001",
+    });
+
+    // 2 delivered vs 4 expected — not complete, not failed.
+    expect(result).toEqual({ status: null });
+    expect(mockCompleteDistribution).not.toHaveBeenCalled();
+    expect(mockMarkDistributionFailed).not.toHaveBeenCalled();
+  });
+
+  it("with two mandatory targets, completes once BOTH have delivered every artifact", async () => {
+    setDistributionTargets([
+      { name: "loopback", isMandatory: true },
+      { name: "sftp", isMandatory: true },
+    ]);
+    mockListBillingAccountIdsForRun.mockResolvedValue(["BAN00000001"]);
+    const deliveredRow = (
+      id: string,
+      target: string,
+      artifactRef: string,
+      artifactType: "invoice_pdf" | "report_csv",
+    ) => ({
+      billRunDistributionId: id,
+      target,
+      artifactRef,
+      artifactType,
+      isMandatory: true,
+      outcome: "DELIVERED" as const,
+      at: new Date(),
+      distributionAttempt: 1,
+    });
+    mockListForRunDistribution.mockResolvedValue([
+      deliveredRow("BRD00000001", "loopback", "BRI00000001", "invoice_pdf"),
+      deliveredRow("BRD00000002", "loopback", "REPORT", "report_csv"),
+      deliveredRow("BRD00000003", "sftp", "BRI00000001", "invoice_pdf"),
+      deliveredRow("BRD00000004", "sftp", "REPORT", "report_csv"),
+    ]);
+
+    const result = await recomputeDistributionStatus(txStub as never, {
+      billRunId: "BRN00000001",
+    });
+
+    expect(result).toEqual({ status: "COMPLETED" });
     expect(mockCompleteDistribution).toHaveBeenCalledWith(
       txStub,
       "BRN00000001",
@@ -799,6 +964,84 @@ describe("rerunDistribution", () => {
       expect.objectContaining({
         eventType: "BILL_RUN_DISTRIBUTION_RERUN",
         beforeData: expect.objectContaining({ failedArtifacts: ["REPORT"] }),
+      }),
+    );
+  });
+
+  // bm34-spec §Implementation §2 / §4 guardrail — with two mandatory targets,
+  // rerun redelivers ONLY the failed `(target, artifact_ref)` pairs: sftp's
+  // invoice FAILED while everything else DELIVERED, so only sftp gets the
+  // invoice re-sent (targets payload = [sftp]), and the artifact appears once.
+  it("redelivers only the failed (target, artifact_ref) pair with two mandatory targets", async () => {
+    setDistributionTargets([
+      { name: "loopback", isMandatory: true },
+      { name: "sftp", isMandatory: true },
+    ]);
+    mockFindByIdForUpdate.mockResolvedValue(
+      run({ status: "DISTRIBUTION_FAILED", distributionAttempt: 1 }),
+    );
+    mockListForRunDistribution.mockResolvedValue([
+      {
+        billRunDistributionId: "BRD00000001",
+        target: "loopback",
+        artifactRef: "BRI00000001",
+        artifactType: "invoice_pdf",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      {
+        billRunDistributionId: "BRD00000002",
+        target: "loopback",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      {
+        billRunDistributionId: "BRD00000003",
+        target: "sftp",
+        artifactRef: "REPORT",
+        artifactType: "report_csv",
+        isMandatory: true,
+        outcome: "DELIVERED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+      {
+        billRunDistributionId: "BRD00000004",
+        target: "sftp",
+        artifactRef: "BRI00000001",
+        artifactType: "invoice_pdf",
+        isMandatory: true,
+        outcome: "FAILED",
+        at: new Date(),
+        distributionAttempt: 1,
+      },
+    ]);
+
+    const result = await rerunDistribution("BRN00000001", "user-1");
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { attempt: 2, artifactCount: 1 },
+    });
+    expect(mockTrigger).toHaveBeenCalledWith(
+      "billrun",
+      "bill_run_distribution",
+      expect.objectContaining({
+        attempt: 2,
+        artifacts: [
+          {
+            ref: "BRI00000001",
+            type: "invoice_pdf",
+            blob_ref: "invoices/2026-07/INV1.pdf",
+          },
+        ],
+        targets: [{ name: "sftp", is_mandatory: true, force_fail: false }],
       }),
     );
   });

@@ -85,6 +85,8 @@ param sftpPort string = '22'
 param sftpUser string = 'billrun'
 @description('bm34 — client-visible SFTP remote base (chroot-relative), e.g. /upload.')
 param sftpRemoteBase string = '/upload'
+@description('bm34 — mount an Azure Files share at /distribution as the loopback distribution sink (bill_run_distribution\'s fs.local.Upload writes delivered artifacts there). Enable on the billrun-hosting instance so the default `loopback` target has a durable, inspectable destination without any SFTP/keys. Default false.')
+param enableLocalDistributionSink bool = false
 
 // Extracted to a var — a for-expression can't sit inline inside a ternary
 // property value (BCP disallows it there even though it's allowed as a
@@ -126,6 +128,31 @@ resource landingFileStorage 'Microsoft.App/managedEnvironments/storages@2023-05-
       accessMode: 'ReadWrite'
     }
   }
+}
+
+// bm34 — the loopback distribution sink. An Azure Files SMB share (no chroot/
+// chown, unlike an atmoz/sftp sidecar) created inline on the same storage
+// account as landing, then registered as an environment storage and mounted at
+// /distribution below. Only materialises for the billrun-hosting instance
+// (enableLocalDistributionSink, set in main.bicep).
+resource distributionShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = if (enableLocalDistributionSink) {
+  name: '${storageAccountName}/default/distribution'
+}
+
+resource distributionFileStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = if (enableLocalDistributionSink) {
+  parent: containerAppsEnvironment
+  name: '${landingEnvStorageName}-distribution'
+  properties: {
+    azureFile: {
+      accountName: storageAccountName
+      accountKey: ratingStorageAccount.listKeys().keys[0].value
+      shareName: 'distribution'
+      accessMode: 'ReadWrite'
+    }
+  }
+  dependsOn: [
+    distributionShare
+  ]
 }
 
 resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
@@ -353,12 +380,22 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'SECRET_SFTP_PRIVATE_KEY', secretRef: 'sftp-private-key' }
             { name: 'SECRET_SFTP_KNOWN_HOSTS', secretRef: 'sftp-known-hosts' }
           ] : [])
-          volumeMounts: [
-            {
-              volumeName: 'landing'
-              mountPath: '/data/landing'
-            }
-          ]
+          volumeMounts: concat(
+            [
+              {
+                volumeName: 'landing'
+                mountPath: '/data/landing'
+              }
+            ],
+            // bm34 — the loopback distribution sink mount (matches the flow's
+            // fs.local.Upload `to` + kestra.yml allowed-paths at /distribution).
+            enableLocalDistributionSink ? [
+              {
+                volumeName: 'distribution'
+                mountPath: '/distribution'
+              }
+            ] : []
+          )
           // Kestra serves /health on its Micronaut MANAGEMENT port (8081),
           // NOT the webserver/UI port (8080) — probing 8080/health returns
           // 404 and the revision never becomes Healthy. The management port
@@ -384,13 +421,22 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
           ]
         }
       ]
-      volumes: [
-        {
-          name: 'landing'
-          storageType: 'AzureFile'
-          storageName: landingFileStorage.name
-        }
-      ]
+      volumes: concat(
+        [
+          {
+            name: 'landing'
+            storageType: 'AzureFile'
+            storageName: landingFileStorage.name
+          }
+        ],
+        enableLocalDistributionSink ? [
+          {
+            name: 'distribution'
+            storageType: 'AzureFile'
+            storageName: distributionFileStorage!.name
+          }
+        ] : []
+      )
       scale: {
         minReplicas: minReplicas
         maxReplicas: maxReplicas
