@@ -91,6 +91,16 @@ const PHASE3_GUARDRAILS: readonly GuardrailEntry[] = [
     ],
   },
   {
+    // §9.28's app-observable half — per-artifact DELIVERED/FAILED, the
+    // "outcome POST is the deliverable not the upload" invariant, and
+    // rerun-failed-only — ships here. The real-SFTP endpoint transport
+    // (host-key verification, key from a Kestra Secret, the SSH upload/retry)
+    // lives in the distributor flow YAML and is the deferred live smoke
+    // (bm22's environment), not an app-repo test.
+    item: "§9.28 SFTP transport — app-side outcome/rerun semantics (real-SFTP transport is the deferred live smoke)",
+    files: ["tests/services/billing/distribute-run.service.test.ts"],
+  },
+  {
     item: "§9.29/§9.32 Uncharged semantics + per-record exception policies (D14/D32/D33)",
     files: [
       "tests/db/billrun-uncharged-exceptions.integration.test.ts",
