@@ -117,7 +117,7 @@ parameters:
   # DevOps schedules support per-schedule parameter overrides there) once a
   # real engine is deployed and reachable.
   - name: runBillrunLiveKestraSmoke
-    displayName: Run the bm21 live-Kestra smoke gate (trigger -> claim -> PROCESSED) against the deployed billrun engine (engine must be deployed first)
+    displayName: Run the bm21 live-Kestra smoke gate (SCHEDULED -> COMPLETED) against the deployed billrun engine (engine must be deployed first)
     type: boolean
     default: false
 
@@ -885,7 +885,7 @@ stages:
   # not run it, to avoid silently reseeding a shared environment on every
   # smoke run).
   - stage: billrun_live_kestra_smoke
-    displayName: Billing ship gate — live-Kestra smoke (bm21, trigger -> claim -> PROCESSED)
+    displayName: Billing ship gate — live-Kestra smoke (bm21, SCHEDULED -> COMPLETED)
     dependsOn: test_scan
     condition: and(succeeded(), eq(${{ parameters.runBillrunLiveKestraSmoke }}, true))
     pool:
@@ -939,4 +939,4 @@ stages:
               # around a real secret.
               BETTER_AUTH_SECRET: "ci-placeholder-secret-min-32-characters-long"
               BETTER_AUTH_URL: "https://localhost"
-            displayName: Trigger -> claim -> PROCESSED against the real billrun engine
+            displayName: SCHEDULED -> COMPLETED against the real billrun engine
