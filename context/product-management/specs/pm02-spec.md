@@ -180,9 +180,12 @@ export type OfferingListSearchParams = z.infer<typeof offeringListSearchParamsSc
 
 Page size is a pm03 service constant, not a URL param. RETIRED-hiding is **service** behavior (pm03); the schema only carries `status: null`.
 
-### 3.7 Seeds — `db/seeds/product.ts` (new) + npm script
+### 3.7 Seeds — mandatory grant (`db/seeds/product.ts`) + opt-in demo catalog (`db/seeds/demo/product-demo.ts`)
 
-Standalone idempotent script following `seed-rbac.ts` exactly: `postgres` + `drizzle` with `max: 1`, skip-if-seeded pre-check (any `product_offering` row exists → log + return), everything in **one transaction**, `logger` not `console`, `process.exit(1)` on failure. Runs **after** `db:seed-rbac` (needs the ADMIN role). Every JSONB/price payload is `.parse()`d through §3.6 schemas before insert (code-standards §1.7) — a bad payload throws and nothing lands.
+Two responsibilities, two scripts (split by the seed-refactor change, 2026-09-16):
+
+- **Mandatory grant — `db/seeds/product.ts`** (`db:seed-product`, part of `db:setup`): grants `products:DELETE → ADMIN` (idempotent check-then-insert), one transaction, `logger` not `console`, `process.exit(1)` on failure. Runs **after** `db:seed-rbac` (needs the ADMIN role). Seeds **no** catalog rows.
+- **Opt-in demo catalog — `db/seeds/demo/product-demo.ts`** (run only by `npm run db:seed-demo`, never in `db:setup`; prod-guarded via the `db/seeds/demo/seed-demo.ts` orchestrator): seeds the `Demo — *` offerings/specs/prices below. Standalone idempotent script following `seed-rbac.ts`'s shape: skip-if-seeded pre-check (the demo `Demo — 5G Nationwide Service Plan` offering exists → log + return), everything in **one transaction**. Every JSONB/price payload is `.parse()`d through §3.6 schemas before insert (code-standards §1.7) — a bad payload throws and nothing lands.
 
 Seed data (all names use the human-readable `Demo — ` prefix; seeded only via the opt-in `npm run db:seed-demo` script — no longer part of `db:setup`; fixed UTC ISO datetimes, not `now()`, so pm03 tests are deterministic; `last_edited_by: null`; `version: 1`; currency `MYR` per `SYSTEM_CONFIG.default_currency`):
 

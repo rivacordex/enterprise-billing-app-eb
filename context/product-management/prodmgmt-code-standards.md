@@ -162,8 +162,12 @@ db/repositories/
   product-specification.ts   # finders + insertSpecification, updateSpecification, deleteSpecification
   product-offering-price.ts  # finders + insertPrice (only write, ever)
 db/migrations/…             # schema + `products` PERMISSIONS seed row + family_offering_id migration
-db/seeds/product.ts         # mandatory products:DELETE→ADMIN grant only
-db/seeds/demo/product-demo.ts  # opt-in `Demo — *` catalog rows, validated via Zod (db:seed-demo)
+db/seeds/product.ts         # mandatory products:DELETE→ADMIN grant (db:seed-product, in db:setup)
+db/seeds/ordering-inventory.ts  # mandatory ordering permission grants (db:seed-ordering, in db:setup)
+db/seeds/demo/
+  product-demo.ts           # opt-in `Demo — *` catalog rows, validated via Zod
+  ordering-demo.ts          # opt-in demo ordering/inventory story (references the demo offering)
+  seed-demo.ts              # db:seed-demo orchestrator (product-demo → ordering-demo, prod-guarded)
 validation/product/
   offering-list.schema.ts           # searchParams: q/status/sort/page/offering
   pricing-characteristics.schema.ts # per-pricing_model discriminated schemas
