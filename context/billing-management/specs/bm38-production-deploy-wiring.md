@@ -13,7 +13,7 @@ Wire the `billrun_runtime` DB credential and the engine/SFTP Key Vault secrets a
 **Structural decisions**
 
 - **No new container — the `billrun` namespace rides the shared engine (collapsed topology).** `prod.bicepparam` sets `topology = 'collapsed'`; one `workflow-engine` Container App hosts both `rating` and `billrun`. This unit adds credentials/secrets to that module, not a new Container App/Job.
-- **`billrun_runtime` DB URL becomes a first-class Key Vault secret + engine env var.** The flows connect to Postgres as `billrun_runtime` (bm14). Add a Key Vault secret `billrun-runtime-db-url`, a `secretRef` on the engine container, and env `BILLRUN_RUNTIME_DATABASE_URL` — closing the gap `db-role-verification.md` flags ("no Key Vault secret name or consumer mapping defined yet"). Gate the wiring behind a param so a `billrun`-hosting engine gets it and a rating-only engine does not.
+- **The `billrun_runtime` DB credential becomes a first-class Key Vault secret + engine env var.** The flows connect to Postgres as `billrun_runtime` (bm14). Add a Key Vault secret `billrun-runtime-db-url`, a `secretRef` on the engine container, and env `BILLRUN_RUNTIME_DATABASE_URL` — closing the gap `db-role-verification.md` flags ("no Key Vault secret name or consumer mapping defined yet"). Gate the wiring behind a param so a `billrun`-hosting engine gets it and a rating-only engine does not. _(Shipped shape, per the §1 Review correction: a bare-password secret `billrun-runtime-db-password` → `SECRET_BILLRUN_RUNTIME_PASSWORD` + the `BILLRUN_DB_*` coordinates — not a full URL.)_
 - **App→engine credential secrets, created not assumed.** Create `billrun-engine-url` and `billrun-engine-auth` (flagged NOT-YET-CREATED in `azure-pipelines.yml`). `billrun-engine-auth` is a **coupled triple** — its username half must be `workflow-ops@billing.ops` to match the engine's Basic-Auth user and the `deploy_workflow_flows` `--user`; the cutover runbook makes the rotation explicit or every app→engine call 401s.
 - **SFTP secrets stay parameter-gated (bm34 already wired the shape).** `enableSftpDistribution` + `sftp-private-key`/`sftp-known-hosts` already exist; document provisioning them and flip `enableSftpDistribution`/`distributionTargets='sftp'` **only when a real SFTP endpoint exists** (gated, default off — loopback stays the default).
 - **Deploy flags readied but left gated.** `deployWorkflowEngine` (false), `deployRatingFlows` (gates `deploy_workflow_flows`), `runBillrunLiveKestraSmoke` (false) stay off; the runbook documents the cutover order. "Done" for this unit is deployable + wired + local E2E green (bm37) — not a green cloud run.
@@ -33,15 +33,14 @@ Wire the `billrun_runtime` DB credential and the engine/SFTP Key Vault secrets a
 > plus `BILLRUN_DB_HOST/PORT/NAME/USER` — so a full-URL wiring is inert (the
 > flow hard-aborts on the unset `SECRET_BILLRUN_RUNTIME_PASSWORD`). As shipped,
 > the wiring is therefore the **split shape**, and the orphaned
-> `BILLRUN_RUNTIME_DATABASE_URL` was removed from `.env.example`. Read the bullets
-> below with `billrun-runtime-db-url` → `billrun-runtime-db-password` (bare
-> password) and `BILLRUN_RUNTIME_DATABASE_URL` → `SECRET_BILLRUN_RUNTIME_PASSWORD`
-> + `BILLRUN_DB_*`. The goal (gate the credential onto the billrun-hosting engine)
-> is unchanged.
+> `BILLRUN_RUNTIME_DATABASE_URL` was removed from `.env.example`. The bullets and
+> verification checklist below have been corrected in place to the shipped split
+> shape; the original full-URL intent is recorded in `bm14-billrun-runtime-role.md`.
+> The goal (gate the credential onto the billrun-hosting engine) is unchanged.
 
-- **Key Vault:** new secret `billrun-runtime-db-url` (the `postgresql://billrun_runtime:<pwd>@<host>/<db>` URL; value provisioned out-of-band, never in git).
-- **`workflow-engine-container-app.bicep`:** a `billrun-runtime-db-url` entry in the `secrets` block and a `BILLRUN_RUNTIME_DATABASE_URL` env var (`secretRef`), gated by a new param (e.g. `hostsBillrunNamespace`, true when `defaultNamespace == 'billrun'` / collapsed).
-- **`db-role-verification.md` §2:** replace the "not yet wired" note with the secret name (`billrun-runtime-db-url`) and consumer mapping (the `workflow-engine` container).
+- **Key Vault:** new secret `billrun-runtime-db-password` (the BARE `billrun_runtime` password; value provisioned out-of-band, never in git). NOT a full connection string — the flow reads it via `PGPASSWORD`.
+- **`workflow-engine-container-app.bicep`:** a `billrun-runtime-db-password` entry in the `secrets` block exposed as env `SECRET_BILLRUN_RUNTIME_PASSWORD`, plus the non-secret coordinates `BILLRUN_DB_HOST` (= `postgresServerFqdn`) / `BILLRUN_DB_PORT` / `BILLRUN_DB_NAME` (`enterprise_billing`) / `BILLRUN_DB_USER` (`billrun_runtime`) as plain env — all gated by a new param (`hostsBillrunNamespace`, true on the collapsed engine and the split billrun instance). Mirrors the rating worker's `SECRET_RATING_RUNTIME_PASSWORD` + `RATING_DB_*` shape.
+- **`db-role-verification.md` §2:** replace the "not yet wired" note with the secret name (`billrun-runtime-db-password`) and consumer mapping (the `workflow-engine` container).
 
 ### 2. App→engine + SFTP secrets
 
@@ -68,8 +67,8 @@ Wire the `billrun_runtime` DB credential and the engine/SFTP Key Vault secrets a
 
 ## Verification checklist
 
-- [ ] `workflow-engine-container-app.bicep` declares a `billrun-runtime-db-url` secret + a `BILLRUN_RUNTIME_DATABASE_URL` env `secretRef`, gated to the `billrun`-hosting engine; a bicep build (`az bicep build` / `what-if`) is clean.
-- [ ] `db-role-verification.md` §2 names the `billrun-runtime-db-url` secret and its consumer (the engine container), superseding the "not yet wired" note; the `ALTER ROLE billrun_runtime` password step is recorded.
+- [ ] `workflow-engine-container-app.bicep` declares a `billrun-runtime-db-password` secret exposed as a `SECRET_BILLRUN_RUNTIME_PASSWORD` env `secretRef`, plus the `BILLRUN_DB_HOST/PORT/NAME/USER` env vars, gated to the `billrun`-hosting engine; a bicep build (`az bicep build` / `what-if`) is clean.
+- [ ] `db-role-verification.md` §2 names the `billrun-runtime-db-password` secret and its consumer (the engine container), superseding the "not yet wired" note; the `ALTER ROLE billrun_runtime` password step is recorded.
 - [ ] `billrun-engine-url` / `billrun-engine-auth` are created (or documented as a named cutover prerequisite), with the `billrun-engine-auth` username = `workflow-ops@billing.ops` rotation called out; the NOT-YET-CREATED flag is resolved.
 - [ ] `deployWorkflowEngine` / `deployRatingFlows` / `runBillrunLiveKestraSmoke` remain **off by default**; `deploy_workflow_flows` still maps `bill-run-processor/local-dev` and `bill-run-distributor/local-dev` to the `billrun` namespace; the cutover runbook documents the order.
 - [ ] `bill_run_processing.template.yml` and the `bill-run-*/README.md` no longer claim a separate, TBD-owned canonical flow — the repo's `local-dev` flow is named as the deployed flow.

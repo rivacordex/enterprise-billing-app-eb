@@ -189,10 +189,14 @@ connection themselves from the coordinates and read the password from the
   `workflow-engine-billrun` split instance); a rating-only engine gets neither.
   `BILLRUN_DB_HOST` is the Flexible Server FQDN (shared with the `kestra` DB —
   only the DB **name** differs), `BILLRUN_DB_NAME` is `enterprise_billing`. The
-  flows connect via `psql`/`PGPASSWORD` — note they do **not** currently set
-  `PGSSLMODE`, so authenticated-TLS enforcement for the flow's DB hop is a
-  separate follow-up (the same gap applies to the rating worker), not wired by
-  bm38.
+  flows connect via `psql`/`PGPASSWORD`. **Before production cutover the billrun
+  DB hop MUST enforce authenticated TLS:** set `PGSSLMODE=verify-full` plus
+  `PGSSLROOTCERT` pointing at the trusted CA bundle (the Azure PG root CA) as
+  engine container env — libpq honours both automatically, so no flow change is
+  needed — so the connection authenticates the server and can never silently
+  fall back to plaintext. Provisioned as a cutover step (see "Production
+  cutover" below), not a default in this module. (The separate rating-worker
+  configuration is out of scope here and left unchanged.)
 
 All three are `see workflow-engine-container-app.bicep`.
 
@@ -355,7 +359,9 @@ workflow-management flow repo); `deploy_workflow_flows` pushes both to the
    for this instance, so the `billrun-runtime-db-password` secret ref +
    `SECRET_BILLRUN_RUNTIME_PASSWORD` / `BILLRUN_DB_*` env vars deploy with it;
    the loopback distribution sink (`enableLocalDistributionSink`, default true)
-   mounts at `/distribution`.
+   mounts at `/distribution`. Also set `PGSSLMODE=verify-full` + `PGSSLROOTCERT`
+   (trusted CA bundle) on the engine so the billrun DB hop authenticates the
+   server and cannot fall back to plaintext (§2).
 4. **Deploy the flows + run the smoke.** Queue the pipeline with
    `deployRatingFlows = true` (merge-to-main only) so `deploy_workflow_flows`
    pushes `rating-engine → rating`, `bill-run-processor/local-dev → billrun`,

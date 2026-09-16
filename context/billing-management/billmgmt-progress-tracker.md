@@ -36,8 +36,12 @@ detail: `context/billing-management/specs/bm*.md`._
   `scripts/billrun-live-kestra-smoke.ts` now drives the WHOLE operator journey
   against the real deployed flows and closes the bm16/bm20 live-Kestra gate.
 - **Production deploy path is deployable + wired (bm38, Phase 4 · Phase O,
-  2026-09-16).** The `billrun_runtime` DB URL + engine/SFTP Key Vault secrets
-  and their consumer mapping are wired into the shared `workflow-engine` bicep,
+  2026-09-16).** The `billrun_runtime` DB credential — the
+  `billrun-runtime-db-password` bare-password secret (→ `SECRET_BILLRUN_RUNTIME_PASSWORD`)
+  plus the `BILLRUN_DB_HOST`/`BILLRUN_DB_PORT`/`BILLRUN_DB_NAME`/`BILLRUN_DB_USER`
+  coordinates, the split shape the deployed flow actually reads — and the
+  engine/SFTP Key Vault secrets and their consumer mapping are wired into the
+  shared `workflow-engine` bicep,
   the deploy flags are readied (still off by default), the `local-dev` flow is
   promoted as the production flow (the "separate repo, TBD owner" fiction is
   gone), and the cutover runbook + taxation-`0.00` interim are recorded. **The

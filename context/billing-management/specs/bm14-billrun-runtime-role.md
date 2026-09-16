@@ -274,7 +274,7 @@ DB-gated (skips loudly under `DATABASE_URL` unset), connecting **as `billrun_run
 ## Dependencies
 
 - **No new npm packages.** Reuses `postgres`/`tsx` and the existing bootstrap-runner pattern.
-- **Env:** `BOOTSTRAP_DATABASE_URL` (exists, superuser/owner) to run the bootstrap; `BILLRUN_RUNTIME_DATABASE_URL` (new — the `billrun_runtime` connection string, dummy in `.env.example`, real in Key Vault).
+- **Env:** `BOOTSTRAP_DATABASE_URL` (exists, superuser/owner) to run the bootstrap; the `billrun_runtime` credential the engine consumes — a bare password (`SECRET_BILLRUN_RUNTIME_PASSWORD`, from Key Vault `billrun-runtime-db-password`) plus the `BILLRUN_DB_HOST`/`PORT`/`NAME`/`USER` coordinates (bm38 split shape; superseded the original single `BILLRUN_RUNTIME_DATABASE_URL` — see the §4 note).
 - **External prerequisites (must already exist):**
   - The **rating** module's `rating.udr_rated` table (rm01) and `rating-db-roles.sql` **already run** in the target environment — its `REVOKE CONNECT … FROM PUBLIC` must precede this unit (D15).
   - Phase-1 `billing.customer_bill` / `customer_bill_tax_item` / `bill_run*` and the pgledger `SECURITY DEFINER` functions (bm05/bm06/bm09) — already delivered.
