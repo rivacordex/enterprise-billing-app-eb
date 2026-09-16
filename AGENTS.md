@@ -6,7 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
-
+<!--
 ## Change Configuration
 Read the following files in order before implementing
 or making any architectural decision related to the change required
@@ -15,8 +15,8 @@ or making any architectural decision related to the change required
 2. `context/architecture.md` 
 
 Update `context/general-change-tracker.md` after each meaningful general implementation change.
-
- <!--
+-->
+ 
 ## Billing Module Update Context
 
 Read the following files in order before implementing
@@ -37,4 +37,4 @@ Read also the general context document to support the changes as referenced by t
 3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 4. `context/ui-context.md` — theme, colors, typography, and component conventions
 
- -->
+ 

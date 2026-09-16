@@ -2,136 +2,219 @@
 
 ## Overview
 
-The Billing Management Module is the section of the Enterprise Billing App (Telco) where the Revenue Operations team executes and controls monthly bill runs. It manages the operational instance of a billing cycle (`bill_run`), the per-account state inside that run (`bill_run_account`, `bill_run_account_stage`), the draft bill assembled for each billing account (`customer_bill`, `customer_bill_tax_item`), and — rather than copying charge lines into billing — a tamper-evident checksum of the posted charges stamped on each bill (`customer_bill.charge_checksum`; the charge records themselves stay in the rating store). The module provides a new "Billing" navigation section whose Bill Runs pages let RevOps see which run is current for each bill cycle, trigger it manually, watch it progress stage by stage, review every customer's draft bill on screen, rerun all or selected accounts while the run is unapproved, and — under a four-eyes gate — approve it, which posts one `INV` document per billed account through the existing Accounts document engine and into pgledger.
+The Billing Management Module is the section of the Enterprise Billing App (Telco)
+where the **Revenue Operations (RevOps)** team executes and controls monthly bill
+runs. It manages the operational instance of a billing cycle (`bill_run`), the
+per-account state inside that run (`bill_run_account`, `bill_run_account_stage`),
+the draft bill assembled for each billing account (`customer_bill`,
+`customer_bill_line`, `customer_bill_tax_item`), the final stored invoice PDF
+(`bill_run_invoices`), and the distribution outcomes (`bill_run_distribution`).
+The module provides a "Billing" navigation section whose Bill Runs pages let RevOps
+see which run is current for each cycle, trigger it, watch it progress stage by
+stage, review every customer's draft bill (and a PRO-FORMA preview) on screen,
+reject or rerun accounts while the run is unapproved, and — under a four-eyes gate —
+approve it, which posts one `INV` document per billed account through the existing
+Accounts document engine into pgledger, renders and stores each final invoice, and
+distributes the invoices + run report over SFTP.
 
-**The bill run performs no rating.** Charges are rated continuously by an external rating/charging engine and land as already-rated Usage Detail Records in `rating.udr_rated`; the bill run **collects (claims)** the records due for the period and bills them. The run is orchestrated by a **workflow engine** (fan-out per account, per-stage signals, health/cancel); the workflow engine deployed as part of this solution is **Kestra** (OSS edition), though the schema and app stay vendor-neutral ("workflow" naming). In this release the rating engine is not built — the workflow orchestrates the real pipeline against a **stub** `rating.udr_rated`; the deployment runs in **stub-data mode** (an environment flag) so its figures are clearly badged as fixtures.
+**The bill run performs no usage rating.** Usage is rated continuously by an
+external engine and lands as already-rated Usage Detail Records in
+`rating.udr_rated`; the bill run **collects (claims)** the records due for the
+period and bills them. Recurring charges are **derived by the bill run** from
+`inventory.product_inventory` (not rated). The run is orchestrated by a **workflow
+engine** — deployed as **Kestra** (OSS), though the schema and app stay
+vendor-neutral ("workflow" naming) — which runs the real compute pipeline as the
+least-privilege `billrun_runtime` role and writes the bill data itself, signalling
+the app on each stage (write-then-signal). The placeholder/stub-data mode of
+earlier phases has been retired; the pipeline runs against real Postgres, real
+Kestra, a real blob store and a real SFTP endpoint.
 
-## Goals
+> **Current state (2026-09-16).** The compute, posting, rendering and distribution
+> planes are all built and real (Phases 1–3, bm01–bm35). **One gap remains before a
+> triggered run completes end-to-end on its own:** the processor flow's
+> **signal-back** is still stubbed — `bill_run_processing.yml` `Log`-stubs its
+> per-stage stage-complete POSTs and its terminal `on_error`/`on_finally` `/status`
+> POST, so accounts never auto-reach `PROCESSED` and the run wedges in `PROCESSING`.
+> The app-side receiver and the sibling distributor's callbacks (bm34) are real.
+> Closing this — plus production deploy wiring and asserting the whole path
+> end-to-end — is **Phase 4** (see `billmgmt-update-overview.md` and
+> `billmgmt-gap-assessment.md`). Taxation is a ratified `0.00` interim.
 
-1. Give Revenue Operations one page that answers "what needs billing right now" — the current run per bill cycle, upcoming runs not yet due, and every historical run — without a calendar or a spreadsheet.
-2. Make each monthly run appear automatically on the correct date with **no scheduler, cron job, or background worker in the application**: the run row is materialized on page load from `bill_cycle` and the in-arrears window rule.
-3. Track progress at **billing-account grain, not run grain**, so "126 accounts billed, 2 failed" is an ordinary state, and rerunning three accounts is the same operation as rerunning all of them.
-4. Let RevOps rerun — fully or for selected accounts — any number of times while the run is unapproved, and make it impossible to rerun anything once an invoice number has been consumed.
-5. Enforce four-eyes on the highest-value action in the platform: the user who triggered the final attempt cannot be the user who approves the run.
-6. Post invoices through the **existing** Accounts document engine (`INV` documents, `ban.A/R ← revenue` legs, accounting-period validation, pgledger transfers, per-type sequence with configurable prefix/format) so the bill run never grows a second path by which money moves.
-7. Make posting resumable per account: a mid-batch failure leaves the other invoices posted and lets the run continue from where it stopped, instead of rolling back 126 invoices.
-8. Surface every account and subscription the run deliberately did **not** charge as a visible exception, so unbilled revenue is a work queue rather than a silent omission.
-9. Detect a workflow that has gone quiet and give an operator a way out, so one wedged execution cannot block a billing cycle indefinitely.
-10. Keep every operator action auditable — trigger, rerun with prior totals and reason, approval, cancellation — in the existing partitioned audit schema.
+## Lifecycle
+
+```
+SCHEDULED → PROCESSING → PROCESSED → APPROVED → POSTING → INVOICED → DISTRIBUTING → COMPLETED
+```
+plus two rerunnable failure states `PROCESSING_FAILED` and `DISTRIBUTION_FAILED`,
+and `CANCELLED`. `INVOICED` means financially complete (postings done, invoice
+numbers consumed); `COMPLETED` means operationally complete. **Next-cycle
+operability keys off `INVOICED`**, so a stalled distribution target can never block
+next month's billing. Run status is always recomputed under a `bill_run` row lock
+from `bill_run_account`, never by incrementing a counter.
 
 ## Core user flow
 
-The primary flow — RevOps runs, reviews, and posts the July bill run for the Enterprise Monthly cycle:
+1. **Materialise.** RevOps opens Billing → Bill Runs. On load the page lazily
+   inserts the current period's `bill_run` (`SCHEDULED`) for each active cycle
+   (`ON CONFLICT (cycle, period_start) DO NOTHING`, concurrency-safe). No scheduler,
+   cron, or background worker in the app. In-arrears window: a `cycle_day`-1 monthly
+   cycle's July run appears on 1 August; `scheduled_run_date = period_end + 1`.
+2. **Trigger.** A `billrun_operate` user selects the operable run and clicks Run.
+   The service snapshots every eligible account into `bill_run_account` (freezing
+   the population), sets the run `PROCESSING`, and triggers **Kestra execution #1
+   (processing)** with `{bill_run_id, period_start, period_end, ban_ids, attempt,
+   gl_event_at}`. A second click while an execution is live is rejected.
+3. **Process (execution #1, as `billrun_runtime`).** Per account, fanned out:
+   - **Validation** asserts currency (`= billing_account.currency`) and window
+     coverage against the correlated set (below). Zero-claimable is a zero-charge
+     `DONE`, not an error.
+   - **Collection** resolves each `RAN_USAGE` row `udr_subscriber_ref_id →
+     inventory.product_inventory → billing_account_id` (set-based, once per run),
+     then claims the in-scope rows `RATED → BILL_DRAFT`, stamping the six claim
+     columns. An unresolvable subscriber is left `RATED`/unclaimed and surfaced,
+     never dropped or failed.
+   - **Aggregation** writes one `customer_bill` (`category='trial'`) plus its
+     `customer_bill_line` rows at grain `(product_offering_id, udr_type)` — USAGE
+     rolled from claimed `udr_rated`, RECURRING derived from `product_inventory`
+     and priced as-of with the resolved price **snapshotted** onto the line.
+     `subtotal = SUM(net_amount)`.
+   - **Taxation** (interim `0.00`) and **Verification** (incl. bill↔charge
+     reconciliation) run; execution #1 terminates at `PROCESSED` (it does not wait
+     for approval).
+4. **Review.** RevOps opens the drill-down: Workflow (stage timeline + pre-approval
+   checks), Customers & Bills (`customer_bill_line` rows as the invoice's face, the
+   `udr_rated` records as per-subscription drill-down, PRO-FORMA preview), Uncharged
+   (accounts that produced **no** charge line), Errors, Distribution, and Audit tabs.
+5. **Reject / Rerun (optional).** Reject (a `billrun_approve` action) or rerun (a
+   `billrun_operate` action, mandatory reason, audit-before-retrigger) **releases**
+   the claimed rows back to `RATED` with all four claim columns cleared, and
+   re-derives the trial bill as a whole-account replace. While rows are still
+   claimed, a rating reload is refused whole with `LOAD_BLOCKED_INFLIGHT`.
+6. **Approve → Post.** A **different** `billrun_approve` user (≠ the final trigger
+   actor) approves after the pre-approval checks pass; claimed rows flip
+   `BILL_DRAFT → BILL_APPROVED`; the run moves `APPROVED → POSTING`. Per account, in
+   its own transaction: compute `charge_checksum` over the account's
+   `customer_bill_line` rows, create and auto-post one `INV` through the Accounts
+   engine (consuming the invoice number), then render the final PDF and store it in
+   `bill_run_invoices`. Failed accounts are `SKIPPED`; already-invoiced accounts are
+   skipped on retry (resumable). When all are terminal the run reaches `INVOICED`
+   and the next cycle unblocks.
+7. **Distribute → Complete (execution #2).** The app triggers **Kestra execution #2**
+   with one `invoice_pdf` artifact per stored invoice plus a `report_csv` and the
+   environment's target list. The flow downloads each artifact from blob storage and
+   SFTPs it to its remote path, POSTing a `DELIVERED`/`FAILED` outcome per artifact.
+   Every mandatory artifact delivered to every mandatory target → `COMPLETED`; any
+   mandatory failure → `DISTRIBUTION_FAILED`, rerunnable (only the failed artifacts).
+8. A `billrun_view` user can follow all of the above read-only, with no mutating
+   action visible.
 
-1. Sign in as a user holding `billrun_operate`. The sidebar shows the "Billing" section with Bill Runs.
-2. Open **Bill Runs**. On load the page computes which runs should exist for each active cycle and inserts any missing (`ON CONFLICT (ref_bill_cycle_id, period_start) DO NOTHING`, so concurrent loads produce exactly one row). For a monthly cycle with `cycle_day` 1 billing **in arrears**, the 1–31 July run appears on 1 August as `SCHEDULED`.
-3. The **Current & Upcoming** tab lists one operable run per cycle plus not-yet-due runs, disabled — an in-arrears run cannot execute before its period closes. The **Historical** tab lists completed runs read-only; a run in `PROCESSING_FAILED` or `DISTRIBUTION_FAILED` is not read-only history — it is rerunnable once the cause is fixed.
-4. Select the current run and click **Run**. The service snapshots every eligible billing account into `bill_run_account` (freezing the population at trigger), sets the run to `PROCESSING`, and triggers the workflow engine with `{bill_run_id, period_start, period_end, ban_ids, attempt, gl_event_at}`. A second click is rejected while an execution is live.
-5. The workflow fans out per account and signals `POST /api/billrun/{runId}/stage/{stage}/complete` per stage. Each signal inserts a `bill_run_account_stage` row first — the unique `(run, ban, stage, attempt)` constraint makes replays a 200 no-op — then advances that account. The app's stages run: **validation** (readiness), **collection** (claim the account's already-rated records from `rating.udr_rated`), **aggregation** writes `customer_bill` (category `trial`, stamping bill format, template version, and `payment_due_date`), **taxation** writes `customer_bill_tax_item`, **verification** writes exceptions and findings. There is no billing-side charge table — the charge records live in the rating store and are read from there for review.
-6. When every account is terminal the run reaches `PROCESSED`. Run status is recomputed under a row lock on `bill_run`, never by incrementing a counter.
-7. Review: the **Workflow** tab shows the stage timeline and pre-approval checks; **Customers & Bills** lists every account with its draft totals, drilling into charge lines read live from `rating`; **Uncharged** lists everything deliberately not charged; **Errors** lists hard errors with codes; **Audit** shows every action.
-8. Fix the underlying data and **Rerun** — all or a subset — with a mandatory reason. The audit event (actor, accounts, prior totals, reason) is written *before* re-trigger; stages after the rerun point are invalidated for those accounts only; nothing already invoiced can be touched.
-9. When the numbers are right, a **different** user holding `billrun_approve` opens **Approve & Post**. Pre-approval checks confirm the accounting period is open, GL mappings resolve, no bill totals are zero or negative (a backstop — zero-charge accounts are already excluded at Scoping), and the approver differs from the trigger actor. Confirm.
-10. The run moves `APPROVED → POSTING`. Per account, in its own transaction: the app reads the account's claimed charge records from the rating store and stamps a `charge_checksum` + `posted_attempt` on the bill (no billing-side copy), one `INV` document is created and auto-posted (its reason code carries an unlimited `autoPostLimit`, so the run-level four-eyes is the sole second signature), the invoice number is consumed, `customer_bill` gets `ref_inv_document_id` and category `normal`, and the account becomes `INVOICED`. An account already carrying an invoice number is skipped, so a retry resumes rather than duplicates.
-11. An account that failed is `PROCESSING_FAILED` during the run; at approval such accounts are recorded as `SKIPPED` — no charges, no bill, no invoice number consumed.
-12. When every account is terminal-final the run reaches `INVOICED`: money is in the ledger, and **the next cycle's run becomes operable at this point**. With no distribution targets configured in v1 it then moves straight to `COMPLETED`; `DISTRIBUTING` stays in the modeled state machine for future dispatch but is never entered this release.
-13. A user holding only `billrun_view` can follow all of the above read-only, but sees no trigger, rerun, approve, or cancel action.
+## Architecture & boundaries
 
-## Features
-
-### Bill run lifecycle
-- Lazy materialization of run rows from `billing.bill_cycle` on page load — no scheduler, cron, or background worker in the application.
-- Monthly in-arrears window derivation honouring `cycle_day` 1–28; `scheduled_run_date = period_end + 1`.
-- Exactly one operable run per cycle; upcoming runs visible but disabled until their period closes; past-due runs operable oldest-first so a missed month never strands a period.
-- Run states `SCHEDULED → PROCESSING → PROCESSED → APPROVED → POSTING → INVOICED → DISTRIBUTING → COMPLETED`, plus two rerunnable failure states `PROCESSING_FAILED` and `DISTRIBUTION_FAILED`, and `CANCELLED`.
-- `INVOICED` means financially complete (postings done, numbers consumed); `COMPLETED` means operationally complete. Next-cycle operability keys off `INVOICED`, so a stalled downstream target can never block next month's billing.
-- Historical runs read-only, filterable by cycle and status, CSV-exportable.
-
-### Stage tracking and observability
-- Stages: scoping, validation, usage collection (claim), aggregation, taxation, verification, posting, rendering, distribution — the first six built this release.
-- `bill_run_account_stage` records status, timing, error class and code per `(run, account, stage, attempt)` — the drill-down surface and the idempotency guard in one table.
-- Failure taxonomy: HARD (account fails the stage, run continues, account excluded at approval), SOFT (stage succeeds, finding raised), INFRA (retryable, no state change on retry success).
-- Run-level counters treated as a cache; display derives from `bill_run_account`, with a test asserting stored == derived.
-
-### Workflow integration & the charge boundary
-- Trigger contract carrying the period window, account list, app-assigned attempt number, and the GL event date (`gl_event_at`, the cycle's billing-run day) — no rating policy (the bill run doesn't rate).
-- Signal-based handoff: the completion call carries no charge payload; the app reads the charge records from the `rating` schema itself.
-- Idempotency enforced solely by a database unique constraint on `(run, ban, stage, attempt)` — never by the orchestrator.
-- Ownership boundary as a Postgres grant: rating has full rights on `rating.*` and `SELECT` on the billing tables it rates from; the app has `SELECT` on `rating.*` plus `UPDATE` on the one **claim marker** column of `rating.udr_rated` (the bill run stamps its run ref to claim the records it bills). No cross-schema foreign keys in either direction.
-- Retention & immutability contract: once a run is `APPROVED` the rating subsystem may not purge or overwrite its charge records, which remain immutable for the invoice's statutory life (architecture Inv. #14 — not just until `COMPLETED`); once a record is posted it is permanently immutable — posting reads it, and any tampering with a posted invoice's lines is caught by the bill's `charge_checksum`.
-
-### Rerun and correction
-- Full or partial rerun while unapproved, from a selectable stage, with a mandatory reason.
-- Audit event written before re-trigger, capturing actor, accounts, prior bill totals, and reason.
-- Per-account stage invalidation: rerunning stage N discards outputs of later stages for those accounts only.
-- Finalization guard is absolute: nothing carrying `ref_inv_document_id` is ever invalidated; posted charge records are frozen in the rating store, and tampering is caught by the bill's `charge_checksum`.
-
-### Review and approval
-- Draft bills reviewed on screen: per-account totals, charge lines with coverage windows, tax items, exceptions, and failures.
-- Uncharged tab listing every account/subscription deliberately not charged (started, ceased, or suspended mid-period), with the uncharged window and an indicative value, exportable for manual billing.
-- Pre-approval checks panel: accounting period open, GL mappings resolvable, no zero/negative totals (backstop; zero-charge accounts excluded at Scoping), approver ≠ trigger actor, all accounts terminal.
-- Approval stamps `approved_by`, `approved_at`, and the immutable run total.
-
-### Posting to the ledger
-- Per-account transaction: read the claimed charge records + compute `charge_checksum`, create the `INV`, auto-post, consume the invoice number, back-link, flip status.
-- Resumable and idempotent — an account already carrying an invoice number is skipped on retry.
-- Invoice numbers (configurable prefix + format) consumed only on successful posting; a trial or a skipped account never reserves one. After approval, posting runs without gaps, though a rollback can leave a rare gap (acceptable, not a strict guarantee).
-- `gl_event_at` per cycle: resolves to the **billing-run day** (`scheduled_run_date`, e.g. the 1st of the month after the service period) — when billing ran and the bill is deemed complete, not the later posting timestamp — and is written to the INV's `document.event_at`, so revenue posts to the GL period of the run month. `entry_date` is the invoice date and is what `payment_due_date` counts from.
-- Accounting-period locks respected; a **period-close guard** refuses to close a period while a run is still posting into it; `PERIOD_CLOSED` is a first-class per-account posting error with a retry action.
-
-### Health and recovery
-- Heartbeat: every stage signal bumps `last_progress_at`.
-- STALLED is derived on read, not stored — no background job writes it — appearing when a `PROCESSING` run exceeds its cycle's stall threshold.
-- Operator actions on a stalled run: **Check status** (reconcile against the workflow engine) and **Cancel run** (kill the execution, set `CANCELLED`, reset accounts to `PENDING`, clear the execution reference). Cancellation consumes no invoice numbers and re-materializes the period cleanly.
-
-### Access control and audit
-- Three permissions: `billrun_view` (list, drill down, export), `billrun_operate` (trigger, rerun, cancel), `billrun_approve` (approve and post). Operate and approve imply view.
-- Bill-run read access (`billrun_view`) is standard Revenue Ops work, carried by the platform's existing **MANAGER** and **USER** roles — no dedicated viewer role. _(Amended by the seed-refactor change, 2026-09-16; the earlier "Billing Viewer role for Finance and Internal Audit" framing is withdrawn.)_
-- Four-eyes enforced in the service layer: approver ≠ the user who triggered the final attempt.
-- Machine-to-machine ingest endpoints carry no session semantics: bearer service token, constant-time compare, never logged, Zod-validated, HTTPS only, rejected unless the run is `PROCESSING`.
-- Audit events for materialization, trigger, rerun, approval, and cancellation; per-account **stage completion** is recorded as the append-only `bill_run_account_stage` row (the drill-down/audit surface), **not** a per-signal `core.AUDIT_LOG` event (code-standards §1.10).
+- **Workflow engine.** Two Kestra executions per run — `bill_run_processing` and
+  `bill_run_distribution` — deployed to the `billrun` namespace on a shared
+  `workflow-engine` Container App (collapsed topology; the rating flows share it).
+  The app triggers/reconciles/cancels via an out-of-band `billrun-engine-auth`
+  credential; the flows call back over M2M (bearer `BILLRUN_APP_TOKEN`).
+- **Two-writer charge boundary (Postgres grants).** `billrun_runtime` writes the
+  bill data (`customer_bill` trial columns, `customer_bill_line`,
+  `customer_bill_tax_item`) and holds `SELECT`+`UPDATE` on only the six
+  `rating.udr_rated` claim columns; it holds **no** table-level `DELETE` on
+  `customer_bill_line` (the scoped `SECURITY DEFINER billrun_delete_trial_bill` is
+  the only deletion path) and no write on run-state tables, `billing.document`,
+  pgledger or `bill_run_invoices`. The **app** holds `SELECT`-only on
+  `customer_bill_line`; its only `rating` write is the six claim columns via
+  `db/repositories/billing/udr-status.repository.ts`. Role-aware triggers
+  (`billrun_status_guard`, `rating_status_guard`) enforce the allowed transitions
+  at the database. No cross-schema foreign keys in either direction.
+- **Charge model.** `customer_bill_line` is the bill's durable stored charge record
+  (the invoice's face), partitioned like `customer_bill`, `ON DELETE CASCADE` to its
+  header. `charge_checksum` is re-anchored on `customer_bill_line`, hashing business
+  content (all three money columns) so it covers every charge source and reproduces
+  from an archived invoice; it is computed once at posting (no post-posting
+  re-verification — a tracked residual).
+- **Idempotency & signals.** Enforced solely by the DB unique constraint
+  `(run, ban, stage, attempt, period_partition)` on `bill_run_account_stage` — a
+  replayed signal is a 200 no-op; a signal after `APPROVED` is 409. The M2M
+  completion call carries no charge payload; the app records what it is told and
+  computes nothing (record-only; `TERMINAL_STAGE='verification'` flips the account to
+  `PROCESSED`).
+- **Retention & immutability.** Per-run record tables are partitioned on
+  `period_partition` (monthly, 7-year detach-and-archive via `pg_partman`/`pg_cron`).
+  Once `APPROVED`, the run's charge records are immutable for the invoice's statutory
+  life (Inv. #14); a finalized `customer_bill` (carrying `ref_inv_document_id`) is
+  DB-guarded against mutation/delete; `bill_run_invoices` rows are born immutable.
 
 ## In scope
 
-- New "Billing" sidebar section with the Bill Runs list (Current & Upcoming, Historical) and the run detail page (Workflow, Customers & Bills, Uncharged, Errors, Audit tabs), plus the posting progress view.
-- Tables in the existing `billing` schema: `bill_run`, `bill_run_account`, `bill_run_account_stage`, `customer_bill`, `customer_bill_tax_item`, `bill_template_version`, with per-entity ID sequences. No billing-side charge copy — the per-run record tables (`bill_run_account`, `bill_run_account_stage`, `customer_bill`, `customer_bill_tax_item`) are partitioned on a generic `period_partition` key (default monthly), 7-year detach-and-archive via `pg_partman`/`pg_cron`.
-- The `rating` schema, its dedicated Postgres role and grants, and the claim-marker `UPDATE` the app holds on `rating.udr_rated`.
-- Additive changes to Accounts-owned objects: `document_inv_seq`, `'INV'` added to the document type check, an INV reason code with unlimited `autoPostLimit`, GL mapping rows, and the period-close guard.
-- Route handlers under `app/api/billrun/` for stage completion and status, service-token authenticated, calling the same service layer as the server actions.
-- Server actions for trigger, rerun, cancel, approve, and post, each wrapping validate → mutate → audit in one transaction. Materialization is not a server action — it is the write performed on the Bill Runs list page's server render (the single materialization entry point).
-- Monthly on-cycle runs, recurring subscription charges only.
-- Workflow-engine deployment (namespace, definition, private-network placement, secret wiring) and the pipeline orchestration, including injectable HARD/SOFT/INFRA failures and on-demand stalling for testing.
-- RBAC permission rows and the `billrun_view:READ` grant onto the MANAGER/USER (Revenue Ops) roles.
-- Unit and integration tests (vitest) plus one end-to-end journey.
+- The "Billing" section: Bill Runs list (Current & Upcoming / Historical) and the run
+  detail page (Workflow, Customers & Bills, Uncharged, Errors, Distribution, Audit),
+  the approve/post views, and the PRO-FORMA / stored-invoice preview modals.
+- `billing` schema tables: `bill_run`, `bill_run_account`, `bill_run_account_stage`,
+  `customer_bill`, `customer_bill_line`, `customer_bill_tax_item`,
+  `bill_run_invoices`, `bill_run_distribution`, `bill_template_version` — partitioned
+  where per-run.
+- The real `bill_run_processing` flow (validation, correlation-based collection,
+  two-source aggregation, taxation, verification) and the real `bill_run_distribution`
+  flow (blob download → SFTP upload → outcome POST, multi-target).
+- Recurring charge derivation from `inventory.product_inventory` with as-of pricing +
+  snapshot; the `billrun_runtime`/`app_runtime` grants and the two status-guard
+  triggers.
+- Additive Accounts-owned objects: `document_inv_seq`, `'INV'` document type, the
+  unlimited-`autoPostLimit` INV reason code, GL mapping rows, and the period-close
+  guard.
+- Route handlers under `app/api/billrun/` (stage-complete, status,
+  distribution/outcome — service-token authed) and server actions (trigger, rerun,
+  cancel, reject, approve, post). Materialization is the write on the list page's
+  server render, not an action.
+- RBAC: `billrun_view` / `billrun_operate` / `billrun_approve` (operate & approve
+  imply view), the Billing Viewer role, and four-eyes in the service layer.
+- The `RAN_USAGE` sample seed (`ci` + `volume` profiles, six scenarios) and the
+  vitest suites plus the end-to-end journey.
 
-## Out of scope
+## Out of scope / interim decisions
 
-- **The rating engine** — v1 runs the pipeline against a **stub** `rating.udr_rated`; the collection/claim auto-completes and the deployment runs in **stub-data mode** (an environment flag). The real engine, its charge computation, and live UDRs arrive with the rating/charging module.
-- **Rendered invoice artifacts** — no PDF generation, no `bill_format` catalog UI, no draft proofs. The invoice *postings* are real; there is no customer-facing invoice *document* yet.
-- **Distribution** — no dispatch, no email, no downstream feeds. `DISTRIBUTING` exists in the state machine but is never entered (no targets configured).
-- **Proration** — any account holding a partial-period subscription is excluded from the automated run entirely and billed manually (billing only its full-period subs would post an under-charged invoice); the excluded accounts and subscriptions are listed as exceptions. No account is partially billed.
-- **One-time (`once`) / usage / ad-hoc OCC charge sourcing** — v1 bills recurring subscription charges only; other charge sourcing is a deferred upstream (charging-module) dependency.
-- **Off-cycle and on-demand runs** — `run_type` is modelled but only `onCycle` is written. Consequently there is no closure final bill and no automated recovery of a skipped account's missed revenue; both are handled as manual DBN/ADJ documents in Accounts → Transactions, and that workaround must be in the RevOps runbook.
-- **Multi-frequency cycles** — materialization and window derivation handle monthly only.
-- **Per-invoice approval workflow** — approval is run-level; individual bills are not approved, held, or released.
-- **Scheduled (cron) run creation** — runs are materialized on page view and triggered by hand.
-- **Credit-note automation** — post-invoice corrections remain manual CRN through Accounts → Transactions.
-- **External TMF APIs** — the data shapes follow TMF678/TMF666, but no REST surface is exposed.
-- **Workflow-engine Enterprise-tier hardening** — scoped service-account tokens are a phase-2 change from the OSS Basic-Auth outbound.
+- **Real taxation** — ratified `0.00` interim; `total = subtotal`. Single-rate
+  `BILLRUN_TAX_RATE` config exists; no jurisdiction/category catalog.
+- **OCC (one-time / multi-cycle) charges and discounts** — `source`/`line_type`
+  reserved; no occurrence ledger, no discount compute. Manual DBN/ADJ/CRN via
+  Accounts → Transactions.
+- **Proration** — a partial-period account (mid-period start/cease/suspend) is
+  `EXCLUDED` before the flow runs and bills from the next full cycle; excluded
+  accounts/subscriptions appear on Uncharged.
+- **Off-cycle / on-demand runs, multi-frequency cycles, scheduled (cron) creation,
+  per-invoice approval, TMF REST surface** — modelled or deferred, not built.
+- **Distribution targets beyond SFTP + loopback**, a stored `bill_run_output`
+  report, and **Kestra Enterprise / scoped per-flow tokens** — deferred.
+- **Production cutover** — the deploy path is being made deployable + wired in
+  Phase 4; the live cloud run is a gated ops step, not part of the module build.
 
-## Success criteria
+## Success criteria (module-level)
 
-1. Opening Bill Runs on or after the 1st creates the prior month's run for every active monthly cycle exactly once, verified under concurrent page loads, with no scheduler or background process in the application.
-2. A user with `billrun_operate` can complete the full core user flow — trigger, watch stages advance, review draft bills, rerun a subset, hand over — and a **different** user with `billrun_approve` can approve and post, with the four-eyes check rejecting an attempt by the trigger actor.
-3. Every stage signal is replay-safe: re-sending the same `(run, account, stage, attempt)` returns 200 and changes nothing, and a signal after approval is rejected with 409.
-4. Rerunning a subset invalidates only later stages for those accounts, never touches an account already carrying an invoice number, and writes its audit event — with prior totals and reason — before re-trigger.
-5. The database refuses to delete a `customer_bill` carrying `ref_inv_document_id`, unconditionally; posted charge records are frozen in the rating store, and a change to a posted invoice's lines is detected by the bill's `charge_checksum`.
-6. Approving posts one `INV` per billed account with sequential numbering (configurable prefix/format; a rollback gap is tolerable), correct `ban.A/R ← revenue` and tax legs in pgledger, `event_at` = `gl_event_at` (the cycle's billing-run day) and `entry_date` on the invoice date; a mid-batch `PERIOD_CLOSED` failure leaves every other invoice posted and the run resumable, and retrying skips accounts already invoiced.
-7. Accounts that failed are `PROCESSING_FAILED` during the run and recorded as `SKIPPED` at approval — no charges, no bill, no invoice number consumed; the run still reaches `INVOICED` then `COMPLETED` with them listed.
-8. Any account excluded because it holds a partial-period subscription — and each such subscription — appears on the Uncharged tab with its uncharged window, and the tab is exportable.
-9. A run left without a heartbeat past its stall threshold displays as STALLED on next view; **Check status** reconciles it against the workflow engine and **Cancel run** releases it to `CANCELLED` with all accounts reset and no numbers consumed.
-10. Next-cycle operability keys off `INVOICED`, not `COMPLETED` — so once a run is financially complete the next cycle can be triggered, and a downstream state (`DISTRIBUTING`, once future targets exist) can never block it.
-11. A user holding only `billrun_view` can reach every read surface and no mutating action, verified by direct server-action and route-handler calls, not only by navigation.
-12. The ingest route handlers reject a missing or invalid bearer token with 401, carry no session semantics, and never log the token.
-13. In **stub-data mode** (v1) every run is visibly marked in the UI so its fixture figures are never mistaken for production charges, and the stub/UAT environment is isolated from any ledger holding real Accounts data.
-14. `npm run typecheck`, `npm run lint`, and the full vitest suite pass; the module follows the existing `context/` documentation conventions with a progress tracker kept current.
+1. Opening Bill Runs on/after the 1st materialises the prior month's run for every
+   active monthly cycle exactly once, concurrency-safe, with no scheduler.
+2. A triggered run claims `udr_rated` rows (NULL `billrun_ban_id`), resolves each to
+   an account via `product_inventory`, writes real `customer_bill` +
+   `customer_bill_line`, and reaches `PROCESSED`; `SUM(net_amount) = subtotal`; an
+   account with 3+500 subscriptions of two offerings produces exactly 2 lines.
+3. A recurring-only account bills a non-empty, reproducible-checksum bill; an account
+   with no charge lines is Uncharged; every `USAGE` line's `gross_amount` equals the
+   SUM of the `udr_rated` rows that rolled into it.
+4. Reject/rerun release claimed rows to `RATED` (four columns cleared) before
+   re-trigger, so no claim survives an abandoned attempt; a rating reload colliding
+   with a claimed row is refused (`LOAD_BLOCKED_INFLIGHT` / `LOAD_BLOCKED_BILLED`).
+5. A different `billrun_approve` user posts one `INV` per billed account (correct
+   `A/R ← revenue` + tax legs, `event_at = gl_event_at`), renders + stores the final
+   PDF; a mid-batch `PERIOD_CLOSED` leaves other invoices posted and the run
+   resumable; the run reaches `INVOICED` and the next cycle unblocks.
+6. Distribution SFTPs each artifact to its own remote path, completes only when every
+   mandatory artifact reaches every mandatory target, and reruns only failed
+   artifacts on `DISTRIBUTION_FAILED`.
+7. A stalled run shows `STALLED` on read; Check status reconciles it, Cancel releases
+   it (accounts reset, no numbers consumed). `billrun_view` reaches every read
+   surface and no mutation. M2M routes reject a missing/invalid bearer with 401 and
+   never log the token.
+8. The two-writer grant boundary holds per column/table; `typecheck`, `lint`, and the
+   vitest suite pass; the docs conventions and progress tracker are kept current.
+9. **[Phase 4]** A freshly triggered run drives itself `SCHEDULED → COMPLETED` with
+   no out-of-band calls (real processor signal-back incl. terminal `FAILED`
+   settlement), asserted by the live-Kestra E2E on the `ci` seed.
