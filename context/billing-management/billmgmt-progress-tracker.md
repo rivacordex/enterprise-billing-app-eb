@@ -1845,10 +1845,16 @@ enumerations were trimmed to key facts + decisions. Full history:
 ## Delivered Units (bm01–bm13)
 
 - **bm01 — Billing section & RBAC scaffold.** Permissions `billrun_view/
-  operate/approve` (`PERMISSION_NAMES`, migration `0024`); seeded
-  `BILLING_VIEWER` role (`db/seeds/billing.ts`); `/billing/bill-runs` route +
-  guarded empty state; `Billing` nav section between Accounts and
-  Administration. No domain tables.
+  operate/approve` (`PERMISSION_NAMES`, migration `0024`); `billrun_view:READ`
+  grant on the MANAGER/USER (Revenue Ops) roles (`db/seeds/billing.ts`);
+  `/billing/bill-runs` route + guarded empty state; `Billing` nav section
+  between Accounts and Administration. No domain tables. _(Seed-refactor change,
+  2026-09-16: the originally-seeded `BILLING_VIEWER` role was retired and its
+  `billrun_view:READ` grant folded into MANAGER + USER — bill-run viewing is
+  ordinary Revenue Ops work, not a Finance/Internal-Audit-only concern. The demo
+  product/ordering catalog was also split out of `db:setup` into the opt-in,
+  prod-guarded `db:seed-demo`, with `TOREMOVE-Template-*` fixtures renamed to
+  `Demo — *`.)_
 
 - **bm02 — Bill Runs list + lazy materialization.** New `billing.bill_run`
   header table (migration `0025`, `BRN` id, `(cycle, period_start)` UNIQUE +

@@ -217,7 +217,7 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 - A separate pricing-visibility permission (`product_pricing`) — anyone who can see products sees prices.
 - Semantics of the price `policy` column — carried as nullable text until a consumer defines it.
 - Merging two version families together, or moving a version from one family to another.
-- Replacement of the `TOREMOVE-Template-*` seed rows with the real catalog — a go-live data-migration task, not module code.
+- Replacement of the `Demo — *` seed rows (opt-in `db:seed-demo`) with the real catalog — a go-live data-migration task, not module code. _(Renamed from `TOREMOVE-Template-*` and moved out of `db:setup` by the seed-refactor change, 2026-09-16.)_
 
 **Ordering & Inventory:**
 

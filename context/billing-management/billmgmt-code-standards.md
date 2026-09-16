@@ -220,7 +220,7 @@ db/repositories/billing/
 db/bootstrap/
   billrun-db-roles.sql         # billrun_runtime grants + rating.billrun_status_guard
   rating-db-roles.sql          # + rating.rating_status_guard (phase 3)
-db/migrations/…                # billing tables + partition_management rows + billrun_* PERMISSIONS + Billing Viewer role + INV additions
+db/migrations/…                # billing tables + partition_management rows + billrun_* PERMISSIONS + INV additions
 workflow-management/flows/        # wfm-architecture.md §4 — function-first; spin-off subdirectory
   bill-run-processor/
     bill_run_processing.template.yml   # the contract doc (non-deployable)

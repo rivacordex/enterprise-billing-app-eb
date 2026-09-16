@@ -302,9 +302,9 @@ Run before declaring the unit done (general workflow §8; prodmgmt-workflow §8)
 - [ ] `npm run lint` and `npm run format:check` green (boundary rule: no `next/*` server import inside a `"use client"` component beyond `next/navigation`).
 - [ ] `npm run test` green — both vitest configs; **zero pre-existing assertions change** (new route + new components only).
 
-**Behavior — the point of the unit**
+**Behavior — the point of the unit** (the demo verification rows below require `npm run db:seed-demo` first — they are no longer part of `db:setup`)
 
-- [ ] Signed in with `products : READ`, clicking "Product Offering" in the nav (pm04) lands the table showing the two seeded offerings (`TOREMOVE-Template-5G-…`, `TOREMOVE-Template-Enterprise-IoT-…`), RETIRED hidden by default.
+- [ ] Signed in with `products : READ`, clicking "Product Offering" in the nav (pm04) lands the table showing the two seeded offerings (`Demo — 5G …`, `Demo — Enterprise IoT …`), RETIRED hidden by default.
 - [ ] **Guard**: a user **without** `products : READ` is redirected to `/no-access`; the table never renders (deny by default, Inv. #10).
 - [ ] **Search**: typing a name substring + **Apply** (or **Enter**) filters server-side and resets to page 1; **Clear** restores the full list; a `%`/`_` in the term matches literally (pm03 escaping) and doesn't error.
 - [ ] **Filter**: choosing `Retired` shows only retired rows (muted); `All` returns to the non-retired default.

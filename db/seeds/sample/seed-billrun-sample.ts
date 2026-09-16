@@ -33,7 +33,11 @@ import {
   buildSampleUdrRatedRow,
   type SampleUdrRatedRow,
 } from "@/db/seeds/sample/udr-rated-sample";
-import { getOrCreateAppUser } from "@/db/seeds/sample/get-or-create-appuser";
+import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
+import {
+  assertNonProductionUrl,
+  type NonProdGuardContext,
+} from "@/db/seeds/lib/non-prod-guard";
 
 // bm15-spec. Standalone seed script (`npm run db:seed-sample`) — **never**
 // added to `db:setup` (D32: sample data is opt-in, dev/test/demo only). Own
@@ -209,39 +213,23 @@ function resolveSelectedProfile(): SeedProfile {
   return match;
 }
 
-const NON_PROD_HOSTS = new Set(["localhost", "127.0.0.1", "db", "postgres"]);
+// Shared prod-write guard context (db/seeds/lib/non-prod-guard.ts). Applied to
+// BOTH `DATABASE_URL` and the privileged `BOOTSTRAP_DATABASE_URL` teardown
+// connection: the latter drives a destructive `DELETE FROM
+// billing.pgledger_accounts`, and is read only via raw `process.env` (never in
+// `lib/config`), so it must clear the same gate rather than slip past a guard
+// that only ever inspected `DATABASE_URL`.
+const SAMPLE_GUARD: NonProdGuardContext = {
+  seedScript: "db:seed-sample",
+  overrideEnv: "ALLOW_SAMPLE_SEED",
+  action: `writes and deletes unmistakably-fake "_SAMPLE_" data`,
+};
 
 // Deliberate waiver of the non-prod host check, for a non-local demo box. It
 // applies to EVERY connection this seed touches — the app `DATABASE_URL` and the
 // privileged `BOOTSTRAP_DATABASE_URL` teardown connection alike.
 function isSampleSeedOverride(): boolean {
   return process.env.ALLOW_SAMPLE_SEED === "true";
-}
-
-// Refuses a connection string that looks like a production target. Used for BOTH
-// `DATABASE_URL` and the privileged `BOOTSTRAP_DATABASE_URL`: the latter drives a
-// destructive `DELETE FROM billing.pgledger_accounts`, and is read only via raw
-// `process.env` (never in `lib/config`), so it must clear the same gate rather
-// than slip past a guard that only ever inspected `DATABASE_URL`.
-function assertNonProductionUrl(url: string, label: string): void {
-  let host: string;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    throw new Error(
-      `db:seed-sample refused: ${label} could not be parsed as a URL.`,
-    );
-  }
-
-  if (!NON_PROD_HOSTS.has(host) || config.NODE_ENV === "production") {
-    throw new Error(
-      `db:seed-sample refused: ${label} looks like a production target ` +
-        `(host="${host}", NODE_ENV="${config.NODE_ENV}"). This seed writes and ` +
-        `deletes unmistakably-fake "_SAMPLE_" data and must never run against ` +
-        `production. Set ALLOW_SAMPLE_SEED=true to override for a deliberate ` +
-        `non-local demo box.`,
-    );
-  }
 }
 
 // bm15-spec §Design — the two hard rules that make this data impossible to
@@ -254,7 +242,7 @@ function assertNonProductionTarget(): void {
     );
     return;
   }
-  assertNonProductionUrl(config.DATABASE_URL, "DATABASE_URL");
+  assertNonProductionUrl(config.DATABASE_URL, "DATABASE_URL", SAMPLE_GUARD);
 }
 
 // bm15-spec §Design "Idempotent + re-runnable" — purges any prior _SAMPLE_*
@@ -512,7 +500,7 @@ async function openPrivilegedConnection(): Promise<postgres.Sql> {
     );
   }
   if (!isSampleSeedOverride()) {
-    assertNonProductionUrl(url, "BOOTSTRAP_DATABASE_URL");
+    assertNonProductionUrl(url, "BOOTSTRAP_DATABASE_URL", SAMPLE_GUARD);
   }
 
   const admin = postgres(url, { max: 1 });

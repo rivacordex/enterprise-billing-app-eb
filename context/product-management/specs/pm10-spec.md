@@ -84,7 +84,7 @@ Read the actual generated file and confirm: (a) it's a plain `ALTER TABLE ADD CO
 
 ### 3.4 Seeds — no change
 
-`db/seeds/product.ts`'s two existing `TOREMOVE-Template-*` offerings need no edit. `family_offering_id` is nullable and defaults to `NULL`, which is exactly correct for two pre-existing, standalone offerings that have no other version — they're each trivially the root of a one-row family. Confirm this after migrating (§5) rather than adding an explicit `family_offering_id: null` to the seed data (redundant with the column default).
+`db/seeds/product.ts`'s two existing `Demo — *` offerings need no edit. `family_offering_id` is nullable and defaults to `NULL`, which is exactly correct for two pre-existing, standalone offerings that have no other version — they're each trivially the root of a one-row family. Confirm this after migrating (§5) rather than adding an explicit `family_offering_id: null` to the seed data (redundant with the column default).
 
 ## 4. Dependencies
 
@@ -102,9 +102,9 @@ Read the actual generated file and confirm: (a) it's a plain `ALTER TABLE ADD CO
 - [ ] Self-reference guard works: `UPDATE product.product_offering SET family_offering_id = product_offering_id WHERE product_offering_id = 'PRDOFR000001'` fails the CHECK constraint.
 - [ ] FK integrity works: inserting a row with `family_offering_id` set to a non-existent offering id fails the FK constraint; setting it to a real existing offering id succeeds.
 
-**The unit's stated visible result**
+**The unit's stated visible result** (the demo seeded-offering check below requires `npm run db:seed-demo` first — it is no longer part of `db:setup`)
 - [ ] Hand-insert one root row (`family_offering_id` omitted/`NULL`) and one row with `family_offering_id` pointing at the root's id. Run `SELECT product_offering_id FROM product.product_offering WHERE product_offering_id = :rootId OR family_offering_id = :rootId` — confirm both rows return.
-- [ ] Both Phase 1 seeded offerings (`TOREMOVE-Template-*`) still have `family_offering_id IS NULL` after migrating — each remains a valid, if trivial, one-row family.
+- [ ] Both Phase 1 seeded offerings (`Demo — *`) still have `family_offering_id IS NULL` after migrating — each remains a valid, if trivial, one-row family.
 
 **Build gates**
 - [ ] `npm run typecheck` green — `ProductOfferingInsert`/`ProductOffering` include `familyOfferingId: string | null` with no manual type edit.
