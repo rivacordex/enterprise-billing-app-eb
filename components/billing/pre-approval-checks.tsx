@@ -3,7 +3,11 @@
 // behind a summary. Semantic tokens only, an icon paired with every state
 // (ui-context "Rendering rule"). bm32 adds the INFORMATIONAL orphan-count line
 // (§4): rendered with the Info family (never the danger accent), it always
-// passes and carries no blocking remediation.
+// passes and carries no blocking remediation. 2026-09-17 adds a second
+// informational line on the same contract — the zero-total-bill count. Under the
+// sign-based rule only a NEGATIVE total blocks (`positive_totals`); a zero bill
+// is simply not posted, so this informational line is the only place an approver
+// sees it.
 
 import { CheckCircle2, Info, XCircle } from "lucide-react";
 
@@ -13,11 +17,12 @@ import type { PreApprovalCheck, PreApprovalCheckKey } from "@/types/billing";
 const CHECK_LABELS: Record<PreApprovalCheckKey, string> = {
   period_open: "Accounting period open",
   gl_mappings: "GL mappings resolvable",
-  positive_totals: "No zero or negative totals",
+  positive_totals: "No negative totals",
   four_eyes: "Approver differs from the trigger actor",
   accounts_terminal: "All accounts terminal",
   no_rejected_pending: "No accounts pending reject-reprocess",
   orphan_count: "Orphaned usage records",
+  zero_total_bills: "Zero-total bills",
 };
 
 export interface PreApprovalChecksProps {

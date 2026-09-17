@@ -64,12 +64,25 @@ tasks:
       # bm36 — the account's stage GROUP wrapped in a Sequential so a HARD
       # stage failure is CONTAINED to THIS account (its local `errors`
       # handler POSTs the FAILED signal) and sibling accounts in the ForEach
-      # keep processing (spec §Design). `taskrun.value` inside these wrapped
-      # tasks is still the account id — the enclosing ForEach value is
-      # inherited by descendants — so every stage's SQL and every callback
-      # reads it exactly as it did when the stages were direct ForEach
-      # children. allowFailure keeps a contained account failure from failing
-      # the whole execution (the terminal /status POST settles the run).
+      # keep processing (spec §Design). allowFailure keeps a contained account
+      # failure from failing the whole execution (the terminal /status POST
+      # settles the run).
+      #
+      # READING THE ACCOUNT ID FROM INSIDE THE WRAP. Every stage's SQL and
+      # every callback below reads the loop's account id as
+      # `{{ parents[0].taskrun.value }}` — NOT the bare `{{ taskrun.value }}`
+      # the stages used when they were DIRECT ForEach children. A ForEach value
+      # is NOT inherited by descendants: once the stages moved under this
+      # Sequential, `taskrun.value` became unresolvable there and every account
+      # failed at the first stage with
+      # `IllegalVariableEvaluationException: Unable to find 'value'`.
+      # `parents` counts from the innermost enclosing branch task, so
+      # `parents[0]` is THIS `account_pipeline` — whose own taskrun IS the
+      # ForEach child and therefore carries the account id. It resolves
+      # identically in the stage tasks and in the `errors` handler below
+      # (verified against the pinned engine, 1.3.35); `parents[1]` does not
+      # exist at this depth. Same convention, same reason, as the distributor's
+      # `parents[N].taskrun.value` (bill_run_distribution.yml).
       - id: account_pipeline
         type: io.kestra.plugin.core.flow.Sequential
         allowFailure: true
@@ -122,7 +135,7 @@ tasks:
                 # NOT substitute its variables inside a dollar-quoted ($$) block, so
                 # the DO block reads them with current_setting() instead.
                 psql -v ON_ERROR_STOP=1 \
-                  -v ban="{{ taskrun.value }}" \
+                  -v ban="{{ parents[0].taskrun.value }}" \
                   -v period_start="{{ inputs.period_start }}" \
                   -v period_end="{{ inputs.period_end }}" <<'SQL'
                 SELECT set_config('billrun.ban',          :'ban',          false),
@@ -195,7 +208,7 @@ tasks:
             headers:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
-              {{ { "ban_id": taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
+              {{ { "ban_id": parents[0].taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
           # bm27 — REAL Collection: the claim. Whole-account, set-based, ONE
           # statement, run as billrun_runtime. Claims RATED -> BILL_DRAFT ONLY (post
           # bm24/bm25 — the old ('RATED','REJECTED') is dropped; billrun_status_guard
@@ -225,7 +238,7 @@ tasks:
                 export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
                 export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
                 psql -v ON_ERROR_STOP=1 \
-                  -v ban="{{ taskrun.value }}" \
+                  -v ban="{{ parents[0].taskrun.value }}" \
                   -v run="{{ inputs.bill_run_id }}" \
                   -v attempt="{{ inputs.attempt }}" <<'SQL'
                 WITH correlated AS (
@@ -262,7 +275,7 @@ tasks:
             headers:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
-              {{ { "ban_id": taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
+              {{ { "ban_id": parents[0].taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
           # bm28/bm29 — REAL Aggregation: assemble billing.customer_bill_line from
           # BOTH sources in ONE whole-account-replace transaction (Inv #16, D22).
           #  * USAGE (bm28): group claimed BILL_DRAFT rating.udr_rated into one line
@@ -340,8 +353,8 @@ tasks:
                 # FAILED for (ban, aggregation) — the deterministic terminal
                 # FAILED path for the bm37 gate. No-op when force_fail is false;
                 # every other account bills normally.
-                if [ "{{ inputs.force_fail }}" = "true" ] && [ "{{ taskrun.value }}" = "{{ inputs.ban_ids[0] }}" ]; then
-                  echo "BILLRUN_PROCESSING_FORCE_FAIL: synthetic HARD failure at aggregation for first scoped account {{ taskrun.value }}" >&2
+                if [ "{{ inputs.force_fail }}" = "true" ] && [ "{{ parents[0].taskrun.value }}" = "{{ inputs.ban_ids[0] }}" ]; then
+                  echo "BILLRUN_PROCESSING_FORCE_FAIL: synthetic HARD failure at aggregation for first scoped account {{ parents[0].taskrun.value }}" >&2
                   exit 1
                 fi
                 export PGHOST="${BILLRUN_DB_HOST:-db}"
@@ -350,7 +363,7 @@ tasks:
                 export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
                 export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
                 psql -v ON_ERROR_STOP=1 \
-                  -v ban="{{ taskrun.value }}" \
+                  -v ban="{{ parents[0].taskrun.value }}" \
                   -v run="{{ inputs.bill_run_id }}" \
                   -v attempt="{{ inputs.attempt }}" \
                   -v period_start="{{ inputs.period_start }}" \
@@ -677,10 +690,10 @@ tasks:
             headers:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
-              {{ { "ban_id": taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
+              {{ { "ban_id": parents[0].taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
           - id: taxation
             type: io.kestra.plugin.core.log.Log
-            message: "[{{ taskrun.value }}] taxation — STUB: one tax line, recompute tax_total/total in SQL"
+            message: "[{{ parents[0].taskrun.value }}] taxation — STUB: one tax line, recompute tax_total/total in SQL"
           # bm36 §Implementation §1 — Taxation DONE POST (see signal_validation_done).
           # Taxation is a no-op Log this phase (tax_total = 0.00, ratified interim),
           # but it is still a contract stage, so it signals DONE like the others.
@@ -697,7 +710,7 @@ tasks:
             headers:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
-              {{ { "ban_id": taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
+              {{ { "ban_id": parents[0].taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
           # bm30 — REAL Verification: the detective control (Inv #3 corollary). Runs as
           # billrun_runtime, SELECT-only — it writes NOTHING. It reads four tables, ALL
           # already SELECT-granted (no new grant): billing.customer_bill_line + billing.
@@ -742,7 +755,7 @@ tasks:
                 export PGUSER="${BILLRUN_DB_USER:-billrun_runtime}"
                 export PGPASSWORD="${SECRET_BILLRUN_RUNTIME_PASSWORD:?set in workflow-management/dev/.env.example}"
                 psql -v ON_ERROR_STOP=1 \
-                  -v ban="{{ taskrun.value }}" \
+                  -v ban="{{ parents[0].taskrun.value }}" \
                   -v run="{{ inputs.bill_run_id }}" \
                   -v attempt="{{ inputs.attempt }}" <<'SQL'
                 SELECT set_config('billrun.ban',     :'ban',     false),
@@ -845,7 +858,7 @@ tasks:
             headers:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
-              {{ { "ban_id": taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
+              {{ { "ban_id": parents[0].taskrun.value, "attempt": inputs.attempt, "status": "DONE" } }}
         # bm36 §Implementation §2 — per-account HARD FAILED handler. Local to the
         # account_pipeline Sequential, so it fires when ANY stage of THIS account
         # RAISEs (ON_ERROR_STOP=1 + set -e), and allowFailure on the Sequential
@@ -888,12 +901,12 @@ tasks:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
               {{ {
-                "ban_id": taskrun.value,
+                "ban_id": parents[0].taskrun.value,
                 "attempt": inputs.attempt,
                 "status": "FAILED",
                 "error_class": "HARD",
                 "error_code": "PROCESSING_STAGE_FAILED",
-                "error_detail": "HARD processing failure for account " ~ taskrun.value ~ " (attempt " ~ inputs.attempt ~ "); see the execution log for the failing stage."
+                "error_detail": "HARD processing failure for account " ~ parents[0].taskrun.value ~ " (attempt " ~ inputs.attempt ~ "); see the execution log for the failing stage."
               } }}
   - id: done
     type: io.kestra.plugin.core.debug.Return

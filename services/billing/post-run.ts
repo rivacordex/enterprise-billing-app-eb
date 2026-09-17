@@ -268,6 +268,56 @@ export async function postAccount(
         return { status: "skipped" } as const;
       }
 
+      // 2026-09-17 (owner decision) — suppress the zero-value invoice.
+      //
+      // A bill worth nothing has no economic substance: no receivable, no
+      // revenue, no tax. Posting one is not just pointless, it FAILS: posting
+      // always inserts a revenue `charge` line at `amount = subtotal`, and
+      // `document_line_amount_check` (`amount > 0`) rejects it — which parked
+      // the account at `POSTING_FAILED` with an opaque "unexpected error"
+      // (observed on the `ci` seed's no-charges account). Skipping also keeps
+      // Inv #7 honest: an invoice number is consumed only by a successful post,
+      // so a suppressed bill burns none.
+      //
+      // EXACTLY ZERO, AND BOTH COLUMNS — deliberately not `<= 0`, and not
+      // `total_amount` alone:
+      //   * A NEGATIVE total is a credit position — real economic substance
+      //     (money owed TO the customer). Suppressing it would understate the
+      //     liability and silently deny the customer a credit, so it must keep
+      //     failing loudly until a credit-note path exists (out of scope).
+      //   * `subtotal = 0` with a non-zero `total_amount` would be a tax-only
+      //     bill; skipping that would drop a real tax liability. Requiring BOTH
+      //     to be zero means we only ever suppress a bill that is genuinely
+      //     worth nothing on every axis.
+      // Compared through `money.compare` (exact, via integer sen), never
+      // `Number()` on an amount — code-standards §2.2, enforced by
+      // `tests/accounts/grep-gates.test.ts`.
+      if (
+        money.compare(bill.subtotal, "0.00") === 0 &&
+        money.compare(bill.totalAmount, "0.00") === 0
+      ) {
+        // Must leave `PROCESSED`, or `completePosting`'s "no account still
+        // PROCESSED" guard never lets the run reach `INVOICED`. `SKIPPED` is
+        // the same terminal status approval already gives a `PROCESSING_FAILED`
+        // /`EXCLUDED` account, and it is NOT a billed marker — the account
+        // stays fully billable next period. The account remains visible on the
+        // run and on the Uncharged tab (Inv #22), so a zero-charge account is
+        // accounted for, never silently dropped.
+        await billRunAccountRepository.updateStatus(
+          tx,
+          run.billRunId,
+          billingAccountId,
+          {
+            status: "SKIPPED",
+            errorCode: "ZERO_TOTAL_NOT_INVOICED",
+            errorDetail:
+              "No invoice issued: the bill totals zero. The account produced no billable charge for this period and appears on the Uncharged tab.",
+            expectedStatus: "PROCESSED",
+          },
+        );
+        return { status: "skipped" } as const;
+      }
+
       const doc = await documentRepository.insert(tx, "INV", {
         state: "draft",
         refFinancialAccountId: bill.refFinancialAccountId,

@@ -1,5 +1,5 @@
 // bm04-spec §Visual — the Workflow tab's per-account stage grid: one row per
-// scoped account, one column per `Stage`, each cell a `StageStatusBadge`
+// scoped account, one column per `TimelineStage`, each cell a `StageStatusBadge`
 // (+ `ErrorClassBadge` on a failure). The mid-flight summary ("N processed,
 // M PROCESSING_FAILED") is per-row progress, never a global spinner — and
 // always the caller's derived counts, never a stored cache
@@ -8,10 +8,18 @@
 import { AccountStatusBadge } from "@/components/billing/account-status-badge";
 import { ErrorClassBadge } from "@/components/billing/error-class-badge";
 import { StageStatusBadge } from "@/components/billing/stage-status-badge";
-import { STAGES } from "@/types/billing";
-import type { StageTimelineRow, StageTimelineSummary } from "@/types/billing";
+import { TIMELINE_STAGES } from "@/types/billing";
+import type {
+  StageTimelineRow,
+  StageTimelineSummary,
+  TimelineStage,
+} from "@/types/billing";
 
-const STAGE_LABELS: Record<(typeof STAGES)[number], string> = {
+// No `distribution` column: it is tracked per (target, artifact) in
+// `bill_run_distribution` — its run report belongs to no account — so a
+// per-account cell could only ever be fabricated. The run-level flow bar above
+// carries it and links to the Distribution tab instead.
+const STAGE_LABELS: Record<TimelineStage, string> = {
   scoping: "Scoping",
   validation: "Validation",
   collection: "Collection",
@@ -20,7 +28,6 @@ const STAGE_LABELS: Record<(typeof STAGES)[number], string> = {
   verification: "Verification",
   posting: "Posting",
   rendering: "Rendering",
-  distribution: "Distribution",
 };
 
 export interface StageTimelineProps {
@@ -37,9 +44,15 @@ export function StageTimeline({
       <p className="text-body-sm text-muted-foreground">
         {summary.total === 0
           ? "No accounts were scoped into this run."
-          : `${summary.processed} processed, ${summary.processingFailed} processing failed` +
-            (summary.excluded > 0 ? `, ${summary.excluded} excluded` : "") +
-            ` of ${summary.total}.`}
+          : // Past the processing phase the counts all read zero (every account
+            // has left `PROCESSED`), so the line is hidden rather than shown
+            // contradicting the flow bar above it. The grid still tells the
+            // per-account story.
+            summary.isMidFlight
+            ? `${summary.processed} processed, ${summary.processingFailed} processing failed` +
+              (summary.excluded > 0 ? `, ${summary.excluded} excluded` : "") +
+              ` of ${summary.total}.`
+            : `${summary.total} account${summary.total === 1 ? "" : "s"} in this run.`}
       </p>
 
       {rows.length === 0 ? (
@@ -59,7 +72,7 @@ export function StageTimeline({
                 <th className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase">
                   Status
                 </th>
-                {STAGES.map((stage) => (
+                {TIMELINE_STAGES.map((stage) => (
                   <th
                     key={stage}
                     className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase"

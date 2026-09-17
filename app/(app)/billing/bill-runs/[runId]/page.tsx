@@ -80,12 +80,21 @@ export default async function BillRunDetailPage({
     tab: firstValue(rawSearch.tab),
   });
 
+  // The run's own status is passed in as the floor for the flow bar — see
+  // `getStageTimeline`.
   const timeline =
     parsedSearch.tab === "workflow"
-      ? await getStageTimeline(detail.billRunId)
+      ? await getStageTimeline(detail.billRunId, detail.status)
       : {
           rows: [],
-          summary: { total: 0, processed: 0, processingFailed: 0, excluded: 0 },
+          summary: {
+            total: 0,
+            processed: 0,
+            processingFailed: 0,
+            excluded: 0,
+            isMidFlight: true,
+          },
+          flow: { steps: [], currentStage: null },
         };
 
   const customerBills =

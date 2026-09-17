@@ -104,24 +104,70 @@ async function checkGlMappingsResolvable(
   return { check: "gl_mappings", pass: true, remediation: null };
 }
 
-// Check 3 — a backstop: zero-charge accounts were already excluded at
-// Scoping, but any postable bill with `total_amount <= 0` blocks approval.
-async function checkPositiveTotals(
+// Check 3 — a postable bill with a NEGATIVE `subtotal` or `total_amount` blocks
+// approval. A bill is never a negative amount; that is a credit, and there is no
+// credit-note path (known-issues §14).
+//
+// SIGN-BASED RULE (2026-09-17, owner decision). Zero does NOT block. The check's
+// original premise — "zero-charge accounts were already excluded at Scoping"
+// (bm10-spec §3) — stopped being true at bm32, which redefined Uncharged
+// (Inv #22): a zero-charge account is now scoped, runs every stage, reaches
+// `PROCESSED`, and is surfaced on the Uncharged tab, while the processor still
+// writes an unconditional `subtotal-0.00` header for it (known-issues §11). So
+// the old `<= 0` backstop fired on a shape it was never written for and made any
+// run containing a no-charges account permanently unapprovable.
+//
+// Zero is instead handled by being *not posted* (`post-run.ts` skips it, so no
+// INV and no ledger entry) and *reported* by the informational
+// `zero_total_bills` check below. Keying this check on the sign rather than on
+// line-presence also means a bill that nets to zero WITH lines — the
+// fully-discounted case once discounting ships — is treated as an ordinary zero
+// instead of wedging the run (known-issues §12).
+async function checkNegativeTotals(
   dbOrTx: Database,
   run: BillRun,
 ): Promise<PreApprovalCheck> {
-  const nonPositive = await customerBillRepository.countNonPositivePostable(
+  const negative = await customerBillRepository.countNegativePostable(
     dbOrTx,
     run.billRunId,
   );
-  if (nonPositive > 0) {
+  if (negative > 0) {
     return {
       check: "positive_totals",
       pass: false,
-      remediation: `${nonPositive} bill${nonPositive === 1 ? "" : "s"} have a zero or negative total. Review Customers & Bills.`,
+      remediation: `${negative} bill${negative === 1 ? "" : "s"} ${negative === 1 ? "has" : "have"} a negative total. A bill is never a negative amount — review Customers & Bills.`,
     };
   }
   return { check: "positive_totals", pass: true, remediation: null };
+}
+
+// Check 3b (2026-09-17, owner decision) — the zero-total-bill count.
+// INFORMATIONAL, never blocking: same contract as `orphan_count` below
+// (`pass: true`, `informational: true`, excluded from `approveRun`'s gate).
+//
+// The visible half of the sign-based rule. Zero bills do not block and are not
+// posted, so without this line they would be entirely invisible at the money
+// gate — an approver should see that a run carries N bills worth nothing before
+// signing. Counts every postable zero-total bill, line-less or not.
+async function checkZeroTotalBills(
+  dbOrTx: Database,
+  run: BillRun,
+): Promise<PreApprovalCheck> {
+  const zeroTotal = await customerBillRepository.countZeroTotalPostable(
+    dbOrTx,
+    run.billRunId,
+  );
+  return {
+    check: "zero_total_bills",
+    pass: true,
+    informational: true,
+    remediation:
+      zeroTotal > 0
+        ? // Subject and verb have to agree in both directions: "1 bill totals
+          // zero" / "3 bills total zero".
+          `${zeroTotal} ${zeroTotal === 1 ? "bill totals" : "bills total"} zero — informational, does not block approval. Accounts that produced no charge line appear on the Uncharged tab.`
+        : null,
+  };
 }
 
 // Check 4 — four-eyes (segregation of duties): the approver must differ from
@@ -253,14 +299,16 @@ export async function runPreApprovalChecks(
     accountsTerminal,
     noRejectedPending,
     orphanCount,
+    zeroTotalBills,
   ] = await Promise.all([
     checkPeriodOpen(dbOrTx, run),
     checkGlMappingsResolvable(dbOrTx, run),
-    checkPositiveTotals(dbOrTx, run),
+    checkNegativeTotals(dbOrTx, run),
     checkFourEyes(dbOrTx, run, approverId),
     checkAccountsTerminal(dbOrTx, run),
     checkNoRejectedPending(dbOrTx, run),
     checkOrphanCount(dbOrTx, run),
+    checkZeroTotalBills(dbOrTx, run),
   ]);
 
   return [
@@ -271,5 +319,6 @@ export async function runPreApprovalChecks(
     accountsTerminal,
     noRejectedPending,
     orphanCount,
+    zeroTotalBills,
   ];
 }

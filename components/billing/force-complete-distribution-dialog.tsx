@@ -13,7 +13,6 @@ import { AlertOctagon } from "lucide-react";
 
 import { forceCompleteDistributionAction } from "@/actions/billing/force-complete-distribution.action";
 import { Button } from "@/components/ui/button";
-import type { DistributionRow } from "@/types/billing";
 
 export interface ForceCompleteDistributionDialogProps {
   billRunId: string;
@@ -182,18 +181,4 @@ function describeError(code: string): string {
     default:
       return "Something went wrong. Please try again.";
   }
-}
-
-// Convenience — derives the failed artifact refs of the delivery log's
-// CURRENT round (the highest recorded `distributionAttempt` — the log spans
-// every round, including a superseded prior one after a rerun) so the
-// run-detail page needn't re-derive this filter itself.
-export function failedArtifactRefsFromRows(rows: DistributionRow[]): string[] {
-  if (rows.length === 0) return [];
-  const currentAttempt = Math.max(...rows.map((r) => r.distributionAttempt));
-  return rows
-    .filter(
-      (r) => r.distributionAttempt === currentAttempt && r.outcome === "FAILED",
-    )
-    .map((r) => r.artifactRef);
 }

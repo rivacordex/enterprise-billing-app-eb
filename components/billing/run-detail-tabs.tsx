@@ -11,6 +11,7 @@ import { AuditTable } from "@/components/billing/audit-table";
 import { CustomerBillTable } from "@/components/billing/customer-bill-table";
 import { DistributionTab } from "@/components/billing/distribution-tab";
 import { ErrorsTable } from "@/components/billing/errors-table";
+import { RunFlowProgressBar } from "@/components/billing/run-flow-progress";
 import { StageTimeline } from "@/components/billing/stage-timeline";
 import { UnchargedTable } from "@/components/billing/uncharged-table";
 import type { AuditLogRow } from "@/types/audit-log";
@@ -22,6 +23,7 @@ import type {
   ErrorRow,
   ExceptionRow,
   RejectedPendingRow,
+  RunFlowProgress,
   StageTimelineRow,
   StageTimelineSummary,
   UnchargedRow,
@@ -42,6 +44,7 @@ export interface RunDetailTabsProps {
   timeline: {
     rows: StageTimelineRow[];
     summary: StageTimelineSummary;
+    flow: RunFlowProgress;
   };
   customerBills: CustomerBillRow[];
   uncharged: UnchargedRow[];
@@ -102,7 +105,10 @@ export function RunDetailTabs({
       </nav>
 
       {activeTab === "workflow" ? (
-        <StageTimeline rows={timeline.rows} summary={timeline.summary} />
+        <div className="space-y-4">
+          <RunFlowProgressBar runId={runId} flow={timeline.flow} />
+          <StageTimeline rows={timeline.rows} summary={timeline.summary} />
+        </div>
       ) : activeTab === "customers" ? (
         <CustomerBillTable
           billRunId={runId}
