@@ -182,14 +182,29 @@ export const customerBillRepository = {
     return rows.map((r) => r.currency);
   },
 
-  // The "no zero/negative amounts" backstop's count — postable bills with a
-  // non-positive `subtotal` OR `total_amount`, computed in SQL `numeric`
-  // (code-standards §2.3). `subtotal` is checked too because posting always
-  // inserts a revenue `charge` line at `amount = subtotal`, and
-  // `document_line_amount_check` (`amount > 0`) would reject a `subtotal <= 0`
-  // line at post time — permanently parking the account. Catching it here
-  // blocks approval instead.
-  async countNonPositivePostable(
+  // The approval backstop's count — postable bills with a **negative**
+  // `subtotal` OR `total_amount`, computed in SQL `numeric`
+  // (code-standards §2.3).
+  //
+  // SIGN-BASED RULE (2026-09-17, owner decision). A bill is either positive
+  // (post it), zero (don't post it, don't block on it) or negative (block —
+  // a bill is never a negative amount). So this counts strictly `< 0`:
+  //
+  //   * `subtotal` is checked as well as `total_amount` because posting inserts
+  //     the revenue `charge` line at `amount = subtotal`, and
+  //     `document_line_amount_check` (`amount > 0`) would reject a negative line
+  //     at post time — permanently parking the account. Catching it here blocks
+  //     approval instead.
+  //   * ZERO no longer blocks. It is reported by the informational
+  //     `zero_total_bills` check and suppressed at posting (`post-run.ts`), so a
+  //     zero-value bill never reaches the ledger and never wedges a run.
+  //
+  // This replaces a `<= 0 AND EXISTS(lines)` predicate that existed only to let
+  // line-less zero bills through (the shape known-issues §11 creates). Keying on
+  // the sign instead of on line-presence means a bill that nets to zero *with*
+  // lines — the fully-discounted case, once discounting ships — is treated the
+  // same as any other zero, rather than wedging the run (known-issues §12).
+  async countNegativePostable(
     db: Database,
     billRunId: string,
   ): Promise<number> {
@@ -210,7 +225,41 @@ export const customerBillRepository = {
         and(
           eq(customerBill.refBillRunId, billRunId),
           eq(billRunAccount.status, "PROCESSED"),
-          sql`(${customerBill.subtotal} <= 0 OR ${customerBill.totalAmount} <= 0)`,
+          sql`(${customerBill.subtotal} < 0 OR ${customerBill.totalAmount} < 0)`,
+        ),
+      );
+    return row?.cnt ?? 0;
+  },
+
+  // The `zero_total_bills` informational check's count (2026-09-17, owner
+  // decision) — postable bills whose `total_amount` is exactly zero, whether or
+  // not they carry lines. Purely advisory: it never blocks approval. Under the
+  // sign-based rule above, zero is a legitimate outcome that simply is not
+  // posted, so this count is the ONLY visibility an approver gets that a run
+  // contains bills worth nothing — it must never be dropped. Counted in SQL
+  // `numeric`, never a JS reduce (code-standards §2.3).
+  async countZeroTotalPostable(
+    db: Database,
+    billRunId: string,
+  ): Promise<number> {
+    const [row] = await db
+      .select({ cnt: count() })
+      .from(customerBill)
+      .innerJoin(
+        billRunAccount,
+        and(
+          eq(billRunAccount.refBillRunId, customerBill.refBillRunId),
+          eq(
+            billRunAccount.refBillingAccountId,
+            customerBill.refBillingAccountId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(customerBill.refBillRunId, billRunId),
+          eq(billRunAccount.status, "PROCESSED"),
+          sql`${customerBill.totalAmount} = 0`,
         ),
       );
     return row?.cnt ?? 0;

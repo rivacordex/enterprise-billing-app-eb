@@ -52,11 +52,26 @@ tasks:
     type: io.kestra.plugin.core.log.Log
     message: "bill_run_distribution START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} targets={{ inputs.targets }} artifacts={{ inputs.artifacts }}"
   # Cross-product: each target × each artifact (D25 — loopback and sftp can both
-  # be live in one run). From the innermost tasks: the artifact object is the
-  # immediate loop value (`taskrun.value`); the target object is the OUTER loop,
-  # reached as `parents[1].taskrun.value` — `parents` counts from innermost, so
-  # `parents[0]` is the enclosing per_artifact loop (the artifact again) and
-  # `parents[1]` is per_target. Both are JSON objects, read with `fromJson(...)`.
+  # be live in one run). From the innermost tasks (direct children of
+  # per_artifact), both loop values are reachable, and BOTH are JSON objects read
+  # with `fromJson(...)`:
+  #
+  #   * the ARTIFACT — `{{ taskrun.value }}` (this task's own value, inherited
+  #     from its immediate `per_artifact` ForEach parent)
+  #   * the TARGET   — `{{ parents[0].taskrun.value }}` (the enclosing
+  #     `per_target` ForEach)
+  #
+  # `parents` holds the enclosing loop taskruns ABOVE the one whose value this
+  # task already carries, so at this depth `parents[0]` IS `per_target` and
+  # `parents[1]` DOES NOT EXIST. An earlier revision of this comment claimed
+  # `parents[0]` was "the enclosing per_artifact loop (the artifact again)" and
+  # that `parents[1]` was `per_target`; that was never true on the pinned engine
+  # (1.3.35, verified directly) and it broke every distribution run:
+  # `upload_local`'s `runIf` died with
+  # `PebbleException: Could not perform not equals comparison` because
+  # `parents[1].taskrun.value` resolved to nothing, so no artifact was ever
+  # delivered and no outcome was ever POSTed. Same root cause as the processing
+  # flow's `taskrun.value`-inside-a-wrapper bug (bill_run_processing.yml).
   - id: per_target
     type: io.kestra.plugin.core.flow.ForEach
     values: "{{ inputs.targets }}"
@@ -80,7 +95,7 @@ tasks:
             container: invoices
             name: "{{ fromJson(taskrun.value).blob_ref | replace({'invoices/': ''}) }}"
           # 2. Deliver the artifact to its target (architecture §3), selected by
-          #    the TARGET's name (`parents[1]` — the outer per_target loop). Only
+          #    the TARGET's name (`parents[0]` — the outer per_target loop). Only
           #    the matching task runs (runIf on the name); the other is SKIPPED
           #    (its output undefined). Both allowFailure so the outcome step always
           #    runs; runIf also honours the target's force_fail (both skipped →
@@ -99,8 +114,8 @@ tasks:
           - id: upload_local
             type: io.kestra.plugin.fs.local.Upload
             allowFailure: true
-            runIf: "{{ fromJson(parents[1].taskrun.value).name != 'sftp' and not fromJson(parents[1].taskrun.value).force_fail }}"
-            from: "{{ outputs.download.blob.uri }}"
+            runIf: "{{ fromJson(parents[0].taskrun.value).name != 'sftp' and not fromJson(parents[0].taskrun.value).force_fail }}"
+            from: "{{ outputs.download[parents[0].taskrun.value][taskrun.value].blob.uri }}"
             to: "{{ '/distribution/' ~ (fromJson(taskrun.value).type == 'report_csv' ? 'reports/' : 'invoices/') ~ (fromJson(taskrun.value).blob_ref | replace({'invoices/': ''})) }}"
           #  2b. `sftp` (enabled later, via the app's BILLRUN_DISTRIBUTION_TARGETS
           #      + the engine's enableSftpDistribution): upload to the real external
@@ -111,7 +126,7 @@ tasks:
           - id: upload_sftp
             type: io.kestra.plugin.fs.sftp.Upload
             allowFailure: true
-            runIf: "{{ fromJson(parents[1].taskrun.value).name == 'sftp' and not fromJson(parents[1].taskrun.value).force_fail }}"
+            runIf: "{{ fromJson(parents[0].taskrun.value).name == 'sftp' and not fromJson(parents[0].taskrun.value).force_fail }}"
             retry:
               type: constant
               interval: PT5S
@@ -120,7 +135,7 @@ tasks:
             port: "22"
             username: billrun
             keyfile: "{{ secret('SFTP_PRIVATE_KEY') }}"
-            from: "{{ outputs.download.blob.uri }}"
+            from: "{{ outputs.download[parents[0].taskrun.value][taskrun.value].blob.uri }}"
             to: "{{ '/upload/' ~ (fromJson(taskrun.value).type == 'report_csv' ? 'reports/' : 'invoices/') ~ (fromJson(taskrun.value).blob_ref | replace({'invoices/': ''})) }}"
           # 3. POST the per-artifact outcome (§4 record-only M2M — no charge
           #    payload). DELIVERED iff WHICHEVER upload ran produced its output
@@ -147,11 +162,12 @@ tasks:
               Authorization: "Bearer {{ secret('BILLRUN_APP_TOKEN') }}"
             body: |
               {{ {
-                "target": fromJson(parents[1].taskrun.value).name,
+                "target": fromJson(parents[0].taskrun.value).name,
                 "artifact_ref": fromJson(taskrun.value).ref,
                 "artifact_type": fromJson(taskrun.value).type,
-                "is_mandatory": fromJson(parents[1].taskrun.value).is_mandatory,
-                "outcome": (outputs.upload_local.uri is defined or outputs.upload_sftp.to is defined ? "DELIVERED" : "FAILED"),
+                "is_mandatory": fromJson(parents[0].taskrun.value).is_mandatory,
+                "outcome": (outputs.upload_local[parents[0].taskrun.value][taskrun.value].uri is defined
+                              or outputs.upload_sftp[parents[0].taskrun.value][taskrun.value].to is defined ? "DELIVERED" : "FAILED"),
                 "attempt": inputs.attempt
               } }}
   - id: done

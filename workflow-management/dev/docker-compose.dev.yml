@@ -68,7 +68,13 @@ services:
   # account — not a secret, safe to commit (workflow-management/dev/.env.example).
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
-    command: "azurite-blob --blobHost 0.0.0.0 --blobPort 10000"
+    # `-l /data` is load-bearing: without it Azurite writes its store to its own
+    # working directory (/opt/azurite) INSIDE the container, so the azurite_data
+    # volume below is mounted but never used — every rendered invoice PDF and
+    # Kestra's internal storage silently live in the container layer and are lost
+    # on any recreate (`--force-recreate`, an image pull, `down`). Pointing it at
+    # the mounted volume is what makes the artifacts survive.
+    command: "azurite-blob --blobHost 0.0.0.0 --blobPort 10000 -l /data"
     ports:
       - "${AZURITE_BLOB_PORT:-10000}:10000"
     volumes:
@@ -131,6 +137,26 @@ services:
       context: ./workflow-management/worker/workflow-engine
     env_file:
       - ./workflow-management/dev/.env.example
+    # LOCAL DEV ONLY — make the flows' M2M callback host reachable.
+    # bill_run_processing/bill_run_distribution POST their stage and terminal
+    # signals to `http://app:3000/api/billrun/...` — the Compose service name,
+    # which is correct for the deployed stack and for the fully-containerized
+    # dev stack. But the README's PRIMARY local path runs the app ON THE HOST
+    # (`npm run dev`, for the Playwright/PRO-FORMA preview) and starts the
+    # engine with `--no-deps`, so no `app` container exists and every callback
+    # died with `java.net.UnknownHostException: app` — the run reached
+    # `PROCESSING` and stopped there forever.
+    #
+    # Mapping `app` to the Docker host gateway here fixes that WITHOUT touching
+    # a single flow URI, so the deployed contract stays byte-identical (the same
+    # YAML is what ships — architecture §5). TRADE-OFF, deliberate: /etc/hosts is
+    # resolved before Compose's embedded DNS, so if you ever run the `app`
+    # SERVICE from docker-compose.dev.yml together with this file, callbacks go
+    # to the host's :3000 rather than that container. That combination is not the
+    # documented path (README Part 2 starts the engine `--no-deps`); if you need
+    # it, delete this block for that run.
+    extra_hosts:
+      - "app:host-gateway"
     environment:
       KESTRA_DATASOURCES_POSTGRES_URL: jdbc:postgresql://db:5432/kestra
       KESTRA_DATASOURCES_POSTGRES_USERNAME: kestra_engine

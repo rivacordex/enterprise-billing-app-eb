@@ -10,12 +10,32 @@ import { CircleCheck, Send } from "lucide-react";
 import { DistributionOutcomeBadge } from "@/components/billing/distribution-outcome-badge";
 import { StartDistributionControl } from "@/components/billing/start-distribution-control";
 import { RerunDistributionControl } from "@/components/billing/rerun-distribution-control";
-import {
-  ForceCompleteDistributionDialog,
-  failedArtifactRefsFromRows,
-} from "@/components/billing/force-complete-distribution-dialog";
+import { ForceCompleteDistributionDialog } from "@/components/billing/force-complete-distribution-dialog";
 import { formatDatetime } from "@/lib/formatters";
-import type { DistributionView } from "@/types/billing";
+import type { DistributionRow, DistributionView } from "@/types/billing";
+
+// Derives the failed artifact refs of the delivery log's CURRENT round (the
+// highest recorded `distributionAttempt` — the log spans every round, including
+// a superseded prior one after a rerun).
+//
+// Lives HERE, in this server component, not in the force-complete dialog. It
+// was exported from that `"use client"` module and called from this server
+// render, which Next refuses at runtime: "Attempted to call
+// failedArtifactRefsFromRows() from the server but failedArtifactRefsFromRows is
+// on the client." The whole Distribution tab crashed to the run-detail error
+// boundary. It never showed up before because the tab only reaches these call
+// sites once `bill_run_distribution` has rows, and distribution had never
+// actually run locally. It is a pure function over plain rows — no React, no
+// client API — so the server component owns it.
+function failedArtifactRefsFromRows(rows: DistributionRow[]): string[] {
+  if (rows.length === 0) return [];
+  const currentAttempt = Math.max(...rows.map((r) => r.distributionAttempt));
+  return rows
+    .filter(
+      (r) => r.distributionAttempt === currentAttempt && r.outcome === "FAILED",
+    )
+    .map((r) => r.artifactRef);
+}
 
 export interface DistributionTabProps {
   view: DistributionView;

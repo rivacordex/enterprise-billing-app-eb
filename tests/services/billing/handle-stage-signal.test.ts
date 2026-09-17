@@ -171,7 +171,7 @@ describe("handleStageSignal — stale-attempt rejection (T14, superseded executi
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 2 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -208,7 +208,7 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PENDING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -253,7 +253,7 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -282,7 +282,7 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSED" },
+      { billingAccountId: "BAN00000001", status: "PROCESSED", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -322,8 +322,8 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
-      { billingAccountId: "BAN00000002", status: "PROCESSING" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED", errorCode: null },
+      { billingAccountId: "BAN00000002", status: "PROCESSING", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -349,7 +349,7 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -385,7 +385,7 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
       attemptCount: 1,
     });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED", errorCode: null },
     ]);
 
     await handleStageSignal({
@@ -410,8 +410,8 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PROCESSING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSED" },
-      { billingAccountId: "BAN00000002", status: "EXCLUDED" },
+      { billingAccountId: "BAN00000001", status: "PROCESSED", errorCode: null },
+      { billingAccountId: "BAN00000002", status: "EXCLUDED", errorCode: null },
     ]);
 
     const result = await handleStageSignal({
@@ -438,7 +438,7 @@ describe("handleStageSignal — record-only (bm16-spec §Design D5)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockFindStatus.mockResolvedValue({ status: "PENDING", attemptCount: 1 });
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+      { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
     ]);
 
     const result = await handleStageSignal({

@@ -102,14 +102,26 @@ export const billRunAccountRepository = {
   // bm04-spec §Design/§Implementation §8 — every account status for the run,
   // the input to the pure `computeRunStatus` recompute and to the Workflow
   // tab's derived summary/timeline (never the optional cache).
+  // `errorCode` is carried alongside the status (2026-09-18) because a parked
+  // posting failure leaves the account at `PROCESSED` and records the reason
+  // ONLY in `error_code` — the Workflow tab's derived `posting` cell needs it to
+  // show FAILED rather than a misleading PENDING. Additive: every existing
+  // caller reads `billingAccountId`/`status` and is unaffected.
   async listStatusesForRun(
     tx: Database,
     billRunId: string,
-  ): Promise<{ billingAccountId: string; status: AccountStatus }[]> {
+  ): Promise<
+    {
+      billingAccountId: string;
+      status: AccountStatus;
+      errorCode: string | null;
+    }[]
+  > {
     const rows = await tx
       .select({
         billingAccountId: billRunAccount.refBillingAccountId,
         status: billRunAccount.status,
+        errorCode: billRunAccount.errorCode,
       })
       .from(billRunAccount)
       .where(eq(billRunAccount.refBillRunId, billRunId))

@@ -1,0 +1,39 @@
+# Line-ending policy.
+#
+# Without this file, Git for Windows' default `core.autocrlf=true` checks every
+# text file out as CRLF. That is harmless for the app, the DB setup and the
+# flows — but NOT for the tests that treat `.sql` files as data and assert on
+# their exact bytes:
+#
+#   * tests/guardrails/billing-customer-bill-line-replace-boundary.test.ts
+#   * tests/guardrails/billrun-inventory-write-boundary.test.ts
+#     Both strip SQL line comments with `line.replace(/--.*$/, "")` after
+#     `split("\n")`. With CRLF, each line still ends in `\r` — and `\r` is a
+#     JavaScript regex LINE TERMINATOR, so `.` never matches it and `$` (no `m`
+#     flag) never matches before it. The strip silently no-ops, the read-only
+#     boundary prose in `db/bootstrap/billrun-db-roles.sql` (which legitimately
+#     names INSERT/UPDATE/DELETE) survives into the assertion, and the
+#     `not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i)` guardrails fail.
+#
+#   * tests/pgledger/transform.test.ts
+#     Compares the regenerated pgledger SQL to the committed file byte-for-byte.
+#
+# Pinning `.sql` to LF in the working tree — on every platform — makes those
+# nine tests pass on Windows without weakening a single assertion.
+#
+# `* text=auto` only normalizes to LF *in the repository*; it does not change
+# what any existing checkout looks like, so it is safe to add here.
+* text=auto
+
+# Data files whose exact bytes are asserted by tests — always LF on disk.
+*.sql text eol=lf
+
+# Binary — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
