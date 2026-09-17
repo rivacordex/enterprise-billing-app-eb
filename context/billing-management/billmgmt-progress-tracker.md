@@ -336,11 +336,210 @@ detail: `context/billing-management/specs/bm*.md`._
 
 ## Known residuals
 
+- **DELIVERED (2026-09-18, owner decision) — Workflow tab: derived app-side
+  stages, distribution removed from the grid, run-level flow bar added.** Four of
+  the nine grid columns (`scoping`, `posting`, `rendering`, `distribution`) had
+  never been written by anything — only the processor's five M2M callbacks write
+  `bill_run_account_stage` — so a `COMPLETED` run still rendered "posting:
+  pending", reading as a broken pipeline. Fixed by DERIVING them in
+  `get-stage-timeline.ts` rather than fabricating stage rows (Inv #12 — derived
+  on read, never stored):
+  - **scoping** — the `bill_run_account` row itself (`scopeAccounts` only
+    snapshots ACTIVE accounts, so a row IS "scoped in and active"). Keyed on
+    `error_code = 'PARTIAL_PERIOD'` as well as `status = 'EXCLUDED'`, because
+    `approveRun` re-badges EXCLUDED → SKIPPED and the status alone stops
+    identifying a scoping-time exclusion after approval (`[CRITICAL]` test).
+  - **posting** — the account reaching `INVOICED`; `SKIPPED` shows SKIPPED; a
+    parked `PROCESSED` + `POSTING_FAILED` shows FAILED. Needed
+    `listStatusesForRun` to carry `errorCode` (additive; existing callers
+    unaffected).
+  - **rendering** — a `bill_run_invoices` row for the account, via the existing
+    `listBillingAccountIdsForRun`. An `INVOICED` account without one is
+    genuinely render-pending, so PENDING there is true.
+  - **distribution** — REMOVED from the per-account grid (`TIMELINE_STAGES`).
+    `bill_run_distribution` keys on `artifact_ref`, and its `REPORT` artifact
+    belongs to no account, so a per-account cell could only be fabricated.
+    `STAGES` is unchanged and still mirrors the `bill_run_account_stage.stage`
+    CHECK exactly; the M2M ingest still accepts every value.
+  A real stage row always WINS over the derivation, so wiring any of the three to
+  a genuine signal later needs no change here. **New `RunFlowProgressBar`** shows
+  the nine steps at run level and, when the run reaches distribution, links the
+  operator to the Distribution tab (where the per-artifact log actually lives).
+  The RUN status acts as a FLOOR on the bar so a `COMPLETED` run can never render
+  an earlier step as `current`. Verified live on `BRN00000001`. 316 files /
+  3160 tests green.
+- **FIXED (2026-09-18, owner decision) — the Workflow tab's mid-flight summary
+  line no longer contradicts the flow bar.** `StageTimelineSummary` counts only
+  `processed`/`processingFailed`/`excluded`, so once posting moved accounts off
+  `PROCESSED` a finished run read "0 processed, 0 processing failed of 6"
+  directly beneath a fully green flow bar. `summary.isMidFlight` (derived from
+  the RUN status, not from the counts — an in-flight run with genuinely nothing
+  processed still shows "0 of N") now gates it, and past the processing phase the
+  line falls back to a plain "N accounts in this run." **The gate is WIDER than
+  "terminal"**: `INVOICED` and `DISTRIBUTING` are live states, but posting has
+  already emptied the counts there, so the line was equally misleading —
+  `APPROVED`/`POSTING` are deliberately excluded, since approval only re-badges
+  failed/excluded accounts and the counts still hold until posting runs. Covered
+  by table-driven tests over every run status.
+
+- **VERIFIED (2026-09-17) — first full `SCHEDULED → COMPLETED` lifecycle on real
+  infrastructure.** `BRN00000001` (the `_SAMPLE_` `ci` seed) traversed
+  `PROCESSING → PROCESSED → APPROVED → POSTING → INVOICED → DISTRIBUTING →
+  COMPLETED` against real Postgres + real Kestra 1.3.35 + Azurite, with 4 INV
+  documents posted, all 5 artifacts (4 invoice PDFs + the run report CSV)
+  `DELIVERED` to the `loopback` sink at byte-exact sizes under the architecture
+  §3 subtree layout (`/distribution/invoices/2026-08/`,
+  `/distribution/reports/2026-08/`). This is the bm22/bm35 exit criterion that
+  the tracker had listed as pending execution.
+- **FIXED (2026-09-17) — `bill_run_distribution` had three independent defects,
+  none previously exercised** (distribution had never actually run locally, so
+  the whole flow was unverified):
+  1. **`parents[1]` does not exist at that depth.** The flow read the TARGET as
+     `parents[1].taskrun.value`; probed directly against the pinned engine,
+     `taskrun.value` IS the artifact and `parents[0]` IS the target. Every run
+     died on `upload_local`'s `runIf` with
+     `PebbleException: Could not perform not equals comparison`, so nothing was
+     ever delivered and no outcome was ever POSTed. Same family as the processor
+     bug. The file's comment asserting the opposite is replaced with the
+     measured behaviour.
+  2. **Task outputs inside a nested ForEach are keyed by BOTH loop values.**
+     `{{ outputs.download.blob.uri }}` is unresolvable there; the shape is
+     `outputs.<task>[<outer value>][<inner value>]`, so the correct reference is
+     `outputs.download[parents[0].taskrun.value][taskrun.value].blob.uri`.
+     Fixed at all three sites (both uploads + the outcome POST's
+     DELIVERED/FAILED decision, which silently evaluated to FAILED for every
+     artifact before).
+  3. **`kestra-internal` container was never created.** Azurite does not
+     auto-create containers and neither does Kestra — it PUTs and takes the 404.
+     `azure.storage.blob.Download` fetched each invoice PDF successfully
+     (Azurite logged `206`) and then failed writing the result into Kestra's OWN
+     internal storage, surfacing as a bare `BlobStorageException: Status code
+     404` that looked like a missing invoice. Added `npm run dev:azurite-init`
+     (`scripts/azurite-init.ts`, idempotent `createIfNotExists`).
+- **FIXED (2026-09-17) — the Distribution tab crashed whenever it had rows.**
+  `components/billing/distribution-tab.tsx` (a SERVER component) imported
+  `failedArtifactRefsFromRows` from the `"use client"`
+  `force-complete-distribution-dialog.tsx`; Next refuses that at runtime
+  ("Attempted to call ... from the server but ... is on the client") and the
+  whole run-detail page fell to its error boundary. Invisible until now because
+  the tab only reaches those call sites once `bill_run_distribution` has rows.
+  The helper is a pure function over plain rows, so it moved into the server
+  component that uses it.
+- **FIXED (2026-09-17) — Azurite was not persisting to its volume.** The compose
+  service mounted `azurite_data:/data` but ran without `-l /data`, so Azurite
+  wrote its store to `/opt/azurite` inside the container: every rendered invoice
+  PDF and all of Kestra's internal storage lived in the container layer and
+  would be lost on any recreate. Now `-l /data`. **Note for anyone repeating
+  this:** migrating an existing store must copy `__azurite_db_blob__.json`,
+  `__azurite_db_blob_extent__.json` AND `__blobstorage__/` together — copying
+  the blob DB without the extent DB leaves the metadata pointing at extents the
+  new instance cannot resolve and every GET returns `500`.
+
+- **OPEN (2026-09-17, tracked as known-issues §11) — the processor writes a `subtotal-0.00` header for a
+  zero-charge account.** `bill_run_processing`'s `ins_header` CTE is a
+  data-modifying CTE, so it runs exactly once regardless of whether `all_lines`
+  is empty; the flow's own comment calls this "the deferred limitation". Since
+  bm32 redefined Uncharged (Inv #22), such an account is scoped, `PROCESSED`
+  and Uncharged — so the empty header is the only artefact of it. Everything
+  else already expects the header NOT to exist: Verification guards with
+  `IF v_total IS NOT NULL` and treats a non-positive total as a **SOFT,
+  advisory, non-blocking** NOTICE, and `listUnchargedForRun`'s `HAVING` keeps
+  accounts with "NO bill/line". **Durable fix:** make `ins_header` conditional
+  on `all_lines` being non-empty, so a zero-charge account produces no bill at
+  all. Until then the empty header reaches posting and would consume an invoice
+  number for a 0.00 INV unless `document_line_amount_check` (`amount > 0`)
+  rejects it first and parks the account.
+  **Interim (owner decision, 2026-09-17):** the approval gate was loosened
+  rather than the flow fixed — see the next entry. The engineering
+  recommendation was the flow fix; the owner chose the gate change to unblock
+  approval, with the invoice-number consequence stated and accepted.
+- **DECISION (2026-09-17, owner; known-issues §11 mitigation 2, latent risk §12) — posting suppresses the zero-value invoice.**
+  The predicted consequence of the gate loosening below landed immediately: the
+  line-less 0.00 bill reached posting, `document_line_amount_check`
+  (`amount > 0`) rejected the revenue line (posting inserts it at
+  `amount = subtotal`), and the account parked at `POSTING_FAILED` with an
+  opaque "An unexpected error occurred while posting this invoice."
+  `postAccount` now skips a bill whose **`subtotal` AND `total_amount` are both
+  exactly zero**, marking the account `SKIPPED` /
+  `ZERO_TOTAL_NOT_INVOICED` so `completePosting` can still finish the run.
+  Consistent with Inv #7 — a suppressed bill consumes no invoice number.
+  **Deliberately narrow, with `[CRITICAL]` tests on both edges:** a
+  **negative** total is a credit position with real economic substance and is
+  NEVER skipped (it must keep failing loudly until a credit-note path exists —
+  out of scope); and `subtotal = 0` with a non-zero `total_amount` (a tax-only
+  bill) is NEVER skipped either, since that would drop a real tax liability.
+  Zero comparison goes through `money.compare` (exact, integer sen) — the
+  `Number(<amount>)` grep gate in `tests/accounts/grep-gates.test.ts` caught the
+  first attempt and was respected, not amended. Verified live: `BRN00000001`
+  `POSTING → INVOICED → DISTRIBUTING`, 4 INV documents for 5 processed
+  accounts, `BAN…04` `SKIPPED`. **Open accounting caveat:** once discounting
+  ships, a bill can net to zero because a charge was fully discounted. That is
+  NOT a revenue-recognition exposure — net IS the transaction price, posting
+  books the GL revenue line at `amount = subtotal` (net), and the gross/discount
+  split survives on `customer_bill_line` either way — but the predicates cannot
+  tell it apart from a no-charge account, so it would wedge the whole run at
+  approval and then issue no invoice to a customer who had real activity
+  (known-issues §12). The
+  skip must be re-evaluated then — today `discount_amount` is always `0.00`, so
+  a zero net can only mean a zero charge.
+- **DECISION (2026-09-17, owner; known-issues §11 mitigation 1, latent risk §12) — `positive_totals` narrowed; `zero_total_bills`
+  added as informational.** `countNonPositivePostable` now excludes bills with
+  no `customer_bill_line`, so a line-less zero bill no longer blocks approval; a
+  bill WITH lines that totals `<= 0` still does. A new informational check
+  (`zero_total_bills`, bm32's `informational` contract — always passes, never
+  gates) reports how many postable bills total zero, so they stay visible to the
+  approver. Touched: `customer-bill.repository.ts` (narrowed query +
+  `countZeroTotalPostable`), `pre-approval-checks.ts`, `types/billing.ts`,
+  `components/billing/pre-approval-checks.tsx`, both pre-approval test files,
+  and `specs/bm10-approve.md` (whose stale "excluded at Scoping" premise is
+  corrected in the same change set, per workflow rules §7.5/§7.8). Verified
+  against the live `ci` seed: `BRN00000001` blocking count 0, informational
+  count 1, four-eyes still correctly refusing the trigger actor.
+
 - See `billmgmt-known-issues.md` for the full list. **Accepted residual (ENG
   CLEARED, 2026-09-14):** posted `customer_bill_line` rows have no DB-level
   immutability trigger and `charge_checksum` is not re-verified after posting, so
   post-posting line tampering has no active detection until a re-verification path is
   added.
+- **FIXED (2026-09-17) — `bill_run_processing` failed its first stage on the pinned
+  engine.** Every execution ended `per_account → account_pipeline → validation`
+  `FAILED` with `IllegalVariableEvaluationException: Unable to find 'value'`. The
+  flow read `{{ taskrun.value }}` from tasks nested inside the bm36
+  `account_pipeline` `Sequential` within the `per_account` `ForEach`; the file's
+  comment asserted the ForEach value "is inherited by descendants" — it is not.
+  **Probed directly against 1.3.35** (throwaway `scratch.parents_probe` flow
+  mirroring the nesting, since deployed-YAML behaviour is not something to guess
+  at): from inside the wrap `taskrun.value` is unresolvable,
+  `parents[0].taskrun.value` IS the account id in both the stage tasks and the
+  `errors` handler, and `parents[1]` does not exist at that depth. All 15
+  references now use `{{ parents[0].taskrun.value }}` — the convention
+  `bill_run_distribution.yml` already documents — and the misleading comment is
+  replaced with the measured behaviour. No task logic, SQL, callback contract or
+  stage taxonomy changed.
+- **FIXED (2026-09-17) — local status callbacks were unreachable on the host-based
+  stack.** The processor/distributor callbacks POST to `http://app:3000/api/billrun/…`
+  (the Compose service name), but the README's host-based path runs the app on the
+  host with no `app` container, so every signal died with
+  `java.net.UnknownHostException: app`. Fixed in **local-dev infrastructure, not the
+  flow**: `workflow-management/dev/docker-compose.dev.yml` now sets
+  `extra_hosts: ["app:host-gateway"]` on `workflow-engine`. **No flow URI changed**,
+  so the deployed contract (architecture §5 — the same YAML ships) is byte-identical
+  and bm38's deploy wiring is untouched. Documented trade-off in that file: /etc/hosts
+  precedes Compose DNS, so running the containerized `app` service together with this
+  file would send callbacks to the host instead. The prior "callbacks are still
+  stubbed (logged, not sent)" README wording was stale — bm36 replaced the `Log`
+  stubs with real POSTs.
+- **VERIFIED (2026-09-17) — the phase-4 processing leg now runs end to end locally.**
+  With both fixes plus two environment corrections (`BILLRUN_APP_TOKEN` must equal
+  the base64-decoded `SECRET_BILLRUN_APP_TOKEN`, not a random value; a stale
+  Turbopack `.next` cache 404s the deeper `app/api/billrun/**` routes), a
+  `_SAMPLE_` `ci`-seed run went **`PROCESSING → PROCESSED`**: execution `SUCCESS`,
+  5 accounts × 5 stages × 5 `signal_*_done` all green, `customer_bill` rows written
+  by `billrun_runtime` (224.00 / 634.50 / 199.00 / 0.00 / 199.00), `BAN00000005`
+  correctly `EXCLUDED` (Inv #26) and `BAN00000004` billed at zero. This is the
+  bm36 signal-back contract (architecture "What changed" row 15) demonstrated
+  against real Postgres + real Kestra for the first time. Distribution remains
+  un-exercised locally (needs the SFTP endpoint + key material).
 
 ## Environment quirks
 
@@ -349,6 +548,53 @@ detail: `context/billing-management/specs/bm*.md`._
   clean baseline (dates now >3 days past). Confirmed this module never touches them.
 - Context docs live under `context/billing-management/` (renamed from a `billling-`
   triple-l typo).
+- **FIXED (2026-09-17) — Windows CRLF broke 9 tests in 3 files.** The repo had no
+  `.gitattributes`, so Git for Windows' default `core.autocrlf=true` checked `.sql`
+  files out CRLF. The guardrail helper strips SQL comments with
+  `line.replace(/--.*$/, "")` after `split("\n")`, but `\r` is a JS regex line
+  terminator — `.` never matches it and `$` (no `m`) never matches before it, so
+  the strip silently no-opped and `billrun-db-roles.sql`'s read-only-boundary prose
+  tripped the `not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i)` assertions.
+  Affected `billing-customer-bill-line-replace-boundary` (5),
+  `billrun-inventory-write-boundary` (2) and `pgledger/transform` (2, byte-for-byte
+  compare). Fixed by adding `.gitattributes` with `*.sql text eol=lf` (plus
+  `* text=auto` and binary pins) and re-normalizing the working tree — **no
+  assertion weakened**, which matters because two of the nine are `[CRITICAL]`
+  write-boundary guardrails that were silently passing-by-accident/failing-by-
+  accident on Windows. Full unit suite now **315/315 files, 3137/3137 tests**.
+- **`npm run test`'s DB-gated half is destructive by default (2026-09-17).** With a
+  dev `.env` exported it points the 91 `*.integration.test.ts` suites at the shared
+  dev DB and `DROP SCHEMA … CASCADE`s it. The convention (bm22 §21 — disposable DB
+  only) was recorded in the specs but not in `README.md`; the README now carries it
+  with a worked disposable-DB invocation. Separately, the configs' promised
+  "skip loudly when `DATABASE_URL` is unset" never fires — `db/client.ts` imports
+  `lib/config.ts` at module load and throws before `describe.skipIf` is evaluated,
+  so every DB-gated file errors instead of skipping.
+- **[CRITICAL] The DB-gated suite kills a co-located workflow engine (2026-09-17; known-issues §13).**
+  A disposable `DATABASE_URL` is necessary but NOT sufficient:
+  `tests/db/billrun-db-roles.integration.test.ts`'s `afterAll` runs
+  `DROP DATABASE IF EXISTS "kestra" WITH (FORCE)` — outside `DATABASE_URL`, against
+  the whole cluster. `FORCE` terminates every live connection first, so the running
+  engine lost all Hikari connections at once (`SQLSTATE(08006)`), each queue poller
+  logged `Fatal error while polling … Initiating shutdown`, and the container exited
+  0 with the `kestra` DB left dropped and **every deployed flow gone**. Observed
+  13:15:40 UTC during the first full DB-gated run. Recovery:
+  `db:bootstrap-kestra-roles` → `ALTER ROLE kestra_engine` → `up -d --no-deps
+  workflow-engine` → `flow-deploy`. The suite therefore needs either a separate
+  Postgres *instance* or the engine stopped for its duration — the bm22 §21
+  "disposable database" wording understates this. README now documents both.
+- **First full DB-gated run executed (2026-09-17; failures tracked as known-issues §4c)** against a disposable DB in the
+  dev cluster: **89 files passed, 2 skipped, 2 failed** (813 passed / 68 skipped /
+  2 failed tests). Both failures are the full-journey E2E suites
+  (`tests/db/billing-e2e-happy-path`, `tests/db/billrun-phase3-journey`) at the same
+  post→distribute assertion — `expected 'INVOICED' to be 'DISTRIBUTING'`: posting
+  settles the run at `INVOICED` but the post-commit `triggerDistribution` does not
+  advance it (`distribute-run.ts` rolls back and returns `ENGINE_UNREACHABLE` when
+  `engineRegistry.trigger` throws). Both are also sensitive to ambient env beyond
+  `DATABASE_URL` — with a dev `.env` also exported, `billrun-phase3-journey` fails
+  earlier instead (line 568). **UNTRIAGED** — this is the gated verification step
+  the tracker listed as not yet executed, so these are first-execution results, not
+  a known regression.
 
 ## Open questions
 
