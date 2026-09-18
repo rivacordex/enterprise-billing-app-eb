@@ -268,6 +268,7 @@ export default async function BillRunDetailPage({
 
       <RunDetailTabs
         runId={detail.billRunId}
+        runStatus={detail.status}
         activeTab={parsedSearch.tab}
         timeline={timeline}
         customerBills={customerBills}

@@ -24,6 +24,7 @@ import type {
   ExceptionRow,
   RejectedPendingRow,
   RunFlowProgress,
+  RunStatus,
   StageTimelineRow,
   StageTimelineSummary,
   UnchargedRow,
@@ -40,6 +41,7 @@ const TAB_LABELS: Record<RunDetailTab, string> = {
 
 export interface RunDetailTabsProps {
   runId: string;
+  runStatus: RunStatus;
   activeTab: RunDetailTab;
   timeline: {
     rows: StageTimelineRow[];
@@ -63,6 +65,7 @@ export interface RunDetailTabsProps {
 
 export function RunDetailTabs({
   runId,
+  runStatus,
   activeTab,
   timeline,
   customerBills,
@@ -106,7 +109,17 @@ export function RunDetailTabs({
 
       {activeTab === "workflow" ? (
         <div className="space-y-4">
-          <RunFlowProgressBar runId={runId} flow={timeline.flow} />
+          {runStatus === "CANCELLED" ? (
+            // A cancelled run was reset (accounts back to PENDING), so a
+            // pipeline-progress bar would read as in-progress. Suppress it and
+            // show a plain note; the per-account grid below still reflects the
+            // reset state and the run status badge above says CANCELLED.
+            <p className="text-body-sm text-muted-foreground">
+              This run was cancelled — the pipeline progress bar is hidden.
+            </p>
+          ) : (
+            <RunFlowProgressBar runId={runId} flow={timeline.flow} />
+          )}
           <StageTimeline rows={timeline.rows} summary={timeline.summary} />
         </div>
       ) : activeTab === "customers" ? (

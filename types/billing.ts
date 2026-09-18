@@ -105,6 +105,22 @@ export const TIMELINE_STAGES = STAGES.filter(
 );
 export type TimelineStage = Exclude<Stage, "distribution">;
 
+// The human label for each pipeline stage — the SINGLE source shared by the
+// per-account grid header (`StageTimeline`, over the `TIMELINE_STAGES` subset)
+// and the run-level flow bar (`RunFlowProgressBar`, over the full `Stage` set
+// incl. `distribution`), so a rename can never make the two surfaces disagree.
+export const STAGE_LABELS: Record<Stage, string> = {
+  scoping: "Scoping",
+  validation: "Validation",
+  collection: "Collection",
+  aggregation: "Aggregation",
+  taxation: "Taxation",
+  verification: "Verification",
+  posting: "Posting",
+  rendering: "Rendering",
+  distribution: "Distribution",
+};
+
 export const STAGE_STATUSES = [
   "PENDING",
   "RUNNING",

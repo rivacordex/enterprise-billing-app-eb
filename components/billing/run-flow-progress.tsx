@@ -13,19 +13,8 @@
 import Link from "next/link";
 
 import { cn } from "@/lib/utils";
+import { STAGE_LABELS } from "@/types/billing";
 import type { FlowStepState, RunFlowProgress } from "@/types/billing";
-
-const STEP_LABELS: Record<string, string> = {
-  scoping: "Scoping",
-  validation: "Validation",
-  collection: "Collection",
-  aggregation: "Aggregation",
-  taxation: "Taxation",
-  verification: "Verification",
-  posting: "Posting",
-  rendering: "Rendering",
-  distribution: "Distribution",
-};
 
 // Marker glyph per state — paired with the colour, never the colour alone.
 const STEP_MARKS: Record<FlowStepState, string> = {
@@ -65,7 +54,13 @@ export function RunFlowProgressBar({
   flow,
   className,
 }: RunFlowProgressBarProps): React.JSX.Element {
-  const atDistribution = flow.currentStage === "distribution";
+  // Only when distribution is genuinely IN PROGRESS. `currentStage` also anchors
+  // on a FAILED step, so keying the hint on it would sit this calm, info-toned
+  // copy over a failed delivery; gate on the step's own `current` state instead.
+  // A failed/done distribution shows its own step marker, and the Distribution
+  // tab stays reachable via the tab nav.
+  const distributionStep = flow.steps.find((s) => s.stage === "distribution");
+  const atDistribution = distributionStep?.state === "current";
 
   return (
     <div className={cn("space-y-3", className)}>
@@ -79,7 +74,7 @@ export function RunFlowProgressBar({
             )}
           >
             <span aria-hidden="true">{STEP_MARKS[step.state]}</span>
-            <span>{STEP_LABELS[step.stage] ?? step.stage}</span>
+            <span>{STAGE_LABELS[step.stage]}</span>
             <span className="sr-only"> — {STATE_LABELS[step.state]}</span>
           </li>
         ))}
@@ -87,8 +82,8 @@ export function RunFlowProgressBar({
 
       {atDistribution && (
         <p className="text-body-sm text-[color:var(--color-info-700)]">
-          This run is at the distribution step. Delivery is tracked per artifact,
-          not per account — open the{" "}
+          This run is at the distribution step. Delivery is tracked per
+          artifact, not per account — open the{" "}
           <Link
             href={`/billing/bill-runs/${runId}?tab=distribution`}
             className="underline underline-offset-2"

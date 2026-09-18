@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunDistribution } from "@/db/schema/billing/bill-run-distribution";
@@ -96,5 +96,33 @@ export const billRunDistributionRepository = {
       ...r,
       artifactType: r.artifactType as DistributionArtifactType,
     }));
+  },
+
+  // Whether the run's LATEST distribution round left any FAILED artifact — the
+  // "abandoned" set a `COMPLETED` run carries when it was force-completed (T11,
+  // bm20-spec §Implementation §3) rather than fully delivered. Mirrors
+  // `failedArtifactRefsFromRows` in `distribution-tab.tsx` (FAILED at the
+  // current/max `distribution_attempt`) but as a single boolean, so the
+  // Workflow-tab flow bar can flip its Distribution step from `done` to
+  // `failed` without loading the whole delivery log.
+  async hasAbandonedArtifactsForRun(
+    db: Database,
+    billRunId: string,
+  ): Promise<boolean> {
+    const [row] = await db
+      .select({ artifactRef: billRunDistribution.artifactRef })
+      .from(billRunDistribution)
+      .where(
+        and(
+          eq(billRunDistribution.refBillRunId, billRunId),
+          eq(billRunDistribution.outcome, "FAILED"),
+          eq(
+            billRunDistribution.distributionAttempt,
+            sql`(SELECT MAX(${billRunDistribution.distributionAttempt}) FROM ${billRunDistribution} WHERE ${billRunDistribution.refBillRunId} = ${billRunId})`,
+          ),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
   },
 };

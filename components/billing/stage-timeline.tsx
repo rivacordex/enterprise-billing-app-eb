@@ -8,27 +8,15 @@
 import { AccountStatusBadge } from "@/components/billing/account-status-badge";
 import { ErrorClassBadge } from "@/components/billing/error-class-badge";
 import { StageStatusBadge } from "@/components/billing/stage-status-badge";
-import { TIMELINE_STAGES } from "@/types/billing";
-import type {
-  StageTimelineRow,
-  StageTimelineSummary,
-  TimelineStage,
-} from "@/types/billing";
+import { STAGE_LABELS, TIMELINE_STAGES } from "@/types/billing";
+import type { StageTimelineRow, StageTimelineSummary } from "@/types/billing";
 
 // No `distribution` column: it is tracked per (target, artifact) in
 // `bill_run_distribution` — its run report belongs to no account — so a
 // per-account cell could only ever be fabricated. The run-level flow bar above
-// carries it and links to the Distribution tab instead.
-const STAGE_LABELS: Record<TimelineStage, string> = {
-  scoping: "Scoping",
-  validation: "Validation",
-  collection: "Collection",
-  aggregation: "Aggregation",
-  taxation: "Taxation",
-  verification: "Verification",
-  posting: "Posting",
-  rendering: "Rendering",
-};
+// carries it and links to the Distribution tab instead. Labels come from the
+// shared `STAGE_LABELS` (types/billing) so this header and the flow bar can
+// never drift.
 
 export interface StageTimelineProps {
   rows: StageTimelineRow[];

@@ -72,6 +72,24 @@ describe("RunFlowProgressBar", () => {
     expect(screen.queryByRole("link", { name: "Distribution tab" })).toBeNull();
   });
 
+  it("does NOT show the calm distribution hint when distribution FAILED", () => {
+    // A DISTRIBUTION_FAILED run anchors currentStage on 'distribution', but the
+    // step is 'failed', not 'current' — the info-toned "at the distribution
+    // step" copy must never sit over a failed delivery.
+    render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{
+          steps: steps({ distribution: "failed" }),
+          currentStage: "distribution",
+        }}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Distribution tab" })).toBeNull();
+    expect(screen.getByText("— failed")).toBeTruthy();
+  });
+
   // ui-context "Rendering rule" — state is never conveyed by colour alone.
   it("labels each step's state for assistive tech", () => {
     render(

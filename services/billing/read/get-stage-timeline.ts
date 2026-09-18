@@ -1,6 +1,7 @@
 import { db } from "@/db/client";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
+import { billRunDistributionRepository } from "@/db/repositories/billing/bill-run-distribution.repository";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import {
   STAGES,
@@ -63,6 +64,19 @@ const SETTLED_OUT: ReadonlySet<AccountStatus> = new Set([
   "PROCESSING_FAILED",
 ]);
 
+// Accounts whose failure is RESOLVED — deliberately taken out of the run's
+// billed outcome: `EXCLUDED` at scoping (Inv #26), or a `PROCESSING_FAILED`/
+// `EXCLUDED` account re-badged `SKIPPED` at approval. Their historical FAILED
+// stage cells stay on the per-account grid (that is the account's truth), but
+// must NOT read as a live failure on the run-level flow bar — a COMPLETED run
+// whose only failure was skipped at approval is not a failed run.
+// `PROCESSING_FAILED` is deliberately ABSENT: that failure is still live
+// (pre-approval) and must surface on the bar until approval skips it.
+const RESOLVED_OUT: ReadonlySet<AccountStatus> = new Set([
+  "EXCLUDED",
+  "SKIPPED",
+]);
+
 const POSTED_STATUSES: ReadonlySet<AccountStatus> = new Set([
   "INVOICED",
   "DISTRIBUTING",
@@ -87,11 +101,21 @@ export async function getStageTimeline(
   billRunId: string,
   runStatus?: RunStatus,
 ): Promise<StageTimelineResult> {
-  const [accounts, stageRows, renderedAccountIds] = await Promise.all([
-    billRunAccountRepository.listStatusesForRun(db, billRunId),
-    billRunAccountStageRepository.listLatestForRun(db, billRunId),
-    billRunInvoicesRepository.listBillingAccountIdsForRun(db, billRunId),
-  ]);
+  const [accounts, stageRows, renderedAccountIds, distributionAbandoned] =
+    await Promise.all([
+      billRunAccountRepository.listStatusesForRun(db, billRunId),
+      billRunAccountStageRepository.listLatestForRun(db, billRunId),
+      billRunInvoicesRepository.listBillingAccountIdsForRun(db, billRunId),
+      // Only a COMPLETED run can have reached distribution via T11's
+      // force-complete/abandon path — that is the one run status where the flow
+      // bar's Distribution step would otherwise read a falsely-clean `done`.
+      runStatus === "COMPLETED"
+        ? billRunDistributionRepository.hasAbandonedArtifactsForRun(
+            db,
+            billRunId,
+          )
+        : Promise.resolve(false),
+    ]);
 
   const rendered = new Set(renderedAccountIds);
 
@@ -139,7 +163,11 @@ export async function getStageTimeline(
     accounts.map((a) => a.status),
     runStatus ?? null,
   );
-  const flow = deriveFlowProgress(rows, accounts, runStatus ?? null);
+  const flow = deriveFlowProgress(
+    rows,
+    runStatus ?? null,
+    distributionAbandoned,
+  );
 
   return { rows, summary, flow };
 }
@@ -148,7 +176,11 @@ export async function getStageTimeline(
 // stage or a state we cannot honestly call yet.
 function deriveAppSideStage(
   stage: TimelineStage,
-  account: { billingAccountId: string; status: AccountStatus; errorCode: string | null },
+  account: {
+    billingAccountId: string;
+    status: AccountStatus;
+    errorCode: string | null;
+  },
   rendered: ReadonlySet<string>,
 ): StageStatus | null {
   switch (stage) {
@@ -169,9 +201,17 @@ function deriveAppSideStage(
         return "SKIPPED";
       }
       if (POSTED_STATUSES.has(account.status)) return "DONE";
-      // Parked by a posting failure: the account stays PROCESSED and carries
-      // the error code, so the cell must not read as merely "not started".
-      if (account.errorCode === "POSTING_FAILED") return "FAILED";
+      // Parked by a posting failure: the account stays `PROCESSED` and records
+      // the reason ONLY in `error_code` — `handle-stage-signal` clears it on a
+      // clean terminal signal, so a successfully-`PROCESSED` account never
+      // carries one. ANY code here (POSTING_FAILED, PERIOD_CLOSED, a GL/period
+      // reject, …) therefore means parked, so mirror `get-posting-progress.ts`'s
+      // failed/PERIOD_CLOSED derivation rather than matching a single literal —
+      // else a genuinely-stuck account (e.g. PERIOD_CLOSED) reads as a
+      // misleading PENDING, the exact defect these derived stages exist to fix.
+      if (account.status === "PROCESSED" && account.errorCode !== null) {
+        return "FAILED";
+      }
       return null;
     case "rendering":
       if (account.status === "SKIPPED" || account.status === "EXCLUDED") {
@@ -204,31 +244,52 @@ function deriveSummary(
 // (target, artifact) in `bill_run_distribution`, never per account.
 function deriveFlowProgress(
   rows: readonly StageTimelineRow[],
-  accounts: readonly { status: AccountStatus }[],
   runStatus: RunStatus | null,
+  distributionAbandoned: boolean,
 ): RunFlowProgress {
-  const inPlay = accounts.filter((a) => !SETTLED_OUT.has(a.status)).length;
+  // Only accounts still in play have to clear a step; an EXCLUDED/SKIPPED or
+  // already-failed account must never hold the whole run at `current`. This is
+  // filtered off each ROW by its own account status, because a settled-out
+  // account can carry cells that never became DONE/SKIPPED — e.g. a
+  // partial-period `EXCLUDED` row is scoped but bypassed, so its stage cells stay
+  // `null`. Counting it against `rows.length` would strand a stage at `current`
+  // even after every in-play account cleared it.
+  const inPlayRows = rows.filter((r) => !SETTLED_OUT.has(r.accountStatus));
 
   const states = new Map<Stage, FlowStepState>();
 
   for (const stage of TIMELINE_STAGES) {
+    // `anyFailed` and `started` still look across ALL rows — a failure or a
+    // signal on any account is real whether or not it settled out.
     const cells = rows.map((r) => r.cells.find((c) => c.stage === stage));
-    const anyFailed = cells.some((c) => c?.status === "FAILED");
-    // Only accounts still in play have to clear a step; an EXCLUDED/SKIPPED or
-    // already-failed account must never hold the whole run at `current`.
-    const cleared = rows.filter((r, i) => {
-      const status = cells[i]?.status;
+    // A stage reads `failed` on the bar only for a LIVE failure — one on an
+    // account still owned by the run. A failure on a RESOLVED_OUT account
+    // (EXCLUDED, or re-badged SKIPPED at approval) is history the grid still
+    // shows but must not paint a COMPLETED run's bar red (the floor below never
+    // downgrades a `failed`, so this is the only place to draw the line).
+    const anyFailed = rows.some(
+      (r) =>
+        !RESOLVED_OUT.has(r.accountStatus) &&
+        r.cells.find((c) => c.stage === stage)?.status === "FAILED",
+    );
+    const cleared = inPlayRows.filter((r) => {
+      const status = r.cells.find((c) => c.stage === stage)?.status;
       return status === "DONE" || status === "SKIPPED";
     }).length;
     const started = cells.some((c) => c?.status != null);
 
     if (anyFailed) states.set(stage, "failed");
-    else if (rows.length > 0 && cleared >= rows.length) states.set(stage, "done");
-    else if (inPlay === 0 && rows.length > 0) states.set(stage, "skipped");
+    else if (inPlayRows.length > 0 && cleared >= inPlayRows.length)
+      states.set(stage, "done");
+    else if (inPlayRows.length === 0 && rows.length > 0)
+      states.set(stage, "skipped");
     else states.set(stage, started ? "current" : "pending");
   }
 
-  states.set("distribution", deriveDistributionState(runStatus));
+  states.set(
+    "distribution",
+    deriveDistributionState(runStatus, distributionAbandoned),
+  );
 
   // The RUN's own status is a FLOOR on the bar. A run that has reached
   // `INVOICED` necessarily cleared every processing stage and posting, whatever
@@ -295,10 +356,18 @@ function impliedCompleteThrough(runStatus: RunStatus | null): number | null {
   }
 }
 
-function deriveDistributionState(runStatus: RunStatus | null): FlowStepState {
+function deriveDistributionState(
+  runStatus: RunStatus | null,
+  distributionAbandoned: boolean,
+): FlowStepState {
   switch (runStatus) {
     case "COMPLETED":
-      return "done";
+      // A COMPLETED run is normally fully delivered, but T11's force-complete
+      // path leaves FAILED artifacts abandoned. Reflect that as `failed` so the
+      // bar never shows a clean `done` over an undelivered artifact — matching
+      // the Distribution tab's own abandoned-artifact detection. (The floor
+      // below never downgrades a `failed`, so this survives.)
+      return distributionAbandoned ? "failed" : "done";
     case "DISTRIBUTING":
       return "current";
     case "DISTRIBUTION_FAILED":
