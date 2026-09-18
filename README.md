@@ -811,10 +811,19 @@ DB: `SELECT status FROM billing.bill_run` should show `COMPLETED`.
 
 **Older checkouts — Windows CRLF breaks SQL-boundary tests.** Without
 `.gitattributes`, Git for Windows' `core.autocrlf=true` checks `.sql` files out
-as CRLF, which breaks nine byte-exact guardrail tests. Re-normalize:
+as CRLF, which breaks nine byte-exact guardrail tests. Re-normalize by forcing a
+fresh LF checkout of the tracked `.sql` files.
+
+> ⚠️ This **deletes and re-checks-out** every tracked `.sql` file, discarding
+> any uncommitted `.sql` edits. Commit or stash them first — the guard below
+> refuses to run while `.sql` changes are pending.
 
 ```bash
-git ls-files -z '*.sql' | xargs -0 rm -f && git checkout -- '*.sql'
+if git diff --quiet -- '*.sql' && git diff --cached --quiet -- '*.sql'; then
+  git ls-files -z '*.sql' | xargs -0 rm -f && git checkout -- '*.sql'
+else
+  echo "Uncommitted .sql changes — commit or stash them before re-normalizing."
+fi
 ```
 
 ---
