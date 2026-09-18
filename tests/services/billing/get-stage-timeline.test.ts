@@ -16,9 +16,13 @@ vi.mock("@/db/repositories/billing/bill-run-account-stage.repository", () => ({
 vi.mock("@/db/repositories/billing/bill-run-invoices.repository", () => ({
   billRunInvoicesRepository: { listBillingAccountIdsForRun: vi.fn() },
 }));
+vi.mock("@/db/repositories/billing/bill-run-distribution.repository", () => ({
+  billRunDistributionRepository: { hasAbandonedArtifactsForRun: vi.fn() },
+}));
 
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
+import { billRunDistributionRepository } from "@/db/repositories/billing/bill-run-distribution.repository";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import { getStageTimeline } from "@/services/billing/read/get-stage-timeline";
 import { STAGES, TIMELINE_STAGES } from "@/types/billing";
@@ -30,6 +34,9 @@ const mockListLatest = vi.mocked(
 );
 const mockListRendered = vi.mocked(
   billRunInvoicesRepository.listBillingAccountIdsForRun,
+);
+const mockHasAbandoned = vi.mocked(
+  billRunDistributionRepository.hasAbandonedArtifactsForRun,
 );
 
 function stageRow(overrides: Record<string, unknown>) {
@@ -61,12 +68,17 @@ function step(steps: RunFlowStep[], stage: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockListRendered.mockResolvedValue([]);
+  mockHasAbandoned.mockResolvedValue(false);
 });
 
 describe("getStageTimeline", () => {
   it("builds one row per account, one cell per TIMELINE stage, filling signalled stages and leaving unsignalled ones null", async () => {
     mockListStatuses.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
+      {
+        billingAccountId: "BAN00000001",
+        status: "PROCESSING",
+        errorCode: null,
+      },
       { billingAccountId: "BAN00000002", status: "EXCLUDED", errorCode: null },
     ]);
     mockListLatest.mockResolvedValue([stageRow({})]);
@@ -115,8 +127,16 @@ describe("getStageTimeline", () => {
   describe("derived app-side stages", () => {
     it("scoping is DONE for a scoped account and SKIPPED for an EXCLUDED one", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "PROCESSED", errorCode: null },
-        { billingAccountId: "BAN00000002", status: "EXCLUDED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "PROCESSED",
+          errorCode: null,
+        },
+        {
+          billingAccountId: "BAN00000002",
+          status: "EXCLUDED",
+          errorCode: null,
+        },
       ]);
       mockListLatest.mockResolvedValue([]);
 
@@ -145,9 +165,13 @@ describe("getStageTimeline", () => {
       expect(cell(rows[0], "scoping")?.status).toBe("SKIPPED");
     });
 
-    it("posting is DONE once the account is INVOICED, SKIPPED when skipped, FAILED when parked", async () => {
+    it("posting is DONE once the account is INVOICED, SKIPPED when skipped, FAILED when parked under ANY error code", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "INVOICED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "INVOICED",
+          errorCode: null,
+        },
         {
           billingAccountId: "BAN00000002",
           status: "SKIPPED",
@@ -158,7 +182,19 @@ describe("getStageTimeline", () => {
           status: "PROCESSED",
           errorCode: "POSTING_FAILED",
         },
-        { billingAccountId: "BAN00000004", status: "PROCESSED", errorCode: null },
+        {
+          billingAccountId: "BAN00000004",
+          status: "PROCESSED",
+          errorCode: null,
+        },
+        {
+          // Parked on a first-class posting failure whose code is NOT the
+          // literal "POSTING_FAILED" — must still read FAILED, not a
+          // misleading PENDING (mirrors get-posting-progress.ts).
+          billingAccountId: "BAN00000005",
+          status: "PROCESSED",
+          errorCode: "PERIOD_CLOSED",
+        },
       ]);
       mockListLatest.mockResolvedValue([]);
 
@@ -169,12 +205,21 @@ describe("getStageTimeline", () => {
       expect(cell(rows[2], "posting")?.status).toBe("FAILED");
       // Approved but not yet posted — genuinely pending, not a failure.
       expect(cell(rows[3], "posting")?.status).toBeNull();
+      expect(cell(rows[4], "posting")?.status).toBe("FAILED");
     });
 
     it("rendering is DONE only for an account with a stored invoice", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "INVOICED", errorCode: null },
-        { billingAccountId: "BAN00000002", status: "INVOICED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "INVOICED",
+          errorCode: null,
+        },
+        {
+          billingAccountId: "BAN00000002",
+          status: "INVOICED",
+          errorCode: null,
+        },
       ]);
       mockListLatest.mockResolvedValue([]);
       mockListRendered.mockResolvedValue(["BAN00000001"]);
@@ -188,7 +233,11 @@ describe("getStageTimeline", () => {
 
     it("[CRITICAL] a real stage row always wins over the derivation", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "EXCLUDED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "EXCLUDED",
+          errorCode: null,
+        },
       ]);
       // An EXCLUDED account would derive scoping=SKIPPED; a genuine signal says
       // otherwise and must not be overwritten.
@@ -205,7 +254,11 @@ describe("getStageTimeline", () => {
   describe("run flow progress", () => {
     it("marks distribution done only when the run is COMPLETED", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "COMPLETED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "COMPLETED",
+          errorCode: null,
+        },
       ]);
       mockListLatest.mockResolvedValue([]);
       mockListRendered.mockResolvedValue(["BAN00000001"]);
@@ -214,6 +267,29 @@ describe("getStageTimeline", () => {
 
       expect(step(flow.steps, "distribution")?.state).toBe("done");
       expect(flow.steps).toHaveLength(STAGES.length);
+    });
+
+    it("marks distribution FAILED (not done) for a force-completed run with abandoned artifacts", async () => {
+      // A COMPLETED run reached via T11's force-complete path carries abandoned
+      // FAILED artifacts; the bar must not show a clean `done` over them.
+      mockListStatuses.mockResolvedValue([
+        {
+          billingAccountId: "BAN00000001",
+          status: "COMPLETED",
+          errorCode: null,
+        },
+      ]);
+      mockListLatest.mockResolvedValue([]);
+      mockListRendered.mockResolvedValue(["BAN00000001"]);
+      mockHasAbandoned.mockResolvedValue(true);
+
+      const { flow } = await getStageTimeline("BRN00000001", "COMPLETED");
+
+      expect(mockHasAbandoned).toHaveBeenCalledWith(
+        expect.anything(),
+        "BRN00000001",
+      );
+      expect(step(flow.steps, "distribution")?.state).toBe("failed");
     });
 
     it("anchors on distribution while the run is DISTRIBUTING", async () => {
@@ -235,7 +311,11 @@ describe("getStageTimeline", () => {
 
     it("reports distribution failed when the run is DISTRIBUTION_FAILED", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "INVOICED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "INVOICED",
+          errorCode: null,
+        },
       ]);
       mockListLatest.mockResolvedValue([]);
       mockListRendered.mockResolvedValue(["BAN00000001"]);
@@ -247,6 +327,37 @@ describe("getStageTimeline", () => {
 
       expect(step(flow.steps, "distribution")?.state).toBe("failed");
       expect(flow.currentStage).toBe("distribution");
+    });
+
+    it("does NOT paint a COMPLETED run's bar failed for a stage that failed on an account since re-badged SKIPPED at approval", async () => {
+      // BAN1 failed validation, was re-badged PROCESSING_FAILED -> SKIPPED at
+      // approval; its FAILED validation stage row survives (approval only
+      // changes account status). BAN2 completed and posted. The run reached
+      // COMPLETED — the bar must read done end-to-end, not carry a red validation
+      // step, because BAN1's failure was resolved OUT of the run at approval.
+      mockListStatuses.mockResolvedValue([
+        { billingAccountId: "BAN00000001", status: "SKIPPED", errorCode: null },
+        {
+          billingAccountId: "BAN00000002",
+          status: "COMPLETED",
+          errorCode: null,
+        },
+      ]);
+      mockListLatest.mockResolvedValue([
+        stageRow({
+          refBillingAccountId: "BAN00000001",
+          stage: "validation",
+          status: "FAILED",
+          errorClass: "HARD",
+        }),
+      ]);
+      mockListRendered.mockResolvedValue(["BAN00000002"]);
+
+      const { flow } = await getStageTimeline("BRN00000001", "COMPLETED");
+
+      expect(step(flow.steps, "validation")?.state).toBe("done");
+      expect(flow.steps.some((s) => s.state === "failed")).toBe(false);
+      expect(flow.currentStage).not.toBe("validation");
     });
 
     it("surfaces a failed processing stage as the run's anchor", async () => {
@@ -267,9 +378,43 @@ describe("getStageTimeline", () => {
       expect(flow.currentStage).toBe("validation");
     });
 
+    // Regression: a settled-out account (partial-period EXCLUDED, so scoped but
+    // bypassed and carrying no stage signals) must not hold a stage at
+    // `current`. Only IN-PLAY rows count toward a stage being `done` — the old
+    // `cleared >= rows.length` test stranded validation at `current` here.
+    it("marks a stage done once every in-play account cleared it, ignoring an EXCLUDED row with no signals", async () => {
+      mockListStatuses.mockResolvedValue([
+        {
+          billingAccountId: "BAN00000001",
+          status: "PROCESSING",
+          errorCode: null,
+        },
+        {
+          billingAccountId: "BAN00000002",
+          status: "EXCLUDED",
+          errorCode: "PARTIAL_PERIOD",
+        },
+      ]);
+      mockListLatest.mockResolvedValue([
+        stageRow({
+          refBillingAccountId: "BAN00000001",
+          stage: "validation",
+          status: "DONE",
+        }),
+      ]);
+
+      const { flow } = await getStageTimeline("BRN00000001", "PROCESSING");
+
+      expect(step(flow.steps, "validation")?.state).toBe("done");
+    });
+
     it("exposes at most one current step", async () => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "PROCESSING", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "PROCESSING",
+          errorCode: null,
+        },
       ]);
       mockListLatest.mockResolvedValue([
         stageRow({ stage: "validation", status: "DONE" }),
@@ -287,12 +432,22 @@ describe("getStageTimeline", () => {
   describe("mid-flight summary gate", () => {
     beforeEach(() => {
       mockListStatuses.mockResolvedValue([
-        { billingAccountId: "BAN00000001", status: "INVOICED", errorCode: null },
+        {
+          billingAccountId: "BAN00000001",
+          status: "INVOICED",
+          errorCode: null,
+        },
       ]);
       mockListLatest.mockResolvedValue([]);
     });
 
-    it.each(["INVOICED", "DISTRIBUTING", "DISTRIBUTION_FAILED", "COMPLETED", "CANCELLED"] as const)(
+    it.each([
+      "INVOICED",
+      "DISTRIBUTING",
+      "DISTRIBUTION_FAILED",
+      "COMPLETED",
+      "CANCELLED",
+    ] as const)(
       "suppresses the counts once the run is %s",
       async (runStatus) => {
         const { summary } = await getStageTimeline("BRN00000001", runStatus);
@@ -302,13 +457,16 @@ describe("getStageTimeline", () => {
 
     // Approval only re-badges failed/excluded accounts, so the counts still
     // hold until posting actually runs.
-    it.each(["PROCESSING", "PROCESSED", "APPROVED", "POSTING", "PROCESSING_FAILED"] as const)(
-      "keeps the counts while the run is %s",
-      async (runStatus) => {
-        const { summary } = await getStageTimeline("BRN00000001", runStatus);
-        expect(summary.isMidFlight).toBe(true);
-      },
-    );
+    it.each([
+      "PROCESSING",
+      "PROCESSED",
+      "APPROVED",
+      "POSTING",
+      "PROCESSING_FAILED",
+    ] as const)("keeps the counts while the run is %s", async (runStatus) => {
+      const { summary } = await getStageTimeline("BRN00000001", runStatus);
+      expect(summary.isMidFlight).toBe(true);
+    });
 
     it("keeps the counts when no run status is supplied", async () => {
       const { summary } = await getStageTimeline("BRN00000001");

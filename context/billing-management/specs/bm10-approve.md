@@ -7,7 +7,7 @@
 
 ## Goal
 
-A **different** approver (≠ the final trigger actor) opens **Approve & Post**, sees the pre-approval checklist (accounting period open, GL mappings resolvable, no zero/negative totals, approver ≠ trigger actor, all accounts terminal), and approves — stamping `approved_by`/`approved_at`/the immutable `total_amount` and moving the run `PROCESSED → APPROVED`; failed/excluded accounts are recorded `SKIPPED`. (Posting itself is bm11.)
+A **different** approver (≠ the final trigger actor) opens **Approve & Post**, sees the pre-approval checklist — the **five blocking checks** (accounting period open, GL mappings resolvable, no zero/negative totals on billed accounts that carry `customer_bill_line` entries, approver ≠ trigger actor, all accounts terminal) plus a **sixth informational** zero-total line — and approves — stamping `approved_by`/`approved_at`/the immutable `total_amount` and moving the run `PROCESSED → APPROVED`; failed/excluded accounts are recorded `SKIPPED`. (Posting itself is bm11.)
 
 ---
 
@@ -16,7 +16,7 @@ A **different** approver (≠ the final trigger actor) opens **Approve & Post**,
 ### Structural
 - **Precondition:** run `status = 'PROCESSED'`, every account terminal (`PROCESSED`/`PROCESSING_FAILED`/`EXCLUDED`).
 - **Four-eyes (segregation of duties):** the approver ≠ the user who triggered the **final** attempt (`bill_run.triggered_by`) — enforced in the **service layer** (typed `FOUR_EYES_VIOLATION`) and backed by the `bill_run.approver_distinct` DB CHECK (bm02). The UI additionally disables Approve for the trigger actor with a reason (show/hide only).
-- **Pre-approval checks** (all must pass; each renders pass/fail + remediation), `services/billing/pre-approval-checks.ts`:
+- **Pre-approval checks** — **five blocking checks (1–5, all must pass)** plus **one informational line (6)**; each renders pass/fail + remediation, `services/billing/pre-approval-checks.ts`:
   1. **Accounting period open** — `accountingPeriodRepository.findByPeriodAndCurrency(periodKeyFor(gl_event_at), currency)` is not `closed` (an absent row = open).
   2. **GL mappings resolvable** — the INV revenue + tax mappings resolve (bm09's `gl_resolution`); an unresolved mapping blocks.
   3. **No zero/negative totals on billed accounts** — a backstop; any `total_amount <= 0` among postable bills **that carry at least one `customer_bill_line`** blocks. **AMENDED 2026-09-17 (owner decision).** The original premise — "zero-charge accounts were excluded at Scoping" — was true at bm10 but was invalidated by **bm32**, which redefined Uncharged (Inv #22): a zero-charge account is now scoped, runs every stage, reaches `PROCESSED`, and is surfaced on the Uncharged tab, while the processor still writes an unconditional `subtotal-0.00` header for it (its own documented "deferred limitation"). The backstop therefore fired on a shape it was never written for and made **any run containing a no-charges account permanently unapprovable** — including the `ci` sample seed's `BAN…04`. A **line-less** zero bill no longer blocks; a bill **with** lines that still totals `<= 0` remains a genuine anomaly and still blocks. **Accepted consequence:** the line-less header is no longer stopped here, so it reaches posting and would consume an invoice number for a 0.00 INV unless `document_line_amount_check` (`amount > 0`) rejects it first and parks the account. The durable fix — stop the processor writing the header at all — is recorded as open in `billmgmt-progress-tracker.md`.
@@ -60,7 +60,7 @@ A **different** approver (≠ the final trigger actor) opens **Approve & Post**,
 
 - [ ] Typecheck/lint/format clean; `BILL_RUN_APPROVED` in `AUDIT_EVENT_TYPES` + category map (+ coverage test); no new dependency.
 - [ ] **Four-eyes** enforced in the service **and** by the `approver_distinct` DB CHECK; the UI disables Approve for the trigger actor with a reason.
-- [ ] All five pre-approval checks render pass/fail + remediation; any failing check blocks approval (no state change).
+- [ ] All five **blocking** pre-approval checks render pass/fail + remediation; any failing check blocks approval (no state change) — but a line-less zero bill does **not** block (check 3 only fires on a bill carrying `customer_bill_line` entries whose `total_amount <= 0`). The sixth **informational** zero-total line always passes and is excluded from `CHECKS_FAILED`.
 - [ ] Approve stamps `approved_by`/`approved_at`/immutable `total_amount`, records `SKIPPED` for failed/excluded accounts, moves `PROCESSED → APPROVED`, audits `BILL_RUN_APPROVED`; posting is not performed here (bm11).
 - [ ] `billrun_approve : EDIT` gates the page + action (route × level); the Approve confirm frames irreversibility + shows the skipped count.
 - [ ] Docs updated same change set (`billmgmt-code-standards.md` §8 bm10 row + `billmgmt-progress-tracker.md`).

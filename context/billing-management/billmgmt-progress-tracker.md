@@ -381,6 +381,50 @@ detail: `context/billing-management/specs/bm*.md`._
   `APPROVED`/`POSTING` are deliberately excluded, since approval only re-badges
   failed/excluded accounts and the counts still hold until posting runs. Covered
   by table-driven tests over every run status.
+- **FIXED (2026-09-18) — Workflow-tab flow-bar review findings (post-review of
+  the derived-stages + flow-bar change set).** Six correctness/consistency fixes,
+  each verified against the canonical reference before changing:
+  - **Posting cell mislabelled a parked non-`POSTING_FAILED` failure as PENDING.**
+    `deriveAppSideStage`'s posting branch only mapped the literal `POSTING_FAILED`
+    to FAILED, so an account parked on any other first-class code (chiefly
+    `PERIOD_CLOSED`) at `status = PROCESSED` read as a misleading PENDING — the
+    exact defect the derivation exists to remove, and a contradiction with the
+    Posting tab. Now: a `PROCESSED` account with ANY non-null `error_code` is
+    FAILED, mirroring `get-posting-progress.ts` (safe because
+    `handle-stage-signal` clears the code on a clean terminal signal, so a healthy
+    `PROCESSED` account never carries one).
+  - **Flow bar showed a red stage on a green COMPLETED run.** `anyFailed` scanned
+    ALL rows, so a `PROCESSING_FAILED` account re-badged `SKIPPED` at approval kept
+    painting its (still-present) FAILED stage cell onto the run-level bar. New
+    `RESOLVED_OUT` set ({EXCLUDED, SKIPPED}) excludes resolved-out accounts from
+    `anyFailed`; a live `PROCESSING_FAILED` failure still surfaces (it is
+    deliberately NOT in the set). The per-account grid still shows the historical
+    failure.
+  - **Force-completed distribution read as a clean `done`.** A `COMPLETED` run
+    reached via T11 force-complete carries abandoned FAILED artifacts; the bar's
+    distribution step showed `done` (green ✓) over them, contradicting the
+    Distribution tab. `getStageTimeline` now reads
+    `billRunDistributionRepository.hasAbandonedArtifactsForRun` (a boolean mirror
+    of the tab's "FAILED at max attempt" rule, fetched only for a COMPLETED run)
+    and `deriveDistributionState` returns `failed` when abandoned.
+  - **CANCELLED run's bar looked in-progress.** A cancelled run resets accounts to
+    PENDING with no run-status floor, so the bar rendered scoping `done` /
+    validation `current`. The Workflow tab now suppresses the bar for a CANCELLED
+    run and shows a plain note (`runStatus` threaded into `RunDetailTabs`); the
+    per-account grid still reflects the reset.
+  - **Calm distribution hint sat over a failed delivery.** The "This run is at the
+    distribution step" hint keyed on `currentStage`, which also anchors a FAILED
+    step. It now gates on the distribution step's own `current` state.
+  - **Duplicated stage-label map.** `run-flow-progress.tsx` and `stage-timeline.tsx`
+    each maintained a stage→label map; unified into one exported `STAGE_LABELS`
+    (`types/billing.ts`) consumed by both.
+  **Deliberately NOT changed (verified non-issues):** the max-attempt-*per-stage*
+  read in `listLatestForRun` is required for partial-rerun display (not a bug); a
+  stale prior-attempt `bill_run_invoices` render row is unreachable (one immutable
+  row per run/account, and cancel is gated to `PROCESSING`); the tax-only /
+  net-zero sign-rule gap stays the documented latent item (known-issues §12 —
+  unreachable while taxation derives tax from subtotal). `tsc`, `eslint`,
+  `prettier`, and the billing vitest suites pass.
 
 - **VERIFIED (2026-09-17) — first full `SCHEDULED → COMPLETED` lifecycle on real
   infrastructure.** `BRN00000001` (the `_SAMPLE_` `ci` seed) traversed
