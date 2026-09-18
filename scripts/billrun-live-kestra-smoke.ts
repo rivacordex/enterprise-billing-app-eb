@@ -1021,9 +1021,33 @@ async function main(): Promise<void> {
   }
 }
 
+// Best-effort clean shutdown: close the postgres-js pool BEFORE `process.exit`
+// tears the event loop down, so its sockets are CLOSED (not still-CLOSING) when
+// teardown runs. Node 24 on Windows has aborted here with a libuv
+// `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` — a double-close
+// race over lingering handles — which flipped a confirmed-COMPLETED run's exit
+// code to nonzero AFTER the journey had already passed. Draining the pool
+// removes one class of lingering handle; a short `timeout` keeps a wedged pool
+// from hanging the exit, and any close error is swallowed so it can never mask
+// the real result.
+//
+// UNVERIFIED: this has not been reproduced/confirmed against the real crash
+// (that needs a clean-DB end-to-end run on this platform — see README). The
+// engine client's undici keep-alive sockets to Kestra are another lingering
+// handle this does NOT close and may still trip the assertion. If a
+// confirmed-COMPLETED run still exits nonzero at teardown, the DB is the source
+// of truth (`SELECT status FROM billing.bill_run` -> COMPLETED, per README).
+async function shutdown(code: number): Promise<never> {
+  await db.$client.end({ timeout: 5 }).catch(() => {});
+  process.exit(code);
+}
+
 main()
-  .then(() => process.exit(0))
+  // A resolved `main()` IS the success signal — the lifecycle checks all passed
+  // (a failed check throws). Exit 0 through a clean pool close.
+  .then(() => shutdown(0))
   .catch((err: unknown) => {
     logger.error("billrun-live-kestra-smoke: failed.", { err });
-    process.exit(1);
+    // Failed lifecycle checks still exit nonzero.
+    return shutdown(1);
   });

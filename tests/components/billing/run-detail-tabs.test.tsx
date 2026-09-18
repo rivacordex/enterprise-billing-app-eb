@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { RunDetailTabs } from "@/components/billing/run-detail-tabs";
@@ -50,8 +50,10 @@ describe("RunDetailTabs — Workflow tab flow bar", () => {
   it("renders the flow bar for a non-cancelled run", () => {
     render(<RunDetailTabs {...props("PROCESSING")} />);
 
-    // The bar renders every pipeline step; "Scoping" is unique to it here.
-    expect(screen.getByText("Scoping")).toBeTruthy();
+    // The flow bar is the run detail's only list (the grid below is a table),
+    // so scope the step assertion to it: "Scoping" must render inside the bar.
+    const bar = screen.getByRole("list");
+    expect(within(bar).getByText("Scoping")).toBeTruthy();
     expect(screen.queryByText(/This run was cancelled/)).toBeNull();
   });
 
@@ -59,7 +61,7 @@ describe("RunDetailTabs — Workflow tab flow bar", () => {
     render(<RunDetailTabs {...props("CANCELLED")} />);
 
     expect(screen.getByText(/This run was cancelled/)).toBeTruthy();
-    // No flow-bar steps rendered.
-    expect(screen.queryByText("Scoping")).toBeNull();
+    // The bar is the only list; its absence proves the whole bar is suppressed.
+    expect(screen.queryByRole("list")).toBeNull();
   });
 });

@@ -159,6 +159,30 @@ export async function getStageTimeline(
     };
   });
 
+  // A FAILED stage cell from a SUPERSEDED attempt is history the grid still
+  // shows, but must not paint the run-level bar failed — the account has since
+  // been re-attempted. `listLatestForRun` already gives the highest attempt per
+  // (account, stage), so the account's current attempt is the max of those, and
+  // a FAILED cell below it belongs to an attempt a later rerun replaced. Keyed
+  // `${account}::${stage}` for `deriveFlowProgress`. (The per-account grid keeps
+  // the cell; only the run-bar's `anyFailed` ignores it.)
+  const maxAttemptByAccount = new Map<string, number>();
+  for (const s of stageRows) {
+    const prev = maxAttemptByAccount.get(s.refBillingAccountId) ?? 0;
+    if (s.attempt > prev) {
+      maxAttemptByAccount.set(s.refBillingAccountId, s.attempt);
+    }
+  }
+  const staleFailedCells = new Set<string>();
+  for (const s of stageRows) {
+    if (
+      s.status === "FAILED" &&
+      s.attempt < (maxAttemptByAccount.get(s.refBillingAccountId) ?? s.attempt)
+    ) {
+      staleFailedCells.add(`${s.refBillingAccountId}::${s.stage}`);
+    }
+  }
+
   const summary = deriveSummary(
     accounts.map((a) => a.status),
     runStatus ?? null,
@@ -167,6 +191,7 @@ export async function getStageTimeline(
     rows,
     runStatus ?? null,
     distributionAbandoned,
+    staleFailedCells,
   );
 
   return { rows, summary, flow };
@@ -246,6 +271,7 @@ function deriveFlowProgress(
   rows: readonly StageTimelineRow[],
   runStatus: RunStatus | null,
   distributionAbandoned: boolean,
+  staleFailedCells: ReadonlySet<string>,
 ): RunFlowProgress {
   // Only accounts still in play have to clear a step; an EXCLUDED/SKIPPED or
   // already-failed account must never hold the whole run at `current`. This is
@@ -263,14 +289,17 @@ function deriveFlowProgress(
     // signal on any account is real whether or not it settled out.
     const cells = rows.map((r) => r.cells.find((c) => c.stage === stage));
     // A stage reads `failed` on the bar only for a LIVE failure — one on an
-    // account still owned by the run. A failure on a RESOLVED_OUT account
-    // (EXCLUDED, or re-badged SKIPPED at approval) is history the grid still
-    // shows but must not paint a COMPLETED run's bar red (the floor below never
-    // downgrades a `failed`, so this is the only place to draw the line).
+    // account still owned by the run AND on the account's CURRENT attempt. A
+    // failure on a RESOLVED_OUT account (EXCLUDED, or re-badged SKIPPED at
+    // approval), or one from a superseded attempt a later rerun replaced
+    // (`staleFailedCells`), is history the grid still shows but must not paint a
+    // COMPLETED run's bar red (the floor below never downgrades a `failed`, so
+    // this is the only place to draw the line).
     const anyFailed = rows.some(
       (r) =>
         !RESOLVED_OUT.has(r.accountStatus) &&
-        r.cells.find((c) => c.stage === stage)?.status === "FAILED",
+        r.cells.find((c) => c.stage === stage)?.status === "FAILED" &&
+        !staleFailedCells.has(`${r.billingAccountId}::${stage}`),
     );
     const cleared = inPlayRows.filter((r) => {
       const status = r.cells.find((c) => c.stage === stage)?.status;

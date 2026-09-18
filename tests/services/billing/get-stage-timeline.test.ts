@@ -360,6 +360,47 @@ describe("getStageTimeline", () => {
       expect(flow.currentStage).not.toBe("validation");
     });
 
+    it("[CRITICAL] does not paint a COMPLETED run's bar failed for a stage that failed on a SUPERSEDED attempt", async () => {
+      // BAN1 failed `collection` on attempt 1, was reran, and cleared the
+      // pipeline on attempt 2 (a fresh `validation` signal proves the higher
+      // attempt). The attempt-1 collection FAILED row is the latest for that
+      // stage (no attempt-2 collection signal), so `listLatestForRun` still
+      // returns it — but it belongs to a superseded attempt. The COMPLETED run's
+      // bar must read done end-to-end, while the per-account grid still shows the
+      // historical FAILED cell.
+      mockListStatuses.mockResolvedValue([
+        {
+          billingAccountId: "BAN00000001",
+          status: "COMPLETED",
+          errorCode: null,
+        },
+      ]);
+      mockListLatest.mockResolvedValue([
+        stageRow({
+          refBillingAccountId: "BAN00000001",
+          stage: "collection",
+          attempt: 1,
+          status: "FAILED",
+          errorClass: "HARD",
+        }),
+        stageRow({
+          refBillingAccountId: "BAN00000001",
+          stage: "validation",
+          attempt: 2,
+          status: "DONE",
+        }),
+      ]);
+      mockListRendered.mockResolvedValue(["BAN00000001"]);
+
+      const { rows, flow } = await getStageTimeline("BRN00000001", "COMPLETED");
+
+      // Run bar: no live failure, and collection is forced done by the floor.
+      expect(flow.steps.some((s) => s.state === "failed")).toBe(false);
+      expect(step(flow.steps, "collection")?.state).toBe("done");
+      // Grid: the historical FAILED cell is preserved.
+      expect(cell(rows[0], "collection")?.status).toBe("FAILED");
+    });
+
     it("surfaces a failed processing stage as the run's anchor", async () => {
       mockListStatuses.mockResolvedValue([
         {
