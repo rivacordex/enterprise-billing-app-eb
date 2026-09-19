@@ -19,9 +19,15 @@ import type { TieredPricingCharacteristics } from "@/validation/product/pricing-
 
 export const product = pgSchema("product");
 
+// Declaration order IS lifecycle order (DRAFT → TESTING → ACTIVE → OBSOLETE →
+// RETIRED). Postgres orders enum values by declaration, so this ordering is
+// load-bearing for `ORDER BY lifecycle_status` and any `<`/`>` comparison — do
+// not re-sort into alphabetical order (pm35-spec D3).
 export const lifecycleStatus = product.enum("lifecycle_status", [
   "DRAFT",
+  "TESTING",
   "ACTIVE",
+  "OBSOLETE",
   "RETIRED",
 ]);
 
@@ -87,7 +93,7 @@ export const productSpecifications = product.table(
     refProductOfferingId: text("ref_product_offering_id")
       .notNull()
       .references(() => productOffering.productOfferingId, {
-        onDelete: "restrict",
+        onDelete: "cascade",
       }),
     name: text("name").notNull(),
     isMandatory: boolean("is_mandatory").notNull(),
@@ -113,7 +119,7 @@ export const productOfferingPrice = product.table(
     productOfferingId: text("product_offering_id")
       .notNull()
       .references(() => productOffering.productOfferingId, {
-        onDelete: "restrict",
+        onDelete: "cascade",
       }),
     name: text("name").notNull(),
     priceType: text("price_type").notNull(),
@@ -161,6 +167,25 @@ export const productOfferingPrice = product.table(
     check(
       "product_offering_price_amount_xor_tiers_check",
       sql`(pricing_model = 'flat' AND amount IS NOT NULL AND pricing_characteristics IS NULL) OR (pricing_model = 'tiered' AND amount IS NULL AND pricing_characteristics IS NOT NULL)`,
+    ),
+    // Per-price-type completeness (pm35-spec D4 / I2). Mirrors 0006_product.sql
+    // exactly — the database owns these predicates; Drizzle is the mirror
+    // (code-standards §6.5). Four constraints so a violation names its own cause.
+    check(
+      "product_offering_price_recurring_period_check",
+      sql`(price_type = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_type <> 'recurring' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)`,
+    ),
+    check(
+      "product_offering_price_period_value_check",
+      sql`recurring_charge_period_type IS NULL OR (recurring_charge_period_type = 'months' AND recurring_charge_period_length IN (1, 3, 12))`,
+    ),
+    check(
+      "product_offering_price_usage_unit_check",
+      sql`(price_type = 'usage' AND unit_of_measure IS NOT NULL) OR (price_type <> 'usage' AND unit_of_measure IS NULL)`,
+    ),
+    check(
+      "product_offering_price_unit_value_check",
+      sql`unit_of_measure IS NULL OR unit_of_measure IN ('Mbps', 'GB', 'MB', 'EA')`,
     ),
     check("product_offering_price_amount_check", sql`amount >= 0`),
   ],
