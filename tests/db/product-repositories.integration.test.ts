@@ -316,6 +316,54 @@ describe.skipIf(!databaseUrl)(
         expect(retired.rows[0]?.name).toBe("PAGINATE Delta");
       });
 
+      // pm37-spec I6/D4. The no-filter default hides BOTH terminal states
+      // (OBSOLETE + RETIRED); each is still reachable via an explicit filter.
+      // Offerings only (no child rows), so pm36's DRAFT-guard trigger never
+      // fires — this case stands on its own in the otherwise co-land-red file.
+      it("default (status: null) hides OBSOLETE and RETIRED; an explicit filter surfaces them", async () => {
+        await insertOffering({ name: "TERMFILTER Active" }); // helper defaults ACTIVE
+        await insertOffering({
+          name: "TERMFILTER Draft",
+          lifecycleStatus: "DRAFT",
+        });
+        await insertOffering({
+          name: "TERMFILTER Testing",
+          lifecycleStatus: "TESTING",
+        });
+        await insertOffering({
+          name: "TERMFILTER Obsolete",
+          lifecycleStatus: "OBSOLETE",
+        });
+        await insertOffering({
+          name: "TERMFILTER Retired",
+          lifecycleStatus: "RETIRED",
+        });
+
+        const def = await productOfferingRepository.findList(db, {
+          q: "TERMFILTER",
+          status: null,
+          sort: "name",
+          page: 1,
+          pageSize: 10,
+        });
+        expect(def.total).toBe(3);
+        expect(def.rows.map((r) => r.name)).toEqual([
+          "TERMFILTER Active",
+          "TERMFILTER Draft",
+          "TERMFILTER Testing",
+        ]);
+
+        const obsolete = await productOfferingRepository.findList(db, {
+          q: "TERMFILTER",
+          status: "OBSOLETE",
+          sort: "name",
+          page: 1,
+          pageSize: 10,
+        });
+        expect(obsolete.total).toBe(1);
+        expect(obsolete.rows[0]?.name).toBe("TERMFILTER Obsolete");
+      });
+
       it("case-insensitive substring search; %/_ are treated literally; no match returns empty", async () => {
         await insertOffering({ name: "SEARCH Percent%Sign" });
         await insertOffering({ name: "SEARCH Underscore_Char" });

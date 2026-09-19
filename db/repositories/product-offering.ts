@@ -60,11 +60,17 @@ function buildWhereClause(
     const escaped = q.replace(/[%_\\]/g, "\\$&");
     conditions.push(ilike(productOffering.name, `%${escaped}%`));
   }
-  conditions.push(
-    status === null
-      ? ne(productOffering.lifecycleStatus, "RETIRED")
-      : eq(productOffering.lifecycleStatus, status),
-  );
+  if (status === null) {
+    // Default View Product list answers "what can be sold". Both terminal
+    // states — OBSOLETE (superseded or stopped) and RETIRED (withdrawn) — are
+    // not sellable, so the no-filter default hides both (pm37-spec D4 / G2).
+    // Each stays reachable through the explicit status filter, which now
+    // offers all five values (it derives from LIFECYCLE_STATUSES).
+    conditions.push(ne(productOffering.lifecycleStatus, "OBSOLETE"));
+    conditions.push(ne(productOffering.lifecycleStatus, "RETIRED"));
+  } else {
+    conditions.push(eq(productOffering.lifecycleStatus, status));
+  }
   return and(...conditions);
 }
 
@@ -99,9 +105,12 @@ async function resolveNextVersion(
 }
 
 export const productOfferingRepository = {
-  // Backs the offerings table (pm03-spec §3.5). RETIRED is hidden by
-  // default (Design #5) — the service passes `status: null` through
-  // unchanged and this repository owns the exclusion.
+  // Backs the offerings table (pm03-spec §3.5). Both terminal states —
+  // OBSOLETE and RETIRED — are hidden by default (pm37 D4 / G2); the service
+  // passes `status: null` through unchanged and this repository owns the
+  // exclusion (see buildWhereClause). Callers that need "every status" must
+  // request each hidden state explicitly — a `null` bucket no longer covers
+  // OBSOLETE (see the Manage Products flag in the pm37 tracker entry).
   async findList(
     db: Database,
     filters: OfferingListFilters,

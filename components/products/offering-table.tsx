@@ -11,7 +11,10 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { LifecycleBadge } from "@/components/products/lifecycle-badge";
+import {
+  LIFECYCLE_BADGE_VARIANTS,
+  LifecycleBadge,
+} from "@/components/products/lifecycle-badge";
 import { Button } from "@/components/ui/button";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -198,7 +201,7 @@ export function OfferingTable({
             disabled={isPending}
             className="h-9 w-40 rounded-sm border border-border bg-card px-3 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
           >
-            <option value="">All (non-retired)</option>
+            <option value="">All (excl. obsolete &amp; retired)</option>
             {LIFECYCLE_STATUSES.map((s) => (
               <option key={s} value={s}>
                 {s.charAt(0) + s.slice(1).toLowerCase()}
@@ -269,7 +272,11 @@ export function OfferingTable({
             ) : (
               rows.map((row) => {
                 const isSelected = row.productOfferingId === selectedOfferingId;
-                const isRetired = row.lifecycleStatus === "RETIRED";
+                // De-emphasise the terminal greys (OBSOLETE + RETIRED) via the
+                // badge's own muted flag rather than a hardcoded === 'RETIRED'
+                // — that literal now misses OBSOLETE (pm37 D3/G2).
+                const isMuted =
+                  LIFECYCLE_BADGE_VARIANTS[row.lifecycleStatus].muted;
                 const showNotSellable =
                   !row.isSellable && row.lifecycleStatus === "ACTIVE";
 
@@ -289,7 +296,7 @@ export function OfferingTable({
                     className={cn(
                       "cursor-pointer border-b border-[color:var(--border-subtle)] outline-none last:border-0 hover:bg-[color:var(--action-ghost-hover)] focus-visible:[box-shadow:var(--focus-ring)]",
                       isSelected && "bg-[color:var(--surface-selected)]",
-                      isRetired && "text-[color:var(--text-muted)]",
+                      isMuted && "text-[color:var(--text-muted)]",
                     )}
                   >
                     <td className="px-4 py-2 font-mono text-mono tabular-nums">
