@@ -2,7 +2,7 @@
 
 **Module:** Product Management (second module of the wholesale enterprise billing application)
 **Users:** Billing Operations (catalog — View Product & Manage Products) and Revenue Operations (Orders & Subscriptions; permissions `product_orders`, `product_inventory`)
-**Status:** SHIPPED — the read-only catalog (units pm01–pm09), the Manage Products CRUD fast-follow (units pm10–pm24), and the **Product Ordering & Inventory update** (units pm25–pm34) are all implemented and ship-gate-verified. See `prodmgmt-completed-tracker.md` for the per-unit build record.
+**Status:** SHIPPED — the read-only catalog (units pm01–pm09), the Manage Products CRUD fast-follow (units pm10–pm24), and the **Product Ordering & Inventory update** (units pm25–pm34) are all implemented and ship-gate-verified. See the "Completed Tracker" section at the end of `prodmgmt-progress-tracker.md` for the per-unit build record.
 **Companion docs:** `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**), `prodmgmt-code-standards.md` (conventions)
 
 ## Overview

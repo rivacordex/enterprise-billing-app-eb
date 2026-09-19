@@ -7,7 +7,7 @@ enumerations trimmed to key facts + decisions. Full history:
 `git log -- context/billing-management/billmgmt-progress-tracker.md`; per-unit
 detail: `context/billing-management/specs/bm*.md`._
 
-## Current state (2026-09-16)
+## Current state (2026-09-18)
 
 - **bm39 — Phase-4 ship gate: DELIVERED (2026-09-16).** Audited the assembled
   Phase-4 boundary against its guardrails (audit, don't rebuild — bm21/bm35

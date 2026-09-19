@@ -9,7 +9,7 @@ Read `context/ai-workflow-rules.md` first — it is binding for every module and
 - `_updatemodule-product-manage-page-refactor-plan.md` — the update's decisions (D1–D13), verified migration mechanics, verification items V1–V10, open items O1–O3, hand-offs H1–H3, delivery order U1–U5.
 - `prodmgmt-architecture.md` — `product`/`ordering`/`inventory` schemas, permission matrix (§4), Module Invariants (§6; #1, #6, #13, #14, #17 amended and #23–29 added by this update).
 - `prodmgmt-code-standards.md` — module conventions (§1–§7), permission map (§8), guardrails (§9), Appendix A (superseded rules).
-- `prodmgmt-completed-tracker.md` — the delivered build record and its recurring ripple patterns.
+- `prodmgmt-progress-tracker.md` — current progress plus the delivered build record (the "Completed Tracker" section at the end) and its recurring ripple patterns.
 
 **Precedence:** architecture **Invariants** → update overview → architecture → code-standards → this supplement → general workflow rules.
 
@@ -17,9 +17,9 @@ Read `context/ai-workflow-rules.md` first — it is binding for every module and
 
 ## 1. Operating Approach
 
-1. **Read the five companion docs in full before writing a line of code for this update.** They describe a shipped system plus an agreed change to it. Do not infer the current shape from the code alone: several shipped comments assert rules this update reverses (Appendix A).
+1. **Read the six companion docs in full before writing a line of code for this update.** They describe a shipped system plus an agreed change to it. Do not infer the current shape from the code alone: several shipped comments assert rules this update reverses (Appendix A).
 2. **Cite the authorizing section before coding.** Name the decision (D1–D13), the success criterion, the Invariant, or the code-standards rule that mandates what you are about to build. No citation, no mandate — stop and ask.
-3. **Do not start U1 until the five invariant amendments are approved.** `architecture.md` §7 Inv. #18 and `prodmgmt-architecture.md` Inv. #1, #6, #13, #14, #17 all require a documented design review. Until the user records that approval, write no schema, no repository write, and no service for this update. Building first and papering the invariant afterwards is a review-blocking defect.
+3. **Do not start U1 until the six invariant amendments are approved.** `architecture.md` §7 Inv. #18 and `prodmgmt-architecture.md` Inv. #1, #6, #13, #14, #17 all require a documented design review. Until the user records that approval, write no schema, no repository write, and no service for this update. Building first and papering the invariant afterwards is a review-blocking defect.
 4. **Do not start U1 until verification item V5 has been run.** Grep every `'RETIRED'` comparison outside `db/schema/product.ts` — `services/**`, `db/repositories/**`, `components/**`, `tests/**` and the flow SQL under `workflow-management/**` — and list them with the decision for each. The value's meaning changes in this update; a missed comparison silently mis-bills or mis-hides a version.
 5. **Deliver in the plan's order: U1 schema → U2 repository and services → U3 validation → U4 page → U5 sweep and docs.** U1 blocks everything. U3 may land with U2. Do not begin U4 before U2's transitions pass their tests.
 6. **Make the smallest correct change.** No refactor, rename, folder reorg or dependency change rides along with a unit.
@@ -45,14 +45,14 @@ Read `context/ai-workflow-rules.md` first — it is binding for every module and
 
    | Unit | Delivers | Must not contain |
    |---|---|---|
-   | **U1 — Schema** | The edited `0006_product.sql` (five-value enum, per-price-type CHECKs, unit-list CHECK, cascade child FKs), the two expression unique indexes, the DRAFT-guard trigger, regenerated snapshots, re-baselined guardrail 13 | Any repository, service, action or component change |
+   | **U1 — Schema** | The edited `0006_product.sql` (five-value enum, per-price-type CHECKs, unit-list CHECK, cascade child FKs), the two expression unique indexes, the DRAFT-guard trigger, a by-hand schema-mirror sync (no `drizzle-kit generate`; the `0006` snapshot and `meta/_journal.json` stay unchanged, D2), re-baselined guardrail 13 | Any repository, service, action or component change |
    | **U2 — Repository + services** | `findFamilyPage`, `findFamilyVersions`, DRAFT-only `updatePrice`/`deletePrice`, the five transition services, `deleteOffering`, the new audit event types | Any page or component change; any Zod change beyond what compiles |
    | **U3 — Validation** | The discriminated price-input schema, the per-price-type required fields, the unit enum, the charge-period mapping check, the family-list searchParams schema | Service logic; a second copy of a rule the DB already enforces |
    | **U4 — Page** | The families table, version bar, both editable panels, URL selection, inline editing, the five confirmation dialogs, the new actions | Any schema or service change; a per-row detail fetch of any kind |
    | **U5 — Sweep + docs** | The V5 literal sweep applied, seeds updated, the §9 doc amendments landed, V1–V10 green | New behaviour of any kind |
 
 2. **Split any unit that grows past its row.** Finish the smaller piece first.
-3. **Do not resume the pm-numbering sequence.** This update's units are U1–U5 unless the user says otherwise.
+3. **Unit numbering — pm35–pm45 (user-authorised).** The user has authorised continuing the `pm` sequence for this update, so the authoritative buildable units are **pm35–pm45** (`specs/pm00-build-plan.md` §9), which map onto the U1–U5 buckets in the table above (U1 → pm35 + pm36, etc.; see pm00 §Sequencing notes). Cite pm-numbers for delivery and gates; U1–U5 remain the conceptual grouping only.
 4. **Land each unit's tests in the same commit as its behaviour.** Deferring guardrail coverage to U5 repeats the pm24 finding, where guardrails 8, 9 and 14 went unverified for several units.
 
 ---

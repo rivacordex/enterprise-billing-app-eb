@@ -114,7 +114,7 @@ BEFORE INSERT OR UPDATE OR DELETE ON product.product_offering_price
   → reject unless the parent offering's lifecycle_status = 'DRAFT'
 ```
 
-The trigger is what makes D3 safe to state as an invariant amendment rather than a code convention. The delete branch must allow the cascade from §3.4 (the parent row is being deleted while DRAFT or TESTING) — implemented by exempting `TG_OP = 'DELETE'` when the parent row no longer exists, or by deleting children explicitly in the service before the parent. **Build-time verification item V6 (§10).**
+The trigger is what makes D3 safe to state as an invariant amendment rather than a code convention. The delete branch must allow the cascade from §3.4 (the parent row is being deleted while DRAFT or TESTING) — implemented by exempting `TG_OP = 'DELETE'` when the parent row is itself being deleted. Parent-first cascade is the **only** supported hard-delete path: deleting children explicitly before the parent is not viable for a `TESTING` parent, because the trigger rejects a child delete whenever the parent is not `DRAFT`. **Build-time verification item V6 (§10).**
 
 ---
 
@@ -229,7 +229,7 @@ Every action re-checks the level server-side and re-reads the target's status un
 
 bm29's recurring resolver maps `recurring_charge_period_length` / `_type` onto the account's bill cycle (monthly / quarterly / annually) and multiplies by subscription quantity. Because the app writes `NULL` today, **any recurring price created through the UI is currently unresolvable** — D7 is what makes UI-created recurring prices billable at all.
 
-Proposed allowed combinations, to be confirmed against bm29's mapping table (**open item O1**):
+Allowed combinations (O1 CLOSED — confirmed against bm29's shipped resolver, see §Open items):
 
 | length | type | Bill cycle |
 |---|---|---|
@@ -298,7 +298,7 @@ Tests that change or land with the work:
 - **V3 — One open version per family.** Two concurrent branch attempts on one family leave exactly one open version; a direct SQL insert of a second is rejected by the index. Same for two concurrent activations.
 - **V4 — Hard delete.** Discarding a DRAFT removes its specs and prices, leaves every other family member untouched, and writes one audit event. An ACTIVE, OBSOLETE or RETIRED version cannot be deleted by any path.
 - **V5 — Status literal sweep.** No code path outside the product module treats OBSOLETE as unbillable. Includes a grep of `workflow-management/**` flow SQL (§7.4) — **do this before the build spec, not during it**.
-- **V6 — Cascade vs trigger.** The §3.5 trigger does not block the §3.4 cascade. Prove it with a delete that removes a DRAFT carrying both specs and prices.
+- **V6 — Cascade vs trigger.** The §3.5 trigger does not block the §3.4 cascade. Prove it with a delete that removes a `DRAFT` **and** a `TESTING` version, each carrying both specs and prices — the `TESTING` case is the one a child-first delete cannot handle (the trigger rejects the child delete while the parent is not `DRAFT`), so it is the load-bearing case.
 - **V7 — Required price fields.** A recurring price with no period, a usage price with no unit, a `once` price carrying either, and a unit outside the list each fail in Zod and at the database.
 - **V8 — Grandfathering (guardrail 16, updated).** Activating a new version leaves an existing subscription's pinned version and resolved prices byte-identical, with the old version now OBSOLETE.
 - **V9 — Page query budget.** The first load issues the §5.2 query count and no per-row detail fetch. Worth asserting, since this is the whole point of the rebuild.
@@ -308,7 +308,7 @@ Tests that change or land with the work:
 
 ## 11. Open items and hand-offs
 
-**O1 — bm29 period mapping.** Confirm the exact length/type combinations bm29's resolver accepts before fixing the CHECK (§7.1).
+**O1 — CLOSED (2026-09-19).** bm29's shipped resolver (`bill_run_processing.yml`) maps the charge period onto `billing.bill_cycle.frequency`; pm35 stores the safe subset `months` only, length ∈ (1, 3, 12) (1 → monthly, 3 → quarterly, 12 → annually), enforced by `product_offering_price_period_value_check` (D4). `'years'` is deliberately not stored (§3.2).
 
 **O2 — `EA` in the unit list.** Included on the argument that adding a value later needs a migration. Drop it if counted usage is not coming.
 
