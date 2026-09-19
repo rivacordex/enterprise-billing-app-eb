@@ -446,14 +446,9 @@ async function purgeSampleGraph(): Promise<void> {
       .where(eq(productOffering.name, SAMPLE_OFFERING_NAME))
       .limit(1);
     if (offering) {
-      await tx
-        .delete(productOfferingPrice)
-        .where(
-          eq(
-            productOfferingPrice.productOfferingId,
-            offering.productOfferingId,
-          ),
-        );
+      // Delete the offering row only; its price (and any spec) children are
+      // removed by the ON DELETE cascade added in pm35 (D5/I3.2). The prior
+      // explicit product_offering_price delete is gone — the cascade owns it.
       await tx
         .delete(productOffering)
         .where(
@@ -553,6 +548,67 @@ async function ensureSampleOffering(): Promise<{
   priceId: string;
 }> {
   return db.transaction(async (tx) => {
+    // Idempotent (pm35-spec I3.1): a re-seed without teardown, or a partial-
+    // failure rerun, must NOT re-insert or re-activate. The UPDATE → ACTIVE
+    // below trips product_offering_one_active_per_family (pm36) the moment the
+    // family already holds an ACTIVE row, so if the _SAMPLE_ offering already
+    // exists, return it (with its price) rather than rebuilding it. (The old
+    // insert-ACTIVE-directly seed was not order-dependent this way.)
+    const [existing] = await tx
+      .select({
+        productOfferingId: productOffering.productOfferingId,
+        lifecycleStatus: productOffering.lifecycleStatus,
+      })
+      .from(productOffering)
+      .where(eq(productOffering.name, SAMPLE_OFFERING_NAME))
+      .limit(1);
+    if (existing) {
+      const [existingPrice] = await tx
+        .select({
+          productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
+        })
+        .from(productOfferingPrice)
+        .where(
+          eq(
+            productOfferingPrice.productOfferingId,
+            existing.productOfferingId,
+          ),
+        )
+        .limit(1);
+      if (!existingPrice) {
+        throw new Error(
+          "_SAMPLE_ offering already exists but carries no price row.",
+        );
+      }
+      // Harden the idempotent path: guarantee the offering we hand back is
+      // ACTIVE. A pre-existing _SAMPLE_ offering left short of ACTIVE (e.g. a
+      // DRAFT/TESTING row from an interrupted or externally-authored run) would
+      // otherwise fail downstream — createOrder's ORDERABLE precondition needs
+      // an ACTIVE offering. This normalises the one row we just found in place,
+      // so it never inserts a second family member and cannot trip
+      // product_offering_one_active_per_family (pm36); it is a no-op when the
+      // row is already ACTIVE.
+      if (existing.lifecycleStatus !== "ACTIVE") {
+        await tx
+          .update(productOffering)
+          .set({ lifecycleStatus: "ACTIVE" })
+          .where(
+            eq(productOffering.productOfferingId, existing.productOfferingId),
+          );
+      }
+      return {
+        offeringId: existing.productOfferingId,
+        priceId: existingPrice.productOfferingPriceId,
+      };
+    }
+
+    // Insert the offering as DRAFT, add its price, THEN promote it to ACTIVE —
+    // all inside this one transaction. pm36's DRAFT-guard trigger rejects a
+    // child (price) write unless the parent offering's lifecycle_status is
+    // DRAFT, so the offering must still be DRAFT when the price is inserted; it
+    // is flipped to ACTIVE only afterwards. Do NOT "simplify" this back to
+    // inserting lifecycleStatus: "ACTIVE" directly — that reintroduces the
+    // bm15-era shape the trigger will reject (pm35-spec I3.1).
     const [offering] = await tx
       .insert(productOffering)
       .values({
@@ -560,7 +616,7 @@ async function ensureSampleOffering(): Promise<{
         isBundle: false,
         isSellable: true,
         billingOnly: true,
-        lifecycleStatus: "ACTIVE",
+        lifecycleStatus: "DRAFT",
         version: 1,
         lastEditedBy: null,
       })
@@ -592,6 +648,14 @@ async function ensureSampleOffering(): Promise<{
     if (!price) {
       throw new Error("_SAMPLE_ offering price insert returned no row");
     }
+
+    // Promote to ACTIVE now that the priced child exists. The trigger governs
+    // the child tables only (product_specifications / product_offering_price),
+    // so flipping the parent's own status is unaffected by it (pm35-spec I3.1).
+    await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "ACTIVE" })
+      .where(eq(productOffering.productOfferingId, offering.productOfferingId));
 
     return {
       offeringId: offering.productOfferingId,

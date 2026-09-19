@@ -382,6 +382,68 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(offeringTableBlock).toContain("product_offering_family_idx");
   });
 
+  // Guardrail 13 (constraint baseline) — pm35-spec I5. Sits *beside* the
+  // column-diff test above (which pm35 leaves byte-identical — pm35 adds no
+  // column). Freezes what pm35 *does* change: the five enum members in
+  // lifecycle order, the four per-price-type CHECK names, and the cascade
+  // direction on the child FKs — in both the Drizzle mirror and the SQL of
+  // record, so an unreviewed drift in either fails CI. The SQL and the mirror
+  // must agree (code-standards §6.5 makes the DB the owner, Drizzle the mirror).
+  it("db/schema/product.ts + 0006 freeze the five-value enum, the four price CHECKs, and the cascade child FKs (pm35 D3/D4/D5)", () => {
+    const schemaSource = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "schema", "product.ts"),
+      "utf8",
+    );
+    const migrationSource = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "migrations", "0006_product.sql"),
+      "utf8",
+    );
+
+    const EXPECTED_ENUM = ["DRAFT", "TESTING", "ACTIVE", "OBSOLETE", "RETIRED"];
+    const NEW_PRICE_CHECKS = [
+      "product_offering_price_recurring_period_check",
+      "product_offering_price_period_value_check",
+      "product_offering_price_usage_unit_check",
+      "product_offering_price_unit_value_check",
+    ];
+
+    // 1. Enum members in lifecycle (declaration) order — the array literal.
+    const enumMatch = schemaSource.match(
+      /product\.enum\(\s*"lifecycle_status",\s*\[([\s\S]*?)\]/,
+    );
+    expect(enumMatch).not.toBeNull();
+    const enumMembers = [...(enumMatch?.[1] ?? "").matchAll(/"([A-Z]+)"/g)].map(
+      (m) => m[1],
+    );
+    expect(enumMembers).toEqual(EXPECTED_ENUM);
+
+    // 2. All four new CHECK names appear in the productOfferingPrice block.
+    const priceBlock = extractTableBlock(schemaSource, "productOfferingPrice");
+    for (const name of NEW_PRICE_CHECKS) {
+      expect(priceBlock).toContain(name);
+    }
+
+    // 3. Both child FKs cascade; the self-referencing family FK still restricts.
+    const specBlock = extractTableBlock(schemaSource, "productSpecifications");
+    expect(specBlock).toContain('onDelete: "cascade"');
+    expect(priceBlock).toContain('onDelete: "cascade"');
+    const offeringBlock = extractTableBlock(schemaSource, "productOffering");
+    expect(offeringBlock).toContain('onDelete: "restrict"'); // familyOfferingId
+
+    // 4. The SQL of record agrees with the Drizzle mirror.
+    expect(migrationSource).toContain(
+      "AS ENUM('DRAFT', 'TESTING', 'ACTIVE', 'OBSOLETE', 'RETIRED')",
+    );
+    for (const name of NEW_PRICE_CHECKS) {
+      expect(migrationSource).toContain(name);
+    }
+    // Both child-table FK ALTERs carry ON DELETE cascade (2 occurrences); the
+    // family FK is inline on product_offering and stays restrict, untouched.
+    const cascadeCount = (migrationSource.match(/ON DELETE cascade/g) ?? [])
+      .length;
+    expect(cascadeCount).toBe(2);
+  });
+
   // Guardrail 10 (code-standards-phase2 §9), closing pm14's own open item
   // (pm14-spec's closing line explicitly left open whether this becomes
   // "asserted structurally" or stays "by construction"). Does not re-verify
