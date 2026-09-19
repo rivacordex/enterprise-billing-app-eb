@@ -1,6 +1,6 @@
 CREATE SCHEMA "product";
 --> statement-breakpoint
-CREATE TYPE "product"."lifecycle_status" AS ENUM('DRAFT', 'ACTIVE', 'RETIRED');--> statement-breakpoint
+CREATE TYPE "product"."lifecycle_status" AS ENUM('DRAFT', 'TESTING', 'ACTIVE', 'OBSOLETE', 'RETIRED');--> statement-breakpoint
 CREATE SEQUENCE "product"."product_offering_price_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE SEQUENCE "product"."product_offering_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE SEQUENCE "product"."product_specifications_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
@@ -35,7 +35,29 @@ CREATE TABLE "product"."product_offering_price" (
 	CONSTRAINT "product_offering_price_type_check" CHECK (price_type IN ('recurring','usage','once')),
 	CONSTRAINT "product_offering_price_pricing_model_check" CHECK (pricing_model IN ('flat','tiered')),
 	CONSTRAINT "product_offering_price_currency_check" CHECK (char_length(currency) = 3),
-	CONSTRAINT "product_offering_price_amount_xor_tiers_check" CHECK ((pricing_model = 'flat' AND amount IS NOT NULL AND pricing_characteristics IS NULL) OR (pricing_model = 'tiered' AND amount IS NULL AND pricing_characteristics IS NOT NULL))
+	CONSTRAINT "product_offering_price_amount_xor_tiers_check" CHECK ((pricing_model = 'flat' AND amount IS NOT NULL AND pricing_characteristics IS NULL) OR (pricing_model = 'tiered' AND amount IS NULL AND pricing_characteristics IS NOT NULL)),
+	CONSTRAINT "product_offering_price_recurring_period_check" CHECK (
+	  (price_type = 'recurring'
+	     AND recurring_charge_period_length IS NOT NULL
+	     AND recurring_charge_period_type IS NOT NULL)
+	  OR
+	  (price_type <> 'recurring'
+	     AND recurring_charge_period_length IS NULL
+	     AND recurring_charge_period_type IS NULL)
+	),
+	CONSTRAINT "product_offering_price_period_value_check" CHECK (
+	  recurring_charge_period_type IS NULL
+	  OR (recurring_charge_period_type = 'months'
+	      AND recurring_charge_period_length IN (1, 3, 12))
+	),
+	CONSTRAINT "product_offering_price_usage_unit_check" CHECK (
+	  (price_type = 'usage' AND unit_of_measure IS NOT NULL)
+	  OR (price_type <> 'usage' AND unit_of_measure IS NULL)
+	),
+	CONSTRAINT "product_offering_price_unit_value_check" CHECK (
+	  unit_of_measure IS NULL
+	  OR unit_of_measure IN ('Mbps', 'GB', 'MB', 'EA')
+	)
 );
 --> statement-breakpoint
 CREATE TABLE "product"."product_specifications" (
@@ -49,8 +71,8 @@ CREATE TABLE "product"."product_specifications" (
 );
 --> statement-breakpoint
 ALTER TABLE "product"."product_offering" ADD CONSTRAINT "product_offering_last_edited_by_appuser_user_id_fk" FOREIGN KEY ("last_edited_by") REFERENCES "core"."appuser"("user_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "product"."product_offering_price" ADD CONSTRAINT "product_offering_price_product_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "product"."product_specifications" ADD CONSTRAINT "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("ref_product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "product"."product_offering_price" ADD CONSTRAINT "product_offering_price_product_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "product"."product_specifications" ADD CONSTRAINT "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("ref_product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "product_offering_price_type_start_unique" ON "product"."product_offering_price" USING btree ("product_offering_id","price_type","start_date_time");--> statement-breakpoint
 CREATE INDEX "product_offering_price_offering_idx" ON "product"."product_offering_price" USING btree ("product_offering_id");--> statement-breakpoint
 CREATE INDEX "product_specifications_offering_idx" ON "product"."product_specifications" USING btree ("ref_product_offering_id");--> statement-breakpoint

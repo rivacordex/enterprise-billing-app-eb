@@ -1,113 +1,176 @@
 # Product Management — AI Workflow Rules (Module Supplement)
 
-This document supplements `context/ai-workflow-rules.md` (binding for all modules — read it first); everything there applies unchanged. The module is now **fully built**: the read-only catalog (View Product), the CRUD surface (Manage Products), and the **Product Ordering & Inventory update** (Orders + Subscriptions pages, `ordering`/`inventory` schemas) are all implemented and ship-gate-verified (units pm01–pm34). This doc pins the module's guardrails, permissions, protected files, and doc-section references for any future work on the module (bug fixes, a further extension, or unrelated changes that happen to touch this module's files).
+Read `context/ai-workflow-rules.md` first — it is binding for every module and applies here unchanged; this file adds only what is specific to Product Management, and its numbering follows that document's sections. The module is **fully built and shipped** (View Product, Manage Products, Orders, Subscriptions; units pm01–pm34) and is now **under a planned update**: the Manage Products rebuild & catalog lifecycle change (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). Every rule below is written for the target state that update defines. Four rules in the previous version of this file are superseded by it — see **Appendix A** before you conclude that a rule here contradicts the shipped code.
 
-**Companion docs (authoritative — do not restate or contradict):**
+**Companion docs (authoritative — cite them, never restate or contradict them):**
 
-- `prodmgmt-project-overview.md` — product spec for the whole module (all three phases): user flows (View Product, Manage Products, Orders, Subscriptions), the four-section catalog page, the CRUD/versioning model, the ordering→subscription/grandfathering model, the 3-table catalog + 5-table ordering/inventory data model, in/out of scope, success criteria.
-- `prodmgmt-architecture.md` — technical design: `product`/`ordering`/`inventory` schemas, JSONB usage, permission matrix (§4), 22 numbered **Module Invariants** (§6; #15–22 belong to the shipped Ordering update).
-- `prodmgmt-code-standards.md` — module coding conventions, file tree (§7), permission map (§8), guardrail tests (§9), covering the catalog and the Ordering update alike.
-- `prodmgmt-completed-tracker.md` — delivered build record: per-unit deliverables (pm01–pm34), the recurring-ripple patterns any future unit is likely to hit again (permission-name additions, new-audit-event-type additions, new-pgSchema integration-test setup, etc.), and the permanent post-ship lessons.
-- **Ordering update (shipped, pm25–pm34):** its spec, scope, and success criteria now live in `prodmgmt-project-overview.md` alongside the catalog (the former `prodmgmt-update-overview.md` was merged in) — a unit extending the update cites that overview and the architecture Invariants #15–22.
+- `prodmgmt-project-overview.md` — product spec for the shipped module.
+- `prodmgmt-update-overview.md` — product spec for the planned update: goals, 14-step core flow, features, in/out of scope, 14 success criteria.
+- `_updatemodule-product-manage-page-refactor-plan.md` — the update's decisions (D1–D13), verified migration mechanics, verification items V1–V10, open items O1–O3, hand-offs H1–H3, delivery order U1–U5.
+- `prodmgmt-architecture.md` — `product`/`ordering`/`inventory` schemas, permission matrix (§4), Module Invariants (§6; #1, #6, #13, #14, #17 amended and #23–29 added by this update).
+- `prodmgmt-code-standards.md` — module conventions (§1–§7), permission map (§8), guardrails (§9), Appendix A (superseded rules).
+- `prodmgmt-completed-tracker.md` — the delivered build record and its recurring ripple patterns.
 
-**Precedence** per the general doc: module architecture **Invariants** → overview → architecture → code-standards → this supplement → general workflow rules.
+**Precedence:** architecture **Invariants** → update overview → architecture → code-standards → this supplement → general workflow rules.
 
 ---
 
-## 1. Operating Approach — Module Specifics
+## 1. Operating Approach
 
-1. **The module is fully built; treat new work as an addition to a live system, not a fresh build.** Before writing code for any new unit, read the companion docs above in full — they describe the *current*, shipped shape of the module, not a plan. A request that sounds like it wants v1's old "read-only, no mutations" behavior is describing a state that no longer exists; confirm scope against the current docs rather than assuming.
-2. **Cite the authorizing section before coding**, per the general doc §1.1 — an overview feature, an architecture §2 folder row, or a code-standards rule. No section, no mandate. This still applies in full: the module being CRUD-capable does not mean unscoped mutation code is pre-authorized. A genuinely new feature (e.g. a third product page, a new lifecycle transition, a new entity) still requires the same explicit-authorization discipline v1 used for its own CRUD fast-follow.
-3. **The route-group rename and the nav refactor are historical** (pm01, pm04) — both are done and are platform-level precedent for future modules, not open work items here.
-4. **The permanent, cross-phase rules that never expire**, regardless of what future work touches this module:
-   - `app/api/product*` is never created, in any phase (architecture §5, code-standards §5).
-   - The price repository never gains `update*`/`delete*` — `insertPrice` is its only write, forever (Inv. #1).
-   - `is_bundle` is never user-editable in any form (code-standards §1 rule 9).
-   - Editing an `ACTIVE` offering never mutates it in place — always branch first via `branchOfferingAsDraft` (Inv. #14).
-   - Every branch-vs-in-place decision reads its target's status inside the transaction, locked, immediately before the decision — never a pre-transaction snapshot (code-standards §1 rule 13; this exact TOCTOU bug was found and fixed independently in pm14, pm15, pm16, and pm20 — treat a pre-transaction status read as a review-blocking defect on sight).
-   - *(Ordering update)* `app/api/ordering*` and `app/api/inventory*` are never created either, same rule as `app/api/product*` (code-standards §9 guardrail 19).
-   - *(Ordering update)* The `inventory_status_history` and `order_item_price_override` repositories never gain `update*`/`delete*` — insert + finders only, forever (Inv. #16/#18, code-standards §9 guardrails 15/18).
-   - *(Ordering update)* No column named like `%cycle%`/`%frequency%` ever appears on `ordering.*`/`inventory.*` — cycle lives on the BAN (Inv. #20, code-standards §9 guardrail 20).
-   - *(Ordering update)* Order approval always re-runs the full submission validation set (`checkOrderPreconditions`) under locks at approval time, and never accepts reviewer = submitter — enforced in the service and backstopped by the `product_order_reviewer_check` DB CHECK (architecture §4, code-standards §9 guardrail 22). Never weaken either side of this to "trust the UI's earlier validation."
-   - *(Ordering update)* Grandfathering holds unconditionally: activating a new catalog version never changes an existing subscription's pinned `product_offering_id` or its resolved price lines (Inv. #17, code-standards §9 guardrail 16). No future unit may add a migration/backfill path that repoints a subscription's offering FK.
+1. **Read the five companion docs in full before writing a line of code for this update.** They describe a shipped system plus an agreed change to it. Do not infer the current shape from the code alone: several shipped comments assert rules this update reverses (Appendix A).
+2. **Cite the authorizing section before coding.** Name the decision (D1–D13), the success criterion, the Invariant, or the code-standards rule that mandates what you are about to build. No citation, no mandate — stop and ask.
+3. **Do not start U1 until the five invariant amendments are approved.** `architecture.md` §7 Inv. #18 and `prodmgmt-architecture.md` Inv. #1, #6, #13, #14, #17 all require a documented design review. Until the user records that approval, write no schema, no repository write, and no service for this update. Building first and papering the invariant afterwards is a review-blocking defect.
+4. **Do not start U1 until verification item V5 has been run.** Grep every `'RETIRED'` comparison outside `db/schema/product.ts` — `services/**`, `db/repositories/**`, `components/**`, `tests/**` and the flow SQL under `workflow-management/**` — and list them with the decision for each. The value's meaning changes in this update; a missed comparison silently mis-bills or mis-hides a version.
+5. **Deliver in the plan's order: U1 schema → U2 repository and services → U3 validation → U4 page → U5 sweep and docs.** U1 blocks everything. U3 may land with U2. Do not begin U4 before U2's transitions pass their tests.
+6. **Make the smallest correct change.** No refactor, rename, folder reorg or dependency change rides along with a unit.
+7. **State the unit's scope, files, permissions and tests before editing**, and stop and re-scope the moment you touch a file that is not on that list.
+
+### Permanent rules — they never expire, in any unit, in any future phase
+
+- Never create `app/api/product*`, `app/api/ordering*` or `app/api/inventory*`.
+- Never make `is_bundle` user-settable, in any schema, form or dialog.
+- Never mutate an `ACTIVE` offering, its specifications or its prices in place — branch first via `branchOfferingAsDraft` (Inv. #14).
+- Never read a status that gates a branch-or-write decision before the transaction opens. Read it on `tx`, locked, immediately before the decision. This exact TOCTOU bug was found and fixed four times (pm14, pm15, pm16, pm20); treat a pre-transaction status read as a review-blocking defect on sight.
+- Never add `update*` or `delete*` to the `order_item_price_override` or `inventory_status_history` repositories (Inv. #16, #18).
+- Never add a column matching `%cycle%` or `%frequency%` to `ordering.*` or `inventory.*` (Inv. #20).
+- Never weaken order approval: it re-runs the full submission validation under locks and refuses reviewer = submitter, in the service and at the DB CHECK.
+- Never add a migration or backfill that repoints a subscription's `product_offering_id`. Grandfathering is unconditional (Inv. #17).
+- Never write into `enterprise-billing-app/` when the task is planning. Plans, specs and doc updates go to `_plan_enterprise-billing-app/`.
+
+---
 
 ## 2. Units — One at a Time
 
-The general doc's "one unit at a time, in dependency order, previous unit verified and committed before the next starts" (§2) still governs any future work. The module's full build order (pm01–pm34) is recorded unit-by-unit in `prodmgmt-completed-tracker.md` — treat it as the reference example of how this module gets built in dependency-ordered, independently-verified slices, not as a checklist with remaining items. A new unit of work (bug fix, extension, Phase 3 feature) gets its own fresh unit plan following that same discipline; it does not resume the pm-numbering sequence unless the user says otherwise.
+1. **Build exactly these five units, in this order, each verified and committed before the next starts.** Each line states what the unit delivers and what it must not contain.
+
+   | Unit | Delivers | Must not contain |
+   |---|---|---|
+   | **U1 — Schema** | The edited `0006_product.sql` (five-value enum, per-price-type CHECKs, unit-list CHECK, cascade child FKs), the two expression unique indexes, the DRAFT-guard trigger, regenerated snapshots, re-baselined guardrail 13 | Any repository, service, action or component change |
+   | **U2 — Repository + services** | `findFamilyPage`, `findFamilyVersions`, DRAFT-only `updatePrice`/`deletePrice`, the five transition services, `deleteOffering`, the new audit event types | Any page or component change; any Zod change beyond what compiles |
+   | **U3 — Validation** | The discriminated price-input schema, the per-price-type required fields, the unit enum, the charge-period mapping check, the family-list searchParams schema | Service logic; a second copy of a rule the DB already enforces |
+   | **U4 — Page** | The families table, version bar, both editable panels, URL selection, inline editing, the five confirmation dialogs, the new actions | Any schema or service change; a per-row detail fetch of any kind |
+   | **U5 — Sweep + docs** | The V5 literal sweep applied, seeds updated, the §9 doc amendments landed, V1–V10 green | New behaviour of any kind |
+
+2. **Split any unit that grows past its row.** Finish the smaller piece first.
+3. **Do not resume the pm-numbering sequence.** This update's units are U1–U5 unless the user says otherwise.
+4. **Land each unit's tests in the same commit as its behaviour.** Deferring guardrail coverage to U5 repeats the pm24 finding, where guardrails 8, 9 and 14 went unverified for several units.
+
+---
 
 ## 3. Scoping — No Speculative Changes
 
-1. **Do not** create a second Route Handler surface, a second nav component, or a parallel table implementation — the module has exactly one of each pattern (`actions/product/`, `components/admin-nav.tsx`, the shared Administration table primitives) and forking one is a defect, not a convenience.
-2. **Do not** build out-of-scope features without explicit instruction: CSV export, `bundle_link`/child-offering views, a `product_pricing` permission split, tier child tables, `policy`-column semantics, hard delete of any product entity, merging or splitting version families, or a second schema addition beyond `family_offering_id` **to the `product` schema** (overview *Out of Scope*, architecture §5). This rule scopes the *catalog*: the shipped Ordering update's `ordering`/`inventory` schemas are separately authorized by `prodmgmt-project-overview.md` (Ordering & Inventory sections) and do not touch the `product` schema at all — an ordering unit that finds itself modifying `db/schema/product.ts` is out of bounds and must stop.
-3. **Do not** add columns, flags, or abstractions the current unit doesn't need — including a stored `end_date_time` or `last_update` on prices (Inv. #3) or a second `version`-like counter.
-4. **Do not** touch Administration pages or other modules' files beyond genuinely shared primitives you extend (never fork, code-standards §4.2/general §5). Unrelated fixes: note and raise separately.
-5. **Respect layer boundaries**: `page.tsx` files are thin orchestrators — no DB access, no business rules; `services/product` has no `next/*` imports; SQL lives only in `db/**`; `actions/product/**` has no DB access of its own.
-6. **Do not** add `update*`/`delete*` to the price repository, for any reason, in any future unit (Inv. #1, permanent).
-7. **Do not** add a hard-delete path for offerings, or for a specification on a non-`DRAFT` offering — every removal is a status transition (Discard/Retire) or the existing DRAFT-only spec delete, never a row deletion.
-8. **Do not** make `is_bundle` user-settable in any form, dialog, or schema.
-9. **Do not** write an in-place `UPDATE` to an `ACTIVE` offering's own columns, its specifications, or its prices, in any service — always branch first (Inv. #14). If a unit seems to need an exception to this, stop and ask — it almost certainly means the branch primitive is being bypassed, not that an exception is warranted.
-10. **Do not** attempt to merge two version families, split one family into two, or move a row from one family to another — out of scope, not designed, and not requested.
+1. **Do not build anything in the update overview's *Out of scope* list.** Specifically: maker-checker or approval routing for catalog changes; what TESTING actually does; `PER_UNIT`, tiered or block rating; tiered recurring support in bm29; unit normalisation between catalog and rating feed; a billing basis for rate-based units; `policy` semantics; bundles or `bundle_link`; a TMF620 API; tier child tables.
+2. **Do not touch Orders, Subscriptions, Customer, Accounts, billing or rating code.** The only reach outside `product` is the retirement gate's read of `inventory.product_inventory` through that module's locked repository finder, and the V5 literal sweep.
+3. **Do not add a fourth table to the `product` schema**, and do not add a column the current unit does not need — no stored `end_date_time`, no `last_update`, no derived "is billable" column, no second version-like counter.
+4. **Do not create a generic `setLifecycleStatus` helper, a state-machine module, or an action that takes a target status as a parameter.** One transition, one service, one audit event.
+5. **Do not fetch per-row detail on a list page**, in any form: no `getOfferingDetail` in a loop, no `Promise.all` over rows, no concurrency-limited mapper. If a list needs a field, add it to the paged SQL.
+6. **Do not reintroduce** `fetchAllForStatus`, `fetchAllOfferingRows`, `fetchSpecificationsByOfferingId`, `mapWithConcurrencyLimit`, `groupIntoFamilies`, `MAX_COMBINED_ROWS`, `OfferingFamilyRow`, `selectPrimary` or `resolveFamilyId` under any name.
+7. **Do not add a fourth write to the price repository.** `insertPrice`, `updatePrice`, `deletePrice` — and the latter two refuse a parent that is not `DRAFT`.
+8. **Do not add a hard-delete path for anything except a `DRAFT` or `TESTING` offering that was never `ACTIVE`.** An `ACTIVE`, `OBSOLETE` or `RETIRED` version and its children are never deleted by any path, migration included.
+9. **Do not merge, split or re-parent version families.** Not designed, not requested.
+10. **Do not fork a shared primitive.** The module has one action folder, one nav registry, one set of Administration table primitives, one money formatter, one datetime formatter. Extend; never copy.
+11. **Do not disable, weaken or delete a guardrail to make a unit pass.** Re-baseline guardrail 13 against the target schema as U1's own deliverable; every other guardrail must pass as written.
+
+---
 
 ## 4. When to Split
 
-Apply the general doc §3 triggers, plus these module-specific splits:
+Apply the general doc §3, plus these:
 
-1. **Split a schema migration from the behavior that depends on it** — land and verify the migration in complete isolation before repository code depends on it (the pattern pm01/pm10 both used).
-2. **Split each page section or dialog** — table, detail, specs panel, prices panel on View Product; each dialog/form on Manage Products — are separate units; do not deliver a multi-section page in one pass.
-3. **Split a new write primitive from every service that will call it** — e.g. if a future primitive analogous to `branchOfferingAsDraft` is ever needed, build and thoroughly test it as its own unit before wiring it into callers; none of those callers should be the first place its behavior gets exercised.
-4. **Split guardrail/versioning-invariant tests to land with the unit that introduces the behavior, not deferred to a later ship-gate unit** — the module's own history (pm24's pre-flight audit) found that deferring this coverage let guardrails 8/9/14 go unverified by committed tests for several units; land the test in the same commit as the behavior.
-5. **When in doubt, split.**
+1. **Split the migration from everything that depends on it.** U1 lands and is verified alone.
+2. **Split each transition into its own unit-sized step** when U2 grows: submit-for-testing, return-to-draft, activate, obsolete, retire, delete. Each has its own preconditions, audit event and tests.
+3. **Split a new write primitive from its callers.** Build and test `updatePrice`/`deletePrice` and the DRAFT guard before any service or UI calls them.
+4. **Split the page by region.** Families table, version bar, specifications panel, pricing panel, dialogs — separate steps, each independently green.
+5. **Split the V5 literal sweep from the behaviour change** if it turns up more than a handful of sites, and land the sweep first.
+6. **When in doubt, split.**
+
+---
 
 ## 5. Missing or Ambiguous Requirements
 
-Follow the general doc §4: resolve from the docs first, cite the section; otherwise stop and ask one precise question with options. Never guess on security, data shape, permissions, effectivity, versioning, or constraints. Module-specific:
+1. **Never guess on security, permissions, data shape, effectivity, versioning, lifecycle transitions or audit.** Stop and ask one precise question with options.
+2. **Stop and ask on these named open items — do not resolve them yourself:**
+   - **O1** — the exact `recurring_charge_period_length`/`_type` combinations bm29's resolver accepts. Until the user confirms them against bm29, do not write the CHECK's value list.
+   - **O2** — whether `EA` stays in the unit list.
+   - **O3** — whether `MB` and `GB` may coexist, or pre-rating normalises to one volume unit.
+   - **H1–H3** — the rating-side hand-offs (unit spelling, rate-based unit basis, `PER_UNIT`). These are not this update's work; do not implement them because a test would be easier.
+3. **Stop and ask if a unit appears to need an exception to branch-on-edit, to the DRAFT-only write rule, or to the delete rule.** It almost certainly means a primitive is being bypassed.
+4. **Never invent a JSONB shape.** `product_spec_characteristics` and `pricing_characteristics` come from the Zod schemas in `validation/product/`.
+5. **Never guess price effectivity or backdating.** End is derived from the successor's `start_date_time`; a future-dated successor does not displace the current price early; the tolerance is exactly 3 days, checked against the transaction's `now()`.
+6. **Never guess versioning semantics.** `version` is a family-relative sequence number assigned once; `family_offering_id` resolves to the root in exactly one hop.
+7. **Never guess what TESTING does.** In this update it is read-only, not orderable, not billable, reversible to DRAFT, and counts as the family's open version — nothing more. A request to give it behaviour is a new phase.
+8. **Record every resolution in the owning companion doc** in the same change set, so the next agent does not re-ask.
 
-1. **Still-deferred decisions — do not resolve them yourself:** `policy` column semantics (carried as nullable text), tier storage migration to a child table, a pricing-visibility permission split, bundle composition. If a unit seems to need one, stop and ask.
-2. **Never invent JSONB shapes.** `product_spec_characteristics` and `pricing_characteristics` shapes come from the Zod schemas in `validation/product/`; if a needed shape isn't specified, ask (Inv. #4).
-3. **Never guess price-effectivity or backdating semantics.** End is derived from the successor's `start_date_time`; future-dated prices don't displace current ones early; backdating tolerance is exactly 3 days, checked against real time in the service layer. Anything unclear here is a stop-and-ask, never a default.
-4. **Never guess versioning semantics.** `version` is a family-relative sequence number, not a per-edit counter; `family_offering_id` resolves in exactly one hop to the root. Any change to this convention is a protected-file-level decision (§6 below), not a build-time call.
-5. **Record every resolution** in the owning companion doc so the next agent doesn't re-ask (general doc §4.6).
+---
 
-## 6. Protected Files — Module References
+## 6. Files You Must Not Modify Without Explicit Instruction
 
-The general doc §5 list applies in full. Module-specific detail and additions — do not touch without explicit instruction:
+The general doc §5 list applies in full. Module-specific:
 
-1. **`components/ui/`** — managed vendor layer. Build new indicator/form components in `components/products/` or `components/products/manage/` by composition.
-2. **Better-Auth managed tables and `auth/` mapping** — this module only references `core.APPUSER` by FK (`last_edited_by`); it creates no identity/RBAC/session/config/audit tables (Inv. #9).
-3. **Applied migrations** — forward-only; new constraints or columns ship in a new migration, never by editing an applied one.
-4. **Permission registry mechanism** — the `products` row (READ/EDIT/DELETE) comes only from its committed migration; no code path inserts PERMISSIONS rows.
-5. **`tsconfig` strict flags, ESLint/Prettier, CI (`infra/**`)** — including the rename-invariance CI check; never weaken a gate to pass.
-6. **Lockfiles/dependencies** — no DB extensions are needed for this module; any npm dependency change is its own requested unit.
-7. **Existing Administration routes, URLs, and authz results** — must stay byte-identical (Inv. #12).
-8. **`Demo — *` seed rows** (opt-in `db:seed-demo`, `db/seeds/demo/`) — keep the `Demo — ` prefix; never make production code depend on them; replacing them is a go-live data-migration task, not module code. _(Seed-refactor change, 2026-09-16: renamed from the former `TOREMOVE-Template-*` prefix and moved out of `db:setup`.)_
-9. **The price repository's exported surface** — adding `update*`/`delete*` price functions is forbidden permanently (Inv. #1).
-10. **The `family_offering_id` linkage convention** (`NULL` = root, non-null always resolves to the root in one hop) — changing it would silently corrupt every family's version lineage. Touching it requires stopping and getting explicit confirmation.
-11. **`app/(app)/products/product-offering/**` and its existing components** — may only be touched for nav label / page `H1` text; any other edit is out of bounds without stopping to explain why (View Product's read-only guarantee is structurally enforced and guardrail-tested).
+1. **`components/ui/`** — managed vendor layer. Compose new components in `components/products/` or `components/products/manage/`.
+2. **Applied migrations** — forward-only, with **one authorized exception**: `db/migrations/0006_product.sql` may be edited in place, in U1 only, under decision D11's fresh-install assumption. That authorization covers `0006` and nothing else. Never edit another applied migration, and never extend this exception to a second round without asking.
+3. **Never write a migration that adds an enum value and then uses it.** The migrator applies all pending files in one transaction and Postgres rejects the use (`unsafe use of new value`, verified). If the fresh-install assumption is withdrawn, the create-new-type-and-swap form is the only correct shape.
+4. **`app/(app)/products/product-offering/**` and `components/products/*.tsx`** — View Product's route folder may be touched only for nav label or page `H1` text. You may **import** `components/products/*` from `components/products/manage/**`; you may not edit those files to suit Manage Products. If a shared component needs a prop it does not have, stop and ask.
+5. **`workflow-management/**`** — read-only from this module. The V5 sweep reports what it finds there; it does not change it.
+6. **Better-Auth managed tables and the `auth/` field mapping** — this module only FKs `core.APPUSER`.
+7. **The permission registry mechanism** — the `products` row comes only from its committed migration; no code path inserts `PERMISSIONS` rows, and this update adds no permission.
+8. **`tsconfig` strict flags, ESLint, Prettier, CI (`infra/**`)** — never weaken a gate to pass.
+9. **Lockfiles and dependencies** — a dependency change is its own requested unit.
+10. **Existing Administration routes, URLs and authz results** — byte-identical (Inv. #12).
+11. **`TOREMOVE-Template-*` seed rows** — keep the prefix; no production code depends on them.
+12. **The `family_offering_id` linkage convention** (`NULL` = root; non-null resolves to the root in one hop) — the two new unique indexes depend on it. Changing it corrupts every family's lineage and every index predicate.
+13. **Ordering and inventory repositories, schemas and services** — this update reads one locked finder from `product_inventory` and changes nothing there. Adding that finder is the only permitted edit, and it is insert-free, read-only.
 
 If a unit genuinely requires touching any of these, stop, explain why, and get explicit confirmation.
 
-## 7. Docs in Sync
+---
 
-Per the general doc §6, plus:
+## 7. Keeping Docs in Sync
 
-1. **Permission map** — a change to either page, its components, or the permission ships with the matching rows in `prodmgmt-architecture.md` §4 and `prodmgmt-code-standards.md` §8 in the same change set.
-2. **Registry + map + guard together** — the `products` PERMISSIONS row, the map rows, the typed constant (`PERMISSIONS.PRODUCTS`), and both page guards move as one traceable set whenever any of them changes.
-3. **Cross-module doc edits** — any change touching another module's docs needs explicit approval; the historical rename/nav-refactor cross-edits to `usrmgmt-*` docs are done and are not a template for casual cross-module edits going forward.
-4. **Owning doc per fact:** product behavior → overview; schema/Invariant → architecture; convention/component names → code-standards; workflow → this doc; build history/ripple patterns → progress tracker. Reference, don't copy.
-5. **Component names are binding** — create exactly the names listed in code-standards §4/§7/§8, or the page↔route↔component↔permission chain breaks.
-6. **New audit event types ripple beyond `tsc`.** A new `AUDIT_EVENT_TYPES` entry needs an `AUDIT_EVENT_CATEGORY_MAP` entry (`tsc`-caught) *and* a count/optgroup fix in `tests/components/audit-log-filters.test.tsx` (**not** `tsc`-caught) — this has bitten every Phase 2 write unit; check it explicitly rather than trusting the type checker.
+1. **Land the §9 doc amendments before or with the unit that makes them true.** `architecture.md` Inv. #18 and `prodmgmt-architecture.md` Inv. #1, #6, #13, #14, #17 land with U1; the code-standards, ui-context and workflow-rules edits land with the unit that changes the behaviour they describe. Never ship code that a doc still forbids.
+2. **Clear one Appendix A row as each superseded rule stops being true in `main`.** Appendix A is temporary; a row that outlives its code is drift.
+3. **Update the permission map in both places in the same change set** — `prodmgmt-architecture.md` §4 and `prodmgmt-code-standards.md` §8 — whenever a page, action or level changes. This update adds no permission but adds five actions; every one gets a row.
+4. **Update the file tree in code-standards §7 as files land.** Remove a `(new)` marker when the file exists; remove a `(del)` line when the file is gone.
+5. **Owning doc per fact:** product behaviour → update overview; schema, invariant or lifecycle → architecture; convention, component name or guardrail → code-standards; workflow → this doc; build history → tracker. Reference, never copy.
+6. **Component names are binding.** Create exactly the names in code-standards §4.8 and §7, or the page ↔ route ↔ component ↔ permission chain breaks.
+7. **A new audit event type ripples past `tsc`.** Each of the six new types needs its `AUDIT_EVENT_TYPES` entry, its `AUDIT_EVENT_CATEGORY_MAP` entry (`tsc`-caught) **and** a count/optgroup fix in `tests/components/audit-log-filters.test.tsx` (**not** `tsc`-caught). Check this explicitly; it has bitten every write unit in this module's history.
+8. **Removing `PRODUCT_OFFERING_DISCARDED` is a doc change too** — update the architecture §5 event table and the filter test in the same change set as the code.
+9. **Cross-module doc edits need explicit approval.** The rating-side hand-offs (H1–H3) are recorded in this update's plan, not written into `ratemgmt-*` docs by this module.
+
+---
 
 ## 8. Verification — Before the Next Unit
 
-Run the full general doc §8 checklist, with these module readings and additions:
+Run the general doc §8 checklist in full, plus every item below. If any fails, the unit is not done.
 
-1. **Guardrail tests pass** — all twenty-two in code-standards §9. Catalog (1–14): authz matrix (both pages, incl. EDIT-vs-DELETE split), price immutability (structural + behavioral), overlap constraint, derived effectivity, JSONB/Zod validation, deep link, rename invariance, single-active-per-family, branch-not-mutate, spec-delete-unreachable-on-ACTIVE, view-stays-read-only, route manifest, schema-diff, TOCTOU-safe status reads. Ordering update (15–22, pm34 ship gate): insert-only surfaces, grandfathering, gap-free history, write-once core, boundary sweeps, no-cycle-column, route manifest (both new routes), reviewer ≠ submitter.
-2. **Authorization** — `requirePermission('products', 'READ')` on View Product, `requirePermission('products', 'EDIT')` on Manage Products (with `DELETE` re-checked on retire/discard); no-grant → no-access; no partial rendering of specs/prices under a weaker check (Inv. #10); deep links pass through the same guard.
-3. **Audit** — every mutation's transaction ends with exactly one `insertAuditEvent` call, inside the same transaction as the data change, using one of the module's audit event types (architecture §5); confirm View Product reads still write **no** `AUDIT_LOG` rows.
-4. **Data layer** — SQL only in `db/**`; constraints enforced by the DB, Zod additional (code-standards §6); `created_at` and `start_date_time` both present and distinct on prices; no stored `end_date_time` anywhere (Inv. #3); any status-gated branch decision reads via a locked query on `tx`, not `db` (code-standards §1 rule 13).
-5. **URL state** — View Product's list/selection state lives in searchParams, parsed never trusted, RETIRED hidden server-side by default, invalid params fall back to schema defaults (code-standards §3).
-6. **Read models** — services return `OfferingListRow` / `OfferingDetail` / `SpecificationCard` / `PriceCard` (or the Manage Products family-grouped shape), not raw Drizzle rows (code-standards §2.7).
-7. **Build gates** — `tsc --noEmit`, ESLint, Prettier, full test suite, SAST + DAST baseline clean; existing Administration pages green under `(app)` with identical URLs.
-8. **No forbidden edits** — nothing from §6 above touched without explicit confirmation; no `app/api/product*` path exists; no `TODO`, commented-out code, or `console.*`.
+1. **Guardrails pass** — all thirty in code-standards §9. Confirm the five re-scoped ones assert the target behaviour, not the old: 2 (DRAFT-only price mutation, trigger-backed), 8 (index-backed single-active), 11 (one-directional import rule), 13 (re-baselined schema-diff), 16 (grandfathering with `OBSOLETE`).
+2. **Transitions** — every transition in Inv. #23 succeeds from its legal predecessor; every other ordered pair is refused with a typed code; no `setLifecycleStatus`-style helper exists anywhere (V1).
+3. **DRAFT-only writes** — a price or spec insert, update or delete against a `TESTING`, `ACTIVE`, `OBSOLETE` or `RETIRED` parent is refused by the repository **and** by the trigger on a direct SQL write (V2).
+4. **Family uniqueness** — two concurrent branch attempts leave one open version; two concurrent activations leave exactly one ACTIVE; direct SQL inserts of a second open or second ACTIVE row are rejected by the indexes, for a family root and for a branch (V3).
+5. **Hard delete** — a discarded DRAFT takes its specs and prices with it, leaves siblings untouched, writes one `PRODUCT_OFFERING_DELETED` event with the removed counts, and the trigger does not block the cascade (V4, V6).
+6. **Price completeness** — recurring without a period, usage without a unit, `once` with either, `'MBPS'`, `'gb'`, and an unmapped period all fail in Zod **and** at the database; seeds obey the same rules (V7).
+7. **Retirement gate** — refused while a pinned subscription is not `TERMINATED` or is `TERMINATED` with `end_date >= current_date`; the refusal carries the live count; succeeds at zero.
+8. **Query budget** — Manage Products' first render issues one families query plus its count and **no** per-row detail query; selecting a family issues the version, detail, specification and price queries once each; the budget still holds after a mutation (V9).
+9. **Authorization** — page guard `products : EDIT`; `obsoleteOffering`, `retireOffering` and `deleteOffering` re-check `DELETE`; an EDIT-only principal is refused all three; deep links (`?family=`, `?version=`) grant nothing (V10).
+10. **Audit** — exactly one `insertAuditEvent` per mutation, inside the same transaction, using a type the architecture §5 table lists; View Product reads still write nothing.
+11. **Data layer** — SQL only in `db/**`; constraints enforced by the database with Zod as the mirror; no stored `end_date_time`; every status-gated decision reads on `tx`, locked.
+12. **URL state** — Manage Products' list and selection state lives in searchParams, parsed and never trusted; an unknown `family` renders the empty-selection state; a `version` outside the family falls back to the primary version; neither 404s.
+13. **Literal sweep clear** — no code path outside the product module treats `OBSOLETE` as unbillable or unreadable, `workflow-management/**` included (V5).
+14. **Migrations** — `npm run db:migrate` on an empty database produces the five-value enum, both indexes, the trigger, the cascade FKs and every new CHECK; seeds load; no migration other than `0006` was edited.
+15. **Build gates** — `tsc --noEmit`, ESLint, Prettier, full test suite, SAST and the DAST baseline clean; Orders, Subscriptions and every Administration route green and unchanged.
+16. **No forbidden edits** — nothing from §6 touched without confirmation; no `app/api/product*`; no `TODO`, commented-out code or `console.*`.
 
-If any item fails, the unit is not done. Fix it before moving on.
+---
+
+## Appendix A — Rules in the previous version of this file that this update supersedes
+
+Do not follow these. They are listed so you recognise them when the shipped code, its comments, or an older copy of this doc asserts them.
+
+| Superseded rule | Rule now in force |
+|---|---|
+| "The price repository never gains `update*`/`delete*` — `insertPrice` is its only write, forever." | §3.7 — three writes; `updatePrice` and `deletePrice` exist and refuse any parent that is not `DRAFT` (Inv. #1, amended). |
+| "Do not add a hard-delete path for offerings — every removal is a status transition (Discard/Retire), never a row deletion." | §3.8 — a `DRAFT` or `TESTING` version that was never `ACTIVE` is hard-deleted with its children; released versions are never deleted (Inv. #25). |
+| "Applied migrations — forward-only; new constraints or columns ship in a new migration, never by editing an applied one." | §6.2 — still true for every migration except `0006_product.sql`, which D11 authorises editing in place, in U1, once. |
+| "Single-active-per-family cannot be expressed as a unique index; enforce it transactionally." | §8.4 — two expression unique indexes on `COALESCE(family_offering_id, product_offering_id)` back the transaction lock (Inv. #13, corrected). |
+
+`prodmgmt-code-standards.md` Appendix A lists the code comments and tests that still assert the old rules. Clear both appendices as the update lands.

@@ -90,47 +90,57 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 ## Features
 
 ### Catalog listing (View Product)
+
 - Server-side paginated, sortable offerings table driven entirely by URL searchParams (RSC pattern shared with the Administration pages).
 - Name search (case-insensitive substring) and `lifecycle_status` filter; RETIRED hidden by default.
 - Row selection synced to `?offering=` for deep-linking.
 
 ### Offering detail (View Product)
-- All `product_offering` columns displayed: flags, lifecycle badge, `version` (a row's sequence number within its version family — see *Versioning* below), `last_modified`, `last_edited_by` resolved to a user display name via FK to APPUSER.
+
+- All `product_offering` columns displayed: flags, lifecycle badge, `version` (a row's sequence number within its version family — see _Versioning_ below), `last_modified`, `last_edited_by` resolved to a user display name via FK to APPUSER.
 
 ### Specifications panel (View Product)
+
 - Cards per `product_specifications` row scoped to the selected offering: mandatory/default indicators, `default_value`, and JSONB characteristics rendered as `key: value` plain text.
 
 ### Prices panel (View Product)
+
 - Cards per `product_offering_price` row scoped to the selected offering.
 - Flat prices show `amount` + `currency`; tiered prices render the tier array (`[{from, to, rate}, …]`) from `pricing_characteristics` JSONB as inline `from–to: rate` text.
 - Effectivity display: `start_date_time` per price; a price's end is derived from its successor's start (no stored `end_date_time`).
 
 ### Offering management (Manage Products)
+
 - Create dialog: name, `is_sellable`, `billing_only` — offering starts in `DRAFT` as the root of a new version family. `is_bundle` is never shown or settable in this UI; new offerings are always non-bundle.
 - Edit dialog behavior depends on the target's status: a `DRAFT` can be saved in place or explicitly "saved as new" (a sibling draft version); an `ACTIVE` offering has no in-place option at all — any edit transparently produces a new draft version instead.
 - No hard delete anywhere in the UI or the API surface. Removing an offering is always a lifecycle transition to `RETIRED` — "Discard" for a draft that never went live, "Retire" for a version that was active.
 
 ### Versioning and single-active-version guarantee (Manage Products)
+
 - Every offering belongs to a version family, linked by `product_offering.family_offering_id` (nullable, self-referencing). The Manage Products table shows one row per family by default, expandable to the full version history.
 - `version` is the row's sequence number within its family — the root is `1`, the first branch is `2`, and so on — assigned once at insert and never changed afterward, including for an in-place edit to an already-`DRAFT` row.
 - At most one version per family can be `ACTIVE` at a time. Activating a draft automatically retires whichever other version in its family was active, in the same atomic action.
 - Editing an `ACTIVE` version's own fields, specifications, or prices always clones it into a new `DRAFT` version first — the active row and everything attached to it are never modified in place.
 
 ### Specification management (Manage Products)
+
 - Add and edit specifications on a `DRAFT`. On an `ACTIVE` offering, adding or editing a specification triggers the clone-to-new-draft behavior above, and the change lands on the new draft, not the live version.
 - Hard delete is available for a specification, but only on a `DRAFT` row — and since specification writes against an `ACTIVE` offering always land on a freshly cloned draft first, this condition holds automatically rather than needing a separate check bolted on top.
 
 ### Price management (Manage Products)
+
 - Add price: name, price type, pricing model (flat or tiered), currency, GL code, start date. On an `ACTIVE` offering, this triggers the clone-to-new-draft behavior; on a `DRAFT`, it applies directly.
 - Prices remain insert-only everywhere. There is no edit or delete action for an existing price, on any offering, at any version.
 - A new price's start date may be backdated up to 3 days; the form shows a non-blocking warning when it is. Earlier than that is rejected outright.
 
 ### Lifecycle transitions (Manage Products)
+
 - `DRAFT → ACTIVE`: requires at least one price row and all mandatory specifications resolved. Available via "Activate" on a draft. Automatically retires the family's previous active version, if any, as part of the same action.
 - `ACTIVE → RETIRED` ("Retire") and `DRAFT → RETIRED` ("Discard"): both a soft-delete transition to the same terminal status, with an optional free-text reason, labeled differently in the UI and the audit trail depending on which state the row was in.
 - `RETIRED` is terminal — no path back to `DRAFT` or `ACTIVE`.
 
 ### Order capture (Orders)
+
 - Three-step order form: customer search → BAN selection → offer/quantity/dates/characteristics/price. One order item per order in the UI (schema supports multiple; UI creates one).
 - Party gate: `ACTIVE` only. BAN gate: any non-closed state. Offer gate: `ACTIVE ∧ billing_only ∧ is_sellable`.
 - Quantity column (integer ≥ 1, default 1) on order item and subscription; one subscription row regardless of quantity — rating multiplies.
@@ -138,23 +148,32 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 - Instance characteristics: key/value editor prefilled from the pinned version's spec characteristics; stored write-once on the order item (`ordered_characteristics`), copied to the subscription as living values (`instance_characteristics`).
 
 ### Pricing and approval (Orders)
+
 - No price snapshot columns anywhere: the pinned version FK is the snapshot, because activated versions' specs and prices are frozen by the catalog's copy-on-write invariants.
 - Optional negotiated price per flat-model price type, stored in insert-only `ordering.order_item_price_override` (UNIQUE per item + price type; currency must match the BAN; tiered price types not overridable).
 - Manager approval workflow for override orders: `PENDING` state, approve/reject by a MANAGER ≠ submitter, full re-validation at approval time, `reviewed_by`/`reviewed_at` stamped on either outcome.
 - Stated rating contract for the future bill run: per price type, use the override row if present, else the catalog price row effective on the rating date.
 
 ### Subscription lifecycle (Subscriptions)
+
 - Subscription born `ACTIVE` at order completion; TMF637 status enum fully seeded, phase uses `ACTIVE / SUSPENDED / TERMINATED`.
 - Suspend pauses charges from its effective date; resume restarts them; terminate sets `end_date` and is terminal.
 - Append-only, gap-free `inventory_status_history` — every transition recorded with effective date, reason, and actor; suspension windows derived from consecutive rows; repository permanently exports no update/delete for this table.
 - Edit-characteristics action on subscriptions: updates `instance_characteristics` only, with audit event — never a rating input.
 
+### Order and subscription lists (Orders, Subscriptions)
+
+- Orders list columns: order id, customer, BAN, offer + version, quantity, start date, negotiated-price indicator, status, submitted by/at, reviewed by/at; `PENDING` rows badged with a Review action.
+- Subscriptions list columns: subscription id, customer, BAN, pinned offer version, quantity, start/end dates, status, expandable status history; row actions gated by the current status.
+
 ### Navigation & shell
+
 - "Products" nav section with four items: "View Product" (lucide `Package`), "Manage Products" (lucide `PackagePlus`), "Orders", and "Subscriptions", via the `NAV_ITEMS` → `NAV_SECTIONS` refactor of `admin-nav.tsx`; collapsed-rail behavior unchanged.
 - Route group `(app)`; pages live at `app/(app)/products/{product-offering,manage-products,orders,subscriptions}/`.
 - Accent-filled primary actions: "New offering" on Manage Products, "New order" on Orders.
 
 ### Data integrity (enforced, not just displayed)
+
 - Price rows are immutable and insert-only everywhere — the price repository exposes exactly one write method, `insertPrice`; a change inserts a new row, it never updates or deletes an existing one. The `order_item_price_override` and `inventory_status_history` repositories are likewise permanently insert-only (finders only, no `update*`/`delete*`).
 - Constraint: no two prices of the same `price_type` on one offering with the same `start_date_time` (DB UNIQUE constraint; derived windows never overlap by construction — a new price supersedes its predecessor from its start instant).
 - Zod schema per `pricing_model` validates `pricing_characteristics` on every write (tiered requires contiguous, non-overlapping bounds).
@@ -165,11 +184,13 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 - "View Product" imports no write-path code — the read guarantees from the catalog viewer remain structurally enforced.
 
 ### Access control
+
 - Catalog: single code-seeded `products` permission, page-level. READ gates View Product, including prices — no pricing-visibility split. EDIT gates offering/specification create-edit, branching, and price add on Manage Products; DELETE gates retirement and discard.
 - Ordering & Inventory: two code-seeded permissions with no grant overlap against `products`. `product_orders` (READ sees the Orders list; EDIT places and reviews orders — approval additionally requires the MANAGER role, checked live). `product_inventory` (READ sees the Subscriptions list; EDIT drives suspend/resume/terminate and characteristics edits).
 - Nav items render regardless of permission; each page guard (`requirePermission(<name>, 'READ' | 'EDIT')`) enforces access.
 
 ### Audit trail
+
 - View Product and Subscriptions/Orders list reads are never audited.
 - Catalog writes: offering created, updated (in-place draft save), branched (new draft from an edit), activated, superseded (auto-retired by another version's activation), retired, discarded; specification created, updated, deleted; price added.
 - Ordering/Inventory writes: `PRODUCT_ORDER_CREATED / _PENDING_APPROVAL / _APPROVED / _REJECTED / _COMPLETED / _FAILED` and `PRODUCT_INVENTORY_CREATED / _CHARACTERISTICS_UPDATED / _SUSPENDED / _RESUMED / _TERMINATED`.
