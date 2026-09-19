@@ -99,7 +99,7 @@ This update rebuilds the Manage Products page and completes the catalog data it 
 - New transition services: submit for testing, back to draft, obsolete, retire (with the live-subscription gate), hard delete.
 - Manage Products importing View Product's read-only presentational components (one-directional; the reverse stays forbidden and guardrail 11 still asserts it).
 - Badge treatments for `TESTING` (info tint, flask icon) and `OBSOLETE` (muted row, history icon, Retire as the only action).
-- Amendments to `architecture.md` Inv. #18 and `prodmgmt-architecture.md` Inv. #1, #6, #13, #17, plus the code-standards, ui-context and workflow-rules edits listed in the plan's §9.
+- Amendments to `architecture.md` Inv. #18 and `prodmgmt-architecture.md` Inv. #1, #6, #13, #14, #17, plus the code-standards, ui-context and workflow-rules edits listed in the plan's §9.
 - Re-baselined guardrails: price immutability re-scoped to non-DRAFT, single-active now index-backed, schema-diff against the new price-table shape, grandfathering asserting OBSOLETE.
 - Updated demo and sample seeds carrying the new required price fields.
 - A codebase sweep of every `'RETIRED'` comparison outside the product module, including the flow SQL under `workflow-management/**`.

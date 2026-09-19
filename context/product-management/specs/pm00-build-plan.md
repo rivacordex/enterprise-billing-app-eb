@@ -12,7 +12,7 @@ Numbering continues from pm34 (delivered units are never renumbered); this overw
 
 ## Part 1 — Delivered baseline (pm01–pm24)
 
-Catalog phases 1–2, shipped and ship-gate-verified. Unit-by-unit history in `prodmgmt-completed-tracker.md`; per-unit specs in this folder. Retained for dependency reference.
+Catalog phases 1–2, shipped and ship-gate-verified. Unit-by-unit history in the "Completed Tracker" section at the end of `prodmgmt-progress-tracker.md`; per-unit specs in this folder. Retained for dependency reference.
 
 | # | Unit | Visible result | Depends on |
 |---|---|---|---|
@@ -130,7 +130,7 @@ pm37 depends on pm35 for the enum values it types, and on G2 for the literal fix
 
 **pm43 owns the only cross-module reach in Part 3.** The locked live-subscription finder on `product_inventory` is added there and nowhere else. A unit that finds itself editing `ordering/**` or `inventory/**` beyond that one read-only finder is out of bounds and must stop.
 
-**O1 blocks pm35's CHECK, not the whole unit.** If the bm29 charge-period mapping is still unconfirmed when pm35 starts, build everything else and leave `product_offering_price_period_type_check` for a same-unit follow-up commit — do not guess the accepted combinations.
+**O1 — CLOSED (2026-09-19).** The bm29 charge-period mapping is confirmed against the shipped resolver (`bill-run-processor/.../bill_run_processing.yml`): `months` only, length ∈ (1, 3, 12), mapping onto `billing.bill_cycle.frequency` (1 → monthly, 3 → quarterly, 12 → annually). pm35 ships this as `product_offering_price_period_value_check` (D4); no follow-up commit is deferred.
 
 ---
 
