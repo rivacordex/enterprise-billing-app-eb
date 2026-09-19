@@ -9,6 +9,10 @@ import {
   LIFECYCLE_BADGE_VARIANTS,
   LifecycleBadge,
 } from "@/components/products/lifecycle-badge";
+import {
+  MANAGE_PRODUCTS_PATH,
+  buildManageProductsHref,
+} from "@/components/products/manage/manage-products-href";
 import { ListPagination } from "@/components/products/list-pagination";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -17,8 +21,6 @@ import {
   type FamilyPage,
   type LifecycleStatus,
 } from "@/types/product";
-
-const BASE_PATH = "/products/manage-products";
 
 export interface FamilyTableProps {
   page: FamilyPage;
@@ -31,22 +33,10 @@ export interface FamilyTableProps {
 // Server component (code-standards §3.6): rows and pagination are `<Link>`s
 // (§3.4 — no client selection state) and the search/filter is a GET `<form>`
 // that rewrites the URL on submit without any client JS, so the whole table
-// renders on the server. pm40 layers the version bar and panels on top of the
-// same `?family=` selection this table writes.
-function buildHref(parts: {
-  q: string;
-  status: LifecycleStatus | null;
-  page?: number;
-  family?: string;
-}): string {
-  const params = new URLSearchParams();
-  if (parts.q) params.set("q", parts.q);
-  if (parts.status) params.set("status", parts.status);
-  if (parts.page && parts.page > 1) params.set("page", String(parts.page));
-  if (parts.family) params.set("family", parts.family);
-  const qs = params.toString();
-  return qs ? `${BASE_PATH}?${qs}` : BASE_PATH;
-}
+// renders on the server. Row/pagination/clear links share `buildManageProductsHref`
+// with the version bar so the two never drift (pm40 review dedup). pm40 layers
+// the version bar and panels on top of the same `?family=` selection this table
+// writes.
 
 export function FamilyTable({
   page,
@@ -64,7 +54,7 @@ export function FamilyTable({
       {/* Search + status filter: a GET form so the URL is rewritten on submit
           with no client component (the empty option maps to "all statuses"). */}
       <form
-        action={BASE_PATH}
+        action={MANAGE_PRODUCTS_PATH}
         method="get"
         className="flex flex-wrap items-end gap-3 border-b border-border p-4"
       >
@@ -109,7 +99,7 @@ export function FamilyTable({
         </button>
         {hasFilters && (
           <Link
-            href={BASE_PATH}
+            href={MANAGE_PRODUCTS_PATH}
             className="inline-flex h-9 items-center rounded-md border border-border px-3 text-body-sm font-semibold text-muted-foreground hover:text-foreground"
           >
             Clear
@@ -132,7 +122,7 @@ export function FamilyTable({
                 .
               </p>
               <Link
-                href={BASE_PATH}
+                href={MANAGE_PRODUCTS_PATH}
                 className="text-body-sm font-semibold text-[color:var(--text-link)] hover:underline"
               >
                 Clear filters
@@ -161,7 +151,7 @@ export function FamilyTable({
               {totalPages} {totalPages === 1 ? "page" : "pages"} of products.
             </p>
             <Link
-              href={buildHref({ q: query, status })}
+              href={buildManageProductsHref({ q: query, status })}
               className="text-body-sm font-semibold text-[color:var(--text-link)] hover:underline"
             >
               Go to the first page
@@ -208,7 +198,7 @@ export function FamilyTable({
                     </td>
                     <td className="px-4 py-2">
                       <Link
-                        href={buildHref({
+                        href={buildManageProductsHref({
                           q: query,
                           status,
                           page: currentPage,
@@ -257,7 +247,9 @@ export function FamilyTable({
           pageSize={pageSize}
           total={total}
           itemLabel="products"
-          hrefFor={(p) => buildHref({ q: query, status, page: p })}
+          hrefFor={(p) =>
+            buildManageProductsHref({ q: query, status, page: p })
+          }
         />
       )}
     </div>
