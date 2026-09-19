@@ -75,9 +75,11 @@ export async function checkOrderPreconditions(
     return { ok: false, code: "OFFERING_NOT_ORDERABLE" };
   }
 
-  // Prices — at least one row on the pinned version. Insert-only (Inv. #1),
-  // so no lock is needed for this existence check to stay valid through the
-  // write below (pm16 NO_PRICE_ROWS precedent).
+  // Prices — at least one row on the pinned version. A price row is immutable
+  // once its version leaves DRAFT (pm38 makes DRAFT prices mutable); orders
+  // only ever touch ACTIVE versions, whose prices are immutable, so no lock is
+  // needed for this existence check to stay valid through the write below
+  // (pm16 NO_PRICE_ROWS precedent; pm37 G2 rationale re-derivation).
   const prices =
     await productOfferingPriceRepository.findByOfferingIdWithDerivedEnd(
       tx,
