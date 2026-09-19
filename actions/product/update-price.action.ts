@@ -5,15 +5,14 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
-import { insertPrice } from "@/services/product/insert-price";
-import { insertPriceSchema } from "@/validation/product/insert-price.schema";
+import { updatePrice } from "@/services/product/update-price";
+import { updatePriceSchema } from "@/validation/product/update-price.schema";
 
-export type InsertPriceActionResult =
+export type UpdatePriceActionResult =
   | {
       ok: true;
       offeringId: string;
       productOfferingPriceId: string;
-      branched: boolean;
       backdated: boolean;
     }
   | {
@@ -21,20 +20,19 @@ export type InsertPriceActionResult =
       code: "VALIDATION_ERROR";
       fieldErrors: Record<string, string[]>;
     }
-  | { ok: false; code: "OFFERING_NOT_FOUND" }
-  | { ok: false; code: "OFFERING_RETIRED" }
+  | { ok: false; code: "PRICE_NOT_FOUND" }
+  | { ok: false; code: "OFFERING_NOT_DRAFT" }
   | { ok: false; code: "BACKDATED_START_TOO_FAR" }
   | { ok: false; code: "DUPLICATE_START" }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
-// pm22-spec §3.2. `offeringId` travels as its own parameter, never inside
-// `rawInput` (Design §2.3, mirroring pm15's `insertPrice` and pm20's
-// `updateOfferingAction` shape).
-export async function insertPriceAction(
-  offeringId: string,
+// pm38-spec I5. Follows insert-price.action.ts line for line; the price id
+// travels as its own parameter, never inside `rawInput` (the pm22 convention).
+export async function updatePriceAction(
+  priceId: string,
   rawInput: unknown,
-): Promise<InsertPriceActionResult> {
+): Promise<UpdatePriceActionResult> {
   let actorId: string;
   try {
     ({ userId: actorId } = await requirePermission(
@@ -48,7 +46,7 @@ export async function insertPriceAction(
     return { ok: false, code: "SERVER_ERROR" };
   }
 
-  const parsed = insertPriceSchema.safeParse(rawInput);
+  const parsed = updatePriceSchema.safeParse(rawInput);
   if (!parsed.success) {
     return {
       ok: false,
@@ -59,7 +57,7 @@ export async function insertPriceAction(
 
   let result;
   try {
-    result = await insertPrice(offeringId, parsed.data, actorId);
+    result = await updatePrice(priceId, parsed.data, actorId);
   } catch {
     return { ok: false, code: "SERVER_ERROR" };
   }
@@ -68,8 +66,6 @@ export async function insertPriceAction(
     return { ok: false, code: result.code };
   }
 
-  // Both product pages, matching create-offering.action.ts (pm19) and
-  // update-offering.action.ts (pm20)'s identical precedent.
   revalidatePath("/products/manage-products");
   revalidatePath("/products/product-offering");
 
@@ -77,7 +73,6 @@ export async function insertPriceAction(
     ok: true,
     offeringId: result.offeringId,
     productOfferingPriceId: result.productOfferingPriceId,
-    branched: result.branched,
     backdated: result.backdated,
   };
 }

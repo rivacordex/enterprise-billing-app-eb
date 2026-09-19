@@ -95,6 +95,10 @@ describe("AuditLogFilters", () => {
     expect(
       within(change).getByText("PRODUCT_SPECIFICATION_UPDATED"),
     ).toBeInTheDocument();
+    // pm38 additions
+    expect(
+      within(change).getByText("PRODUCT_PRICE_UPDATED"),
+    ).toBeInTheDocument();
 
     const removal = within(select).getByRole("group", { name: "Removal" });
     expect(within(removal).getByText("CONTACT_DELETED")).toBeInTheDocument();
@@ -109,6 +113,10 @@ describe("AuditLogFilters", () => {
     ).toBeInTheDocument();
     expect(
       within(removal).getByText("PRODUCT_OFFERING_DISCARDED"),
+    ).toBeInTheDocument();
+    // pm38 addition
+    expect(
+      within(removal).getByText("PRODUCT_PRICE_DELETED"),
     ).toBeInTheDocument();
 
     const security = within(select).getByRole("group", { name: "Security" });
@@ -155,7 +163,7 @@ describe("AuditLogFilters", () => {
       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(73); // "All events" + 72 (bm20 added BILL_RUN_DISTRIBUTION_STARTED/_RERUN/_ABANDONED)
+    expect(within(select).getAllByRole("option")).toHaveLength(75); // "All events" + 74 (pm38 added PRODUCT_PRICE_UPDATED/_DELETED)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

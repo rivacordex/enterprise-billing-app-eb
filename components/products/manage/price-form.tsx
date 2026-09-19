@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, X } from "lucide-react";
@@ -15,7 +15,14 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PRICE_TYPES, PRICING_MODELS } from "@/types/product";
+import {
+  PRICE_TYPES,
+  PRICING_MODELS,
+  RECURRING_PERIOD_LENGTHS,
+  UNITS_OF_MEASURE,
+  type RecurringPeriodLength,
+  type UnitOfMeasure,
+} from "@/types/product";
 import type { InsertPriceInput } from "@/validation/product/insert-price.schema";
 
 // Same tolerance value as insert-price.schema.ts's and insert-price.ts's own
@@ -28,6 +35,18 @@ const PRICE_TYPE_LABELS: Record<(typeof PRICE_TYPES)[number], string> = {
   usage: "Usage",
   once: "Once",
 };
+
+// pm38-spec I6 — helper text for each charge period, so the user sees the cycle
+// a length maps onto (prodmgmt-architecture §3.2: (1, months) → monthly,
+// (3, months) → quarterly, (12, months) → annually).
+const PERIOD_LENGTH_HELP: Record<RecurringPeriodLength, string> = {
+  1: "1 month — bills on a monthly cycle",
+  3: "3 months — bills on a quarterly cycle",
+  12: "12 months — bills on an annual cycle",
+};
+
+const RECURRING_PERIOD_LENGTH_STRINGS: readonly string[] =
+  RECURRING_PERIOD_LENGTHS.map((length) => String(length));
 
 const MONEY_REGEX = /^\d+(\.\d+)?$/;
 
@@ -42,17 +61,25 @@ function todayLocalDate(): string {
   return `${year}-${month}-${day}`;
 }
 
-// pm22-spec §2.4. Validates only the checks meaningful on this flat,
-// pre-assembly shape — NOT tier contiguity or the open-ended-only-on-last
-// rule, which stay defined exactly once, in tieredPricingCharacteristicsSchema
-// (reused, not re-declared, by the Server Action's own insertPriceSchema
-// round-trip at submit time).
+// pm22-spec §2.4, extended by pm38-spec I6. Validates only the checks meaningful
+// on this flat, pre-assembly shape — the per-price-type completeness rules
+// (charge period for recurring, unit for usage) and the flat/tiered money
+// checks. Tier contiguity and the open-ended-only-on-last rule stay defined
+// exactly once, in tieredPricingCharacteristicsSchema (reused, not re-declared,
+// by the Server Action's own insertPriceSchema/updatePriceSchema round-trip at
+// submit time).
 const priceFormSchema = z
   .object({
-    name: z.string().trim().min(1, "Price name is required"),
+    name: z
+      .string()
+      .trim()
+      .min(1, "Price name is required")
+      .max(200, "Price name must be 200 characters or fewer"),
     priceType: z.enum(PRICE_TYPES),
+    recurringChargePeriodLength: z.string(),
+    unitOfMeasure: z.string(),
     currency: z.string().trim().length(3, "Currency must be a 3-letter code"),
-    glCode: z.string().trim(),
+    glCode: z.string().trim().max(50, "GL code must be 50 characters or fewer"),
     startDateTime: z.string().min(1, "Start date is required"),
     pricingModel: z.enum(PRICING_MODELS),
     amount: z.string(),
@@ -61,6 +88,29 @@ const priceFormSchema = z
     ),
   })
   .superRefine((value, ctx) => {
+    if (
+      value.priceType === "recurring" &&
+      !RECURRING_PERIOD_LENGTH_STRINGS.includes(
+        value.recurringChargePeriodLength,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Charge period must be 1, 3 or 12 months",
+        path: ["recurringChargePeriodLength"],
+      });
+    }
+    if (
+      value.priceType === "usage" &&
+      !(UNITS_OF_MEASURE as readonly string[]).includes(value.unitOfMeasure)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose a unit of measure for a usage price",
+        path: ["unitOfMeasure"],
+      });
+    }
+
     if (value.pricingModel === "flat" && !MONEY_REGEX.test(value.amount)) {
       ctx.addIssue({
         code: "custom",
@@ -103,8 +153,8 @@ const priceFormSchema = z
     }
 
     // Duplicated tolerance check (Design §2.5) — a fast, live, field-level
-    // check; the Server Action's own insertPriceSchema round-trip (§3.2) is
-    // the authoritative one.
+    // check; the Server Action's own schema round-trip (§3.2) is the
+    // authoritative one.
     const start = new Date(`${value.startDateTime}T00:00:00`);
     if (!Number.isNaN(start.getTime())) {
       const msSinceStart = Date.now() - start.getTime();
@@ -127,8 +177,11 @@ export interface PriceFormProps {
   isSubmitting: boolean;
 }
 
-// pm22-spec §3.3. Assembles the flat form shape into insertPriceSchema's
-// actual nested shape — the one place the two representations meet.
+// pm22-spec §3.3, extended by pm38-spec I6. Assembles the flat form shape into
+// the discriminated InsertPriceInput — the one place the two representations
+// meet. Each branch carries exactly the completeness columns its `priceType`
+// allows: recurring gets its charge period (type fixed to `months`), usage its
+// unit, `once` neither.
 function toInsertPriceInput(values: PriceFormValues): InsertPriceInput {
   const priceCharacteristics =
     values.pricingModel === "flat"
@@ -149,14 +202,32 @@ function toInsertPriceInput(values: PriceFormValues): InsertPriceInput {
           },
         };
 
-  return {
+  const core = {
     name: values.name,
-    priceType: values.priceType,
     currency: values.currency.toUpperCase(),
     glCode: values.glCode.trim() === "" ? null : values.glCode.trim(),
     startDateTime: new Date(`${values.startDateTime}T00:00:00`),
     priceCharacteristics,
   };
+
+  if (values.priceType === "recurring") {
+    return {
+      priceType: "recurring",
+      recurringChargePeriodLength: Number(
+        values.recurringChargePeriodLength,
+      ) as RecurringPeriodLength,
+      recurringChargePeriodType: "months",
+      ...core,
+    };
+  }
+  if (values.priceType === "usage") {
+    return {
+      priceType: "usage",
+      unitOfMeasure: values.unitOfMeasure as UnitOfMeasure,
+      ...core,
+    };
+  }
+  return { priceType: "once", ...core };
 }
 
 export function PriceForm({
@@ -170,12 +241,15 @@ export function PriceForm({
     handleSubmit,
     control,
     getValues,
+    setValue,
     formState: { errors },
   } = useForm<PriceFormValues>({
     resolver: zodResolver(priceFormSchema),
     defaultValues: {
       name: "",
       priceType: "recurring",
+      recurringChargePeriodLength: "1",
+      unitOfMeasure: "",
       currency: "",
       glCode: "",
       startDateTime: todayLocalDate(),
@@ -190,8 +264,21 @@ export function PriceForm({
     name: "tiers",
   });
 
+  const priceType = useWatch({ control, name: "priceType" });
   const pricingModel = useWatch({ control, name: "pricingModel" });
+  const recurringChargePeriodLength = useWatch({
+    control,
+    name: "recurringChargePeriodLength",
+  });
   const startDateTime = useWatch({ control, name: "startDateTime" });
+
+  // pm38-spec I6 — clear and hide the type-specific groups when the type
+  // changes, so a switched type can never submit a stale unit or period.
+  // Idempotent, so running on mount (recurring default) is harmless.
+  useEffect(() => {
+    if (priceType !== "usage") setValue("unitOfMeasure", "");
+    if (priceType !== "recurring") setValue("recurringChargePeriodLength", "1");
+  }, [priceType, setValue]);
 
   // Captured once via a lazy useState initializer, not read directly during
   // render (React's purity rules disallow calling Date.now() in the render
@@ -211,6 +298,24 @@ export function PriceForm({
     }
     return null;
   })();
+
+  // pm38-spec D5 / ui-context §4 — the two unbillable-but-legal shapes save with
+  // a warning, never a block (§1.19). Nothing downstream bills a tiered
+  // recurring price (bm29 fails the account), and rating v1 is FLAT-only.
+  const unbillableWarning =
+    pricingModel === "tiered" && priceType === "recurring"
+      ? "Nothing bills a tiered recurring price yet — this version will fail its bill run."
+      : pricingModel === "tiered" && priceType === "usage"
+        ? "Usage rating charges a flat amount today; tiers are stored but not applied."
+        : null;
+
+  const periodHelp = RECURRING_PERIOD_LENGTH_STRINGS.includes(
+    recurringChargePeriodLength ?? "",
+  )
+    ? PERIOD_LENGTH_HELP[
+        Number(recurringChargePeriodLength) as RecurringPeriodLength
+      ]
+    : null;
 
   return (
     <form
@@ -261,6 +366,70 @@ export function PriceForm({
           <FieldError errors={[errors.priceType]} />
         </Field>
 
+        {priceType === "recurring" && (
+          <Field orientation="responsive">
+            <Field>
+              <FieldLabel htmlFor="price-period-length">
+                Charge period
+              </FieldLabel>
+              <select
+                id="price-period-length"
+                aria-invalid={!!errors.recurringChargePeriodLength}
+                disabled={isSubmitting}
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm tabular-nums"
+                {...register("recurringChargePeriodLength")}
+              >
+                {RECURRING_PERIOD_LENGTHS.map((length) => (
+                  <option key={length} value={String(length)}>
+                    {length}
+                  </option>
+                ))}
+              </select>
+              {periodHelp && (
+                <p className="text-caption text-[color:var(--text-muted)]">
+                  {periodHelp}
+                </p>
+              )}
+              <FieldError errors={[errors.recurringChargePeriodLength]} />
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="price-period-type">Period unit</FieldLabel>
+              {/* Fixed to `months` (the only mapped period type, O1 resolved);
+                  rendered read-only until a second value exists. */}
+              <Input
+                id="price-period-type"
+                type="text"
+                value="months"
+                readOnly
+                tabIndex={-1}
+                aria-label="Period unit (fixed to months)"
+              />
+            </Field>
+          </Field>
+        )}
+
+        {priceType === "usage" && (
+          <Field>
+            <FieldLabel htmlFor="price-unit">Unit of measure</FieldLabel>
+            <select
+              id="price-unit"
+              aria-invalid={!!errors.unitOfMeasure}
+              disabled={isSubmitting}
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
+              {...register("unitOfMeasure")}
+            >
+              <option value="">Select a unit…</option>
+              {UNITS_OF_MEASURE.map((unit) => (
+                <option key={unit} value={unit}>
+                  {unit}
+                </option>
+              ))}
+            </select>
+            <FieldError errors={[errors.unitOfMeasure]} />
+          </Field>
+        )}
+
         <Field orientation="responsive">
           <Field>
             <FieldLabel htmlFor="price-currency">Currency</FieldLabel>
@@ -310,6 +479,12 @@ export function PriceForm({
             )}
           />
         </Field>
+
+        {unbillableWarning && (
+          <div className="rounded-[var(--radius)] bg-[color:var(--bg-warning)] px-3 py-2 text-body-sm text-[color:var(--text-warning)]">
+            {unbillableWarning}
+          </div>
+        )}
 
         {pricingModel === "flat" && (
           <Field>

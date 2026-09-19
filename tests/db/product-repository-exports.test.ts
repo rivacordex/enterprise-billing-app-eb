@@ -31,6 +31,17 @@ const ALLOWED_SPECIFICATION_MUTATIONS = new Set([
   "deleteSpecification",
 ]);
 
+// pm38 (Inv. #1 amended): the price repository gains `updatePrice`/`deletePrice`
+// alongside `insertPrice` — the three writes it now permanently exports, and no
+// fourth. Both mutators refuse a non-DRAFT parent (proven by
+// product-price-writes.integration.test.ts and the source-level
+// product-module-boundaries guardrail); this file only asserts the export set.
+const ALLOWED_PRICE_MUTATIONS = new Set([
+  "insertPrice",
+  "updatePrice",
+  "deletePrice",
+]);
+
 describe("product repository exports (structural)", () => {
   it("productOfferingRepository exports no update*/delete* mutation function (insertOffering, updateOfferingDraftInPlace, branchOfferingAsDraft excepted, Phase 2 pm11/pm12/pm13)", () => {
     const names = Object.keys(productOfferingRepository);
@@ -51,10 +62,10 @@ describe("product repository exports (structural)", () => {
     expect(forbidden).toEqual([]);
   });
 
-  it("productOfferingPriceRepository exports no update*/delete* mutation function (insertPrice excepted, Phase 2 pm15)", () => {
+  it("productOfferingPriceRepository exports only insertPrice/updatePrice/deletePrice mutations (pm38 Inv. #1 amended)", () => {
     const names = Object.keys(productOfferingPriceRepository);
     const forbidden = names.filter(
-      (n) => MUTATION_NAME_PATTERN.test(n) && n !== "insertPrice",
+      (n) => MUTATION_NAME_PATTERN.test(n) && !ALLOWED_PRICE_MUTATIONS.has(n),
     );
     expect(forbidden).toEqual([]);
   });
