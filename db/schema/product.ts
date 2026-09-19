@@ -43,6 +43,14 @@ export const productOfferingPriceSeq = product.sequence(
   { startWith: 1 },
 );
 
+// The two expression unique indexes below are declared here AND in
+// 0040_product_family_guards.sql (the SQL of record). That migration ALSO adds
+// the `product.child_write_requires_draft()` trigger function and its two
+// BEFORE INSERT OR UPDATE OR DELETE triggers on product_specifications /
+// product_offering_price — a function and triggers have NO Drizzle
+// representation, so 0040 is authoritative for them and this schema mirror
+// carries only the indexes (pm36-spec D3/I2, following the "kept in sync with
+// it" precedent in db/schema/billing/documents.ts).
 export const productOffering = product.table(
   "product_offering",
   {
@@ -79,6 +87,18 @@ export const productOffering = product.table(
       "product_offering_family_not_self_check",
       sql`family_offering_id IS NULL OR family_offering_id <> product_offering_id`,
     ),
+    // pm36-spec D1/I2 — one ACTIVE and one open (DRAFT|TESTING) version per
+    // family, expression-indexed on COALESCE(family_offering_id,
+    // product_offering_id) so a family root (family_offering_id IS NULL)
+    // indexes its own id and collides with its branches. Mirrors
+    // 0040_product_family_guards.sql exactly; that migration is the SQL of
+    // record. Backs the advisory lock in activateOffering, does not replace it.
+    uniqueIndex("product_offering_one_active_per_family")
+      .on(sql`(coalesce(${t.familyOfferingId}, ${t.productOfferingId}))`)
+      .where(sql`${t.lifecycleStatus} = 'ACTIVE'`),
+    uniqueIndex("product_offering_one_open_per_family")
+      .on(sql`(coalesce(${t.familyOfferingId}, ${t.productOfferingId}))`)
+      .where(sql`${t.lifecycleStatus} IN ('DRAFT','TESTING')`),
   ],
 );
 

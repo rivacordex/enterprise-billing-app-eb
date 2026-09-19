@@ -444,6 +444,147 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(cascadeCount).toBe(2);
   });
 
+  // Guardrail 8 + 24 (constraint/trigger backstop) — pm36-spec I5. Freezes the
+  // shape 0040_product_family_guards.sql ships: the two expression unique
+  // indexes (one open, one ACTIVE per family), the child_write_requires_draft
+  // trigger function, and its two BEFORE INSERT OR UPDATE OR DELETE triggers.
+  // The function and triggers have no Drizzle representation, so 0040 is the
+  // SQL of record; db/schema/product.ts mirrors only the two indexes. The
+  // journal must carry 0040 after 0039 (a forward migration, never an edit to
+  // an applied file — db/migrations/README.md).
+  it("0040 + db/schema/product.ts freeze the family-uniqueness indexes and the DRAFT-guard trigger (pm36 D1/D3)", () => {
+    const migrationSource = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        "db",
+        "migrations",
+        "0040_product_family_guards.sql",
+      ),
+      "utf8",
+    );
+    const schemaSource = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "schema", "product.ts"),
+      "utf8",
+    );
+
+    const INDEX_NAMES = [
+      "product_offering_one_active_per_family",
+      "product_offering_one_open_per_family",
+    ];
+    const TRIGGER_NAMES = [
+      "product_specifications_draft_guard",
+      "product_offering_price_draft_guard",
+    ];
+
+    // 1. The migration carries both indexes, the function and both triggers.
+    for (const name of INDEX_NAMES) {
+      expect(migrationSource).toContain(name);
+    }
+    expect(migrationSource).toContain("child_write_requires_draft");
+    for (const name of TRIGGER_NAMES) {
+      expect(migrationSource).toContain(name);
+    }
+
+    // 2. The Drizzle mirror declares both unique indexes (and only these two —
+    // the function/triggers deliberately have no schema representation).
+    const offeringBlock = extractTableBlock(schemaSource, "productOffering");
+    for (const name of INDEX_NAMES) {
+      expect(offeringBlock).toContain(name);
+    }
+
+    // 3. The journal carries a 0040 entry whose `when` is greater than 0039's —
+    // the ordering the migrator actually gates on (README: it applies an entry
+    // only when its `when` exceeds the last-applied one), so a forward migration
+    // must sort after 0039. (This asserts the ordering, not that every prior
+    // entry is byte-unchanged.)
+    const journal = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "db", "migrations", "meta", "_journal.json"),
+        "utf8",
+      ),
+    ) as { entries: { tag: string; when: number }[] };
+    const entry = journal.entries.find(
+      (e) => e.tag === "0040_product_family_guards",
+    );
+    const prior = journal.entries.find(
+      (e) => e.tag === "0039_customer_bill_line",
+    );
+    expect(entry).toBeDefined();
+    expect(prior).toBeDefined();
+    expect(entry!.when).toBeGreaterThan(prior!.when);
+  });
+
+  // pm36-spec Dependencies (Grants). The trigger runs as invoker and its
+  // internal SELECT reads product.product_offering; rating_runtime and
+  // billrun_runtime hold SELECT on the product read tables but must never gain
+  // INSERT/UPDATE/DELETE on either product child table — a write grant there
+  // would let the trigger's SELECT run under a role lacking SELECT on the
+  // parent, surfacing as an opaque trigger failure. A future grant that lets
+  // either engine role write a product child table fails CI here.
+  it("rating/billrun bootstrap grants no write (INSERT/UPDATE/DELETE) on either product child table", () => {
+    const WRITE = /\b(INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i;
+    // A write privilege reaches a product child table three ways, all scoped to
+    // the product schema: naming the table, a schema-wide ALL TABLES grant, or a
+    // default-privilege grant on future product tables. All three are covered so
+    // the guardrail cannot be sidestepped by the un-named grant forms; SELECT-
+    // only grants (the roles' legitimate product reads) match none of them.
+    const NAMES_CHILD_TABLE =
+      /product"?\.\s*"?(product_specifications|product_offering_price)"?/i;
+    const ALL_TABLES_IN_PRODUCT = /ALL\s+TABLES\s+IN\s+SCHEMA\s+"?product"?/i;
+    const IN_SCHEMA_PRODUCT = /IN\s+SCHEMA\s+"?product"?/i;
+
+    function writeGrantsOnProductChildTables(sqlText: string): string[] {
+      // Split into statements on the breakpoint markers and semicolons; strip
+      // line comments so a `--` note mentioning a table never trips the match.
+      const statements = sqlText
+        .split(/-->\s*statement-breakpoint|;/)
+        .map((s) =>
+          s
+            .split("\n")
+            .filter((line) => !line.trim().startsWith("--"))
+            .join("\n")
+            .trim(),
+        );
+      const offenders: string[] = [];
+      for (const stmt of statements) {
+        // Plain GRANT: the privilege list sits between GRANT and ON.
+        if (/^GRANT\b/i.test(stmt)) {
+          const priv = stmt.match(/^GRANT\s+([\s\S]*?)\bON\b/i)?.[1] ?? "";
+          if (!WRITE.test(priv)) continue;
+          if (
+            NAMES_CHILD_TABLE.test(stmt) ||
+            ALL_TABLES_IN_PRODUCT.test(stmt)
+          ) {
+            offenders.push(stmt.replace(/\s+/g, " ").slice(0, 100));
+          }
+          continue;
+        }
+        // ALTER DEFAULT PRIVILEGES … IN SCHEMA "product" … GRANT <write> ON TABLES
+        // silently grants writes on every future product table, child tables
+        // included — a write grant by another name.
+        if (
+          /^ALTER\s+DEFAULT\s+PRIVILEGES\b/i.test(stmt) &&
+          IN_SCHEMA_PRODUCT.test(stmt) &&
+          /\bON\s+TABLES\b/i.test(stmt)
+        ) {
+          const priv = stmt.match(/\bGRANT\s+([\s\S]*?)\bON\b/i)?.[1] ?? "";
+          if (WRITE.test(priv)) {
+            offenders.push(stmt.replace(/\s+/g, " ").slice(0, 100));
+          }
+        }
+      }
+      return offenders;
+    }
+
+    for (const fileName of ["rating-db-roles.sql", "billrun-db-roles.sql"]) {
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, "db", "bootstrap", fileName),
+        "utf8",
+      );
+      expect(writeGrantsOnProductChildTables(source)).toEqual([]);
+    }
+  });
+
   // Guardrail 10 (code-standards-phase2 §9), closing pm14's own open item
   // (pm14-spec's closing line explicitly left open whether this becomes
   // "asserted structurally" or stays "by construction"). Does not re-verify

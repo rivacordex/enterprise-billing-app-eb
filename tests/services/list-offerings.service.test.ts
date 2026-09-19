@@ -42,7 +42,7 @@ function baseParams(
 }
 
 describe("listOfferings", () => {
-  it("passes status: null through unchanged (repository owns the RETIRED exclusion)", async () => {
+  it("passes status: null through unchanged (repository owns the OBSOLETE + RETIRED exclusion)", async () => {
     mockFindActiveValue.mockResolvedValue("5");
     await listOfferings(baseParams({ status: null }));
 

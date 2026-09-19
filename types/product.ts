@@ -1,7 +1,18 @@
 import type { ProductSpecCharacteristics } from "@/validation/product/product-spec-characteristics.schema";
 import type { TieredPricingCharacteristics } from "@/validation/product/pricing-characteristics.schema";
 
-export const LIFECYCLE_STATUSES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
+// Declaration order IS lifecycle order (DRAFT → TESTING → ACTIVE → OBSOLETE →
+// RETIRED). UI sort weight derives from the array index and the database enum
+// (pm35) declares the same order, so `ORDER BY lifecycle_status` in SQL and
+// sorting in TypeScript agree. Nothing else may re-declare this order — a
+// second status list is a drift bug (pm37-spec D1).
+export const LIFECYCLE_STATUSES = [
+  "DRAFT",
+  "TESTING",
+  "ACTIVE",
+  "OBSOLETE",
+  "RETIRED",
+] as const;
 export type LifecycleStatus = (typeof LIFECYCLE_STATUSES)[number];
 
 export const PRICE_TYPES = ["recurring", "usage", "once"] as const;
@@ -9,6 +20,24 @@ export type PriceType = (typeof PRICE_TYPES)[number];
 
 export const PRICING_MODELS = ["flat", "tiered"] as const;
 export type PricingModel = (typeof PRICING_MODELS)[number];
+
+// Closed, case-sensitive unit vocabulary for `usage` prices, matching pm35's
+// `product_offering_price_unit_value_check` exactly. Declared here with the
+// other domain unions (code-standards §2.1); first consumed by pm38's price
+// schema. Widening requires a migration changing the CHECK AND a confirmed
+// bm29 mapping — never a TypeScript-only edit (pm37-spec D5).
+export const UNITS_OF_MEASURE = ["Mbps", "GB", "MB", "EA"] as const;
+export type UnitOfMeasure = (typeof UNITS_OF_MEASURE)[number];
+
+// Recurring charge-period vocabulary, matching pm35's
+// `product_offering_price_period_value_check`: `months` only, length ∈
+// (1, 3, 12). Same widening rule as UNITS_OF_MEASURE — migration + confirmed
+// bm29 mapping, never a TypeScript-only edit (pm37-spec D5).
+export const RECURRING_PERIOD_TYPES = ["months"] as const;
+export type RecurringPeriodType = (typeof RECURRING_PERIOD_TYPES)[number];
+
+export const RECURRING_PERIOD_LENGTHS = [1, 3, 12] as const;
+export type RecurringPeriodLength = (typeof RECURRING_PERIOD_LENGTHS)[number];
 
 export type {
   ProductOffering,
