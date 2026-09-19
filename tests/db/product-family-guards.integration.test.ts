@@ -332,6 +332,80 @@ describe.skipIf(!databaseUrl)(
       expect(counts.prices).toBe(0);
     });
 
+    // ── Re-parenting guard (both OLD and NEW parent must be DRAFT) ───────────
+    // A direct-SQL UPDATE that moves a child from one offering to another must
+    // not strip a spec/price off a released version. The trigger validates the
+    // parent losing the row AND the parent gaining it.
+
+    it("rejects re-parenting a price OFF an ACTIVE parent (OLD-side guard)", async () => {
+      // Priced while DRAFT, then activated — the price now sits on a released
+      // version. Moving it to a DRAFT sibling would silently mutate the ACTIVE
+      // offering's price set; the OLD-side check rejects it.
+      const active = await insertOffering({
+        name: "rp off-active",
+        status: "DRAFT",
+      });
+      await insertPrice(active, { name: "rp-p1" });
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE'
+                WHERE product_offering_id = ${active}`;
+      const draft = await insertOffering({
+        name: "rp target-draft",
+        status: "DRAFT",
+      });
+
+      let err: unknown;
+      try {
+        await sql`UPDATE product.product_offering_price SET product_offering_id = ${draft}
+                  WHERE product_offering_id = ${active}`;
+      } catch (e) {
+        err = e;
+      }
+      expect(String(err)).toContain("product_child_write_requires_draft");
+      expect(String(err)).toContain("ACTIVE");
+    });
+
+    it("rejects re-parenting a price ONTO an ACTIVE parent (NEW-side guard)", async () => {
+      const draft = await insertOffering({
+        name: "rp src-draft",
+        status: "DRAFT",
+      });
+      await insertPrice(draft, { name: "rp-p2" });
+      const active = await insertOffering({
+        name: "rp onto-active",
+        status: "DRAFT",
+      });
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE'
+                WHERE product_offering_id = ${active}`;
+
+      let err: unknown;
+      try {
+        await sql`UPDATE product.product_offering_price SET product_offering_id = ${active}
+                  WHERE product_offering_id = ${draft}`;
+      } catch (e) {
+        err = e;
+      }
+      expect(String(err)).toContain("product_child_write_requires_draft");
+      expect(String(err)).toContain("ACTIVE");
+    });
+
+    it("allows re-parenting a price between two DRAFT parents", async () => {
+      const a = await insertOffering({ name: "rp draft-a", status: "DRAFT" });
+      await insertPrice(a, { name: "rp-p3" });
+      const b = await insertOffering({ name: "rp draft-b", status: "DRAFT" });
+
+      await sql`UPDATE product.product_offering_price SET product_offering_id = ${b}
+                WHERE product_offering_id = ${a}`;
+
+      const [onA] = await sql<{ count: string }[]>`
+        SELECT count(*)::text AS count FROM product.product_offering_price
+        WHERE product_offering_id = ${a}`;
+      const [onB] = await sql<{ count: string }[]>`
+        SELECT count(*)::text AS count FROM product.product_offering_price
+        WHERE product_offering_id = ${b}`;
+      expect(onA?.count).toBe("0");
+      expect(onB?.count).toBe("1");
+    });
+
     // ── Role-context (pm36-spec Dependencies) ───────────────────────────────
     // Proves the trigger's internal SELECT resolves under app_runtime — the
     // role the production insert-price path actually runs as. A missing SELECT
