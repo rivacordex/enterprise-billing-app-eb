@@ -168,8 +168,12 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockGetExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
     mockListStatusesForRun.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSED" },
-      { billingAccountId: "BAN00000002", status: "PROCESSING_FAILED" },
+      { billingAccountId: "BAN00000001", status: "PROCESSED", errorCode: null },
+      {
+        billingAccountId: "BAN00000002",
+        status: "PROCESSING_FAILED",
+        errorCode: null,
+      },
     ]);
 
     const result = await reconcileRun("BRN00000001", "user-1");
@@ -202,7 +206,11 @@ describe("reconcileRun (bm12-spec §Design/§3)", () => {
     mockFindByIdForUpdate.mockResolvedValue(run());
     mockGetExecutionStatus.mockResolvedValue({ state: "SUCCESS" });
     mockListStatusesForRun.mockResolvedValue([
-      { billingAccountId: "BAN00000001", status: "PROCESSING" },
+      {
+        billingAccountId: "BAN00000001",
+        status: "PROCESSING",
+        errorCode: null,
+      },
     ]);
 
     const result = await reconcileRun("BRN00000001", "user-1");

@@ -353,6 +353,79 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
     });
   });
 
+  // 2026-09-17 (owner decision) — suppress the zero-value invoice. A bill worth
+  // nothing has no economic substance, and posting it FAILS on
+  // `document_line_amount_check` (`amount > 0`), parking the account. It is
+  // skipped instead, marked SKIPPED so `completePosting` can finish the run,
+  // and consumes NO invoice number (Inv #7).
+  it("a zero-total bill is not invoiced — no INV, no invoice number, account SKIPPED", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({ subtotal: "0.00", taxTotal: "0.00", totalAmount: "0.00" }),
+    );
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    expect(mockDocInsert).not.toHaveBeenCalled();
+    expect(mockStampPosted).not.toHaveBeenCalled();
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({
+        status: "SKIPPED",
+        errorCode: "ZERO_TOTAL_NOT_INVOICED",
+        expectedStatus: "PROCESSED",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        results: [
+          { billingAccountId: "BAN00000001", result: { status: "skipped" } },
+        ],
+      },
+    });
+  });
+
+  // [CRITICAL] The skip is EXACTLY zero, never `<= 0`. A negative total is a
+  // credit position with real economic substance (money owed TO the customer);
+  // suppressing it would understate the liability and silently deny the
+  // customer a credit. It must still attempt to post (and fail loudly) until a
+  // credit-note path exists.
+  it("[CRITICAL] a NEGATIVE-total bill is never skipped — it still attempts to post", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({ subtotal: "-50.00", taxTotal: "0.00", totalAmount: "-50.00" }),
+    );
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockDocInsert).toHaveBeenCalled();
+    expect(mockUpdateStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({ errorCode: "ZERO_TOTAL_NOT_INVOICED" }),
+    );
+  });
+
+  // A tax-only bill (subtotal 0, total > 0) carries a real tax liability, so it
+  // must NOT be suppressed — the skip requires BOTH columns to be zero.
+  it("[CRITICAL] a zero-subtotal bill with a non-zero total is never skipped", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({ subtotal: "0.00", taxTotal: "8.00", totalAmount: "8.00" }),
+    );
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockDocInsert).toHaveBeenCalled();
+    expect(mockUpdateStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({ errorCode: "ZERO_TOTAL_NOT_INVOICED" }),
+    );
+  });
+
   it("[CRITICAL] no double-post — a postDocument failure never stamps the bill or marks INVOICED, and parks the account instead", async () => {
     mockPostDocument.mockResolvedValue({
       ok: false,

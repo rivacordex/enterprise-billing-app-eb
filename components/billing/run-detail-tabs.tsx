@@ -11,6 +11,7 @@ import { AuditTable } from "@/components/billing/audit-table";
 import { CustomerBillTable } from "@/components/billing/customer-bill-table";
 import { DistributionTab } from "@/components/billing/distribution-tab";
 import { ErrorsTable } from "@/components/billing/errors-table";
+import { RunFlowProgressBar } from "@/components/billing/run-flow-progress";
 import { StageTimeline } from "@/components/billing/stage-timeline";
 import { UnchargedTable } from "@/components/billing/uncharged-table";
 import type { AuditLogRow } from "@/types/audit-log";
@@ -22,6 +23,8 @@ import type {
   ErrorRow,
   ExceptionRow,
   RejectedPendingRow,
+  RunFlowProgress,
+  RunStatus,
   StageTimelineRow,
   StageTimelineSummary,
   UnchargedRow,
@@ -38,10 +41,12 @@ const TAB_LABELS: Record<RunDetailTab, string> = {
 
 export interface RunDetailTabsProps {
   runId: string;
+  runStatus: RunStatus;
   activeTab: RunDetailTab;
   timeline: {
     rows: StageTimelineRow[];
     summary: StageTimelineSummary;
+    flow: RunFlowProgress;
   };
   customerBills: CustomerBillRow[];
   uncharged: UnchargedRow[];
@@ -60,6 +65,7 @@ export interface RunDetailTabsProps {
 
 export function RunDetailTabs({
   runId,
+  runStatus,
   activeTab,
   timeline,
   customerBills,
@@ -102,7 +108,20 @@ export function RunDetailTabs({
       </nav>
 
       {activeTab === "workflow" ? (
-        <StageTimeline rows={timeline.rows} summary={timeline.summary} />
+        <div className="space-y-4">
+          {runStatus === "CANCELLED" ? (
+            // A cancelled run was reset (accounts back to PENDING), so a
+            // pipeline-progress bar would read as in-progress. Suppress it and
+            // show a plain note; the per-account grid below still reflects the
+            // reset state and the run status badge above says CANCELLED.
+            <p className="text-body-sm text-muted-foreground">
+              This run was cancelled — the pipeline progress bar is hidden.
+            </p>
+          ) : (
+            <RunFlowProgressBar runId={runId} flow={timeline.flow} />
+          )}
+          <StageTimeline rows={timeline.rows} summary={timeline.summary} />
+        </div>
       ) : activeTab === "customers" ? (
         <CustomerBillTable
           billRunId={runId}

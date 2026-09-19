@@ -13,6 +13,14 @@ phase against its guardrails and signed it off** (§9 resolved, §10 ratified, n
 schema). The cloud cutover itself remains a gated ops step (see
 `billmgmt-update-overview.md` and `billmgmt-progress-tracker.md`).
 
+**§11–§14 and §4c were added on 2026-09-17**, from the first
+end-to-end local execution of the full `SCHEDULED → COMPLETED` lifecycle
+(processing, approval, posting and distribution all driven against real
+Postgres, real Kestra and Azurite). Defects that run surfaced and FIXED are
+recorded in `billmgmt-progress-tracker.md` and `README.md`; the entries here
+are the ones still OPEN, plus the two interim mitigations whose root cause
+(§11) is unaddressed.
+
 > **Status legend:** 🟡 deferred (conscious decision) · 🔴 real bug, out of
 > current scope · ⚪ cosmetic / low priority.
 
@@ -163,10 +171,38 @@ step in the file created the row and it isn't reset between cases).
 **ELI5.** A test tries to create the same bill run twice and trips over the
 "no duplicates" rule — a test-setup cleanup gap, not a product bug.
 
+### 4c. Both full-journey E2E suites fail at post → distribute (UNTRIAGED)
+
+**Where:** `tests/db/billing-e2e-happy-path.integration.test.ts:776`,
+`tests/db/billrun-phase3-journey.integration.test.ts:747`.
+
+**Technical.** Surfaced on 2026-09-17 by the **first full DB-gated run** against a
+disposable Postgres (89 files passed, 2 skipped, 2 failed; 813 tests passed).
+Both fail the same assertion — `expected 'INVOICED' to be 'DISTRIBUTING'`:
+posting settles the run at `INVOICED`, but the post-commit `triggerDistribution`
+does not advance it. `distribute-run.ts` rolls its transaction back and returns
+`ENGINE_UNREACHABLE` when `engineRegistry.trigger` throws, which is consistent
+with the observed state but was **not** confirmed as the cause. The suites are
+also sensitive to ambient environment beyond `DATABASE_URL`: re-running
+`billrun-phase3-journey` with a dev `.env` also exported fails **earlier**
+instead (line 568), so the two runs are not directly comparable.
+
+**ELI5.** The two tests that walk a bill run from start to finish both stop at
+the same step — after invoicing, the run never moves on to delivery. Nobody has
+worked out why yet.
+
+**Not a regression.** The progress tracker had listed this full DB-gated run as a
+gated verification step that had never been executed, so these are
+first-execution results, not something that broke.
+
 **Recommendation.** File a bm02/bm03 ticket: (1) clamp scheduled-run/period-end
 dates to the month's real last day (fixes 4a), and (2) fix the trigger test's
 per-case isolation (fixes 4b). Both are date/fixture issues, unrelated to the
 approve/post work.
+
+**4c is separate and untriaged** - it is a post→distribute lifecycle question,
+not a date/fixture issue, and needs its own investigation before a ticket can
+name a fix.
 
 ---
 
@@ -328,3 +364,180 @@ written by the real flow.
 **Recommendation.** Ratified as the intended interim (Phase 4 decision) — invoices
 show `total = subtotal`. Implement a real (flat-rate SST, then jurisdictional)
 taxation stage in a later unit if RevOps needs a tax line on the reviewed invoice.
+
+---
+
+## 11. 🔴 The processor writes a zero-total bill for a zero-charge account
+
+**Where:** `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`
+- the `aggregation` stage's `ins_header` CTE.
+
+**Technical.** `ins_header` is a data-modifying CTE, so it runs **exactly once
+per account regardless of whether `all_lines` is empty**; the flow's own comment
+calls this "the deferred limitation". An account with no subscription and no
+rated usage therefore gets a `customer_bill` header with `subtotal` and
+`total_amount` of `0.00` and zero `customer_bill_line` rows. Since **bm32**
+redefined Uncharged (Inv #22), such an account is scoped, `PROCESSED`, and
+surfaced on the Uncharged tab — so the empty header is the only artefact of it,
+and everything else already expects it NOT to exist: Verification guards with
+`IF v_total IS NOT NULL` and treats a non-positive total as a **SOFT, advisory,
+non-blocking** NOTICE, and `listUnchargedForRun`'s `HAVING` keeps accounts with
+"NO bill/line".
+
+**Blast radius (all observed live on the `ci` seed's `BAN...04`).** The stray
+header broke the lifecycle twice in succession:
+
+1. **At approval** — `positive_totals` counted it, making *any* run containing a
+   no-charges account permanently unapprovable.
+2. **At posting** — posting inserts the revenue line at `amount = subtotal`, so
+   `document_line_amount_check` (`amount > 0`) rejected it and parked the account
+   at `POSTING_FAILED` with an opaque "An unexpected error occurred while posting
+   this invoice."
+
+**ELI5.** For a customer with nothing to bill, the system still creates a blank
+zero-value invoice. Nothing wants that blank invoice, and it jammed first the
+approval step and then the posting step.
+
+**Two interim mitigations are in place (owner decisions, 2026-09-17).** Both
+treat the symptom; neither removes the cause:
+
+- `countNonPositivePostable` now ignores **line-less** zero bills, and the new
+  informational `zero_total_bills` check reports them
+  (`specs/bm10-approve.md` checks 3 and 6).
+- `postAccount` skips a bill whose `subtotal` **and** `total_amount` are both
+  exactly zero, marking the account `SKIPPED` / `ZERO_TOTAL_NOT_INVOICED`
+  (`specs/bm11-post-to-ledger.md` step 1b).
+
+**Recommendation.** Make `ins_header` conditional on `all_lines` being non-empty,
+so a zero-charge account produces no bill at all. That was the engineering
+recommendation before each mitigation; the owner chose the mitigations to unblock
+the demo. Keep the posting skip afterwards as a second line of defence, and
+revisit the approval narrowing (§12) at the same time.
+
+---
+
+## 12. 🟡 The zero-total predicates will misfire on a fully-discounted bill
+
+**Where:** `services/billing/post-run.ts` (`postAccount`'s zero-total skip) and
+`db/repositories/billing/customer-bill.repository.ts`
+(`countNonPositivePostable`).
+
+**Not a revenue-recognition issue — corrected 2026-09-17.** An earlier draft of
+this entry claimed the skip would "suppress real revenue". That was wrong, and
+the correction matters because it changes what the fix is for. A bill charged
+100 and discounted 100 has a transaction price of **zero**; net IS the revenue.
+Posting inserts the GL revenue line at `amount = bill.subtotal`, i.e. **net**, so
+whether such a bill posts or not the P&L impact is identically `0.00`. Nor is the
+gross-to-net record lost: `customer_bill_line` persists `gross_amount`,
+`discount_amount`, `discount_amount_raw` and `net_amount` independently of
+posting, so discount analytics survive a skip. **There is no accounting exposure
+here.**
+
+**Technical — what the real exposure is.** Both predicates key on a bill
+totalling exactly zero, which today can only mean "no charge". Once discounting
+lands it can also mean "fully discounted", and the two are then
+indistinguishable:
+
+1. **A fully-discounted account wedges the whole run at approval.**
+   `countNonPositivePostable` is `(subtotal <= 0 OR total_amount <= 0) AND
+   EXISTS(lines)`. A discounted-to-zero bill HAS lines, so it is counted,
+   `positive_totals` fails, and **no account in that run can be approved** until
+   someone intervenes. This is the same operational jam as §11, re-armed for a
+   legitimate account — and it is the more likely of the two to be hit.
+2. **If unblocked, the customer gets no invoice.** `postAccount`'s skip is
+   `subtotal == 0 AND total_amount == 0` with no line check, so the account
+   settles `SKIPPED` / `ZERO_TOTAL_NOT_INVOICED` and no INV document is produced
+   — for an account that had genuine billable activity. The customer never
+   receives a document showing the charge and the discount that cancelled it,
+   which is a contractual/transparency question for RevOps, not a ledger one.
+3. **Operators cannot tell the two apart.** A 100%-discounted account and an
+   account with nothing to bill both land as `SKIPPED` with the same reason code
+   and both appear on the Uncharged tab.
+
+**ELI5.** "This invoice totals zero" currently always means "there was nothing to
+bill". After discounts exist it can also mean "we charged 100 and took 100 off".
+The money is the same either way — zero — so nothing is misstated. The problem is
+that the system treats the second case as if the customer were idle: it first
+refuses to approve the entire run because of it, and if you force past that, it
+quietly issues no invoice, so the customer never sees the discount they were
+given.
+
+**Interaction with §11 — important.** Fixing §11 does **not** fix this. A
+discounted-to-zero bill has lines, so §11's fix (only create a header when there
+ARE lines) correctly still creates it, and both predicates still misread it. What
+§11's fix DOES do is remove the only legitimate reason those predicates exist:
+with no line-less bills in the system, the `EXISTS(lines)` narrowing is redundant
+and the posting skip's **only remaining reachable case is the harmful one**. So
+the mitigations should be removed or re-keyed as part of the §11 fix, not left
+behind.
+
+**Recommendation.** When §11 is fixed, in the same change: drop the
+`EXISTS(lines)` clause from `countNonPositivePostable`, and either remove
+`postAccount`'s zero-total skip or re-key it to "the bill has no charge lines".
+Add a test asserting a zero-net bill WITH lines still posts. Separately, RevOps
+should decide whether a fully-discounted account should receive a zero-value
+invoice — that is a product decision, not a defect, and it is the only part of
+this entry that needs a business answer.
+
+---
+
+## 13. 🔴 The DB-gated test suite destroys a co-located dev stack
+
+**Where:** `tests/db/billrun-db-roles.integration.test.ts`
+(`beforeAll`/`afterAll`), `vitest.integration.config.ts`, `npm run test`.
+
+**Technical.** Three separate hazards, all confirmed live on 2026-09-17:
+
+1. **It drops the `kestra` database.** `afterAll` runs
+   `DROP DATABASE IF EXISTS "kestra" WITH (FORCE)` — outside `DATABASE_URL`,
+   against the whole cluster. `FORCE` terminates every live connection first, so a
+   running engine lost all Hikari connections at once (`SQLSTATE(08006)`), each
+   queue poller logged `Fatal error while polling ... Initiating shutdown`, and
+   the container exited 0 with **every deployed flow gone**.
+2. **It rewrites cluster-level role passwords.** `ALTER ROLE app_runtime /
+   rating_runtime / billrun_runtime WITH PASSWORD 'bm14-test-only-pw'`. Roles are
+   cluster-scoped, so the dev app then fails `28P01` and every flow DB task fails
+   authentication. Restoring the password is not enough on its own — the app's
+   connection pool holds the old credential until it is restarted.
+3. **The promised "skip loudly" never fires.** Each suite carries
+   `describe.skipIf(!DATABASE_URL)`, but `db/client.ts` imports `lib/config.ts` at
+   module load and throws `Invalid environment configuration.` first, so every
+   DB-gated file **errors** instead of skipping.
+
+Consequently `npm run test` with a dev `.env` exported destroys the local stack,
+and the config's own comment about skipping is misleading.
+
+**ELI5.** Running the full test suite against your development database doesn't
+just wipe that database — it also deletes the workflow engine's database and
+changes the shared login passwords, so the app and the engine both stop working
+until you put them back.
+
+**Recommendation.** Point `DATABASE_URL` at a **separate Postgres instance**, not
+merely a different database in the same cluster; or stop the engine for the run
+and rebuild afterwards (README "Tests, typecheck and lint" documents both, with
+the recovery sequence). The durable fix is to scope the teardown to the target
+database and stop rewriting cluster-level roles — `bm22 §21`'s "disposable
+database" wording understates the blast radius and should be amended with it.
+
+---
+
+## 14. 🟡 No credit-note path — a negative-total bill fails loudly at posting
+
+**Where:** `services/billing/post-run.ts`; plan §13 (out of scope).
+
+**Technical.** A negative `total_amount` is a credit position — money owed **to**
+the customer — and has real economic substance. The zero-invoice skip (§11) is
+therefore deliberately scoped to *exactly* zero, never `<= 0`, with a
+`[CRITICAL]` test on that edge: suppressing a negative would understate the
+liability and silently deny the customer a credit. Nothing else handles it
+either, so such a bill reaches posting and is rejected by
+`document_line_amount_check` (`amount > 0`), parking the account with the same
+opaque "unexpected error" message.
+
+**ELI5.** If we ever owe a customer money instead of charging them, the system
+can't issue that credit — it just fails with an unhelpful error.
+
+**Recommendation.** Leave the skip narrow (never widen it to `<= 0`). When a
+credit-note capability is scoped, give a negative total a **clear parked reason**
+instead of the generic failure, so the operator sees what happened. Until then
+this is correct-but-unfriendly behaviour, not a data-integrity risk.

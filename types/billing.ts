@@ -91,6 +91,36 @@ export const STAGES = [
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
+// The Workflow tab's per-account GRID columns (2026-09-18). `distribution` is
+// deliberately NOT one of them: `bill_run_distribution` keys on `artifact_ref`,
+// not on a billing account, and its `REPORT` artifact is run-level and belongs
+// to no account at all — so a per-account distribution cell cannot be derived
+// honestly. Distribution is represented once, at the run level, on the flow
+// progress bar (which links to the Distribution tab where the real per-artifact
+// delivery log lives). `STAGES` itself is unchanged: it still mirrors the
+// `bill_run_account_stage.stage` CHECK exactly, and the M2M ingest still accepts
+// every value in it.
+export const TIMELINE_STAGES = STAGES.filter(
+  (s): s is Exclude<Stage, "distribution"> => s !== "distribution",
+);
+export type TimelineStage = Exclude<Stage, "distribution">;
+
+// The human label for each pipeline stage — the SINGLE source shared by the
+// per-account grid header (`StageTimeline`, over the `TIMELINE_STAGES` subset)
+// and the run-level flow bar (`RunFlowProgressBar`, over the full `Stage` set
+// incl. `distribution`), so a rename can never make the two surfaces disagree.
+export const STAGE_LABELS: Record<Stage, string> = {
+  scoping: "Scoping",
+  validation: "Validation",
+  collection: "Collection",
+  aggregation: "Aggregation",
+  taxation: "Taxation",
+  verification: "Verification",
+  posting: "Posting",
+  rendering: "Rendering",
+  distribution: "Distribution",
+};
+
 export const STAGE_STATUSES = [
   "PENDING",
   "RUNNING",
@@ -133,13 +163,54 @@ export interface StageTimelineRow {
   cells: StageTimelineCell[];
 }
 
+// The flow progress bar's full state: the nine ordered steps, plus which one is
+// current so the view can anchor the "go to the Distribution tab" hint without
+// re-deriving it.
+export interface RunFlowProgress {
+  steps: RunFlowStep[];
+  currentStage: Stage | null;
+}
+
 // The Workflow tab's mid-flight summary — always derived from
 // `bill_run_account`, never the optional cache (architecture Inv. #12).
+//
+// `isMidFlight` (2026-09-18) gates whether the counts are worth showing at all.
+// They describe the PROCESSING phase, and once posting starts moving accounts
+// `PROCESSED → INVOICED`/`SKIPPED` they all read zero — so a finished run
+// rendered "0 processed, 0 processing failed of 6" directly beneath a fully
+// green flow bar. Derived from the run's status, not from the counts, so an
+// in-flight run that genuinely has nothing processed yet still shows "0 of N".
 export interface StageTimelineSummary {
   total: number;
   processed: number;
   processingFailed: number;
   excluded: number;
+  isMidFlight: boolean;
+}
+
+// The run-level flow progress bar (2026-09-18) — one step per `Stage`, in flow
+// order, summarising where the WHOLE run has got to. Derived on every read from
+// the same account/stage data as the grid plus `bill_run.status`; never stored
+// (architecture Inv. #12).
+//
+// `done`    — every eligible account cleared this step
+// `current` — the run is here now (the first step not yet done)
+// `failed`  — this step failed for at least one account, or the run is in that
+//             step's terminal failure state
+// `pending` — not reached yet
+// `skipped` — the whole step was bypassed (no eligible account)
+export const FLOW_STEP_STATES = [
+  "pending",
+  "current",
+  "done",
+  "failed",
+  "skipped",
+] as const;
+export type FlowStepState = (typeof FLOW_STEP_STATES)[number];
+
+export interface RunFlowStep {
+  stage: Stage;
+  state: FlowStepState;
 }
 
 // bm05-spec §Design/§Implementation §2, code-standards §2.1. `customer_bill`
@@ -369,6 +440,12 @@ export const PRE_APPROVAL_CHECKS = [
   // INFORMATIONAL, never blocking (D32/Inv #25): it always `pass`es and is
   // excluded from `approveRun`'s blocking gate.
   "orphan_count",
+  // 2026-09-17 (owner decision) — the zero-total-bill count. INFORMATIONAL,
+  // never blocking, same contract as `orphan_count`. The visible half of the
+  // sign-based rule: `positive_totals` blocks only a NEGATIVE total, a zero bill
+  // is simply not posted (`post-run.ts`), so the zero totals still have to be
+  // reported — just not gated.
+  "zero_total_bills",
 ] as const;
 export type PreApprovalCheckKey = (typeof PRE_APPROVAL_CHECKS)[number];
 

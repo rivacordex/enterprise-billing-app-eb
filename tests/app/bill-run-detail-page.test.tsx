@@ -142,7 +142,14 @@ beforeEach(() => {
   mockGetRunDetail.mockResolvedValue(DETAIL);
   mockGetStageTimeline.mockResolvedValue({
     rows: [],
-    summary: { total: 0, processed: 0, processingFailed: 0, excluded: 0 },
+    summary: {
+      total: 0,
+      processed: 0,
+      processingFailed: 0,
+      excluded: 0,
+      isMidFlight: true,
+    },
+    flow: { steps: [], currentStage: null },
   });
   mockListAccountBills.mockResolvedValue([]);
   mockListUncharged.mockResolvedValue([]);

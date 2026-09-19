@@ -25,7 +25,8 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {
     listPostableCurrencies: vi.fn(),
     listPostableTaxCurrencies: vi.fn(),
-    countNonPositivePostable: vi.fn(),
+    countNegativePostable: vi.fn(),
+    countZeroTotalPostable: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
@@ -52,8 +53,11 @@ const mockListCurrencies = vi.mocked(
 const mockListTaxCurrencies = vi.mocked(
   customerBillRepository.listPostableTaxCurrencies,
 );
-const mockCountNonPositive = vi.mocked(
-  customerBillRepository.countNonPositivePostable,
+const mockCountNegative = vi.mocked(
+  customerBillRepository.countNegativePostable,
+);
+const mockCountZeroTotal = vi.mocked(
+  customerBillRepository.countZeroTotalPostable,
 );
 const mockListTriggerActors = vi.mocked(
   auditLogRepository.listActorIdsForEvents,
@@ -91,7 +95,7 @@ beforeEach(() => {
   mockListTriggerActors.mockResolvedValue([]); // no reruns by default
   mockFindPeriod.mockResolvedValue(null); // absent row = open
   mockResolveGlCode.mockResolvedValue("4000"); // resolved
-  mockCountNonPositive.mockResolvedValue(0);
+  mockCountNegative.mockResolvedValue(0);
   mockListStatuses.mockResolvedValue([
     { billingAccountId: "BAN00000001", status: "PROCESSED" },
     { billingAccountId: "BAN00000002", status: "PROCESSING_FAILED" },
@@ -99,13 +103,15 @@ beforeEach(() => {
   ] as never);
   mockListRejectedPending.mockResolvedValue([]); // no rejected accounts by default
   mockCountOrphans.mockResolvedValue(0); // no orphans by default
+  mockCountZeroTotal.mockResolvedValue(0); // no zero-total bills by default
+  mockCountZeroTotal.mockResolvedValue(0); // no zero-total bills by default
 });
 
-describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 7th)", () => {
-  it("returns all seven checks passing on a clean run", async () => {
+describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 7th, 2026-09-17 an 8th)", () => {
+  it("returns all eight checks passing on a clean run", async () => {
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
-    expect(checks).toHaveLength(7);
+    expect(checks).toHaveLength(8);
     for (const c of checks) {
       expect(c.pass).toBe(true);
       expect(c.remediation).toBeNull();
@@ -207,14 +213,74 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 
     );
   });
 
-  it("positive_totals fails when a postable bill is zero or negative", async () => {
-    mockCountNonPositive.mockResolvedValue(2);
+  // SIGN-BASED RULE (2026-09-17, owner decision). A bill is never a negative
+  // amount — that is a credit, and there is no credit-note path (§14) — so a
+  // negative total is the ONLY total that blocks approval.
+  it("[CRITICAL] positive_totals fails when a postable bill has a NEGATIVE total", async () => {
+    mockCountNegative.mockResolvedValue(2);
 
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
     expect(byKey(checks, "positive_totals")).toMatchObject({
       pass: false,
       remediation: expect.stringContaining("2 bills"),
+    });
+    expect(byKey(checks, "positive_totals")?.remediation).toContain("negative");
+  });
+
+  // The other half of the sign rule: ZERO never blocks, whether the bill has
+  // lines or not. It is reported by `zero_total_bills` and suppressed at
+  // posting instead. Guards the regression that made every run containing a
+  // no-charges account permanently unapprovable, and pre-empts the same jam for
+  // a fully-discounted (zero-net, WITH lines) bill once discounting ships.
+  it("positive_totals passes when bills total zero — the run stays approvable", async () => {
+    mockCountNegative.mockResolvedValue(0); // repo counts only negatives
+    mockCountZeroTotal.mockResolvedValue(2);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "positive_totals")).toMatchObject({
+      pass: true,
+      remediation: null,
+    });
+    // ...and nothing else blocks either, so the run is approvable.
+    expect(checks.filter((c) => !c.pass && !c.informational)).toEqual([]);
+  });
+
+  it("zero_total_bills is informational, always passes, and reports the count", async () => {
+    mockCountZeroTotal.mockResolvedValue(3);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "zero_total_bills")).toMatchObject({
+      check: "zero_total_bills",
+      pass: true,
+      informational: true,
+      remediation: expect.stringContaining("3 bills total zero"),
+    });
+  });
+
+  // Subject/verb agreement in both directions — the singular reads "1 bill
+  // totals zero", not "1 bill total zero".
+  it("zero_total_bills agrees in number for a single zero-total bill", async () => {
+    mockCountZeroTotal.mockResolvedValue(1);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "zero_total_bills")?.remediation).toContain(
+      "1 bill totals zero",
+    );
+  });
+
+  it("zero_total_bills carries a null remediation when no bill totals zero", async () => {
+    mockCountZeroTotal.mockResolvedValue(0);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "zero_total_bills")).toMatchObject({
+      pass: true,
+      informational: true,
+      remediation: null,
     });
   });
 
