@@ -248,7 +248,11 @@ describe.skipIf(!databaseUrl)(
 
     it("cascades a DRAFT offering delete to its specifications and prices, leaving siblings untouched", async () => {
       const target = await createOffering("pm35 cascade-target", "DRAFT");
-      const sibling = await createOffering("pm35 cascade-sibling", "ACTIVE");
+      // Created DRAFT, priced below, then activated: pm36's DRAFT-guard trigger
+      // (0040) refuses a child write once the parent leaves DRAFT, so the
+      // sibling's price must be inserted while it is still DRAFT and the sibling
+      // activated afterward (the insert-then-activate pattern, pm36-spec I6).
+      const sibling = await createOffering("pm35 cascade-sibling", "DRAFT");
 
       // 2 specifications on the target.
       for (const specName of ["spec A", "spec B"]) {
@@ -274,7 +278,8 @@ describe.skipIf(!databaseUrl)(
         periodType: null,
         unitOfMeasure: null,
       });
-      // 1 price on the sibling, to prove it survives.
+      // 1 price on the sibling, to prove it survives. Inserted while the
+      // sibling is still DRAFT, then the sibling is activated (pm36 trigger).
       await insertPrice({
         offeringId: sibling,
         name: "s-recurring",
@@ -283,6 +288,7 @@ describe.skipIf(!databaseUrl)(
         periodType: "months",
         unitOfMeasure: null,
       });
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE' WHERE product_offering_id = ${sibling}`;
 
       await sql`DELETE FROM product.product_offering WHERE product_offering_id = ${target}`;
 

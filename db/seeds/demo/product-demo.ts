@@ -185,6 +185,12 @@ export async function seedProductDemo(tx: Database): Promise<void> {
   }
 
   for (const offeringSeed of OFFERING_SEEDS) {
+    // Inserted DRAFT, priced and specced below, then flipped to ACTIVE:
+    // pm36's DRAFT-guard trigger (0040) refuses a specification or price write
+    // once the parent offering leaves DRAFT, so the offering must be authored
+    // while DRAFT and activated only after its children exist (pm36-spec I6 —
+    // the same insert-then-activate pattern pm35 gave the sample seed, not an
+    // exemption to the trigger).
     const [insertedOffering] = await tx
       .insert(productOffering)
       .values({
@@ -192,7 +198,7 @@ export async function seedProductDemo(tx: Database): Promise<void> {
         isBundle: false,
         isSellable: true,
         billingOnly: false,
-        lifecycleStatus: "ACTIVE",
+        lifecycleStatus: "DRAFT",
         version: 1,
         lastEditedBy: null,
       })
@@ -243,6 +249,13 @@ export async function seedProductDemo(tx: Database): Promise<void> {
         startDateTime: priceSeed.startDateTime,
       });
     }
+
+    // Now that every specification and price row exists, release the offering
+    // to ACTIVE (pm36 trigger — see the DRAFT insert above).
+    await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "ACTIVE" })
+      .where(eq(productOffering.productOfferingId, offeringId));
   }
 
   logger.info("db:seed-demo: product demo catalog seeded.");

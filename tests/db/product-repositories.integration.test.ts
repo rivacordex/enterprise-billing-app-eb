@@ -999,5 +999,44 @@ describe.skipIf(!databaseUrl)(
         expect(afterOffering?.version).toBe(beforeOffering?.version);
       });
     });
+
+    // pm36-spec I4. The open-version unique index (0040) is the backstop for
+    // Inv. #27 (one open version per family). Two concurrent branches of one
+    // family both attempt to insert a new DRAFT keyed on the same family root:
+    // the advisory lock in resolveNextVersion serializes them and the loser's
+    // insert is rejected by product_offering_one_open_per_family — so exactly
+    // one open version survives, with no service-level redirect involved.
+    describe("branchOfferingAsDraft concurrency (pm36 I4: one open version per family)", () => {
+      it("two concurrent branch attempts on one family leave exactly one open version; the other is rejected", async () => {
+        const rootId = await insertOffering({
+          name: "PM36 Branch Race Root",
+          lifecycleStatus: "ACTIVE",
+        });
+
+        const results = await Promise.allSettled([
+          db.transaction((tx) =>
+            productOfferingRepository.branchOfferingAsDraft(tx, rootId),
+          ),
+          db.transaction((tx) =>
+            productOfferingRepository.branchOfferingAsDraft(tx, rootId),
+          ),
+        ]);
+
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        const rejected = results.filter((r) => r.status === "rejected");
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+
+        const familyRows = await findFamilyRows(rootId);
+        // branchOfferingAsDraft only ever inserts DRAFT (the sole open status a
+        // branch produces), so the surviving open version is a DRAFT. TESTING
+        // is not referenced here — widening LifecycleStatus to the five-value
+        // union is a later, non-DB unit's scope, not pm36's.
+        const openRows = familyRows.filter(
+          (r) => r.lifecycleStatus === "DRAFT",
+        );
+        expect(openRows).toHaveLength(1);
+      });
+    });
   },
 );

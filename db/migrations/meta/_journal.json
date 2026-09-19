@@ -281,6 +281,13 @@
       "when": 1788196029615,
       "tag": "0039_customer_bill_line",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788282429615,
+      "tag": "0040_product_family_guards",
+      "breakpoints": true
     }
   ]
 }
