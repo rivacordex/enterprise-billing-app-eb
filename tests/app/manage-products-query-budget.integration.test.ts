@@ -15,14 +15,28 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
-// pm39-spec I8.2 (the unit's headline proof) / V9. Renders the real Manage
-// Products page against the test database with a statement counter installed on
-// the pool (the `postgres` client's `debug` hook — the harness's own query log),
-// and asserts the first render issues exactly TWO product_offering statements
-// (findFamilyPage's page + count) and ZERO statements against the child tables —
-// no per-row detail fetch (§1.16). Named `.integration.test.ts` so it runs in
-// the DB-backed project (the DB-free jsdom project excludes it) — a slight
-// filename deviation from the spec, required by the harness split.
+// pm39-spec I8.2 (the unit's headline proof) / V9, extended by pm40 I7/D5.
+// Renders the real Manage Products page against the test database with a
+// statement counter installed on the pool (the `postgres` client's `debug` hook
+// — the harness's own query log), and asserts the exact per-render query budget:
+//
+//   • no selection      = 2 product_offering statements, 0 child-table (pm39)
+//   • family selected   = 6 (findFamilyPage 2 + findFamilyVersions 1 +
+//                            getOfferingDetail 3: detail + specs + prices)
+//   • version switch    = 6 (same shape, a different `?version=`)
+//
+// pm40 D5 decision (recorded in the tracker): findFamilyPage is NOT held in a
+// data cache — the module has no cache layer (architecture §1) and the existing
+// mutations revalidate by path, not tag — so the families 2 statements are re-run
+// on every selection. The spec checklist's illustrative "selection = 4" assumed
+// the cached design; uncached, the always-paid 2 make it 6. Statement matching
+// normalises identifier quotes so both findFamilyPage's raw SQL
+// (`product.product_offering`) and the Drizzle-builder reads
+// (`"product"."product_offering"`) are counted the same way.
+//
+// Named `.integration.test.ts` so it runs in the DB-backed project (the DB-free
+// jsdom project excludes it) — a slight filename deviation from the spec,
+// required by the harness split.
 //
 // `db` is mocked to a counted drizzle client so the page's own `@/db/client`
 // singleton routes through the counter; auth and app-config reads are stubbed so
@@ -30,7 +44,10 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 const databaseUrl = process.env.DATABASE_URL;
 
 const hoisted = vi.hoisted(() => ({
-  queries: [] as string[],
+  // Capture the bind parameters alongside the SQL text: a parameterised query's
+  // target id lives in `params`, not the statement string, so proving a version
+  // switch actually fetched the requested version needs the params (pm40 I7).
+  queries: [] as { query: string; params: readonly unknown[] }[],
   holder: { db: undefined as unknown },
 }));
 
@@ -58,14 +75,18 @@ describe.skipIf(!databaseUrl)(
   "Manage Products query budget (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
+    // Captured from the fixtures so the selection/switch cases can deep-link a
+    // real family + version (the family root's own id is its family key).
+    let alphaFamilyId: string;
+    let alphaDraftId: string;
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, {
         max: 1,
         onnotice: () => {},
-        debug: (_connection, query) => {
-          hoisted.queries.push(query);
+        debug: (_connection, query, params) => {
+          hoisted.queries.push({ query, params });
         },
       });
       await sql.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
@@ -84,12 +105,27 @@ describe.skipIf(!databaseUrl)(
       hoisted.holder.db = db;
 
       // Two families so the page has rows to render (the count is unaffected).
-      for (const name of ["Alpha", "Beta"]) {
-        await sql`
-          INSERT INTO product.product_offering
-            (name, is_bundle, is_sellable, billing_only, lifecycle_status, version)
-          VALUES (${name}, false, true, false, 'ACTIVE', 1)`;
-      }
+      // Alpha gets a second, DRAFT version so the selection/switch cases have a
+      // real family with two versions — the one-open-per-family index (pm36)
+      // permits exactly this one open version.
+      const [alpha] = await sql<{ id: string }[]>`
+        INSERT INTO product.product_offering
+          (name, is_bundle, is_sellable, billing_only, lifecycle_status, version)
+        VALUES ('Alpha', false, true, false, 'ACTIVE', 1)
+        RETURNING product_offering_id AS id`;
+      alphaFamilyId = alpha!.id;
+
+      await sql`
+        INSERT INTO product.product_offering
+          (name, is_bundle, is_sellable, billing_only, lifecycle_status, version)
+        VALUES ('Beta', false, true, false, 'ACTIVE', 1)`;
+
+      const [alphaDraft] = await sql<{ id: string }[]>`
+        INSERT INTO product.product_offering
+          (name, is_bundle, is_sellable, billing_only, lifecycle_status, version, family_offering_id)
+        VALUES ('Alpha', false, false, false, 'DRAFT', 2, ${alphaFamilyId})
+        RETURNING product_offering_id AS id`;
+      alphaDraftId = alphaDraft!.id;
     }, 30_000);
 
     afterAll(async () => {
@@ -108,26 +144,98 @@ describe.skipIf(!databaseUrl)(
       hoisted.queries.length = 0;
     });
 
-    it("issues exactly two product_offering statements and none against the child tables on first render", async () => {
+    // Strip identifier quotes first so raw SQL (`product.product_offering`) and
+    // Drizzle-builder SQL (`"product"."product_offering"`) count identically.
+    // We count STATEMENTS, not occurrences: `.filter(test)` hits each statement
+    // once, so a statement that also references an offering *column* (e.g.
+    // `product.product_offering.product_offering_id`) is still counted once, the
+    // same as its `FROM product.product_offering`. The regex's trailing `\b`
+    // matters only to keep the *price* child table out of the offering bucket:
+    // `product.product_offering_price` has a `_` after "offering" (no word
+    // boundary), so a price-only statement is never miscounted as an offering one.
+    function countProductStatements(): {
+      offering: number;
+      price: number;
+      spec: number;
+    } {
+      const normalised = hoisted.queries.map((q) => q.query.replace(/"/g, ""));
+      return {
+        offering: normalised.filter((q) =>
+          /\bproduct\.product_offering\b/.test(q),
+        ).length,
+        price: normalised.filter((q) => /product_offering_price/.test(q))
+          .length,
+        spec: normalised.filter((q) => /product_specifications/.test(q)).length,
+      };
+    }
+
+    // Every bind parameter across the render, flattened — used to prove WHICH
+    // offering id getOfferingDetail was called with (the id is a bind param, not
+    // in the SQL text), so version resolution is asserted behaviourally, not just
+    // by statement count (which is identical for a switch vs a silent fallback).
+    function allBindParams(): unknown[] {
+      return hoisted.queries.flatMap((q) => [...q.params]);
+    }
+
+    async function renderManageProducts(
+      searchParams: Record<string, string | string[] | undefined>,
+    ): Promise<void> {
       const { default: ManageProductsPage } =
         await import("@/app/(app)/products/manage-products/page");
+      await ManageProductsPage({ searchParams: Promise.resolve(searchParams) });
+    }
 
-      await ManageProductsPage({ searchParams: Promise.resolve({}) });
+    it("no selection ⇒ two product_offering statements and none against the child tables", async () => {
+      await renderManageProducts({});
 
-      const captured = hoisted.queries;
-      const offeringStmts = captured.filter((q) =>
-        /product\.product_offering\b/.test(q),
-      );
-      const priceStmts = captured.filter((q) =>
-        /product_offering_price/.test(q),
-      );
-      const specStmts = captured.filter((q) =>
-        /product_specifications/.test(q),
-      );
+      const { offering, price, spec } = countProductStatements();
+      expect(offering).toBe(2); // findFamilyPage: page + count
+      expect(price).toBe(0);
+      expect(spec).toBe(0);
+    }, 30_000); // cold dynamic import of the page compiles the whole panel tree
 
-      expect(offeringStmts).toHaveLength(2);
-      expect(priceStmts).toHaveLength(0);
-      expect(specStmts).toHaveLength(0);
-    });
+    it("selecting a family ⇒ six statements, and the detail is fetched for the primary (ACTIVE) version, not the draft", async () => {
+      await renderManageProducts({ family: alphaFamilyId });
+
+      const { offering, price, spec } = countProductStatements();
+      // findFamilyPage (2, re-run — not cached, D5) + findFamilyVersions (1) +
+      // findDetailById (1) = 4 offering statements; specs (1) + prices (1).
+      expect(offering).toBe(4);
+      expect(price).toBe(1);
+      expect(spec).toBe(1);
+      expect(offering + price + spec).toBe(6);
+      // No ?version= ⇒ the primary (ACTIVE root = alphaFamilyId) is selected;
+      // the draft's detail is NOT fetched (its id never appears as a bind param).
+      expect(allBindParams()).not.toContain(alphaDraftId);
+    }, 30_000);
+
+    it("switching version ⇒ six statements, and getOfferingDetail targets the requested version", async () => {
+      await renderManageProducts({
+        family: alphaFamilyId,
+        version: alphaDraftId,
+      });
+
+      const { offering, price, spec } = countProductStatements();
+      expect(offering).toBe(4);
+      expect(price).toBe(1);
+      expect(spec).toBe(1);
+      expect(offering + price + spec).toBe(6);
+      // ?version=<draft> is honoured: getOfferingDetail(alphaDraftId) binds the
+      // draft id across its detail/specs/prices reads — a silent fallback to the
+      // primary would leave alphaDraftId absent, so this distinguishes the two.
+      expect(allBindParams()).toContain(alphaDraftId);
+    }, 30_000);
+
+    it("a well-formed but unknown ?family= ⇒ three statements (families 2 + versions 1), no detail", async () => {
+      await renderManageProducts({ family: "PRDOFR00000404" });
+
+      const { offering, price, spec } = countProductStatements();
+      // findFamilyPage (2) + findFamilyVersions (1, returns no rows); the empty
+      // version list resolves to null, so getOfferingDetail never runs (the one
+      // budget case between "no selection = 2" and "selection = 6").
+      expect(offering).toBe(3);
+      expect(price).toBe(0);
+      expect(spec).toBe(0);
+    }, 30_000);
   },
 );
