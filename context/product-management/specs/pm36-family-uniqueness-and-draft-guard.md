@@ -56,37 +56,49 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  parent_id text;
+  old_parent_id text;
+  new_parent_id text;
   parent_status "product"."lifecycle_status";
 BEGIN
-  parent_id := CASE TG_OP
-    WHEN 'DELETE' THEN
-      CASE TG_TABLE_NAME
-        WHEN 'product_specifications' THEN OLD.ref_product_offering_id
-        ELSE OLD.product_offering_id
-      END
-    ELSE
-      CASE TG_TABLE_NAME
-        WHEN 'product_specifications' THEN NEW.ref_product_offering_id
-        ELSE NEW.product_offering_id
-      END
-  END;
-
-  SELECT lifecycle_status INTO parent_status
-    FROM "product"."product_offering"
-   WHERE product_offering_id = parent_id;
-
-  -- Parent gone: this is the ON DELETE cascade of a discarded version
-  -- (pm44). Nothing to guard.
-  IF NOT FOUND THEN
-    RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END;
+  -- Resolve the affected parent id(s) per table, guarded by TG_TABLE_NAME so
+  -- each field only appears in the branch for the table that has it (PL/pgSQL
+  -- plans each statement lazily, so the untaken branch never resolves a
+  -- non-existent column — a single CASE spanning both column names fails with
+  -- "record ... has no field ..."). A re-parenting UPDATE touches TWO parents
+  -- (OLD loses the row, NEW gains it) and both must be DRAFT.
+  IF TG_TABLE_NAME = 'product_specifications' THEN
+    IF TG_OP <> 'INSERT' THEN old_parent_id := OLD.ref_product_offering_id; END IF;
+    IF TG_OP <> 'DELETE' THEN new_parent_id := NEW.ref_product_offering_id; END IF;
+  ELSE
+    IF TG_OP <> 'INSERT' THEN old_parent_id := OLD.product_offering_id; END IF;
+    IF TG_OP <> 'DELETE' THEN new_parent_id := NEW.product_offering_id; END IF;
   END IF;
 
-  IF parent_status <> 'DRAFT' THEN
-    RAISE EXCEPTION
-      'product_child_write_requires_draft: % on %.% rejected — offering % is %',
-      TG_OP, TG_TABLE_SCHEMA, TG_TABLE_NAME, parent_id, parent_status
-      USING ERRCODE = '23514';
+  -- Parent gaining/holding the row (INSERT/UPDATE) must be DRAFT.
+  IF new_parent_id IS NOT NULL THEN
+    SELECT lifecycle_status INTO parent_status
+      FROM "product"."product_offering" WHERE product_offering_id = new_parent_id;
+    IF FOUND AND parent_status <> 'DRAFT' THEN
+      RAISE EXCEPTION
+        'product_child_write_requires_draft: % on %.% rejected — offering % is %',
+        TG_OP, TG_TABLE_SCHEMA, TG_TABLE_NAME, new_parent_id, parent_status
+        USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  -- Parent losing the row (DELETE, or a re-parenting UPDATE) must be DRAFT too.
+  -- Skipped when equal to the parent already checked; a parent that is gone is
+  -- the ON DELETE cascade of a discarded DRAFT/TESTING version (pm44) — NOT
+  -- FOUND passes it through.
+  IF old_parent_id IS NOT NULL AND old_parent_id IS DISTINCT FROM new_parent_id THEN
+    SELECT lifecycle_status INTO parent_status
+      FROM "product"."product_offering" WHERE product_offering_id = old_parent_id;
+    IF FOUND AND parent_status <> 'DRAFT' THEN
+      RAISE EXCEPTION
+        'product_child_write_requires_draft: % on %.% rejected — offering % is %',
+        TG_OP, TG_TABLE_SCHEMA, TG_TABLE_NAME, old_parent_id, parent_status
+        USING ERRCODE = '23514';
+    END IF;
   END IF;
 
   RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END;
@@ -102,7 +114,7 @@ CREATE TRIGGER "product_offering_price_draft_guard"
   FOR EACH ROW EXECUTE FUNCTION "product"."child_write_requires_draft"();
 ```
 
-Note the `UPDATE` branch reads `NEW`'s parent id; a row cannot be re-parented (no service does it, and the branch primitive inserts new rows), so checking one side is sufficient.
+Note the `UPDATE` path validates **both** the `OLD` and `NEW` parent when they differ: no application code re-parents a child (the branch primitive inserts new rows), but the trigger is a backstop against a direct-SQL write, and a re-parent that moved a spec/price off a released version is exactly such a write — so both the offering losing the row and the offering gaining it must be `DRAFT`. When the parent is unchanged, only that one parent is checked.
 
 ### I2. `db/schema/product.ts`
 

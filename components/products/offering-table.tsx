@@ -302,7 +302,11 @@ export function OfferingTable({
                     <td className="px-4 py-2 font-mono text-mono tabular-nums">
                       {row.productOfferingId}
                     </td>
-                    <td className="px-4 py-2 text-foreground">{row.name}</td>
+                    <td
+                      className={cn("px-4 py-2", !isMuted && "text-foreground")}
+                    >
+                      {row.name}
+                    </td>
                     <td className="px-4 py-2">
                       <LifecycleBadge status={row.lifecycleStatus} />
                     </td>
