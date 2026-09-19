@@ -1,7 +1,11 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { productOfferingRepository } from "@/db/repositories/product-offering";
-import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
+import {
+  productOfferingPriceRepository,
+  toPriceWriteData,
+} from "@/db/repositories/product-offering-price";
+import { isUniqueViolation } from "@/lib/db-errors";
 import type { InsertPriceInput } from "@/validation/product/insert-price.schema";
 
 // Same tolerance value as insert-price.schema.ts's own copy — declared
@@ -18,7 +22,8 @@ export type InsertPriceResult =
     }
   | { ok: false; code: "OFFERING_NOT_FOUND" }
   | { ok: false; code: "OFFERING_RETIRED" }
-  | { ok: false; code: "BACKDATED_START_TOO_FAR" };
+  | { ok: false; code: "BACKDATED_START_TOO_FAR" }
+  | { ok: false; code: "DUPLICATE_START" };
 
 // pm15-spec §3.4. Branch-first when the target offering is ACTIVE (Design);
 // adding a price never needs to "locate a counterpart" the way pm14's
@@ -42,68 +47,75 @@ export async function insertPrice(
     return { ok: false, code: "BACKDATED_START_TOO_FAR" };
   }
 
-  const priceData = {
-    name: input.name,
-    priceType: input.priceType,
-    currency: input.currency,
-    glCode: input.glCode,
-    pricingModel: input.priceCharacteristics.pricing_model,
-    amount: input.priceCharacteristics.amount,
-    pricingCharacteristics: input.priceCharacteristics.pricing_characteristics,
-    startDateTime: input.startDateTime,
-  };
+  // pm38-spec I4 — the per-price-type completeness columns come from the parsed
+  // discriminated input (recurring → charge period, usage → unit, once →
+  // neither), shared with updatePrice via toPriceWriteData so the two writes can
+  // never disagree on which columns each type fills. This is what satisfies
+  // pm35's DB CHECKs (a null period on a recurring price is now illegal).
+  const priceData = toPriceWriteData(input);
 
-  return db.transaction(async (tx) => {
-    // Re-fetched through tx, immediately before the branch decision (post-
-    // ship fix) — a pre-transaction read via `db` would let the offering's
-    // lifecycleStatus go stale between this read and the write below.
-    const offering = await productOfferingRepository.findDetailById(
-      tx,
-      offeringId,
-    );
-    if (!offering) {
-      return { ok: false, code: "OFFERING_NOT_FOUND" };
-    }
-    if (offering.lifecycleStatus === "RETIRED") {
-      return { ok: false, code: "OFFERING_RETIRED" };
-    }
+  try {
+    return await db.transaction(async (tx) => {
+      // Re-fetched through tx, immediately before the branch decision (post-
+      // ship fix) — a pre-transaction read via `db` would let the offering's
+      // lifecycleStatus go stale between this read and the write below.
+      const offering = await productOfferingRepository.findDetailById(
+        tx,
+        offeringId,
+      );
+      if (!offering) {
+        return { ok: false, code: "OFFERING_NOT_FOUND" };
+      }
+      if (offering.lifecycleStatus === "RETIRED") {
+        return { ok: false, code: "OFFERING_RETIRED" };
+      }
 
-    let targetOfferingId = offeringId;
-    let branched = false;
+      let targetOfferingId = offeringId;
+      let branched = false;
 
-    if (offering.lifecycleStatus === "ACTIVE") {
-      const { offeringId: branchedId } =
-        await productOfferingRepository.branchOfferingAsDraft(tx, offeringId);
-      targetOfferingId = branchedId;
-      branched = true;
-    }
+      if (offering.lifecycleStatus === "ACTIVE") {
+        const { offeringId: branchedId } =
+          await productOfferingRepository.branchOfferingAsDraft(tx, offeringId);
+        targetOfferingId = branchedId;
+        branched = true;
+      }
 
-    const { productOfferingPriceId } =
-      await productOfferingPriceRepository.insertPrice(tx, {
-        productOfferingId: targetOfferingId,
-        ...priceData,
+      const { productOfferingPriceId } =
+        await productOfferingPriceRepository.insertPrice(tx, {
+          productOfferingId: targetOfferingId,
+          ...priceData,
+        });
+
+      await insertAuditEvent(tx, {
+        eventType: "PRODUCT_PRICE_ADDED",
+        actorUserId: actorId,
+        targetEntity: "PRODUCT_OFFERING_PRICE",
+        targetId: productOfferingPriceId,
+        beforeData: null,
+        afterData: {
+          offeringId: targetOfferingId,
+          ...(branched ? { branchedFromOfferingId: offeringId } : {}),
+          ...priceData,
+          backdated,
+        },
       });
 
-    await insertAuditEvent(tx, {
-      eventType: "PRODUCT_PRICE_ADDED",
-      actorUserId: actorId,
-      targetEntity: "PRODUCT_OFFERING_PRICE",
-      targetId: productOfferingPriceId,
-      beforeData: null,
-      afterData: {
+      return {
+        ok: true,
         offeringId: targetOfferingId,
-        ...(branched ? { branchedFromOfferingId: offeringId } : {}),
-        ...priceData,
+        productOfferingPriceId,
+        branched,
         backdated,
-      },
+      };
     });
-
-    return {
-      ok: true,
-      offeringId: targetOfferingId,
-      productOfferingPriceId,
-      branched,
-      backdated,
-    };
-  });
+  } catch (err) {
+    // A second price of the same type at the same start on this offering hits
+    // the UNIQUE (offering, price_type, start_date_time) index (Inv. #2) — the
+    // same collision updatePrice translates, surfaced here as a typed result
+    // instead of a raw error (pm38 review symmetry fix).
+    if (isUniqueViolation(err, "product_offering_price_type_start_unique")) {
+      return { ok: false, code: "DUPLICATE_START" };
+    }
+    throw err; // anything else is a genuine, unexpected failure — fail loud
+  }
 }

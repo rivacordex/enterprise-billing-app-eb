@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { meetsLevel } from "@/types/permissions";
@@ -42,10 +43,6 @@ export const dynamic = "force-dynamic";
 interface BillRunDetailPageProps {
   params: Promise<{ runId: string }>;
   searchParams: Promise<{ tab?: string | string[] }>;
-}
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 export async function generateMetadata({

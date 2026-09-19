@@ -18,7 +18,11 @@ import {
   productOfferingPrice,
   productSpecifications,
 } from "@/db/schema/product";
-import type { LifecycleStatus, OfferingListRow } from "@/types/product";
+import type {
+  FamilyListRow,
+  LifecycleStatus,
+  OfferingListRow,
+} from "@/types/product";
 import type { OFFERING_SORT_VALUES } from "@/validation/product/offering-list.schema";
 
 export type OfferingSort = (typeof OFFERING_SORT_VALUES)[number];
@@ -27,6 +31,13 @@ export interface OfferingListFilters {
   q: string;
   status: LifecycleStatus | null;
   sort: OfferingSort;
+  page: number;
+  pageSize: number;
+}
+
+export interface FamilyPageFilters {
+  q: string;
+  status: LifecycleStatus | null;
   page: number;
   pageSize: number;
 }
@@ -51,13 +62,20 @@ export interface BranchOfferingOverrides {
   billingOnly?: boolean;
 }
 
+// Escapes LIKE/ILIKE wildcards so a user's literal % or _ in the search term
+// matches literally, not as a pattern. Shared by findList (View Product) and
+// findFamilyPage (Manage Products) so both lists wildcard a search identically.
+function escapeLikePattern(value: string): string {
+  return value.replace(/[%_\\]/g, "\\$&");
+}
+
 function buildWhereClause(
   q: string,
   status: LifecycleStatus | null,
 ): SQL | undefined {
   const conditions = [];
   if (q.length > 0) {
-    const escaped = q.replace(/[%_\\]/g, "\\$&");
+    const escaped = escapeLikePattern(q);
     conditions.push(ilike(productOffering.name, `%${escaped}%`));
   }
   if (status === null) {
@@ -154,6 +172,117 @@ export const productOfferingRepository = {
       rows: rows.map((row) => ({
         ...row,
         lifecycleStatus: row.lifecycleStatus as LifecycleStatus,
+      })),
+    };
+  },
+
+  // Backs the Manage Products families list (pm39 D2 / I2). One CTE groups every
+  // offering by its family key COALESCE(family_offering_id, product_offering_id)
+  // — the same expression pm36's indexes use — and picks each family's primary
+  // version (ACTIVE first, then the single open DRAFT/TESTING version, then the
+  // highest version) with ROW_NUMBER, alongside the version count and the open
+  // version's id (at most one per family by index, so FILTER MAX yields it or
+  // NULL). Filters (q ILIKE, status) apply to the primary version (D3); the
+  // count query reuses the same CTE so the total survives LIMIT. Two statements,
+  // no per-row detail fetch (§1.16, V9). Returns families, never versions.
+  async findFamilyPage(
+    db: Database,
+    filters: FamilyPageFilters,
+  ): Promise<{ rows: FamilyListRow[]; total: number }> {
+    const famCte = sql`
+      SELECT
+        coalesce(family_offering_id, product_offering_id) AS family_id,
+        product_offering_id AS primary_version_id,
+        name,
+        lifecycle_status,
+        version,
+        is_sellable,
+        billing_only,
+        last_modified,
+        row_number() OVER (
+          PARTITION BY coalesce(family_offering_id, product_offering_id)
+          ORDER BY
+            CASE lifecycle_status
+              WHEN 'ACTIVE' THEN 0
+              WHEN 'TESTING' THEN 1
+              WHEN 'DRAFT' THEN 1
+              ELSE 2
+            END,
+            version DESC
+        ) AS rank,
+        count(*) OVER (
+          PARTITION BY coalesce(family_offering_id, product_offering_id)
+        ) AS version_count,
+        max(product_offering_id) FILTER (
+          WHERE lifecycle_status IN ('DRAFT', 'TESTING')
+        ) OVER (
+          PARTITION BY coalesce(family_offering_id, product_offering_id)
+        ) AS open_version_id
+      FROM product.product_offering
+    `;
+
+    // Filters run against the primary version's own columns (rank = 1 rows).
+    const conditions = [sql`rank = 1`];
+    if (filters.q.length > 0) {
+      const escaped = escapeLikePattern(filters.q);
+      conditions.push(sql`name ILIKE ${`%${escaped}%`}`);
+    }
+    if (filters.status !== null) {
+      conditions.push(
+        sql`lifecycle_status = ${filters.status}::product.lifecycle_status`,
+      );
+    }
+    const whereClause = sql.join(conditions, sql` AND `);
+
+    const page = Math.max(1, filters.page);
+    const offset = (page - 1) * filters.pageSize;
+
+    const rows = await db.execute<{
+      family_id: string;
+      primary_version_id: string;
+      name: string;
+      lifecycle_status: string;
+      version: number;
+      version_count: string | number;
+      open_version_id: string | null;
+      is_sellable: boolean;
+      billing_only: boolean;
+      last_modified: string | Date;
+    }>(sql`
+      WITH fam AS (${famCte})
+      SELECT family_id, primary_version_id, name, lifecycle_status, version,
+             version_count, open_version_id, is_sellable, billing_only,
+             last_modified
+      FROM fam
+      WHERE ${whereClause}
+      ORDER BY name ASC, family_id ASC
+      LIMIT ${filters.pageSize} OFFSET ${offset}
+    `);
+
+    const countResult = await db.execute<{ total: string | number }>(sql`
+      WITH fam AS (${famCte})
+      SELECT count(*) AS total FROM fam WHERE ${whereClause}
+    `);
+    const total = Number(countResult[0]?.total ?? 0);
+
+    return {
+      total,
+      rows: [...rows].map((row) => ({
+        familyId: row.family_id,
+        primaryVersionId: row.primary_version_id,
+        name: row.name,
+        lifecycleStatus: row.lifecycle_status as LifecycleStatus,
+        version: Number(row.version),
+        versionCount: Number(row.version_count),
+        openVersionId: row.open_version_id,
+        isSellable: row.is_sellable,
+        billingOnly: row.billing_only,
+        // Raw execute returns timestamptz as a string, not a Date
+        // ([[raw-execute-timestamp-strings]]) — normalise to the read model's Date.
+        lastModified:
+          row.last_modified instanceof Date
+            ? row.last_modified
+            : new Date(row.last_modified),
       })),
     };
   },

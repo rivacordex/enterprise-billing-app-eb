@@ -45,6 +45,8 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "update-specification.action.ts": "updateSpecificationAction",
     "delete-specification.action.ts": "deleteSpecificationAction",
     "insert-price.action.ts": "insertPriceAction",
+    "update-price.action.ts": "updatePriceAction",
+    "delete-price.action.ts": "deletePriceAction",
     "activate-offering.action.ts": "activateOfferingAction",
     "retire-offering.action.ts": "retireOfferingAction",
   };
@@ -83,12 +85,14 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(offending).toEqual([]);
   });
 
-  // Inv. #1 / code-standards §1.2: the price repository permanently exports
-  // no update*/delete* — the only write the CRUD fast-follow may ever add
-  // is insertPrice. Structural, string-level; duplicates pm03's runtime
-  // export-shape assert deliberately so the ship gate re-checks it
-  // module-wide from source, not just via a live import.
-  it("the price repository's exported methods include no update*/delete* (insertPrice excepted)", () => {
+  // Inv. #1 (amended) / code-standards §1.2 / guardrail 2 (re-scoped): the price
+  // repository exports EXACTLY three writes plus the one finder — no fourth is
+  // ever added — and each mutator (`updatePrice`/`deletePrice`) carries a
+  // `DRAFT` status check, the code-shape backstop that mirrors the §3.5 trigger.
+  // Structural, string-level; the live-import counterpart is
+  // tests/db/product-repository-exports.test.ts, and the DB-side refusal of a
+  // non-DRAFT write is proven by tests/db/product-price-writes.integration.test.ts.
+  it("the price repository exports exactly findByOfferingIdWithDerivedEnd, insertPrice, updatePrice, deletePrice, and the two mutators check for DRAFT (pm38 D6)", () => {
     const source = fs.readFileSync(
       path.join(REPO_ROOT, "db", "repositories", "product-offering-price.ts"),
       "utf8",
@@ -100,15 +104,30 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
 
     const methodNames = [
       ...(objectBody?.[1] ?? "").matchAll(
-        /^\s*(?:async\s+)?([a-zA-Z_$][\w$]*)\s*\(/gm,
+        /^\s{2}(?:async\s+)?([a-zA-Z_$][\w$]*)\s*\(/gm,
       ),
     ].map((match) => match[1] ?? "");
-    expect(methodNames.length).toBeGreaterThan(0);
 
-    const forbidden = methodNames.filter((name) =>
-      /^(update|delete|insert(?!Price\b))/.test(name),
+    expect(methodNames.sort()).toEqual(
+      [
+        "deletePrice",
+        "findByOfferingIdWithDerivedEnd",
+        "insertPrice",
+        "updatePrice",
+      ].sort(),
     );
-    expect(forbidden).toEqual([]);
+
+    // Each mutator's own body refuses a non-DRAFT parent. The methods delegate
+    // the locked parent read to `lockParentStatus`, but the DRAFT decision
+    // (`!== "DRAFT"` → OFFERING_NOT_DRAFT) lives in each method body itself.
+    for (const method of ["updatePrice", "deletePrice"]) {
+      const body =
+        source.match(
+          new RegExp(`async ${method}\\([\\s\\S]*?\\n  \\},`),
+        )?.[0] ?? "";
+      expect(body).toContain('"DRAFT"');
+      expect(body).toContain("OFFERING_NOT_DRAFT");
+    }
   });
 
   // Inv. #7 / code-standards §1.3: reads are not audited. No product read
@@ -126,6 +145,8 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "update-specification.ts",
     "delete-specification.ts",
     "insert-price.ts",
+    "update-price.ts",
+    "delete-price.ts",
     "activate-offering.ts",
     "retire-offering.ts",
   ]);
@@ -178,6 +199,37 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       manifestMatch?.[1]?.match(/"\/products\/product-offering"/g) ?? []
     ).length;
     expect(occurrences).toBe(1);
+  });
+
+  // pm39 D6/I8. The fetch-everything page's nine helpers/types are deleted for
+  // good; a string-level scan of the rewritten page fails CI if any is
+  // reintroduced under the same name (leaving one in place invites the next
+  // agent to call it).
+  it("manage-products/page.tsx contains none of pm39's nine deleted identifiers", () => {
+    const source = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        "app",
+        "(app)",
+        "products",
+        "manage-products",
+        "page.tsx",
+      ),
+      "utf8",
+    );
+    const DELETED_IDENTIFIERS = [
+      "fetchAllForStatus",
+      "fetchAllOfferingRows",
+      "fetchSpecificationsByOfferingId",
+      "mapWithConcurrencyLimit",
+      "groupIntoFamilies",
+      "selectPrimary",
+      "resolveFamilyId",
+      "MAX_COMBINED_ROWS",
+      "OfferingFamilyRow",
+    ];
+    const present = DELETED_IDENTIFIERS.filter((id) => source.includes(id));
+    expect(present).toEqual([]);
   });
 
   // Guardrail 12 (code-standards-phase2 §9). pm18 already added the route

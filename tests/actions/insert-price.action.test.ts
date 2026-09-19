@@ -25,9 +25,13 @@ function redirectError(target: string): Error & { digest: string } {
 
 const OFFERING_ID = "PRDOFR000001";
 
+// pm38: the recurring branch is now discriminated and strict — it requires a
+// charge period (length ∈ 1/3/12, type `months`) and forbids `unitOfMeasure`.
 const VALID_INPUT = {
   name: "Monthly recurring",
   priceType: "recurring",
+  recurringChargePeriodLength: 1,
+  recurringChargePeriodType: "months",
   currency: "USD",
   glCode: null,
   startDateTime: new Date(),
@@ -177,6 +181,18 @@ describe("insertPriceAction", () => {
     const result = await insertPriceAction(OFFERING_ID, VALID_INPUT);
 
     expect(result).toEqual({ ok: false, code: "BACKDATED_START_TOO_FAR" });
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("passes DUPLICATE_START through unchanged", async () => {
+    mockInsertPrice.mockResolvedValue({
+      ok: false,
+      code: "DUPLICATE_START",
+    });
+
+    const result = await insertPriceAction(OFFERING_ID, VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, code: "DUPLICATE_START" });
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
