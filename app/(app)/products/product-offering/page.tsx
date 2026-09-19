@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { OfferingDetailRegion } from "@/components/products/offering-detail-region";
@@ -20,10 +21,6 @@ export const dynamic = "force-dynamic";
 // `React.cache`d, so it shares the page's per-request read).
 export async function generateMetadata(): Promise<Metadata> {
   return { title: `View Product — ${await getAppName()}` };
-}
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 export default async function ProductOfferingPage({

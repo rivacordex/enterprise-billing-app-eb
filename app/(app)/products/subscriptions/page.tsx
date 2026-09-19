@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { SubscriptionsTable } from "@/components/products/inventory/subscriptions-table";
@@ -20,10 +21,6 @@ export const dynamic = "force-dynamic";
 // `React.cache`d, so it shares the page's per-request read).
 export async function generateMetadata(): Promise<Metadata> {
   return { title: `Subscriptions — ${await getAppName()}` };
-}
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 // pm33-spec §Implementation-1. Thin RSC orchestrator (orders/page.tsx

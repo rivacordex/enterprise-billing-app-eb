@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { AuditLogFilters } from "@/components/audit-log/audit-log-filters";
@@ -32,10 +33,6 @@ interface AuditLogPageProps {
     dateTo?: string | string[];
     page?: string | string[];
   }>;
-}
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 export default async function AuditLogPage({

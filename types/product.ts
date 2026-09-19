@@ -66,19 +66,36 @@ export type OfferingListRow = {
   billingOnly: boolean; // needed to prefill the Edit dialog (pm20 §2.3)
 };
 
-// Backs the Manage Products page only (pm18 §2.2). Not consumed by View
-// Product or getOfferingDetail.
-export type OfferingFamilyRow = {
-  familyId: string;
-  primary: OfferingListRow;
-  versions: OfferingListRow[]; // version desc, primary included
-};
-
 export type OfferingListPage = {
   rows: OfferingListRow[];
   total: number; // matching rows across all pages (for "Page X of Y")
   page: number;
   pageSize: number; // the resolved (configurable) size
+};
+
+// One row per family for Manage Products' list (pm39 D1, code-standards §2.9),
+// built entirely in SQL by `findFamilyPage`. The row shows the family's primary
+// version (ACTIVE → open → highest); `openVersionId` carries the family's single
+// DRAFT/TESTING version id (null when none) so pm41's edit affordance routes to
+// it without a second query.
+export type FamilyListRow = {
+  familyId: string; // COALESCE(family_offering_id, product_offering_id)
+  primaryVersionId: string; // the primary version's product_offering_id
+  name: string;
+  lifecycleStatus: LifecycleStatus; // the primary version's status
+  version: number; // the primary version's version number
+  versionCount: number; // total versions in the family
+  openVersionId: string | null; // the DRAFT/TESTING version, if any
+  isSellable: boolean;
+  billingOnly: boolean;
+  lastModified: Date;
+};
+
+export type FamilyPage = {
+  rows: FamilyListRow[];
+  total: number; // matching families across all pages
+  page: number;
+  pageSize: number;
 };
 
 export type SpecificationCard = {
