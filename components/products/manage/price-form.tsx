@@ -451,9 +451,11 @@ export function PriceForm({
               id="price-gl-code"
               type="text"
               placeholder="Optional"
+              aria-invalid={!!errors.glCode}
               disabled={isSubmitting}
               {...register("glCode")}
             />
+            <FieldError errors={[errors.glCode]} />
           </Field>
         </Field>
 

@@ -8,7 +8,7 @@
 
 ## Goal
 
-Replace Manage Products' fetch-everything page with a server-paged list of product families built by one SQL query, so the first render issues exactly two statements (page + count) and no per-row detail fetch.
+Replace Manage Products' fetch-everything page with a server-paged list of product families built by one shared SQL CTE — run as two statements, a page query and a count query — so the first render issues exactly two statements and no per-row detail fetch.
 
 ---
 
@@ -22,7 +22,7 @@ Columns: name, primary version's `LifecycleBadge`, version number, version count
 
 ### D2. Grouping happens in SQL
 
-`findFamilyPage` is one statement with a CTE:
+`findFamilyPage` is one shared CTE run as two statements (a page query and a count query); the page query is:
 
 ```
 WITH fam AS (

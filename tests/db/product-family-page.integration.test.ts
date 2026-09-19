@@ -201,8 +201,11 @@ describe.skipIf(!databaseUrl)("findFamilyPage (requires DATABASE_URL)", () => {
     expect(actives.rows[0]?.name).toBe("Alpha");
   });
 
-  it("pages families (not versions) with a total that survives LIMIT", async () => {
-    for (let i = 1; i <= 12; i += 1) {
+  it("pages families (not versions) in name order with a total that survives LIMIT", async () => {
+    // Insert in a deliberately shuffled order so the assertions prove the SQL
+    // ORDER BY name — not incidental insertion/id order.
+    const seedOrder = [7, 2, 11, 4, 9, 1, 6, 12, 3, 8, 5, 10];
+    for (const i of seedOrder) {
       await seedOffering({
         name: `Product ${String(i).padStart(2, "0")}`,
         status: "ACTIVE",
@@ -224,10 +227,14 @@ describe.skipIf(!databaseUrl)("findFamilyPage (requires DATABASE_URL)", () => {
     });
 
     expect(page1.total).toBe(12);
-    expect(page1.rows).toHaveLength(5);
-    expect(page1.rows[0]?.name).toBe("Product 01");
+    expect(page1.rows.map((r) => r.name)).toEqual([
+      "Product 01",
+      "Product 02",
+      "Product 03",
+      "Product 04",
+      "Product 05",
+    ]);
     expect(page3.total).toBe(12);
-    expect(page3.rows).toHaveLength(2);
-    expect(page3.rows[0]?.name).toBe("Product 11");
+    expect(page3.rows.map((r) => r.name)).toEqual(["Product 11", "Product 12"]);
   });
 });
