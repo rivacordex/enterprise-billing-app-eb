@@ -34,7 +34,7 @@ Nothing on this page is editable yet. pm40 renders; pm41 edits. Keeping them apa
 
 One compact entry per version: `v3` + `LifecycleBadge`. The selected entry carries `--surface-selected`; the others `--surface-sunken`. Ordered by version descending, so the newest work sits left. A family with one version renders that single entry — never an affordance implying more (`prodmgmt-ui-context.md` §6). Each entry is a `<Link>` rewriting `?version=` and preserving `q`, `status`, `page`, `family`.
 
-**Overflow at scale (design review).** A long-lived family can hold many versions. The bar **scrolls horizontally with an edge-fade** when entries exceed the width; it never wraps to stacked rows (that pushes the panels down unboundedly). Descending order keeps the ACTIVE/open version at the left edge, always visible without scrolling. Links stay tab-navigable; the h-scroll is pointer/trackpad plus keyboard-focus-scroll (a focused off-screen link scrolls into view natively) — no custom key handler, no `tablist` (`prodmgmt-ui-context.md` §7).
+**Overflow at scale (design review).** A long-lived family can hold many versions. The bar **scrolls horizontally with an edge-fade** when entries exceed the width; it never wraps to stacked rows (that pushes the panels down unboundedly). Descending order puts the **newest** version at the left edge — the open `DRAFT`/`TESTING` version when the family has one (a branch is `MAX(version)+1`, so it outranks the `ACTIVE` version by number), otherwise the `ACTIVE`/highest version — so the version a user most likely wants sits left, visible without scrolling; the `ACTIVE` version is not guaranteed to be the leftmost when an open draft precedes it. Links stay tab-navigable; the h-scroll is pointer/trackpad plus keyboard-focus-scroll (a focused off-screen link scrolls into view natively) — no custom key handler, no `tablist` (`prodmgmt-ui-context.md` §7).
 
 A dropdown would hide the shape of the family — how many versions exist and what states they are in is exactly what a Revenue Ops user opens this page to see.
 
@@ -64,7 +64,7 @@ Pick one design, write the exact resulting integers, and assert them — no "thr
 
 ### I1. `db/repositories/product-offering.ts` — `findFamilyVersions`
 
-`(db, familyId) => VersionSummary[]`, one query: `WHERE COALESCE(family_offering_id, product_offering_id) = $1 ORDER BY version DESC`. Returns `{ productOfferingId, version, lifecycleStatus, lastModified }`. Add `VersionSummary` to `types/product.ts`.
+`(db, familyId) => VersionSummary[]`, one query: `WHERE COALESCE(family_offering_id, product_offering_id) = $1 ORDER BY version DESC, product_offering_id ASC`. The `product_offering_id ASC` tie-breaker keeps the order deterministic and matches `findList`/`findFamilyPage`'s stable-ordering convention; `version` is unique within a family (Inv. #8), so it only bites on a data anomaly, but the order feeds `resolveSelectedVersion`'s "highest version" fallback. Returns `{ productOfferingId, version, lifecycleStatus, lastModified }`. Add `VersionSummary` to `types/product.ts`.
 
 ### I2. `services/product/list-family-versions.ts` (new)
 
@@ -72,7 +72,7 @@ Thin pass-through with an explicit return type, framework-agnostic. It exists so
 
 ### I3. `app/(app)/products/manage-products/page.tsx`
 
-Extend pm39's page: after `listFamilies`, when `params.family` is set, `Promise.all([listFamilyVersions(family), getOfferingDetail(resolvedVersionId)])` — `getOfferingDetail` already returns offering + specifications + prices with derived effectivity, so no new read is written for the panels. Apply D1's resolution order in a small pure helper (`resolveSelectedVersion(versions, requestedVersionId)`) that is unit-tested on its own.
+Extend pm39's page: when `params.family` is set, `listFamilyVersions(family)` runs concurrently with `listFamilies` in the page's `Promise.all` (neither depends on the other). Then resolve the selected version with the pure helper `resolveSelectedVersion(versions, requestedVersionId)` (D1's resolution order, unit-tested on its own), and only then `getOfferingDetail(resolvedVersionId)` for the resolved id — it already returns offering + specifications + prices with derived effectivity, so no new read is written for the panels. The version list and the detail read **cannot** share one `Promise.all`: the detail read depends on the resolved id, which is not known until the version list has been fetched and resolved (this is the sequential step, not the concurrent one).
 
 ### I4. `components/products/manage/version-bar.tsx` (new)
 
@@ -92,7 +92,7 @@ A small `manage/selection-region.tsx` server component composing detail + specif
 
 - `tests/services/resolve-selected-version.test.ts`: all five D1 cases.
 - `tests/app/manage-products-selection.test.tsx`: selecting a family renders specs and prices; switching version re-renders the panels; a `?version=` from another family falls back to the primary; an unknown `?family=` renders the empty state.
-- Extend `tests/app/manage-products-query-budget.test.ts` with D5's numbers, including "no selection ⇒ still two statements".
+- Extend `tests/app/manage-products-query-budget.integration.test.ts` (the `.integration.` variant, so the DB-backed project picks it up) with D5's numbers, including "no selection ⇒ still two statements".
 - Guardrail: `components/products/*.tsx` still imports nothing from `manage/` (guardrail 11 unchanged, and it must not be relaxed by this unit's new import direction).
 
 ---
