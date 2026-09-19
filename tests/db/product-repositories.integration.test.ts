@@ -950,6 +950,7 @@ describe.skipIf(!databaseUrl)(
           {
             name: "New Price",
             priceType: "usage",
+            unitOfMeasure: "GB",
             currency: "MYR",
             glCode: null,
             startDateTime: new Date(),
@@ -1012,6 +1013,8 @@ describe.skipIf(!databaseUrl)(
           {
             name: "Successor Price",
             priceType: "recurring",
+            recurringChargePeriodLength: 1,
+            recurringChargePeriodType: "months",
             currency: "MYR",
             glCode: null,
             startDateTime: new Date(),

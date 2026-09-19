@@ -163,8 +163,8 @@ actions/product/
   update-specification.action.ts
   delete-specification.action.ts
   insert-price.action.ts
-  update-price.action.ts              # (new)
-  delete-price.action.ts              # (new)
+  update-price.action.ts              # (pm38)
+  delete-price.action.ts              # (pm38)
   submit-for-testing.action.ts        # (new)
   return-to-draft.action.ts           # (new)
   activate-offering.action.ts
@@ -197,8 +197,8 @@ services/product/
   list-family-versions.ts             # (new)  version bar
   create-offering.ts, update-offering.ts
   add-specification.ts, update-specification.ts, delete-specification.ts
-  insert-price.ts, update-price.ts    # (new)
-  delete-price.ts                     # (new)
+  insert-price.ts, update-price.ts    # update-price (pm38)
+  delete-price.ts                     # (pm38)
   submit-for-testing.ts               # (new)
   return-to-draft.ts                  # (new)
   activate-offering.ts
@@ -210,7 +210,7 @@ db/repositories/
   product-offering.ts                 # + findFamilyPage, findFamilyVersions, transition writes,
                                       #   deleteOffering
   product-specification.ts
-  product-offering-price.ts           # insertPrice + updatePrice (new) + deletePrice (new)
+  product-offering-price.ts           # insertPrice + updatePrice + deletePrice (pm38)
 db/migrations/0006_product.sql        # edited in place (D11, §6.14)
 db/migrations/…                       # trigger + indexes land with 0006's shape
 db/seeds/product.ts, db/seeds/demo/product-demo.ts
@@ -218,9 +218,9 @@ validation/product/
   offering-list.schema.ts
   family-list.schema.ts               # (new)  q/status/page/family/version
   pricing-characteristics.schema.ts
-  price-input.schema.ts               # (new)  discriminated by priceType; shared insert/update
-  insert-price.schema.ts              # composes price-input + backdating
-  update-price.schema.ts              # (new)
+  price-input.schema.ts               # (pm38)  discriminated by priceType; shared insert/update
+  insert-price.schema.ts              # composes price-input + backdating (pm38)
+  update-price.schema.ts              # (pm38)
   create-offering.schema.ts, update-offering.schema.ts
   create-specification.schema.ts, update-specification.schema.ts
   transition.schema.ts                # (new)  offering id + optional reason, shared by the five

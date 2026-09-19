@@ -74,6 +74,10 @@ export function AddPriceDialog({
         toast.error(
           "Start date is more than 3 days in the past and can no longer be used.",
         );
+      } else if (result.code === "DUPLICATE_START") {
+        toast.error(
+          "A price of this type already starts on that date. Choose a different start date.",
+        );
       } else {
         toast.error("Something went wrong. Please try again.");
       }
