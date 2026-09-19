@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { CustomerResultsTable } from "@/components/customers/customer-results-table";
@@ -12,10 +13,6 @@ import { customerSearchParamsSchema } from "@/validation/customer/search-params.
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Manage Customer" };
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 export default async function ManageCustomerSearchPage({
   searchParams,

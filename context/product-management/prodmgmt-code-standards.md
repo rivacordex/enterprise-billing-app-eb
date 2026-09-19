@@ -176,11 +176,11 @@ components/products/
   specifications-panel.tsx, prices-panel.tsx
   lifecycle-badge.tsx, price-type-badge.tsx
 components/products/manage/
-  family-table.tsx                    # (new)  FamilyTable
+  family-table.tsx                    # (pm39)  FamilyTable
   version-bar.tsx                     # (new)  VersionBar
   manage-specifications-panel.tsx     # (new)  ManageSpecificationsPanel
   manage-prices-panel.tsx             # (new)  ManagePricesPanel
-  manage-offering-table.tsx           # (del)
+  manage-offering-table.tsx           # (removed pm39)
   specifications-dialog.tsx           # (del)  panel replaces the dialog
   add-price-dialog.tsx                # (del)  panel replaces the dialog
   offering-form.tsx, specification-form.tsx, price-form.tsx
@@ -192,7 +192,7 @@ components/products/manage/
   delete-version-dialog.tsx           # (new)
 services/product/
   list-offerings.ts                   # View Product's list
-  list-families.ts                    # (new)  Manage Products' list
+  list-families.ts                    # (pm39)  Manage Products' list
   get-offering-detail.ts
   list-family-versions.ts             # (new)  version bar
   create-offering.ts, update-offering.ts
@@ -216,7 +216,7 @@ db/migrations/…                       # trigger + indexes land with 0006's sha
 db/seeds/product.ts, db/seeds/demo/product-demo.ts
 validation/product/
   offering-list.schema.ts
-  family-list.schema.ts               # (new)  q/status/page/family/version
+  family-list.schema.ts               # (pm39)  q/status/page/family/version
   pricing-characteristics.schema.ts
   price-input.schema.ts               # (pm38)  discriminated by priceType; shared insert/update
   insert-price.schema.ts              # composes price-input + backdating (pm38)

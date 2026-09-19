@@ -201,6 +201,37 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(occurrences).toBe(1);
   });
 
+  // pm39 D6/I8. The fetch-everything page's nine helpers/types are deleted for
+  // good; a string-level scan of the rewritten page fails CI if any is
+  // reintroduced under the same name (leaving one in place invites the next
+  // agent to call it).
+  it("manage-products/page.tsx contains none of pm39's nine deleted identifiers", () => {
+    const source = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        "app",
+        "(app)",
+        "products",
+        "manage-products",
+        "page.tsx",
+      ),
+      "utf8",
+    );
+    const DELETED_IDENTIFIERS = [
+      "fetchAllForStatus",
+      "fetchAllOfferingRows",
+      "fetchSpecificationsByOfferingId",
+      "mapWithConcurrencyLimit",
+      "groupIntoFamilies",
+      "selectPrimary",
+      "resolveFamilyId",
+      "MAX_COMBINED_ROWS",
+      "OfferingFamilyRow",
+    ];
+    const present = DELETED_IDENTIFIERS.filter((id) => source.includes(id));
+    expect(present).toEqual([]);
+  });
+
   // Guardrail 12 (code-standards-phase2 §9). pm18 already added the route
   // itself to ROUTE_MANIFEST (confirmed via pm24-spec §3.1's pre-flight
   // audit — grep found it present); this assertion is the sweep file's own

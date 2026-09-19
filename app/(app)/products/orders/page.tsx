@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { actorHasRole } from "@/auth/roles";
@@ -29,10 +30,6 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 const MANAGER_ROLE = "MANAGER";
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 export default async function OrdersPage({
   searchParams,

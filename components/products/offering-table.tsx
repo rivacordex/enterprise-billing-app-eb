@@ -1,20 +1,15 @@
 "use client";
 
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  PackageSearch,
-  ShoppingCart,
-} from "lucide-react";
+import { ChevronDown, ChevronUp, PackageSearch } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { SellabilityChip } from "@/components/products/flag-chips";
 import {
   LIFECYCLE_BADGE_VARIANTS,
   LifecycleBadge,
 } from "@/components/products/lifecycle-badge";
+import { ListPagination } from "@/components/products/list-pagination";
 import { Button } from "@/components/ui/button";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -90,7 +85,6 @@ export function OfferingTable({
   }
 
   const { column: activeColumn, dir: activeDir } = parseSort(sort);
-  const totalPages = Math.ceil(total / pageSize);
 
   function navigate(mutate: (params: URLSearchParams) => void, push = false) {
     const params = new URLSearchParams(searchParams.toString());
@@ -204,7 +198,7 @@ export function OfferingTable({
             <option value="">All (excl. obsolete &amp; retired)</option>
             {LIFECYCLE_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s.charAt(0) + s.slice(1).toLowerCase()}
+                {LIFECYCLE_BADGE_VARIANTS[s].label}
               </option>
             ))}
           </select>
@@ -277,8 +271,6 @@ export function OfferingTable({
                 // — that literal now misses OBSOLETE (pm37 D3/G2).
                 const isMuted =
                   LIFECYCLE_BADGE_VARIANTS[row.lifecycleStatus].muted;
-                const showNotSellable =
-                  !row.isSellable && row.lifecycleStatus === "ACTIVE";
 
                 return (
                   <tr
@@ -317,19 +309,13 @@ export function OfferingTable({
                       {formatDatetime(row.lastModified, locale, timezone)}
                     </td>
                     <td className="px-4 py-2">
-                      {row.isSellable ? (
-                        <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[color:var(--color-neutral-100)] px-1.5 py-0.5 text-[11px] font-semibold tracking-wider text-[color:var(--color-neutral-700)] uppercase">
-                          <ShoppingCart size={12} aria-hidden="true" />
-                          Sellable
-                        </span>
-                      ) : showNotSellable ? (
-                        <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[color:var(--color-warning-50)] px-1.5 py-0.5 text-[11px] font-semibold tracking-wider text-[color:var(--color-warning-700)] uppercase">
-                          <ShoppingCart size={12} aria-hidden="true" />
-                          Not sellable
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                      <SellabilityChip
+                        isSellable={row.isSellable}
+                        lifecycleStatus={row.lifecycleStatus}
+                        emptyFallback={
+                          <span className="text-muted-foreground">—</span>
+                        }
+                      />
                     </td>
                   </tr>
                 );
@@ -340,35 +326,14 @@ export function OfferingTable({
       </div>
 
       {total > 0 && (
-        <div className="flex items-center justify-between border-t border-[color:var(--border-subtle)] px-4 py-4">
-          <span className="text-body text-muted-foreground">
-            Showing {(page - 1) * pageSize + 1}–
-            {Math.min(page * pageSize, total)} of {total} offerings
-          </span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => goToPage(page - 1)}
-              disabled={page <= 1 || isPending}
-              aria-label="Previous page"
-              className="rounded-sm p-1 text-muted-foreground hover:text-foreground focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <ChevronLeft className="size-4" />
-            </button>
-            <span className="px-2 text-body text-muted-foreground">
-              Page {page} of {totalPages || 1}
-            </span>
-            <button
-              type="button"
-              onClick={() => goToPage(page + 1)}
-              disabled={page >= totalPages || isPending}
-              aria-label="Next page"
-              className="rounded-sm p-1 text-muted-foreground hover:text-foreground focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <ChevronRight className="size-4" />
-            </button>
-          </div>
-        </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          itemLabel="offerings"
+          onNavigate={goToPage}
+          disabled={isPending}
+        />
       )}
     </div>
   );

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { LIFECYCLE_STATUSES } from "@/types/product";
+import {
+  listSearchBase,
+  offeringIdParam,
+} from "@/validation/product/list-search-params.base";
 
 // One `sort` searchParam (pm02-spec Design #10): a sort key with an optional
 // `-` prefix for descending. Default is `name` ascending — no separate `dir`
@@ -22,15 +25,9 @@ export const OFFERING_SORT_VALUES = [
 // tampered or stale URL never 500s the page — every field falls back to its
 // default on a parse failure.
 export const offeringListSearchParamsSchema = z.object({
-  q: z.string().trim().max(100).catch(""),
-  status: z.enum(LIFECYCLE_STATUSES).nullable().catch(null),
+  ...listSearchBase,
   sort: z.enum(OFFERING_SORT_VALUES).catch("name"),
-  page: z.coerce.number().int().min(1).catch(1),
-  offering: z
-    .string()
-    .regex(/^PRDOFR\d+$/)
-    .nullable()
-    .catch(null),
+  offering: offeringIdParam,
 });
 export type OfferingListSearchParams = z.infer<
   typeof offeringListSearchParamsSchema

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { BillRunList } from "@/components/billing/bill-run-list";
@@ -23,10 +24,6 @@ interface BillRunsPageProps {
     status?: string | string[];
     page?: string | string[];
   }>;
-}
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 export default async function BillRunsPage({

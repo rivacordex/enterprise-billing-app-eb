@@ -1,44 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { OfferingListPage, OfferingListRow } from "@/types/product";
+import type { FamilyPage } from "@/types/product";
 
-// Guard-level + orchestration test only (product-offering-page.test.tsx
-// precedent) — asserts requirePermission gates the page and that
-// fetchAllOfferingRows/groupIntoFamilies (private to page.tsx) produce the
-// right shape, not that ManageOfferingTable renders pixels.
+// Guard-level + orchestration test (product-offering-page.test.tsx precedent):
+// asserts requirePermission gates the page and that the parsed searchParams flow
+// into listFamilies and the resulting page into FamilyTable — not that
+// FamilyTable renders pixels (pm39 replaced the fetch-everything page).
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
-vi.mock("@/services/product/list-offerings", () => ({
-  listOfferings: vi.fn(),
-}));
-vi.mock("@/services/product/get-offering-detail", () => ({
-  getOfferingDetail: vi.fn(),
+vi.mock("@/services/product/list-families", () => ({
+  listFamilies: vi.fn(),
 }));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppName: vi.fn().mockResolvedValue("Acme Telco"),
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
   getAppLocale: vi.fn().mockResolvedValue("en-US"),
 }));
-vi.mock("@/components/products/manage/manage-offering-table", () => ({
-  ManageOfferingTable: vi.fn(() => null),
+vi.mock("@/components/products/manage/family-table", () => ({
+  FamilyTable: vi.fn(() => null),
+}));
+vi.mock("@/components/products/manage/create-offering-dialog", () => ({
+  CreateOfferingDialog: vi.fn(() => null),
 }));
 
 import ManageProductsPage from "@/app/(app)/products/manage-products/page";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import { ManageOfferingTable } from "@/components/products/manage/manage-offering-table";
-import { getOfferingDetail } from "@/services/product/get-offering-detail";
-import { listOfferings } from "@/services/product/list-offerings";
+import { FamilyTable } from "@/components/products/manage/family-table";
+import { listFamilies } from "@/services/product/list-families";
 
 const mockRequirePermission = vi.mocked(requirePermission);
-const mockListOfferings = vi.mocked(listOfferings);
-const mockGetOfferingDetail = vi.mocked(getOfferingDetail);
+const mockListFamilies = vi.mocked(listFamilies);
 
-// The page is a Server Component: calling it directly returns a React
-// element tree without ever invoking child component functions, so we find
-// the `ManageOfferingTable` element by type and read its props directly.
 interface ReactElementLike {
   type: unknown;
-  props: { children?: unknown };
+  props: Record<string, unknown> & { children?: unknown };
 }
 
 function isReactElementLike(node: unknown): node is ReactElementLike {
@@ -56,7 +51,6 @@ function findElementByType(
 ): ReactElementLike | undefined {
   if (!isReactElementLike(node)) return undefined;
   if (node.type === type) return node;
-
   const children = node.props.children;
   for (const child of Array.isArray(children) ? children : [children]) {
     const found = findElementByType(child, type);
@@ -71,31 +65,21 @@ function redirectError(target: string): Error & { digest: string } {
   return error;
 }
 
-function makeRow(overrides: Partial<OfferingListRow>): OfferingListRow {
-  return {
-    productOfferingId: "PRDOFR000001",
-    name: "Offering",
-    lifecycleStatus: "ACTIVE",
-    version: 1,
-    isSellable: true,
-    billingOnly: false,
-    lastModified: new Date("2026-01-01T00:00:00.000Z"),
-    familyOfferingId: null,
-    ...overrides,
-  };
+function emptyPage(): FamilyPage {
+  return { rows: [], total: 0, page: 1, pageSize: 5 };
 }
 
-function emptyPage(): OfferingListPage {
-  return { rows: [], total: 0, page: 1, pageSize: 5 };
+async function renderPage(
+  searchParams: Record<string, string | string[] | undefined> = {},
+): Promise<React.JSX.Element> {
+  return ManageProductsPage({ searchParams: Promise.resolve(searchParams) });
 }
 
 beforeEach(() => {
   mockRequirePermission.mockReset();
-  mockListOfferings.mockReset();
-  mockGetOfferingDetail.mockReset();
-  vi.mocked(ManageOfferingTable).mockClear();
-  mockListOfferings.mockResolvedValue(emptyPage());
-  mockGetOfferingDetail.mockResolvedValue(null);
+  mockListFamilies.mockReset();
+  vi.mocked(FamilyTable).mockClear();
+  mockListFamilies.mockResolvedValue(emptyPage());
   mockRequirePermission.mockResolvedValue({
     userId: "admin-1",
     userEmail: "admin@example.com",
@@ -111,149 +95,70 @@ beforeEach(() => {
 });
 
 describe("ManageProductsPage", () => {
-  it("calls requirePermission(PERMISSIONS.PRODUCTS, LEVELS.EDIT) as the first statement", async () => {
-    await ManageProductsPage();
+  it("calls requirePermission(PERMISSIONS.PRODUCTS, LEVELS.EDIT) and then lists families", async () => {
+    await renderPage();
 
     expect(mockRequirePermission).toHaveBeenCalledWith(
       PERMISSIONS.PRODUCTS,
       LEVELS.EDIT,
     );
-    expect(mockListOfferings).toHaveBeenCalled();
+    expect(mockListFamilies).toHaveBeenCalled();
   });
 
-  it("propagates the /no-access redirect for a user without products:EDIT and never calls listOfferings", async () => {
+  it("propagates the /no-access redirect and never lists families", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
 
-    await expect(ManageProductsPage()).rejects.toThrow();
-    expect(mockListOfferings).not.toHaveBeenCalled();
+    await expect(renderPage()).rejects.toThrow();
+    expect(mockListFamilies).not.toHaveBeenCalled();
   });
 
-  it("fetches both status:null and status:RETIRED buckets", async () => {
-    await ManageProductsPage();
+  it("parses searchParams and passes them to listFamilies", async () => {
+    await renderPage({ q: "fibre", status: "ACTIVE", page: "2" });
 
-    expect(mockListOfferings).toHaveBeenCalledWith(
-      expect.objectContaining({ status: null }),
-    );
-    expect(mockListOfferings).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "RETIRED" }),
+    expect(mockListFamilies).toHaveBeenCalledWith(
+      expect.objectContaining({ q: "fibre", status: "ACTIVE", page: 2 }),
     );
   });
 
-  it("loops across pages until every row in a status bucket is collected", async () => {
-    const page1Rows = Array.from({ length: 5 }, (_, i) =>
-      makeRow({
-        productOfferingId: `PRDOFR00000${i + 1}`,
-        name: `Offering ${i + 1}`,
-      }),
+  it("falls back to defaults for a tampered ?page=abc&status=NOPE", async () => {
+    await renderPage({ page: "abc", status: "NOPE" });
+
+    expect(mockListFamilies).toHaveBeenCalledWith(
+      expect.objectContaining({ q: "", status: null, page: 1 }),
     );
-    const page2Rows = [
-      makeRow({ productOfferingId: "PRDOFR000006", name: "Offering 6" }),
-      makeRow({ productOfferingId: "PRDOFR000007", name: "Offering 7" }),
-    ];
+  });
 
-    mockListOfferings.mockImplementation(async (params) => {
-      if (params.status === null) {
-        if (params.page === 1) {
-          return { rows: page1Rows, total: 7, page: 1, pageSize: 5 };
-        }
-        return { rows: page2Rows, total: 7, page: 2, pageSize: 5 };
-      }
-      return emptyPage();
-    });
+  it("passes the family page and parsed query/status to FamilyTable", async () => {
+    const familyPage: FamilyPage = {
+      rows: [
+        {
+          familyId: "PRDOFR000001",
+          primaryVersionId: "PRDOFR000002",
+          name: "Fibre 100",
+          lifecycleStatus: "ACTIVE",
+          version: 2,
+          versionCount: 2,
+          openVersionId: null,
+          isSellable: true,
+          billingOnly: false,
+          lastModified: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 5,
+    };
+    mockListFamilies.mockResolvedValue(familyPage);
 
-    const result = await ManageProductsPage();
+    const result = await renderPage({ q: "fibre" });
+    const table = findElementByType(result, FamilyTable);
 
-    expect(mockListOfferings).toHaveBeenCalledWith(
-      expect.objectContaining({ status: null, page: 1 }),
-    );
-    expect(mockListOfferings).toHaveBeenCalledWith(
-      expect.objectContaining({ status: null, page: 2 }),
-    );
-
-    const table = findElementByType(result, ManageOfferingTable);
     expect(table?.props).toMatchObject({
-      families: expect.arrayContaining([
-        expect.objectContaining({
-          primary: expect.objectContaining({
-            productOfferingId: "PRDOFR000007",
-          }),
-        }),
-      ]),
+      page: familyPage,
+      query: "fibre",
+      status: null,
+      locale: "en-US",
+      timezone: "UTC",
     });
-    const tableProps = table?.props as { families: unknown[] };
-    expect(tableProps.families).toHaveLength(7);
-  });
-
-  it("collapses same-family rows into one family row with the ACTIVE version as primary", async () => {
-    const draftRoot = makeRow({
-      productOfferingId: "PRDOFR000010",
-      name: "Family Alpha",
-      familyOfferingId: null,
-      version: 1,
-      lifecycleStatus: "DRAFT",
-    });
-    const activeBranch = makeRow({
-      productOfferingId: "PRDOFR000011",
-      name: "Family Alpha",
-      familyOfferingId: "PRDOFR000010",
-      version: 2,
-      lifecycleStatus: "ACTIVE",
-    });
-
-    mockListOfferings.mockImplementation(async (params) => {
-      if (params.status === null) {
-        return {
-          rows: [draftRoot, activeBranch],
-          total: 2,
-          page: 1,
-          pageSize: 5,
-        };
-      }
-      return emptyPage();
-    });
-
-    const result = await ManageProductsPage();
-    const table = findElementByType(result, ManageOfferingTable);
-    const tableProps = table?.props as {
-      families: Array<{
-        primary: OfferingListRow;
-        versions: OfferingListRow[];
-      }>;
-    };
-
-    expect(tableProps.families).toHaveLength(1);
-    expect(tableProps.families[0]?.primary.productOfferingId).toBe(
-      "PRDOFR000011",
-    );
-    expect(tableProps.families[0]?.versions).toHaveLength(2);
-  });
-
-  it("resolves the highest-version row as primary when no ACTIVE row exists in the family (RETIRED-primary case)", async () => {
-    const retiredRow = makeRow({
-      productOfferingId: "PRDOFR000004",
-      name: "Legacy 4G Add-On",
-      familyOfferingId: null,
-      version: 3,
-      lifecycleStatus: "RETIRED",
-    });
-
-    mockListOfferings.mockImplementation(async (params) => {
-      if (params.status === "RETIRED") {
-        return { rows: [retiredRow], total: 1, page: 1, pageSize: 5 };
-      }
-      return emptyPage();
-    });
-
-    const result = await ManageProductsPage();
-    const table = findElementByType(result, ManageOfferingTable);
-    const tableProps = table?.props as {
-      families: Array<{ primary: OfferingListRow }>;
-    };
-
-    expect(tableProps.families).toHaveLength(1);
-    expect(tableProps.families[0]?.primary.lifecycleStatus).toBe("RETIRED");
-    expect(tableProps.families[0]?.primary.productOfferingId).toBe(
-      "PRDOFR000004",
-    );
   });
 });
