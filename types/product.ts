@@ -98,6 +98,17 @@ export type FamilyPage = {
   pageSize: number;
 };
 
+// One entry per version for Manage Products' version bar (pm40 D2/I1, code-
+// standards §2.9), built by `findFamilyVersions` (one query, version DESC). The
+// bar renders `v{version}` + `LifecycleBadge`; it carries no prices or specs —
+// the selected version's detail is fetched separately by `getOfferingDetail`.
+export type VersionSummary = {
+  productOfferingId: string;
+  version: number;
+  lifecycleStatus: LifecycleStatus;
+  lastModified: Date;
+};
+
 export type SpecificationCard = {
   productSpecId: string;
   name: string;
