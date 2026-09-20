@@ -47,10 +47,13 @@ export async function submitForTesting(
       return { ok: false, code: "NO_PRICE_ROWS" };
     }
 
-    // Decision 5's literal rule: at least one specification exists, AND every
-    // mandatory one has a resolved (non-null) defaultValue. Read locked, so a
-    // concurrent spec edit cannot slip the version into TESTING with an
-    // unresolved mandatory spec.
+    // Decision 5's rule: at least one specification exists, AND every mandatory
+    // one is RESOLVED — a non-null, non-blank defaultValue. A whitespace-only or
+    // empty default is treated as unresolved (the schema permits "" since
+    // defaultValue is nullable with no min length), matching the "resolved"
+    // intent rather than the literal "non-null". Read locked, so a concurrent
+    // spec edit cannot slip the version into TESTING with an unresolved mandatory
+    // spec.
     const specs =
       await productSpecificationRepository.findByOfferingIdForUpdate(
         tx,
@@ -58,7 +61,11 @@ export async function submitForTesting(
       );
     const specificationsResolved =
       specs.length > 0 &&
-      specs.every((spec) => !spec.isMandatory || spec.defaultValue !== null);
+      specs.every(
+        (spec) =>
+          !spec.isMandatory ||
+          (spec.defaultValue !== null && spec.defaultValue.trim() !== ""),
+      );
     if (!specificationsResolved) {
       return { ok: false, code: "SPECIFICATIONS_NOT_RESOLVED" };
     }

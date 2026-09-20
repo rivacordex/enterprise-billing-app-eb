@@ -475,6 +475,8 @@ describe.skipIf(!databaseUrl)(
         updateSpecificationMod,
         deleteSpecificationMod,
         insertPriceMod,
+        submitForTestingMod,
+        returnToDraftMod,
         activateOfferingMod,
         obsoleteOfferingMod,
         retireOfferingMod,
@@ -486,6 +488,8 @@ describe.skipIf(!databaseUrl)(
         import("@/actions/product/update-specification.action"),
         import("@/actions/product/delete-specification.action"),
         import("@/actions/product/insert-price.action"),
+        import("@/actions/product/submit-for-testing.action"),
+        import("@/actions/product/return-to-draft.action"),
         import("@/actions/product/activate-offering.action"),
         import("@/actions/product/obsolete-offering.action"),
         import("@/actions/product/retire-offering.action"),
@@ -511,6 +515,10 @@ describe.skipIf(!databaseUrl)(
           ),
         insertPriceAction: () =>
           insertPriceMod.insertPriceAction("PRDOFR000001", {}),
+        submitForTestingAction: () =>
+          submitForTestingMod.submitForTestingAction("PRDOFR000001", {}),
+        returnToDraftAction: () =>
+          returnToDraftMod.returnToDraftAction("PRDOFR000001", {}),
         activateOfferingAction: () =>
           activateOfferingMod.activateOfferingAction("PRDOFR000001", {}),
         obsoleteOfferingAction: () =>
@@ -989,6 +997,8 @@ describe.skipIf(!databaseUrl)(
         "updateSpecificationAction",
         "deleteSpecificationAction",
         "insertPriceAction",
+        "submitForTestingAction",
+        "returnToDraftAction",
         "activateOfferingAction",
       ] as const;
 

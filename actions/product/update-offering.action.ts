@@ -17,6 +17,7 @@ export type UpdateOfferingActionResult =
     }
   | { ok: false; code: "OFFERING_NOT_FOUND" }
   | { ok: false; code: "OFFERING_RETIRED" }
+  | { ok: false; code: "OFFERING_HAS_OPEN_VERSION" }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 

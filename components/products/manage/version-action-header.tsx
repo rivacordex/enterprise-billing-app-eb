@@ -120,6 +120,14 @@ export function VersionActionHeader({
         toast.error("This offering no longer exists. Refreshing...");
         setOpen(false);
         router.refresh();
+      } else if (result.code === "OFFERING_HAS_OPEN_VERSION") {
+        // Editing an ACTIVE version would branch a new draft, but the family
+        // already has an open (draft/testing) version — edit that one instead.
+        toast.error(
+          "This product already has a version in progress. Open that version to edit it.",
+        );
+        setOpen(false);
+        router.refresh();
       } else {
         toast.error("Something went wrong. Please try again.");
       }

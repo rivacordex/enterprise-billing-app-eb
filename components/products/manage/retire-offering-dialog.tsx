@@ -104,7 +104,9 @@ export function RetireOfferingDialog({
           <AlertDialogDescription>
             {isBlocked ? (
               <>
-                {effectiveBlocked} subscriptions still bill from this version.
+                {effectiveBlocked} subscription
+                {effectiveBlocked === 1 ? "" : "s"} still{" "}
+                {effectiveBlocked === 1 ? "bills" : "bill"} from this version.
                 It can be retired once they end.
               </>
             ) : (
