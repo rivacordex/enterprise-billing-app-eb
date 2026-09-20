@@ -16,15 +16,15 @@ export type ActivateOfferingActionResult =
       fieldErrors: Record<string, string[]>;
     }
   | { ok: false; code: "OFFERING_NOT_FOUND" }
-  | { ok: false; code: "OFFERING_NOT_DRAFT" }
-  | { ok: false; code: "NO_PRICE_ROWS" }
-  | { ok: false; code: "SPECIFICATIONS_NOT_RESOLVED" }
+  | { ok: false; code: "OFFERING_NOT_TESTING" }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
-// pm23-spec §3.2. Activate is gated at products:EDIT, not DELETE (Design
-// §2.3; architecture-phase2 §4) — the only permission-level difference
-// between this file and retire-offering.action.ts below.
+// pm23-spec §3.2, amended pm42 I4/I5. Activate is gated at products:EDIT, not
+// DELETE (architecture §4). Activation now flips TESTING → ACTIVE: the old
+// OFFERING_NOT_DRAFT code is replaced by OFFERING_NOT_TESTING, and the release
+// preconditions (NO_PRICE_ROWS / SPECIFICATIONS_NOT_RESOLVED) moved to
+// submit-for-testing.action.ts, so they no longer surface here.
 export async function activateOfferingAction(
   offeringId: string,
   rawInput: unknown,

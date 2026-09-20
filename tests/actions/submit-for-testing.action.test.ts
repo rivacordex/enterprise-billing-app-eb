@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
-vi.mock("@/services/product/activate-offering", () => ({
-  activateOffering: vi.fn(),
+vi.mock("@/services/product/submit-for-testing", () => ({
+  submitForTesting: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -10,12 +10,12 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { revalidatePath } from "next/cache";
 
-import { activateOfferingAction } from "@/actions/product/activate-offering.action";
-import * as activateOfferingService from "@/services/product/activate-offering";
+import { submitForTestingAction } from "@/actions/product/submit-for-testing.action";
+import * as submitForTestingService from "@/services/product/submit-for-testing";
 
 const mockRequirePermission = vi.mocked(requirePermission);
-const mockActivateOffering = vi.mocked(
-  activateOfferingService.activateOffering,
+const mockSubmitForTesting = vi.mocked(
+  submitForTestingService.submitForTesting,
 );
 const mockRevalidatePath = vi.mocked(revalidatePath);
 
@@ -29,7 +29,7 @@ const OFFERING_ID = "PRDOFR000001";
 
 beforeEach(() => {
   mockRequirePermission.mockReset();
-  mockActivateOffering.mockReset();
+  mockSubmitForTesting.mockReset();
   mockRevalidatePath.mockReset();
   mockRequirePermission.mockResolvedValue({
     userId: "admin-1",
@@ -45,15 +45,14 @@ beforeEach(() => {
   });
 });
 
-describe("activateOfferingAction", () => {
-  it("calls requirePermission with PRODUCTS/EDIT (not DELETE)", async () => {
-    mockActivateOffering.mockResolvedValue({
+describe("submitForTestingAction", () => {
+  it("calls requirePermission with PRODUCTS/EDIT", async () => {
+    mockSubmitForTesting.mockResolvedValue({
       ok: true,
       offeringId: OFFERING_ID,
-      supersededOfferingId: null,
     });
 
-    await activateOfferingAction(OFFERING_ID, { reason: "" });
+    await submitForTestingAction(OFFERING_ID, { reason: "" });
 
     expect(mockRequirePermission).toHaveBeenCalledWith(
       PERMISSIONS.PRODUCTS,
@@ -61,25 +60,20 @@ describe("activateOfferingAction", () => {
     );
   });
 
-  it("activates and revalidates both product paths, no superseded sibling", async () => {
-    mockActivateOffering.mockResolvedValue({
+  it("submits and revalidates both product paths", async () => {
+    mockSubmitForTesting.mockResolvedValue({
       ok: true,
       offeringId: OFFERING_ID,
-      supersededOfferingId: null,
     });
 
-    const result = await activateOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await submitForTestingAction(OFFERING_ID, { reason: "Go" });
 
-    expect(mockActivateOffering).toHaveBeenCalledWith(
+    expect(mockSubmitForTesting).toHaveBeenCalledWith(
       OFFERING_ID,
-      expect.objectContaining({ reason: "" }),
+      expect.objectContaining({ reason: "Go" }),
       "admin-1",
     );
-    expect(result).toEqual({
-      ok: true,
-      offeringId: OFFERING_ID,
-      supersededOfferingId: null,
-    });
+    expect(result).toEqual({ ok: true, offeringId: OFFERING_ID });
     expect(mockRevalidatePath).toHaveBeenCalledWith(
       "/products/manage-products",
     );
@@ -88,24 +82,8 @@ describe("activateOfferingAction", () => {
     );
   });
 
-  it("returns supersededOfferingId when the service reports one", async () => {
-    mockActivateOffering.mockResolvedValue({
-      ok: true,
-      offeringId: OFFERING_ID,
-      supersededOfferingId: "PRDOFR000002",
-    });
-
-    const result = await activateOfferingAction(OFFERING_ID, { reason: "" });
-
-    expect(result).toEqual({
-      ok: true,
-      offeringId: OFFERING_ID,
-      supersededOfferingId: "PRDOFR000002",
-    });
-  });
-
   it("returns VALIDATION_ERROR for a reason over 500 characters without calling the service", async () => {
-    const result = await activateOfferingAction(OFFERING_ID, {
+    const result = await submitForTestingAction(OFFERING_ID, {
       reason: "x".repeat(501),
     });
 
@@ -115,43 +93,45 @@ describe("activateOfferingAction", () => {
     } else {
       throw new Error("Expected VALIDATION_ERROR");
     }
-    expect(mockActivateOffering).not.toHaveBeenCalled();
+    expect(mockSubmitForTesting).not.toHaveBeenCalled();
   });
 
   it("returns FORBIDDEN when requirePermission redirects, without calling the service", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
 
-    const result = await activateOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await submitForTestingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(mockActivateOffering).not.toHaveBeenCalled();
+    expect(mockSubmitForTesting).not.toHaveBeenCalled();
   });
 
   it("returns SERVER_ERROR when requirePermission throws a non-redirect error", async () => {
     mockRequirePermission.mockRejectedValue(new Error("db exploded"));
 
-    const result = await activateOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await submitForTestingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
-    expect(mockActivateOffering).not.toHaveBeenCalled();
+    expect(mockSubmitForTesting).not.toHaveBeenCalled();
   });
 
-  it.each(["OFFERING_NOT_FOUND", "OFFERING_NOT_TESTING"] as const)(
-    "passes %s through the action unchanged",
-    async (code) => {
-      mockActivateOffering.mockResolvedValue({ ok: false, code });
+  it.each([
+    "OFFERING_NOT_FOUND",
+    "OFFERING_NOT_DRAFT",
+    "NO_PRICE_ROWS",
+    "SPECIFICATIONS_NOT_RESOLVED",
+  ] as const)("passes %s through the action unchanged", async (code) => {
+    mockSubmitForTesting.mockResolvedValue({ ok: false, code });
 
-      const result = await activateOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await submitForTestingAction(OFFERING_ID, { reason: "" });
 
-      expect(result).toEqual({ ok: false, code });
-      expect(mockRevalidatePath).not.toHaveBeenCalled();
-    },
-  );
+    expect(result).toEqual({ ok: false, code });
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
 
   it("returns SERVER_ERROR when the service throws", async () => {
-    mockActivateOffering.mockRejectedValue(new Error("db exploded"));
+    mockSubmitForTesting.mockRejectedValue(new Error("db exploded"));
 
-    const result = await activateOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await submitForTestingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
   });

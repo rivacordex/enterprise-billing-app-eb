@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil } from "lucide-react";
+import { Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
+import { returnToDraftAction } from "@/actions/product/return-to-draft.action";
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
+import { ActivateOfferingDialog } from "@/components/products/manage/activate-offering-dialog";
 import { buildManageProductsHref } from "@/components/products/manage/manage-products-href";
 import { OfferingForm } from "@/components/products/manage/offering-form";
+import { SubmitForTestingDialog } from "@/components/products/manage/submit-for-testing-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,18 +18,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { LifecycleStatus, OfferingDetail } from "@/types/product";
+import {
+  VERSION_HEADER_ACTIONS_BY_STATUS,
+  type LifecycleStatus,
+  type OfferingDetail,
+} from "@/types/product";
 import type { UpdateOfferingInput } from "@/validation/product/update-offering.schema";
 
-// pm41 D4. The offering-level Edit affordance in the selected version's header.
-// On a DRAFT it edits the offering fields in place; on an ACTIVE version the
-// panels themselves are never editable — this Edit calls updateOfferingAction
-// (branch-first, as today) and the page then navigates to the new draft's
-// ?version=. The "this creates a new draft" banner lives inside the reused
-// OfferingForm (ui-context §7 — shown before the branch happens). The Edit
-// affordance appears only on DRAFT and ACTIVE (ui-context §7); TESTING's
-// return-to-draft, OBSOLETE's retire and DRAFT/TESTING's discard are later
-// units, so this header renders nothing for those statuses.
+// pm41 D4 + pm42 I6. The version-level actions in the selected version's header,
+// their visibility read from the total VERSION_HEADER_ACTIONS_BY_STATUS Record
+// (never inline `status === …` comparisons) so a new lifecycle status forces a
+// decision here (code-standards §2.2). DRAFT: Edit (in place) + Submit for
+// testing. TESTING: Back to draft + Activate. ACTIVE: Edit (branch-first, then
+// navigate to the new draft's ?version=). OBSOLETE/RETIRED: nothing. The
+// "creates a new draft" banner lives inside the reused OfferingForm.
+const TOUCH_TARGET = "[@media(pointer:coarse)]:min-h-[44px]";
+
 export interface VersionActionHeaderProps {
   offering: OfferingDetail;
   familyId: string;
@@ -48,19 +55,17 @@ export function VersionActionHeader({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReturning, setIsReturning] = useState(false);
 
-  // Only DRAFT and ACTIVE carry an Edit affordance (ui-context §7). The narrow
-  // union is what OfferingForm's edit mode accepts.
-  const editableStatus: "DRAFT" | "ACTIVE" | null =
-    offering.lifecycleStatus === "DRAFT"
-      ? "DRAFT"
-      : offering.lifecycleStatus === "ACTIVE"
-        ? "ACTIVE"
-        : null;
-
-  if (editableStatus === null) {
+  const actions = VERSION_HEADER_ACTIONS_BY_STATUS[offering.lifecycleStatus];
+  if (actions.length === 0) {
     return null;
   }
+
+  // Edit is offered only on DRAFT and ACTIVE (the Record); the narrow union is
+  // what OfferingForm's edit mode accepts.
+  const editableStatus: "DRAFT" | "ACTIVE" =
+    offering.lifecycleStatus === "ACTIVE" ? "ACTIVE" : "DRAFT";
 
   function handleOpenChange(nextOpen: boolean): void {
     if (isSubmitting) return;
@@ -115,38 +120,117 @@ export function VersionActionHeader({
     }
   }
 
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="[@media(pointer:coarse)]:min-h-[44px]"
-        aria-label="Edit"
-        onClick={() => setOpen(true)}
-      >
-        <Pencil size={14} aria-hidden />
-        Edit
-      </Button>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit {offering.name}</DialogTitle>
-        </DialogHeader>
+  async function handleReturnToDraft(): Promise<void> {
+    setIsReturning(true);
+    try {
+      const result = await returnToDraftAction(offering.productOfferingId, {});
+      if (result.ok) {
+        toast.success("Returned to draft");
+        router.refresh();
+      } else if (result.code === "FORBIDDEN") {
+        toast.error("You don't have permission to do that.");
+      } else if (result.code === "OFFERING_NOT_TESTING") {
+        toast.error("This version is no longer in testing. Refreshing...");
+        router.refresh();
+      } else if (result.code === "OFFERING_NOT_FOUND") {
+        toast.error("This offering no longer exists. Refreshing...");
+        router.refresh();
+      } else {
+        toast.error("Something went wrong. Please try again.");
+      }
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsReturning(false);
+    }
+  }
 
-        <OfferingForm
-          mode="edit"
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
+      {actions.includes("returnToDraft") ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={TOUCH_TARGET}
+          disabled={isReturning}
+          onClick={() => void handleReturnToDraft()}
+        >
+          {isReturning && <Loader2 size={14} className="animate-spin" />}
+          Back to draft
+        </Button>
+      ) : null}
+
+      {actions.includes("submitForTesting") ? (
+        <SubmitForTestingDialog
+          offeringId={offering.productOfferingId}
           offeringName={offering.name}
-          currentStatus={editableStatus}
-          defaultValues={{
-            name: offering.name,
-            isSellable: offering.isSellable,
-            billingOnly: offering.billingOnly,
-          }}
-          onSubmit={handleSubmit}
-          onCancel={() => handleOpenChange(false)}
-          isSubmitting={isSubmitting}
+          offeringVersion={offering.version}
+          trigger={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={TOUCH_TARGET}
+            >
+              Submit for testing
+            </Button>
+          }
         />
-      </DialogContent>
-    </Dialog>
+      ) : null}
+
+      {actions.includes("activate") ? (
+        <ActivateOfferingDialog
+          offeringId={offering.productOfferingId}
+          offeringName={offering.name}
+          offeringVersion={offering.version}
+          trigger={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={TOUCH_TARGET}
+            >
+              Activate
+            </Button>
+          }
+        />
+      ) : null}
+
+      {actions.includes("edit") ? (
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={TOUCH_TARGET}
+            aria-label="Edit"
+            onClick={() => setOpen(true)}
+          >
+            <Pencil size={14} aria-hidden />
+            Edit
+          </Button>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit {offering.name}</DialogTitle>
+            </DialogHeader>
+
+            <OfferingForm
+              mode="edit"
+              offeringName={offering.name}
+              currentStatus={editableStatus}
+              defaultValues={{
+                name: offering.name,
+                isSellable: offering.isSellable,
+                billingOnly: offering.billingOnly,
+              }}
+              onSubmit={handleSubmit}
+              onCancel={() => handleOpenChange(false)}
+              isSubmitting={isSubmitting}
+            />
+          </DialogContent>
+        </Dialog>
+      ) : null}
+    </div>
   );
 }

@@ -617,32 +617,167 @@ export const productOfferingRepository = {
     return active ? { offeringId: active.offeringId } : null;
   },
 
-  // pm16-spec §3.3. Caller (services/product/activate-offering.ts) has
-  // already verified draftId is DRAFT and meets both activation
-  // preconditions before this is ever called (Design) — this method's own
-  // job is exactly the transactional single-active-per-family re-check
-  // (Inv. 13), not precondition enforcement. No actorId parameter —
-  // attribution is the caller's job (Design, mirroring branchOfferingAsDraft).
+  // pm42-spec I1. Narrow single-status writers — one per legal transition, no
+  // generic `setLifecycleStatus(id, status)` helper (code-standards §1.15): a
+  // transition the state table does not list has no code path. Each pins its
+  // expected predecessor in the WHERE clause so a concurrent transition cannot
+  // be silently clobbered, and each stamps `last_modified`/`last_edited_by`
+  // (the transition is an edit). The calling service has already re-read the
+  // status locked (`findLifecycleStatusForUpdate`) immediately before; the WHERE
+  // predecessor is the defense-in-depth backstop, mirroring
+  // `updateOfferingDraftInPlace`'s own status WHERE.
+  async markTesting(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "TESTING",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "DRAFT"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markTesting: offering ${offeringId} not found or not DRAFT`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm42-spec I1. TESTING → DRAFT (returnToDraft). Not a rollback — no content is
+  // restored (pm42 D4); the version simply becomes editable again because the
+  // §3.5 trigger's DRAFT condition is satisfied once more.
+  async markDraft(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "DRAFT",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "TESTING"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markDraft: offering ${offeringId} not found or not TESTING`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm42-spec I1/I4. TESTING → ACTIVE. Composed by `activateOffering` below after
+  // the family's previous ACTIVE version has been superseded (index-safe order).
+  async markActive(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "ACTIVE",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "TESTING"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markActive: offering ${offeringId} not found or not TESTING`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm42-spec I1/I4. ACTIVE → OBSOLETE. Used by `activateOffering` to supersede
+  // the family's previous ACTIVE version (pm42 D3 — the status the superseded row
+  // takes changed from RETIRED to OBSOLETE, so a superseded version keeps billing
+  // its pinned subscriptions, Inv. #6/#17). pm43 will reuse this for the manual
+  // stop-selling transition.
+  async markObsolete(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "OBSOLETE",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "ACTIVE"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markObsolete: offering ${offeringId} not found or not ACTIVE`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm16-spec §3.3, amended pm42 D3/I4. Supersede-then-flip, index-ordered: the
+  // family's current ACTIVE sibling (if any) is moved to OBSOLETE *before* the
+  // target flips to ACTIVE, so `product_offering_one_active_per_family` never
+  // sees two ACTIVE rows mid-transaction (the reverse order trips the index).
+  // Activation now flips TESTING → ACTIVE (was DRAFT → ACTIVE): the release
+  // preconditions moved one step earlier to `submitForTesting` (pm42 D2), and a
+  // TESTING version's content has been frozen since it left DRAFT, so activation
+  // re-checks nothing about content. `findActiveInFamily`'s family-wide
+  // `FOR UPDATE` is the serialization that makes two concurrent activations safe
+  // (Inv. #13) — unchanged; it is the "lock" pm42 D3 refers to (activation never
+  // took a separate `pg_advisory_xact_lock` — that guards branching only). The
+  // caller has already re-read this version's status locked and refused unless
+  // TESTING (code-standards §1.13); `markActive`'s WHERE is the backstop.
   async activateOffering(
     tx: Database,
-    draftId: string,
+    offeringId: string,
+    actorId: string,
   ): Promise<{ offeringId: string; supersededOfferingId: string | null }> {
-    const [draft] = await tx
+    const [target] = await tx
       .select({
         productOfferingId: productOffering.productOfferingId,
         familyOfferingId: productOffering.familyOfferingId,
       })
       .from(productOffering)
-      .where(eq(productOffering.productOfferingId, draftId))
+      .where(eq(productOffering.productOfferingId, offeringId))
       .limit(1);
-    if (!draft) {
-      throw new Error(`activateOffering: offering ${draftId} not found`);
+    if (!target) {
+      throw new Error(`activateOffering: offering ${offeringId} not found`);
     }
 
     // One-hop family resolution (architecture-phase2 §3), duplicated from
     // branchOfferingAsDraft's own inline resolution — pm12-spec's own
     // prediction (Design).
-    const rootId = draft.familyOfferingId ?? draft.productOfferingId;
+    const rootId = target.familyOfferingId ?? target.productOfferingId;
 
     const activeSibling = await productOfferingRepository.findActiveInFamily(
       tx,
@@ -650,36 +785,18 @@ export const productOfferingRepository = {
     );
 
     if (activeSibling) {
-      const retired = await tx
-        .update(productOffering)
-        .set({ lifecycleStatus: "RETIRED" })
-        .where(eq(productOffering.productOfferingId, activeSibling.offeringId))
-        .returning({ offeringId: productOffering.productOfferingId });
-      if (retired.length === 0) {
-        throw new Error(
-          `activateOffering: failed to retire sibling ${activeSibling.offeringId}`,
-        );
-      }
-    }
-
-    const [activated] = await tx
-      .update(productOffering)
-      .set({ lifecycleStatus: "ACTIVE" })
-      .where(
-        and(
-          eq(productOffering.productOfferingId, draftId),
-          eq(productOffering.lifecycleStatus, "DRAFT"),
-        ),
-      )
-      .returning({ offeringId: productOffering.productOfferingId });
-    if (!activated) {
-      throw new Error(
-        `activateOffering: offering ${draftId} not found or not DRAFT`,
+      await productOfferingRepository.markObsolete(
+        tx,
+        activeSibling.offeringId,
+        actorId,
       );
     }
 
+    const { offeringId: activatedId } =
+      await productOfferingRepository.markActive(tx, offeringId, actorId);
+
     return {
-      offeringId: activated.offeringId,
+      offeringId: activatedId,
       supersededOfferingId: activeSibling?.offeringId ?? null,
     };
   },

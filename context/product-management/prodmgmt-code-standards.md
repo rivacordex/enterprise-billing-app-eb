@@ -165,8 +165,8 @@ actions/product/
   insert-price.action.ts
   update-price.action.ts              # (pm38)
   delete-price.action.ts              # (pm38)
-  submit-for-testing.action.ts        # (new)
-  return-to-draft.action.ts           # (new)
+  submit-for-testing.action.ts        # (pm42)
+  return-to-draft.action.ts           # (pm42)
   activate-offering.action.ts
   obsolete-offering.action.ts         # (new)  ACTIVE → OBSOLETE
   retire-offering.action.ts           # re-purposed: OBSOLETE → RETIRED only
@@ -190,7 +190,7 @@ components/products/manage/
   offering-form.tsx, specification-form.tsx, price-form.tsx
   create-offering-dialog.tsx
   activate-offering-dialog.tsx
-  submit-for-testing-dialog.tsx       # (new)
+  submit-for-testing-dialog.tsx       # (pm42)
   obsolete-offering-dialog.tsx        # (new)
   retire-offering-dialog.tsx          # re-purposed (OBSOLETE → RETIRED)
   delete-version-dialog.tsx           # (new)
@@ -203,8 +203,8 @@ services/product/
   add-specification.ts, update-specification.ts, delete-specification.ts
   insert-price.ts, update-price.ts    # update-price (pm38)
   delete-price.ts                     # (pm38)
-  submit-for-testing.ts               # (new)
-  return-to-draft.ts                  # (new)
+  submit-for-testing.ts               # (pm42)
+  return-to-draft.ts                  # (pm42)
   activate-offering.ts
   obsolete-offering.ts                # (new)
   retire-offering.ts                  # re-purposed + subscription gate
@@ -227,7 +227,7 @@ validation/product/
   update-price.schema.ts              # (pm38)
   create-offering.schema.ts, update-offering.schema.ts
   create-specification.schema.ts, update-specification.schema.ts
-  transition.schema.ts                # (new)  offering id + optional reason, shared by the five
+  transition.schema.ts                # (pm42)  optional reason, shared by submit + return (activate keeps its own)
 tests/…                               # mirrors source; authz matrix; guardrails (§9)
 ```
 

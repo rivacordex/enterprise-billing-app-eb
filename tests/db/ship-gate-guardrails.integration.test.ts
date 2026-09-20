@@ -23,6 +23,7 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { createOrder as CreateOrder } from "@/services/ordering/create-order";
 import type { getOrderDetail as GetOrderDetail } from "@/services/ordering/get-order-detail";
 import type { activateOffering as ActivateOffering } from "@/services/product/activate-offering";
+import type { submitForTesting as SubmitForTesting } from "@/services/product/submit-for-testing";
 import type { suspendSubscription as SuspendSubscription } from "@/services/inventory/suspend-subscription";
 import type { resumeSubscription as ResumeSubscription } from "@/services/inventory/resume-subscription";
 import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
@@ -45,6 +46,7 @@ describe.skipIf(!databaseUrl)(
     let createOrder: typeof CreateOrder;
     let getOrderDetail: typeof GetOrderDetail;
     let activateOffering: typeof ActivateOffering;
+    let submitForTesting: typeof SubmitForTesting;
     let suspendSubscription: typeof SuspendSubscription;
     let resumeSubscription: typeof ResumeSubscription;
 
@@ -114,9 +116,13 @@ describe.skipIf(!databaseUrl)(
 
     // Unlike create-order.integration.test.ts's `newOffering` (which never
     // needs to survive a real `activateOffering` call), this fixture also
-    // inserts a resolved mandatory specification — `activateOffering`'s
+    // inserts a resolved mandatory specification — `submitForTesting`'s
     // SPECIFICATIONS_NOT_RESOLVED precondition requires at least one, and
     // `branchOfferingAsDraft` clones it onto the branch guardrail 16 activates.
+    // The offering is created DRAFT and its children are inserted while DRAFT
+    // (pm36's §3.5 trigger rejects child writes onto a non-DRAFT parent), then
+    // the parent status is flipped to ACTIVE directly — a fixture shortcut for
+    // the pre-existing ACTIVE version, not the release path under test.
     async function newActiveOfferingWithResolvedSpec(): Promise<string> {
       const [offering] = await db
         .insert(productOffering)
@@ -125,7 +131,7 @@ describe.skipIf(!databaseUrl)(
           isBundle: false,
           isSellable: true,
           billingOnly: true,
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
           version: 1,
           lastEditedBy: null,
         })
@@ -145,11 +151,18 @@ describe.skipIf(!databaseUrl)(
         productOfferingId: offeringId,
         name: "Monthly Recurring Charge",
         priceType: "recurring",
+        recurringChargePeriodLength: 1,
+        recurringChargePeriodType: "months",
         amount: "5000.00",
         currency: CURRENCY,
         pricingModel: "flat",
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       });
+
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, offeringId));
 
       return offeringId;
     }
@@ -176,6 +189,8 @@ describe.skipIf(!databaseUrl)(
         await import("@/services/ordering/get-order-detail"));
       ({ activateOffering } =
         await import("@/services/product/activate-offering"));
+      ({ submitForTesting } =
+        await import("@/services/product/submit-for-testing"));
       ({ suspendSubscription } =
         await import("@/services/inventory/suspend-subscription"));
       ({ resumeSubscription } =
@@ -202,13 +217,14 @@ describe.skipIf(!databaseUrl)(
       await sql.end();
     });
 
-    // Guardrail 16 (code-standards §9): activate a new version of the
-    // ordered offering through the real catalog services (branch + activate,
-    // not a raw SQL status flip — pm26/pm32's own "RETIRED pinned version"
-    // tests only ever flipped `lifecycle_status` directly); assert the
-    // subscription's pinned `product_offering_id` is unchanged and its
-    // `OrderPriceLine`/rating reads still resolve byte-identically from the
-    // now-RETIRED version's rows (Inv. #17).
+    // Guardrail 16 (code-standards §9, re-scoped pm42 I7): activate a new
+    // version of the ordered offering through the real catalog release path
+    // (branch → submit for testing → activate, not a raw SQL status flip —
+    // pm26/pm32's own "RETIRED pinned version" tests only ever flipped
+    // `lifecycle_status` directly); assert the subscription's pinned
+    // `product_offering_id` is unchanged and its `OrderPriceLine`/rating reads
+    // still resolve byte-identically from the now-OBSOLETE version's rows
+    // (Inv. #17 — grandfathering makes an OBSOLETE version live billing data).
     it("guardrail 16 — grandfathering survives a real catalog activation of a new version", async () => {
       const partyRoleId = await newPartyRole("PMSHIPGATE-Grandfather");
       const banId = await newBillingAccount(partyRoleId);
@@ -233,23 +249,28 @@ describe.skipIf(!databaseUrl)(
       expect(before!.item.productOfferingId).toBe(offeringId);
       expect(before!.prices.length).toBeGreaterThan(0);
 
-      // Branch a new DRAFT version off the ordered offering, then activate
-      // it through the real pm16 service — this is what actually retires
-      // the sibling (Inv. #6/#13), not a direct UPDATE.
+      // Branch a new DRAFT version off the ordered offering, then move it
+      // through the real pm42 release path (submit for testing → activate) —
+      // this is what actually supersedes the sibling (Inv. #6/#13), not a
+      // direct UPDATE.
       const { offeringId: branchedId } = await db.transaction((tx) =>
         productOfferingRepository.branchOfferingAsDraft(tx, offeringId),
       );
+      const submitResult = await submitForTesting(branchedId, {}, actorId);
+      expect(submitResult.ok).toBe(true);
       const activateResult = await activateOffering(branchedId, {}, actorId);
       expect(activateResult).toMatchObject({
         ok: true,
         supersededOfferingId: offeringId,
       });
 
-      const [retiredOffering] = await db
+      // The superseded version is now OBSOLETE, not RETIRED (pm42 D3) — it stays
+      // a live billing source for the grandfathered subscription below.
+      const [supersededOffering] = await db
         .select({ lifecycleStatus: productOffering.lifecycleStatus })
         .from(productOffering)
         .where(eq(productOffering.productOfferingId, offeringId));
-      expect(retiredOffering?.lifecycleStatus).toBe("RETIRED");
+      expect(supersededOffering?.lifecycleStatus).toBe("OBSOLETE");
 
       const [subscription] = await db
         .select({ productOfferingId: productInventory.productOfferingId })
