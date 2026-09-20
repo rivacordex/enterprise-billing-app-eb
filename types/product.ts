@@ -15,6 +15,20 @@ export const LIFECYCLE_STATUSES = [
 ] as const;
 export type LifecycleStatus = (typeof LIFECYCLE_STATUSES)[number];
 
+// Whether a version's specification/pricing panels edit inline (pm41 D3/I4).
+// DRAFT is the only editable status; TESTING/ACTIVE/OBSOLETE/RETIRED render the
+// read-only variant. A total `Record` (never an inline `status === "DRAFT"`
+// comparison) so adding a lifecycle status is a compile error here rather than
+// silently defaulting to non-editable (code-standards §2.2 — "allowed actions"
+// maps are total Records).
+export const PANEL_EDITABLE_BY_STATUS: Record<LifecycleStatus, boolean> = {
+  DRAFT: true,
+  TESTING: false,
+  ACTIVE: false,
+  OBSOLETE: false,
+  RETIRED: false,
+};
+
 export const PRICE_TYPES = ["recurring", "usage", "once"] as const;
 export type PriceType = (typeof PRICE_TYPES)[number];
 
@@ -96,6 +110,17 @@ export type FamilyPage = {
   total: number; // matching families across all pages
   page: number;
   pageSize: number;
+};
+
+// One entry per version for Manage Products' version bar (pm40 D2/I1, code-
+// standards §2.9), built by `findFamilyVersions` (one query, version DESC). The
+// bar renders `v{version}` + `LifecycleBadge`; it carries no prices or specs —
+// the selected version's detail is fetched separately by `getOfferingDetail`.
+export type VersionSummary = {
+  productOfferingId: string;
+  version: number;
+  lifecycleStatus: LifecycleStatus;
+  lastModified: Date;
 };
 
 export type SpecificationCard = {

@@ -1,6 +1,10 @@
 import { Receipt } from "lucide-react";
 
 import { PriceTypeBadge } from "@/components/products/price-type-badge";
+import {
+  PriceEffectivityTag,
+  effectivityAccentClass,
+} from "@/components/products/price-effectivity";
 import { formatCurrency, formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { EffectivityStatus, PriceCard } from "@/types/product";
@@ -17,42 +21,13 @@ type PricesPanelProps = {
   timezone: string;
 };
 
-function stateTag(
-  price: PriceCard,
-  locale: string,
-  timezone: string,
-): React.JSX.Element | null {
-  if (price.effectivityStatus === "future") {
-    return (
-      <span className="inline-flex items-center rounded-[var(--radius-xs)] bg-[color:var(--color-info-50)] px-1.5 py-0.5 text-[11px] font-semibold tracking-wider text-[color:var(--color-info-700)] uppercase">
-        {`Starts ${formatDatetime(price.startDateTime, locale, timezone)}`}
-      </span>
-    );
-  }
-
-  if (price.effectivityStatus === "superseded") {
-    return (
-      <span className="inline-flex items-center rounded-[var(--radius-xs)] bg-[color:var(--color-neutral-100)] px-1.5 py-0.5 text-[11px] font-semibold tracking-wider text-[color:var(--color-neutral-700)] uppercase">
-        Superseded
-      </span>
-    );
-  }
-
-  return null;
-}
-
+// Effectivity tag + card accent come from the shared price-effectivity module
+// (pm41 review #8), so Manage Products' inline editor renders the same signal.
 function cardClassName(status: EffectivityStatus): string {
-  const base = "rounded-md border border-[color:var(--border-subtle)] p-3";
-
-  if (status === "current") {
-    return cn(base, "border-l-4 border-l-[color:var(--color-cyan-500)]");
-  }
-
-  if (status === "superseded") {
-    return cn(base, "text-muted-foreground");
-  }
-
-  return base;
+  return cn(
+    "rounded-md border border-[color:var(--border-subtle)] p-3",
+    effectivityAccentClass(status),
+  );
 }
 
 function formatChargePeriod(length: number, type: string): string {
@@ -93,7 +68,11 @@ export function PricesPanel({
               {price.name}
             </span>
             <PriceTypeBadge priceType={price.priceType} />
-            {stateTag(price, locale, timezone)}
+            <PriceEffectivityTag
+              price={price}
+              locale={locale}
+              timezone={timezone}
+            />
           </div>
 
           <div className="mt-1.5">

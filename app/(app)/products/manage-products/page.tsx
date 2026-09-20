@@ -6,12 +6,22 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { CreateOfferingDialog } from "@/components/products/manage/create-offering-dialog";
 import { FamilyTable } from "@/components/products/manage/family-table";
+import { SelectionRegion } from "@/components/products/manage/selection-region";
+import { VersionBar } from "@/components/products/manage/version-bar";
+import { getOfferingDetail } from "@/services/product/get-offering-detail";
 import { listFamilies } from "@/services/product/list-families";
+import { listFamilyVersions } from "@/services/product/list-family-versions";
+import { resolveSelectedVersion } from "@/services/product/resolve-selected-version";
 import {
   getAppLocale,
   getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
+import {
+  PANEL_EDITABLE_BY_STATUS,
+  type OfferingDetail,
+  type VersionSummary,
+} from "@/types/product";
 import { familyListSearchParamsSchema } from "@/validation/product/family-list.schema";
 
 export const dynamic = "force-dynamic";
@@ -41,13 +51,43 @@ export default async function ManageProductsPage({
     version: firstValue(raw.version),
   });
 
-  // One paged families query (+ its count) and the two config reads — no
-  // per-row detail fetch (pm39 D2/§1.16, V9).
-  const [page, locale, timezone] = await Promise.all([
+  // First render: one paged families query (+ its count) and the two config
+  // reads — no per-row detail fetch (pm39 D2/§1.16, V9). The family versions are
+  // fetched concurrently when a family is selected (they don't depend on the
+  // list). findFamilyPage is deliberately NOT held in a data cache (pm40 D5): the
+  // module has no cache layer (architecture §1), and the existing mutations
+  // revalidate by path, not tag — so the families 2 statements are re-run per
+  // selection. Query budget: no selection = 2; selection/version switch = 6
+  // (families 2 + versions 1 + getOfferingDetail 3).
+  // `family` is a local const so its truthiness narrows `string | null` → `string`
+  // inside each branch below, avoiding an `as string` assertion the compiler
+  // can't verify against a separate boolean.
+  const family = params.family;
+  const [page, locale, timezone, versions] = await Promise.all([
     listFamilies(params),
     getAppLocale(),
     getAppTimezone(),
+    family
+      ? listFamilyVersions(family)
+      : Promise.resolve([] as VersionSummary[]),
   ]);
+
+  // `version` is subordinate to `family` (D1): a stale/foreign `?version=` falls
+  // back to the primary version silently; an unknown `?family=` resolves to null
+  // and renders the empty-selection state, never a 404 (§3.3).
+  const selectedVersionId = family
+    ? resolveSelectedVersion(versions, params.version)
+    : null;
+  const selectedOffering: OfferingDetail | null = selectedVersionId
+    ? await getOfferingDetail(selectedVersionId)
+    : null;
+
+  // pm41 I4: the panels edit inline only on a DRAFT version, read from a total
+  // `Record<LifecycleStatus, boolean>` (never an inline `=== "DRAFT"`) so a new
+  // status forces a decision here rather than silently staying read-only.
+  const canEdit = selectedOffering
+    ? PANEL_EDITABLE_BY_STATUS[selectedOffering.lifecycleStatus]
+    : false;
 
   return (
     <main className="space-y-5 p-5">
@@ -80,6 +120,35 @@ export default async function ManageProductsPage({
         page={page}
         query={params.q}
         status={params.status}
+        locale={locale}
+        timezone={timezone}
+      />
+
+      {/* D4 layout order: table → version bar → detail → specs → prices. The
+          bar renders only when a selected family actually has versions; a
+          family that matches no row falls through to SelectionRegion's empty
+          state below. `key` on the region resets any subtree state per version,
+          matching View Product's OfferingDetailRegion precedent. */}
+      {family && versions.length > 0 && selectedVersionId ? (
+        <VersionBar
+          versions={versions}
+          selectedVersionId={selectedVersionId}
+          query={params.q}
+          status={params.status}
+          page={params.page}
+          family={family}
+        />
+      ) : null}
+
+      <SelectionRegion
+        key={selectedVersionId ?? "none"}
+        hasFamily={family !== null}
+        offering={selectedOffering}
+        canEdit={canEdit}
+        familyId={family}
+        query={params.q}
+        status={params.status}
+        page={params.page}
         locale={locale}
         timezone={timezone}
       />

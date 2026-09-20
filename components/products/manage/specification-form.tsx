@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, X } from "lucide-react";
@@ -84,24 +85,41 @@ export interface SpecificationFormDefaultValues {
 }
 
 export interface SpecificationFormProps {
-  mode: "create" | "edit";
   defaultValues?: SpecificationFormDefaultValues;
   onSubmit: (values: CreateSpecificationInput) => Promise<void>;
   isSubmitting: boolean;
   formId: string;
+  // pm41 D2 — the inline editor tracks per-row dirtiness so activating a second
+  // row while one has unsaved edits can prompt to discard. Optional so the
+  // create-dialog callers that don't need it are unaffected.
+  onDirtyChange?: (dirty: boolean) => void;
+  // pm41 review #7 — server-returned field errors attached to their inputs via
+  // setError; unmatched keys render in a residual list so none are dropped.
+  serverFieldErrors?: Record<string, string[]> | null;
 }
+
+// The form fields a server error key can be attached to (pm41 review #7).
+const SPEC_SERVER_FIELDS: readonly (keyof SpecificationFormValues)[] = [
+  "name",
+  "defaultValue",
+  "isMandatory",
+  "isDefault",
+];
 
 export function SpecificationForm({
   defaultValues,
   onSubmit,
   isSubmitting,
   formId,
+  onDirtyChange,
+  serverFieldErrors,
 }: SpecificationFormProps): React.JSX.Element {
   const {
     register,
     handleSubmit,
     control,
-    formState: { errors },
+    setError,
+    formState: { errors, isDirty },
   } = useForm<SpecificationFormValues>({
     resolver: zodResolver(specificationFormSchema),
     defaultValues: {
@@ -119,6 +137,35 @@ export function SpecificationForm({
     control,
     name: "characteristicsList",
   });
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  // pm41 review #7 — attach server field errors to their inputs via setError
+  // (the one side effect); unmatched keys (e.g. productSpecCharacteristics)
+  // become residual messages, derived during render below so none are lost.
+  useEffect(() => {
+    if (!serverFieldErrors) return;
+    for (const [key, messages] of Object.entries(serverFieldErrors)) {
+      const message = messages.join(" ");
+      if (message && (SPEC_SERVER_FIELDS as readonly string[]).includes(key)) {
+        setError(key as keyof SpecificationFormValues, {
+          type: "server",
+          message,
+        });
+      }
+    }
+  }, [serverFieldErrors, setError]);
+
+  const residualServerMessages = serverFieldErrors
+    ? Object.entries(serverFieldErrors)
+        .filter(
+          ([key]) => !(SPEC_SERVER_FIELDS as readonly string[]).includes(key),
+        )
+        .map(([, messages]) => messages.join(" "))
+        .filter((message) => message.length > 0)
+    : [];
 
   return (
     <form
@@ -255,6 +302,19 @@ export function SpecificationForm({
             Add characteristic
           </Button>
         </fieldset>
+
+        {residualServerMessages.length > 0 && (
+          <ul className="flex flex-col gap-0.5">
+            {residualServerMessages.map((message, index) => (
+              <li
+                key={index}
+                className="text-body-sm text-[color:var(--text-danger)]"
+              >
+                {message}
+              </li>
+            ))}
+          </ul>
+        )}
       </FieldGroup>
     </form>
   );

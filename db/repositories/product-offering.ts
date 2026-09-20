@@ -22,6 +22,7 @@ import type {
   FamilyListRow,
   LifecycleStatus,
   OfferingListRow,
+  VersionSummary,
 } from "@/types/product";
 import type { OFFERING_SORT_VALUES } from "@/validation/product/offering-list.schema";
 
@@ -185,6 +186,11 @@ export const productOfferingRepository = {
   // NULL). Filters (q ILIKE, status) apply to the primary version (D3); the
   // count query reuses the same CTE so the total survives LIMIT. Two statements,
   // no per-row detail fetch (§1.16, V9). Returns families, never versions.
+  //
+  // The ROW_NUMBER `CASE` below encodes the primary-version priority (ACTIVE →
+  // open → highest). pm40's `resolveSelectedVersion` (services/product) applies
+  // the identical rule in TS to auto-select a version when a family is opened —
+  // keep the two in sync; a change here must change that helper in the same edit.
   async findFamilyPage(
     db: Database,
     filters: FamilyPageFilters,
@@ -285,6 +291,45 @@ export const productOfferingRepository = {
             : new Date(row.last_modified),
       })),
     };
+  },
+
+  // Backs the Manage Products version bar (pm40 I1). One statement: every
+  // version in the family, newest-first (D2 — descending, so the ACTIVE/open
+  // version sits at the left edge). The family key is
+  // COALESCE(family_offering_id, product_offering_id) — the same expression
+  // pm36's indexes and findFamilyPage use — so a `familyId` (a root's own id)
+  // matches the root row and every branch. Returns VersionSummary rows, never a
+  // detail; the selected version's detail is a separate getOfferingDetail read.
+  //
+  // `version` is unique within a family (Inv. #8), so `desc(version)` is already
+  // deterministic; the `asc(productOfferingId)` tie-breaker is kept anyway to
+  // match findList/findFamilyPage's stable-ordering convention and to stay
+  // deterministic if that invariant is ever violated by a data anomaly (the
+  // order feeds `resolveSelectedVersion`'s "highest" primary fallback).
+  async findFamilyVersions(
+    db: Database,
+    familyId: string,
+  ): Promise<VersionSummary[]> {
+    const rows = await db
+      .select({
+        productOfferingId: productOffering.productOfferingId,
+        version: productOffering.version,
+        lifecycleStatus: productOffering.lifecycleStatus,
+        lastModified: productOffering.lastModified,
+      })
+      .from(productOffering)
+      .where(
+        sql`coalesce(${productOffering.familyOfferingId}, ${productOffering.productOfferingId}) = ${familyId}`,
+      )
+      .orderBy(
+        desc(productOffering.version),
+        asc(productOffering.productOfferingId),
+      );
+
+    return rows.map((row) => ({
+      ...row,
+      lifecycleStatus: row.lifecycleStatus as LifecycleStatus,
+    }));
   },
 
   // Backs the offering detail section (pm03-spec §3.6). Left-joins

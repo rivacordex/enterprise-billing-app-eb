@@ -253,6 +253,61 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    it("re-saving a DRAFT price without moving its (old) start date is not blocked by backdating (pm41 review #1)", async () => {
+      const offeringId = await createDraftOffering("pm41 unchanged-start");
+      const oldStart = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+      const priceId = await insertRecurringPrice(
+        offeringId,
+        "Old",
+        oldStart.toISOString(),
+      );
+
+      // Amount-only edit re-submits the row's own >3-day-old start; the
+      // tolerance must not fire because the start is unchanged.
+      const result = await updatePrice(
+        priceId,
+        recurringInput("88.00", oldStart),
+        actorId,
+      );
+
+      expect(result.ok).toBe(true);
+      // `oldStart` carries a time-of-day component; the unchanged-start edit must
+      // preserve the exact stored instant, not shift it (review #3).
+      const rows = await sql<{ amount: string; start_date_time: Date }[]>`
+        SELECT amount, start_date_time FROM product.product_offering_price
+        WHERE product_offering_price_id = ${priceId}`;
+      expect(rows[0]!.amount).toBe("88.00");
+      expect(new Date(rows[0]!.start_date_time).getTime()).toBe(
+        oldStart.getTime(),
+      );
+      expect(await auditCount(priceId, "PRODUCT_PRICE_UPDATED")).toBe(1);
+    });
+
+    it("rejects a DRAFT price update that MOVES the start >3 days into the past, rolling the change back (pm41 review #1)", async () => {
+      const offeringId = await createDraftOffering("pm41 moved-start");
+      const priceId = await insertRecurringPrice(
+        offeringId,
+        "Recent",
+        new Date().toISOString(),
+      );
+
+      const movedBack = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+      const result = await updatePrice(
+        priceId,
+        recurringInput("88.00", movedBack),
+        actorId,
+      );
+
+      expect(result).toEqual({ ok: false, code: "BACKDATED_START_TOO_FAR" });
+      // The in-transaction throw rolled the update back: amount unchanged, no
+      // audit row written.
+      const rows = await sql<{ amount: string }[]>`
+        SELECT amount FROM product.product_offering_price
+        WHERE product_offering_price_id = ${priceId}`;
+      expect(rows[0]!.amount).toBe("10.00");
+      expect(await auditCount(priceId, "PRODUCT_PRICE_UPDATED")).toBe(0);
+    });
+
     it("deletes a price on a DRAFT version and writes exactly one PRODUCT_PRICE_DELETED audit row", async () => {
       const offeringId = await createDraftOffering("pm38 del-draft");
       const priceId = await insertRecurringPrice(
