@@ -54,7 +54,7 @@ The §9 amendment list from the plan lands here if it has not already landed wit
 - Behavioural: a table-driven test over all 25 ordered pairs of the five statuses plus delete — each pair either maps to a named service that succeeds, or has no code path and is proven unreachable by the absence of a caller.
 - `actions/product/` exports exactly **fourteen** files — the eight pre-existing catalog actions plus the six this update adds: `update-price`, `delete-price` (pm38), `submit-for-testing`, `return-to-draft` (pm42), `obsolete-offering` (pm43), `delete-offering` (pm44). Assert the explicit file **set** from the code-standards §7 tree, not a bare count, so a missing or extra file fails by name. (An earlier draft said "thirteen"; that predated pm44's `delete-offering`. Extends the existing `PRODUCT_ACTION_FILES` assertion.)
 
-### I2. Guardrail 29 — query budget (`tests/app/manage-products-query-budget.test.ts`, extended)
+### I2. Guardrail 29 — query budget (`tests/app/manage-products-query-budget.integration.test.ts`, extended)
 
 Per D4, including the post-mutation case. Assert statement counts per table, so a future N+1 against `product_offering_price` fails even if the total happens to match.
 
@@ -70,7 +70,7 @@ Rows for all five new actions × the three levels. Explicitly: an `EDIT`-only pr
 
 ### I5. Success-criteria evidence table
 
-A short section appended to `prodmgmt-update-overview.md`: each of the fourteen criteria mapped to the test file and test name that proves it. This is the artefact a reviewer reads instead of re-deriving coverage, and it makes an unproven criterion visible rather than assumed.
+A short section appended to `prodmgmt-update-overview.md`: each of the fourteen criteria mapped to the test file and the case that proves it — the exact test name where a single `it` owns the criterion, otherwise the file plus the specific proving scenario (some criteria are proven by several cases across a file). This is the artefact a reviewer reads instead of re-deriving coverage, and it makes an unproven criterion visible rather than assumed.
 
 ### I6. Documentation amendments landed and verified
 

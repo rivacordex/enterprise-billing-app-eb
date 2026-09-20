@@ -4,7 +4,7 @@
 
 **Companion docs:** `prodmgmt-project-overview.md` and `prodmgmt-update-overview.md` (product spec) and `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
 
-> **Status:** covers all four catalog and ordering surfaces — View Product, Manage Products, Orders, Subscriptions. Every rule below is written as the standard **in force for the module's target state**, which includes the Manage Products rebuild & catalog lifecycle update (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). That update has now **landed in `main` (pm35–pm45)**: every rule below is the standard in force, and **Appendix A is empty** — no shipped code, comment, test or file still asserts a pre-update rule. Rules are stated once, in the present tense.
+> **Status:** covers all four catalog and ordering surfaces — View Product, Manage Products, Orders, Subscriptions. Every rule below is written as the standard **in force for the module's target state**, which includes the Manage Products rebuild & catalog lifecycle update (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). That update is now **delivered and ship-gate-verified (pm35–pm45)**: every rule below is the standard in force, and **Appendix A is empty** — no shipped code, comment, test or file still asserts a pre-update rule. Rules are stated once, in the present tense.
 
 ---
 
@@ -40,7 +40,7 @@
    - `PriceType`: `'recurring' | 'usage' | 'once'`
    - `PricingModel`: `'flat' | 'tiered'`
    - `UnitOfMeasure`: `'Mbps' | 'GB' | 'MB' | 'EA'` — **case-sensitive literals**. `'MBPS'`, `'mbps'` and `'Gb'` are not members and are not normalised on the way in.
-   - `RecurringPeriodType`: `'months'` (single member pending plan open item O1). Adding a member requires a migration changing the CHECK **and** a confirmed mapping in the bill run's recurring resolver — never a TypeScript-only edit.
+   - `RecurringPeriodType`: `'months'` (single member; open item O1 is closed — `months` only, length ∈ (1, 3, 12), per bm29's resolver). Adding a member requires a migration changing the CHECK **and** a confirmed mapping in the bill run's recurring resolver — never a TypeScript-only edit.
 2. **Every map keyed by a domain union is a total `Record`.** `Record<LifecycleStatus, X>` for badge variants, labels, allowed actions and sort weight; `Record<PriceType, X>` for field requirements. Adding `TESTING`/`OBSOLETE` must break the build in every such map rather than fall through to a default. No `switch` over a domain union without an exhaustive `never` default.
 3. **JSONB typing per general §6.17.** `ProductSpecCharacteristics` and `PricingCharacteristics` live in `validation/product/`; the Drizzle `.$type<T>()` types derive from them.
 4. **`PricingCharacteristics` is a discriminated union on `pricing_model`** — `{ tiers: Tier[] }` with `Tier = { from: number; to: number | null; rate: string }`; contiguity comes from the Zod schema, not ad-hoc checks.
@@ -235,7 +235,7 @@ tests/…                               # mirrors source; authz matrix; guardrai
 
 1. **The nav lives in the shared registry** (`lib/nav-registry.ts` + `components/nav-icons.ts`); no product-specific nav file.
 2. **`services/product` stays framework-agnostic** — no `next/*` imports; parsed params in, §2.9 read models out.
-3. **`app/(app)/products/product-offering/**`may only ever be touched for its nav label and page`H1`** beyond its original scope. Manage Products may **import from** `components/products/\*` but nothing inside the View Product route folder is edited.
+3. **`app/(app)/products/product-offering/**`may only ever be touched for its nav label and page`H1`** beyond its original scope. Manage Products may **import from** `components/products/*` but nothing inside the View Product route folder is edited.
 4. **One transition per file** — in `actions/product/` and `services/product/` alike. Do not collapse the five transition services into a state-machine module; the shared part (id + optional reason parsing) is the Zod schema, and that is the only thing they share.
 
 ---
@@ -302,7 +302,7 @@ The authz matrix (guardrail 1) extends to every row of §8, including the EDIT-v
 
 ## Appendix A — Superseded wording and the code/tests that still assert the old rules
 
-**Empty (cleared pm45).** The Manage rebuild & catalog lifecycle update (pm35–pm45) has fully landed, so no shipped code comment, test or file still asserts a pre-update rule. Each row was removed as its rule stopped being true in `main`, verified by grep rather than memory:
+**Empty (cleared pm45).** The Manage rebuild & catalog lifecycle update (pm35–pm45) is delivered and ship-gate-verified, so no shipped code comment, test or file still asserts a pre-update rule. Each row was removed as its rule stopped being true in the codebase, verified by grep rather than memory:
 
 - The price repository exports `updatePrice`/`deletePrice`, each refusing a non-`DRAFT` parent (§1.2).
 - `deleteOffering` hard-deletes a never-`ACTIVE` version, replacing the old discard-sets-`RETIRED` behaviour (§1.11); `PRODUCT_OFFERING_DISCARDED` is gone from `AUDIT_EVENT_TYPES`, `PRODUCT_OFFERING_DELETED` is present.

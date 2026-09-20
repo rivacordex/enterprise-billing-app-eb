@@ -1,6 +1,6 @@
 # Product Management — AI Workflow Rules (Module Supplement)
 
-Read `context/ai-workflow-rules.md` first — it is binding for every module and applies here unchanged; this file adds only what is specific to Product Management, and its numbering follows that document's sections. The module is **fully built and shipped** (View Product, Manage Products, Orders, Subscriptions; units pm01–pm34) and is now **under a planned update**: the Manage Products rebuild & catalog lifecycle change (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). Every rule below is written for the target state that update defines. Four rules in the previous version of this file are superseded by it — see **Appendix A** before you conclude that a rule here contradicts the shipped code.
+Read `context/ai-workflow-rules.md` first — it is binding for every module and applies here unchanged; this file adds only what is specific to Product Management, and its numbering follows that document's sections. The module is **fully built and shipped** (View Product, Manage Products, Orders, Subscriptions; units pm01–pm34) and has now also **delivered the Manage Products rebuild & catalog lifecycle update** (units pm35–pm45, `_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). Every rule below is written for the target state that update defines. Four rules in the previous version of this file are superseded by it — see **Appendix A** before you conclude that a rule here contradicts the shipped code.
 
 **Companion docs (authoritative — cite them, never restate or contradict them):**
 
@@ -164,7 +164,7 @@ Run the general doc §8 checklist in full, plus every item below. If any fails, 
 
 ## Appendix A — Rules in the previous version of this file that this update supersedes
 
-**Empty (cleared pm45).** The Manage rebuild & catalog lifecycle update (pm35–pm45) has fully landed in `main`, so every rule it superseded is now in force and nothing in the shipped code, its comments, an older doc copy or a test still asserts a pre-update rule. Verified by grep as each row was cleared, not from memory:
+**Empty (cleared pm45).** The Manage rebuild & catalog lifecycle update (pm35–pm45) is delivered and ship-gate-verified — the rules below are the target state it establishes, now in force in the codebase — so every rule it superseded is cleared and nothing in the code, its comments, an older doc copy or a test still asserts a pre-update rule. Verified by grep as each row was cleared, not from memory:
 
 - The price repository's `updatePrice`/`deletePrice` exist and refuse any non-`DRAFT` parent (§3.7, Inv. #1 amended).
 - `deleteOffering` hard-deletes a never-`ACTIVE` `DRAFT`/`TESTING` version with its children (§3.8, Inv. #25).
