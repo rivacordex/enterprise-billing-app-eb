@@ -24,6 +24,17 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 //   • family selected   = 6 (findFamilyPage 2 + findFamilyVersions 1 +
 //                            getOfferingDetail 3: detail + specs + prices)
 //   • version switch    = 6 (same shape, a different `?version=`)
+//   • unknown ?family=   = 3 (findFamilyPage 2 + findFamilyVersions 1, no detail)
+//   • OBSOLETE selection = 6 product + 1 inventory (the live-subscription count,
+//                            pm43 I7 — the D4 "+1" case)
+//   • after a mutation   = 6, identical to a fresh selection: revalidatePath
+//                            re-renders the whole route, not a partial panel
+//                            refresh (pm45 D4)
+//
+// pm45 D4 extends this suite to the full page lifecycle and pins the EXACT
+// integers per table (never a "3 or 4" range) so a real +1 regression — e.g. an
+// N+1 against product_offering_price after a write — cannot pass on a
+// coincidental total.
 //
 // pm40 D5 decision (recorded in the tracker): findFamilyPage is NOT held in a
 // data cache — the module has no cache layer (architecture §1) and the existing
@@ -79,6 +90,10 @@ describe.skipIf(!databaseUrl)(
     // real family + version (the family root's own id is its family key).
     let alphaFamilyId: string;
     let alphaDraftId: string;
+    // A single-version OBSOLETE family: selecting it resolves the OBSOLETE
+    // primary, the one status whose page render also reads the live-subscription
+    // count (pm43 I7) — the "+1" case in pm45 D4.
+    let gammaFamilyId: string;
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
@@ -126,6 +141,17 @@ describe.skipIf(!databaseUrl)(
         VALUES ('Alpha', false, false, false, 'DRAFT', 2, ${alphaFamilyId})
         RETURNING product_offering_id AS id`;
       alphaDraftId = alphaDraft!.id;
+
+      // Gamma: a lone OBSOLETE version (its own id is its family key). Selecting
+      // family=Gamma resolves this OBSOLETE version as the primary (no ACTIVE,
+      // no open, highest wins), so the page additionally reads the live count.
+      // OBSOLETE is neither open nor ACTIVE, so no family index rejects it.
+      const [gamma] = await sql<{ id: string }[]>`
+        INSERT INTO product.product_offering
+          (name, is_bundle, is_sellable, billing_only, lifecycle_status, version)
+        VALUES ('Gamma', false, false, false, 'OBSOLETE', 1)
+        RETURNING product_offering_id AS id`;
+      gammaFamilyId = gamma!.id;
     }, 30_000);
 
     afterAll(async () => {
@@ -157,6 +183,7 @@ describe.skipIf(!databaseUrl)(
       offering: number;
       price: number;
       spec: number;
+      inventory: number;
     } {
       const normalised = hoisted.queries.map((q) => q.query.replace(/"/g, ""));
       return {
@@ -166,6 +193,11 @@ describe.skipIf(!databaseUrl)(
         price: normalised.filter((q) => /product_offering_price/.test(q))
           .length,
         spec: normalised.filter((q) => /product_specifications/.test(q)).length,
+        // The live-subscription count (pm43 I7) — the only inventory read the
+        // page ever issues, and only for an OBSOLETE selection.
+        inventory: normalised.filter((q) =>
+          /\binventory\.product_inventory\b/.test(q),
+        ).length,
       };
     }
 
@@ -197,13 +229,16 @@ describe.skipIf(!databaseUrl)(
     it("selecting a family ⇒ six statements, and the detail is fetched for the primary (ACTIVE) version, not the draft", async () => {
       await renderManageProducts({ family: alphaFamilyId });
 
-      const { offering, price, spec } = countProductStatements();
+      const { offering, price, spec, inventory } = countProductStatements();
       // findFamilyPage (2, re-run — not cached, D5) + findFamilyVersions (1) +
       // findDetailById (1) = 4 offering statements; specs (1) + prices (1).
       expect(offering).toBe(4);
       expect(price).toBe(1);
       expect(spec).toBe(1);
       expect(offering + price + spec).toBe(6);
+      // An ACTIVE primary reads NO live-subscription count — that read is
+      // OBSOLETE-only (contrast the OBSOLETE case below).
+      expect(inventory).toBe(0);
       // No ?version= ⇒ the primary (ACTIVE root = alphaFamilyId) is selected;
       // the draft's detail is NOT fetched (its id never appears as a bind param).
       expect(allBindParams()).not.toContain(alphaDraftId);
@@ -236,6 +271,53 @@ describe.skipIf(!databaseUrl)(
       expect(offering).toBe(3);
       expect(price).toBe(0);
       expect(spec).toBe(0);
+    }, 30_000);
+
+    it("selecting an OBSOLETE version ⇒ the six-statement selection budget PLUS exactly one live-subscription count (pm43 I7 / D4)", async () => {
+      await renderManageProducts({ family: gammaFamilyId });
+
+      const { offering, price, spec, inventory } = countProductStatements();
+      // The product budget is unchanged from a normal selection (6); the OBSOLETE
+      // status adds exactly ONE inventory read — the Retire blocked-state count —
+      // and nothing more. This is the D4 "+1 for the live count" case.
+      expect(offering).toBe(4);
+      expect(price).toBe(1);
+      expect(spec).toBe(1);
+      expect(offering + price + spec).toBe(6);
+      expect(inventory).toBe(1);
+    }, 30_000);
+
+    it("after a mutation ⇒ the same selection budget, never a partial 'panels only' refresh (D4)", async () => {
+      // A mutation happened (modelled by a direct write to the selected DRAFT
+      // version). The Server Action would then call `revalidatePath`, which
+      // invalidates the WHOLE route — Next has no panels-only revalidation — so
+      // the next render re-issues the FULL selection budget, not a cheaper
+      // partial. We measure ONLY the post-mutation re-render (the counter is
+      // cleared after the mutation's own statements), and assert per-table counts
+      // so an N+1 against product_offering_price after a write fails here even if
+      // the total coincidentally still summed to six.
+      await sql`
+        UPDATE product.product_offering
+        SET name = 'Alpha (edited)'
+        WHERE product_offering_id = ${alphaDraftId}`;
+      hoisted.queries.length = 0;
+
+      await renderManageProducts({
+        family: alphaFamilyId,
+        version: alphaDraftId,
+      });
+
+      const { offering, price, spec, inventory } = countProductStatements();
+      expect(offering).toBe(4);
+      expect(price).toBe(1);
+      expect(spec).toBe(1);
+      expect(offering + price + spec).toBe(6);
+      // The DRAFT selection is not OBSOLETE, so no live count is read.
+      expect(inventory).toBe(0);
+      // …and the re-render actually re-selected the requested DRAFT version, not
+      // a silent fallback to the ACTIVE primary (which would cost the identical
+      // 4/1/1 and hide a "?version= ignored after revalidate" regression).
+      expect(allBindParams()).toContain(alphaDraftId);
     }, 30_000);
   },
 );

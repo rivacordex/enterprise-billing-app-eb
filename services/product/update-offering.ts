@@ -9,6 +9,7 @@ export type UpdateOfferingResult =
   | { ok: true; offeringId: string; branched: boolean }
   | { ok: false; code: "OFFERING_NOT_FOUND" }
   | { ok: false; code: "OFFERING_RETIRED" }
+  | { ok: false; code: "OFFERING_NOT_EDITABLE" }
   | { ok: false; code: "OFFERING_HAS_OPEN_VERSION" };
 
 type OfferingEdit = {
@@ -81,6 +82,16 @@ export async function updateOffering(
           actorId,
         );
         return { ok: true, offeringId: branchedId, branched: true };
+      }
+
+      // Only DRAFT and ACTIVE are editable (Inv. #14): ACTIVE branched above,
+      // RETIRED was refused above. TESTING and OBSOLETE would otherwise fall
+      // through to the DRAFT-only block below — where the branch guard / DRAFT
+      // WHERE throw a generic SERVER_ERROR, or an unchanged no-op wrongly reports
+      // success — so refuse them here with a typed result. TESTING is edited by
+      // returning it to draft first; OBSOLETE and RETIRED are not editable at all.
+      if (current.lifecycleStatus !== "DRAFT") {
+        return { ok: false, code: "OFFERING_NOT_EDITABLE" };
       }
 
       // current.lifecycleStatus === "DRAFT" from here on.
