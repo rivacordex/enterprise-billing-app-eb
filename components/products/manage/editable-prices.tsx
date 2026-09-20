@@ -350,6 +350,7 @@ export function EditablePrices({
                       currentStatus="DRAFT"
                       formId={formId}
                       defaultValues={priceCardToFormValues(price)}
+                      baselineStartDateTime={price.startDateTime}
                       onSubmit={(values) =>
                         handleSave(values, price.productOfferingPriceId)
                       }

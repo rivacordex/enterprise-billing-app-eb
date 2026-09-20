@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, X } from "lucide-react";
@@ -142,31 +142,30 @@ export function SpecificationForm({
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
 
-  // pm41 review #7 — attach server field errors to their inputs; unmatched keys
-  // (e.g. productSpecCharacteristics) become residual messages so none are lost.
-  const [residualServerMessages, setResidualServerMessages] = useState<
-    string[]
-  >([]);
+  // pm41 review #7 — attach server field errors to their inputs via setError
+  // (the one side effect); unmatched keys (e.g. productSpecCharacteristics)
+  // become residual messages, derived during render below so none are lost.
   useEffect(() => {
-    if (!serverFieldErrors) {
-      setResidualServerMessages([]);
-      return;
-    }
-    const residual: string[] = [];
+    if (!serverFieldErrors) return;
     for (const [key, messages] of Object.entries(serverFieldErrors)) {
       const message = messages.join(" ");
-      if (!message) continue;
-      if ((SPEC_SERVER_FIELDS as readonly string[]).includes(key)) {
+      if (message && (SPEC_SERVER_FIELDS as readonly string[]).includes(key)) {
         setError(key as keyof SpecificationFormValues, {
           type: "server",
           message,
         });
-      } else {
-        residual.push(message);
       }
     }
-    setResidualServerMessages(residual);
   }, [serverFieldErrors, setError]);
+
+  const residualServerMessages = serverFieldErrors
+    ? Object.entries(serverFieldErrors)
+        .filter(
+          ([key]) => !(SPEC_SERVER_FIELDS as readonly string[]).includes(key),
+        )
+        .map(([, messages]) => messages.join(" "))
+        .filter((message) => message.length > 0)
+    : [];
 
   return (
     <form

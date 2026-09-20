@@ -123,6 +123,37 @@ describe("ManagePricesPanel", () => {
     expect(mockRefresh).toHaveBeenCalled();
   });
 
+  it("preserves a non-midnight stored start on an amount-only edit (review #3)", async () => {
+    mockUpdate.mockResolvedValue({
+      ok: true,
+      offeringId: OFFERING_ID,
+      productOfferingPriceId: "PRDOFP000001",
+      backdated: false,
+    });
+    // A stored start with a time-of-day component, >3 days before "now".
+    const start = new Date(2026, 6, 10, 9, 30, 0);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderPanel(true, [makePrice({ name: "Monthly", startDateTime: start })]);
+
+    await user.click(screen.getByRole("button", { name: /^Edit Monthly/ }));
+    await user.clear(screen.getByLabelText("Amount"));
+    await user.type(screen.getByLabelText("Amount"), "150.00");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith(
+        "PRDOFP000001",
+        expect.objectContaining({
+          // The exact original instant is round-tripped — not flattened to
+          // local midnight — so the service reads it as unchanged (no backdating,
+          // no silent time-shift).
+          startDateTime: start,
+          priceCharacteristics: expect.objectContaining({ amount: "150.00" }),
+        }),
+      );
+    });
+  });
+
   it("a VALIDATION_ERROR keeps the row in edit mode with the field message", async () => {
     mockUpdate.mockResolvedValue({
       ok: false,

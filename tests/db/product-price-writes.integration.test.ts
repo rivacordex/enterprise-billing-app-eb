@@ -271,10 +271,15 @@ describe.skipIf(!databaseUrl)(
       );
 
       expect(result.ok).toBe(true);
-      const rows = await sql<{ amount: string }[]>`
-        SELECT amount FROM product.product_offering_price
+      // `oldStart` carries a time-of-day component; the unchanged-start edit must
+      // preserve the exact stored instant, not shift it (review #3).
+      const rows = await sql<{ amount: string; start_date_time: Date }[]>`
+        SELECT amount, start_date_time FROM product.product_offering_price
         WHERE product_offering_price_id = ${priceId}`;
       expect(rows[0]!.amount).toBe("88.00");
+      expect(new Date(rows[0]!.start_date_time).getTime()).toBe(
+        oldStart.getTime(),
+      );
       expect(await auditCount(priceId, "PRODUCT_PRICE_UPDATED")).toBe(1);
     });
 
