@@ -2,14 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Pencil } from "lucide-react";
+import { Archive, Ban, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 import { returnToDraftAction } from "@/actions/product/return-to-draft.action";
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
 import { ActivateOfferingDialog } from "@/components/products/manage/activate-offering-dialog";
 import { buildManageProductsHref } from "@/components/products/manage/manage-products-href";
+import { ObsoleteOfferingDialog } from "@/components/products/manage/obsolete-offering-dialog";
 import { OfferingForm } from "@/components/products/manage/offering-form";
+import { RetireOfferingDialog } from "@/components/products/manage/retire-offering-dialog";
 import { SubmitForTestingDialog } from "@/components/products/manage/submit-for-testing-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,8 +32,9 @@ import type { UpdateOfferingInput } from "@/validation/product/update-offering.s
 // (never inline `status === …` comparisons) so a new lifecycle status forces a
 // decision here (code-standards §2.2). DRAFT: Edit (in place) + Submit for
 // testing. TESTING: Back to draft + Activate. ACTIVE: Edit (branch-first, then
-// navigate to the new draft's ?version=). OBSOLETE/RETIRED: nothing. The
-// "creates a new draft" banner lives inside the reused OfferingForm.
+// navigate to the new draft's ?version=) + Stop selling. OBSOLETE: Retire.
+// RETIRED: nothing (pm43 I6). The "creates a new draft" banner lives inside the
+// reused OfferingForm.
 const TOUCH_TARGET = "[@media(pointer:coarse)]:min-h-[44px]";
 
 export interface VersionActionHeaderProps {
@@ -43,6 +46,11 @@ export interface VersionActionHeaderProps {
   query: string;
   status: LifecycleStatus | null;
   page: number;
+  // Live-subscription count for the selected version, read by the page only when
+  // the version is OBSOLETE (pm43 I7); feeds RetireOfferingDialog's blocked state.
+  // Defaults to 0 — the value is irrelevant for any non-OBSOLETE version, which
+  // never renders the Retire action.
+  liveCount?: number;
 }
 
 export function VersionActionHeader({
@@ -51,6 +59,7 @@ export function VersionActionHeader({
   query,
   status,
   page,
+  liveCount = 0,
 }: VersionActionHeaderProps): React.JSX.Element | null {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -230,6 +239,52 @@ export function VersionActionHeader({
             />
           </DialogContent>
         </Dialog>
+      ) : null}
+
+      {actions.includes("stopSelling") ? (
+        <ObsoleteOfferingDialog
+          offeringId={offering.productOfferingId}
+          offeringName={offering.name}
+          trigger={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={TOUCH_TARGET}
+            >
+              <Ban
+                size={14}
+                className="text-[color:var(--text-danger)]"
+                aria-hidden
+              />
+              Stop selling
+            </Button>
+          }
+        />
+      ) : null}
+
+      {actions.includes("retire") ? (
+        <RetireOfferingDialog
+          offeringId={offering.productOfferingId}
+          offeringName={offering.name}
+          offeringVersion={offering.version}
+          liveCount={liveCount}
+          trigger={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={TOUCH_TARGET}
+            >
+              <Archive
+                size={14}
+                className="text-[color:var(--text-danger)]"
+                aria-hidden
+              />
+              Retire
+            </Button>
+          }
+        />
       ) : null}
     </div>
   );

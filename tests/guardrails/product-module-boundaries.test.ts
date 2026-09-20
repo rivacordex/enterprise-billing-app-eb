@@ -50,6 +50,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "submit-for-testing.action.ts": "submitForTestingAction",
     "return-to-draft.action.ts": "returnToDraftAction",
     "activate-offering.action.ts": "activateOfferingAction",
+    "obsolete-offering.action.ts": "obsoleteOfferingAction",
     "retire-offering.action.ts": "retireOfferingAction",
   };
 
@@ -162,6 +163,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "submit-for-testing.ts",
     "return-to-draft.ts",
     "activate-offering.ts",
+    "obsolete-offering.ts",
     "retire-offering.ts",
   ]);
 

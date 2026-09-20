@@ -8,6 +8,7 @@ import { CreateOfferingDialog } from "@/components/products/manage/create-offeri
 import { FamilyTable } from "@/components/products/manage/family-table";
 import { SelectionRegion } from "@/components/products/manage/selection-region";
 import { VersionBar } from "@/components/products/manage/version-bar";
+import { getLiveSubscriptionCount } from "@/services/product/get-live-subscription-count";
 import { getOfferingDetail } from "@/services/product/get-offering-detail";
 import { listFamilies } from "@/services/product/list-families";
 import { listFamilyVersions } from "@/services/product/list-family-versions";
@@ -89,6 +90,15 @@ export default async function ManageProductsPage({
     ? PANEL_EDITABLE_BY_STATUS[selectedOffering.lifecycleStatus]
     : false;
 
+  // The blocked-state read for Retire (pm43 I7): one extra statement, and only
+  // when the selected version is OBSOLETE (the only status whose header offers
+  // Retire). Never run on the list or on any other status. The Retire dialog
+  // re-checks server-side regardless, so a stale count only ever fails safe.
+  const liveCount =
+    selectedOffering?.lifecycleStatus === "OBSOLETE"
+      ? await getLiveSubscriptionCount(selectedOffering.productOfferingId)
+      : 0;
+
   return (
     <main className="space-y-5 p-5">
       <header className="flex items-start justify-between gap-4">
@@ -149,6 +159,7 @@ export default async function ManageProductsPage({
         query={params.q}
         status={params.status}
         page={params.page}
+        liveCount={liveCount}
         locale={locale}
         timezone={timezone}
       />

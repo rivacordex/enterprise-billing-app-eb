@@ -31,6 +31,9 @@ export interface SelectionRegionProps {
   query?: string;
   status?: LifecycleStatus | null;
   page?: number;
+  // Live-subscription count for the selected version — read by the page only for
+  // an OBSOLETE version (pm43 I7), feeds the Retire dialog's blocked state.
+  liveCount?: number;
   locale: string;
   timezone: string;
 }
@@ -58,6 +61,7 @@ export function SelectionRegion({
   query = "",
   status = null,
   page = 1,
+  liveCount = 0,
   locale,
   timezone,
 }: SelectionRegionProps): React.JSX.Element {
@@ -96,6 +100,7 @@ export function SelectionRegion({
               query={query}
               status={status}
               page={page}
+              liveCount={liveCount}
             />
           ) : null}
         </div>

@@ -24,51 +24,42 @@ export interface RetireOfferingDialogProps {
   trigger: React.ReactNode;
   offeringId: string;
   offeringName: string;
-  // "DRAFT" -> Discard copy; "ACTIVE" -> Retire copy (ui-context-phase2's
-  // one-component-two-copy-states table). pm18's own action matrix never
-  // renders this dialog's trigger on a RETIRED row, so no third case exists.
-  currentStatus: "DRAFT" | "ACTIVE";
+  offeringVersion: number;
+  // The page's own live-subscription count for this OBSOLETE version (pm43 I6/I7).
+  // When > 0 the dialog shows the blocked message instead of a confirm button —
+  // it never offers an action the gate will refuse. The server re-checks
+  // regardless (D4), so a stale count only ever fails safe.
+  liveCount: number;
 }
 
-// ui-context-phase2.md "Discard vs. Retire dialog" — exact copy, verbatim.
-const COPY = {
-  DRAFT: {
-    title: "Discard draft",
-    body: (name: string): string =>
-      `Discarding ${name} removes this draft — it never went live and this cannot be undone.`,
-    confirmLabel: "Discard draft",
-    successToast: "Draft discarded",
-  },
-  ACTIVE: {
-    title: "Retire offering",
-    body: (name: string): string =>
-      `Retiring ${name} hides it from new billing selection. This cannot be undone.`,
-    confirmLabel: "Retire offering",
-    successToast: "Offering retired",
-  },
-} as const;
-
-// pm23-spec §3.5. One component, two copy states — code-standards-phase2 §4
-// ("its copy/title switches between 'Retire' and 'Discard draft' based on
-// the target's status — one component, not two") and §1 rule 11 (one
-// repository call, one service, now one dialog — no re-fork anywhere in
-// this stack). Structurally near-identical to delete-role-dialog.tsx, with
-// an added optional Reason field (Design §2.2).
+// pm43-spec I6, re-purposed. Retire (OBSOLETE → RETIRED): shown on OBSOLETE only.
+// A danger AlertDialog; copy verbatim from ui-context §7. When any subscription
+// still bills from the version the confirm button is replaced by the blocked
+// message naming the count.
 export function RetireOfferingDialog({
   trigger,
   offeringId,
   offeringName,
-  currentStatus,
+  offeringVersion,
+  liveCount,
 }: RetireOfferingDialogProps): React.JSX.Element {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const copy = COPY[currentStatus];
+  // A server-reported block (the count moved between the page read and the
+  // confirm) surfaces here so the dialog can switch to the blocked message.
+  const [blockedCount, setBlockedCount] = useState<number | null>(null);
+
+  const effectiveBlocked = blockedCount ?? liveCount;
+  const isBlocked = effectiveBlocked > 0;
 
   function handleOpenChange(nextOpen: boolean): void {
     if (isSubmitting) return;
-    if (nextOpen) setReason("");
+    if (nextOpen) {
+      setReason("");
+      setBlockedCount(null);
+    }
     setOpen(nextOpen);
   }
 
@@ -79,18 +70,15 @@ export function RetireOfferingDialog({
 
       if (result.ok) {
         setOpen(false);
-        // Design §2.9 — eventType, not the currentStatus prop, drives the
-        // toast: the server's own answer to "which one actually happened."
-        toast.success(
-          result.eventType === "PRODUCT_OFFERING_DISCARDED"
-            ? COPY.DRAFT.successToast
-            : COPY.ACTIVE.successToast,
-        );
+        toast.success("Version retired");
         router.refresh();
+      } else if (result.code === "RETIRE_BLOCKED_BY_SUBSCRIPTIONS") {
+        // The gate moved under us — switch to the blocked message in place.
+        setBlockedCount(result.liveCount);
       } else if (result.code === "FORBIDDEN") {
         toast.error("You don't have permission to do that.");
-      } else if (result.code === "OFFERING_RETIRED") {
-        toast.error("This offering has already been retired.");
+      } else if (result.code === "OFFERING_NOT_OBSOLETE") {
+        toast.error("This version can no longer be retired. Refreshing...");
         setOpen(false);
         router.refresh();
       } else if (result.code === "OFFERING_NOT_FOUND") {
@@ -112,38 +100,54 @@ export function RetireOfferingDialog({
       <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogTitle>Retire version</AlertDialogTitle>
           <AlertDialogDescription>
-            {copy.body(offeringName)}
+            {isBlocked ? (
+              <>
+                {effectiveBlocked} subscriptions still bill from this version.
+                It can be retired once they end.
+              </>
+            ) : (
+              <>
+                No subscription depends on <strong>{offeringName}</strong> v
+                {offeringVersion} any more. Retiring is final.
+              </>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <Field>
-          <FieldLabel htmlFor="retire-reason">Reason (optional)</FieldLabel>
-          <Textarea
-            id="retire-reason"
-            rows={2}
-            maxLength={500}
-            placeholder="Superseded by the new rate plan"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            disabled={isSubmitting}
-          />
-        </Field>
+        {!isBlocked ? (
+          <Field>
+            <FieldLabel htmlFor="retire-reason">Reason (optional)</FieldLabel>
+            <Textarea
+              id="retire-reason"
+              rows={2}
+              maxLength={500}
+              placeholder="Superseded by the new rate plan"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              disabled={isSubmitting}
+            />
+          </Field>
+        ) : null}
 
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isSubmitting}>Cancel</AlertDialogCancel>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={isSubmitting}
-            onClick={() => void handleConfirm()}
-          >
-            {isSubmitting && (
-              <Loader2 size={14} className="mr-1 animate-spin" />
-            )}
-            {copy.confirmLabel}
-          </Button>
+          <AlertDialogCancel disabled={isSubmitting}>
+            {isBlocked ? "Close" : "Cancel"}
+          </AlertDialogCancel>
+          {!isBlocked ? (
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isSubmitting}
+              onClick={() => void handleConfirm()}
+            >
+              {isSubmitting && (
+                <Loader2 size={14} className="mr-1 animate-spin" />
+              )}
+              Retire version
+            </Button>
+          ) : null}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

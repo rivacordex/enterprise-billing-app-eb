@@ -279,6 +279,35 @@ export const productInventoryRepository = {
     return { productInventoryId: row.productInventoryId };
   },
 
+  // pm43-spec I1/D2/D3. The single home of the "still-live subscription"
+  // predicate — a subscription blocks retirement when it is not TERMINATED, or is
+  // TERMINATED with an end_date today or later (still inclusive-billed to that
+  // date, Inv. #21). Written exactly once here and never restated in a service,
+  // page or fixture (code-standards §6.15). Its only caller is
+  // `services/product/retire-offering.ts` (the retirement gate) and, with `db`,
+  // the page's display-count read; it lives in this inventory repository rather
+  // than a product service because it is an in-transaction precondition re-check
+  // against another module's table (code-standards §1.14, the ac04 precedent).
+  // Rows are locked FOR UPDATE so a subscription created between the count and the
+  // status write cannot be orphaned onto a just-retired version. Read-only — the
+  // write surface (`updateStatus`, `updateCharacteristics`) is untouched (Inv. #18).
+  async countLiveForOfferingForUpdate(
+    tx: Database,
+    productOfferingId: string,
+  ): Promise<number> {
+    const rows = await tx
+      .select({ productInventoryId: productInventory.productInventoryId })
+      .from(productInventory)
+      .where(
+        sql`${productInventory.productOfferingId} = ${productOfferingId}
+          AND (${productInventory.status} <> 'TERMINATED'
+               OR ${productInventory.endDate} IS NULL
+               OR ${productInventory.endDate} >= current_date)`,
+      )
+      .for("update");
+    return rows.length;
+  },
+
   // bm03-spec §Design/§6 — batched read for the partial-period predicate:
   // every subscription window (account + start/end dates) for a set of
   // billing accounts, no join fan-out (one row per instance).

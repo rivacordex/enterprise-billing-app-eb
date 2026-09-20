@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
-vi.mock("@/services/product/retire-offering", () => ({
-  retireOffering: vi.fn(),
+vi.mock("@/services/product/obsolete-offering", () => ({
+  obsoleteOffering: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -10,11 +10,13 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { revalidatePath } from "next/cache";
 
-import { retireOfferingAction } from "@/actions/product/retire-offering.action";
-import * as retireOfferingService from "@/services/product/retire-offering";
+import { obsoleteOfferingAction } from "@/actions/product/obsolete-offering.action";
+import * as obsoleteOfferingService from "@/services/product/obsolete-offering";
 
 const mockRequirePermission = vi.mocked(requirePermission);
-const mockRetireOffering = vi.mocked(retireOfferingService.retireOffering);
+const mockObsoleteOffering = vi.mocked(
+  obsoleteOfferingService.obsoleteOffering,
+);
 const mockRevalidatePath = vi.mocked(revalidatePath);
 
 function redirectError(target: string): Error & { digest: string } {
@@ -27,7 +29,7 @@ const OFFERING_ID = "PRDOFR000001";
 
 beforeEach(() => {
   mockRequirePermission.mockReset();
-  mockRetireOffering.mockReset();
+  mockObsoleteOffering.mockReset();
   mockRevalidatePath.mockReset();
   mockRequirePermission.mockResolvedValue({
     userId: "admin-1",
@@ -43,11 +45,14 @@ beforeEach(() => {
   });
 });
 
-describe("retireOfferingAction", () => {
+describe("obsoleteOfferingAction", () => {
   it("calls requirePermission with PRODUCTS/DELETE (not EDIT)", async () => {
-    mockRetireOffering.mockResolvedValue({ ok: true, offeringId: OFFERING_ID });
+    mockObsoleteOffering.mockResolvedValue({
+      ok: true,
+      offeringId: OFFERING_ID,
+    });
 
-    await retireOfferingAction(OFFERING_ID, { reason: "" });
+    await obsoleteOfferingAction(OFFERING_ID, { reason: "" });
 
     expect(mockRequirePermission).toHaveBeenCalledWith(
       PERMISSIONS.PRODUCTS,
@@ -55,14 +60,17 @@ describe("retireOfferingAction", () => {
     );
   });
 
-  it("retires an OBSOLETE offering and revalidates both product paths", async () => {
-    mockRetireOffering.mockResolvedValue({ ok: true, offeringId: OFFERING_ID });
+  it("stops selling and revalidates both product paths", async () => {
+    mockObsoleteOffering.mockResolvedValue({
+      ok: true,
+      offeringId: OFFERING_ID,
+    });
 
-    const result = await retireOfferingAction(OFFERING_ID, { reason: "done" });
+    const result = await obsoleteOfferingAction(OFFERING_ID, { reason: "EOL" });
 
-    expect(mockRetireOffering).toHaveBeenCalledWith(
+    expect(mockObsoleteOffering).toHaveBeenCalledWith(
       OFFERING_ID,
-      expect.objectContaining({ reason: "done" }),
+      expect.objectContaining({ reason: "EOL" }),
       "admin-1",
     );
     expect(result).toEqual({ ok: true, offeringId: OFFERING_ID });
@@ -74,25 +82,8 @@ describe("retireOfferingAction", () => {
     );
   });
 
-  it("passes RETIRE_BLOCKED_BY_SUBSCRIPTIONS through with its liveCount", async () => {
-    mockRetireOffering.mockResolvedValue({
-      ok: false,
-      code: "RETIRE_BLOCKED_BY_SUBSCRIPTIONS",
-      liveCount: 4,
-    });
-
-    const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
-
-    expect(result).toEqual({
-      ok: false,
-      code: "RETIRE_BLOCKED_BY_SUBSCRIPTIONS",
-      liveCount: 4,
-    });
-    expect(mockRevalidatePath).not.toHaveBeenCalled();
-  });
-
   it("returns VALIDATION_ERROR for a reason over 500 characters without calling the service", async () => {
-    const result = await retireOfferingAction(OFFERING_ID, {
+    const result = await obsoleteOfferingAction(OFFERING_ID, {
       reason: "x".repeat(501),
     });
 
@@ -102,33 +93,33 @@ describe("retireOfferingAction", () => {
     } else {
       throw new Error("Expected VALIDATION_ERROR");
     }
-    expect(mockRetireOffering).not.toHaveBeenCalled();
+    expect(mockObsoleteOffering).not.toHaveBeenCalled();
   });
 
-  it("returns FORBIDDEN when requirePermission redirects (e.g. an EDIT-only user), without calling the service", async () => {
+  it("returns FORBIDDEN when requirePermission redirects (an EDIT-only user), without calling the service", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
 
-    const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await obsoleteOfferingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(mockRetireOffering).not.toHaveBeenCalled();
+    expect(mockObsoleteOffering).not.toHaveBeenCalled();
   });
 
   it("returns SERVER_ERROR when requirePermission throws a non-redirect error", async () => {
     mockRequirePermission.mockRejectedValue(new Error("db exploded"));
 
-    const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await obsoleteOfferingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
-    expect(mockRetireOffering).not.toHaveBeenCalled();
+    expect(mockObsoleteOffering).not.toHaveBeenCalled();
   });
 
-  it.each(["OFFERING_NOT_FOUND", "OFFERING_NOT_OBSOLETE"] as const)(
+  it.each(["OFFERING_NOT_FOUND", "OFFERING_NOT_ACTIVE"] as const)(
     "passes %s through the action unchanged",
     async (code) => {
-      mockRetireOffering.mockResolvedValue({ ok: false, code });
+      mockObsoleteOffering.mockResolvedValue({ ok: false, code });
 
-      const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
+      const result = await obsoleteOfferingAction(OFFERING_ID, { reason: "" });
 
       expect(result).toEqual({ ok: false, code });
       expect(mockRevalidatePath).not.toHaveBeenCalled();
@@ -136,9 +127,9 @@ describe("retireOfferingAction", () => {
   );
 
   it("returns SERVER_ERROR when the service throws", async () => {
-    mockRetireOffering.mockRejectedValue(new Error("db exploded"));
+    mockObsoleteOffering.mockRejectedValue(new Error("db exploded"));
 
-    const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await obsoleteOfferingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
   });

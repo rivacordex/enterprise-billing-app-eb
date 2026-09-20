@@ -115,6 +115,10 @@ describe("AuditLogFilters", () => {
     expect(
       within(removal).getByText("PRODUCT_OFFERING_SUPERSEDED"),
     ).toBeInTheDocument();
+    // pm43 addition (stop selling)
+    expect(
+      within(removal).getByText("PRODUCT_OFFERING_OBSOLETED"),
+    ).toBeInTheDocument();
     expect(
       within(removal).getByText("PRODUCT_OFFERING_RETIRED"),
     ).toBeInTheDocument();
@@ -170,7 +174,7 @@ describe("AuditLogFilters", () => {
       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(77); // "All events" + 76 (pm42 added PRODUCT_OFFERING_SUBMITTED_FOR_TESTING/_RETURNED_TO_DRAFT)
+    expect(within(select).getAllByRole("option")).toHaveLength(78); // "All events" + 77 (pm43 added PRODUCT_OFFERING_OBSOLETED)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {
