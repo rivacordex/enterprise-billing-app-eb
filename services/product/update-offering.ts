@@ -2,12 +2,14 @@ import { db } from "@/db/client";
 import type { Database } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { productOfferingRepository } from "@/db/repositories/product-offering";
+import { isUniqueViolation } from "@/lib/db-errors";
 import type { UpdateOfferingInput } from "@/validation/product/update-offering.schema";
 
 export type UpdateOfferingResult =
   | { ok: true; offeringId: string; branched: boolean }
   | { ok: false; code: "OFFERING_NOT_FOUND" }
-  | { ok: false; code: "OFFERING_RETIRED" };
+  | { ok: false; code: "OFFERING_RETIRED" }
+  | { ok: false; code: "OFFERING_HAS_OPEN_VERSION" };
 
 type OfferingEdit = {
   name: string;
@@ -46,74 +48,91 @@ export async function updateOffering(
   input: UpdateOfferingInput,
   actorId: string,
 ): Promise<UpdateOfferingResult> {
-  return db.transaction(async (tx) => {
-    const current = await productOfferingRepository.findDetailByIdForUpdate(
-      tx,
-      offeringId,
-    );
-    if (!current) {
-      return { ok: false, code: "OFFERING_NOT_FOUND" };
-    }
-    if (current.lifecycleStatus === "RETIRED") {
-      return { ok: false, code: "OFFERING_RETIRED" };
-    }
-
-    const edit: OfferingEdit = {
-      name: input.name,
-      isSellable: input.isSellable,
-      billingOnly: input.billingOnly,
-    };
-    const before: OfferingEdit = {
-      name: current.name,
-      isSellable: current.isSellable,
-      billingOnly: current.billingOnly,
-    };
-
-    if (current.lifecycleStatus === "ACTIVE") {
-      const branchedId = await branchAndAudit(
+  try {
+    return await db.transaction(async (tx) => {
+      const current = await productOfferingRepository.findDetailByIdForUpdate(
         tx,
         offeringId,
-        before,
-        edit,
-        actorId,
       );
-      return { ok: true, offeringId: branchedId, branched: true };
-    }
+      if (!current) {
+        return { ok: false, code: "OFFERING_NOT_FOUND" };
+      }
+      if (current.lifecycleStatus === "RETIRED") {
+        return { ok: false, code: "OFFERING_RETIRED" };
+      }
 
-    // current.lifecycleStatus === "DRAFT" from here on.
-    if (input.saveAsNew) {
-      const branchedId = await branchAndAudit(
+      const edit: OfferingEdit = {
+        name: input.name,
+        isSellable: input.isSellable,
+        billingOnly: input.billingOnly,
+      };
+      const before: OfferingEdit = {
+        name: current.name,
+        isSellable: current.isSellable,
+        billingOnly: current.billingOnly,
+      };
+
+      if (current.lifecycleStatus === "ACTIVE") {
+        const branchedId = await branchAndAudit(
+          tx,
+          offeringId,
+          before,
+          edit,
+          actorId,
+        );
+        return { ok: true, offeringId: branchedId, branched: true };
+      }
+
+      // current.lifecycleStatus === "DRAFT" from here on.
+      if (input.saveAsNew) {
+        const branchedId = await branchAndAudit(
+          tx,
+          offeringId,
+          before,
+          edit,
+          actorId,
+        );
+        return { ok: true, offeringId: branchedId, branched: true };
+      }
+
+      const unchanged =
+        before.name === edit.name &&
+        before.isSellable === edit.isSellable &&
+        before.billingOnly === edit.billingOnly;
+      if (unchanged) {
+        return { ok: true, offeringId, branched: false };
+      }
+
+      await productOfferingRepository.updateOfferingDraftInPlace(
         tx,
         offeringId,
-        before,
-        edit,
-        actorId,
+        {
+          ...edit,
+          lastEditedBy: actorId,
+        },
       );
-      return { ok: true, offeringId: branchedId, branched: true };
-    }
 
-    const unchanged =
-      before.name === edit.name &&
-      before.isSellable === edit.isSellable &&
-      before.billingOnly === edit.billingOnly;
-    if (unchanged) {
+      await insertAuditEvent(tx, {
+        eventType: "PRODUCT_OFFERING_UPDATED",
+        actorUserId: actorId,
+        targetEntity: "PRODUCT_OFFERING",
+        targetId: offeringId,
+        beforeData: before,
+        afterData: edit,
+      });
+
       return { ok: true, offeringId, branched: false };
+    });
+  } catch (err) {
+    // A branch (ACTIVE-edit, or saveAsNew on a DRAFT) inserts a new DRAFT row;
+    // if the family already holds an open (DRAFT/TESTING) version, the
+    // product_offering_one_open_per_family index rejects it (23505). Surface a
+    // typed code so the UI can say "a version is already in progress" instead of
+    // a generic SERVER_ERROR (pm44 review). pm42 made TESTING an occupiable open
+    // slot, widening when this fires (previously only a DRAFT sibling could).
+    if (isUniqueViolation(err, "product_offering_one_open_per_family")) {
+      return { ok: false, code: "OFFERING_HAS_OPEN_VERSION" };
     }
-
-    await productOfferingRepository.updateOfferingDraftInPlace(tx, offeringId, {
-      ...edit,
-      lastEditedBy: actorId,
-    });
-
-    await insertAuditEvent(tx, {
-      eventType: "PRODUCT_OFFERING_UPDATED",
-      actorUserId: actorId,
-      targetEntity: "PRODUCT_OFFERING",
-      targetId: offeringId,
-      beforeData: before,
-      afterData: edit,
-    });
-
-    return { ok: true, offeringId, branched: false };
-  });
+    throw err;
+  }
 }

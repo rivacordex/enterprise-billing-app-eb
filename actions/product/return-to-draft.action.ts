@@ -5,10 +5,10 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
-import { retireOffering } from "@/services/product/retire-offering";
-import { retireOfferingSchema } from "@/validation/product/retire-offering.schema";
+import { returnToDraft } from "@/services/product/return-to-draft";
+import { transitionSchema } from "@/validation/product/transition.schema";
 
-export type RetireOfferingActionResult =
+export type ReturnToDraftActionResult =
   | { ok: true; offeringId: string }
   | {
       ok: false;
@@ -16,24 +16,22 @@ export type RetireOfferingActionResult =
       fieldErrors: Record<string, string[]>;
     }
   | { ok: false; code: "OFFERING_NOT_FOUND" }
-  | { ok: false; code: "OFFERING_NOT_OBSOLETE" }
-  | { ok: false; code: "RETIRE_BLOCKED_BY_SUBSCRIPTIONS"; liveCount: number }
+  | { ok: false; code: "OFFERING_NOT_TESTING" }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
-// pm23-spec §3.3, re-purposed pm43 I5. Retire is now OBSOLETE → RETIRED only,
-// behind the subscription gate — the old dual-purpose Retire/Discard is gone
-// (discard is pm44's hard delete). Gated at products:DELETE (D6, architecture
-// §4). A blocked retire returns the live count so the dialog can name it (D4).
-export async function retireOfferingAction(
+// pm42-spec I5. Return to draft (TESTING → DRAFT) is gated at products:EDIT
+// (architecture §4). Standard action shape: requirePermission → safeParse →
+// service → revalidate both product pages.
+export async function returnToDraftAction(
   offeringId: string,
   rawInput: unknown,
-): Promise<RetireOfferingActionResult> {
+): Promise<ReturnToDraftActionResult> {
   let actorId: string;
   try {
     ({ userId: actorId } = await requirePermission(
       PERMISSIONS.PRODUCTS,
-      LEVELS.DELETE,
+      LEVELS.EDIT,
     ));
   } catch (error) {
     if (isRedirectError(error)) {
@@ -42,7 +40,7 @@ export async function retireOfferingAction(
     return { ok: false, code: "SERVER_ERROR" };
   }
 
-  const parsed = retireOfferingSchema.safeParse(rawInput);
+  const parsed = transitionSchema.safeParse(rawInput);
   if (!parsed.success) {
     return {
       ok: false,
@@ -53,15 +51,13 @@ export async function retireOfferingAction(
 
   let result;
   try {
-    result = await retireOffering(offeringId, parsed.data, actorId);
+    result = await returnToDraft(offeringId, parsed.data, actorId);
   } catch {
     return { ok: false, code: "SERVER_ERROR" };
   }
 
   if (!result.ok) {
-    return result.code === "RETIRE_BLOCKED_BY_SUBSCRIPTIONS"
-      ? { ok: false, code: result.code, liveCount: result.liveCount }
-      : { ok: false, code: result.code };
+    return { ok: false, code: result.code };
   }
 
   revalidatePath("/products/manage-products");

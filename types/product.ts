@@ -29,6 +29,39 @@ export const PANEL_EDITABLE_BY_STATUS: Record<LifecycleStatus, boolean> = {
   RETIRED: false,
 };
 
+// The version-level lifecycle actions each status offers in the selected
+// version's header (pm42 I6). A total `Record<LifecycleStatus, …>` (code-
+// standards §2.2 — "allowed actions" is one of the maps that must be total) so a
+// new lifecycle status is a compile error here, never a silent "no actions".
+// `edit` is pm41's affordance (DRAFT in-place / ACTIVE branch); `submitForTesting`,
+// `returnToDraft` and `activate` are pm42's transitions; `stopSelling`
+// (ACTIVE → OBSOLETE) and `retire` (OBSOLETE → RETIRED) are pm43's; `discard`
+// (hard delete of a never-released DRAFT/TESTING version) is pm44's. TESTING
+// carries no `edit` — a TESTING version is read-only content and must be returned
+// to DRAFT before it can change (Inv. #14/#24). Discard is offered on DRAFT and
+// TESTING only and is absent (never disabled) on every other status (§1.20).
+export const VERSION_HEADER_ACTIONS = [
+  "edit",
+  "submitForTesting",
+  "returnToDraft",
+  "activate",
+  "stopSelling",
+  "retire",
+  "discard",
+] as const;
+export type VersionHeaderAction = (typeof VERSION_HEADER_ACTIONS)[number];
+
+export const VERSION_HEADER_ACTIONS_BY_STATUS: Record<
+  LifecycleStatus,
+  readonly VersionHeaderAction[]
+> = {
+  DRAFT: ["edit", "submitForTesting", "discard"],
+  TESTING: ["returnToDraft", "activate", "discard"],
+  ACTIVE: ["edit", "stopSelling"],
+  OBSOLETE: ["retire"],
+  RETIRED: [],
+};
+
 export const PRICE_TYPES = ["recurring", "usage", "once"] as const;
 export type PriceType = (typeof PRICE_TYPES)[number];
 

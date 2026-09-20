@@ -494,6 +494,25 @@ export const productOfferingRepository = {
       );
     }
 
+    // Inv. #14: only a DRAFT (copy-on-write via `saveAsNew`) or an ACTIVE version
+    // (branch-on-edit) may be branched. OBSOLETE, TESTING and RETIRED versions
+    // are "not editable by any path" — refuse to clone them. This is the single
+    // choke point every copy-on-write edit routes through (update-offering, the
+    // three specification services, insert-price), so guarding it here backstops
+    // all of them at once. Load-bearing since pm42 makes OBSOLETE and TESTING
+    // reachable: without it, updateOffering's `saveAsNew` path would clone an
+    // OBSOLETE version into a new editable draft. Defense-in-depth for a direct
+    // service/action call — the UI never offers editing a non-DRAFT/ACTIVE
+    // version (VERSION_HEADER_ACTIONS_BY_STATUS).
+    if (
+      source.lifecycleStatus !== "DRAFT" &&
+      source.lifecycleStatus !== "ACTIVE"
+    ) {
+      throw new Error(
+        `branchOfferingAsDraft: source offering ${sourceOfferingId} is ${source.lifecycleStatus}, not branchable`,
+      );
+    }
+
     // One-hop family resolution (architecture-phase2 §3): NULL means the
     // source itself is the root.
     const rootId = source.familyOfferingId ?? source.productOfferingId;
@@ -617,32 +636,167 @@ export const productOfferingRepository = {
     return active ? { offeringId: active.offeringId } : null;
   },
 
-  // pm16-spec §3.3. Caller (services/product/activate-offering.ts) has
-  // already verified draftId is DRAFT and meets both activation
-  // preconditions before this is ever called (Design) — this method's own
-  // job is exactly the transactional single-active-per-family re-check
-  // (Inv. 13), not precondition enforcement. No actorId parameter —
-  // attribution is the caller's job (Design, mirroring branchOfferingAsDraft).
+  // pm42-spec I1. Narrow single-status writers — one per legal transition, no
+  // generic `setLifecycleStatus(id, status)` helper (code-standards §1.15): a
+  // transition the state table does not list has no code path. Each pins its
+  // expected predecessor in the WHERE clause so a concurrent transition cannot
+  // be silently clobbered, and each stamps `last_modified`/`last_edited_by`
+  // (the transition is an edit). The calling service has already re-read the
+  // status locked (`findLifecycleStatusForUpdate`) immediately before; the WHERE
+  // predecessor is the defense-in-depth backstop, mirroring
+  // `updateOfferingDraftInPlace`'s own status WHERE.
+  async markTesting(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "TESTING",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "DRAFT"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markTesting: offering ${offeringId} not found or not DRAFT`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm42-spec I1. TESTING → DRAFT (returnToDraft). Not a rollback — no content is
+  // restored (pm42 D4); the version simply becomes editable again because the
+  // §3.5 trigger's DRAFT condition is satisfied once more.
+  async markDraft(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "DRAFT",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "TESTING"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markDraft: offering ${offeringId} not found or not TESTING`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm42-spec I1/I4. TESTING → ACTIVE. Composed by `activateOffering` below after
+  // the family's previous ACTIVE version has been superseded (index-safe order).
+  async markActive(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "ACTIVE",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "TESTING"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markActive: offering ${offeringId} not found or not TESTING`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm42-spec I1/I4. ACTIVE → OBSOLETE. Used by `activateOffering` to supersede
+  // the family's previous ACTIVE version (pm42 D3 — the status the superseded row
+  // takes changed from RETIRED to OBSOLETE, so a superseded version keeps billing
+  // its pinned subscriptions, Inv. #6/#17). pm43 will reuse this for the manual
+  // stop-selling transition.
+  async markObsolete(
+    tx: Database,
+    offeringId: string,
+    actorId: string,
+  ): Promise<{ offeringId: string }> {
+    const [row] = await tx
+      .update(productOffering)
+      .set({
+        lifecycleStatus: "OBSOLETE",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "ACTIVE"),
+        ),
+      )
+      .returning({ offeringId: productOffering.productOfferingId });
+    if (!row) {
+      throw new Error(
+        `markObsolete: offering ${offeringId} not found or not ACTIVE`,
+      );
+    }
+    return { offeringId: row.offeringId };
+  },
+
+  // pm16-spec §3.3, amended pm42 D3/I4. Supersede-then-flip, index-ordered: the
+  // family's current ACTIVE sibling (if any) is moved to OBSOLETE *before* the
+  // target flips to ACTIVE, so `product_offering_one_active_per_family` never
+  // sees two ACTIVE rows mid-transaction (the reverse order trips the index).
+  // Activation now flips TESTING → ACTIVE (was DRAFT → ACTIVE): the release
+  // preconditions moved one step earlier to `submitForTesting` (pm42 D2), and a
+  // TESTING version's content has been frozen since it left DRAFT, so activation
+  // re-checks nothing about content. `findActiveInFamily`'s family-wide
+  // `FOR UPDATE` is the serialization that makes two concurrent activations safe
+  // (Inv. #13) — unchanged; it is the "lock" pm42 D3 refers to (activation never
+  // took a separate `pg_advisory_xact_lock` — that guards branching only). The
+  // caller has already re-read this version's status locked and refused unless
+  // TESTING (code-standards §1.13); `markActive`'s WHERE is the backstop.
   async activateOffering(
     tx: Database,
-    draftId: string,
+    offeringId: string,
+    actorId: string,
   ): Promise<{ offeringId: string; supersededOfferingId: string | null }> {
-    const [draft] = await tx
+    const [target] = await tx
       .select({
         productOfferingId: productOffering.productOfferingId,
         familyOfferingId: productOffering.familyOfferingId,
       })
       .from(productOffering)
-      .where(eq(productOffering.productOfferingId, draftId))
+      .where(eq(productOffering.productOfferingId, offeringId))
       .limit(1);
-    if (!draft) {
-      throw new Error(`activateOffering: offering ${draftId} not found`);
+    if (!target) {
+      throw new Error(`activateOffering: offering ${offeringId} not found`);
     }
 
     // One-hop family resolution (architecture-phase2 §3), duplicated from
     // branchOfferingAsDraft's own inline resolution — pm12-spec's own
     // prediction (Design).
-    const rootId = draft.familyOfferingId ?? draft.productOfferingId;
+    const rootId = target.familyOfferingId ?? target.productOfferingId;
 
     const activeSibling = await productOfferingRepository.findActiveInFamily(
       tx,
@@ -650,57 +804,142 @@ export const productOfferingRepository = {
     );
 
     if (activeSibling) {
-      const retired = await tx
-        .update(productOffering)
-        .set({ lifecycleStatus: "RETIRED" })
-        .where(eq(productOffering.productOfferingId, activeSibling.offeringId))
-        .returning({ offeringId: productOffering.productOfferingId });
-      if (retired.length === 0) {
-        throw new Error(
-          `activateOffering: failed to retire sibling ${activeSibling.offeringId}`,
-        );
-      }
-    }
-
-    const [activated] = await tx
-      .update(productOffering)
-      .set({ lifecycleStatus: "ACTIVE" })
-      .where(
-        and(
-          eq(productOffering.productOfferingId, draftId),
-          eq(productOffering.lifecycleStatus, "DRAFT"),
-        ),
-      )
-      .returning({ offeringId: productOffering.productOfferingId });
-    if (!activated) {
-      throw new Error(
-        `activateOffering: offering ${draftId} not found or not DRAFT`,
+      await productOfferingRepository.markObsolete(
+        tx,
+        activeSibling.offeringId,
+        actorId,
       );
     }
 
+    const { offeringId: activatedId } =
+      await productOfferingRepository.markActive(tx, offeringId, actorId);
+
     return {
-      offeringId: activated.offeringId,
+      offeringId: activatedId,
       supersededOfferingId: activeSibling?.offeringId ?? null,
     };
   },
 
-  // pm16-spec §3.3. Unconditional — sets RETIRED regardless of the row's
-  // prior status (build plan's literal wording; code-standards-phase2 §1
-  // rule 11: "Do not fork this into two repository methods"). The
-  // already-RETIRED guard lives entirely in the calling service, ahead of
-  // the transaction (Design) — this method has no WHERE-status backstop.
+  // pm16-spec §3.3, re-purposed pm43 I2. OBSOLETE → RETIRED only — the old
+  // dual-purpose ACTIVE/DRAFT → RETIRED behaviour is gone (discard becomes pm44's
+  // hard delete, not a status flip). Narrow single-status writer (code-standards
+  // §1.15): pins OBSOLETE in the WHERE and stamps last_modified/last_edited_by
+  // (the transition is an edit). The calling service has already re-read the
+  // status locked and run the subscription gate immediately before (code-
+  // standards §1.13); the WHERE predecessor is the backstop.
   async retireOffering(
     tx: Database,
     offeringId: string,
+    actorId: string,
   ): Promise<{ offeringId: string }> {
     const [row] = await tx
       .update(productOffering)
-      .set({ lifecycleStatus: "RETIRED" })
-      .where(eq(productOffering.productOfferingId, offeringId))
+      .set({
+        lifecycleStatus: "RETIRED",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "OBSOLETE"),
+        ),
+      )
       .returning({ offeringId: productOffering.productOfferingId });
     if (!row) {
-      throw new Error(`retireOffering: offering ${offeringId} not found`);
+      throw new Error(
+        `retireOffering: offering ${offeringId} not found or not OBSOLETE`,
+      );
     }
     return { offeringId: row.offeringId };
+  },
+
+  // pm44-spec I1/D4. Count the child rows about to be cascade-deleted, so the
+  // PRODUCT_OFFERING_DELETED audit payload can record how many specs/prices were
+  // removed — the audit event being the only survivor of a discard. The count is
+  // taken over a FOR UPDATE-locked subquery so it matches EXACTLY what the parent
+  // delete's cascade removes: the parent's own FOR UPDATE (held by the caller)
+  // already blocks a concurrent child INSERT (its FK takes a conflicting KEY SHARE
+  // on the parent), and locking the counted rows here additionally serializes a
+  // concurrent explicit child DELETE, which does not lock the parent. Postgres
+  // forbids FOR UPDATE directly with an aggregate, so the lock lives in the
+  // subquery (same idiom as the retirement gate).
+  async countSpecificationsForOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<number> {
+    const rows = await tx.execute<{ child_count: string | number }>(sql`
+      SELECT count(*) AS child_count FROM (
+        SELECT 1
+        FROM product.product_specifications
+        WHERE ${productSpecifications.refProductOfferingId} = ${offeringId}
+        FOR UPDATE
+      ) t`);
+    return Number(rows[0]?.child_count ?? 0);
+  },
+
+  async countPricesForOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<number> {
+    const rows = await tx.execute<{ child_count: string | number }>(sql`
+      SELECT count(*) AS child_count FROM (
+        SELECT 1
+        FROM product.product_offering_price
+        WHERE ${productOfferingPrice.productOfferingId} = ${offeringId}
+        FOR UPDATE
+      ) t`);
+    return Number(rows[0]?.child_count ?? 0);
+  },
+
+  // pm44-spec I3. After a discard, how many versions remain in the family — so
+  // the action can send the UI to the family's remaining primary version, or to
+  // the bare list when the family is now empty. Same COALESCE family key the
+  // pm36 indexes and findFamilyPage use.
+  async countFamilyVersions(tx: Database, familyId: string): Promise<number> {
+    const [row] = await tx
+      .select({ c: count() })
+      .from(productOffering)
+      .where(
+        sql`coalesce(${productOffering.familyOfferingId}, ${productOffering.productOfferingId}) = ${familyId}`,
+      );
+    return row?.c ?? 0;
+  },
+
+  // pm44-spec I1/D1/D2. Hard-deletes a never-released (DRAFT/TESTING) version.
+  // Deletes ONLY the parent row and lets pm35's `ON DELETE cascade` remove the
+  // specifications and prices — parent-first cascade is the ONLY child-delete
+  // path pm36's trigger permits for a TESTING parent (it exempts a child delete
+  // whose parent row is being deleted in the same statement; an explicit
+  // child-delete-before-parent is rejected while a TESTING parent is still
+  // present — architecture §3.5 / code-standards §6.8). No WHERE-status clause:
+  // the calling service owns the DRAFT/TESTING decision under its lock, and a
+  // silent 0-row delete would be worse than a refusal (I1). `RETURNING` yields
+  // the deleted row's fields for the audit payload (D4). The self-referencing
+  // `family_offering_id` (ON DELETE restrict) never fires: a DRAFT/TESTING
+  // version can never be a family root that other versions point at (a root with
+  // branches has been ACTIVE, so it is OBSOLETE/RETIRED, never deletable).
+  async deleteOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<{
+    productOfferingId: string;
+    name: string;
+    version: number;
+    lifecycleStatus: LifecycleStatus;
+    familyOfferingId: string | null;
+  } | null> {
+    const [row] = await tx
+      .delete(productOffering)
+      .where(eq(productOffering.productOfferingId, offeringId))
+      .returning({
+        productOfferingId: productOffering.productOfferingId,
+        name: productOffering.name,
+        version: productOffering.version,
+        lifecycleStatus: productOffering.lifecycleStatus,
+        familyOfferingId: productOffering.familyOfferingId,
+      });
+    if (!row) return null;
+    return { ...row, lifecycleStatus: row.lifecycleStatus as LifecycleStatus };
   },
 };

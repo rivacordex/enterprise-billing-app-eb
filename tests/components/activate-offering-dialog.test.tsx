@@ -34,17 +34,15 @@ beforeEach(() => {
 function renderDialog(
   overrides: Partial<React.ComponentProps<typeof ActivateOfferingDialog>> = {},
 ) {
-  const onSuperseded = vi.fn();
-  const utils = render(
+  return render(
     <ActivateOfferingDialog
       trigger={<button>Activate</button>}
       offeringId="PRDOFR1"
       offeringName="Test Plan"
-      onSuperseded={onSuperseded}
+      offeringVersion={2}
       {...overrides}
     />,
   );
-  return { onSuperseded, ...utils };
 }
 
 async function openDialog(user: ReturnType<typeof userEvent.setup>) {
@@ -57,6 +55,20 @@ function getConfirmButton(): HTMLElement {
 }
 
 describe("ActivateOfferingDialog", () => {
+  it("shows the revised copy naming the version and the supersession", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await openDialog(user);
+
+    expect(
+      screen.getByText(/becomes orderable/, { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/becomes obsolete/, { exact: false }),
+    ).toBeInTheDocument();
+  });
+
   it("submits with an empty reason by default", async () => {
     mockActivateOfferingAction.mockResolvedValue({
       ok: true,
@@ -96,14 +108,14 @@ describe("ActivateOfferingDialog", () => {
     });
   });
 
-  it("on a direct success (no superseded sibling) closes, toasts, refreshes, and does not call onSuperseded", async () => {
+  it("on a direct success (no superseded sibling) closes, toasts, and refreshes", async () => {
     mockActivateOfferingAction.mockResolvedValue({
       ok: true,
       offeringId: "PRDOFR1",
       supersededOfferingId: null,
     });
     const user = userEvent.setup();
-    const { onSuperseded } = renderDialog();
+    renderDialog();
 
     await openDialog(user);
     await user.click(getConfirmButton());
@@ -112,79 +124,33 @@ describe("ActivateOfferingDialog", () => {
       expect(mockToastSuccess).toHaveBeenCalledWith("Offering activated");
     });
     expect(mockRefresh).toHaveBeenCalled();
-    expect(onSuperseded).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
 
-  it("on a superseding success toasts the superseded copy and calls onSuperseded", async () => {
+  it("on a superseding success toasts the obsolete copy", async () => {
     mockActivateOfferingAction.mockResolvedValue({
       ok: true,
       offeringId: "PRDOFR1",
       supersededOfferingId: "PRDOFR2",
     });
     const user = userEvent.setup();
-    const { onSuperseded } = renderDialog();
+    renderDialog();
 
     await openDialog(user);
     await user.click(getConfirmButton());
 
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith(
-        "Offering activated — previous version retired",
+        "Offering activated — previous version marked obsolete",
       );
     });
-    expect(onSuperseded).toHaveBeenCalled();
-  });
-
-  it("on NO_PRICE_ROWS shows the inline alert copy and keeps the dialog open (no toast)", async () => {
-    mockActivateOfferingAction.mockResolvedValue({
-      ok: false,
-      code: "NO_PRICE_ROWS",
-    });
-    const user = userEvent.setup();
-    renderDialog();
-
-    await openDialog(user);
-    await user.click(getConfirmButton());
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "This draft has no prices yet. Add at least one price before activating.",
-        ),
-      ).toBeInTheDocument();
-    });
-    expect(mockToastError).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-  });
-
-  it("on SPECIFICATIONS_NOT_RESOLVED shows the inline alert copy and keeps the dialog open (no toast)", async () => {
-    mockActivateOfferingAction.mockResolvedValue({
-      ok: false,
-      code: "SPECIFICATIONS_NOT_RESOLVED",
-    });
-    const user = userEvent.setup();
-    renderDialog();
-
-    await openDialog(user);
-    await user.click(getConfirmButton());
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "This draft has an unresolved mandatory specification. Set a value for every mandatory specification before activating.",
-        ),
-      ).toBeInTheDocument();
-    });
-    expect(mockToastError).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(mockRefresh).toHaveBeenCalled();
   });
 
   it.each([
     ["FORBIDDEN", "You don't have permission to do that."],
-    ["OFFERING_NOT_DRAFT", "Something went wrong. Please try again."],
     ["VALIDATION_ERROR", "Something went wrong. Please try again."],
     ["SERVER_ERROR", "Something went wrong. Please try again."],
   ] as const)(
@@ -208,6 +174,28 @@ describe("ActivateOfferingDialog", () => {
       expect(mockRefresh).not.toHaveBeenCalled();
     },
   );
+
+  it("on OFFERING_NOT_TESTING the dialog closes and refreshes", async () => {
+    mockActivateOfferingAction.mockResolvedValue({
+      ok: false,
+      code: "OFFERING_NOT_TESTING",
+    });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await openDialog(user);
+    await user.click(getConfirmButton());
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "This version is no longer in testing. Refreshing...",
+      );
+    });
+    expect(mockRefresh).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
 
   it("on OFFERING_NOT_FOUND the dialog closes and refreshes", async () => {
     mockActivateOfferingAction.mockResolvedValue({

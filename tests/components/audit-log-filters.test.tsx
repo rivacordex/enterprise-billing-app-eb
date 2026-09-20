@@ -99,6 +99,13 @@ describe("AuditLogFilters", () => {
     expect(
       within(change).getByText("PRODUCT_PRICE_UPDATED"),
     ).toBeInTheDocument();
+    // pm42 additions (release-path transitions)
+    expect(
+      within(change).getByText("PRODUCT_OFFERING_SUBMITTED_FOR_TESTING"),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("PRODUCT_OFFERING_RETURNED_TO_DRAFT"),
+    ).toBeInTheDocument();
 
     const removal = within(select).getByRole("group", { name: "Removal" });
     expect(within(removal).getByText("CONTACT_DELETED")).toBeInTheDocument();
@@ -108,12 +115,21 @@ describe("AuditLogFilters", () => {
     expect(
       within(removal).getByText("PRODUCT_OFFERING_SUPERSEDED"),
     ).toBeInTheDocument();
+    // pm43 addition (stop selling)
+    expect(
+      within(removal).getByText("PRODUCT_OFFERING_OBSOLETED"),
+    ).toBeInTheDocument();
     expect(
       within(removal).getByText("PRODUCT_OFFERING_RETIRED"),
     ).toBeInTheDocument();
+    // pm44 replaced PRODUCT_OFFERING_DISCARDED with PRODUCT_OFFERING_DELETED
+    // (the hard-delete audit event); DISCARDED is no longer a filter option.
     expect(
-      within(removal).getByText("PRODUCT_OFFERING_DISCARDED"),
+      within(removal).getByText("PRODUCT_OFFERING_DELETED"),
     ).toBeInTheDocument();
+    expect(
+      within(removal).queryByText("PRODUCT_OFFERING_DISCARDED"),
+    ).not.toBeInTheDocument();
     // pm38 addition
     expect(
       within(removal).getByText("PRODUCT_PRICE_DELETED"),
@@ -163,7 +179,7 @@ describe("AuditLogFilters", () => {
       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(75); // "All events" + 74 (pm38 added PRODUCT_PRICE_UPDATED/_DELETED)
+    expect(within(select).getAllByRole("option")).toHaveLength(78); // "All events" + 77 (pm44 swapped PRODUCT_OFFERING_DISCARDED → PRODUCT_OFFERING_DELETED, net 0)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

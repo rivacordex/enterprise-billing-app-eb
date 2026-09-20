@@ -20,6 +20,10 @@ const ALLOWED_OFFERING_MUTATIONS = new Set([
   "insertOffering",
   "updateOfferingDraftInPlace",
   "branchOfferingAsDraft",
+  // pm44: the offering repository gains the hard-delete of a never-released
+  // version (deleteOffering). The count* helpers it also gained are reads, not
+  // mutations, so they never match MUTATION_NAME_PATTERN.
+  "deleteOffering",
 ]);
 
 // pm14: the specification repository gains its own write methods

@@ -39,6 +39,8 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   PRODUCT_INVENTORY_RESUMED: "Change",
   PRODUCT_SPECIFICATION_UPDATED: "Change",
   PRODUCT_PRICE_UPDATED: "Change",
+  PRODUCT_OFFERING_SUBMITTED_FOR_TESTING: "Change",
+  PRODUCT_OFFERING_RETURNED_TO_DRAFT: "Change",
   ORGANIZATION_UPDATED: "Change",
   ORGANIZATION_STATUS_CHANGED: "Change",
   CUSTOMER_STATUS_CHANGED: "Change",
@@ -57,8 +59,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   PRODUCT_SPECIFICATION_DELETED: "Removal",
   PRODUCT_PRICE_DELETED: "Removal",
   PRODUCT_OFFERING_SUPERSEDED: "Removal",
+  PRODUCT_OFFERING_OBSOLETED: "Removal",
   PRODUCT_OFFERING_RETIRED: "Removal",
-  PRODUCT_OFFERING_DISCARDED: "Removal",
+  PRODUCT_OFFERING_DELETED: "Removal",
   PRODUCT_ORDER_REJECTED: "Removal",
   PRODUCT_ORDER_FAILED: "Removal",
   PRODUCT_INVENTORY_TERMINATED: "Removal",
@@ -112,6 +115,23 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // bm20 T11 — DISTRIBUTION_FAILED → COMPLETED, force-completing a
   // permanently-failing distribution: a state transition, mandatory reason.
   BILL_RUN_DISTRIBUTION_ABANDONED: "Change",
+};
+
+// Event types removed from AUDIT_EVENT_TYPES (no longer written, no longer a
+// filter option) but still present on historical rows — their category so the
+// audit log can still render them (pm44 D5). `toAuditLogRow` maps a row's
+// category from the raw DB `event_type`, so a removed type would otherwise
+// resolve to `undefined`; this legacy fallback keeps old rows rendering with
+// their real category. Keyed by `string` (not `AuditEventType`) precisely
+// because these keys are no longer union members. Never merged into
+// AUDIT_EVENT_TYPES: nothing writes them and they must not reappear as options.
+export const LEGACY_AUDIT_EVENT_CATEGORY_MAP: Record<
+  string,
+  AuditEventCategory
+> = {
+  // pm44 replaced discard-sets-RETIRED with a hard delete
+  // (PRODUCT_OFFERING_DELETED); rows written before that stay in the log.
+  PRODUCT_OFFERING_DISCARDED: "Removal",
 };
 
 // Shape returned by the repository join (audit_log + appuser for the

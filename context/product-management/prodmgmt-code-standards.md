@@ -165,12 +165,12 @@ actions/product/
   insert-price.action.ts
   update-price.action.ts              # (pm38)
   delete-price.action.ts              # (pm38)
-  submit-for-testing.action.ts        # (new)
-  return-to-draft.action.ts           # (new)
+  submit-for-testing.action.ts        # (pm42)
+  return-to-draft.action.ts           # (pm42)
   activate-offering.action.ts
-  obsolete-offering.action.ts         # (new)  ACTIVE → OBSOLETE
-  retire-offering.action.ts           # re-purposed: OBSOLETE → RETIRED only
-  delete-offering.action.ts           # (new)  hard delete of a never-released version
+  obsolete-offering.action.ts         # (pm43)  ACTIVE → OBSOLETE
+  retire-offering.action.ts           # (pm43)  re-purposed: OBSOLETE → RETIRED only
+  delete-offering.action.ts           # (pm44)  hard delete of a never-released version
 components/products/
   offering-table.tsx, offering-detail.tsx
   specifications-panel.tsx, prices-panel.tsx
@@ -190,25 +190,26 @@ components/products/manage/
   offering-form.tsx, specification-form.tsx, price-form.tsx
   create-offering-dialog.tsx
   activate-offering-dialog.tsx
-  submit-for-testing-dialog.tsx       # (new)
-  obsolete-offering-dialog.tsx        # (new)
-  retire-offering-dialog.tsx          # re-purposed (OBSOLETE → RETIRED)
-  delete-version-dialog.tsx           # (new)
+  submit-for-testing-dialog.tsx       # (pm42)
+  obsolete-offering-dialog.tsx        # (pm43)
+  retire-offering-dialog.tsx          # (pm43)  re-purposed (OBSOLETE → RETIRED)
+  delete-version-dialog.tsx           # (pm44)
 services/product/
   list-offerings.ts                   # View Product's list
   list-families.ts                    # (pm39)  Manage Products' list
   get-offering-detail.ts
+  get-live-subscription-count.ts      # (pm43)  Retire blocked-state display read
   list-family-versions.ts             # (new)  version bar
   create-offering.ts, update-offering.ts
   add-specification.ts, update-specification.ts, delete-specification.ts
   insert-price.ts, update-price.ts    # update-price (pm38)
   delete-price.ts                     # (pm38)
-  submit-for-testing.ts               # (new)
-  return-to-draft.ts                  # (new)
+  submit-for-testing.ts               # (pm42)
+  return-to-draft.ts                  # (pm42)
   activate-offering.ts
-  obsolete-offering.ts                # (new)
-  retire-offering.ts                  # re-purposed + subscription gate
-  delete-offering.ts                  # (new)
+  obsolete-offering.ts                # (pm43)
+  retire-offering.ts                  # (pm43)  re-purposed + subscription gate
+  delete-offering.ts                  # (pm44)
 db/schema/product.ts                  # 3 tables; 5-value enum; new CHECKs; cascade FKs; 2 indexes
 db/repositories/
   product-offering.ts                 # + findFamilyPage, findFamilyVersions, transition writes,
@@ -227,7 +228,7 @@ validation/product/
   update-price.schema.ts              # (pm38)
   create-offering.schema.ts, update-offering.schema.ts
   create-specification.schema.ts, update-specification.schema.ts
-  transition.schema.ts                # (new)  offering id + optional reason, shared by the five
+  transition.schema.ts                # (pm42)  optional reason, shared by submit + return (activate keeps its own)
 tests/…                               # mirrors source; authz matrix; guardrails (§9)
 ```
 

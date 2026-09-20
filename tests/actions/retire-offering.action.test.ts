@@ -44,12 +44,8 @@ beforeEach(() => {
 });
 
 describe("retireOfferingAction", () => {
-  it("calls requirePermission with PRODUCTS/DELETE (not EDIT) — the concrete proof of Design §2.3's permission split", async () => {
-    mockRetireOffering.mockResolvedValue({
-      ok: true,
-      offeringId: OFFERING_ID,
-      eventType: "PRODUCT_OFFERING_RETIRED",
-    });
+  it("calls requirePermission with PRODUCTS/DELETE (not EDIT)", async () => {
+    mockRetireOffering.mockResolvedValue({ ok: true, offeringId: OFFERING_ID });
 
     await retireOfferingAction(OFFERING_ID, { reason: "" });
 
@@ -59,25 +55,17 @@ describe("retireOfferingAction", () => {
     );
   });
 
-  it("retires an ACTIVE offering and revalidates both product paths", async () => {
-    mockRetireOffering.mockResolvedValue({
-      ok: true,
-      offeringId: OFFERING_ID,
-      eventType: "PRODUCT_OFFERING_RETIRED",
-    });
+  it("retires an OBSOLETE offering and revalidates both product paths", async () => {
+    mockRetireOffering.mockResolvedValue({ ok: true, offeringId: OFFERING_ID });
 
-    const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
+    const result = await retireOfferingAction(OFFERING_ID, { reason: "done" });
 
     expect(mockRetireOffering).toHaveBeenCalledWith(
       OFFERING_ID,
-      expect.objectContaining({ reason: "" }),
+      expect.objectContaining({ reason: "done" }),
       "admin-1",
     );
-    expect(result).toEqual({
-      ok: true,
-      offeringId: OFFERING_ID,
-      eventType: "PRODUCT_OFFERING_RETIRED",
-    });
+    expect(result).toEqual({ ok: true, offeringId: OFFERING_ID });
     expect(mockRevalidatePath).toHaveBeenCalledWith(
       "/products/manage-products",
     );
@@ -86,20 +74,21 @@ describe("retireOfferingAction", () => {
     );
   });
 
-  it("discards a DRAFT offering via the identical action path, differing only in eventType", async () => {
+  it("passes RETIRE_BLOCKED_BY_SUBSCRIPTIONS through with its liveCount", async () => {
     mockRetireOffering.mockResolvedValue({
-      ok: true,
-      offeringId: OFFERING_ID,
-      eventType: "PRODUCT_OFFERING_DISCARDED",
+      ok: false,
+      code: "RETIRE_BLOCKED_BY_SUBSCRIPTIONS",
+      liveCount: 4,
     });
 
     const result = await retireOfferingAction(OFFERING_ID, { reason: "" });
 
     expect(result).toEqual({
-      ok: true,
-      offeringId: OFFERING_ID,
-      eventType: "PRODUCT_OFFERING_DISCARDED",
+      ok: false,
+      code: "RETIRE_BLOCKED_BY_SUBSCRIPTIONS",
+      liveCount: 4,
     });
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
   it("returns VALIDATION_ERROR for a reason over 500 characters without calling the service", async () => {
@@ -134,7 +123,7 @@ describe("retireOfferingAction", () => {
     expect(mockRetireOffering).not.toHaveBeenCalled();
   });
 
-  it.each(["OFFERING_NOT_FOUND", "OFFERING_RETIRED"] as const)(
+  it.each(["OFFERING_NOT_FOUND", "OFFERING_NOT_OBSOLETE"] as const)(
     "passes %s through the action unchanged",
     async (code) => {
       mockRetireOffering.mockResolvedValue({ ok: false, code });

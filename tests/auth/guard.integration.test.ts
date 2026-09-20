@@ -475,8 +475,12 @@ describe.skipIf(!databaseUrl)(
         updateSpecificationMod,
         deleteSpecificationMod,
         insertPriceMod,
+        submitForTestingMod,
+        returnToDraftMod,
         activateOfferingMod,
+        obsoleteOfferingMod,
         retireOfferingMod,
+        deleteOfferingMod,
       ] = await Promise.all([
         import("@/actions/product/create-offering.action"),
         import("@/actions/product/update-offering.action"),
@@ -484,8 +488,12 @@ describe.skipIf(!databaseUrl)(
         import("@/actions/product/update-specification.action"),
         import("@/actions/product/delete-specification.action"),
         import("@/actions/product/insert-price.action"),
+        import("@/actions/product/submit-for-testing.action"),
+        import("@/actions/product/return-to-draft.action"),
         import("@/actions/product/activate-offering.action"),
+        import("@/actions/product/obsolete-offering.action"),
         import("@/actions/product/retire-offering.action"),
+        import("@/actions/product/delete-offering.action"),
       ]);
 
       productActions = {
@@ -507,10 +515,18 @@ describe.skipIf(!databaseUrl)(
           ),
         insertPriceAction: () =>
           insertPriceMod.insertPriceAction("PRDOFR000001", {}),
+        submitForTestingAction: () =>
+          submitForTestingMod.submitForTestingAction("PRDOFR000001", {}),
+        returnToDraftAction: () =>
+          returnToDraftMod.returnToDraftAction("PRDOFR000001", {}),
         activateOfferingAction: () =>
           activateOfferingMod.activateOfferingAction("PRDOFR000001", {}),
+        obsoleteOfferingAction: () =>
+          obsoleteOfferingMod.obsoleteOfferingAction("PRDOFR000001", {}),
         retireOfferingAction: () =>
           retireOfferingMod.retireOfferingAction("PRDOFR000001", {}),
+        deleteOfferingAction: () =>
+          deleteOfferingMod.deleteOfferingAction("PRDOFR000001", {}),
       };
 
       // pm34-spec §1 — the ordering/inventory analogue of the products block
@@ -981,12 +997,16 @@ describe.skipIf(!databaseUrl)(
         "updateSpecificationAction",
         "deleteSpecificationAction",
         "insertPriceAction",
+        "submitForTestingAction",
+        "returnToDraftAction",
         "activateOfferingAction",
       ] as const;
 
       const ALL_PRODUCT_ACTION_NAMES = [
         ...PRODUCTS_EDIT_ACTION_NAMES,
+        "obsoleteOfferingAction",
         "retireOfferingAction",
+        "deleteOfferingAction",
       ] as const;
 
       async function isPermissionRejection(
@@ -1027,13 +1047,18 @@ describe.skipIf(!databaseUrl)(
       // The concrete, executable proof that products:EDIT and
       // products:DELETE are two different gates, not one (pm23-spec §2.3;
       // pm99's own words for this unit).
-      it("retireOfferingAction rejects a products_manager_user (products:EDIT-only, DELETE required)", async () => {
-        mockSession(productsManagerUserId);
-        const rejected = await isPermissionRejection(
-          productActions.retireOfferingAction!,
-        );
-        expect(rejected).toBe(true);
-      });
+      it.each([
+        "obsoleteOfferingAction",
+        "retireOfferingAction",
+        "deleteOfferingAction",
+      ] as const)(
+        "%s rejects a products_manager_user (products:EDIT-only, DELETE required)",
+        async (name) => {
+          mockSession(productsManagerUserId);
+          const rejected = await isPermissionRejection(productActions[name]!);
+          expect(rejected).toBe(true);
+        },
+      );
     });
 
     // pm34-spec §1 — the Ordering-update analogue of the products block

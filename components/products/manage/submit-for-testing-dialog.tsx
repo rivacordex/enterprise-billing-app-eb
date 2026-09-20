@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { activateOfferingAction } from "@/actions/product/activate-offering.action";
+import { submitForTestingAction } from "@/actions/product/submit-for-testing.action";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,26 +18,26 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 
-export interface ActivateOfferingDialogProps {
+export interface SubmitForTestingDialogProps {
   trigger: React.ReactNode;
   offeringId: string;
   offeringName: string;
   offeringVersion: number;
 }
 
-// pm42-spec D6. Keeps its accent confirm button. The revised copy states the two
-// consequences of activation: this version becomes orderable, and the family's
-// currently-active version is superseded to OBSOLETE (not RETIRED — pm42 D3) yet
-// keeps billing its existing subscriptions unchanged (Inv. #6/#17). No
-// precondition copy appears: the release checks moved to submit-for-testing
-// (pm42 D2), so by the time a version reaches Activate they cannot fail. The
-// optional Reason is captured in the audit payload, never a column.
-export function ActivateOfferingDialog({
+// pm42-spec D6. A plain confirmation, not a danger dialog: the version simply
+// becomes read-only while in testing and is reversible to draft. Precondition
+// failures (no prices, an unresolved mandatory spec) NEVER appear as dialog copy
+// — they render as live hints at the panel that owns them (the prices panel, the
+// spec's row). So on such a failure the dialog closes and refreshes, letting
+// those hints surface, rather than restating the requirement here. The optional
+// Reason is captured in the audit payload, never a column.
+export function SubmitForTestingDialog({
   trigger,
   offeringId,
   offeringName,
   offeringVersion,
-}: ActivateOfferingDialogProps): React.JSX.Element {
+}: SubmitForTestingDialogProps): React.JSX.Element {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -51,31 +51,35 @@ export function ActivateOfferingDialog({
     setOpen(nextOpen);
   }
 
-  async function handleActivateConfirm(): Promise<void> {
+  async function handleConfirm(): Promise<void> {
     setIsSubmitting(true);
     try {
-      const result = await activateOfferingAction(offeringId, { reason });
+      const result = await submitForTestingAction(offeringId, { reason });
 
       if (result.ok) {
         setOpen(false);
-        toast.success(
-          result.supersededOfferingId
-            ? "Offering activated — previous version marked obsolete"
-            : "Offering activated",
-        );
+        toast.success("Submitted for testing");
         router.refresh();
+      } else if (
+        result.code === "NO_PRICE_ROWS" ||
+        result.code === "SPECIFICATIONS_NOT_RESOLVED"
+      ) {
+        // Not dialog copy (D6): close and refresh so the panel hints — which are
+        // live — tell the user exactly where to fix it.
+        setOpen(false);
+        router.refresh();
+        toast.error("Resolve the highlighted requirements before submitting.");
       } else if (result.code === "FORBIDDEN") {
         toast.error("You don't have permission to do that.");
+      } else if (result.code === "OFFERING_NOT_DRAFT") {
+        toast.error("This version is no longer a draft. Refreshing...");
+        setOpen(false);
+        router.refresh();
       } else if (result.code === "OFFERING_NOT_FOUND") {
         toast.error("This offering no longer exists. Refreshing...");
         setOpen(false);
         router.refresh();
-      } else if (result.code === "OFFERING_NOT_TESTING") {
-        toast.error("This version is no longer in testing. Refreshing...");
-        setOpen(false);
-        router.refresh();
       } else {
-        // VALIDATION_ERROR / SERVER_ERROR — handled defensively.
         toast.error("Something went wrong. Please try again.");
       }
     } catch {
@@ -90,22 +94,23 @@ export function ActivateOfferingDialog({
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Activate offering</DialogTitle>
+          <DialogTitle>Submit for testing</DialogTitle>
         </DialogHeader>
 
         <p className="text-body-sm text-muted-foreground">
-          <strong>{offeringName}</strong> v{offeringVersion} becomes orderable.
-          The version currently active becomes obsolete — existing subscriptions
-          keep billing from it unchanged.
+          <strong>{offeringName}</strong> v{offeringVersion} becomes read-only
+          while in testing. Return it to draft to make further changes.
         </p>
 
         <Field>
-          <FieldLabel htmlFor="activate-reason">Reason (optional)</FieldLabel>
+          <FieldLabel htmlFor="submit-testing-reason">
+            Reason (optional)
+          </FieldLabel>
           <Textarea
-            id="activate-reason"
+            id="submit-testing-reason"
             rows={2}
             maxLength={500}
-            placeholder="Q3 rate refresh"
+            placeholder="Ready for review"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             disabled={isSubmitting}
@@ -121,16 +126,15 @@ export function ActivateOfferingDialog({
           >
             Cancel
           </Button>
-          {/* ui-context §9: the featured-CTA accent is reserved for this one
-              confirm action. */}
+          {/* Quiet secondary — the featured-CTA accent is reserved for Activate
+              (ui-context §9). */}
           <Button
             type="button"
             disabled={isSubmitting}
-            onClick={() => void handleActivateConfirm()}
-            className="bg-[color:var(--action-cta-bg)]"
+            onClick={() => void handleConfirm()}
           >
             {isSubmitting && <Loader2 className="animate-spin" />}
-            Activate
+            Submit for testing
           </Button>
         </DialogFooter>
       </DialogContent>

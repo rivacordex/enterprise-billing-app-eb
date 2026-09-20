@@ -39,7 +39,8 @@ function renderDialog(
       trigger={<button>Open</button>}
       offeringId="PRDOFR1"
       offeringName="Test Plan"
-      currentStatus="DRAFT"
+      offeringVersion={2}
+      liveCount={0}
       {...overrides}
     />,
   );
@@ -50,100 +51,104 @@ async function openDialog(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("RetireOfferingDialog", () => {
-  it("renders 'Discard draft' copy for a DRAFT target", async () => {
+  it("at zero live subscriptions shows the final-retire copy and a confirm button", async () => {
     const user = userEvent.setup();
-    renderDialog({ currentStatus: "DRAFT" });
+    renderDialog({ liveCount: 0 });
 
     await openDialog(user);
 
     expect(
-      screen.getByRole("heading", { name: "Discard draft" }),
+      screen.getByRole("heading", { name: "Retire version" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Discarding Test Plan removes this draft — it never went live and this cannot be undone.",
-      ),
+      screen.getByText(/Retiring is final/, { exact: false }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Discard draft" }),
+      screen.getByRole("button", { name: "Retire version" }),
     ).toBeInTheDocument();
   });
 
-  it("renders 'Retire offering' copy for an ACTIVE target", async () => {
+  it("when live subscriptions block, shows the count message and no confirm button", async () => {
     const user = userEvent.setup();
-    renderDialog({ currentStatus: "ACTIVE" });
+    renderDialog({ liveCount: 4 });
 
     await openDialog(user);
 
     expect(
-      screen.getByRole("heading", { name: "Retire offering" }),
-    ).toBeInTheDocument();
-    expect(
       screen.getByText(
-        "Retiring Test Plan hides it from new billing selection. This cannot be undone.",
+        "4 subscriptions still bill from this version. It can be retired once they end.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Retire offering" }),
+      screen.queryByRole("button", { name: "Retire version" }),
+    ).not.toBeInTheDocument();
+    // No reason field in the blocked state.
+    expect(
+      screen.queryByLabelText("Reason (optional)"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses singular grammar when exactly one subscription blocks (pm44 review)", async () => {
+    const user = userEvent.setup();
+    renderDialog({ liveCount: 1 });
+
+    await openDialog(user);
+
+    expect(
+      screen.getByText(
+        "1 subscription still bills from this version. It can be retired once they end.",
+      ),
     ).toBeInTheDocument();
   });
 
-  it("submits with the typed reason", async () => {
+  it("submits with the typed reason and toasts on success", async () => {
     mockRetireOfferingAction.mockResolvedValue({
       ok: true,
       offeringId: "PRDOFR1",
-      eventType: "PRODUCT_OFFERING_DISCARDED",
     });
     const user = userEvent.setup();
-    renderDialog();
+    renderDialog({ liveCount: 0 });
 
     await openDialog(user);
     await user.type(
       screen.getByLabelText("Reason (optional)"),
       "No longer needed",
     );
-    await user.click(screen.getByRole("button", { name: "Discard draft" }));
+    await user.click(screen.getByRole("button", { name: "Retire version" }));
 
     await waitFor(() => {
       expect(mockRetireOfferingAction).toHaveBeenCalledWith("PRDOFR1", {
         reason: "No longer needed",
       });
     });
-  });
-
-  it("toasts 'Draft discarded' when eventType is DISCARDED, regardless of the currentStatus prop", async () => {
-    mockRetireOfferingAction.mockResolvedValue({
-      ok: true,
-      offeringId: "PRDOFR1",
-      eventType: "PRODUCT_OFFERING_DISCARDED",
-    });
-    const user = userEvent.setup();
-    renderDialog({ currentStatus: "ACTIVE" });
-
-    await openDialog(user);
-    await user.click(screen.getByRole("button", { name: "Retire offering" }));
-
-    await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith("Draft discarded");
-    });
+    expect(mockToastSuccess).toHaveBeenCalledWith("Version retired");
     expect(mockRefresh).toHaveBeenCalled();
   });
 
-  it("toasts 'Offering retired' when eventType is RETIRED", async () => {
+  it("on a server-reported block switches to the count message in place (no toast, no close)", async () => {
     mockRetireOfferingAction.mockResolvedValue({
-      ok: true,
-      offeringId: "PRDOFR1",
-      eventType: "PRODUCT_OFFERING_RETIRED",
+      ok: false,
+      code: "RETIRE_BLOCKED_BY_SUBSCRIPTIONS",
+      liveCount: 2,
     });
     const user = userEvent.setup();
-    renderDialog({ currentStatus: "ACTIVE" });
+    renderDialog({ liveCount: 0 });
 
     await openDialog(user);
-    await user.click(screen.getByRole("button", { name: "Retire offering" }));
+    await user.click(screen.getByRole("button", { name: "Retire version" }));
 
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith("Offering retired");
+      expect(
+        screen.getByText(
+          "2 subscriptions still bill from this version. It can be retired once they end.",
+        ),
+      ).toBeInTheDocument();
     });
+    expect(
+      screen.queryByRole("button", { name: "Retire version" }),
+    ).not.toBeInTheDocument();
+    expect(mockToastError).not.toHaveBeenCalled();
+    expect(mockRefresh).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -159,10 +164,10 @@ describe("RetireOfferingDialog", () => {
           : { ok: false, code },
       );
       const user = userEvent.setup();
-      renderDialog();
+      renderDialog({ liveCount: 0 });
 
       await openDialog(user);
-      await user.click(screen.getByRole("button", { name: "Discard draft" }));
+      await user.click(screen.getByRole("button", { name: "Retire version" }));
 
       await waitFor(() => {
         expect(mockToastError).toHaveBeenCalledWith(message);
@@ -173,17 +178,20 @@ describe("RetireOfferingDialog", () => {
   );
 
   it.each([
-    ["OFFERING_RETIRED", "This offering has already been retired."],
+    [
+      "OFFERING_NOT_OBSOLETE",
+      "This version can no longer be retired. Refreshing...",
+    ],
     ["OFFERING_NOT_FOUND", "This offering no longer exists. Refreshing..."],
   ] as const)(
     "on %s the dialog closes and refreshes",
     async (code, message) => {
       mockRetireOfferingAction.mockResolvedValue({ ok: false, code });
       const user = userEvent.setup();
-      renderDialog();
+      renderDialog({ liveCount: 0 });
 
       await openDialog(user);
-      await user.click(screen.getByRole("button", { name: "Discard draft" }));
+      await user.click(screen.getByRole("button", { name: "Retire version" }));
 
       await waitFor(() => {
         expect(mockToastError).toHaveBeenCalledWith(message);
@@ -194,37 +202,4 @@ describe("RetireOfferingDialog", () => {
       });
     },
   );
-
-  it("Cancel and confirm are both disabled while a submission is in flight", async () => {
-    let resolveAction: (value: {
-      ok: true;
-      offeringId: string;
-      eventType: "PRODUCT_OFFERING_RETIRED" | "PRODUCT_OFFERING_DISCARDED";
-    }) => void = () => {};
-    mockRetireOfferingAction.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveAction = resolve;
-        }),
-    );
-    const user = userEvent.setup();
-    renderDialog();
-
-    await openDialog(user);
-    await user.click(screen.getByRole("button", { name: "Discard draft" }));
-
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Discard draft" }),
-    ).toBeDisabled();
-
-    resolveAction({
-      ok: true,
-      offeringId: "PRDOFR1",
-      eventType: "PRODUCT_OFFERING_DISCARDED",
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    });
-  });
 });

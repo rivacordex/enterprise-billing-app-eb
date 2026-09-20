@@ -15,6 +15,7 @@ import { auditLog } from "@/db/schema/audit";
 import { appuser } from "@/db/schema/identity";
 import {
   AUDIT_EVENT_CATEGORY_MAP,
+  LEGACY_AUDIT_EVENT_CATEGORY_MAP,
   type AuditLogActorOption,
   type AuditLogFiltersInput,
   type AuditLogRow,
@@ -71,7 +72,13 @@ function toAuditLogRow(row: AuditRowSelection): AuditLogRow {
   return {
     auditId: row.auditId,
     eventType: row.eventType as AuditEventType,
-    category: AUDIT_EVENT_CATEGORY_MAP[row.eventType as AuditEventType],
+    // Current types resolve from the total map; a type removed from
+    // AUDIT_EVENT_TYPES (e.g. PRODUCT_OFFERING_DISCARDED, pm44) but still on
+    // historical rows falls back to the legacy map so the row still renders
+    // (pm44 D5).
+    category:
+      AUDIT_EVENT_CATEGORY_MAP[row.eventType as AuditEventType] ??
+      LEGACY_AUDIT_EVENT_CATEGORY_MAP[row.eventType],
     actorUserId: row.actorUserId,
     actorUserName: row.actorUserName,
     actorDeleted: row.actorStatus === "DELETED",
