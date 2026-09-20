@@ -10,7 +10,6 @@ function renderForm(
   const onSubmit = vi.fn().mockResolvedValue(undefined);
   const utils = render(
     <SpecificationForm
-      mode={overrides.defaultValues ? "edit" : "create"}
       formId="specification-form"
       onSubmit={onSubmit}
       isSubmitting={false}

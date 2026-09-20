@@ -17,7 +17,11 @@ import {
   getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
-import type { OfferingDetail, VersionSummary } from "@/types/product";
+import {
+  PANEL_EDITABLE_BY_STATUS,
+  type OfferingDetail,
+  type VersionSummary,
+} from "@/types/product";
 import { familyListSearchParamsSchema } from "@/validation/product/family-list.schema";
 
 export const dynamic = "force-dynamic";
@@ -78,6 +82,13 @@ export default async function ManageProductsPage({
     ? await getOfferingDetail(selectedVersionId)
     : null;
 
+  // pm41 I4: the panels edit inline only on a DRAFT version, read from a total
+  // `Record<LifecycleStatus, boolean>` (never an inline `=== "DRAFT"`) so a new
+  // status forces a decision here rather than silently staying read-only.
+  const canEdit = selectedOffering
+    ? PANEL_EDITABLE_BY_STATUS[selectedOffering.lifecycleStatus]
+    : false;
+
   return (
     <main className="space-y-5 p-5">
       <header className="flex items-start justify-between gap-4">
@@ -133,6 +144,11 @@ export default async function ManageProductsPage({
         key={selectedVersionId ?? "none"}
         hasFamily={family !== null}
         offering={selectedOffering}
+        canEdit={canEdit}
+        familyId={family}
+        query={params.q}
+        status={params.status}
+        page={params.page}
         locale={locale}
         timezone={timezone}
       />

@@ -70,6 +70,16 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     }
   });
 
+  // pm41 I5/I6. The two modal editors are retired — their content moved into
+  // the inline ManageSpecificationsPanel/ManagePricesPanel. A file scan fails CI
+  // if either dialog reappears in the manage folder under its old name.
+  it("components/products/manage/ contains neither retired dialog (pm41)", () => {
+    const manageDir = path.join(REPO_ROOT, "components", "products", "manage");
+    const names = fs.readdirSync(manageDir);
+    expect(names).not.toContain("specifications-dialog.tsx");
+    expect(names).not.toContain("add-price-dialog.tsx");
+  });
+
   // code-standards §5.1/§5.3: v1 exposes no product route handler — every
   // read goes through the guarded RSC page, never an API route.
   it("has no app/api/product* path", () => {

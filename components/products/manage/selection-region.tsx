@@ -1,23 +1,36 @@
 import { PackageSearch, SearchX } from "lucide-react";
 
+import { ManagePricesPanel } from "@/components/products/manage/manage-prices-panel";
+import { ManageSpecificationsPanel } from "@/components/products/manage/manage-specifications-panel";
+import { VersionActionHeader } from "@/components/products/manage/version-action-header";
 import { OfferingDetail } from "@/components/products/offering-detail";
-import { PricesPanel } from "@/components/products/prices-panel";
-import { SpecificationsPanel } from "@/components/products/specifications-panel";
-import type { OfferingDetail as OfferingDetailModel } from "@/types/product";
+import type {
+  LifecycleStatus,
+  OfferingDetail as OfferingDetailModel,
+} from "@/types/product";
 
-// pm40 I5/D3/D4. Composes the selected version's detail, specifications and
-// prices inside the D4 grid (detail full width → specs and prices side-by-side
-// at `lg:`, stacking in that order on narrow viewports), so page.tsx stays a
-// thin orchestrator. It renders View Product's read-only components directly
-// (Inv. #29 — the import is one-directional and correct); it holds no state and
-// no business rules. The version bar is rendered by the page above this region
-// (D4 order: table → version bar → detail → specs → prices).
+// pm40 I5/D3/D4, extended by pm41 I4. Composes the selected version's detail,
+// specifications and prices inside the D4 grid (detail full width → specs and
+// prices side-by-side at `lg:`, stacking on narrow viewports), so page.tsx
+// stays a thin orchestrator. The detail read view is View Product's read-only
+// OfferingDetail (Inv. #29 — one-directional import); the specs and prices go
+// through the Manage panels, which render read-only or inline-editable per
+// `canEdit`. The version bar is rendered by the page above this region.
 export interface SelectionRegionProps {
   // A family is selected in the URL (`?family=` present and well-formed).
   hasFamily: boolean;
   // The resolved version's detail; null when no family is selected, or when the
   // selected family matches no row (a stale link — the empty state says so).
   offering: OfferingDetailModel | null;
+  // pm41 I4 — the version's panels edit inline only when true (DRAFT). Computed
+  // by the page from PANEL_EDITABLE_BY_STATUS; defaults to read-only.
+  canEdit?: boolean;
+  // The selected family id, needed by the header's branch-then-navigate (D4).
+  familyId?: string | null;
+  // Carried through so the header's branch navigation preserves the list state.
+  query?: string;
+  status?: LifecycleStatus | null;
+  page?: number;
   locale: string;
   timezone: string;
 }
@@ -40,6 +53,11 @@ function EmptyPanel({
 export function SelectionRegion({
   hasFamily,
   offering,
+  canEdit = false,
+  familyId = null,
+  query = "",
+  status = null,
+  page = 1,
   locale,
   timezone,
 }: SelectionRegionProps): React.JSX.Element {
@@ -69,7 +87,18 @@ export function SelectionRegion({
   return (
     <div className="space-y-3">
       <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-3">
-        <h2 className="text-h3 font-semibold text-foreground">Details</h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-h3 font-semibold text-foreground">Details</h2>
+          {familyId !== null ? (
+            <VersionActionHeader
+              offering={offering}
+              familyId={familyId}
+              query={query}
+              status={status}
+              page={page}
+            />
+          ) : null}
+        </div>
         <div className="mt-2">
           <OfferingDetail
             offering={offering}
@@ -84,15 +113,30 @@ export function SelectionRegion({
           <h2 className="text-h3 font-semibold text-foreground">
             Specifications
           </h2>
-          <SpecificationsPanel specifications={offering.specifications} />
+          <ManageSpecificationsPanel
+            canEdit={canEdit}
+            offeringId={offering.productOfferingId}
+            specifications={offering.specifications}
+            familyId={familyId}
+            query={query}
+            status={status}
+            page={page}
+          />
         </section>
 
         <section className="rounded-md border border-border bg-[color:var(--surface-card)] p-3">
           <h2 className="text-h3 font-semibold text-foreground">Prices</h2>
-          <PricesPanel
+          <ManagePricesPanel
+            canEdit={canEdit}
+            offeringId={offering.productOfferingId}
+            offeringName={offering.name}
             prices={offering.prices}
             locale={locale}
             timezone={timezone}
+            familyId={familyId}
+            query={query}
+            status={status}
+            page={page}
           />
           {showNoPriceSubmitHint ? (
             <p className="mt-2 text-body-sm text-muted-foreground">

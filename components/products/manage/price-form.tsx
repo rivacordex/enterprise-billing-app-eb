@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, X } from "lucide-react";
@@ -20,6 +20,7 @@ import {
   PRICING_MODELS,
   RECURRING_PERIOD_LENGTHS,
   UNITS_OF_MEASURE,
+  type PriceCard,
   type RecurringPeriodLength,
   type UnitOfMeasure,
 } from "@/types/product";
@@ -61,6 +62,17 @@ function todayLocalDate(): string {
   return `${year}-${month}-${day}`;
 }
 
+// A stored `start_date_time` rendered back into the `<input type="date">`'s
+// yyyy-mm-dd value, in local parts (the same local-calendar basis todayLocalDate
+// and the backdating checks use, so an edit that leaves the date untouched
+// round-trips to the same day it was displayed).
+function dateToLocalInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 // pm22-spec §2.4, extended by pm38-spec I6. Validates only the checks meaningful
 // on this flat, pre-assembly shape — the per-price-type completeness rules
 // (charge period for recurring, unit for usage) and the flat/tiered money
@@ -68,26 +80,36 @@ function todayLocalDate(): string {
 // exactly once, in tieredPricingCharacteristicsSchema (reused, not re-declared,
 // by the Server Action's own insertPriceSchema/updatePriceSchema round-trip at
 // submit time).
-const priceFormSchema = z
-  .object({
-    name: z
-      .string()
-      .trim()
-      .min(1, "Price name is required")
-      .max(200, "Price name must be 200 characters or fewer"),
-    priceType: z.enum(PRICE_TYPES),
-    recurringChargePeriodLength: z.string(),
-    unitOfMeasure: z.string(),
-    currency: z.string().trim().length(3, "Currency must be a 3-letter code"),
-    glCode: z.string().trim().max(50, "GL code must be 50 characters or fewer"),
-    startDateTime: z.string().min(1, "Start date is required"),
-    pricingModel: z.enum(PRICING_MODELS),
-    amount: z.string(),
-    tiers: z.array(
-      z.object({ from: z.string(), to: z.string(), rate: z.string() }),
-    ),
-  })
-  .superRefine((value, ctx) => {
+const priceFormObjectSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Price name is required")
+    .max(200, "Price name must be 200 characters or fewer"),
+  priceType: z.enum(PRICE_TYPES),
+  recurringChargePeriodLength: z.string(),
+  unitOfMeasure: z.string(),
+  currency: z.string().trim().length(3, "Currency must be a 3-letter code"),
+  glCode: z.string().trim().max(50, "GL code must be 50 characters or fewer"),
+  startDateTime: z.string().min(1, "Start date is required"),
+  pricingModel: z.enum(PRICING_MODELS),
+  amount: z.string(),
+  tiers: z.array(
+    z.object({ from: z.string(), to: z.string(), rate: z.string() }),
+  ),
+});
+
+type PriceFormValues = z.infer<typeof priceFormObjectSchema>;
+
+// pm22-spec §2.4, extended by pm38-spec I6, amended pm41 review #1. The backdating
+// tolerance is applied only when the start date actually changes from
+// `baselineStartDate` (the edit's pre-filled original). Re-saving a row without
+// touching its start — e.g. correcting an amount on a draft branched from a
+// long-live version — is not a new backdate and must not be blocked; the add
+// flow passes no baseline, so any past start beyond tolerance is still caught.
+// Mirrors the authoritative service-layer rule in services/product/update-price.ts.
+function makePriceFormSchema(baselineStartDate?: string) {
+  return priceFormObjectSchema.superRefine((value, ctx) => {
     if (
       value.priceType === "recurring" &&
       !RECURRING_PERIOD_LENGTH_STRINGS.includes(
@@ -154,28 +176,92 @@ const priceFormSchema = z
 
     // Duplicated tolerance check (Design §2.5) — a fast, live, field-level
     // check; the Server Action's own schema round-trip (§3.2) is the
-    // authoritative one.
-    const start = new Date(`${value.startDateTime}T00:00:00`);
-    if (!Number.isNaN(start.getTime())) {
-      const msSinceStart = Date.now() - start.getTime();
-      if (msSinceStart > THREE_DAYS_MS) {
-        ctx.addIssue({
-          code: "custom",
-          message: "Start date cannot be more than 3 days in the past.",
-          path: ["startDateTime"],
-        });
+    // authoritative one. Gated on a changed start date (pm41 review #1).
+    if (value.startDateTime !== baselineStartDate) {
+      const start = new Date(`${value.startDateTime}T00:00:00`);
+      if (!Number.isNaN(start.getTime())) {
+        const msSinceStart = Date.now() - start.getTime();
+        if (msSinceStart > THREE_DAYS_MS) {
+          ctx.addIssue({
+            code: "custom",
+            message: "Start date cannot be more than 3 days in the past.",
+            path: ["startDateTime"],
+          });
+        }
       }
     }
   });
+}
 
-type PriceFormValues = z.infer<typeof priceFormSchema>;
+// pm41 D6 — a stored PriceCard mapped back into the flat form shape, so the
+// inline editor pre-fills the same fields the add flow starts empty. Each
+// branch of the discriminated read model fills exactly the fields its
+// `priceType` carries; the hidden groups keep the add flow's benign defaults
+// (period "1", unit "") so a later type-switch has something valid to show.
+export function priceCardToFormValues(price: PriceCard): PriceFormValues {
+  return {
+    name: price.name,
+    priceType: price.priceType,
+    recurringChargePeriodLength:
+      price.recurringChargePeriodLength !== null
+        ? String(price.recurringChargePeriodLength)
+        : "1",
+    unitOfMeasure: price.unitOfMeasure ?? "",
+    currency: price.currency,
+    glCode: price.glCode ?? "",
+    startDateTime: dateToLocalInput(price.startDateTime),
+    pricingModel: price.pricingModel,
+    amount: price.amount ?? "",
+    tiers:
+      price.pricingModel === "tiered" && price.pricingCharacteristics
+        ? price.pricingCharacteristics.tiers.map((tier) => ({
+            from: String(tier.from),
+            to: tier.to === null ? "" : String(tier.to),
+            rate: tier.rate,
+          }))
+        : [{ from: "0", to: "", rate: "" }],
+  };
+}
 
 export interface PriceFormProps {
   offeringName: string;
   currentStatus: "DRAFT" | "ACTIVE";
   onSubmit: (values: InsertPriceInput) => Promise<void>;
   isSubmitting: boolean;
+  // pm41 D6 — the DOM id of the <form>, so more than one PriceForm can coexist
+  // on the page (an inline editor per row plus the add form) without colliding
+  // ids or cross-wiring their external Save buttons. Defaults to the add flow's
+  // original id.
+  formId?: string;
+  // pm41 D6 — pre-filled values for the inline edit flow; the add flow omits it
+  // and starts from the empty defaults.
+  defaultValues?: PriceFormValues;
+  // pm41 D2 — reports RHF dirtiness up so the panel can prompt-to-discard when a
+  // second row is activated mid-edit.
+  onDirtyChange?: (dirty: boolean) => void;
+  // pm41 review #7 — server-returned field errors (a VALIDATION_ERROR's
+  // fieldErrors, or a synthesised { startDateTime } for DUPLICATE_START /
+  // BACKDATED_START_TOO_FAR). Keyed messages are attached to their field via
+  // RHF setError (aria-invalid + FieldError), meeting spec I3's "field error on
+  // the row/start date"; any key with no matching field renders in a residual
+  // list so nothing is dropped.
+  serverFieldErrors?: Record<string, string[]> | null;
 }
+
+// The form fields a server error key can be attached to (pm41 review #7). A key
+// outside this set (e.g. a nested priceCharacteristics path) has no input to
+// mark, so it falls through to the residual list.
+const PRICE_SERVER_FIELDS: readonly (keyof PriceFormValues)[] = [
+  "name",
+  "priceType",
+  "recurringChargePeriodLength",
+  "unitOfMeasure",
+  "currency",
+  "glCode",
+  "amount",
+  "startDateTime",
+  "tiers",
+];
 
 // pm22-spec §3.3, extended by pm38-spec I6. Assembles the flat form shape into
 // the discriminated InsertPriceInput — the one place the two representations
@@ -235,17 +321,29 @@ export function PriceForm({
   currentStatus,
   onSubmit,
   isSubmitting,
+  formId = "price-form-add",
+  defaultValues,
+  onDirtyChange,
+  serverFieldErrors,
 }: PriceFormProps): React.JSX.Element {
+  // Backdating is gated on a change from the pre-filled start (pm41 review #1);
+  // memoised so the resolver identity is stable across renders.
+  const resolver = useMemo(
+    () => zodResolver(makePriceFormSchema(defaultValues?.startDateTime)),
+    [defaultValues?.startDateTime],
+  );
+
   const {
     register,
     handleSubmit,
     control,
     getValues,
     setValue,
-    formState: { errors },
+    setError,
+    formState: { errors, isDirty },
   } = useForm<PriceFormValues>({
-    resolver: zodResolver(priceFormSchema),
-    defaultValues: {
+    resolver,
+    defaultValues: defaultValues ?? {
       name: "",
       priceType: "recurring",
       recurringChargePeriodLength: "1",
@@ -279,6 +377,35 @@ export function PriceForm({
     if (priceType !== "usage") setValue("unitOfMeasure", "");
     if (priceType !== "recurring") setValue("recurringChargePeriodLength", "1");
   }, [priceType, setValue]);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  // pm41 review #7 — attach server field errors to their inputs (aria-invalid +
+  // FieldError) via setError; keys with no matching field become residual
+  // messages so none are dropped. RHF clears these on the next submit's
+  // re-validation, so a corrected field stops showing the stale server error.
+  const [residualServerMessages, setResidualServerMessages] = useState<
+    string[]
+  >([]);
+  useEffect(() => {
+    if (!serverFieldErrors) {
+      setResidualServerMessages([]);
+      return;
+    }
+    const residual: string[] = [];
+    for (const [key, messages] of Object.entries(serverFieldErrors)) {
+      const message = messages.join(" ");
+      if (!message) continue;
+      if ((PRICE_SERVER_FIELDS as readonly string[]).includes(key)) {
+        setError(key as keyof PriceFormValues, { type: "server", message });
+      } else {
+        residual.push(message);
+      }
+    }
+    setResidualServerMessages(residual);
+  }, [serverFieldErrors, setError]);
 
   // Captured once via a lazy useState initializer, not read directly during
   // render (React's purity rules disallow calling Date.now() in the render
@@ -319,7 +446,7 @@ export function PriceForm({
 
   return (
     <form
-      id="price-form-add"
+      id={formId}
       noValidate
       onSubmit={(e) =>
         void handleSubmit((values) => onSubmit(toInsertPriceInput(values)))(e)
@@ -603,6 +730,19 @@ export function PriceForm({
             </div>
           )}
         </Field>
+
+        {residualServerMessages.length > 0 && (
+          <ul className="flex flex-col gap-0.5">
+            {residualServerMessages.map((message, index) => (
+              <li
+                key={index}
+                className="text-body-sm text-[color:var(--text-danger)]"
+              >
+                {message}
+              </li>
+            ))}
+          </ul>
+        )}
       </FieldGroup>
     </form>
   );
