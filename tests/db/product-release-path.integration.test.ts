@@ -19,6 +19,7 @@ import type { LifecycleStatus } from "@/types/product";
 import type { submitForTesting as SubmitForTesting } from "@/services/product/submit-for-testing";
 import type { returnToDraft as ReturnToDraft } from "@/services/product/return-to-draft";
 import type { activateOffering as ActivateOffering } from "@/services/product/activate-offering";
+import type { updateOffering as UpdateOffering } from "@/services/product/update-offering";
 
 // pm42-spec I7. Live-DB proof of the release path DRAFT → TESTING → ACTIVE plus
 // TESTING → DRAFT: each transition succeeds from its legal predecessor and every
@@ -37,6 +38,7 @@ describe.skipIf(!databaseUrl)(
     let submitForTesting: typeof SubmitForTesting;
     let returnToDraft: typeof ReturnToDraft;
     let activateOffering: typeof ActivateOffering;
+    let updateOffering: typeof UpdateOffering;
     let actorId: string;
     let uniqueCounter = 0;
 
@@ -57,14 +59,16 @@ describe.skipIf(!databaseUrl)(
         migrationsSchema: "drizzle",
       });
 
-      const [submitMod, returnMod, activateMod] = await Promise.all([
+      const [submitMod, returnMod, activateMod, updateMod] = await Promise.all([
         import("@/services/product/submit-for-testing"),
         import("@/services/product/return-to-draft"),
         import("@/services/product/activate-offering"),
+        import("@/services/product/update-offering"),
       ]);
       submitForTesting = submitMod.submitForTesting;
       returnToDraft = returnMod.returnToDraft;
       activateOffering = activateMod.activateOffering;
+      updateOffering = updateMod.updateOffering;
 
       const [user] = await db
         .insert(appuser)
@@ -97,7 +101,7 @@ describe.skipIf(!databaseUrl)(
     // specification. Children are inserted while DRAFT (§3.5 trigger).
     async function createDraft(opts?: {
       price?: boolean;
-      spec?: "resolved" | "unresolved" | "none";
+      spec?: "resolved" | "unresolved" | "empty" | "none";
     }): Promise<string> {
       uniqueCounter += 1;
       const [row] = await db
@@ -130,12 +134,18 @@ describe.skipIf(!databaseUrl)(
 
       const specMode = opts?.spec ?? "resolved";
       if (specMode !== "none") {
+        const defaultValue =
+          specMode === "resolved"
+            ? "01"
+            : specMode === "empty"
+              ? "   " // whitespace-only — must count as unresolved (pm44 review)
+              : null;
         await db.insert(productSpecifications).values({
           refProductOfferingId: offeringId,
           name: "SST identifier",
           isMandatory: true,
           isDefault: true,
-          defaultValue: specMode === "resolved" ? "01" : null,
+          defaultValue,
           productSpecCharacteristics: {},
         });
       }
@@ -322,6 +332,16 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    it("submit refuses a DRAFT whose mandatory spec default is blank/whitespace (pm44 review — 'resolved' means non-empty)", async () => {
+      const id = await createDraft({ spec: "empty" });
+      const result = await submitForTesting(id, {}, actorId);
+      expect(result).toEqual({
+        ok: false,
+        code: "SPECIFICATIONS_NOT_RESOLVED",
+      });
+      expect(await statusOf(id)).toBe("DRAFT");
+    });
+
     // --- Supersession ----------------------------------------------------
 
     it("activation with a sibling supersedes it to OBSOLETE: one ACTIVE, one OBSOLETE, two audit rows", async () => {
@@ -396,6 +416,32 @@ describe.skipIf(!databaseUrl)(
         productOfferingRepository.branchOfferingAsDraft(tx, activeId),
       );
       expect(offeringId).toBeTruthy();
+    });
+
+    it("editing an ACTIVE version whose family already has an open version returns OFFERING_HAS_OPEN_VERSION (pm44 review)", async () => {
+      // root ACTIVE + a branched TESTING version occupy the family's one active
+      // and one open slot.
+      const rootId = await createDraft();
+      await submitForTesting(rootId, {}, actorId);
+      await activateOffering(rootId, {}, actorId);
+      const { offeringId: branchId } = await db.transaction((tx) =>
+        productOfferingRepository.branchOfferingAsDraft(tx, rootId),
+      );
+      await submitForTesting(branchId, {}, actorId);
+
+      // Editing the ACTIVE root would branch a second open version — the
+      // one-open index rejects it, surfaced as a typed code, not SERVER_ERROR.
+      const result = await updateOffering(
+        rootId,
+        {
+          name: "Renamed",
+          isSellable: true,
+          billingOnly: false,
+          saveAsNew: false,
+        },
+        actorId,
+      );
+      expect(result).toEqual({ ok: false, code: "OFFERING_HAS_OPEN_VERSION" });
     });
 
     // --- Concurrency -----------------------------------------------------

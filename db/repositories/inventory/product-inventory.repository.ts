@@ -61,6 +61,21 @@ function buildWhereClause(
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
+// pm43 D2 / pm44 review. The single home of the "still-live subscription" gate
+// predicate — a subscription blocks retirement when it is not TERMINATED, or is
+// TERMINATED with an end_date today or later (still inclusive-billed to that
+// date, Inv. #21). Written once here (code-standards §6.15) and shared by BOTH
+// the locking gate count (`countLiveForOfferingForUpdate`, inside
+// `retireOffering`'s transaction) and the non-locking display count
+// (`countLiveForOffering`, the Manage Products page read) — so the display read
+// never takes FOR UPDATE locks while the predicate still has exactly one source.
+function liveSubscriptionWhere(productOfferingId: string): SQL {
+  return sql`${productInventory.productOfferingId} = ${productOfferingId}
+    AND (${productInventory.status} <> 'TERMINATED'
+         OR ${productInventory.endDate} IS NULL
+         OR ${productInventory.endDate} >= current_date)`;
+}
+
 // The subscription (product inventory) instance repository. Core columns
 // (offering, quantity, start_date) are write-once (architecture Inv. #15) — the
 // only mutations are `updateStatus` (lifecycle) and `updateCharacteristics`
@@ -279,18 +294,13 @@ export const productInventoryRepository = {
     return { productInventoryId: row.productInventoryId };
   },
 
-  // pm43-spec I1/D2/D3. The single home of the "still-live subscription"
-  // predicate — a subscription blocks retirement when it is not TERMINATED, or is
-  // TERMINATED with an end_date today or later (still inclusive-billed to that
-  // date, Inv. #21). Written exactly once here and never restated in a service,
-  // page or fixture (code-standards §6.15). Its only caller is
-  // `services/product/retire-offering.ts` (the retirement gate) and, with `db`,
-  // the page's display-count read; it lives in this inventory repository rather
-  // than a product service because it is an in-transaction precondition re-check
-  // against another module's table (code-standards §1.14, the ac04 precedent).
-  // Rows are locked FOR UPDATE so a subscription created between the count and the
-  // status write cannot be orphaned onto a just-retired version. Read-only — the
-  // write surface (`updateStatus`, `updateCharacteristics`) is untouched (Inv. #18).
+  // pm43-spec I1/D2/D3. The retirement gate's in-transaction re-check: locks every
+  // matching product_inventory row FOR UPDATE so a subscription created between the
+  // count and the status write cannot be orphaned onto a just-retired version.
+  // Called only by `services/product/retire-offering.ts` inside its transaction
+  // (code-standards §1.14, the ac04 cross-module precedent). The predicate lives
+  // in `liveSubscriptionWhere` (§6.15). Read-only — the write surface
+  // (`updateStatus`, `updateCharacteristics`) is untouched (Inv. #18).
   async countLiveForOfferingForUpdate(
     tx: Database,
     productOfferingId: string,
@@ -298,19 +308,32 @@ export const productInventoryRepository = {
     // count(*) over a FOR UPDATE-locked subquery: Postgres forbids a locking
     // clause directly alongside an aggregate, so the lock lives in the inner
     // SELECT (which still locks every matching product_inventory row) and the
-    // outer query counts them — no per-row id is materialized. The gate predicate
-    // (D2) stays here, in this one method.
+    // outer query counts them — no per-row id is materialized.
     const rows = await tx.execute<{ live_count: string | number }>(sql`
       SELECT count(*) AS live_count FROM (
         SELECT 1
         FROM inventory.product_inventory
-        WHERE ${productInventory.productOfferingId} = ${productOfferingId}
-          AND (${productInventory.status} <> 'TERMINATED'
-               OR ${productInventory.endDate} IS NULL
-               OR ${productInventory.endDate} >= current_date)
+        WHERE ${liveSubscriptionWhere(productOfferingId)}
         FOR UPDATE
       ) t`);
     return Number(rows[0]?.live_count ?? 0);
+  },
+
+  // pm44 review. The NON-locking display count for the Manage Products page's
+  // Retire blocked-state hint. Same predicate as the gate above (via
+  // `liveSubscriptionWhere`) but no FOR UPDATE — a read-only page render must not
+  // take write-intent row locks on the inventory hot table. The authoritative
+  // check remains `countLiveForOfferingForUpdate` inside `retireOffering`'s
+  // transaction (D4), so a stale display count only ever fails safe.
+  async countLiveForOffering(
+    db: Database,
+    productOfferingId: string,
+  ): Promise<number> {
+    const [row] = await db
+      .select({ c: count() })
+      .from(productInventory)
+      .where(liveSubscriptionWhere(productOfferingId));
+    return row?.c ?? 0;
   },
 
   // bm03-spec §Design/§6 — batched read for the partial-period predicate:

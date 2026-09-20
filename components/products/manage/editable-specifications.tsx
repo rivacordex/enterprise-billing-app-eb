@@ -400,11 +400,14 @@ export function EditableSpecifications({
                       ))}
                     </p>
                   ) : null}
-                  {/* pm42 D6/I6. A mandatory spec with no default value blocks
+                  {/* pm42 D6/I6. A mandatory spec with no resolved default value
+                      (null OR blank/whitespace, pm44 review) blocks
                       submit-for-testing; the requirement renders here, at the
                       row that owns it, as a live muted hint — never as dialog
                       copy on the Submit confirmation. */}
-                  {spec.isMandatory && spec.defaultValue === null ? (
+                  {spec.isMandatory &&
+                  (spec.defaultValue === null ||
+                    spec.defaultValue.trim() === "") ? (
                     <p className="text-body-sm text-muted-foreground">
                       A default value is required before this version can be
                       submitted for testing.

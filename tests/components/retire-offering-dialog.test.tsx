@@ -88,6 +88,19 @@ describe("RetireOfferingDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("uses singular grammar when exactly one subscription blocks (pm44 review)", async () => {
+    const user = userEvent.setup();
+    renderDialog({ liveCount: 1 });
+
+    await openDialog(user);
+
+    expect(
+      screen.getByText(
+        "1 subscription still bills from this version. It can be retired once they end.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("submits with the typed reason and toasts on success", async () => {
     mockRetireOfferingAction.mockResolvedValue({
       ok: true,
