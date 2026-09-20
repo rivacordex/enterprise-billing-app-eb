@@ -856,29 +856,40 @@ export const productOfferingRepository = {
 
   // pm44-spec I1/D4. Count the child rows about to be cascade-deleted, so the
   // PRODUCT_OFFERING_DELETED audit payload can record how many specs/prices were
-  // removed — the audit event being the only survivor of a discard. Counted
-  // under the caller's transaction (the parent is held FOR UPDATE) immediately
-  // before the parent delete.
+  // removed — the audit event being the only survivor of a discard. The count is
+  // taken over a FOR UPDATE-locked subquery so it matches EXACTLY what the parent
+  // delete's cascade removes: the parent's own FOR UPDATE (held by the caller)
+  // already blocks a concurrent child INSERT (its FK takes a conflicting KEY SHARE
+  // on the parent), and locking the counted rows here additionally serializes a
+  // concurrent explicit child DELETE, which does not lock the parent. Postgres
+  // forbids FOR UPDATE directly with an aggregate, so the lock lives in the
+  // subquery (same idiom as the retirement gate).
   async countSpecificationsForOffering(
     tx: Database,
     offeringId: string,
   ): Promise<number> {
-    const [row] = await tx
-      .select({ c: count() })
-      .from(productSpecifications)
-      .where(eq(productSpecifications.refProductOfferingId, offeringId));
-    return row?.c ?? 0;
+    const rows = await tx.execute<{ child_count: string | number }>(sql`
+      SELECT count(*) AS child_count FROM (
+        SELECT 1
+        FROM product.product_specifications
+        WHERE ${productSpecifications.refProductOfferingId} = ${offeringId}
+        FOR UPDATE
+      ) t`);
+    return Number(rows[0]?.child_count ?? 0);
   },
 
   async countPricesForOffering(
     tx: Database,
     offeringId: string,
   ): Promise<number> {
-    const [row] = await tx
-      .select({ c: count() })
-      .from(productOfferingPrice)
-      .where(eq(productOfferingPrice.productOfferingId, offeringId));
-    return row?.c ?? 0;
+    const rows = await tx.execute<{ child_count: string | number }>(sql`
+      SELECT count(*) AS child_count FROM (
+        SELECT 1
+        FROM product.product_offering_price
+        WHERE ${productOfferingPrice.productOfferingId} = ${offeringId}
+        FOR UPDATE
+      ) t`);
+    return Number(rows[0]?.child_count ?? 0);
   },
 
   // pm44-spec I3. After a discard, how many versions remain in the family — so
