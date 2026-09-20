@@ -400,6 +400,16 @@ export function EditableSpecifications({
                       ))}
                     </p>
                   ) : null}
+                  {/* pm42 D6/I6. A mandatory spec with no default value blocks
+                      submit-for-testing; the requirement renders here, at the
+                      row that owns it, as a live muted hint — never as dialog
+                      copy on the Submit confirmation. */}
+                  {spec.isMandatory && spec.defaultValue === null ? (
+                    <p className="text-body-sm text-muted-foreground">
+                      A default value is required before this version can be
+                      submitted for testing.
+                    </p>
+                  ) : null}
                   {isConfirming ? (
                     <div className="mt-1.5 flex flex-col gap-1">
                       <span className="text-body-sm text-foreground">
