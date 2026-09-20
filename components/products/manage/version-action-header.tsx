@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, Ban, Loader2, Pencil } from "lucide-react";
+import { Archive, Ban, Loader2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { returnToDraftAction } from "@/actions/product/return-to-draft.action";
 import { updateOfferingAction } from "@/actions/product/update-offering.action";
 import { ActivateOfferingDialog } from "@/components/products/manage/activate-offering-dialog";
 import { buildManageProductsHref } from "@/components/products/manage/manage-products-href";
+import { DeleteVersionDialog } from "@/components/products/manage/delete-version-dialog";
 import { ObsoleteOfferingDialog } from "@/components/products/manage/obsolete-offering-dialog";
 import { OfferingForm } from "@/components/products/manage/offering-form";
 import { RetireOfferingDialog } from "@/components/products/manage/retire-offering-dialog";
@@ -282,6 +283,34 @@ export function VersionActionHeader({
                 aria-hidden
               />
               Retire
+            </Button>
+          }
+        />
+      ) : null}
+
+      {actions.includes("discard") ? (
+        <DeleteVersionDialog
+          offeringId={offering.productOfferingId}
+          offeringName={offering.name}
+          offeringVersion={offering.version}
+          specificationCount={offering.specifications.length}
+          priceCount={offering.prices.length}
+          query={query}
+          status={status}
+          page={page}
+          trigger={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={TOUCH_TARGET}
+            >
+              <Trash2
+                size={14}
+                className="text-[color:var(--text-danger)]"
+                aria-hidden
+              />
+              Discard
             </Button>
           }
         />

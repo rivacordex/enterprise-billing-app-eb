@@ -478,6 +478,7 @@ describe.skipIf(!databaseUrl)(
         activateOfferingMod,
         obsoleteOfferingMod,
         retireOfferingMod,
+        deleteOfferingMod,
       ] = await Promise.all([
         import("@/actions/product/create-offering.action"),
         import("@/actions/product/update-offering.action"),
@@ -488,6 +489,7 @@ describe.skipIf(!databaseUrl)(
         import("@/actions/product/activate-offering.action"),
         import("@/actions/product/obsolete-offering.action"),
         import("@/actions/product/retire-offering.action"),
+        import("@/actions/product/delete-offering.action"),
       ]);
 
       productActions = {
@@ -515,6 +517,8 @@ describe.skipIf(!databaseUrl)(
           obsoleteOfferingMod.obsoleteOfferingAction("PRDOFR000001", {}),
         retireOfferingAction: () =>
           retireOfferingMod.retireOfferingAction("PRDOFR000001", {}),
+        deleteOfferingAction: () =>
+          deleteOfferingMod.deleteOfferingAction("PRDOFR000001", {}),
       };
 
       // pm34-spec §1 — the ordering/inventory analogue of the products block
@@ -992,6 +996,7 @@ describe.skipIf(!databaseUrl)(
         ...PRODUCTS_EDIT_ACTION_NAMES,
         "obsoleteOfferingAction",
         "retireOfferingAction",
+        "deleteOfferingAction",
       ] as const;
 
       async function isPermissionRejection(
@@ -1032,7 +1037,11 @@ describe.skipIf(!databaseUrl)(
       // The concrete, executable proof that products:EDIT and
       // products:DELETE are two different gates, not one (pm23-spec §2.3;
       // pm99's own words for this unit).
-      it.each(["obsoleteOfferingAction", "retireOfferingAction"] as const)(
+      it.each([
+        "obsoleteOfferingAction",
+        "retireOfferingAction",
+        "deleteOfferingAction",
+      ] as const)(
         "%s rejects a products_manager_user (products:EDIT-only, DELETE required)",
         async (name) => {
           mockSession(productsManagerUserId);

@@ -122,9 +122,14 @@ describe("AuditLogFilters", () => {
     expect(
       within(removal).getByText("PRODUCT_OFFERING_RETIRED"),
     ).toBeInTheDocument();
+    // pm44 replaced PRODUCT_OFFERING_DISCARDED with PRODUCT_OFFERING_DELETED
+    // (the hard-delete audit event); DISCARDED is no longer a filter option.
     expect(
-      within(removal).getByText("PRODUCT_OFFERING_DISCARDED"),
+      within(removal).getByText("PRODUCT_OFFERING_DELETED"),
     ).toBeInTheDocument();
+    expect(
+      within(removal).queryByText("PRODUCT_OFFERING_DISCARDED"),
+    ).not.toBeInTheDocument();
     // pm38 addition
     expect(
       within(removal).getByText("PRODUCT_PRICE_DELETED"),
@@ -174,7 +179,7 @@ describe("AuditLogFilters", () => {
       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(78); // "All events" + 77 (pm43 added PRODUCT_OFFERING_OBSOLETED)
+    expect(within(select).getAllByRole("option")).toHaveLength(78); // "All events" + 77 (pm44 swapped PRODUCT_OFFERING_DISCARDED → PRODUCT_OFFERING_DELETED, net 0)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

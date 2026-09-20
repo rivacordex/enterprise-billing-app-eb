@@ -170,7 +170,7 @@ actions/product/
   activate-offering.action.ts
   obsolete-offering.action.ts         # (pm43)  ACTIVE → OBSOLETE
   retire-offering.action.ts           # (pm43)  re-purposed: OBSOLETE → RETIRED only
-  delete-offering.action.ts           # (new)  hard delete of a never-released version
+  delete-offering.action.ts           # (pm44)  hard delete of a never-released version
 components/products/
   offering-table.tsx, offering-detail.tsx
   specifications-panel.tsx, prices-panel.tsx
@@ -193,7 +193,7 @@ components/products/manage/
   submit-for-testing-dialog.tsx       # (pm42)
   obsolete-offering-dialog.tsx        # (pm43)
   retire-offering-dialog.tsx          # (pm43)  re-purposed (OBSOLETE → RETIRED)
-  delete-version-dialog.tsx           # (new)
+  delete-version-dialog.tsx           # (pm44)
 services/product/
   list-offerings.ts                   # View Product's list
   list-families.ts                    # (pm39)  Manage Products' list
@@ -209,7 +209,7 @@ services/product/
   activate-offering.ts
   obsolete-offering.ts                # (pm43)
   retire-offering.ts                  # (pm43)  re-purposed + subscription gate
-  delete-offering.ts                  # (new)
+  delete-offering.ts                  # (pm44)
 db/schema/product.ts                  # 3 tables; 5-value enum; new CHECKs; cascade FKs; 2 indexes
 db/repositories/
   product-offering.ts                 # + findFamilyPage, findFamilyVersions, transition writes,
