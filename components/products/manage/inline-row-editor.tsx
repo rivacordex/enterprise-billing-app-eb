@@ -37,19 +37,23 @@ export function InlineRowEditor({
   const saveRef = useRef<HTMLButtonElement | null>(null);
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    // While a save is in flight the Save/Cancel buttons are disabled; keep the
+    // keyboard consistent — ignore Esc/Enter until it resolves, so Esc can't
+    // tear the editor down mid-submit.
+    if (isSubmitting) return;
     if (event.key === "Escape") {
       event.preventDefault();
       onCancel();
       return;
     }
     if (event.key === "Enter") {
+      // An IME composition confirm (Enter) must never be treated as save or
+      // swallowed — let the composition finish.
+      if (event.nativeEvent.isComposing) return;
       if (event.metaKey || event.ctrlKey) {
         event.preventDefault();
         saveRef.current?.click();
-      } else if (
-        (event.target as HTMLElement).tagName === "INPUT" &&
-        !isSubmitting
-      ) {
+      } else if ((event.target as HTMLElement).tagName === "INPUT") {
         // Multi-field row: a bare Enter must not submit prematurely (D2).
         event.preventDefault();
       }

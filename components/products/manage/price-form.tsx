@@ -236,6 +236,10 @@ export interface PriceFormProps {
   // pm41 D6 — pre-filled values for the inline edit flow; the add flow omits it
   // and starts from the empty defaults.
   defaultValues?: PriceFormValues;
+  // pm41 review #3 — the edit flow's original stored start Date. Used to
+  // round-trip a non-midnight start unchanged (the day-only input would
+  // otherwise flatten it to local midnight). Absent for the add flow.
+  baselineStartDateTime?: Date;
   // pm41 D2 — reports RHF dirtiness up so the panel can prompt-to-discard when a
   // second row is activated mid-edit.
   onDirtyChange?: (dirty: boolean) => void;
@@ -268,7 +272,17 @@ const PRICE_SERVER_FIELDS: readonly (keyof PriceFormValues)[] = [
 // meet. Each branch carries exactly the completeness columns its `priceType`
 // allows: recurring gets its charge period (type fixed to `months`), usage its
 // unit, `once` neither.
-function toInsertPriceInput(values: PriceFormValues): InsertPriceInput {
+//
+// pm41 review #3 — when editing, the date input is day-only, so a stored start
+// with a time-of-day component would be silently flattened to local midnight on
+// an amount-only save (and then read as a *changed* start, tripping backdating).
+// If the day is unchanged from `baselineStartDateTime`, re-emit the original
+// Date verbatim so the instant round-trips exactly; a real day change still
+// reconstructs local midnight of the chosen day.
+function toInsertPriceInput(
+  values: PriceFormValues,
+  baselineStartDateTime?: Date,
+): InsertPriceInput {
   const priceCharacteristics =
     values.pricingModel === "flat"
       ? {
@@ -288,11 +302,17 @@ function toInsertPriceInput(values: PriceFormValues): InsertPriceInput {
           },
         };
 
+  const startDateTime =
+    baselineStartDateTime &&
+    values.startDateTime === dateToLocalInput(baselineStartDateTime)
+      ? baselineStartDateTime
+      : new Date(`${values.startDateTime}T00:00:00`);
+
   const core = {
     name: values.name,
     currency: values.currency.toUpperCase(),
     glCode: values.glCode.trim() === "" ? null : values.glCode.trim(),
-    startDateTime: new Date(`${values.startDateTime}T00:00:00`),
+    startDateTime,
     priceCharacteristics,
   };
 
@@ -323,6 +343,7 @@ export function PriceForm({
   isSubmitting,
   formId = "price-form-add",
   defaultValues,
+  baselineStartDateTime,
   onDirtyChange,
   serverFieldErrors,
 }: PriceFormProps): React.JSX.Element {
@@ -383,29 +404,30 @@ export function PriceForm({
   }, [isDirty, onDirtyChange]);
 
   // pm41 review #7 — attach server field errors to their inputs (aria-invalid +
-  // FieldError) via setError; keys with no matching field become residual
-  // messages so none are dropped. RHF clears these on the next submit's
+  // FieldError) via setError. RHF clears these on the next submit's
   // re-validation, so a corrected field stops showing the stale server error.
-  const [residualServerMessages, setResidualServerMessages] = useState<
-    string[]
-  >([]);
+  // This is the one side effect; the residual list below is a pure derivation.
   useEffect(() => {
-    if (!serverFieldErrors) {
-      setResidualServerMessages([]);
-      return;
-    }
-    const residual: string[] = [];
+    if (!serverFieldErrors) return;
     for (const [key, messages] of Object.entries(serverFieldErrors)) {
       const message = messages.join(" ");
-      if (!message) continue;
-      if ((PRICE_SERVER_FIELDS as readonly string[]).includes(key)) {
+      if (message && (PRICE_SERVER_FIELDS as readonly string[]).includes(key)) {
         setError(key as keyof PriceFormValues, { type: "server", message });
-      } else {
-        residual.push(message);
       }
     }
-    setResidualServerMessages(residual);
   }, [serverFieldErrors, setError]);
+
+  // Keys with no matching field become residual messages so none are dropped —
+  // derived during render (pm41 review follow-up), never via setState in an
+  // effect, so it stays in sync with serverFieldErrors with no extra render.
+  const residualServerMessages = serverFieldErrors
+    ? Object.entries(serverFieldErrors)
+        .filter(
+          ([key]) => !(PRICE_SERVER_FIELDS as readonly string[]).includes(key),
+        )
+        .map(([, messages]) => messages.join(" "))
+        .filter((message) => message.length > 0)
+    : [];
 
   // Captured once via a lazy useState initializer, not read directly during
   // render (React's purity rules disallow calling Date.now() in the render
@@ -449,7 +471,9 @@ export function PriceForm({
       id={formId}
       noValidate
       onSubmit={(e) =>
-        void handleSubmit((values) => onSubmit(toInsertPriceInput(values)))(e)
+        void handleSubmit((values) =>
+          onSubmit(toInsertPriceInput(values, baselineStartDateTime)),
+        )(e)
       }
     >
       {currentStatus === "ACTIVE" && (
