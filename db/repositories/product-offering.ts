@@ -494,6 +494,25 @@ export const productOfferingRepository = {
       );
     }
 
+    // Inv. #14: only a DRAFT (copy-on-write via `saveAsNew`) or an ACTIVE version
+    // (branch-on-edit) may be branched. OBSOLETE, TESTING and RETIRED versions
+    // are "not editable by any path" — refuse to clone them. This is the single
+    // choke point every copy-on-write edit routes through (update-offering, the
+    // three specification services, insert-price), so guarding it here backstops
+    // all of them at once. Load-bearing since pm42 makes OBSOLETE and TESTING
+    // reachable: without it, updateOffering's `saveAsNew` path would clone an
+    // OBSOLETE version into a new editable draft. Defense-in-depth for a direct
+    // service/action call — the UI never offers editing a non-DRAFT/ACTIVE
+    // version (VERSION_HEADER_ACTIONS_BY_STATUS).
+    if (
+      source.lifecycleStatus !== "DRAFT" &&
+      source.lifecycleStatus !== "ACTIVE"
+    ) {
+      throw new Error(
+        `branchOfferingAsDraft: source offering ${sourceOfferingId} is ${source.lifecycleStatus}, not branchable`,
+      );
+    }
+
     // One-hop family resolution (architecture-phase2 §3): NULL means the
     // source itself is the root.
     const rootId = source.familyOfferingId ?? source.productOfferingId;

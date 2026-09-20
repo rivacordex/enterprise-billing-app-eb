@@ -376,6 +376,28 @@ describe.skipIf(!databaseUrl)(
       ).toBe("OBSOLETE");
     });
 
+    // --- Not-editable branch guard (Inv. #14) ----------------------------
+
+    it("branchOfferingAsDraft refuses a non-editable source (TESTING/OBSOLETE/RETIRED); ACTIVE still branches", async () => {
+      for (const status of ["TESTING", "OBSOLETE", "RETIRED"] as const) {
+        const id = await createDraft();
+        await forceStatus(id, status);
+        await expect(
+          db.transaction((tx) =>
+            productOfferingRepository.branchOfferingAsDraft(tx, id),
+          ),
+        ).rejects.toThrow(/not branchable/);
+      }
+
+      // The legitimate branch-on-edit source (ACTIVE) still clones fine.
+      const activeId = await createDraft();
+      await forceStatus(activeId, "ACTIVE");
+      const { offeringId } = await db.transaction((tx) =>
+        productOfferingRepository.branchOfferingAsDraft(tx, activeId),
+      );
+      expect(offeringId).toBeTruthy();
+    });
+
     // --- Concurrency -----------------------------------------------------
 
     // pm42 I7 asks for "two near-simultaneous activations of sibling TESTING
