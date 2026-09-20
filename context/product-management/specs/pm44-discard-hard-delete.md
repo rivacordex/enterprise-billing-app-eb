@@ -18,11 +18,16 @@ Delete a `DRAFT` or `TESTING` version that was never `ACTIVE`, together with its
 
 The guard is the row's **current** status being `DRAFT` or `TESTING`. That is sufficient, and provably so: a version reaches `OBSOLETE` or `RETIRED` only from `ACTIVE`, and nothing returns an `ACTIVE` version to `DRAFT` (Inv. #23). So a row that is `DRAFT` or `TESTING` today has never been `ACTIVE`, and no history table or audit lookup is needed to establish it. State this reasoning in the service's comment — the next reader will otherwise wonder whether the check is strong enough.
 
-### D2. Children go first, explicitly
+### D2. Count the children, then let the cascade remove them *(corrected as-built)*
 
-The service deletes specifications, then prices, then the offering row — inside one transaction — rather than relying on pm35's `ON DELETE cascade`. Two reasons: the row counts for the audit payload (D4) must be captured anyway, and an explicit delete is what pm36's trigger evaluates with the parent still present and `DRAFT`, which is the path its tests cover. The cascade stays as the safety net for any future path (and for a direct SQL delete), and pm36's D4 "parent not found ⇒ allow" clause keeps it working.
+> **Original design (explicit child-delete-first) is superseded — it is impossible for a `TESTING` parent.** pm36's trigger rejects an explicit child `DELETE` while the parent is still present and not `DRAFT` (verified in `0040_product_family_guards.sql`: the `OLD`-parent branch RAISEs when the losing parent exists and is not `DRAFT`), and only exempts the child delete when the parent row is being deleted in the **same** statement (the SELECT finds nothing → `NOT FOUND` passes). architecture §3.5 and code-standards §6.8 state this explicitly: **parent-first cascade is the only path that works for a `TESTING` parent.** The original "children go first, explicitly" only ever held for `DRAFT`.
 
-**Two paths reach child deletion (explicit here, cascade in pm36 D4), so make the contract explicit so a later refactor can't silently drop the counts.** The explicit path is the **only supported** discard path and the only one that captures the D4 audit counts; the cascade is a pure DB-integrity backstop for direct SQL, never the app's route. State this in `delete-offering.ts`'s comment, and prove it: a test asserts the service path (not the cascade) is what runs and that the `PRODUCT_OFFERING_DELETED` payload carries the spec/price counts. If someone ever removes the explicit deletes and lets the cascade take over, the counts vanish and that test must fail (see I6).
+The service therefore **counts** specifications, then prices, then **deletes only the parent offering row** — inside one transaction — and lets pm35's `ON DELETE cascade` remove the children. Two facts make this exact and safe:
+
+- The row counts for the audit payload (D4) are captured by the two count reads taken **just before** the parent delete, under the parent's `FOR UPDATE` lock and over a `FOR UPDATE`-locked child subquery, so the counted rows are exactly the rows the cascade removes (a concurrent child INSERT is blocked by the parent lock via its FK; a concurrent explicit child DELETE is blocked by the child-row locks).
+- The cascade is the **deletion mechanism**, not a backstop here: for a `TESTING` parent it is the only permitted path, and pm36's trigger exempts it because the parent row is deleted first (the trigger's "parent not found ⇒ allow" clause).
+
+Prove it (I6): a test asserts the `PRODUCT_OFFERING_DELETED` payload carries the exact spec/price counts **and** that the children are gone after the parent delete — so a bug that dropped the counts, or one that failed to remove the children, fails the test.
 
 ### D3. Nothing can reference a deletable row
 
@@ -46,11 +51,11 @@ The affordance renders on `DRAFT` and `TESTING` only. On every other status ther
 
 ### I1. Repository
 
-`deleteOffering(tx, offeringId)` in `product-offering.ts`: deletes the row, returns the deleted row's fields for the audit payload (`RETURNING`). Separate narrow deletes for the two child tables, each returning its row count. No `WHERE status = …` clause on any of them — the service owns the status decision under its lock, and a silent 0-row delete would be worse than a refusal.
+`deleteOffering(tx, offeringId)` in `product-offering.ts`: deletes the **parent** row only, returning its fields for the audit payload (`RETURNING`); pm35's `ON DELETE cascade` removes the children (D2). No `WHERE status = …` clause — the service owns the status decision under its lock, and a silent 0-row delete would be worse than a refusal. Alongside it, two narrow **count** reads (`countSpecificationsForOffering`, `countPricesForOffering`), each over a `FOR UPDATE`-locked child subquery so the audit count matches exactly what the cascade removes. *(The original "separate narrow child deletes" is dropped — an explicit child delete is rejected by the trigger for a `TESTING` parent, D2.)*
 
 ### I2. `services/product/delete-offering.ts` (new)
 
-Transaction: locked status read → refuse unless `DRAFT` or `TESTING` (`OFFERING_NOT_DELETABLE`, carrying the observed status) → count and delete specifications → count and delete prices → delete the offering → write `PRODUCT_OFFERING_DELETED` with D4's payload. Return `{ ok: true, offeringId, specificationsRemoved, pricesRemoved }` so the UI can confirm concretely.
+Transaction: locked status read → refuse unless `DRAFT` or `TESTING` (`OFFERING_NOT_DELETABLE`, carrying the observed status) → count specifications → count prices → delete the offering (the cascade removes the counted children, D2) → write `PRODUCT_OFFERING_DELETED` with D4's payload. Return `{ ok: true, offeringId, familyId, familyRemains, specificationsRemoved, pricesRemoved }` so the UI can confirm concretely and navigate off the deleted version (I3).
 
 If the deleted version was the family's only row, the family ceases to exist — that is correct and needs no cleanup: `family_offering_id` is a self-reference, not a separate table.
 
@@ -70,7 +75,7 @@ In the rewritten `retire-offering.ts` (pm43) the discard branch is already gone;
 
 - `tests/db/product-delete-offering.integration.test.ts`: deleting a `DRAFT` with 2 specs and 2 prices removes exactly those five rows; siblings in the family are untouched; the audit row carries the right counts; deleting a `TESTING` version behaves identically; `ACTIVE`, `OBSOLETE` and `RETIRED` each return `OFFERING_NOT_DELETABLE` with the observed status; a direct SQL `DELETE` of an `ACTIVE` version's price is still refused by the trigger.
 - Family effects: deleting a family's only version leaves no orphan rows; deleting a branch leaves the root's `family_offering_id` graph intact; the open-version index frees up so a new draft can be created immediately afterwards.
-- Path-assertion (D2 contract): the service's explicit child-delete is the path that runs, and the `PRODUCT_OFFERING_DELETED` payload carries the exact spec/price counts. Written so that if the explicit deletes were removed and the `ON DELETE cascade` took over, the counts would be absent and this test fails — the cascade is a backstop, never the counted path.
+- Count/cascade contract (D2): the `PRODUCT_OFFERING_DELETED` payload carries the exact spec/price counts **and** the children are gone after the parent delete (proving the cascade ran). Written so a bug that dropped the counts, or one that failed to remove the children, fails the test. *(The original "explicit child-delete is the path that runs" assertion is dropped — the cascade is the deletion path, mandated by the trigger for a `TESTING` parent, D2.)*
 - Authz: `EDIT`-only is refused.
 - D5's check: a pre-existing `PRODUCT_OFFERING_DISCARDED` audit row still renders in the audit log.
 
