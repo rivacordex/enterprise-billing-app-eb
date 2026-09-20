@@ -52,6 +52,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "activate-offering.action.ts": "activateOfferingAction",
     "obsolete-offering.action.ts": "obsoleteOfferingAction",
     "retire-offering.action.ts": "retireOfferingAction",
+    "delete-offering.action.ts": "deleteOfferingAction",
   };
 
   it("actions/product/ exists and exports exactly this phase's action set", () => {
@@ -165,6 +166,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "activate-offering.ts",
     "obsolete-offering.ts",
     "retire-offering.ts",
+    "delete-offering.ts",
   ]);
 
   it("no product read path imports the audit-log write path", () => {

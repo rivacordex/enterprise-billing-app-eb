@@ -853,4 +853,82 @@ export const productOfferingRepository = {
     }
     return { offeringId: row.offeringId };
   },
+
+  // pm44-spec I1/D4. Count the child rows about to be cascade-deleted, so the
+  // PRODUCT_OFFERING_DELETED audit payload can record how many specs/prices were
+  // removed — the audit event being the only survivor of a discard. Counted
+  // under the caller's transaction (the parent is held FOR UPDATE) immediately
+  // before the parent delete.
+  async countSpecificationsForOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<number> {
+    const [row] = await tx
+      .select({ c: count() })
+      .from(productSpecifications)
+      .where(eq(productSpecifications.refProductOfferingId, offeringId));
+    return row?.c ?? 0;
+  },
+
+  async countPricesForOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<number> {
+    const [row] = await tx
+      .select({ c: count() })
+      .from(productOfferingPrice)
+      .where(eq(productOfferingPrice.productOfferingId, offeringId));
+    return row?.c ?? 0;
+  },
+
+  // pm44-spec I3. After a discard, how many versions remain in the family — so
+  // the action can send the UI to the family's remaining primary version, or to
+  // the bare list when the family is now empty. Same COALESCE family key the
+  // pm36 indexes and findFamilyPage use.
+  async countFamilyVersions(tx: Database, familyId: string): Promise<number> {
+    const [row] = await tx
+      .select({ c: count() })
+      .from(productOffering)
+      .where(
+        sql`coalesce(${productOffering.familyOfferingId}, ${productOffering.productOfferingId}) = ${familyId}`,
+      );
+    return row?.c ?? 0;
+  },
+
+  // pm44-spec I1/D1/D2. Hard-deletes a never-released (DRAFT/TESTING) version.
+  // Deletes ONLY the parent row and lets pm35's `ON DELETE cascade` remove the
+  // specifications and prices — parent-first cascade is the ONLY child-delete
+  // path pm36's trigger permits for a TESTING parent (it exempts a child delete
+  // whose parent row is being deleted in the same statement; an explicit
+  // child-delete-before-parent is rejected while a TESTING parent is still
+  // present — architecture §3.5 / code-standards §6.8). No WHERE-status clause:
+  // the calling service owns the DRAFT/TESTING decision under its lock, and a
+  // silent 0-row delete would be worse than a refusal (I1). `RETURNING` yields
+  // the deleted row's fields for the audit payload (D4). The self-referencing
+  // `family_offering_id` (ON DELETE restrict) never fires: a DRAFT/TESTING
+  // version can never be a family root that other versions point at (a root with
+  // branches has been ACTIVE, so it is OBSOLETE/RETIRED, never deletable).
+  async deleteOffering(
+    tx: Database,
+    offeringId: string,
+  ): Promise<{
+    productOfferingId: string;
+    name: string;
+    version: number;
+    lifecycleStatus: LifecycleStatus;
+    familyOfferingId: string | null;
+  } | null> {
+    const [row] = await tx
+      .delete(productOffering)
+      .where(eq(productOffering.productOfferingId, offeringId))
+      .returning({
+        productOfferingId: productOffering.productOfferingId,
+        name: productOffering.name,
+        version: productOffering.version,
+        lifecycleStatus: productOffering.lifecycleStatus,
+        familyOfferingId: productOffering.familyOfferingId,
+      });
+    if (!row) return null;
+    return { ...row, lifecycleStatus: row.lifecycleStatus as LifecycleStatus };
+  },
 };

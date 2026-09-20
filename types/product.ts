@@ -35,11 +35,11 @@ export const PANEL_EDITABLE_BY_STATUS: Record<LifecycleStatus, boolean> = {
 // new lifecycle status is a compile error here, never a silent "no actions".
 // `edit` is pm41's affordance (DRAFT in-place / ACTIVE branch); `submitForTesting`,
 // `returnToDraft` and `activate` are pm42's transitions; `stopSelling`
-// (ACTIVE → OBSOLETE) and `retire` (OBSOLETE → RETIRED) are pm43's. TESTING
+// (ACTIVE → OBSOLETE) and `retire` (OBSOLETE → RETIRED) are pm43's; `discard`
+// (hard delete of a never-released DRAFT/TESTING version) is pm44's. TESTING
 // carries no `edit` — a TESTING version is read-only content and must be returned
-// to DRAFT before it can change (Inv. #14/#24). Discard (pm44) is deliberately
-// absent until its service exists — this update adds no code path for a
-// transition the state machine does not yet list (§1.15).
+// to DRAFT before it can change (Inv. #14/#24). Discard is offered on DRAFT and
+// TESTING only and is absent (never disabled) on every other status (§1.20).
 export const VERSION_HEADER_ACTIONS = [
   "edit",
   "submitForTesting",
@@ -47,6 +47,7 @@ export const VERSION_HEADER_ACTIONS = [
   "activate",
   "stopSelling",
   "retire",
+  "discard",
 ] as const;
 export type VersionHeaderAction = (typeof VERSION_HEADER_ACTIONS)[number];
 
@@ -54,8 +55,8 @@ export const VERSION_HEADER_ACTIONS_BY_STATUS: Record<
   LifecycleStatus,
   readonly VersionHeaderAction[]
 > = {
-  DRAFT: ["edit", "submitForTesting"],
-  TESTING: ["returnToDraft", "activate"],
+  DRAFT: ["edit", "submitForTesting", "discard"],
+  TESTING: ["returnToDraft", "activate", "discard"],
   ACTIVE: ["edit", "stopSelling"],
   OBSOLETE: ["retire"],
   RETIRED: [],
