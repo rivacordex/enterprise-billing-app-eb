@@ -58,7 +58,7 @@ This update rebuilds the Manage Products page and completes the catalog data it 
 
 ### Price fields
 
-- `recurring_charge_period_length` + `_type`: required for `recurring`, forbidden for `usage` and `once`. Accepted combinations are validated against the bill run's cycle mapping (1 month = monthly, 3 months = quarterly, 12 months = annually — to be confirmed against bm29, open item O1).
+- `recurring_charge_period_length` + `_type`: required for `recurring`, forbidden for `usage` and `once`. Accepted combinations are validated against the bill run's cycle mapping (1 month = monthly, 3 months = quarterly, 12 months = annually — confirmed against bm29's resolver; open item O1 is closed, shipped as the `product_offering_price_period_value_check` CHECK: `months` only, length ∈ (1, 3, 12)).
 - `unit_of_measure`: required for `usage`, forbidden for `recurring` and `once`, restricted to `Mbps`, `GB`, `MB`, `EA` by a database CHECK and a TypeScript union. Case-sensitive and matched exactly; `Mbps` keeps that casing deliberately, since `MBPS` reads as ambiguous between megabit and megabyte per second. `EA` means "each" — a countable unit.
 - `policy` stays in the table, stays `NULL`, stays out of the form; its semantics are still undefined.
 - A quiet warning on price shapes nothing downstream can bill yet: tiered recurring (bm29 fails the account with `RECURRING_PRICE_UNSUPPORTED`) and tiered usage (rating v1 is `FLAT`-only).
@@ -120,7 +120,7 @@ This update rebuilds the Manage Products page and completes the catalog data it 
 
 ## Success criteria
 
-1. Manage Products' first load issues exactly 2 database queries (families page + count). Selecting a family adds the version list + offering detail + specifications + prices; switching version re-runs the version list + detail. Because a `?family=`/`?version=` change re-renders the whole route, these per-selection counts hold only if `listFamilies` is cached across navigation (Next Data Cache keyed by `q`/`status`/`page`) so the families table's 2 queries are not re-issued on every selection; the exact counts are pinned and asserted at pm40/pm45 build. No code path fetches detail for an unselected row.
+1. Manage Products' first load issues exactly 2 database queries (families page + count). Because a `?family=`/`?version=` change re-renders the whole route and the module runs no cache layer (pm40 D5), `listFamilies` is deliberately **not** cached: the families page + count (2) are re-issued on every selection. Uncached, selecting a family issues **6** (families 2 + version list 1 + offering detail 1 + specifications 1 + prices 1) and switching version also issues **6**; the exact counts are pinned and asserted at pm40/pm45 build. No code path fetches detail for an unselected row.
 2. The pricing panel on Manage Products shows every price row of the selected version — amount or tiers, currency, GL code, charge period or unit, start date, derived end, effectivity state — with no navigation to View Product.
 3. `MAX_COMBINED_ROWS`, `fetchAllForStatus`, `fetchAllOfferingRows` and `fetchSpecificationsByOfferingId` no longer exist; family grouping lives in the repository.
 4. Every transition in the lifecycle table succeeds and every illegal transition is refused with a typed result code, proven by integration tests.
