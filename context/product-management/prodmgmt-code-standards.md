@@ -175,14 +175,18 @@ components/products/
   offering-table.tsx, offering-detail.tsx
   specifications-panel.tsx, prices-panel.tsx
   lifecycle-badge.tsx, price-type-badge.tsx
+  price-effectivity.tsx                # (pm41)  shared effectivity tag + accent (read + edit)
 components/products/manage/
+  inline-row-editor.tsx               # (pm41)  shared Save/Cancel + keyboard shell
   family-table.tsx                    # (pm39)  FamilyTable
-  version-bar.tsx                     # (new)  VersionBar
-  manage-specifications-panel.tsx     # (new)  ManageSpecificationsPanel
-  manage-prices-panel.tsx             # (new)  ManagePricesPanel
+  version-bar.tsx                     # (pm40)  VersionBar
+  manage-specifications-panel.tsx     # (pm41)  ManageSpecificationsPanel (server)
+  manage-prices-panel.tsx             # (pm41)  ManagePricesPanel (server)
+  editable-specifications.tsx         # (pm41)  DRAFT-only inline spec editor (client leaf)
+  editable-prices.tsx                 # (pm41)  DRAFT-only inline price editor (client leaf)
+  version-action-header.tsx           # (pm41)  offering Edit (DRAFT in-place / ACTIVE branch)
   manage-offering-table.tsx           # (removed pm39)
-  specifications-dialog.tsx           # (del)  panel replaces the dialog
-  add-price-dialog.tsx                # (del)  panel replaces the dialog
+  # specifications-dialog.tsx, add-price-dialog.tsx  removed pm41 — the panels replace them
   offering-form.tsx, specification-form.tsx, price-form.tsx
   create-offering-dialog.tsx
   activate-offering-dialog.tsx

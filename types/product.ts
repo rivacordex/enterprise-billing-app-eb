@@ -15,6 +15,20 @@ export const LIFECYCLE_STATUSES = [
 ] as const;
 export type LifecycleStatus = (typeof LIFECYCLE_STATUSES)[number];
 
+// Whether a version's specification/pricing panels edit inline (pm41 D3/I4).
+// DRAFT is the only editable status; TESTING/ACTIVE/OBSOLETE/RETIRED render the
+// read-only variant. A total `Record` (never an inline `status === "DRAFT"`
+// comparison) so adding a lifecycle status is a compile error here rather than
+// silently defaulting to non-editable (code-standards §2.2 — "allowed actions"
+// maps are total Records).
+export const PANEL_EDITABLE_BY_STATUS: Record<LifecycleStatus, boolean> = {
+  DRAFT: true,
+  TESTING: false,
+  ACTIVE: false,
+  OBSOLETE: false,
+  RETIRED: false,
+};
+
 export const PRICE_TYPES = ["recurring", "usage", "once"] as const;
 export type PriceType = (typeof PRICE_TYPES)[number];
 
