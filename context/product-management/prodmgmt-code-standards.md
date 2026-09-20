@@ -168,8 +168,8 @@ actions/product/
   submit-for-testing.action.ts        # (pm42)
   return-to-draft.action.ts           # (pm42)
   activate-offering.action.ts
-  obsolete-offering.action.ts         # (new)  ACTIVE → OBSOLETE
-  retire-offering.action.ts           # re-purposed: OBSOLETE → RETIRED only
+  obsolete-offering.action.ts         # (pm43)  ACTIVE → OBSOLETE
+  retire-offering.action.ts           # (pm43)  re-purposed: OBSOLETE → RETIRED only
   delete-offering.action.ts           # (new)  hard delete of a never-released version
 components/products/
   offering-table.tsx, offering-detail.tsx
@@ -191,13 +191,14 @@ components/products/manage/
   create-offering-dialog.tsx
   activate-offering-dialog.tsx
   submit-for-testing-dialog.tsx       # (pm42)
-  obsolete-offering-dialog.tsx        # (new)
-  retire-offering-dialog.tsx          # re-purposed (OBSOLETE → RETIRED)
+  obsolete-offering-dialog.tsx        # (pm43)
+  retire-offering-dialog.tsx          # (pm43)  re-purposed (OBSOLETE → RETIRED)
   delete-version-dialog.tsx           # (new)
 services/product/
   list-offerings.ts                   # View Product's list
   list-families.ts                    # (pm39)  Manage Products' list
   get-offering-detail.ts
+  get-live-subscription-count.ts      # (pm43)  Retire blocked-state display read
   list-family-versions.ts             # (new)  version bar
   create-offering.ts, update-offering.ts
   add-specification.ts, update-specification.ts, delete-specification.ts
@@ -206,8 +207,8 @@ services/product/
   submit-for-testing.ts               # (pm42)
   return-to-draft.ts                  # (pm42)
   activate-offering.ts
-  obsolete-offering.ts                # (new)
-  retire-offering.ts                  # re-purposed + subscription gate
+  obsolete-offering.ts                # (pm43)
+  retire-offering.ts                  # (pm43)  re-purposed + subscription gate
   delete-offering.ts                  # (new)
 db/schema/product.ts                  # 3 tables; 5-value enum; new CHECKs; cascade FKs; 2 indexes
 db/repositories/

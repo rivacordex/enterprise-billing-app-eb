@@ -820,22 +820,36 @@ export const productOfferingRepository = {
     };
   },
 
-  // pm16-spec §3.3. Unconditional — sets RETIRED regardless of the row's
-  // prior status (build plan's literal wording; code-standards-phase2 §1
-  // rule 11: "Do not fork this into two repository methods"). The
-  // already-RETIRED guard lives entirely in the calling service, ahead of
-  // the transaction (Design) — this method has no WHERE-status backstop.
+  // pm16-spec §3.3, re-purposed pm43 I2. OBSOLETE → RETIRED only — the old
+  // dual-purpose ACTIVE/DRAFT → RETIRED behaviour is gone (discard becomes pm44's
+  // hard delete, not a status flip). Narrow single-status writer (code-standards
+  // §1.15): pins OBSOLETE in the WHERE and stamps last_modified/last_edited_by
+  // (the transition is an edit). The calling service has already re-read the
+  // status locked and run the subscription gate immediately before (code-
+  // standards §1.13); the WHERE predecessor is the backstop.
   async retireOffering(
     tx: Database,
     offeringId: string,
+    actorId: string,
   ): Promise<{ offeringId: string }> {
     const [row] = await tx
       .update(productOffering)
-      .set({ lifecycleStatus: "RETIRED" })
-      .where(eq(productOffering.productOfferingId, offeringId))
+      .set({
+        lifecycleStatus: "RETIRED",
+        lastEditedBy: actorId,
+        lastModified: new Date(),
+      })
+      .where(
+        and(
+          eq(productOffering.productOfferingId, offeringId),
+          eq(productOffering.lifecycleStatus, "OBSOLETE"),
+        ),
+      )
       .returning({ offeringId: productOffering.productOfferingId });
     if (!row) {
-      throw new Error(`retireOffering: offering ${offeringId} not found`);
+      throw new Error(
+        `retireOffering: offering ${offeringId} not found or not OBSOLETE`,
+      );
     }
     return { offeringId: row.offeringId };
   },

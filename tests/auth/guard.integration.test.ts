@@ -476,6 +476,7 @@ describe.skipIf(!databaseUrl)(
         deleteSpecificationMod,
         insertPriceMod,
         activateOfferingMod,
+        obsoleteOfferingMod,
         retireOfferingMod,
       ] = await Promise.all([
         import("@/actions/product/create-offering.action"),
@@ -485,6 +486,7 @@ describe.skipIf(!databaseUrl)(
         import("@/actions/product/delete-specification.action"),
         import("@/actions/product/insert-price.action"),
         import("@/actions/product/activate-offering.action"),
+        import("@/actions/product/obsolete-offering.action"),
         import("@/actions/product/retire-offering.action"),
       ]);
 
@@ -509,6 +511,8 @@ describe.skipIf(!databaseUrl)(
           insertPriceMod.insertPriceAction("PRDOFR000001", {}),
         activateOfferingAction: () =>
           activateOfferingMod.activateOfferingAction("PRDOFR000001", {}),
+        obsoleteOfferingAction: () =>
+          obsoleteOfferingMod.obsoleteOfferingAction("PRDOFR000001", {}),
         retireOfferingAction: () =>
           retireOfferingMod.retireOfferingAction("PRDOFR000001", {}),
       };
@@ -986,6 +990,7 @@ describe.skipIf(!databaseUrl)(
 
       const ALL_PRODUCT_ACTION_NAMES = [
         ...PRODUCTS_EDIT_ACTION_NAMES,
+        "obsoleteOfferingAction",
         "retireOfferingAction",
       ] as const;
 
@@ -1027,13 +1032,14 @@ describe.skipIf(!databaseUrl)(
       // The concrete, executable proof that products:EDIT and
       // products:DELETE are two different gates, not one (pm23-spec §2.3;
       // pm99's own words for this unit).
-      it("retireOfferingAction rejects a products_manager_user (products:EDIT-only, DELETE required)", async () => {
-        mockSession(productsManagerUserId);
-        const rejected = await isPermissionRejection(
-          productActions.retireOfferingAction!,
-        );
-        expect(rejected).toBe(true);
-      });
+      it.each(["obsoleteOfferingAction", "retireOfferingAction"] as const)(
+        "%s rejects a products_manager_user (products:EDIT-only, DELETE required)",
+        async (name) => {
+          mockSession(productsManagerUserId);
+          const rejected = await isPermissionRejection(productActions[name]!);
+          expect(rejected).toBe(true);
+        },
+      );
     });
 
     // pm34-spec §1 — the Ordering-update analogue of the products block
