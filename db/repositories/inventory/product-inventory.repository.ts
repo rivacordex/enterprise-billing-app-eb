@@ -295,17 +295,22 @@ export const productInventoryRepository = {
     tx: Database,
     productOfferingId: string,
   ): Promise<number> {
-    const rows = await tx
-      .select({ productInventoryId: productInventory.productInventoryId })
-      .from(productInventory)
-      .where(
-        sql`${productInventory.productOfferingId} = ${productOfferingId}
+    // count(*) over a FOR UPDATE-locked subquery: Postgres forbids a locking
+    // clause directly alongside an aggregate, so the lock lives in the inner
+    // SELECT (which still locks every matching product_inventory row) and the
+    // outer query counts them — no per-row id is materialized. The gate predicate
+    // (D2) stays here, in this one method.
+    const rows = await tx.execute<{ live_count: string | number }>(sql`
+      SELECT count(*) AS live_count FROM (
+        SELECT 1
+        FROM inventory.product_inventory
+        WHERE ${productInventory.productOfferingId} = ${productOfferingId}
           AND (${productInventory.status} <> 'TERMINATED'
                OR ${productInventory.endDate} IS NULL
-               OR ${productInventory.endDate} >= current_date)`,
-      )
-      .for("update");
-    return rows.length;
+               OR ${productInventory.endDate} >= current_date)
+        FOR UPDATE
+      ) t`);
+    return Number(rows[0]?.live_count ?? 0);
   },
 
   // bm03-spec §Design/§6 — batched read for the partial-period predicate:
