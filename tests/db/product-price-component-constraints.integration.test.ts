@@ -338,6 +338,19 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow("product_offering_price_flat_fee_check");
     });
 
+    it("rejects flat_fee with no priceType", async () => {
+      const offeringId = await createOffering("pm46 flat_fee no priceType");
+      const envelope = flatFeeEnvelope() as Record<string, unknown>;
+      delete envelope.priceType;
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "flat_fee",
+          priceComponent: envelope,
+        }),
+      ).rejects.toThrow("product_offering_price_flat_fee_check");
+    });
+
     it("rejects flat_fee oneTime carrying a period pair", async () => {
       const offeringId = await createOffering(
         "pm46 flat_fee onetime with period",
@@ -468,6 +481,22 @@ describe.skipIf(!databaseUrl)(
           componentType: "capacity_motivation",
           priceComponent: capacityMotivationEnvelope({
             params: { steps: [{ aboveQuantity: 1000, ratePerUnit: 50 }] },
+          }),
+          unitOfMeasure: "EA",
+        }),
+      ).rejects.toThrow("product_offering_price_capacity_motivation_check");
+    });
+
+    it("rejects capacity_motivation with a step missing aboveQuantity", async () => {
+      const offeringId = await createOffering(
+        "pm46 capacity_motivation missing aboveQuantity",
+      );
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "capacity_motivation",
+          priceComponent: capacityMotivationEnvelope({
+            params: { steps: [{ ratePerUnit: "50" }] },
           }),
           unitOfMeasure: "EA",
         }),
