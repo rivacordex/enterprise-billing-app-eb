@@ -150,12 +150,20 @@ describe.skipIf(!databaseUrl)(
       await db.insert(productOfferingPrice).values({
         productOfferingId: offeringId,
         name: "Monthly Recurring Charge",
-        priceType: "recurring",
+        componentType: "flat_fee",
+        priceComponent: {
+          "@type": "flat_fee",
+          specVersion: 1,
+          plaSpecId: null,
+          priceType: "recurring",
+          appliesAt: "billing",
+          basis: "flat",
+          boundTo: null,
+          params: { amount: "5000.00" },
+        },
         recurringChargePeriodLength: 1,
         recurringChargePeriodType: "months",
-        amount: "5000.00",
         currency: CURRENCY,
-        pricingModel: "flat",
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       });
 

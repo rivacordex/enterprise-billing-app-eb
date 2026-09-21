@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 import {
-  ONCE_PRICE_INPUT_SHAPE,
-  RECURRING_PRICE_INPUT_SHAPE,
-  USAGE_PRICE_INPUT_SHAPE,
+  CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE,
+  CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE,
+  FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE,
+  FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE,
+  USAGE_RATE_PRICE_INPUT_SHAPE,
 } from "@/validation/product/price-input.schema";
 
 // 3-day backdating tolerance (Design; prodmgmt-architecture §6 Inv. #2). This
@@ -25,20 +27,36 @@ export const startDateTimeField = z.coerce
     message: "Start date cannot be more than 3 days in the past.",
   });
 
-// pm38-spec I2. Composes the discriminated price-input branches (price-input
-// .schema.ts) with `startDateTime`. Each branch stays a `strictObject`, so a
-// field forbidden for the chosen `priceType` is still rejected once composed.
-export const insertPriceSchema = z.discriminatedUnion("priceType", [
+// pm47-spec D7/I2. Composes the price-input branches (price-input.schema.ts)
+// with `startDateTime`. Each branch stays a `strictObject`, so a field
+// forbidden for the chosen `componentType` is still rejected once composed.
+// A nested `z.discriminatedUnion`, matching price-input.schema.ts's own
+// composition (post-review fix) — the inner `flat_fee` union discriminates
+// on `priceType` since its recurring/oneTime branches share one
+// `componentType` literal and can't be discriminated on it alone.
+const flatFeeInsertPriceSchema = z.discriminatedUnion("priceType", [
   z.strictObject({
-    ...RECURRING_PRICE_INPUT_SHAPE,
+    ...FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
   z.strictObject({
-    ...USAGE_PRICE_INPUT_SHAPE,
+    ...FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE,
+    startDateTime: startDateTimeField,
+  }),
+]);
+
+export const insertPriceSchema = z.discriminatedUnion("componentType", [
+  z.strictObject({
+    ...USAGE_RATE_PRICE_INPUT_SHAPE,
+    startDateTime: startDateTimeField,
+  }),
+  flatFeeInsertPriceSchema,
+  z.strictObject({
+    ...CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
   z.strictObject({
-    ...ONCE_PRICE_INPUT_SHAPE,
+    ...CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
 ]);

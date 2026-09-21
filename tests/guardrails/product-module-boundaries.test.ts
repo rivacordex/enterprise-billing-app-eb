@@ -382,20 +382,21 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "defaultValue",
     "productSpecCharacteristics",
   ].sort();
+  // Reshaped by pm46-spec D2/I5 — the first change to this list since pm02.
+  // `priceType`/`pricingModel`/`amount`/`pricingCharacteristics` leave;
+  // `componentType`/`priceComponent` arrive.
   const PRICE_COLUMNS = [
     "productOfferingPriceId",
     "productOfferingId",
     "name",
-    "priceType",
+    "componentType",
+    "priceComponent",
     "recurringChargePeriodLength",
     "recurringChargePeriodType",
     "unitOfMeasure",
-    "amount",
     "currency",
     "glCode",
-    "pricingModel",
     "policy",
-    "pricingCharacteristics",
     "startDateTime",
     "createdAt",
   ].sort();
@@ -452,14 +453,11 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(offeringTableBlock).toContain("product_offering_family_idx");
   });
 
-  // Guardrail 13 (constraint baseline) — pm35-spec I5. Sits *beside* the
-  // column-diff test above (which pm35 leaves byte-identical — pm35 adds no
-  // column). Freezes what pm35 *does* change: the five enum members in
-  // lifecycle order, the four per-price-type CHECK names, and the cascade
-  // direction on the child FKs — in both the Drizzle mirror and the SQL of
-  // record, so an unreviewed drift in either fails CI. The SQL and the mirror
-  // must agree (code-standards §6.5 makes the DB the owner, Drizzle the mirror).
-  it("db/schema/product.ts + 0006 freeze the five-value enum, the four price CHECKs, and the cascade child FKs (pm35 D3/D4/D5)", () => {
+  // Guardrail 13 (constraint baseline) — pm35-spec I5, re-baselined by
+  // pm46-spec I5.3. Sits *beside* the column-diff test above. Freezes: the
+  // five enum members in lifecycle order, and the cascade direction on the
+  // child FKs (both untouched by pm46).
+  it("db/schema/product.ts + 0006 freeze the five-value enum and the cascade child FKs (pm35 D3/D5)", () => {
     const schemaSource = fs.readFileSync(
       path.join(REPO_ROOT, "db", "schema", "product.ts"),
       "utf8",
@@ -470,12 +468,6 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     );
 
     const EXPECTED_ENUM = ["DRAFT", "TESTING", "ACTIVE", "OBSOLETE", "RETIRED"];
-    const NEW_PRICE_CHECKS = [
-      "product_offering_price_recurring_period_check",
-      "product_offering_price_period_value_check",
-      "product_offering_price_usage_unit_check",
-      "product_offering_price_unit_value_check",
-    ];
 
     // 1. Enum members in lifecycle (declaration) order — the array literal.
     const enumMatch = schemaSource.match(
@@ -487,31 +479,156 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     );
     expect(enumMembers).toEqual(EXPECTED_ENUM);
 
-    // 2. All four new CHECK names appear in the productOfferingPrice block.
-    const priceBlock = extractTableBlock(schemaSource, "productOfferingPrice");
-    for (const name of NEW_PRICE_CHECKS) {
-      expect(priceBlock).toContain(name);
-    }
-
-    // 3. Both child FKs cascade; the self-referencing family FK still restricts.
+    // 2. Both child FKs cascade; the self-referencing family FK still restricts.
     const specBlock = extractTableBlock(schemaSource, "productSpecifications");
+    const priceBlock = extractTableBlock(schemaSource, "productOfferingPrice");
     expect(specBlock).toContain('onDelete: "cascade"');
     expect(priceBlock).toContain('onDelete: "cascade"');
     const offeringBlock = extractTableBlock(schemaSource, "productOffering");
     expect(offeringBlock).toContain('onDelete: "restrict"'); // familyOfferingId
 
-    // 4. The SQL of record agrees with the Drizzle mirror.
+    // 3. The SQL of record agrees with the Drizzle mirror.
     expect(migrationSource).toContain(
       "AS ENUM('DRAFT', 'TESTING', 'ACTIVE', 'OBSOLETE', 'RETIRED')",
     );
-    for (const name of NEW_PRICE_CHECKS) {
-      expect(migrationSource).toContain(name);
-    }
     // Both child-table FK ALTERs carry ON DELETE cascade (2 occurrences); the
     // family FK is inline on product_offering and stays restrict, untouched.
     const cascadeCount = (migrationSource.match(/ON DELETE cascade/g) ?? [])
       .length;
     expect(cascadeCount).toBe(2);
+  });
+
+  // Guardrail 13 (component-envelope baseline) — pm46-spec I5.2/I5.3/I5.4.
+  // Freezes the reshaped price table: the six per-component-type CHECKs, the
+  // `pricing_steps_ok` helper, the `NULLS NOT DISTINCT` unique constraint, the
+  // component_type index, the absence of the four dropped columns/CHECK names
+  // (plus the two necessarily-dropped `price_type`-keyed CHECKs — see the
+  // progress tracker's pm46 deviation note), and the absence of any backfill
+  // artifact (D9) — in both the SQL of record and the Drizzle mirror.
+  it("db/schema/product.ts + 0006/0007 freeze the reshaped price-component envelope (pm46 D2/D3/D6)", () => {
+    const schemaSource = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "schema", "product.ts"),
+      "utf8",
+    );
+    const migrationSource = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "migrations", "0006_product.sql"),
+      "utf8",
+    );
+    const constraintsFixSource = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        "db",
+        "migrations",
+        "0007_product_constraints_fix.sql",
+      ),
+      "utf8",
+    );
+
+    const NEW_CHECKS = [
+      "product_offering_price_component_type_check",
+      "product_offering_price_envelope_type_check",
+      "product_offering_price_usage_rate_check",
+      "product_offering_price_flat_fee_check",
+      "product_offering_price_capacity_commitment_check",
+      "product_offering_price_capacity_motivation_check",
+    ];
+    const DROPPED_CHECKS = [
+      "product_offering_price_type_check",
+      "product_offering_price_pricing_model_check",
+      "product_offering_price_amount_xor_tiers_check",
+      "product_offering_price_amount_check",
+      "product_offering_price_recurring_period_check",
+      "product_offering_price_usage_unit_check",
+    ];
+    const DROPPED_COLUMNS = [
+      "price_type",
+      "pricing_model",
+      "pricing_characteristics",
+    ];
+
+    const priceBlock = extractTableBlock(schemaSource, "productOfferingPrice");
+
+    // 1. The six new CHECKs exist in both the SQL of record and the mirror.
+    for (const name of NEW_CHECKS) {
+      expect(migrationSource).toContain(name);
+      expect(priceBlock).toContain(name);
+    }
+
+    // 2. None of the ten dropped CHECK names survive anywhere under
+    // db/migrations/** (0006, 0007) or the Drizzle mirror.
+    for (const name of DROPPED_CHECKS) {
+      expect(migrationSource).not.toContain(name);
+      expect(constraintsFixSource).not.toContain(name);
+      expect(priceBlock).not.toContain(name);
+    }
+
+    // 3. The dropped columns appear in neither the SQL price-table body nor
+    // the Drizzle mirror. `amount` is checked as a whole-word column
+    // declaration (`"amount"` / `amount:`) so it doesn't false-positive on
+    // `committedQuantity`/`ratePerUnit` money-string predicates that mention
+    // amounts in prose or on JSON keys like `params.amount`.
+    for (const name of DROPPED_COLUMNS) {
+      expect(migrationSource).not.toContain(`"${name}"`);
+      expect(priceBlock).not.toMatch(new RegExp(`\\b${name}:`));
+    }
+    expect(migrationSource).not.toMatch(/"amount"\s+numeric/);
+    expect(priceBlock).not.toMatch(/\bamount:\s*numeric/);
+
+    // 4. component_type/price_component exist, NOT NULL, in both homes.
+    expect(migrationSource).toMatch(/"component_type" text NOT NULL/);
+    expect(migrationSource).toMatch(/"price_component" jsonb NOT NULL/);
+    expect(priceBlock).toContain(
+      'componentType: text("component_type").notNull()',
+    );
+    expect(priceBlock).toContain(".$type<PricingComponent>()");
+
+    // 5. The IMMUTABLE helper function exists, declared before the table.
+    const fnIndex = migrationSource.indexOf(
+      "CREATE FUNCTION product.pricing_steps_ok",
+    );
+    const tableIndex = migrationSource.indexOf(
+      'CREATE TABLE "product"."product_offering_price"',
+    );
+    expect(fnIndex).toBeGreaterThan(-1);
+    expect(tableIndex).toBeGreaterThan(-1);
+    expect(fnIndex).toBeLessThan(tableIndex);
+    expect(migrationSource).toContain("LANGUAGE sql IMMUTABLE");
+
+    // 6. The uniqueness rekey — a UNIQUE constraint (not a unique index)
+    // carrying NULLS NOT DISTINCT — in both homes; the old index is gone.
+    expect(migrationSource).toContain(
+      'ADD CONSTRAINT "product_offering_price_component_start_unique" UNIQUE NULLS NOT DISTINCT',
+    );
+    expect(migrationSource).not.toContain(
+      "product_offering_price_type_start_unique",
+    );
+    expect(priceBlock).toContain(
+      "product_offering_price_component_start_unique",
+    );
+    expect(priceBlock).toContain(".nullsNotDistinct()");
+    expect(priceBlock).not.toContain(
+      "product_offering_price_type_start_unique",
+    );
+
+    // 7. The component_type index exists in both homes; the offering index
+    // (untouched) survives beside it.
+    expect(migrationSource).toContain(
+      "product_offering_price_component_type_idx",
+    );
+    expect(priceBlock).toContain("product_offering_price_component_type_idx");
+    expect(migrationSource).toContain("product_offering_price_offering_idx");
+    expect(priceBlock).toContain("product_offering_price_offering_idx");
+
+    // 8. D9 — no backfill/data-fix/relabelling artifact exists anywhere under
+    // db/migrations/** or scripts/**.
+    const BACKFILL_PATTERN = /backfill|data-?fix|migrate-price/i;
+    const migrationsDir = path.join(REPO_ROOT, "db", "migrations");
+    const scriptsDir = path.join(REPO_ROOT, "scripts");
+    const offendingFiles = [
+      ...collectFiles(migrationsDir),
+      ...collectFiles(scriptsDir),
+    ].filter((f) => BACKFILL_PATTERN.test(path.basename(f)));
+    expect(offendingFiles.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
   });
 
   // Guardrail 8 + 24 (constraint/trigger backstop) — pm36-spec I5. Freezes the
