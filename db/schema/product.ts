@@ -5,17 +5,17 @@ import {
   index,
   integer,
   jsonb,
-  numeric,
   pgSchema,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 import { appuser } from "@/db/schema/identity";
 import type { ProductSpecCharacteristics } from "@/validation/product/product-spec-characteristics.schema";
-import type { TieredPricingCharacteristics } from "@/validation/product/pricing-characteristics.schema";
+import type { PricingComponent } from "@/validation/product/pricing-component.schema";
 
 export const product = pgSchema("product");
 
@@ -142,18 +142,16 @@ export const productOfferingPrice = product.table(
         onDelete: "cascade",
       }),
     name: text("name").notNull(),
-    priceType: text("price_type").notNull(),
+    componentType: text("component_type").notNull(),
+    priceComponent: jsonb("price_component")
+      .$type<PricingComponent>()
+      .notNull(),
     recurringChargePeriodLength: integer("recurring_charge_period_length"),
     recurringChargePeriodType: text("recurring_charge_period_type"),
     unitOfMeasure: text("unit_of_measure"),
-    amount: numeric("amount", { mode: "string" }),
     currency: text("currency").notNull(),
     glCode: text("gl_code"),
-    pricingModel: text("pricing_model").notNull(),
     policy: text("policy"),
-    pricingCharacteristics: jsonb(
-      "pricing_characteristics",
-    ).$type<TieredPricingCharacteristics>(),
     startDateTime: timestamp("start_date_time", {
       withTimezone: true,
       mode: "date",
@@ -166,48 +164,68 @@ export const productOfferingPrice = product.table(
       .default(sql`now()`),
   },
   (t) => [
-    uniqueIndex("product_offering_price_type_start_unique").on(
-      t.productOfferingId,
-      t.priceType,
-      t.startDateTime,
-    ),
+    // Rekeyed per pm46-spec D6/G-F. `NULLS NOT DISTINCT` because
+    // `unit_of_measure` is NULL on every `flat_fee` row and a plain UNIQUE
+    // treats two NULLs as distinct — without it, two `flat_fee` rows sharing a
+    // `start_date_time` would both insert and VI4 would silently not hold
+    // (precedent: 0013_gl_mapping_nulls_not_distinct.sql). A sentinel
+    // `unit_of_measure` string + a `COALESCE` expression index were
+    // considered and rejected (architecture §3.4/§7, corrected by this unit).
+    // The `lead()` derived-end window in the repository (pm49) and both
+    // runtime readers (pm51/pm52) MUST partition on this same
+    // (product_offering_id, component_type, unit_of_measure) key, or a
+    // `capacity_motivation` row could supersede the `usage_rate` beside it.
+    unique("product_offering_price_component_start_unique")
+      .on(
+        t.productOfferingId,
+        t.componentType,
+        t.unitOfMeasure,
+        t.startDateTime,
+      )
+      .nullsNotDistinct(),
     index("product_offering_price_offering_idx").on(t.productOfferingId),
-    check(
-      "product_offering_price_type_check",
-      sql`price_type IN ('recurring','usage','once')`,
-    ),
-    check(
-      "product_offering_price_pricing_model_check",
-      sql`pricing_model IN ('flat','tiered')`,
-    ),
+    index("product_offering_price_component_type_idx").on(t.componentType),
     check(
       "product_offering_price_currency_check",
       sql`char_length(currency) = 3`,
-    ),
-    check(
-      "product_offering_price_amount_xor_tiers_check",
-      sql`(pricing_model = 'flat' AND amount IS NOT NULL AND pricing_characteristics IS NULL) OR (pricing_model = 'tiered' AND amount IS NULL AND pricing_characteristics IS NOT NULL)`,
-    ),
-    // Per-price-type completeness (pm35-spec D4 / I2). Mirrors 0006_product.sql
-    // exactly — the database owns these predicates; Drizzle is the mirror
-    // (code-standards §6.5). Four constraints so a violation names its own cause.
-    check(
-      "product_offering_price_recurring_period_check",
-      sql`(price_type = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_type <> 'recurring' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)`,
     ),
     check(
       "product_offering_price_period_value_check",
       sql`recurring_charge_period_type IS NULL OR (recurring_charge_period_type = 'months' AND recurring_charge_period_length IN (1, 3, 12))`,
     ),
     check(
-      "product_offering_price_usage_unit_check",
-      sql`(price_type = 'usage' AND unit_of_measure IS NOT NULL) OR (price_type <> 'usage' AND unit_of_measure IS NULL)`,
-    ),
-    check(
       "product_offering_price_unit_value_check",
       sql`unit_of_measure IS NULL OR unit_of_measure IN ('Mbps', 'GB', 'MB', 'EA')`,
     ),
-    check("product_offering_price_amount_check", sql`amount >= 0`),
+    // Per-component-type completeness (pm46-spec D3 / I1.4). Mirrors
+    // 0006_product.sql exactly — the database owns these predicates; Drizzle
+    // is the mirror (code-standards §6.5). Six constraints so a violation
+    // names its own cause; `product.pricing_steps_ok` is the schema-local
+    // IMMUTABLE helper the last one calls (a CHECK cannot contain a subquery).
+    check(
+      "product_offering_price_component_type_check",
+      sql`component_type IN ('usage_rate','flat_fee','capacity_commitment','capacity_motivation')`,
+    ),
+    check(
+      "product_offering_price_envelope_type_check",
+      sql`component_type = price_component ->> '@type'`,
+    ),
+    check(
+      "product_offering_price_usage_rate_check",
+      sql`component_type <> 'usage_rate' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,ratePerUnit}'), 'missing') = 'string' AND price_component #>> '{params,ratePerUnit}' ~ '^[0-9]+(\.[0-9]+)?$')`,
+    ),
+    check(
+      "product_offering_price_flat_fee_check",
+      sql`component_type <> 'flat_fee' OR (unit_of_measure IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,amount}'), 'missing') = 'string' AND price_component #>> '{params,amount}' ~ '^[0-9]+(\.[0-9]+)?$' AND ((price_component ->> 'priceType' = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_component ->> 'priceType' <> 'recurring' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)))`,
+    ),
+    check(
+      "product_offering_price_capacity_commitment_check",
+      sql`component_type <> 'capacity_commitment' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,committedQuantity}'), 'missing') = 'number' AND (price_component #>> '{params,committedQuantity}')::numeric > 0)`,
+    ),
+    check(
+      "product_offering_price_capacity_motivation_check",
+      sql`component_type <> 'capacity_motivation' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND product.pricing_steps_ok(price_component #> '{params,steps}'))`,
+    ),
   ],
 );
 

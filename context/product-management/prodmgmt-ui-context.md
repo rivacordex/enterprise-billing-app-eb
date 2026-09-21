@@ -1,13 +1,13 @@
 # Enterprise Billing App — Product Management Module
 ## UI Context: Module-Specific Tokens & Rules
 
-> **Inherits the shared brand system from `context/ui-context.md` unchanged** — brand scales, neutrals, base semantic tokens, typography, radius, and elevation are defined there and are not redefined here. This file contains only the semantic wiring of those tokens to Product Management domain objects, plus this module's exclusions. Per code-standards §4.3, define any new variables in `globals.css`; never hardcode hex in a component. Covers both View Product (read-only) and Manage Products (CRUD).
+> **Inherits the shared brand system from `context/ui-context.md` unchanged** — brand scales, neutrals, base semantic tokens, typography, radius, and elevation are defined there and are not redefined here. This file contains only the semantic wiring of those tokens to Product Management domain objects, plus this module's exclusions. Per code-standards §4.3, define any new variables in `globals.css`; never hardcode hex in a component. Covers both View Product (read-only) and Manage Products (CRUD). The **pricing-components update** (`_updatemodule-product-pricing-components-plan.md`, `prodmgmt-update-overview.md`) adds **no new color, typography, radius or elevation token** either — it rekeys the existing wiring (§2, §4, §5, §7) from the dropped `price_type` column onto `component_type`, and every hue it needs already exists in the shared file.
 
 ---
 
 ## 0. Module Scope & Exclusions
 
-Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | TESTING | ACTIVE | OBSOLETE | RETIRED` → `LifecycleBadge`), **price type** (`recurring | usage | once` → `PriceTypeBadge`), **offering flags** (bundle / sellable / billing-only chips), **spec/tier JSONB entries** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, and the Manage Products table/dialogs/forms.
+Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | TESTING | ACTIVE | OBSOLETE | RETIRED` → `LifecycleBadge`), **pricing component type** (`usage_rate | flat_fee | capacity_commitment | capacity_motivation` → `PricingComponentBadge`, which replaces `PriceTypeBadge` once `price_type` is dropped — §2), **offering flags** (bundle / sellable / billing-only chips), **spec JSONB entries and `capacity_motivation.steps`** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, and the Manage Products table/dialogs/forms.
 
 > **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is wired here — pm27 (§8) wires the Orders list: `OrderStatusBadge` (TMF622 order states) and the negotiated-price indicator; pm31 wires the manager review-screen treatment (reuses §8's tokens, no new ones). pm33 (§9) wires the Subscriptions page: `SubscriptionStatusBadge` (TMF637 subscription states) and the status-history sub-row treatment. `mockup-product-ordering.html` (referenced in the planning docs) is not present in this repo — pm33 follows the Manage Products family-expand affordance (§7) as the closest in-repo precedent for the status-history sub-rows instead.
 
@@ -32,15 +32,25 @@ Two deliberate exclusions (same rules as User Management), applying to **both** 
 
 ---
 
-## 2. Price Type (`PriceTypeBadge`)
+## 2. Pricing Component Type (`PricingComponentBadge`)
 
-Deliberately calmer than lifecycle status (the auth-method pattern) so price cards don't compete with the section's amounts:
+**Pricing-components update — this badge rekeys from `price_type` to `component_type` (PC14).** The `price_type` column is dropped, so the three old variants map **forward onto the new discriminator without a new hue**; the badge stays deliberately calmer than lifecycle status (the auth-method pattern) so price cards don't compete with the section's amounts. One total `Record<ComponentType, …>`, so a new component type is a compile error, never a default branch:
 
-| `price_type` | Meaning | Base | `-fg` text | `-bg` tint | Icon |
-|---|---|---|---|---|---|
-| `recurring` | Periodic charge (charge period shown beside) | `#2E45A9` primary-500 | `#1B2A68` primary-700 | `#EDF0FB` primary-50 | repeat |
-| `usage` | Metered / consumption (incl. tiered) | `#00899A` cyan-600 | `#006975` cyan-700 | `#E2F8FA` cyan-50 | gauge |
-| `once` | One-time charge | `#4C5462` neutral-600 | `#353B46` neutral-700 | `#EEF0F4` neutral-100 | zap |
+| `component_type` | Envelope `priceType` | Meaning | Base | `-fg` text | `-bg` tint | Icon |
+|---|---|---|---|---|---|---|
+| `usage_rate` | `usage` | Base per-unit rate feeding rating (was `price_type = 'usage'`) | `#00899A` cyan-600 | `#006975` cyan-700 | `#E2F8FA` cyan-50 | gauge |
+| `flat_fee` | `recurring` | Periodic charge (charge period shown beside) | `#2E45A9` primary-500 | `#1B2A68` primary-700 | `#EDF0FB` primary-50 | repeat |
+| `flat_fee` | `oneTime` | One-time charge (was `once`) | `#4C5462` neutral-600 | `#353B46` neutral-700 | `#EEF0F4` neutral-100 | zap |
+| `capacity_commitment` | `commitment` | Billable-quantity floor — a constraint on the base rate, not a charge of its own | `#1A73D9` info-500 | `#0C4084` info-700 | `#E7F1FD` info-50 | arrow-down-to-line |
+| `capacity_motivation` | `discount` | Graduated per-unit discount above a target quantity | `#E6007E` accent-500 | `#91004F` accent-700 | `#FDE6F1` accent-50 | trending-down |
+
+`flat_fee` is the **one `component_type` with two variants**: its label and hue come from the envelope's `price_component.priceType` (`recurring` vs `oneTime`), never from the charge-period columns — a `flat_fee` with no period is `oneTime`, not a broken recurring price.
+
+**Why Accent, not the AI family, for `capacity_motivation`.** A catalog discount reuses the shared Accent scale for the same reason §8's "Negotiated" pill does — the §0 AI/Iris exclusion applies in full, and Accent is the brand's own energy accent. The two never render in the same view (catalog pricing panel vs the Orders/Subscriptions tables) and carry different icons (`trending-down` vs `handshake`), so the reuse is not a collision. This is a **badge tint**, not an accent-filled action: §5's "`--action-cta-bg` exactly once per view" rule is untouched.
+
+**The badge reads the `component_type` column, never the JSON.** `component_type` always equals `price_component ->> '@type'` (Inv. #30), so a table cell never parses the envelope to decide how to render itself; the one envelope field it does read is `priceType`, for the `flat_fee` split above. A row whose column and envelope disagree is corruption, not a variant — render nothing rather than guessing.
+
+`negotiated_override` gets **no badge here** — it is the logical/TMF projection of an ordering-table row (PC9/Inv. #39), never a catalog component and not even persistable in this table, and it is already wired as the Orders/Subscriptions "Negotiated" pill (§8/§9). The badge's total record therefore covers **four** component types, not the Zod union's five.
 
 ---
 
@@ -54,7 +64,7 @@ Deliberately calmer than lifecycle status (the auth-method pattern) so price car
 
 ## 4. Price Effectivity States
 
-A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues:
+A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure)` lane (the rekeyed uniqueness index, PC14) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, and each lane computes Current / Future-dated / Superseded independently:
 
 | State | Rule | Treatment |
 |---|---|---|
@@ -62,17 +72,19 @@ A price's end is derived from its successor's `start_date_time`; cards signal te
 | Future-dated | `start_date_time` in future | info-50 bg tag "Starts <date>" in info-700; default card otherwise |
 | Superseded | successor already started | Card muted (`--text-muted`), tag "Superseded" neutral-100/neutral-700 |
 
-Tiered prices render each tier's `from`/`to`/`rate` as plain inline text (e.g. `0–1000: 0.05`), semicolon-separated — no table (revised 2026-07-09 — density pass).
+`capacity_motivation.steps` render each step's threshold and rate as plain inline text in ascending order (e.g. `base 100; above 1000: 50; above 2000: 25`), semicolon-separated — no table. This inherits the density rule the dropped tiered rendering established (revised 2026-07-09 — density pass); `pricing_model = 'tiered'` no longer exists (PC8). A `capacity_commitment` renders as `committed 1,000 EA` — quantity and unit only, **no currency**, because the component carries no money.
+
+**`rateCardLookUp` renders as a name, never as a reference (Inv. #42).** No link, no lookup affordance, no autocomplete, no "view rate card" action — the table it names does not exist. It is a plain mono string beside the rate; anything that implies resolvability is a defect, not a nicety, until the rate-card phase lands.
 
 A future-dated price can only be added while the version is `DRAFT`, so the "Future-dated" tag appears on a `DRAFT` version's panel and on the fixed schedule a released version carries — never as something a user can add to a live version.
 
-**Unbillable-shape warning.** A price shape that saves but nothing downstream can bill yet reuses the `--bg-warning`/`--text-warning` treatment of §7's warnings, inline under the price row: *"Nothing bills a tiered recurring price yet — this version will fail its bill run."* and *"Usage rating charges a flat amount today; tiers are stored but not applied."* Warning only: it never blocks the save. A missing charge period, a unit outside the list, or an unmapped period is a `FieldError`, not this banner.
+**Not-yet-billable warning (O10).** A component that saves but nothing downstream can bill yet reuses the `--bg-warning`/`--text-warning` treatment of §7's warnings, inline under the component row. The two tiered copies are **retired with `pricing_model = 'tiered'`**; the surviving cases are the two capacity modifiers plus the unbuilt rate card: *"Bill run does not apply a capacity commitment yet — this component is stored but not billed."*, *"Bill run does not apply a capacity motivation yet — usage bills at the base rate until then."*, and *"No rate card exists yet — `<name>` falls back to the rate per unit."* A fourth case comes from an open modelling gap (architecture §7): the capacity components are **quantity**-based, but `Mbps` is a rate, so a commitment or motivation in `Mbps` has no stated basis (per month? per peak sample?) — *"A capacity component in Mbps has no agreed basis yet; confirm what the committed quantity means before this version goes live."* It warns rather than blocks, because the unit list is closed and no rule forbids the combination. Warning only, all four: none blocks the save. A missing charge period, a unit outside the list, or an unmapped period is still a `FieldError`, not this banner — as are the cross-component rules (§7), which block it.
 
 ---
 
 ## 5. Module Typography & Surface Notes
 
-Use `--font-mono` for the sequence IDs (`PRDOFR…`, `PRDSMD…`, `PRDOFP…`), GL codes, SST/SD values, and `version`; enable `tabular-nums` on amounts, tier bounds/rates, charge-period lengths, and the version column — identical on Manage Products' table. A usage price renders `amount / unit` (`RM 0.05 / GB`) and a recurring price `amount / period` (`RM 5,000.00 / month`), the unit and period read from the row, never inferred from the price type; the unit keeps its stored casing exactly (`Mbps`, never `MBPS`). Amounts render `--text-h4` weight 600 with currency code in `--text-caption` muted. Selected offering row uses the shared `--surface-selected`; View Product's sections 2–4 are `--surface-card` on `--surface-app` with `--border-default`.
+Use `--font-mono` for the sequence IDs (`PRDOFR…`, `PRDSMD…`, `PRDOFP…`), GL codes, SST/SD values, and `version`; enable `tabular-nums` on amounts, step thresholds/rates, committed quantities, charge-period lengths, and the version column — identical on Manage Products' table. Amount rendering is keyed to `component_type`, not to a price type: a `usage_rate` renders `ratePerUnit / unit` (`RM 0.05 / GB`), a `recurring` `flat_fee` renders `amount / period` (`RM 5,000.00 / month`), and a `oneTime` `flat_fee` renders the bare `amount` — **no unit**, since `unit_of_measure` is NULL on every `flat_fee` row (architecture §3.3). Unit and period are read from the row's columns, never from `params` and never inferred; the unit keeps its stored casing exactly (`Mbps`, never `MBPS`). Amounts render `--text-h4` weight 600 with currency code in `--text-caption` muted. **Pricing-components update:** envelope money is a **decimal string** (`"100"`) — format it for display with the row's `currency` and never re-parse it to a different precision; `committedQuantity` and every `steps[].aboveQuantity` are numbers and take `tabular-nums` like the amounts; a `rateCardLookUp` name renders in `--font-mono` alongside the sequence IDs, with a muted "default rate" beside it when null. Raw `component_type` / `@type` values are never shown — the §2 badge label is the user-facing name, and the derived envelope fields (`specVersion`, `plaSpecId`, `appliesAt`, `basis`, `boundTo`) are never surfaced at all. Selected offering row uses the shared `--surface-selected`; View Product's sections 2–4 are `--surface-card` on `--surface-app` with `--border-default`.
 
 `--action-cta-bg` is used exactly once across the module: the "New offering" button in the Manage Products page header. It remains the **only** accent-filled primary action on that page (per the shared design system's "one accent button per view" rule) — every other action (Edit, Add price, Activate) uses the quieter secondary/ghost treatment; only Retire/Discard use the danger role, and only inside their confirmation dialogs. (The Activate-confirmation dialog's own "Activate" button is the one other place an accent button appears — acceptable since it never renders in the same view as the page-header CTA.)
 
@@ -95,7 +107,7 @@ Patterns that exist only on the CRUD page — View Product never needed them.
 | Action | Icon | Color role | Shown on |
 |---|---|---|---|
 | Edit | `edit` | `--text-secondary` (quiet) | `DRAFT`, `ACTIVE` (an `ACTIVE` edit branches a new draft) |
-| Add price | `cash` | `--text-secondary` (quiet) | `DRAFT` only |
+| Add price component | `cash` | `--text-secondary` (quiet) | `DRAFT` only |
 | Submit for testing | `flask-conical` | `--text-secondary` (quiet) | `DRAFT` only |
 | Back to draft | `undo-2` | `--text-secondary` (quiet) | `TESTING` only |
 | Activate | `check` | `--text-secondary` (quiet — not accent; the CTA stays reserved for "New offering") | `TESTING` only |
@@ -107,6 +119,19 @@ Patterns that exist only on the CRUD page — View Product never needed them.
 **Inline panel editing.** On a `DRAFT` version the specifications and pricing panels edit in place: a row shows its value as text until activated, then an input with explicit **Save** and **Cancel** (secondary/ghost, never accent). No auto-save on blur. On any other status the panels render their read-only variant — plain text, no disabled inputs and no greyed controls, so "not editable now" never looks like "broken". **Keyboard contract (pm41):** `Esc` cancels and restores the prior value; `Enter` saves a single-field row and `Cmd`/`Ctrl+Enter` saves a multi-field row (so `Enter` inside a text field doesn't submit prematurely); on save, focus returns to the edited row; on cancel, focus returns to the control that opened the editor. One row editable at a time (activating a second while one is dirty prompts to discard).
 
 **"This creates a new draft" warning.** Shown inside the Edit dialog and the Add Price dialog whenever the target offering's current status is `ACTIVE` (never on a `DRAFT` target). Treatment: `--bg-warning` background, `--text-warning` text, `--radius` corners, no icon needed (the copy itself is the signal) — same tint pairing as the `DRAFT` lifecycle badge (§1). Copy pattern: *"`<Name>` is active. Saving will not change it — a new draft version is created instead."*
+
+**Component picker (pricing-components update).** The Add Price dialog leads with a `component_type` choice — the §2 badge label plus one line of help — offering exactly the **four persistable types**; `negotiated_override` never appears, because it cannot be written to this table (Inv. #39). The rest of the form is the chosen branch's `params` only. Two row-level fields sit **above** the branch but are not uniformly present, because the completeness rules differ per type (architecture §3.3):
+
+| Branch | `unit_of_measure` | Recurring period pair |
+|---|---|---|
+| `usage_rate` | required | hidden |
+| `flat_fee` — `priceType: recurring` | **hidden** (NULL on the row) | required |
+| `flat_fee` — `priceType: oneTime` | **hidden** (NULL on the row) | hidden |
+| `capacity_commitment` / `capacity_motivation` | required | hidden |
+
+`currency` is the one field every branch shares (PC3/VI5) and stays above the picker. A field that is NULL for a branch is **hidden, not disabled** — the same rule §7's read-only panels follow, so "not applicable here" never reads as "broken". `capacity_motivation.steps` is an add/remove row list the form keeps in ascending order, not a free-text JSON field.
+
+**Cross-component (offering-level) errors.** The pricing-components update adds validity rules that belong to **no single field**: a `post_aggregation` modifier with no same-unit `usage_rate` (VI3), an ambiguous base-rate binding (VI4), and two components of one offering in different currencies (VI5). These render as a **panel-level error banner at the top of the pricing panel** — danger role (`alert-triangle` in `--text-danger` on the danger tint, the §7 dialog construction), naming the offending components by their §2 badge label. Not a `FieldError` (there is no field to attach to) and deliberately **not** the §4 warning tint, which would understate a rule that blocks the save. Copy states the missing counterpart, not the rule name: *"Target Capacity Commitment needs a base usage rate in EA. Add one before saving."* Save stays disabled while the banner is present — the one place in this module where a pricing error is not row-local.
 
 **Backdating warning.** Shown inside the Add Price form when the chosen start date is in the past but within the 3-day tolerance. Same `--bg-warning`/`--text-warning` treatment as above. Copy pattern: *"This price is backdated to `<date>`; historical bills may be affected."* A start date beyond the tolerance is a validation error (standard `FieldError` red-text treatment, not this banner), not a warning.
 
@@ -132,7 +157,7 @@ Each carries an optional "Reason" text input — `FieldLabel` reads "Reason (opt
 
 Patterns for `/products/orders`. `--action-cta-bg` is used exactly once on this page too ("New order," same one-accent-button-per-view rule as Manage Products' "New offering" — the two pages never render together, so no conflict).
 
-**`OrderStatusBadge` (TMF622 order status).** Same pill construction as `LifecycleBadge`/`PriceTypeBadge` (§1/§2 — dark `-fg` text on light `-bg` tint, icon + label, never color-only). All nine seeded `ORDER_STATUSES` get a variant; the phase only ever writes `ACKNOWLEDGED`/`PENDING`/`COMPLETED`/`REJECTED`/`FAILED` (architecture §3), so the remaining four (`HELD`/`IN_PROGRESS`/`CANCELLED`/`PARTIAL`) render if the full enum is ever exercised but are otherwise unused:
+**`OrderStatusBadge` (TMF622 order status).** Same pill construction as `LifecycleBadge`/`PricingComponentBadge` (§1/§2 — dark `-fg` text on light `-bg` tint, icon + label, never color-only). All nine seeded `ORDER_STATUSES` get a variant; the phase only ever writes `ACKNOWLEDGED`/`PENDING`/`COMPLETED`/`REJECTED`/`FAILED` (architecture §3), so the remaining four (`HELD`/`IN_PROGRESS`/`CANCELLED`/`PARTIAL`) render if the full enum is ever exercised but are otherwise unused:
 
 | `status` | Meaning | `-fg` text | `-bg` tint | Icon |
 |---|---|---|---|---|
@@ -157,7 +182,7 @@ Patterns for `/products/orders`. `--action-cta-bg` is used exactly once on this 
 
 Patterns for `/products/subscriptions`. No `--action-cta-bg` on this page — subscriptions are created only via a completed order (Orders page), never directly, so there is no "New" CTA to reserve it for.
 
-**`SubscriptionStatusBadge` (TMF637 subscription status).** Same pill construction as `LifecycleBadge`/`PriceTypeBadge`/`OrderStatusBadge` (§1/§2/§8). All eight seeded `PRODUCT_STATUSES` get a variant; the phase only ever writes `ACTIVE`/`SUSPENDED`/`TERMINATED` (architecture §3), so the remaining five render if the full enum is ever exercised but are otherwise unused:
+**`SubscriptionStatusBadge` (TMF637 subscription status).** Same pill construction as `LifecycleBadge`/`PricingComponentBadge`/`OrderStatusBadge` (§1/§2/§8). All eight seeded `PRODUCT_STATUSES` get a variant; the phase only ever writes `ACTIVE`/`SUSPENDED`/`TERMINATED` (architecture §3), so the remaining five render if the full enum is ever exercised but are otherwise unused:
 
 | `status` | Meaning | `-fg` text | `-bg` tint | Icon |
 |---|---|---|---|---|

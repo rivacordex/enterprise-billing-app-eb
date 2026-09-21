@@ -1,5 +1,21 @@
 import type { ProductSpecCharacteristics } from "@/validation/product/product-spec-characteristics.schema";
-import type { TieredPricingCharacteristics } from "@/validation/product/pricing-characteristics.schema";
+import type {
+  CapacityCommitmentComponent,
+  CapacityMotivationComponent,
+  FlatFeeComponent,
+  NegotiatedOverrideComponent,
+  PricingComponent,
+  UsageRateComponent,
+} from "@/validation/product/pricing-component.schema";
+
+export type {
+  CapacityCommitmentComponent,
+  CapacityMotivationComponent,
+  FlatFeeComponent,
+  NegotiatedOverrideComponent,
+  PricingComponent,
+  UsageRateComponent,
+};
 
 // Declaration order IS lifecycle order (DRAFT → TESTING → ACTIVE → OBSOLETE →
 // RETIRED). UI sort weight derives from the array index and the database enum
@@ -62,11 +78,45 @@ export const VERSION_HEADER_ACTIONS_BY_STATUS: Record<
   RETIRED: [],
 };
 
-export const PRICE_TYPES = ["recurring", "usage", "once"] as const;
-export type PriceType = (typeof PRICE_TYPES)[number];
+// The four persistable price-component kinds (pm47-spec D2/D3) — exactly the
+// list pm46's `product_offering_price_component_type_check` admits, in the
+// order the picker shows them. `negotiated_override` is a branch of
+// `PricingComponent` but deliberately NOT a member of this union (pm47-spec
+// D3, Inv. #39): its row lives in `ordering.order_item_price_override`, never
+// in `product.product_offering_price`, and `persistablePricingComponentSchema`
+// (pricing-component.schema.ts) is what makes that a type error, not just a
+// runtime check.
+export const COMPONENT_TYPES = [
+  "usage_rate",
+  "flat_fee",
+  "capacity_commitment",
+  "capacity_motivation",
+] as const;
+export type ComponentType = (typeof COMPONENT_TYPES)[number];
 
-export const PRICING_MODELS = ["flat", "tiered"] as const;
-export type PricingModel = (typeof PRICING_MODELS)[number];
+// The envelope's own `priceType` axis (pm47-spec D2/D8) — the TMF620 pricing
+// axis a `PricingComponent` branch carries. This replaced the row-level
+// `PriceType`/`PRICE_TYPES` this unit deletes below, and the two must NEVER be
+// equated, mapped onto each other, or derived from each other (PC13,
+// Inv. #38): `EnvelopePriceType` values live inside `price_component`, while
+// the deleted `PriceType` named a row column that no longer exists. The
+// ordering module's own `priceType` axis (`validation/ordering/**`,
+// `types/ordering.ts`) is a third, separate thing again — out of this unit's
+// boundary (pm50-52) and not to be confused with either.
+export const ENVELOPE_PRICE_TYPES = [
+  "usage",
+  "recurring",
+  "oneTime",
+  "discount",
+  "commitment",
+] as const;
+export type EnvelopePriceType = (typeof ENVELOPE_PRICE_TYPES)[number];
+
+export const APPLIES_AT = ["rating", "billing", "post_aggregation"] as const;
+export type AppliesAt = (typeof APPLIES_AT)[number];
+
+export const BASIS = ["quantity", "flat"] as const;
+export type Basis = (typeof BASIS)[number];
 
 // Closed, case-sensitive unit vocabulary for `usage` prices, matching pm35's
 // `product_offering_price_unit_value_check` exactly. Declared here with the
@@ -165,19 +215,21 @@ export type SpecificationCard = {
   characteristics: ProductSpecCharacteristics; // flat string record (pm02 §3.6)
 };
 
+// pm47-spec I3: `PriceCard` is not reshaped here — that's pm49's, together
+// with the repository that populates it. `priceType`/`pricingModel`/`amount`/
+// `pricingCharacteristics` are removed because their backing types
+// (`PriceType`/`PricingModel`/`TieredPricingCharacteristics`) are deleted by
+// this unit; the new `componentType`/`priceComponent` fields are deliberately
+// NOT added early.
 export type PriceCard = {
   productOfferingPriceId: string;
   name: string;
-  priceType: PriceType;
-  pricingModel: PricingModel;
-  amount: string | null; // numeric → string (general §2.15)
   currency: string;
   recurringChargePeriodLength: number | null;
   recurringChargePeriodType: string | null;
   unitOfMeasure: string | null;
   glCode: string | null;
   policy: string | null; // carried, semantics deferred (workflow §5.1)
-  pricingCharacteristics: TieredPricingCharacteristics | null;
   startDateTime: Date;
   createdAt: Date;
   endDateTime: Date | null; // derived; null = open-ended (Inv. #3)
