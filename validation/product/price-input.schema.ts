@@ -6,17 +6,24 @@ import {
   UNITS_OF_MEASURE,
   type RecurringPeriodLength,
 } from "@/types/product";
-import { priceCharacteristicsSchema } from "@/validation/product/pricing-characteristics.schema";
+import {
+  moneyStringSchema,
+  stepsSchema,
+} from "@/validation/product/pricing-component.schema";
 
-// pm38-spec D1/I1. The impossible combination is made untypeable, not merely
-// rejected: `priceInputSchema` discriminates on `priceType`, so each branch
-// declares exactly the columns its type may carry. A recurring price that also
-// names a unit of measure, or a `once` price carrying a charge period, is a
-// compile error at every call site (code-standards §2.8) AND a runtime
-// rejection here — the branches are `strictObject`s, so a forbidden field is an
-// unrecognized key, not a silently-stripped one (verification checklist: "…are
-// rejected by Zod and by the database"). The DB CHECKs shipped by pm35 are the
-// backstop for a write that goes around this schema.
+// pm47-spec D7/I2. Rebuilt to discriminate on `componentType`, not the
+// deleted `priceType`/`pricingModel` axis. Each branch declares exactly the
+// row columns and envelope `params` its component type may carry — the
+// impossible combination is untypeable, not merely rejected (§2.8): a
+// `usage_rate` price can never carry a recurring period pair, and a
+// `flat_fee` (oneTime) price can never carry a unit of measure. The branches
+// are `strictObject`s, so a forbidden field is an unrecognized key, not a
+// silently-stripped one. pm46's per-`component_type` CHECKs are the backstop
+// for a write that goes around this schema (Inv. #31/#32).
+//
+// `moneyStringSchema`/`stepsSchema` are imported from
+// `pricing-component.schema.ts` rather than restated (§2.16 — no second copy
+// of a rule) — the same money/step rules the envelope itself enforces.
 
 // Charge-period length ∈ (1, 3, 12), built from pm37's RECURRING_PERIOD_LENGTHS
 // so the value list has exactly one source. The type-guard predicate narrows
@@ -32,10 +39,12 @@ const recurringChargePeriodLengthSchema = z
     { message: "Charge period must be 1, 3 or 12 months" },
   );
 
-// Name, currency, GL code and the per-`pricing_model` characteristics — the
-// core every price-write schema shares (pm38-spec D2). The amount-XOR-tiers
-// (Inv. #5) and tier-contiguity (Inv. #4) rules stay defined exactly once, in
-// pricing-characteristics.schema.ts; they are reused here, never re-declared.
+const unitOfMeasureFieldSchema = z.enum(UNITS_OF_MEASURE, {
+  message: "Choose a unit of measure for this price",
+});
+
+// Name, currency and GL code — the core every price-write branch shares
+// (pm47-spec D7).
 const priceInputCoreShape = {
   name: z
     .string()
@@ -49,38 +58,66 @@ const priceInputCoreShape = {
     .max(50, "GL code must be 50 characters or fewer")
     .nullable()
     .default(null),
-  priceCharacteristics: priceCharacteristicsSchema,
 } as const;
 
-// Exported as plain field-shape records (not assembled schemas) so insert-price
-// and update-price compose them with their own `startDateTime` rule without
-// re-declaring the per-type field requirements (pm38-spec D2). Spreading the
-// same field-schema instances into another `strictObject` is safe — Zod schemas
-// are immutable and reusable.
-export const RECURRING_PRICE_INPUT_SHAPE = {
-  priceType: z.literal("recurring"),
-  recurringChargePeriodLength: recurringChargePeriodLengthSchema,
-  recurringChargePeriodType: z.enum(RECURRING_PERIOD_TYPES),
-  ...priceInputCoreShape,
-} as const;
-
-export const USAGE_PRICE_INPUT_SHAPE = {
-  priceType: z.literal("usage"),
-  unitOfMeasure: z.enum(UNITS_OF_MEASURE, {
-    message: "Choose a unit of measure for a usage price",
+// Exported as plain field-shape records (not assembled schemas) so
+// insert-price composes them with its own `startDateTime` rule without
+// re-declaring the per-type field requirements — the same pattern pm38
+// established (pm47-spec D7).
+export const USAGE_RATE_PRICE_INPUT_SHAPE = {
+  componentType: z.literal("usage_rate"),
+  unitOfMeasure: unitOfMeasureFieldSchema,
+  params: z.strictObject({
+    ratePerUnit: moneyStringSchema,
+    rateCardLookUp: z.string().trim().min(1).nullable(),
   }),
   ...priceInputCoreShape,
 } as const;
 
-export const ONCE_PRICE_INPUT_SHAPE = {
-  priceType: z.literal("once"),
+export const FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE = {
+  componentType: z.literal("flat_fee"),
+  priceType: z.literal("recurring"),
+  recurringChargePeriodLength: recurringChargePeriodLengthSchema,
+  recurringChargePeriodType: z.enum(RECURRING_PERIOD_TYPES),
+  params: z.strictObject({ amount: moneyStringSchema }),
   ...priceInputCoreShape,
 } as const;
 
-export const priceInputSchema = z.discriminatedUnion("priceType", [
-  z.strictObject(RECURRING_PRICE_INPUT_SHAPE),
-  z.strictObject(USAGE_PRICE_INPUT_SHAPE),
-  z.strictObject(ONCE_PRICE_INPUT_SHAPE),
+export const FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE = {
+  componentType: z.literal("flat_fee"),
+  priceType: z.literal("oneTime"),
+  params: z.strictObject({ amount: moneyStringSchema }),
+  ...priceInputCoreShape,
+} as const;
+
+export const CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE = {
+  componentType: z.literal("capacity_commitment"),
+  unitOfMeasure: unitOfMeasureFieldSchema,
+  params: z.strictObject({
+    committedQuantity: z.number().finite().positive(),
+  }),
+  ...priceInputCoreShape,
+} as const;
+
+export const CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE = {
+  componentType: z.literal("capacity_motivation"),
+  unitOfMeasure: unitOfMeasureFieldSchema,
+  params: z.strictObject({ steps: stepsSchema }),
+  ...priceInputCoreShape,
+} as const;
+
+// A plain `z.union`, not `z.discriminatedUnion` — `flat_fee`'s `recurring` and
+// `oneTime` variants both carry the literal `componentType: 'flat_fee'`, so
+// they cannot occupy two slots of one discriminant map (Zod requires a unique
+// literal per option). Each branch's own literal fields (`componentType` +,
+// for `flat_fee`, `priceType`) still let TypeScript narrow correctly and keep
+// the impossible field combinations untypeable — D7's actual requirement.
+export const priceInputSchema = z.union([
+  z.strictObject(USAGE_RATE_PRICE_INPUT_SHAPE),
+  z.strictObject(FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE),
+  z.strictObject(FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE),
+  z.strictObject(CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE),
+  z.strictObject(CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE),
 ]);
 
 export type PriceInput = z.infer<typeof priceInputSchema>;
