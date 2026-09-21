@@ -10,6 +10,7 @@ import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { ledgerBinding } from "@/db/schema/billing/ledger-binding";
 import { productOffering, productOfferingPrice } from "@/db/schema/product";
+import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import {
   productOrder,
   productOrderItem,
@@ -625,21 +626,34 @@ async function ensureSampleOffering(): Promise<{
       throw new Error("_SAMPLE_ offering insert returned no row");
     }
 
+    // pm48-spec D5 — re-keyed to `flat_fee`, parsed through the union like
+    // every other write; `SAMPLE_RECURRING_AMOUNT` and every other constant
+    // below are unchanged (the bill-run suites assert on the amount, and
+    // pm52 re-keys its SQL to read this exact `flat_fee.params.amount`).
+    const priceEnvelope = persistablePricingComponentSchema.parse({
+      "@type": "flat_fee",
+      specVersion: 1,
+      plaSpecId: null,
+      priceType: "recurring",
+      appliesAt: "billing",
+      basis: "flat",
+      boundTo: null,
+      params: { amount: SAMPLE_RECURRING_AMOUNT },
+    });
+
     const [price] = await tx
       .insert(productOfferingPrice)
       .values({
         productOfferingId: offering.productOfferingId,
         name: SAMPLE_PRICE_NAME,
-        priceType: "recurring",
+        componentType: priceEnvelope["@type"],
+        priceComponent: priceEnvelope,
         recurringChargePeriodLength: 1,
         recurringChargePeriodType: "months",
         unitOfMeasure: null,
-        amount: SAMPLE_RECURRING_AMOUNT,
         currency: CURRENCY,
         glCode: "GL-4100",
-        pricingModel: "flat",
         policy: null,
-        pricingCharacteristics: null,
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       })
       .returning({
