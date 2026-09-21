@@ -12,7 +12,7 @@ LANGUAGE sql IMMUTABLE AS $fn$
      AND NOT EXISTS (
            SELECT 1
            FROM   jsonb_array_elements(steps) AS s(v)
-           WHERE  jsonb_typeof(s.v -> 'aboveQuantity') <> 'number'
+           WHERE  COALESCE(jsonb_typeof(s.v -> 'aboveQuantity'), 'missing') <> 'number'
               OR  (s.v ->> 'aboveQuantity')::numeric <= 0
               OR  COALESCE(jsonb_typeof(s.v -> 'ratePerUnit'), 'missing') <> 'string'
               OR  COALESCE(s.v ->> 'ratePerUnit', '') !~ '^[0-9]+(\.[0-9]+)?$'
@@ -83,12 +83,13 @@ CREATE TABLE "product"."product_offering_price" (
 	    unit_of_measure IS NULL
 	    AND COALESCE(jsonb_typeof(price_component #> '{params,amount}'), 'missing') = 'string'
 	    AND price_component #>> '{params,amount}' ~ '^[0-9]+(\.[0-9]+)?$'
+	    AND COALESCE(price_component ->> 'priceType', '') IN ('recurring', 'oneTime')
 	    AND (
 	      (price_component ->> 'priceType' = 'recurring'
 	         AND recurring_charge_period_length IS NOT NULL
 	         AND recurring_charge_period_type IS NOT NULL)
 	      OR
-	      (price_component ->> 'priceType' <> 'recurring'
+	      (price_component ->> 'priceType' = 'oneTime'
 	         AND recurring_charge_period_length IS NULL
 	         AND recurring_charge_period_type IS NULL)
 	    )
