@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 import {
-  ONCE_PRICE_INPUT_SHAPE,
-  RECURRING_PRICE_INPUT_SHAPE,
-  USAGE_PRICE_INPUT_SHAPE,
+  CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE,
+  CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE,
+  FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE,
+  FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE,
+  USAGE_RATE_PRICE_INPUT_SHAPE,
 } from "@/validation/product/price-input.schema";
 
 // 3-day backdating tolerance (Design; prodmgmt-architecture §6 Inv. #2). This
@@ -25,20 +27,31 @@ export const startDateTimeField = z.coerce
     message: "Start date cannot be more than 3 days in the past.",
   });
 
-// pm38-spec I2. Composes the discriminated price-input branches (price-input
-// .schema.ts) with `startDateTime`. Each branch stays a `strictObject`, so a
-// field forbidden for the chosen `priceType` is still rejected once composed.
-export const insertPriceSchema = z.discriminatedUnion("priceType", [
+// pm47-spec D7/I2. Composes the price-input branches (price-input.schema.ts)
+// with `startDateTime`. Each branch stays a `strictObject`, so a field
+// forbidden for the chosen `componentType` is still rejected once composed.
+// A plain `z.union`, matching price-input.schema.ts's own reasoning — two of
+// these five branches (`flat_fee` recurring/oneTime) share one
+// `componentType` literal and cannot be discriminated on it alone.
+export const insertPriceSchema = z.union([
   z.strictObject({
-    ...RECURRING_PRICE_INPUT_SHAPE,
+    ...USAGE_RATE_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
   z.strictObject({
-    ...USAGE_PRICE_INPUT_SHAPE,
+    ...FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
   z.strictObject({
-    ...ONCE_PRICE_INPUT_SHAPE,
+    ...FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE,
+    startDateTime: startDateTimeField,
+  }),
+  z.strictObject({
+    ...CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE,
+    startDateTime: startDateTimeField,
+  }),
+  z.strictObject({
+    ...CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
 ]);

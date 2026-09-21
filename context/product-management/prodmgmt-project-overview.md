@@ -2,7 +2,7 @@
 
 **Module:** Product Management (second module of the wholesale enterprise billing application)
 **Users:** Billing Operations (catalog — View Product & Manage Products) and Revenue Operations (Orders & Subscriptions; permissions `product_orders`, `product_inventory`)
-**Status:** SHIPPED — the read-only catalog (units pm01–pm09), the Manage Products CRUD fast-follow (units pm10–pm24), and the **Product Ordering & Inventory update** (units pm25–pm34) are all implemented and ship-gate-verified. See the "Completed Tracker" section at the end of `prodmgmt-progress-tracker.md` for the per-unit build record.
+**Status:** SHIPPED — the read-only catalog (units pm01–pm09), the Manage Products CRUD fast-follow (units pm10–pm24), the **Product Ordering & Inventory update** (units pm25–pm34), and the **Manage Products rebuild & catalog lifecycle update** (units pm35–pm45) are implemented and ship-gate-verified. See the "Completed Tracker" section at the end of `prodmgmt-progress-tracker.md` for the per-unit build record. The next planned update — pricing components (capacity commitment/motivation, the component envelope) — is specced in `prodmgmt-update-overview.md` and `_updatemodule-product-pricing-components-plan.md`.
 **Companion docs:** `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**), `prodmgmt-code-standards.md` (conventions)
 
 ## Overview
@@ -12,37 +12,46 @@ The Product Management module is where the business both **defines** the product
 **Catalog (Billing Operations):**
 
 - **View Product** (`/products/product-offering`) — a read-only catalog viewer. Displays product offerings (e.g. "5G Nationwide Service Plan"), each offering's specifications (network-slice characteristics such as SST/SD identifiers held as JSONB), and each offering's prices (recurring, usage, and one-time charges, flat or tiered) on a single four-section page.
-- **Manage Products** (`/products/manage-products`) — the CRUD page. Billing Operations can create an offering, attach and edit its specifications, add new prices, and move it through its lifecycle from draft to active to retired, using a copy-on-write versioning model rather than in-place editing of live data.
+- **Manage Products** (`/products/manage-products`) — the CRUD page, rebuilt into the same four-section shape as View Product: a server-paged **families list**, a **version switcher**, a **specifications panel**, and a **pricing panel**, with editing and versioning controls in the panels. Billing Operations create an offering, edit its specifications and prices **inline while it is `DRAFT`**, and move it through a five-state lifecycle — `DRAFT → TESTING → ACTIVE → OBSOLETE → RETIRED` — using a copy-on-write versioning model rather than in-place editing of live data. The page loads only the selected version's data (2 queries on first load; a further 4 on selecting a family), not the whole catalog.
 
 **Ordering & Inventory (Revenue Operations):**
 
 - **Orders** (`/products/orders`) — where a Revenue Operations user manually places an order of a billing-only offer (`billing_only = true`, `is_sellable = true`, `lifecycle_status = ACTIVE`) for a specific customer against a specific billing account (BAN), through a three-step form (customer → BAN → offer). A standard-price order validates, completes, and instantiates a subscription in one atomic transaction; an order carrying a negotiated price parks as `PENDING` until a manager (never the submitter) approves or rejects it.
 - **Subscriptions** (`/products/subscriptions`) — the product inventory. Each completed order produces exactly one subscription, which pins the exact catalog offering version it was sold at (grandfathered pricing), records which BAN it bills to, and carries a suspend/resume/terminate lifecycle with an append-only status history. The subscription list is what the future bill run will rate; this module produces everything rating needs and nothing else.
 
-Editing a live (`ACTIVE`) offering never modifies that row — it creates a new draft version instead, and only one version of a given product can be `ACTIVE` at a time, so activating a new version automatically retires whichever version was active before it. Prices remain insert-only and immutable everywhere, across every version, so historical bill-run basis stays reproducible after prices change. Grandfathering is the ordering-side consequence of the same guarantee: a subscription FKs the exact offering version it was sold at, so later catalog activations never change an existing subscriber's price. The module reuses the shared platform core delivered by User Management: Better-Auth sessions, the code-seeded RBAC registry, the append-only audit log, and the `services/` → `db/repositories/` layering.
+Editing a live (`ACTIVE`) offering never modifies that row — it branches a new `DRAFT` copy of the whole version (offering fields, all specifications, all prices) instead, and only one version of a product can be `ACTIVE` at a time, so activating a new version automatically moves whichever version was active before it to `OBSOLETE` in the same transaction. A `DRAFT` version's specifications and prices are fully editable and deletable; from `TESTING` onward the version's content is immutable, enforced by the repository **and** a database trigger, not by UI discipline alone. A released version's prices never change, so any historical bill-run basis stays reproducible. Grandfathering is the ordering-side consequence of the same guarantee: a subscription FKs the exact offering version it was sold at, and an `OBSOLETE` version — not orderable, still billed for its existing subscriptions — keeps its prices byte-identical, so later catalog activations never change an existing subscriber's price. The module reuses the shared platform core delivered by User Management: Better-Auth sessions, the code-seeded RBAC registry, the append-only audit log, and the `services/` → `db/repositories/` layering.
 
 ## Goals
 
 **Catalog:**
 
 1. Give Billing Operations one place to see every product offering, its specifications, and its prices without engineering assistance or direct SQL access (View Product).
-2. Let Billing Operations create, edit, and retire product offerings themselves, without engineering writing SQL or seed files (Manage Products).
+2. Let Billing Operations create, edit, release, and withdraw product offerings themselves, without engineering writing SQL or seed files (Manage Products).
 3. Establish the three product tables (`product_offering`, `product_specifications`, `product_offering_price`) as the system of record that later modules (Customer, Billing Service, Bill Run) reference by FK.
-4. Make price data billing-safe: immutable, insert-only price rows with `start_date_time` effectivity, so any historical bill-run basis remains reproducible after prices change or an offering is edited.
-5. Guarantee that a live offering's terms never change silently: editing an `ACTIVE` offering's fields, specifications, or prices always produces a new draft version, leaving the currently active version — and every historical bill computed against it — exactly as it was.
-6. Guarantee that at most one version of a given product is billable at any moment: activating a new version automatically and atomically retires whichever version was previously active.
+4. Make price data billing-safe: a released version's prices are immutable with `start_date_time` effectivity, so any historical bill-run basis remains reproducible after prices change or an offering is superseded; `DRAFT` prices are freely editable and deletable, since no bill has ever been computed against a version that has never been released.
+5. Guarantee that a live offering's terms never change silently: editing an `ACTIVE` offering's fields, specifications, or prices always branches a new `DRAFT` version, leaving the currently active version — and every historical bill computed against it — exactly as it was.
+6. Guarantee that at most one version of a given product is billable at any moment: activating a new version automatically and atomically moves whichever version was previously active to `OBSOLETE` (still billed for existing subscriptions, no longer orderable).
 7. Extend the left navigation with a "Products" section (peer of "Administration") and rename the route group `(admin)` → `(app)`, a pattern every subsequent module follows.
-8. Keep the two product pages structurally independent — View Product stays a pure read path with zero write-code imports, while Manage Products owns all mutation UI.
+8. Keep the two product pages structurally independent — View Product stays a pure read path with zero write-code imports; Manage Products owns all mutation UI and imports View Product's read-only presentational components one-directionally.
 9. Reuse the mutation pattern (UI → server action → write service → repository → Postgres) already established elsewhere in the app, adding one new shared primitive (branching a draft from an existing offering) rather than a second architecture.
+
+**Manage Products rebuild & catalog lifecycle:**
+
+10. Show an offering's prices and specifications on Manage Products itself, so Billing Operations never needs View Product to answer "what does this charge?".
+11. Replace `DRAFT → ACTIVE → RETIRED` with `DRAFT → TESTING → ACTIVE → OBSOLETE → RETIRED`, where `OBSOLETE` means "not orderable, still billed for existing subscriptions" and `RETIRED` means "no subscription depends on this version any more".
+12. Make a `DRAFT` version fully editable — add, change, and delete specifications and prices — while making everything from `TESTING` onward immutable, enforced by the repository and by a database trigger.
+13. Make every price created through the app billable: a recurring price carries a charge period that maps onto a bill cycle; a usage price carries a unit of measure from a fixed list (`Mbps`, `GB`, `MB`, `EA`); a `once` price carries neither.
+14. Replace the discard-sets-`RETIRED` behaviour with a real hard delete of never-released versions, so `RETIRED` carries exactly one meaning.
+15. Enforce "one open version per family" and "one ACTIVE version per family" in the database, as unique indexes backing the in-transaction lock, and cut Manage Products' first load to 2 queries by moving family grouping into a server-paged repository read model.
 
 **Ordering & Inventory:**
 
-10. Record every sale as a TMF622-shaped order (`ordering.product_order` + `ordering.product_order_item`) with the full TMF622 status enum seeded and the module persisting `ACKNOWLEDGED / PENDING / COMPLETED / REJECTED`. `FAILED` remains seeded solely for enum completeness and is never written — a failed order rolls back fully rather than persisting a FAILED row.
-11. Instantiate exactly one TMF637-shaped subscription (`inventory.product_inventory`) per completed order item, automatically, in the same transaction as order completion — no manual fulfilment step.
-12. Guarantee grandfathered pricing: the order item and subscription FK the exact `product.product_offering` version row ordered; later catalog version activations never change an existing subscriber's price.
-13. Make every customer price provable: either an immutable catalog price row or an insert-only, manager-approved override row in `ordering.order_item_price_override` — no third source, no editable price anywhere.
-14. Give subscriptions a billing-safe lifecycle: suspend, resume, and terminate actions writing an append-only, gap-free `inventory.inventory_status_history`, so the bill run can prorate around suspension windows without interpretation.
-15. Keep Revenue Operations' access separate from catalog administration: two new permissions (`product_orders`, `product_inventory`) with no grant overlap against the existing `products` permission.
+16. Record every sale as a TMF622-shaped order (`ordering.product_order` + `ordering.product_order_item`) with the full TMF622 status enum seeded and the module persisting `ACKNOWLEDGED / PENDING / COMPLETED / REJECTED`. `FAILED` remains seeded solely for enum completeness and is never written — a failed order rolls back fully rather than persisting a FAILED row.
+17. Instantiate exactly one TMF637-shaped subscription (`inventory.product_inventory`) per completed order item, automatically, in the same transaction as order completion — no manual fulfilment step.
+18. Guarantee grandfathered pricing: the order item and subscription FK the exact `product.product_offering` version row ordered; later catalog version activations never change an existing subscriber's price.
+19. Make every customer price provable: either an immutable catalog price row or an insert-only, manager-approved override row in `ordering.order_item_price_override` — no third source, no editable price anywhere.
+20. Give subscriptions a billing-safe lifecycle: suspend, resume, and terminate actions writing an append-only, gap-free `inventory.inventory_status_history`, so the bill run can prorate around suspension windows without interpretation.
+21. Keep Revenue Operations' access separate from catalog administration: two new permissions (`product_orders`, `product_inventory`) with no grant overlap against the existing `products` permission.
 
 ## Core User Flows
 
@@ -50,25 +59,27 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 
 1. A Billing Operations user signs in; their role grants the `products` permission at READ level.
 2. They click "View Product" under the "Products" section in the left panel and land on `/products/product-offering`.
-3. Section 1 (top) shows the offerings table: ID, name, lifecycle status, version, sellable flag, last modified. RETIRED offerings are hidden by default; the user can search by name, filter by `lifecycle_status`, sort columns, and page through results.
+3. Section 1 (top) shows the offerings table: ID, name, lifecycle status, version, sellable flag, last modified. `OBSOLETE` and `RETIRED` offerings are hidden by default; the user can search by name, filter by `lifecycle_status`, sort columns, and page through results.
 4. The user clicks a row. The selection is written to the URL (`?offering=PRDOFR000001`), making the view deep-linkable and back-button-safe.
 5. Section 2 renders the selected offering's full detail: name, lifecycle badge, version, bundle/sellable/billing-only flags, last modified, last edited by.
 6. Section 3 (bottom-left) lists the offering's specifications as cards: name, mandatory/default badges, and the `product_spec_characteristics` JSONB rendered as `key: value` text.
-7. Section 4 (bottom-right) lists the offering's prices as cards: name, price type badge (recurring / usage / once), amount and currency for flat prices or the tier bounds/rates for tiered prices (plain inline text), charge period, GL code, and effectivity (`start_date_time`).
+7. Section 4 (bottom-right) lists the offering's prices as cards: name, price type badge (recurring / usage / once), amount and currency for flat prices or the tier bounds/rates for tiered prices, the recurring charge period or the usage unit of measure, GL code, and effectivity (`start_date_time`, derived end from the successor's start).
 8. The user copies the URL to share the exact view with a colleague, or selects another offering. View Product itself has nothing to save — it is, and remains, read-only.
 
 ### Managing the catalog (Manage Products)
 
-1. A Billing Operations user signs in; their role grants the `products` permission at EDIT (and, for retirement, DELETE) level.
-2. They open the "Products" section in the left nav and click "Manage Products," landing on `/products/manage-products` — a sibling of "View Product" under the same nav section.
-3. The page shows offerings grouped by product family — one row per family (its current `ACTIVE` version, or its latest `DRAFT` if the family has never gone live), with an option to expand and see every version in that family's history and each one's status.
-4. The user clicks "New offering," fills in name and flags (sellable, billing-only — bundle is not user-settable) in a dialog, and saves. A brand-new offering is created as the root of a new family, in `DRAFT` status.
-5. The user adds one or more specifications and at least one price to the `DRAFT`. Because it's still a draft, these edits apply directly to it — no versioning branch happens yet.
-6. Once the draft has at least one price and its mandatory specifications are resolved, the user clicks "Activate." The draft becomes `ACTIVE` and billable. (If this family already had an active version, that version is retired automatically in the same action, labeled in the audit trail as superseded.)
-7. Later, the user opens "View Product" and confirms the newly active version appears there exactly as any other `ACTIVE` offering — same detail, specs, and prices panels — and the previously active version (now `RETIRED`) is hidden by the default filter.
-8. Months later, a rate change is needed. The user finds the family on "Manage Products" and clicks "Add price" on the `ACTIVE` row. Because the target is live, the system transparently clones it — offering, specifications, and prices — into a brand-new `DRAFT` version, and adds the new price to that clone. The originally active version, and everything a past bill was computed against, is untouched.
-9. The user reviews the new draft, adjusts anything else needed (in place, since it's now a draft), and activates it once ready. The old active version is retired automatically; the new one takes over.
-10. Separately, the user starts drafting a second product idea, decides against it before it ever goes live, and clicks "Discard" on that draft row. It moves to `RETIRED` directly — a soft delete, not a row deletion — and disappears from the default view.
+1. A Billing Operations user signs in; their role grants the `products` permission at EDIT (and, for withdrawal, DELETE) level.
+2. They open the "Products" section and click "Manage Products," landing on `/products/manage-products`. The page renders a server-paged list of product **families**, one row each: name, the primary version's status badge, version count, sellable and billing-only chips, last modified. (Primary version = the family's `ACTIVE` version, else its open `DRAFT`/`TESTING` version, else its highest version number.)
+3. The user searches or filters by status — both run in SQL against the paged query, no client-side row filtering — then selects a family row. The URL becomes `?family=PRDOFR000004&version=PRDOFR000011`, and three panels load for that version: offering detail, specifications, and prices grouped by price type with each row's derived effectivity (current / future / superseded).
+4. The user switches to another version of the same family from the version bar (version number + status badge per entry); only the three detail queries rerun.
+5. The user edits a version whose status is `ACTIVE`. The first edit branches a new `DRAFT` copy of the whole version — offering fields, all specifications, all prices — assigns the family's next version number, and redirects to it. The `ACTIVE` version is untouched. If the family already has an open version, the user is taken to that one; a second open version is refused.
+6. On the `DRAFT` version, the user edits inline: renames the offering, edits or deletes a specification, edits a price's amount or tiers, deletes a price row, or adds a future-dated successor price of the same type (permitted only while `DRAFT` — how a contractual step-up is set up before the customer signs).
+7. The user adds a **recurring** price (name, amount or tiers, currency, GL code, start date, and a charge period that maps onto a supported bill cycle), a **usage** price (additionally a unit of measure from `Mbps` / `GB` / `MB` / `EA`), or a **once** price (neither). A tiered recurring or tiered usage price saves with a visible warning that no downstream component can bill it yet.
+8. The user clicks **Submit for testing**. The service re-reads status under lock and checks the release preconditions — at least one price row, at least one specification, and every mandatory specification resolved to a non-null default. The version becomes `TESTING` and its content becomes read-only. **Back to draft** returns it to `DRAFT` and editable.
+9. The user clicks **Activate**. In one transaction the version becomes `ACTIVE` and the family's previously `ACTIVE` version becomes `OBSOLETE`. New orders pick the new version; every existing subscription keeps billing from its pinned version.
+10. To stop selling a product with no replacement (`products : DELETE`), the user moves the `ACTIVE` version directly to `OBSOLETE`.
+11. To retire an `OBSOLETE` version (`products : DELETE`), the service counts subscriptions pinned to it that are not terminated (or terminated with an `end_date` today or later). Zero → the version becomes `RETIRED`, terminal. Non-zero → refused, with the blocking subscription count shown.
+12. To discard an unreleased version (`products : DELETE`), a `DRAFT` or `TESTING` version that was never `ACTIVE` is **hard-deleted** with its specifications and prices in one transaction, writing a `PRODUCT_OFFERING_DELETED` audit event with the version id, name, version number, and removed counts.
 
 ### Placing an order (Orders)
 
@@ -92,7 +103,7 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 ### Catalog listing (View Product)
 
 - Server-side paginated, sortable offerings table driven entirely by URL searchParams (RSC pattern shared with the Administration pages).
-- Name search (case-insensitive substring) and `lifecycle_status` filter; RETIRED hidden by default.
+- Name search (case-insensitive substring) and `lifecycle_status` filter; `OBSOLETE` and `RETIRED` hidden by default.
 - Row selection synced to `?offering=` for deep-linking.
 
 ### Offering detail (View Product)
@@ -107,37 +118,46 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 
 - Cards per `product_offering_price` row scoped to the selected offering.
 - Flat prices show `amount` + `currency`; tiered prices render the tier array (`[{from, to, rate}, …]`) from `pricing_characteristics` JSONB as inline `from–to: rate` text.
+- A recurring price shows its charge period (length + type); a usage price shows its unit of measure (`Mbps` / `GB` / `MB` / `EA`); a `once` price shows neither.
 - Effectivity display: `start_date_time` per price; a price's end is derived from its successor's start (no stored `end_date_time`).
 
-### Offering management (Manage Products)
+### Catalog browsing and selection (Manage Products)
 
-- Create dialog: name, `is_sellable`, `billing_only` — offering starts in `DRAFT` as the root of a new version family. `is_bundle` is never shown or settable in this UI; new offerings are always non-bundle.
-- Edit dialog behavior depends on the target's status: a `DRAFT` can be saved in place or explicitly "saved as new" (a sibling draft version); an `ACTIVE` offering has no in-place option at all — any edit transparently produces a new draft version instead.
-- No hard delete anywhere in the UI or the API surface. Removing an offering is always a lifecycle transition to `RETIRED` — "Discard" for a draft that never went live, "Retire" for a version that was active.
+- Server-paged families list: one row per family, page size from the `products.offering_list_page_size` config key; server-side name search and lifecycle-status filter.
+- Version bar for the selected family: every version with its status badge, one click to switch.
+- URL-held selection (`?family=…&version=…`), so deep links and the browser back button work with no client state.
+- Per-version panels: offering detail, specifications, and prices with derived effectivity (`current` / `future` / `superseded`) computed from each successor's `start_date_time`. Manage Products imports View Product's read-only presentational components (one-directional; the reverse stays forbidden).
+
+### Offering and specification management (Manage Products)
+
+- Create dialog: name, `is_sellable`, `billing_only` — offering starts in `DRAFT` as the root of a new version family. `is_bundle` is never shown or settable; new offerings are always non-bundle.
+- Inline editing in the specifications and pricing panels for `DRAFT` versions; dialogs reserved for consequential confirmations (submit for testing, activate, stop selling, retire, discard).
+- Add, edit, and delete specifications on a `DRAFT` version. On an `ACTIVE` version, any spec edit first branches a new `DRAFT` and lands there.
+- Branch-on-edit for `ACTIVE` versions, with the "this creates a new draft" warning; a second open version in a family is refused.
 
 ### Versioning and single-active-version guarantee (Manage Products)
 
-- Every offering belongs to a version family, linked by `product_offering.family_offering_id` (nullable, self-referencing). The Manage Products table shows one row per family by default, expandable to the full version history.
-- `version` is the row's sequence number within its family — the root is `1`, the first branch is `2`, and so on — assigned once at insert and never changed afterward, including for an in-place edit to an already-`DRAFT` row.
-- At most one version per family can be `ACTIVE` at a time. Activating a draft automatically retires whichever other version in its family was active, in the same atomic action.
-- Editing an `ACTIVE` version's own fields, specifications, or prices always clones it into a new `DRAFT` version first — the active row and everything attached to it are never modified in place.
-
-### Specification management (Manage Products)
-
-- Add and edit specifications on a `DRAFT`. On an `ACTIVE` offering, adding or editing a specification triggers the clone-to-new-draft behavior above, and the change lands on the new draft, not the live version.
-- Hard delete is available for a specification, but only on a `DRAFT` row — and since specification writes against an `ACTIVE` offering always land on a freshly cloned draft first, this condition holds automatically rather than needing a separate check bolted on top.
+- Every offering belongs to a version family, linked by `product_offering.family_offering_id` (nullable, self-referencing). The families list shows one row per family; the version bar shows the full history.
+- `version` is the row's sequence number within its family — the root is `1`, the first branch is `2`, and so on — assigned once at insert and never changed afterward.
+- At most one version per family can be `ACTIVE`, and at most one can be *open* (`DRAFT` or `TESTING`), at a time — both enforced by expression unique indexes on `COALESCE(family_offering_id, product_offering_id)` backing the in-transaction advisory lock and re-check.
+- Editing an `ACTIVE` version's own fields, specifications, or prices always branches a new `DRAFT` version first — the active row and everything attached to it are never modified in place.
 
 ### Price management (Manage Products)
 
-- Add price: name, price type, pricing model (flat or tiered), currency, GL code, start date. On an `ACTIVE` offering, this triggers the clone-to-new-draft behavior; on a `DRAFT`, it applies directly.
-- Prices remain insert-only everywhere. There is no edit or delete action for an existing price, on any offering, at any version.
-- A new price's start date may be backdated up to 3 days; the form shows a non-blocking warning when it is. Earlier than that is rejected outright.
+- Add price: name, price type, pricing model (flat or tiered), currency, GL code, start date, and the per-type required fields — a **charge period** (length ∈ {1,3,12} months + type) for `recurring`, a **unit of measure** (`Mbps` / `GB` / `MB` / `EA`) for `usage`, neither for `once`.
+- Edit and delete a price row — new capability, permitted only while the version is `DRAFT`. Several dated prices of one price type per version are permitted only while `DRAFT` (how a contractual step-up is staged).
+- A released version's prices are immutable: from `TESTING` onward, a price update or delete is refused by the repository **and** by a database trigger.
+- A new price's start date may be backdated up to 3 days with a non-blocking warning; earlier than that is rejected outright.
+- A quiet warning on price shapes nothing downstream can bill yet: tiered recurring (bm29 fails with `RECURRING_PRICE_UNSUPPORTED`) and tiered usage (rating v1 is FLAT-only).
 
 ### Lifecycle transitions (Manage Products)
 
-- `DRAFT → ACTIVE`: requires at least one price row and all mandatory specifications resolved. Available via "Activate" on a draft. Automatically retires the family's previous active version, if any, as part of the same action.
-- `ACTIVE → RETIRED` ("Retire") and `DRAFT → RETIRED` ("Discard"): both a soft-delete transition to the same terminal status, with an optional free-text reason, labeled differently in the UI and the audit trail depending on which state the row was in.
-- `RETIRED` is terminal — no path back to `DRAFT` or `ACTIVE`.
+- Five statuses: `DRAFT`, `TESTING`, `ACTIVE`, `OBSOLETE`, `RETIRED`.
+- `DRAFT → TESTING` ("Submit for testing"): requires at least one price row, at least one specification, and every mandatory specification resolved. `TESTING` is read-only, not orderable, not billable, counts as the family's open version, and is reversible to `DRAFT` ("Back to draft").
+- `TESTING → ACTIVE` ("Activate"): moves the family's previous `ACTIVE` version to `OBSOLETE` in the same transaction.
+- `ACTIVE → OBSOLETE` ("Stop selling"): withdraw a live product with no replacement (`products : DELETE`).
+- `OBSOLETE → RETIRED` ("Retire", `products : DELETE`): gated on live subscriptions — refused while any subscription pinned to the version is not terminated (or terminated with an `end_date` today or later), with the blocking count shown.
+- Discard (`products : DELETE`): a `DRAFT` or `TESTING` version that was never `ACTIVE` is hard-deleted with its specifications and prices. `RETIRED` is terminal.
 
 ### Order capture (Orders)
 
@@ -149,7 +169,7 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 
 ### Pricing and approval (Orders)
 
-- No price snapshot columns anywhere: the pinned version FK is the snapshot, because activated versions' specs and prices are frozen by the catalog's copy-on-write invariants.
+- No price snapshot columns anywhere: the pinned version FK is the snapshot, because activated versions' specs and prices are frozen by the catalog's copy-on-write invariants and stay frozen through `OBSOLETE`.
 - Optional negotiated price per flat-model price type, stored in insert-only `ordering.order_item_price_override` (UNIQUE per item + price type; currency must match the BAN; tiered price types not overridable).
 - Manager approval workflow for override orders: `PENDING` state, approve/reject by a MANAGER ≠ submitter, full re-validation at approval time, `reviewed_by`/`reviewed_at` stamped on either outcome.
 - Stated rating contract for the future bill run: per price type, use the override row if present, else the catalog price row effective on the rating date.
@@ -171,44 +191,47 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 - "Products" nav section with four items: "View Product" (lucide `Package`), "Manage Products" (lucide `PackagePlus`), "Orders", and "Subscriptions", via the `NAV_ITEMS` → `NAV_SECTIONS` refactor of `admin-nav.tsx`; collapsed-rail behavior unchanged.
 - Route group `(app)`; pages live at `app/(app)/products/{product-offering,manage-products,orders,subscriptions}/`.
 - Accent-filled primary actions: "New offering" on Manage Products, "New order" on Orders.
+- Badge treatments: `TESTING` (info tint, flask icon) and `OBSOLETE` (muted row, history icon, Retire as the only action).
 
 ### Data integrity (enforced, not just displayed)
 
-- Price rows are immutable and insert-only everywhere — the price repository exposes exactly one write method, `insertPrice`; a change inserts a new row, it never updates or deletes an existing one. The `order_item_price_override` and `inventory_status_history` repositories are likewise permanently insert-only (finders only, no `update*`/`delete*`).
-- Constraint: no two prices of the same `price_type` on one offering with the same `start_date_time` (DB UNIQUE constraint; derived windows never overlap by construction — a new price supersedes its predecessor from its start instant).
-- Zod schema per `pricing_model` validates `pricing_characteristics` on every write (tiered requires contiguous, non-overlapping bounds).
-- The single-active-version rule is enforced inside the same database transaction that performs an activation: any existing active sibling in the family is retired before, or as part of, the new version being marked active.
+- A released version's prices are immutable: price update/delete is permitted only while the parent offering is `DRAFT`, refused by the repository **and** by a `BEFORE INSERT OR UPDATE OR DELETE` trigger on `product_specifications` and `product_offering_price` rejecting any parent whose status is not `DRAFT`. The `order_item_price_override` and `inventory_status_history` repositories remain permanently insert-only (finders only).
+- Per-price-type completeness: a `recurring` price carries a charge period and no unit; a `usage` price carries a unit from `Mbps`/`GB`/`MB`/`EA` and no period; a `once` price carries neither — enforced by DB CHECKs and by discriminated Zod schemas.
+- Constraint: no two prices of the same `price_type` on one offering with the same `start_date_time` (DB UNIQUE; derived windows never overlap by construction).
+- Two expression unique indexes on `COALESCE(family_offering_id, product_offering_id)`: `product_offering_one_active_per_family` (where status `ACTIVE`) and `product_offering_one_open_per_family` (where status `DRAFT` or `TESTING`), backing the in-transaction lock for a family root and a branch alike.
+- `ON DELETE cascade` from `product_specifications` and `product_offering_price` to `product_offering` (the self-referencing `family_offering_id` stays `restrict`), so a discard hard-deletes children in one transaction.
 - Order approval always re-runs the full submission validation set under locks at approval time, and never accepts reviewer = submitter — enforced in the service and backstopped by the `product_order_reviewer_check` DB CHECK.
 - All mutations follow the house TOCTOU rule: precondition reads are re-checked on the transaction with `FOR UPDATE` before writing.
-- Every mutation runs inside a database transaction paired with an audit-log write, so every create, branch, edit, activation, supersession, retirement, discard, specification change, price addition, order event, and subscription-lifecycle transition is independently attributable and timestamped.
-- "View Product" imports no write-path code — the read guarantees from the catalog viewer remain structurally enforced.
+- Every mutation runs inside a database transaction paired with an audit-log write, so every create, branch, edit, submit-for-testing, return-to-draft, activation, supersession-to-obsolete, retirement, discard (hard delete), specification change, price add/update/delete, order event, and subscription-lifecycle transition is independently attributable and timestamped.
+- "View Product" imports no write-path code — the read guarantees remain structurally enforced.
 
 ### Access control
 
-- Catalog: single code-seeded `products` permission, page-level. READ gates View Product, including prices — no pricing-visibility split. EDIT gates offering/specification create-edit, branching, and price add on Manage Products; DELETE gates retirement and discard.
+- Catalog: single code-seeded `products` permission, page-level. READ gates View Product, including prices — no pricing-visibility split. EDIT gates offering/specification/price create-edit, branching, submit-for-testing, back-to-draft, and activate on Manage Products; DELETE gates discard (hard delete), stop selling (→ `OBSOLETE`), and retire (→ `RETIRED`).
 - Ordering & Inventory: two code-seeded permissions with no grant overlap against `products`. `product_orders` (READ sees the Orders list; EDIT places and reviews orders — approval additionally requires the MANAGER role, checked live). `product_inventory` (READ sees the Subscriptions list; EDIT drives suspend/resume/terminate and characteristics edits).
-- Nav items render regardless of permission; each page guard (`requirePermission(<name>, 'READ' | 'EDIT')`) enforces access.
+- Nav items render regardless of permission; each page guard (`requirePermission(<name>, 'READ' | 'EDIT')`) enforces access, and each action re-checks its level server-side under `FOR UPDATE`.
 
 ### Audit trail
 
 - View Product and Subscriptions/Orders list reads are never audited.
-- Catalog writes: offering created, updated (in-place draft save), branched (new draft from an edit), activated, superseded (auto-retired by another version's activation), retired, discarded; specification created, updated, deleted; price added.
+- Catalog writes: offering created, updated (in-place draft save), branched (new draft from an edit), `PRODUCT_OFFERING_SUBMITTED_FOR_TESTING`, `PRODUCT_OFFERING_RETURNED_TO_DRAFT`, activated, `PRODUCT_OFFERING_SUPERSEDED` (auto-moved to `OBSOLETE` by another version's activation, `afterData.lifecycleStatus = 'OBSOLETE'`), `PRODUCT_OFFERING_OBSOLETED` (stop selling), retired, `PRODUCT_OFFERING_DELETED` (discard hard delete); specification created, updated, deleted; `PRODUCT_PRICE` added, `PRODUCT_PRICE_UPDATED`, `PRODUCT_PRICE_DELETED`. `PRODUCT_OFFERING_DISCARDED` is removed.
 - Ordering/Inventory writes: `PRODUCT_ORDER_CREATED / _PENDING_APPROVAL / _APPROVED / _REJECTED / _COMPLETED / _FAILED` and `PRODUCT_INVENTORY_CREATED / _CHARACTERISTICS_UPDATED / _SUSPENDED / _RESUMED / _TERMINATED`.
-- The distinctions between "retired"/"discarded"/"superseded" (catalog) and between the order states are preserved in the audit log even where some share the same underlying status transition. `PRODUCT_ORDER_FAILED` is seeded but unused — orders roll back fully rather than persisting a FAILED row.
+- `PRODUCT_ORDER_FAILED` is seeded but unused — orders roll back fully rather than persisting a FAILED row.
 
 ## In Scope
 
 **Catalog:**
 
-- Three Drizzle-managed tables with migrations and seeds: `product_offering` (with a nullable, self-referencing `family_offering_id` + index linking version history), `product_specifications`, `product_offering_price` (`start_date_time` + `created_at`; `amount` nullable when `pricing_model = tiered`).
+- Three Drizzle-managed tables with migrations and seeds: `product_offering` (with a nullable, self-referencing `family_offering_id` + index linking version history), `product_specifications`, `product_offering_price` (`start_date_time` + `created_at`; `amount` nullable when `pricing_model = tiered`; per-price-type charge-period/unit fields populated, never `NULL` where required).
 - IDs in seed format: prefix + zero-padded DB sequence (`PRDOFR`, `PRDSMD`, `PRDOFP`), one sequence per table.
-- `lifecycle_status` enum `DRAFT / ACTIVE / RETIRED`; only ACTIVE is selectable for billing by later modules; at most one `ACTIVE` row per version family.
-- Repositories and `services/product` for both reads (list/detail) and writes (create, update-in-place, branch-as-draft, specification CRUD, insert-price, activate, retire).
+- `lifecycle_status` enum `DRAFT / TESTING / ACTIVE / OBSOLETE / RETIRED`; only `ACTIVE` is orderable; `ACTIVE` and `OBSOLETE` are billable; at most one `ACTIVE` and one open version per family, index-backed.
+- Repositories and `services/product` for reads (families-page read model `findFamilyPage`, version list, detail) and writes (create, update-in-place, branch-as-draft, specification CRUD, insert/update/delete-price DRAFT-only, submit-for-testing, return-to-draft, activate, obsolete, retire, discard hard delete).
 - The copy-on-write branch primitive: cloning an offering plus its specifications and prices into a new draft whenever an edit targets a live (`ACTIVE`) version.
-- Zod validation schemas including per-`pricing_model` characteristics validation, and schemas for create/update-offering, create/update-specification, insert-price (with backdating check), and activate/retire.
+- Zod validation including per-`pricing_model` characteristics validation and the discriminated per-price-type input schema (period on `recurring`, unit on `usage`, neither on `once`), plus schemas for create/update-offering, create/update/delete-specification, insert/update/delete-price (with backdating check), and the transition services.
+- CHECK constraints for the per-price-type required fields and the unit list; the two family unique indexes; the DRAFT-guard trigger; cascade FKs.
 - `products` permission seed (READ/EDIT/DELETE) and both catalog page guards.
-- View Product (four-section read-only page) and Manage Products (family-grouped offering list, row actions, create/edit/activate/retire/discard dialogs), the nav refactor, and the `(admin)` → `(app)` route-group rename.
-- Optional reason/comment capture on activation and retirement/discard, stored in the audit log, not a new product-table column.
+- View Product (four-section read-only page) and Manage Products (families list + version bar + three panels, inline DRAFT editing, transition dialogs), the nav refactor, and the `(admin)` → `(app)` route-group rename.
+- Optional reason/comment capture on transitions, stored in the audit log, not a new product-table column.
 
 **Ordering & Inventory:**
 
@@ -223,22 +246,26 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 
 **Cross-cutting:**
 
-- Tests: repository/service unit tests, integration tests for every write path and versioning/lifecycle invariant, concurrency tests for the single-active and approval/lifecycle races, and authz-matrix entries for all four pages.
+- Tests: repository/service unit tests, integration tests for every write path and versioning/lifecycle invariant, concurrency tests for the single-active/single-open and approval/lifecycle races, and authz-matrix entries for all four pages.
 
 ## Out of Scope
 
 **Catalog:**
 
-- Hard delete of product offerings, specifications (once their offering has gone live), or prices — every removal path is a status transition, never a row deletion, except the DRAFT-only specification hard-delete.
-- Editing or deleting an existing price row — prices are permanently insert-only, across every version.
-- Any transition out of `RETIRED` — retirement and discard are both permanent.
-- Any UI or code path that allows more than one version of a family to be `ACTIVE` at the same time.
+- Hard delete of an `ACTIVE`, `OBSOLETE`, or `RETIRED` offering — only a never-released `DRAFT`/`TESTING` version is hard-deleted (discard); every other removal is a status transition. Specifications and prices are hard-deletable only on a `DRAFT`.
+- Editing or deleting a price row on any released version (`TESTING` onward) — released prices are immutable; `DRAFT` prices are editable.
+- Any transition out of `RETIRED` — retirement is permanent and terminal.
+- What `TESTING` actually does beyond being read-only, not orderable, not billable, and reversible to `DRAFT`: no sandbox order path, no dry-run bill, no test-data isolation. A later phase defines it.
+- Any UI or code path that allows more than one `ACTIVE`, or more than one open, version of a family at the same time.
 - Making `is_bundle` user-editable — it stays a display-only, non-CRUD attribute; no `bundle_link` table, no child-offering view.
-- CSV export, bulk edit, or bulk retirement of offerings; bundle composition management.
+- CSV export, bulk edit, or bulk withdrawal of offerings; bundle composition management.
 - A separate pricing-visibility permission (`product_pricing`) — anyone who can see products sees prices.
 - Semantics of the price `policy` column — carried as nullable text until a consumer defines it.
-- Merging two version families together, or moving a version from one family to another.
-- Replacement of the `Demo — *` seed rows (opt-in `db:seed-demo`) with the real catalog — a go-live data-migration task, not module code. _(Renamed from `TOREMOVE-Template-*` and moved out of `db:setup` by the seed-refactor change, 2026-09-16.)_
+- `PER_UNIT`, tiered, or block rating; tiered recurring support in bm29 — rating-side work, hand-offs.
+- Normalising units between the catalog and the rating feed (e.g. `Mbps` vs `MBPS`, `MB`/`GB` coexistence) — recorded as hand-offs, not built here.
+- Merging two version families, moving a version between families, or migrating tier JSONB to a child table.
+- Replacement of the `Demo — *` seed rows (opt-in `db:seed-demo`) with the real catalog — a go-live data-migration task, not module code.
+- A relabelling migration or backfill: under the fresh-install assumption (D11), every environment rebuilds its database, so `0006_product.sql` is edited in place.
 
 **Ordering & Inventory:**
 
@@ -251,12 +278,12 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 - Tiered-price overrides; approval tolerance bands (±N% auto-approve); changing an approved override (terminate + re-order).
 - The resume-day proration rule — the effective date is captured; the charge-or-not decision belongs to the bill-run phase.
 - Moving a subscription to a different BAN or customer; notifications; bulk import.
-- Rating/charging logic that consumes tiers — a later billing module concern; tier JSONB may migrate to a child table if that module needs SQL-queryable tiers.
 
 **Cross-cutting:**
 
-- API routes of any kind for product, ordering, or inventory data — all writes go through Server Actions; reads flow through RSC pages calling `services/*` directly. `app/api/product*`, `app/api/ordering*`, and `app/api/inventory*` never exist.
-- Snapshot-copying catalog spec/price rows into orders or inventory — rejected by design, not deferred; the pinned version FK is the snapshot.
+- API routes of any kind for product, ordering, or inventory data — all writes go through Server Actions; reads flow through RSC pages calling `services/*` directly. `app/api/product*`, `app/api/ordering*`, `app/api/inventory*`, and any TMF620 external API never exist.
+- Maker-checker or approval routing for catalog changes — `products : EDIT` / `DELETE` remain the only gates.
+- Snapshot-copying catalog spec/price rows into orders or inventory — rejected by design; the pinned version FK is the snapshot.
 - Any database tables or columns beyond the three product tables (plus the `family_offering_id` lineage column) and the five ordering/inventory tables.
 
 ## Success Criteria
@@ -265,28 +292,32 @@ Editing a live (`ACTIVE`) offering never modifies that row — it creates a new 
 
 - A user whose role grants `products` READ can, from sign-in, reach `/products/product-offering`, find an offering by name search in a catalog of 100+ rows, and read its full detail, specifications, and prices — with zero engineering involvement.
 - A user without the `products` permission is stopped by each page's guard (no-access state), and the authz test matrix covers both catalog routes.
-- The URL `?offering=PRDOFR000001` opened in a fresh session reproduces the exact same selected view on View Product (deep-link works).
-- A user with `products` EDIT can, starting from sign-in, create a new offering, add a mandatory specification, add a flat price, and activate it — the offering reaches `ACTIVE` status and appears correctly on View Product with no engineering involvement.
-- Activating a new version of a family that already has an active version automatically retires the previous one in the same action; at no point do both appear `ACTIVE` simultaneously, including under two near-simultaneous activation attempts.
-- Editing any field, specification, or price on an `ACTIVE` offering leaves that exact row and its exact specification and price rows unchanged in the database, and produces exactly one new `DRAFT` row in the same family with the edit applied.
-- A user with `products` DELETE can retire an `ACTIVE` version or discard a `DRAFT` that never went live; both disappear from View Product's default filter, and the audit log distinguishes "retired" from "discarded" from "superseded."
-- Attempting to activate a `DRAFT` with no prices, or with unresolved mandatory specifications, is rejected with a specific error and the offering stays `DRAFT`.
-- Attempting to backdate a new price's start date more than 3 days is rejected; backdating within 3 days succeeds with a visible warning.
-- There is no UI control, server action, or repository method anywhere in the codebase that updates or deletes an existing price row, confirmed by a guardrail test that inspects the price repository's exported method names.
-- Deleting a specification is only ever possible on a `DRAFT` row — confirmed both by the service logic and by a guardrail test asserting no code path calls it against an `ACTIVE` offering.
-- View Product's source files import no write-path code, confirmed by a guardrail test.
-- `db/schema/product.ts` shows exactly the three product tables plus `family_offering_id` and its index — `product_specifications` and `product_offering_price` are otherwise untouched from their original shape.
+- The URL `?offering=PRDOFR000001` opened in a fresh session reproduces the exact same selected view on View Product; on Manage Products, `?family=…&version=…` reproduces the selected version.
+- Manage Products' first load issues exactly 2 database queries (families page + count); selecting a family adds the version list + detail + specifications + prices; switching version reruns only the version list + detail. No code path fetches detail for an unselected row.
+- A user with `products` EDIT can, from sign-in, create a new offering, add a mandatory specification, add a monthly recurring price and a `GB` usage price, submit for testing, and activate it — the version reaches `ACTIVE` and appears on View Product with no engineering involvement.
+- Every transition in the lifecycle (`DRAFT→TESTING`, `TESTING→DRAFT`, `TESTING→ACTIVE`, `ACTIVE→OBSOLETE`, `OBSOLETE→RETIRED`, discard) succeeds, and every illegal transition is refused with a typed result code, proven by integration tests.
+- Activating a new version automatically moves the family's previous `ACTIVE` version to `OBSOLETE` in the same action; both never appear `ACTIVE` simultaneously, including under two near-simultaneous activation attempts (exactly one `ACTIVE`, never zero or two).
+- A direct SQL insert of a second `ACTIVE`, or a second open, version in one family is rejected by a unique index — for a family root and for a branch alike.
+- A price update or delete against a `TESTING`, `ACTIVE`, `OBSOLETE`, or `RETIRED` version is refused by the repository **and** by the database trigger on a direct SQL write; on a `DRAFT` version, editing and deleting a price works.
+- Editing any field, specification, or price on an `ACTIVE` offering leaves that exact row and its exact specification and price rows unchanged, and produces exactly one new `DRAFT` row in the same family with the edit applied.
+- Discarding a `DRAFT` or `TESTING` version that was never `ACTIVE` removes its specifications and prices, leaves every other family member untouched, and writes one `PRODUCT_OFFERING_DELETED` audit event; no path deletes an `ACTIVE`, `OBSOLETE`, or `RETIRED` version.
+- Retiring is refused while any subscription pinned to the version is not terminated (or terminated with an `end_date` today or later); the refusal names the blocking count. Activating a new version of an ordered offer leaves the existing subscription's pinned `product_offering_id` and its price reads byte-identical, with the superseded version now `OBSOLETE`.
+- Submitting for testing with no prices, no specifications, or an unresolved mandatory specification is rejected with a specific error and the version stays `DRAFT`.
+- A recurring price with no charge period, a usage price with no unit, a `once` price carrying either, a unit outside `Mbps`/`GB`/`MB`/`EA`, and a charge period the bill-run mapping does not cover each fail in Zod and at the database.
+- Backdating a new price's start date more than 3 days is rejected; within 3 days succeeds with a visible warning.
+- No code path outside the product module treats `OBSOLETE` as unbillable, including the flow SQL under `workflow-management/**`.
+- `db/schema/product.ts` shows exactly the three product tables plus `family_offering_id`, its index, the two family unique indexes, the DRAFT-guard trigger, the cascade FKs, and the per-price-type CHECKs.
 
 **Ordering & Inventory** (each verifiable by test or by a live walkthrough):
 
 - A RevOps user can complete the full flow — search a customer, select a BAN, order 5 × an active billing-only offer within the 3-day backdating tolerance — and one `COMPLETED` order plus one `ACTIVE` subscription with matching characteristics exist afterward, created in a single transaction (verified by integration test asserting no intermediate committed state).
-- Submitting for a `VALIDATED` party, a closed BAN, or a non-sellable/retired/draft offering is rejected server-side with a specific error code, even when the UI is bypassed (service-level tests, not just form validation).
+- Submitting for a `VALIDATED` party, a closed BAN, or a non-sellable/non-`ACTIVE` offering is rejected server-side with a specific error code, even when the UI is bypassed (service-level tests).
 - An order with a negotiated price commits as `PENDING` with zero inventory rows; the submitter cannot approve it; a manager's approval re-validates and then creates the subscription; rejection leaves `REJECTED` and zero inventory rows (tests for all three paths plus the approve-vs-reject race under concurrency).
-- After a new catalog version of the ordered offer activates, the existing subscription's pinned `product_offering_id` and its rateable prices are unchanged (grandfathering test), and the retired version's rows remain readable through the subscription's read path.
-- Suspending and later resuming a subscription produces the expected additional history rows whose derived suspension window matches those dates; illegal transitions (resume an `ACTIVE`, suspend a `TERMINATED`) are rejected; two concurrent lifecycle actions on the same subscription serialize with one winner (concurrency test).
+- After a new catalog version of the ordered offer activates, the existing subscription's pinned `product_offering_id` and its rateable prices are unchanged (grandfathering test), and the now-`OBSOLETE` version's rows remain readable through the subscription's read path.
+- Suspending and later resuming a subscription produces the expected additional history rows whose derived suspension window matches those dates; illegal transitions are rejected; two concurrent lifecycle actions on the same subscription serialize with one winner (concurrency test).
 - Effective dates more than 3 days in the past are rejected on every lifecycle action and on order start date; dates within tolerance succeed with the warning shown.
 - Every mutation writes its audit event; `inventory_status_history` and `order_item_price_override` have no update/delete repository method (guardrail test asserting the exported surface).
-- The authz matrix covers both new pages: no `product_orders` grant → `/products/orders` redirects to `/no-access`; no `product_inventory` grant → `/products/subscriptions` redirects; catalog `products` grants confer no access to either, both directions.
+- The authz matrix covers both new pages: no `product_orders` grant → `/products/orders` redirects to `/no-access`; no `product_inventory` grant → `/products/subscriptions` redirects; catalog `products` grants confer no access to either, both directions. A principal with EDIT but not DELETE cannot discard, obsolete, or retire.
 
 **Cross-cutting:**
 

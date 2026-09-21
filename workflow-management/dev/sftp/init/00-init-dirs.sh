@@ -7,4 +7,8 @@
 set -eu
 base=/home/billrun/upload
 mkdir -p "$base/invoices" "$base/reports"
-chown -R billrun:billrun "$base"
+# NUMERIC uid:gid, not `billrun:billrun`: atmoz's create-sftp-user creates the
+# user `billrun` but names its group `group_<gid>` (`group_1001`), so no group
+# named `billrun` exists and a symbolic chown fails with "unknown user/group",
+# which aborts the whole atmoz entrypoint (exit 1, service never starts).
+chown -R 1001:1001 "$base"

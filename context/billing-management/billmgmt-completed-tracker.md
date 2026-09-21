@@ -334,6 +334,105 @@ detail: `context/billing-management/specs/bm*.md`._
   `0026` (apply path reads the journal + `.sql`). Run `db:migrate` then
   `db:setup-partman-billing`.
 
+## Fixed after first live local run (2026-09-17)
+
+The first end-to-end local trigger of the deployed `bill_run_processing` flow
+(demo cycle, `BRN00000003`) surfaced two defects that made the flow
+**unrunnable in any environment**. Both are fixed; the flow is redeployed at
+revision 2.
+
+1. **`taskrun.value` does not resolve inside bm36's `Sequential` wrapper.** The
+   flow's own comment asserted "the enclosing ForEach value is inherited by
+   descendants" — false on Kestra 1.3.35, where a ForEach value reaches only its
+   DIRECT children. bm36 wrapped the per-account stage group in a `Sequential`
+   to contain HARD failures, which put every stage one level too deep, so all 14
+   references failed to render with ``Unable to find `value` used in the
+   expression`` **before any SQL ran** — and the per-account `errors` handler
+   failed identically, masking the real cause. Verified against the running
+   engine with a probe flow: from a task nested one level deeper,
+   `parent.taskrun.value` and `parents[0].taskrun.value` both resolve while bare
+   `taskrun.value` does not. All 14 are now `parent.taskrun.value` and the
+   comment is corrected. `bill_run_distribution` was never affected — it has no
+   `Sequential`, so its 11 bare references are correct as-is; that asymmetry is
+   the proof this came in with bm36.
+2. **The M2M callback token never matched, so every signal 401'd.**
+   `SECRET_BILLRUN_APP_TOKEN` in `workflow-management/dev/.env.example` decodes
+   to the placeholder `billrun_dev_app_token_change_me_0123456789`, while the
+   local `.env` carried a machine-generated `BILLRUN_APP_TOKEN`. Observed live as
+   `401 UNAUTHENTICATED / Invalid service token`. Fixed on the LOCAL side — the
+   repo-root `.env` (never committed) now carries the committed dummy, rather
+   than baking a machine-specific token into the committed example. Root
+   `.env.example` ships `BILLRUN_APP_TOKEN` empty, so the committed engine
+   example is the canonical dev value.
+
+**Neither defect is local-only** — fix 1 ships to the deployed flow (bm38
+promoted `local-dev` as the production flow), and fix 2's mismatch would appear
+in any environment whose two token sources are provisioned independently. There
+is no test covering either: the flows are YAML, and the CI-doubled E2E
+(`tests/db/billing-e2e-happy-path.integration.test.ts`) never renders a real
+Kestra expression.
+
+## Fixed on the first live distribution run (2026-09-17)
+
+The first real `bill_run_distribution` execution (BRN00000003, loopback target)
+failed. Two independent causes, both fixed; flow redeployed at revision 2.
+
+1. **The `kestra-internal` Azurite container does not exist, and nothing creates
+   it.** Misleading symptom: `BlobStorageException: Status code 404,
+   ContainerNotFound` on the `download` task, which looks like the invoice blob
+   is missing. Azurite's own request log proves the download SUCCEEDED
+   (`GET /devstoreaccount1/invoices/2026-08%2FINV00000001.pdf 206 62742`) — the
+   404s are `HEAD`/`PUT` against **`kestra-internal`**, Kestra's own internal
+   storage, where it tries to stash the downloaded file. The app's
+   `blob-store.ts` creates the `invoices` container on demand; Kestra does not
+   create its own, and Azurite provisions nothing. `kestra-setup` should create
+   it (the compose comment already calls azurite "Blob emulator for Kestra's
+   internal storage ONLY (kestra-internal container)" — the provisioning step
+   was never written). **This also explains the `rating.stranded-batch-reconcile`
+   schedule failing every 5 minutes since stack bring-up** — its `kv()` reads hit
+   the same missing container. After creating it, that flow fails on a genuine,
+   previously-masked cause instead: the `rating` namespace has no
+   `rating_stranded_batch_threshold_seconds` KV key, and Pebble throws on the
+   missing key before the `?? 3600` default can apply. **Rating-module issue,
+   still open.**
+2. **`parents[1]` does not exist — same class of bug as bm36's `taskrun.value`.**
+   The flow's own comment claimed `parents` "counts from innermost", so
+   `parents[0]` is per_artifact and `parents[1]` is per_target. On Kestra 1.3.35
+   the immediate loop value is NOT also a `parents` entry: from a task inside
+   the inner ForEach, **`parents` has length 1 and `parents[0]` is the OUTER
+   loop**. Probe against the running engine:
+   `self=<artifact> | parent=<target> | p0=<target> | count=1`. So all six
+   `parents[1]` references rendered ``Unable to find `1```, surfacing as
+   `PebbleException: Could not perform not equals comparison` on `upload_local`'s
+   and `upload_sftp`'s `runIf`. All six are now `parents[0]` and the comment is
+   corrected.
+
+Callbacks were NOT the problem this time — `on_error` and `on_finally_status`
+both succeeded, confirming the earlier route-registration fix holds for
+`/api/billrun/[runId]/distribution/outcome`.
+
+## Open defect — Workflow tab shows 4 permanently-`Pending` columns
+
+**Found 2026-09-17 on the first `INVOICED` run.** `StageTimeline` (the run
+detail's Workflow tab) renders a cell per `STAGES` entry — all **nine** —
+but `getStageTimeline` builds cells purely from `bill_run_account_stage`, and
+`insertStageRow` has exactly ONE caller in the repo
+(`handle-stage-signal.ts:163`), driven by the flow's `/stage/[stage]/complete`
+callbacks. The flows only ever signal the five processing stages
+(validation → verification). **Nothing writes `scoping`, `posting`, `rendering`
+or `distribution` stage rows**, so those four columns read `Pending` on every
+run forever — including a fully `COMPLETED` one. Operators reasonably read that
+as "posting never happened".
+
+Not a schema mismatch — `stageParamSchema` is `z.enum(STAGES)`, so the M2M
+endpoint would accept a `posting`/`rendering` signal today; nothing emits one.
+Fix is a choice, not a bug hunt: either (a) emit stage signals from
+`post-run.ts` (posting + rendering) and the distribution outcome handler, or
+(b) narrow the grid to the stages the flow actually signals and surface
+posting/rendering/distribution from their real sources
+(`bill_run_account.status`, `billing.document`, `bill_run_distribution`), which
+is where the posting-progress view already reads them correctly.
+
 ## Known residuals
 
 - **DELIVERED (2026-09-18, owner decision) — Workflow tab: derived app-side
@@ -639,6 +738,80 @@ detail: `context/billing-management/specs/bm*.md`._
   earlier instead (line 568). **UNTRIAGED** — this is the gated verification step
   the tracker listed as not yet executed, so these are first-execution results, not
   a known regression.
+- **bm22 `sftp` service — two clean-install blockers, one fixed (2026-09-17).**
+  On a fresh clone/reinstall the service exited 1 twice over:
+  (a) `workflow-management/dev/sftp/keys/` is gitignored, so `atmoz` finds no
+  `*.pub` and `create-sftp-user` aborts — you must run the README's `ssh-keygen`
+  step once per machine (not a repo bug, but it is not in any bring-up doc);
+  (b) **fixed in-repo** — `init/00-init-dirs.sh` ran `chown -R billrun:billrun`,
+  but `create-sftp-user` names the user's group `group_<gid>` (`group_1001`), so
+  no group `billrun` exists, busybox `chown` failed with `unknown user/group`,
+  and that aborted the whole atmoz entrypoint. Now `chown -R 1001:1001`.
+  Verified with the README's put → ls → rm round trip (key-auth + host-key
+  verification, file lands owned `1001:1001`).
+- **A clean local stack cannot execute the flows until the runtime DB roles are
+  provisioned by hand (2026-09-17).** `kestra-setup` bootstraps only
+  `kestra_engine`, and `.env`'s engine-wiring note says dev "connects as the
+  `postgres` superuser throughout" — but
+  `bill-run-processor/local-dev/bill_run_processing.yml` exports
+  `PGUSER=${BILLRUN_DB_USER:-billrun_runtime}` on every `psql` task, so on a
+  fresh `down -v` every stage dies with `role "billrun_runtime" does not exist`.
+  Same gap for `rating_runtime`. Fix is the documented chain from
+  `infra/docs/db-role-verification.md`, run with
+  `BOOTSTRAP_DATABASE_URL=postgresql://postgres:postgres@db:5432/enterprise_billing`
+  inside the `app` container: `db:bootstrap-roles` → `db:bootstrap-rating-roles`
+  → `db:bootstrap-billrun-roles`, then `ALTER ROLE billrun_runtime WITH PASSWORD
+  'billrun_runtime_dev_password'` (and `rating_runtime` /
+  `'rating_runtime_dev_password'`) to match the `SECRET_*_RUNTIME_PASSWORD`
+  values in `workflow-management/dev/.env.example`. Verified afterwards by
+  running the flow's own `PG*` exports inside the engine container: connects as
+  `billrun_runtime` and reads the seeded rows. Worth folding into `kestra-setup`
+  so a clean stand-up is executable without manual steps.
+- **Invoice rendering never works from the containerised dev app (2026-09-17).**
+  `render-invoice.ts` drives Playwright Chromium. The production `Dockerfile`
+  installs it (`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`, `npx playwright
+  install --with-deps chromium`), but the dev compose `app` service does NOT
+  build that Dockerfile — it runs `image: node:22-alpine` with a bind mount, and
+  has **no browser cache at all**. So in local dev the invoice artifact can only
+  be rendered by a HOST-side dev server. Symptom in the UI: "Invoice artifact
+  render pending. / Render failed again. Please try again." while the run itself
+  is correctly `INVOICED` (the render is a post-commit step with its own retry,
+  so a render failure never blocks posting).
+- **Playwright browser revision drifts from the pinned package (2026-09-17).**
+  Even on the host the render failed: `playwright@1.63.0` (pinned, and matching
+  `node_modules`) wants `chromium_headless_shell-1243`, but the host cache held
+  only 1228/1234 — the package was upgraded without re-running the download.
+  Fix: `npx playwright install chromium`. Diagnose it directly rather than
+  through the UI with:
+  `node -e "require('playwright').chromium.launch().then(b=>b.close()).catch(e=>console.log(e.message))"`.
+  Red herrings ruled out on the way: `customer_bill.ref_bill_format_id` /
+  `ref_bill_template_version_id` are NULL by design (the template is code in
+  `render-invoice-template.ts`, not a DB row), and Azurite was healthy.
+- **A stale `next_cache` volume makes API routes silently 404 (2026-09-17).**
+  On the first full run of `bill_run_processing`, every stage callback got a
+  **404 with an HTML body** — `/api/billrun/[runId]/stage/[stage]/complete` and
+  `/api/billrun/[runId]/distribution/outcome` were **absent from Next's route
+  registry** (`.next/dev/types/routes.d.ts` listed only 5 of the 7 API routes),
+  while `/api/billrun/[runId]/status` in the same tree resolved fine. The files
+  were present and identical in shape inside the container; `proxy.ts` excludes
+  `/api`; `next.config.ts` excludes nothing. **A container restart did NOT fix
+  it** — the `next_cache` volume mounted at `/app/.next` survives restarts and
+  `--force-recreate`, and the types were regenerated from the stale cached
+  module graph. `rm -rf /app/.next/dev` + restart forced a full rescan and all 7
+  routes registered. Likely cause: Turbopack's initial scan missing files over
+  the Windows bind mount — `WATCHPACK_POLLING` is set on the `app` service but
+  only affects webpack's watchpack, not Turbopack.
+  **How to spot it:** a 404 whose body is HTML (not JSON) from a route that
+  demonstrably exists. Check
+  `docker exec … grep -oE '"/api/[^"]*"' /app/.next/dev/types/routes.d.ts`
+  against `find app/api -name route.ts` before debugging anything else.
+- **The containerised `app` cannot dispatch to the engine.**
+  `BILLRUN_ENGINE_URL=http://localhost:8085/...` resolves to the app container
+  itself (verified: connection refused), and `workflow-engine:8080` is rejected
+  by the HTTPS-unless-loopback rule in `lib/config.ts`. As `.env` documents, a
+  real execution must be triggered from a HOST-side dev server (or
+  `scripts/billrun-live-kestra-smoke.ts`); the container app must stay up
+  regardless, because every flow callback targets `http://app:3000`.
 
 ## Open questions
 
