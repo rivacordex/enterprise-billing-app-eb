@@ -106,16 +106,27 @@ export const CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE = {
   ...priceInputCoreShape,
 } as const;
 
-// A plain `z.union`, not `z.discriminatedUnion` — `flat_fee`'s `recurring` and
-// `oneTime` variants both carry the literal `componentType: 'flat_fee'`, so
-// they cannot occupy two slots of one discriminant map (Zod requires a unique
-// literal per option). Each branch's own literal fields (`componentType` +,
-// for `flat_fee`, `priceType`) still let TypeScript narrow correctly and keep
-// the impossible field combinations untypeable — D7's actual requirement.
-export const priceInputSchema = z.union([
-  z.strictObject(USAGE_RATE_PRICE_INPUT_SHAPE),
+// Nested `z.discriminatedUnion`, not a plain `z.union` — a flat `z.union`
+// collapses every branch's failures into one root-level `invalid_union`
+// issue instead of pointing at the field that's actually wrong (post-review
+// fix). `flat_fee`'s `recurring` and `oneTime` variants both carry the
+// literal `componentType: 'flat_fee'`, so they can't occupy two slots of the
+// outer discriminant map directly (Zod requires a unique literal per option)
+// — but Zod resolves a discriminated union nested as one of the outer
+// union's own options, provided every branch of the inner union still
+// carries the outer key's literal. So `flat_fee` is one outer option: an
+// inner `z.discriminatedUnion("priceType", …)` over its two variants. Each
+// branch stays a `strictObject`, keeping the impossible field combinations
+// untypeable (D7's actual requirement) while field-level errors now land on
+// the offending key instead of the schema root.
+const flatFeePriceInputSchema = z.discriminatedUnion("priceType", [
   z.strictObject(FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE),
   z.strictObject(FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE),
+]);
+
+export const priceInputSchema = z.discriminatedUnion("componentType", [
+  z.strictObject(USAGE_RATE_PRICE_INPUT_SHAPE),
+  flatFeePriceInputSchema,
   z.strictObject(CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE),
   z.strictObject(CAPACITY_MOTIVATION_PRICE_INPUT_SHAPE),
 ]);

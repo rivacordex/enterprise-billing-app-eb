@@ -30,14 +30,11 @@ export const startDateTimeField = z.coerce
 // pm47-spec D7/I2. Composes the price-input branches (price-input.schema.ts)
 // with `startDateTime`. Each branch stays a `strictObject`, so a field
 // forbidden for the chosen `componentType` is still rejected once composed.
-// A plain `z.union`, matching price-input.schema.ts's own reasoning — two of
-// these five branches (`flat_fee` recurring/oneTime) share one
-// `componentType` literal and cannot be discriminated on it alone.
-export const insertPriceSchema = z.union([
-  z.strictObject({
-    ...USAGE_RATE_PRICE_INPUT_SHAPE,
-    startDateTime: startDateTimeField,
-  }),
+// A nested `z.discriminatedUnion`, matching price-input.schema.ts's own
+// composition (post-review fix) — the inner `flat_fee` union discriminates
+// on `priceType` since its recurring/oneTime branches share one
+// `componentType` literal and can't be discriminated on it alone.
+const flatFeeInsertPriceSchema = z.discriminatedUnion("priceType", [
   z.strictObject({
     ...FLAT_FEE_RECURRING_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
@@ -46,6 +43,14 @@ export const insertPriceSchema = z.union([
     ...FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
   }),
+]);
+
+export const insertPriceSchema = z.discriminatedUnion("componentType", [
+  z.strictObject({
+    ...USAGE_RATE_PRICE_INPUT_SHAPE,
+    startDateTime: startDateTimeField,
+  }),
+  flatFeeInsertPriceSchema,
   z.strictObject({
     ...CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE,
     startDateTime: startDateTimeField,
