@@ -475,6 +475,8 @@ describe.skipIf(!databaseUrl)(
         updateSpecificationMod,
         deleteSpecificationMod,
         insertPriceMod,
+        updatePriceMod,
+        deletePriceMod,
         submitForTestingMod,
         returnToDraftMod,
         activateOfferingMod,
@@ -488,6 +490,8 @@ describe.skipIf(!databaseUrl)(
         import("@/actions/product/update-specification.action"),
         import("@/actions/product/delete-specification.action"),
         import("@/actions/product/insert-price.action"),
+        import("@/actions/product/update-price.action"),
+        import("@/actions/product/delete-price.action"),
         import("@/actions/product/submit-for-testing.action"),
         import("@/actions/product/return-to-draft.action"),
         import("@/actions/product/activate-offering.action"),
@@ -515,6 +519,10 @@ describe.skipIf(!databaseUrl)(
           ),
         insertPriceAction: () =>
           insertPriceMod.insertPriceAction("PRDOFR000001", {}),
+        updatePriceAction: () =>
+          updatePriceMod.updatePriceAction("PRDOFP000001", {}),
+        deletePriceAction: () =>
+          deletePriceMod.deletePriceAction("PRDOFP000001"),
         submitForTestingAction: () =>
           submitForTestingMod.submitForTestingAction("PRDOFR000001", {}),
         returnToDraftAction: () =>
@@ -990,6 +998,12 @@ describe.skipIf(!databaseUrl)(
     // so `isPermissionRejection` only needs to check one shape per branch —
     // both are still handled for robustness against either behavior.
     describe("direct Server Action calls reject an under-permissioned caller (products)", () => {
+      // Every products:EDIT action — the content writes (offering, spec, all
+      // three price writes) plus the release transitions (submit, back-to-draft,
+      // activate). pm45 I4 adds updatePrice/deletePrice so "an EDIT-only
+      // principal reaches every content write" is asserted literally, not just
+      // for the insert. The three withdrawal actions (obsolete/retire/delete)
+      // are DELETE-gated and live in ALL_PRODUCT_ACTION_NAMES only.
       const PRODUCTS_EDIT_ACTION_NAMES = [
         "createOfferingAction",
         "updateOfferingAction",
@@ -997,6 +1011,8 @@ describe.skipIf(!databaseUrl)(
         "updateSpecificationAction",
         "deleteSpecificationAction",
         "insertPriceAction",
+        "updatePriceAction",
+        "deletePriceAction",
         "submitForTestingAction",
         "returnToDraftAction",
         "activateOfferingAction",

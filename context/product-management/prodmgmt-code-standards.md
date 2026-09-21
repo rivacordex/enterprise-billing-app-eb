@@ -2,9 +2,9 @@
 
 > Module-specific delta to `../code-standards.md` (the overarching standards). This file contains **only** Product Management specifics; everything else — TypeScript strictness, the Server Action shape, styling tokens, API-route policy, file placement, CI gates — is inherited unchanged from the general file and is not restated here. If a rule seems missing, it lives in the general file.
 
-**Companion docs:** `prodmgmt-project-overview.md` and `prodmgmt-update-overview.md` (product spec) and `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture *Invariants*, the **Invariants win** and the conflict is a bug to fix here.
+**Companion docs:** `prodmgmt-project-overview.md` and `prodmgmt-update-overview.md` (product spec) and `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
 
-> **Status:** covers all four catalog and ordering surfaces — View Product, Manage Products, Orders, Subscriptions. Every rule below is written as the standard **in force for the module's target state**, which includes the Manage Products rebuild & catalog lifecycle update (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). That update is planned, not yet in `main`: where the shipped code still follows an older rule, **Appendix A** lists the superseded wording and the code comments, tests and files that still assert it. Rules are stated once, in the present tense; the history lives only in Appendix A.
+> **Status:** covers all four catalog and ordering surfaces — View Product, Manage Products, Orders, Subscriptions. Every rule below is written as the standard **in force for the module's target state**, which includes the Manage Products rebuild & catalog lifecycle update (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). That update is now **delivered and ship-gate-verified (pm35–pm45)**: every rule below is the standard in force, and **Appendix A is empty** — no shipped code, comment, test or file still asserts a pre-update rule. Rules are stated once, in the present tense.
 
 ---
 
@@ -40,7 +40,7 @@
    - `PriceType`: `'recurring' | 'usage' | 'once'`
    - `PricingModel`: `'flat' | 'tiered'`
    - `UnitOfMeasure`: `'Mbps' | 'GB' | 'MB' | 'EA'` — **case-sensitive literals**. `'MBPS'`, `'mbps'` and `'Gb'` are not members and are not normalised on the way in.
-   - `RecurringPeriodType`: `'months'` (single member pending plan open item O1). Adding a member requires a migration changing the CHECK **and** a confirmed mapping in the bill run's recurring resolver — never a TypeScript-only edit.
+   - `RecurringPeriodType`: `'months'` (single member; open item O1 is closed — `months` only, length ∈ (1, 3, 12), per bm29's resolver). Adding a member requires a migration changing the CHECK **and** a confirmed mapping in the bill run's recurring resolver — never a TypeScript-only edit.
 2. **Every map keyed by a domain union is a total `Record`.** `Record<LifecycleStatus, X>` for badge variants, labels, allowed actions and sort weight; `Record<PriceType, X>` for field requirements. Adding `TESTING`/`OBSOLETE` must break the build in every such map rather than fall through to a default. No `switch` over a domain union without an exhaustive `never` default.
 3. **JSONB typing per general §6.17.** `ProductSpecCharacteristics` and `PricingCharacteristics` live in `validation/product/`; the Drizzle `.$type<T>()` types derive from them.
 4. **`PricingCharacteristics` is a discriminated union on `pricing_model`** — `{ tiers: Tier[] }` with `Tier = { from: number; to: number | null; rate: string }`; contiguity comes from the Zod schema, not ad-hoc checks.
@@ -79,15 +79,16 @@
 
 1. **Shared indicator components**, created exactly with these names: `LifecycleBadge`, `PriceTypeBadge`. `LifecycleBadge` covers all five statuses from a total `Record<LifecycleStatus, …>` (§2.2):
 
-   | Status | Treatment | Icon |
-   |---|---|---|
-   | `DRAFT` | warning tint | `pencil-line` |
-   | `TESTING` | info tint | `flask-conical` |
-   | `ACTIVE` | success tint | `check-circle` |
-   | `OBSOLETE` | neutral tint, row muted, still actionable (Retire) | `history` |
-   | `RETIRED` | neutral tint, row muted, no actions | `archive` |
+   | Status     | Treatment                                          | Icon            |
+   | ---------- | -------------------------------------------------- | --------------- |
+   | `DRAFT`    | warning tint                                       | `pencil-line`   |
+   | `TESTING`  | info tint                                          | `flask-conical` |
+   | `ACTIVE`   | success tint                                       | `check-circle`  |
+   | `OBSOLETE` | neutral tint, row muted, still actionable (Retire) | `history`       |
+   | `RETIRED`  | neutral tint, row muted, no actions                | `archive`       |
 
    Icon + label always; never colour-only meaning (`OBSOLETE` and `RETIRED` are both greyish by design — the icon disambiguates).
+
 2. **JSONB entries render as plain text, not widgets** — spec characteristics as `key: value`, tiers as `from–to: rate`, semicolon-separated, open-ended top tier reading "and above". No `CharacteristicChip`, no `TierTable`.
 3. **Reuse the Administration table primitives** (pagination, sortable headers, empty state) for the View Product table and the families table. Never fork a parallel table implementation.
 4. **Four-section layout.** View Product: table, detail, then specs and prices side-by-side at `lg:`, stacking on narrow viewports. Manage Products uses the same grid with a version bar between the table and the panels, and stacks in the order table → version bar → detail → specifications → prices.
@@ -98,9 +99,9 @@
 9. **`--action-cta-bg` is used exactly once per view** — the "New offering" button in the Manage Products header. Version-level actions (Edit, Add price, Submit for testing, Activate) use the quiet secondary/ghost treatment; Obsolete, Retire and Delete use the danger role and only inside their confirmation dialogs.
 10. **Version-level actions live in the selected version's header, not on every list row.** The families table carries navigation and status only; do not add row actions "for convenience".
 11. **Inline editing affordances.** An editable panel row shows its value as text until activated, then an input with explicit Save and Cancel. No auto-save on blur, no optimistic row mutation — the server action's typed result is what updates the view. A panel on a non-`DRAFT` version renders the read-only variant with no disabled inputs.
-12. **"This creates a new draft" warning** appears in the edit affordance whenever the selected version is `ACTIVE`, never on a `DRAFT` target. Warning tokens, no icon. Copy: *"`<Name>` is active. Saving will not change it — a new draft version is created instead."*
+12. **"This creates a new draft" warning** appears in the edit affordance whenever the selected version is `ACTIVE`, never on a `DRAFT` target. Warning tokens, no icon. Copy: _"`<Name>` is active. Saving will not change it — a new draft version is created instead."_
 13. **Backdating warning** appears when a price start date is in the past but within the 3-day tolerance; beyond it, a standard `FieldError`.
-14. **Unbillable-shape warning** reuses the same warning tokens: *"Nothing bills a tiered recurring price yet — this version will fail its bill run."* and *"Usage rating charges a flat amount today; tiers are stored but not applied."* Warning only (§1.19).
+14. **Unbillable-shape warning** reuses the same warning tokens: _"Nothing bills a tiered recurring price yet — this version will fail its bill run."_ and _"Usage rating charges a flat amount today; tiers are stored but not applied."_ Warning only (§1.19).
 15. **Units and periods render with the numeric conventions already in use:** `--font-mono` for IDs and GL codes, `tabular-nums` for amounts, tier bounds, version numbers, charge-period lengths. A usage price shows `amount / unit` (e.g. `RM 0.05 / GB`); a recurring price shows `amount / period` (e.g. `RM 5,000.00 / month`) with the unit and period taken from the row, never inferred from the price type.
 16. **Empty states** use `--text-muted` on `--surface-sunken`: no family selected, a family with one version (version bar renders the single entry, no affordance implying more), a DRAFT with no prices yet (with the "at least one price is required to submit for testing" hint).
 17. **No AI/Iris-violet tokens and no marketing gradients on any product page** — unchanged module exclusion.
@@ -126,19 +127,19 @@
    - `product_offering_price_period_value_check` — `recurring_charge_period_type IS NULL`, or `recurring_charge_period_type = 'months' AND recurring_charge_period_length IN (1, 3, 12)`. Closed at months + (1, 3, 12); `'years'` is deliberately rejected (O1 resolved). Extend only with a confirmed bill-run mapping (§2.1).
    - `product_offering_price_usage_unit_check` — `price_type = 'usage'` ⇒ `unit_of_measure` NOT NULL; otherwise NULL.
    - `product_offering_price_unit_value_check` — `unit_of_measure IS NULL OR unit_of_measure IN ('Mbps','GB','MB','EA')`, exact case.
-   The existing `amount` XOR tiers, `amount >= 0` and 3-character currency CHECKs are unchanged.
+     The existing `amount` XOR tiers, `amount >= 0` and 3-character currency CHECKs are unchanged.
 6. **`created_at` vs `start_date_time` stay distinct and both required.** Neither substitutes for the other in a query.
 7. **Single-active and single-open per family are DB unique indexes on an expression**:
    - `product_offering_one_active_per_family` on `(COALESCE(family_offering_id, product_offering_id))` `WHERE lifecycle_status = 'ACTIVE'`
    - `product_offering_one_open_per_family` on the same expression `WHERE lifecycle_status IN ('DRAFT','TESTING')`
-   `COALESCE` removes the NULL-root problem (a family root carries `family_offering_id IS NULL`, and NULLs do not collide in a plain partial index). The advisory lock and the in-transaction re-check in `activateOffering` **stay** — the index changes the failure mode, it does not replace the lock.
+     `COALESCE` removes the NULL-root problem (a family root carries `family_offering_id IS NULL`, and NULLs do not collide in a plain partial index). The advisory lock and the in-transaction re-check in `activateOffering` **stay** — the index changes the failure mode, it does not replace the lock.
 8. **Child writes require a `DRAFT` parent, enforced by a trigger**: `BEFORE INSERT OR UPDATE OR DELETE` on `product_specifications` and `product_offering_price`, rejecting any parent whose `lifecycle_status` is not `DRAFT`. The cascade in §6.9 must not be blocked by it — `deleteOffering` relies on parent-first cascade (the trigger exempts a child delete when the parent row is itself being deleted), the only path that works for a `TESTING` parent; deleting children first would be rejected because the parent is not `DRAFT`. Prove it in a test for both `DRAFT` and `TESTING`.
 9. **Child FKs cascade on delete**: `product_specifications.ref_product_offering_id` and `product_offering_price.product_offering_id` are `ON DELETE cascade`. The self-referencing `family_offering_id` stays `restrict`.
 10. **`version` is a row's sequence number within its family**, assigned once at insert, never changed (Inv. #8).
 11. **`lifecycle_status` gates selection, not readability** (Inv. #6, #17): ordering filters `ACTIVE`; billing reads a pinned version whatever its status. A repository finder never filters out `OBSOLETE` or `RETIRED` rows on the caller's behalf — it exposes the status and lets the caller filter.
 12. **JSONB writes are schema-guarded everywhere**, seeds included (Inv. #4).
 13. **Tier storage stays JSONB.** The child-table migration remains the rating module's deferred decision; do not pre-build it.
-14. **Migrations** *(D11 — this round only)*: `0006_product.sql` is edited in place for the five-value enum, the §6.5 CHECKs and the §6.9 cascades, on the stated assumption that no installation exists. Keep `db/schema/product.ts` in sync **by hand**; run no `drizzle-kit generate` (`db:generate`). Snapshots stop at `0026` in this repo — every migration from `0027` on is hand-written SQL with a hand-appended `meta/_journal.json` entry, and `drizzle-kit generate` is retired because it would emit one giant broken diff (`db/migrations/README.md`, `drizzle.config.ts`). The apply path never reads snapshots, so `meta/0006_snapshot.json` is left untouched and stale like every snapshot after `0026`, and `meta/_journal.json` is left byte-identical (the file is edited, not added). Other consequences that are part of the rule, not optional follow-up: guardrail 13 is re-baselined, and every environment rebuilds its database. **Never** write a migration that adds an enum value and uses it — the migrator runs all pending files in one transaction and Postgres rejects the use (`unsafe use of new value`); if the fresh-install assumption is withdrawn, the create-new-type-and-swap form is the only correct shape.
+14. **Migrations** _(D11 — this round only)_: `0006_product.sql` is edited in place for the five-value enum, the §6.5 CHECKs and the §6.9 cascades, on the stated assumption that no installation exists. Keep `db/schema/product.ts` in sync **by hand**; run no `drizzle-kit generate` (`db:generate`). Snapshots stop at `0026` in this repo — every migration from `0027` on is hand-written SQL with a hand-appended `meta/_journal.json` entry, and `drizzle-kit generate` is retired because it would emit one giant broken diff (`db/migrations/README.md`, `drizzle.config.ts`). The apply path never reads snapshots, so `meta/0006_snapshot.json` is left untouched and stale like every snapshot after `0026`, and `meta/_journal.json` is left byte-identical (the file is edited, not added). Other consequences that are part of the rule, not optional follow-up: guardrail 13 is re-baselined, and every environment rebuilds its database. **Never** write a migration that adds an enum value and uses it — the migrator runs all pending files in one transaction and Postgres rejects the use (`unsafe use of new value`); if the fresh-install assumption is withdrawn, the create-new-type-and-swap form is the only correct shape.
 15. **The retirement gate is one repository predicate, written once**: a subscription counts as live when `status <> 'TERMINATED' OR (end_date IS NULL OR end_date >= current_date)`. It lives in `productInventoryRepository.countLiveForOfferingForUpdate` and is called by `retireOffering` inside its transaction. Do not re-express it in a service, a page or a test fixture.
 16. **A hard delete's audit payload is the only surviving record**: `PRODUCT_OFFERING_DELETED.beforeData` carries the version id, name, `version`, `lifecycle_status`, and the counts of specifications and prices removed. Written in the same transaction as the delete.
 17. **Reason text on a transition is captured in the audit payload (`transitionReason`), not a column.** This covers every transition in Inv. #23.
@@ -147,7 +148,7 @@
 
 ## 7. File Organization (module-specific)
 
-Placement per general §7. The tree below shows the **catalog scope after the Manage rebuild**; `(new)` marks a file the rebuild adds, `(del)` one it removes. The Ordering & Inventory tree (`app/(app)/products/orders/`, `subscriptions/`, `actions/ordering/**`, `actions/inventory/**`, `components/products/ordering/**`, `components/products/inventory/**`, `services/ordering/**`, `services/inventory/**`, `db/schema/{ordering,inventory}.ts` and their repositories, validation and tests) is unchanged by this update and is not repeated here.
+Placement per general §7. The tree below shows the **catalog scope after the Manage rebuild** (now landed): each file the rebuild added is annotated with its delivering unit (`(pmNN)`), and a removed file is noted inline. The Ordering & Inventory tree (`app/(app)/products/orders/`, `subscriptions/`, `actions/ordering/**`, `actions/inventory/**`, `components/products/ordering/**`, `components/products/inventory/**`, `services/ordering/**`, `services/inventory/**`, `db/schema/{ordering,inventory}.ts` and their repositories, validation and tests) is unchanged by this update and is not repeated here.
 
 ```
 app/(app)/products/product-offering/
@@ -199,7 +200,7 @@ services/product/
   list-families.ts                    # (pm39)  Manage Products' list
   get-offering-detail.ts
   get-live-subscription-count.ts      # (pm43)  Retire blocked-state display read
-  list-family-versions.ts             # (new)  version bar
+  list-family-versions.ts             # (pm40)  version bar
   create-offering.ts, update-offering.ts
   add-specification.ts, update-specification.ts, delete-specification.ts
   insert-price.ts, update-price.ts    # update-price (pm38)
@@ -234,7 +235,7 @@ tests/…                               # mirrors source; authz matrix; guardrai
 
 1. **The nav lives in the shared registry** (`lib/nav-registry.ts` + `components/nav-icons.ts`); no product-specific nav file.
 2. **`services/product` stays framework-agnostic** — no `next/*` imports; parsed params in, §2.9 read models out.
-3. **`app/(app)/products/product-offering/**` may only ever be touched for its nav label and page `H1`** beyond its original scope. Manage Products may **import from** `components/products/*` but nothing inside the View Product route folder is edited.
+3. **`app/(app)/products/product-offering/**`may only ever be touched for its nav label and page`H1`** beyond its original scope. Manage Products may **import from** `components/products/*` but nothing inside the View Product route folder is edited.
 4. **One transition per file** — in `actions/product/` and `services/product/` alike. Do not collapse the five transition services into a state-machine module; the shared part (id + optional reason parsing) is the Zod schema, and that is the only thing they share.
 
 ---
@@ -245,28 +246,28 @@ tests/…                               # mirrors source; authz matrix; guardrai
 
 Authoritative; mirrors architecture §4. Every page and every mutation appears here before it ships.
 
-| Page / action | Route | Top-level component | Folder | Permission : level |
-|---|---|---|---|---|
-| View Product — list + detail + specs + prices | `/products/product-offering` | `ProductOfferingPage` → `OfferingTable`, `OfferingDetail`, `SpecificationsPanel`, `PricesPanel` | `app/(app)/products/product-offering/` | `products` : **READ** |
-| Manage Products — families list, version bar, panels | `/products/manage-products` | `ManageProductsPage` → `FamilyTable`, `VersionBar`, `ManageSpecificationsPanel`, `ManagePricesPanel` | `app/(app)/products/manage-products/` | `products` : **EDIT** |
-| — create offering / edit DRAFT / branch from ACTIVE | `/products/manage-products` | `CreateOfferingDialog`, `OfferingForm` | `actions/product/{create,update}-offering.action.ts` | `products` : **EDIT** |
-| — add / update / delete a specification *(update, delete: DRAFT only)* | `/products/manage-products` | `ManageSpecificationsPanel`, `SpecificationForm` | `actions/product/*-specification.action.ts` | `products` : **EDIT** |
-| — add / update / delete a price *(update, delete: DRAFT only)* | `/products/manage-products` | `ManagePricesPanel`, `PriceForm` | `actions/product/{insert,update,delete}-price.action.ts` | `products` : **EDIT** |
-| — submit for testing / return to draft | `/products/manage-products` | `SubmitForTestingDialog`, `VersionBar` | `actions/product/{submit-for-testing,return-to-draft}.action.ts` | `products` : **EDIT** |
-| — activate (TESTING → ACTIVE, supersedes to OBSOLETE) | `/products/manage-products` | `ActivateOfferingDialog` | `actions/product/activate-offering.action.ts` | `products` : **EDIT** |
-| — stop selling (ACTIVE → OBSOLETE) | `/products/manage-products` | `ObsoleteOfferingDialog` | `actions/product/obsolete-offering.action.ts` | `products` : **DELETE** |
-| — retire (OBSOLETE → RETIRED, subscription-gated) | `/products/manage-products` | `RetireOfferingDialog` | `actions/product/retire-offering.action.ts` | `products` : **DELETE** |
-| — discard (hard delete a DRAFT/TESTING version) | `/products/manage-products` | `DeleteVersionDialog` | `actions/product/delete-offering.action.ts` | `products` : **DELETE** |
-| Orders — list + New order + Review *(Ordering update)* | `/products/orders` | `OrdersPage` → `OrdersTable`, `NewOrderWizard`, `OrderReviewPanel` | `app/(app)/products/orders/`, `actions/ordering/` | `product_orders` : **READ** (list) / **EDIT** (create) |
-| — approve / reject a `PENDING` order *(Ordering update)* | `/products/orders` | `ReviewActions` | `actions/ordering/{approve,reject}-order.action.ts` | `product_orders` : **EDIT** + **MANAGER role** + reviewer ≠ submitter |
-| Subscriptions — list + lifecycle + characteristics *(Ordering update)* | `/products/subscriptions` | `SubscriptionsPage` → `SubscriptionsTable`, lifecycle dialogs | `app/(app)/products/subscriptions/`, `actions/inventory/` | `product_inventory` : **READ** (list) / **EDIT** (mutations) |
+| Page / action                                                          | Route                        | Top-level component                                                                                  | Folder                                                           | Permission : level                                                    |
+| ---------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
+| View Product — list + detail + specs + prices                          | `/products/product-offering` | `ProductOfferingPage` → `OfferingTable`, `OfferingDetail`, `SpecificationsPanel`, `PricesPanel`      | `app/(app)/products/product-offering/`                           | `products` : **READ**                                                 |
+| Manage Products — families list, version bar, panels                   | `/products/manage-products`  | `ManageProductsPage` → `FamilyTable`, `VersionBar`, `ManageSpecificationsPanel`, `ManagePricesPanel` | `app/(app)/products/manage-products/`                            | `products` : **EDIT**                                                 |
+| — create offering / edit DRAFT / branch from ACTIVE                    | `/products/manage-products`  | `CreateOfferingDialog`, `OfferingForm`                                                               | `actions/product/{create,update}-offering.action.ts`             | `products` : **EDIT**                                                 |
+| — add / update / delete a specification _(update, delete: DRAFT only)_ | `/products/manage-products`  | `ManageSpecificationsPanel`, `SpecificationForm`                                                     | `actions/product/*-specification.action.ts`                      | `products` : **EDIT**                                                 |
+| — add / update / delete a price _(update, delete: DRAFT only)_         | `/products/manage-products`  | `ManagePricesPanel`, `PriceForm`                                                                     | `actions/product/{insert,update,delete}-price.action.ts`         | `products` : **EDIT**                                                 |
+| — submit for testing / return to draft                                 | `/products/manage-products`  | `SubmitForTestingDialog`, `VersionBar`                                                               | `actions/product/{submit-for-testing,return-to-draft}.action.ts` | `products` : **EDIT**                                                 |
+| — activate (TESTING → ACTIVE, supersedes to OBSOLETE)                  | `/products/manage-products`  | `ActivateOfferingDialog`                                                                             | `actions/product/activate-offering.action.ts`                    | `products` : **EDIT**                                                 |
+| — stop selling (ACTIVE → OBSOLETE)                                     | `/products/manage-products`  | `ObsoleteOfferingDialog`                                                                             | `actions/product/obsolete-offering.action.ts`                    | `products` : **DELETE**                                               |
+| — retire (OBSOLETE → RETIRED, subscription-gated)                      | `/products/manage-products`  | `RetireOfferingDialog`                                                                               | `actions/product/retire-offering.action.ts`                      | `products` : **DELETE**                                               |
+| — discard (hard delete a DRAFT/TESTING version)                        | `/products/manage-products`  | `DeleteVersionDialog`                                                                                | `actions/product/delete-offering.action.ts`                      | `products` : **DELETE**                                               |
+| Orders — list + New order + Review _(Ordering update)_                 | `/products/orders`           | `OrdersPage` → `OrdersTable`, `NewOrderWizard`, `OrderReviewPanel`                                   | `app/(app)/products/orders/`, `actions/ordering/`                | `product_orders` : **READ** (list) / **EDIT** (create)                |
+| — approve / reject a `PENDING` order _(Ordering update)_               | `/products/orders`           | `ReviewActions`                                                                                      | `actions/ordering/{approve,reject}-order.action.ts`              | `product_orders` : **EDIT** + **MANAGER role** + reviewer ≠ submitter |
+| Subscriptions — list + lifecycle + characteristics _(Ordering update)_ | `/products/subscriptions`    | `SubscriptionsPage` → `SubscriptionsTable`, lifecycle dialogs                                        | `app/(app)/products/subscriptions/`, `actions/inventory/`        | `product_inventory` : **READ** (list) / **EDIT** (mutations)          |
 
 **Notes**
 
 - Component names are the binding convention; create them exactly so the page ↔ route ↔ component ↔ permission chain stays traceable.
 - A principal with `products : EDIT` but not `DELETE` reaches every authoring and release action and is refused `obsoleteOffering`, `retireOffering` and `deleteOffering` at the action guard — asserted in the authz matrix, both directions.
 - Deep links grant nothing: `?offering=`, `?family=` and `?version=` all pass through their page's guard first.
-- *(Ordering update)* `product_orders` / `product_inventory` carry no grant overlap with `products` in either direction, ship-gate-proven.
+- _(Ordering update)_ `product_orders` / `product_inventory` carry no grant overlap with `products` in either direction, ship-gate-proven.
 
 ---
 
@@ -276,23 +277,36 @@ Guardrails 1–22 are the shipped set (catalog 1–14, Ordering update 15–22) 
 
 **Re-scoped by the Manage rebuild**
 
-| # | Change |
-|---|---|
-| 2 — Price immutability | Now asserts: a successor insert leaves prior rows byte-identical (unchanged); `updatePrice`/`deletePrice` exist, succeed on a `DRAFT` parent, and are refused for every other status — **and** a direct SQL update or delete against a non-`DRAFT` parent's price is rejected by the trigger. |
-| 8 — Single-active-per-family | Keeps the two-concurrent-activations assertion; adds a direct-SQL insert of a second `ACTIVE` row being rejected by `product_offering_one_active_per_family`. |
-| 11 — View stays read-only | Unchanged in direction: `components/products/*.tsx` (excluding `manage/`) and the View Product route import nothing from `actions/product/`, `components/products/manage/`, or a write service. The converse assertion is **dropped** — `manage/` importing View's read-only components is now correct (Inv. #29). |
-| 13 — Schema-diff | Re-baselined to the post-rebuild shape: five-value enum, the §6.5 CHECKs, cascade child FKs, the two expression indexes and the trigger. Still an exact diff, not a removal. |
-| 16 — Grandfathering | Asserts the superseded version is `OBSOLETE` (not `RETIRED`) and the pinned subscription's `OrderPriceLine`/rating reads resolve byte-identically from it. |
+| #                            | Change                                                                                                                                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2 — Price immutability       | Now asserts: a successor insert leaves prior rows byte-identical (unchanged); `updatePrice`/`deletePrice` exist, succeed on a `DRAFT` parent, and are refused for every other status — **and** a direct SQL update or delete against a non-`DRAFT` parent's price is rejected by the trigger.                      |
+| 8 — Single-active-per-family | Keeps the two-concurrent-activations assertion; adds a direct-SQL insert of a second `ACTIVE` row being rejected by `product_offering_one_active_per_family`.                                                                                                                                                      |
+| 11 — View stays read-only    | Unchanged in direction: `components/products/*.tsx` (excluding `manage/`) and the View Product route import nothing from `actions/product/`, `components/products/manage/`, or a write service. The converse assertion is **dropped** — `manage/` importing View's read-only components is now correct (Inv. #29). |
+| 13 — Schema-diff             | Re-baselined to the post-rebuild shape: five-value enum, the §6.5 CHECKs, cascade child FKs, the two expression indexes and the trigger. Still an exact diff, not a removal.                                                                                                                                       |
+| 16 — Grandfathering          | Asserts the superseded version is `OBSOLETE` (not `RETIRED`) and the pinned subscription's `OrderPriceLine`/rating reads resolve byte-identically from it.                                                                                                                                                         |
 
 **New with the Manage rebuild**
 
-23. **Lifecycle transition set** — every transition in Inv. #23 succeeds from its legal predecessor and every other ordered pair is refused with a typed code; no `setLifecycleStatus`-style helper exists (grep-asserted alongside the action-file list). *(plan V1)*
-24. **DRAFT-only child writes** — a spec or price insert, update or delete against a `TESTING`, `ACTIVE`, `OBSOLETE` or `RETIRED` parent is refused by the repository **and**, on a direct SQL write, by the trigger. *(V2)*
-25. **One open version per family** — two concurrent branch attempts on one family leave exactly one open version; a direct SQL insert of a second `DRAFT`/`TESTING` row in the family is rejected by the index, for a family root and for a branch. *(V3)*
-26. **Hard delete** — discarding a `DRAFT` removes its specs and prices, leaves every other family member untouched, and writes one `PRODUCT_OFFERING_DELETED` event carrying the removed counts; no path deletes an `ACTIVE`, `OBSOLETE` or `RETIRED` version or its children. *(V4, V6)*
-27. **Price completeness** — a recurring price without a charge period, a usage price without a unit, a `once` price carrying either, a unit outside the closed list (including `'MBPS'` and `'gb'`), and a period type outside the mapping each fail in Zod **and** at the database; seeds are covered by the same assertions. *(V7)*
-28. **Retirement gate** — retiring is refused while a pinned subscription is not `TERMINATED`, or is `TERMINATED` with `end_date >= current_date`; the refusal carries the live count; retiring succeeds at zero. *(plan §4.1)*
-29. **No detail fan-out** — the Manage Products first render issues one families query plus its count and no per-row detail query; selecting a family issues the version, detail, specification and price queries once each. Asserted by counting statements against the test database, not by reading the source. *(V9)*
-30. **Status-literal sweep** — no code path outside `db/**` and `services/product/**` treats `OBSOLETE` as unbillable or unreadable; `'RETIRED'` comparisons elsewhere in the repo are enumerated and reviewed, including the flow SQL under `workflow-management/**`. *(V5)*
+23. **Lifecycle transition set** — every transition in Inv. #23 succeeds from its legal predecessor and every other ordered pair is refused with a typed code; no `setLifecycleStatus`-style helper exists (grep-asserted alongside the action-file list). _(plan V1)_
+24. **DRAFT-only child writes** — a spec or price insert, update or delete against a `TESTING`, `ACTIVE`, `OBSOLETE` or `RETIRED` parent is refused by the repository **and**, on a direct SQL write, by the trigger. _(V2)_
+25. **One open version per family** — two concurrent branch attempts on one family leave exactly one open version; a direct SQL insert of a second `DRAFT`/`TESTING` row in the family is rejected by the index, for a family root and for a branch. _(V3)_
+26. **Hard delete** — discarding a `DRAFT` removes its specs and prices, leaves every other family member untouched, and writes one `PRODUCT_OFFERING_DELETED` event carrying the removed counts; no path deletes an `ACTIVE`, `OBSOLETE` or `RETIRED` version or its children. _(V4, V6)_
+27. **Price completeness** — a recurring price without a charge period, a usage price without a unit, a `once` price carrying either, a unit outside the closed list (including `'MBPS'` and `'gb'`), and a period type outside the mapping each fail in Zod **and** at the database; seeds are covered by the same assertions. _(V7)_
+28. **Retirement gate** — retiring is refused while a pinned subscription is not `TERMINATED`, or is `TERMINATED` with `end_date >= current_date`; the refusal carries the live count; retiring succeeds at zero. _(plan §4.1)_
+29. **No detail fan-out** — the Manage Products first render issues one families query plus its count and no per-row detail query; selecting a family issues the version, detail, specification and price queries once each. Asserted by counting statements against the test database, not by reading the source. _(V9)_
+30. **Status-literal sweep** — no code path outside `db/**` and `services/product/**` treats `OBSOLETE` as unbillable or unreadable; `'RETIRED'` comparisons elsewhere in the repo are enumerated and reviewed, including the flow SQL under `workflow-management/**`. _(V5)_
 
-The authz matrix (guardrail 1) extends to every row of §8, including the EDIT-vs-DELETE split across the three withdrawal actions. *(V10)*
+The authz matrix (guardrail 1) extends to every row of §8, including the EDIT-vs-DELETE split across the three withdrawal actions. _(V10)_
+
+---
+
+## Appendix A — Superseded wording and the code/tests that still assert the old rules
+
+**Empty (cleared pm45).** The Manage rebuild & catalog lifecycle update (pm35–pm45) is delivered and ship-gate-verified, so no shipped code comment, test or file still asserts a pre-update rule. Each row was removed as its rule stopped being true in the codebase, verified by grep rather than memory:
+
+- The price repository exports `updatePrice`/`deletePrice`, each refusing a non-`DRAFT` parent (§1.2).
+- `deleteOffering` hard-deletes a never-`ACTIVE` version, replacing the old discard-sets-`RETIRED` behaviour (§1.11); `PRODUCT_OFFERING_DISCARDED` is gone from `AUDIT_EVENT_TYPES`, `PRODUCT_OFFERING_DELETED` is present.
+- `db/schema/product.ts` / `0006_product.sql` carry the five-value enum, the four price CHECKs and the cascade child FKs; `0040` carries the two expression unique indexes and the DRAFT-guard trigger (§6.5–§6.8).
+- The status-literal sweep (guardrail 30) confirms no code path outside `db/**` and `services/product/**` treats `OBSOLETE`/`RETIRED` as unbillable.
+
+The workflow-rule counterparts are in `prodmgmt-ai-workflow-rules.md` Appendix A (also empty).

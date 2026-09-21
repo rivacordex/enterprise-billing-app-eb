@@ -120,6 +120,12 @@ export function VersionActionHeader({
         toast.error("This offering no longer exists. Refreshing...");
         setOpen(false);
         router.refresh();
+      } else if (result.code === "OFFERING_NOT_EDITABLE") {
+        // TESTING/OBSOLETE aren't editable via this path (Inv. #14); the header
+        // never offers Edit on them, so this is a defensive stale-state guard.
+        toast.error("This version can no longer be edited. Refreshing...");
+        setOpen(false);
+        router.refresh();
       } else if (result.code === "OFFERING_HAS_OPEN_VERSION") {
         // Editing an ACTIVE version would branch a new draft, but the family
         // already has an open (draft/testing) version — edit that one instead.

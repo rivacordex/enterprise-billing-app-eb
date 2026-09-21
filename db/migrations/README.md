@@ -43,6 +43,9 @@ files (tracking applied ones by hash) only.
    its volume is wiped and rebuilt. That is why **forward migrations remain the
    rule**: they are the only change that actually lands everywhere. Editing an
    unapplied, not-yet-shipped migration in place is fine and is the idiom here.
+   (The Product Manage rebuild's one authorized round of editing `0006_product.sql`
+   in place under its fresh-install assumption — decision D11 — is **closed as of
+   pm45**; forward-only is the rule again for every migration from here.)
    (A rare, explicitly-granted exception: editing **seed metadata that nothing
    reads but admin help text** — e.g. a `system_config` row `description` — in
    place, paired with a one-off documented `UPDATE` for existing environments.)

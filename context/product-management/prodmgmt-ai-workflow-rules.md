@@ -1,6 +1,6 @@
 # Product Management — AI Workflow Rules (Module Supplement)
 
-Read `context/ai-workflow-rules.md` first — it is binding for every module and applies here unchanged; this file adds only what is specific to Product Management, and its numbering follows that document's sections. The module is **fully built and shipped** (View Product, Manage Products, Orders, Subscriptions; units pm01–pm34) and is now **under a planned update**: the Manage Products rebuild & catalog lifecycle change (`_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). Every rule below is written for the target state that update defines. Four rules in the previous version of this file are superseded by it — see **Appendix A** before you conclude that a rule here contradicts the shipped code.
+Read `context/ai-workflow-rules.md` first — it is binding for every module and applies here unchanged; this file adds only what is specific to Product Management, and its numbering follows that document's sections. The module is **fully built and shipped** (View Product, Manage Products, Orders, Subscriptions; units pm01–pm34) and has now also **delivered the Manage Products rebuild & catalog lifecycle update** (units pm35–pm45, `_updatemodule-product-manage-page-refactor-plan.md`, decisions D1–D13). Every rule below is written for the target state that update defines. Four rules in the previous version of this file are superseded by it — see **Appendix A** before you conclude that a rule here contradicts the shipped code.
 
 **Companion docs (authoritative — cite them, never restate or contradict them):**
 
@@ -43,23 +43,23 @@ Read `context/ai-workflow-rules.md` first — it is binding for every module and
 
 1. **Build exactly these five units, in this order, each verified and committed before the next starts.** Each line states what the unit delivers and what it must not contain.
 
-   | Unit | Delivers | Must not contain |
-   |---|---|---|
-   | **U1 — Schema** | The edited `0006_product.sql` (five-value enum, per-price-type CHECKs, unit-list CHECK, cascade child FKs), the two expression unique indexes, the DRAFT-guard trigger, a by-hand schema-mirror sync (no `drizzle-kit generate`; the `0006` snapshot and `meta/_journal.json` stay unchanged, D2), re-baselined guardrail 13 | Any repository, service, action or component change |
-   | **U2 — Repository + services** | `findFamilyPage`, `findFamilyVersions`, DRAFT-only `updatePrice`/`deletePrice`, the five transition services, `deleteOffering`, the new audit event types | Any page or component change; any Zod change beyond what compiles |
-   | **U3 — Validation** | The discriminated price-input schema, the per-price-type required fields, the unit enum, the charge-period mapping check, the family-list searchParams schema | Service logic; a second copy of a rule the DB already enforces |
-   | **U4 — Page** | The families table, version bar, both editable panels, URL selection, inline editing, the five confirmation dialogs, the new actions | Any schema or service change; a per-row detail fetch of any kind |
-   | **U5 — Sweep + docs** | The V5 literal sweep applied, seeds updated, the §9 doc amendments landed, V1–V10 green | New behaviour of any kind |
+   | Unit                           | Delivers                                                                                                                                                                                                                                                                                                                     | Must not contain                                                  |
+   | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+   | **U1 — Schema**                | The edited `0006_product.sql` (five-value enum, per-price-type CHECKs, unit-list CHECK, cascade child FKs), the two expression unique indexes, the DRAFT-guard trigger, a by-hand schema-mirror sync (no `drizzle-kit generate`; the `0006` snapshot and `meta/_journal.json` stay unchanged, D2), re-baselined guardrail 13 | Any repository, service, action or component change               |
+   | **U2 — Repository + services** | `findFamilyPage`, `findFamilyVersions`, DRAFT-only `updatePrice`/`deletePrice`, the five transition services, `deleteOffering`, the new audit event types                                                                                                                                                                    | Any page or component change; any Zod change beyond what compiles |
+   | **U3 — Validation**            | The discriminated price-input schema, the per-price-type required fields, the unit enum, the charge-period mapping check, the family-list searchParams schema                                                                                                                                                                | Service logic; a second copy of a rule the DB already enforces    |
+   | **U4 — Page**                  | The families table, version bar, both editable panels, URL selection, inline editing, the five confirmation dialogs, the new actions                                                                                                                                                                                         | Any schema or service change; a per-row detail fetch of any kind  |
+   | **U5 — Sweep + docs**          | The V5 literal sweep applied, seeds updated, the §9 doc amendments landed, V1–V10 green                                                                                                                                                                                                                                      | New behaviour of any kind                                         |
 
 2. **Split any unit that grows past its row.** Finish the smaller piece first.
-3. **Unit numbering — pm35–pm45 (user-authorised).** The user has authorised continuing the `pm` sequence for this update, so the authoritative buildable units are **pm35–pm45** (`specs/pm00-build-plan.md` §9), which map onto the U1–U5 buckets in the table above (U1 → pm35 + pm36, etc.; see pm00 §Sequencing notes). Cite pm-numbers for delivery and gates; U1–U5 remain the conceptual grouping only.
+3. **Unit numbering — pm35–pm45 (user-authorised).** The user has authorised continuing the `pm` sequence for this update, so the authoritative buildable units are **pm35–pm45** (`specs/pm00-build-plan.md` §9), which map onto the U1–U5 buckets in the table above (U1 → pm35 + pm36, etc.; see pm00 §Sequencing notes). Cite pm-numbers for delivery and gates; U1–U5 remain the conceptual grouping only. **All eleven units (pm35–pm45) are now delivered and ship-gate-verified (pm45).**
 4. **Land each unit's tests in the same commit as its behaviour.** Deferring guardrail coverage to U5 repeats the pm24 finding, where guardrails 8, 9 and 14 went unverified for several units.
 
 ---
 
 ## 3. Scoping — No Speculative Changes
 
-1. **Do not build anything in the update overview's *Out of scope* list.** Specifically: maker-checker or approval routing for catalog changes; what TESTING actually does; `PER_UNIT`, tiered or block rating; tiered recurring support in bm29; unit normalisation between catalog and rating feed; a billing basis for rate-based units; `policy` semantics; bundles or `bundle_link`; a TMF620 API; tier child tables.
+1. **Do not build anything in the update overview's _Out of scope_ list.** Specifically: maker-checker or approval routing for catalog changes; what TESTING actually does; `PER_UNIT`, tiered or block rating; tiered recurring support in bm29; unit normalisation between catalog and rating feed; a billing basis for rate-based units; `policy` semantics; bundles or `bundle_link`; a TMF620 API; tier child tables.
 2. **Do not touch Orders, Subscriptions, Customer, Accounts, billing or rating code.** The only reach outside `product` is the retirement gate's read of `inventory.product_inventory` through that module's locked repository finder, and the V5 literal sweep.
 3. **Do not add a fourth table to the `product` schema**, and do not add a column the current unit does not need — no stored `end_date_time`, no `last_update`, no derived "is billable" column, no second version-like counter.
 4. **Do not create a generic `setLifecycleStatus` helper, a state-machine module, or an action that takes a target status as a parameter.** One transition, one service, one audit event.
@@ -108,13 +108,13 @@ Apply the general doc §3, plus these:
 The general doc §5 list applies in full. Module-specific:
 
 1. **`components/ui/`** — managed vendor layer. Compose new components in `components/products/` or `components/products/manage/`.
-2. **Applied migrations** — forward-only, with **one authorized exception**: `db/migrations/0006_product.sql` may be edited in place, in U1 only, under decision D11's fresh-install assumption. That authorization covers `0006` and nothing else. Never edit another applied migration, and never extend this exception to a second round without asking.
+2. **Applied migrations** — forward-only, with **one authorized exception**: `db/migrations/0006_product.sql` may be edited in place, in U1 only, under decision D11's fresh-install assumption. That authorization covers `0006` and nothing else. Never edit another applied migration, and never extend this exception to a second round without asking. **Closed (pm45):** the one-round `0006` in-place edit is complete; forward-only is the rule again for every migration from here — a further in-place edit needs a fresh authorization.
 3. **Never write a migration that adds an enum value and then uses it.** The migrator applies all pending files in one transaction and Postgres rejects the use (`unsafe use of new value`, verified). If the fresh-install assumption is withdrawn, the create-new-type-and-swap form is the only correct shape.
-4. **`app/(app)/products/product-offering/**` and `components/products/*.tsx`** — View Product's route folder may be touched only for nav label or page `H1` text. You may **import** `components/products/*` from `components/products/manage/**`; you may not edit those files to suit Manage Products. If a shared component needs a prop it does not have, stop and ask.
-5. **`workflow-management/**`** — read-only from this module. The V5 sweep reports what it finds there; it does not change it.
+4. **`app/(app)/products/product-offering/**`and`components/products/_.tsx`** — View Product's route folder may be touched only for nav label or page `H1`text. You may **import**`components/products/_`from`components/products/manage/\*\*`; you may not edit those files to suit Manage Products. If a shared component needs a prop it does not have, stop and ask.
+5. **`workflow-management/**`\*\* — read-only from this module. The V5 sweep reports what it finds there; it does not change it.
 6. **Better-Auth managed tables and the `auth/` field mapping** — this module only FKs `core.APPUSER`.
 7. **The permission registry mechanism** — the `products` row comes only from its committed migration; no code path inserts `PERMISSIONS` rows, and this update adds no permission.
-8. **`tsconfig` strict flags, ESLint, Prettier, CI (`infra/**`)** — never weaken a gate to pass.
+8. **`tsconfig` strict flags, ESLint, Prettier, CI (`infra/**`)\*\* — never weaken a gate to pass.
 9. **Lockfiles and dependencies** — a dependency change is its own requested unit.
 10. **Existing Administration routes, URLs and authz results** — byte-identical (Inv. #12).
 11. **`TOREMOVE-Template-*` seed rows** — keep the prefix; no production code depends on them.
@@ -164,13 +164,11 @@ Run the general doc §8 checklist in full, plus every item below. If any fails, 
 
 ## Appendix A — Rules in the previous version of this file that this update supersedes
 
-Do not follow these. They are listed so you recognise them when the shipped code, its comments, or an older copy of this doc asserts them.
+**Empty (cleared pm45).** The Manage rebuild & catalog lifecycle update (pm35–pm45) is delivered and ship-gate-verified — the rules below are the target state it establishes, now in force in the codebase — so every rule it superseded is cleared and nothing in the code, its comments, an older doc copy or a test still asserts a pre-update rule. Verified by grep as each row was cleared, not from memory:
 
-| Superseded rule | Rule now in force |
-|---|---|
-| "The price repository never gains `update*`/`delete*` — `insertPrice` is its only write, forever." | §3.7 — three writes; `updatePrice` and `deletePrice` exist and refuse any parent that is not `DRAFT` (Inv. #1, amended). |
-| "Do not add a hard-delete path for offerings — every removal is a status transition (Discard/Retire), never a row deletion." | §3.8 — a `DRAFT` or `TESTING` version that was never `ACTIVE` is hard-deleted with its children; released versions are never deleted (Inv. #25). |
-| "Applied migrations — forward-only; new constraints or columns ship in a new migration, never by editing an applied one." | §6.2 — still true for every migration except `0006_product.sql`, which D11 authorises editing in place, in U1, once. |
-| "Single-active-per-family cannot be expressed as a unique index; enforce it transactionally." | §8.4 — two expression unique indexes on `COALESCE(family_offering_id, product_offering_id)` back the transaction lock (Inv. #13, corrected). |
+- The price repository's `updatePrice`/`deletePrice` exist and refuse any non-`DRAFT` parent (§3.7, Inv. #1 amended).
+- `deleteOffering` hard-deletes a never-`ACTIVE` `DRAFT`/`TESTING` version with its children (§3.8, Inv. #25).
+- The one-round in-place edit of `0006_product.sql` (D11) is **closed** — forward-only is the rule again for every migration from here (§6.2).
+- The two `COALESCE(family_offering_id, product_offering_id)` expression unique indexes back the transaction lock (§8.4, Inv. #13 corrected).
 
-`prodmgmt-code-standards.md` Appendix A lists the code comments and tests that still assert the old rules. Clear both appendices as the update lands.
+`prodmgmt-code-standards.md` Appendix A is likewise empty.

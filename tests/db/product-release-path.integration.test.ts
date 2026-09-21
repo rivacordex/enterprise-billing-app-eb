@@ -444,6 +444,26 @@ describe.skipIf(!databaseUrl)(
       expect(result).toEqual({ ok: false, code: "OFFERING_HAS_OPEN_VERSION" });
     });
 
+    it("updateOffering refuses a TESTING or OBSOLETE version with OFFERING_NOT_EDITABLE (Inv. #14)", async () => {
+      for (const status of ["TESTING", "OBSOLETE"] as const) {
+        const id = await createDraft();
+        await forceStatus(id, status);
+        const result = await updateOffering(
+          id,
+          {
+            name: "Renamed",
+            isSellable: true,
+            billingOnly: false,
+            saveAsNew: false,
+          },
+          actorId,
+        );
+        expect(result).toEqual({ ok: false, code: "OFFERING_NOT_EDITABLE" });
+        // Untouched: still its forced status, name unchanged.
+        expect(await statusOf(id)).toBe(status);
+      }
+    });
+
     // --- Concurrency -----------------------------------------------------
 
     // pm42 I7 asks for "two near-simultaneous activations of sibling TESTING
