@@ -1,153 +1,256 @@
 # Product Management — Architecture (Module)
 
-This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Product Management module adds or changes**. Anything not stated here is inherited unchanged. The product spec (user flows, data model, features) for the whole module — the catalog and the Ordering & Inventory update alike — is in `prodmgmt-project-overview.md`.
+This document builds on `context/architecture.md`, which owns the platform-wide design — the technology stack, folder ownership, multi-module database design, the auth/authorization platform, storage principles and the platform invariants — and records **only what the Product Management module adds or changes**. Anything not stated here is inherited unchanged. This revision is scoped to the **Pricing Components update** (Target Capacity Commitment & Target Capacity Motivation); the delivered catalog, Ordering & Inventory and Manage Products rebuild architecture is the **baseline** it builds on, restated here only where the pricing update depends on it or changes it.
 
-**Status:** SHIPPED — read-only catalog (units pm01–pm09, decisions agreed 2026-07-03), the CRUD fast-follow (units pm10–pm24, decisions agreed 2026-07-20), and the **Product Ordering & Inventory update** (units pm25–pm34, decisions locked 2026-07-23/31) are all implemented and ship-gate-verified. Its additions are still marked *(Ordering update)* throughout this document to distinguish them from the original catalog. Changes to *Module Invariants* require a documented design review.
+**Status:** IN PROGRESS. Decisions **PC1–PC14**, validation invariants **VI1–VI5** and open items **O1–O10** (O3/O4 resolved) are locked in `_updatemodule-product-pricing-components-plan.md` — the authoritative design. **pm46 has landed §3.2–§3.5's schema** (`0006_product.sql` + `db/schema/product.ts`) and §6's Inv. #2/#4/#5/#28/#30–#44 amendments (see §6); everything else in §3 remains unbuilt. Changes to _Module Invariants_ require a documented design review; the §6 amendments this unit lands are recorded as approved for schema purposes (workflow §7.1) — **G-B's own formal sign-off is tracked separately in `prodmgmt-ai-workflow-rules.md` and is not closed by this note.**
 
-**Scope:** The module has four shipped pages — **View Product** (`/products/product-offering`), a read-only catalog viewer; **Manage Products** (`/products/manage-products`), the full create/edit/branch/activate/retire surface; **Orders** (`/products/orders`), manual intake of billing-only offers with a manager-approval path for negotiated prices; and **Subscriptions** (`/products/subscriptions`), the product inventory instances with suspend/resume/terminate lifecycle. View Product and Manage Products share the three `product` schema tables and the `products` permission; Orders and Subscriptions add two new schemas (`ordering`, `inventory`) and two new permissions (`product_orders`, `product_inventory`), built on top of the accounts module's `billing.financial_account` / `billing.billing_account` / `billing.bill_cycle` tables, which landed first as this update's hard dependency.
+**Baseline (G-A correction, workflow §7.10): unverified, not "delivered."** The line below previously read "delivered, unchanged by this update." `prodmgmt-ai-workflow-rules.md` §0.1/G-A records that claim as **verified false** for the Manage Products rebuild (pm35–pm45): those units are implemented and unit/integration/type/lint-verified locally (`prodmgmt-progress-tracker.md`), but **G-0 — merge to `main` and the ship-gate SAST/DAST pass — is still open** as of this note (2026-09-21). Until G-0 closes, treat the five-value lifecycle, the expression unique indexes, the DRAFT-guard trigger and the retirement gate named below as the **target state this update builds against, not an observed fact in `main`.** This correction is owed in two more places per G-A (`prodmgmt-code-standards.md` §7/§9, the trackers); pm46 carries only this copy.
+
+**Baseline (unchanged by this update, pending the G-A caveat above):** four pages — View Product (`/products/product-offering`), Manage Products (`/products/manage-products`), Orders (`/products/orders`), Subscriptions (`/products/subscriptions`); the five-value lifecycle `DRAFT → TESTING → ACTIVE → OBSOLETE → RETIRED`; the expression unique indexes for one-open and one-active per family; the DRAFT-guard trigger on both child tables; the retirement gate; three `product` tables.
+
+**Scope of this update:** the JSON pricing-component envelope and its **Product Management persistence only** — schema, validation, services, repository, UI, seeds. It adds **no page, no route, no permission, no table and no stack component.** The bill-run computation, the rating engine's rate extraction, the LookUp Rate Card table and any TMF620 adapter are explicitly later phases and are **not** owned here.
+
+**Companion docs:** `_updatemodule-product-pricing-components-plan.md` (authoritative), `prodmgmt-update-overview.md`, `prodmgmt-code-standards.md`, `prodmgmt-project-overview.md`, `_updatemodule-product-manage-page-refactor-plan.md` (the D11 fresh-install assumption this update reuses).
 
 ---
 
 ## 1. Technology Stack — Deltas Only
 
-The stack is inherited wholesale from `architecture.md` §1 (Next.js ≥ 15 App Router + RSC, Server Actions over `services/`, Azure PostgreSQL via Drizzle, Better-Auth, Container Apps, Azure DevOps, no cache/CDN, no rate limiting). This module introduces **no new stack components**. Module-specific usage notes:
+The stack is inherited wholesale from `architecture.md` §1. **This update introduces no new stack component, no new dependency, and no new runtime.** Notably it adds **no TMF620 library, SDK or adapter** — TMForum alignment is a documented projection (§3.6), not code.
 
-| Layer | Technology (inherited) | This module's usage / delta |
-|---|---|---|
-| Frontend | Next.js App Router, RSC | All list state (search, filter, sort, page, row selection) on View Product lives in **URL searchParams** rendered by RSC — same pattern as Administration pages. Deep-link: `?offering=PRDOFR000001`. Manage Products is a thin RSC orchestrator with dialogs/forms as `'use client'` interaction leaves. No client-side state store for list state. *(Ordering update)* The New Order form is the app's first **multi-step wizard** (3 steps — customer → BAN → offer/price); step state is client-held UX only, never trusted — the submit re-validates everything server-side. |
-| APIs & Backend | Server Actions + `services/` | `actions/product/**` exists — one file per mutation, following the platform's standard Server-Action shape (`requirePermission` → `safeParse` → delegate to `services/product` → `revalidatePath`). Reads flow RSC page → `services/product` → repositories. **No `app/api/product*` route, ever** — permanently forbidden regardless of phase. *(Ordering update)* New actions in `actions/ordering/**` and `actions/inventory/**`: create/approve/reject order, suspend/resume/terminate, edit instance characteristics. Same shape; no Route Handlers. |
-| Database | PostgreSQL ≥ 16, Drizzle | **`product` schema** (platform §4 namespacing) with 3 tables. Uses **JSONB** columns (`product_spec_characteristics`, `pricing_characteristics`) — guarded by per-`pricing_model` Zod schemas, not free-form. `product_offering.family_offering_id` (nullable, self-referencing FK + index) links version history. *(Ordering update)* Two new schemas, **`ordering`** and **`inventory`** (5 tables, split on TMF622/TMF637 component lines) — the first module delivering two schemas, and the first transaction spanning three existing modules' tables (`customer`, `billing`, `product`) plus both new schemas. Locking reuses catalog pm16 patterns (`FOR UPDATE`, advisory locks) — no new primitives. |
-| Auth & Permissions | Better-Auth + core RBAC | One code-seeded permission: `products` (READ/EDIT/DELETE). No auth mechanics change. *(Ordering update)* Two more code-seeded permissions, `product_orders` and `product_inventory`, plus the module's first **role-conditioned check**: order approval requires MANAGER role in addition to permission level (§4). |
-| Validation | Zod in `validation/` | Per-`pricing_model` discriminated schemas (tiered requires contiguous, non-overlapping `[{from,to,rate}]` bounds) plus create/update-offering, create/update-specification, insert-price (with backdating check), and activate/retire schemas. *(Ordering update)* New `validation/ordering/**` and `validation/inventory/**`: order submission (characteristics `Record<string,string>`, override rows), review reason, lifecycle actions (effective date + reason, 3-day backdating check). Override price-type validity (`exists ∧ pricing_model = flat`) is service-checked — it needs DB state, not just shape. |
-| Everything else | — | Unchanged: hosting, CI/CD, monitoring, backup/recovery, no cache, no RLS. |
+| Layer | Technology (inherited) | Role in this update |
+| --- | --- | --- |
+| Frontend | Next.js ≥ 15 App Router + RSC, TypeScript `strict` | The Manage Products pricing panel (`PriceForm`, `ManagePricesPanel`) becomes a **component authoring surface**: one sub-form per `@type`, plus the non-blocking *not-yet-billable* warning (O10) shown while bill-run support is missing. URL-state convention (`?family=…&version=…`) unchanged. |
+| APIs & Backend | Server Actions over framework-agnostic `services/` | Price mutations keep the standard action shape (`requirePermission` → `safeParse` → service → `revalidatePath`). **No `app/api/product*` route is added — and none ever exists**, including for TMF620. |
+| Database | Azure PostgreSQL 17 via Drizzle ORM | `product_offering_price` is **reshaped** to a `component_type text` discriminator + a `price_component jsonb` envelope (§3.2). One row per component. Edited in place in `0006_product.sql` under the fresh-install assumption — no migration file, no backfill. |
+| JSONB typing | Drizzle `$type<>` + Zod | `price_component` is typed `$type<PricingComponent>` and guarded by a **Zod discriminated union on `@type`**, each branch a `strictObject` (unknown key rejected, never stripped). The per-`component_type` DB CHECK is the backstop. |
+| Validation | Zod in `validation/` | New `validation/product/pricing-component.schema.ts` replaces `pricing-characteristics.schema.ts`; `price-input.schema.ts` is rebuilt around components. First **offering-level (cross-row)** validator in the module — everything before it validated a single row. |
+| Auth & Permissions | Better-Auth + core RBAC | **No new permission, no new level semantics, no new guard.** Component authoring sits inside the existing `products : EDIT` surface (§4). |
+| Workflow engine | Kestra OSS + the custom Python worker (`workflow-management/**`) | **Not touched in this phase** — but it is a *reader* of the reshaped table and breaks on the column drops (§3.7). It is a separate runtime, bounded by Postgres grants, never imported by the app. |
+| Caching / CDN | None | Unchanged. No component, rate or resolution result is cached; nothing about this update introduces a cache tier. |
+| Background jobs / AI | None | Unchanged — see §5. The composition contract is a pure function, not a job. |
+| Everything else | — | Unchanged: hosting, CI/CD, monitoring, backup/recovery, RLS unused, no rate limiting, no email. |
 
 ---
 
 ## 2. System Boundaries — Folder Ownership Deltas
 
-Dependency rule unchanged (UI → actions/routes → services → repositories → DB; inner layers never import outward). Platform-level changes this module delivered, plus its own subfolders:
+Dependency rule unchanged: UI → actions → services → repositories → DB; inner layers never import outward. `components/`, `validation/`, `types/` remain shared leaves.
 
-| Path | Owns | Notes |
-|---|---|---|
-| `app/(app)/**` | Route group hosting all authenticated modules as plain subfolders (`administration/`, `products/`, later `customers/`, `bill-runs/`). Originally a rename from `(admin)` (Decision #10, pm01). | URL-invisible; new route groups only when chrome genuinely differs (cf. `(auth)`). |
-| `app/(app)/products/product-offering/` | View Product: the four-section read-only page (offerings table, detail, specs, prices). Declares `products : READ` guard. Thin orchestrator composing `components/products/`. | No DB queries, no raw SQL, no heavy markup (platform §2). Nav label and page `H1` read "View Product"; route, components, and data logic otherwise untouched since v1. |
-| `app/(app)/products/manage-products/` | Manage Products: the CRUD page — family-grouped offering list, row actions, create/edit/activate/retire/discard dialogs. Declares `products : EDIT` guard (retire/discard actions additionally re-check `DELETE`). | Structurally independent of `product-offering/` — imports no components from it, and vice versa (guardrail-enforced). |
-| `components/admin-nav.tsx` | `NAV_SECTIONS` (caption + items per section). "Products" section, peer of "Administration", with two items: "View Product" (lucide `Package`) and "Manage Products" (lucide `PackagePlus`). | Collapsed-rail and active-state behavior unchanged. Nav renders regardless of permission; the page guard enforces access (platform convention). |
-| `components/products/**` | Read-only, view-side components (`OfferingTable`, `OfferingDetail`, `SpecificationsPanel`, `PricesPanel`, `LifecycleBadge`, `PriceTypeBadge`) used by View Product. | A guardrail test asserts these import nothing from `components/products/manage/` or any write-path module. |
-| `components/products/manage/**` | Write-capable UI: offering/spec/price forms, activate/retire/discard dialogs (`ManageOfferingTable`, `OfferingForm`, `SpecificationForm`, `SpecificationsDialog`, `PriceForm`, `RetireOfferingDialog`, `CreateOfferingDialog`, `AddPriceDialog`, `ActivateOfferingDialog`). | Deliberately separate from `components/products/*`. |
-| `actions/product/**` | One Server Action file per mutation (`create-offering`, `update-offering`, `create-specification`, `update-specification`, `delete-specification`, `insert-price`, `activate-offering`, `retire-offering`). | No DB access in this layer — same convention as `actions/roles/**`. |
-| `services/product/**` | Read use cases (`list-offerings.ts`, `get-offering-detail.ts`) and write use cases (`create-offering.ts`, `update-offering.ts`, `add-specification.ts`, `update-specification.ts`, `delete-specification.ts`, `insert-price.ts`, `activate-offering.ts`, `retire-offering.ts`) plus the shared `branchOfferingAsDraft` primitive. Framework-agnostic; no `next/*` imports. | |
-| `db/**` (product scope) | Drizzle schema for the `product` schema (3 tables + `family_offering_id` lineage column + index), migrations, seeds (incl. `products` PERMISSIONS row), sequences, constraints, repositories. Repositories carry both finder and write methods; the price repository gains exactly one write, `insertPrice` — never `update*`/`delete*` (Inv. #1). | Only place SQL lives. |
-| `validation/product/**` | Zod schemas for list params, `pricing_characteristics` per `pricing_model`, create/update-offering, create/update-specification, insert-price (backdating), activate/retire (optional `reason`). | Parsed before any service call. |
-| `tests/**` | Repo/service unit tests, integration tests for every write path and versioning invariant, authz-matrix entries for both `/products/product-offering` and `/products/manage-products`, and the module guardrail suite (`product-module-boundaries.test.ts`). | Both pages must appear in the authz matrix (platform §5). |
+| Path | Owns | This update |
+| --- | --- | --- |
+| `validation/product/pricing-component.schema.ts` | **New.** The envelope, the discriminated union on `@type`, the five component branches, and the `plaSpec` doc-block catalog (PC11). | **Replaces `pricing-characteristics.schema.ts`**, which is deleted along with `tierSchema` and `tieredPricingCharacteristicsSchema`. This file is the in-codebase source of truth for the TMF620 mapping table. |
+| `validation/product/price-input.schema.ts` | Shape of a price write from the form. | Rebuilt around components; per-`price_type` conditional requirements are re-keyed to `component_type`. |
+| `services/product/insert-price.ts`, `update-price.ts`, `delete-price.ts` | Price write use cases. | Host the **new offering-level validator** enforcing VI3 (a modifier needs a same-unit `usage_rate`), VI4 (exactly one effective `usage_rate` per unit) and VI5 (one currency per offering). DRAFT-only writes and the 3-day backdating check are unchanged. |
+| `db/repositories/product-offering-price.ts` | The only SQL for the price table. | Reads/writes `component_type` + `price_component`. Still exports exactly three writes (`insertPrice`, `updatePrice`, `deletePrice`), the latter two still refusing a non-`DRAFT` parent. |
+| `db/schema/product.ts`, `db/migrations/0006_product.sql` | Drizzle schema + the in-place DDL. | Column drops, the two new columns, the per-`component_type` CHECK, and the uniqueness-index rekey (§3). Kept in sync by hand — no `drizzle-kit generate` (D11 carry-over). |
+| `components/products/manage/**` | Write-capable UI. | Per-`@type` authoring sub-forms + the not-yet-billable warning. Import direction unchanged: `manage/**` may import View's read-only components; View imports nothing from `manage/`. |
+| `db/seeds/product.ts`, `db/seeds/demo/product-demo.ts`, `db/seeds/sample/**` | Seed data. | Emit the envelope. Seeds are held to the same CHECKs and the same Zod validation as user input. |
+| `types/product.ts` | Shared cross-layer types. | Exports the `PricingComponent` union; **drops `TieredPricingCharacteristics`**. |
+| `actions/product/**` | One Server Action per mutation. | No new action file. `EXPECTED_PRODUCT_ACTION_FILES` is unchanged — the existing `insert-price` / `update-price` / `delete-price` actions carry the new payload. |
+| `tests/**` | Units, integration, authz matrix, guardrails. | New component-validation and cross-component suites; the schema-diff guardrail (13) is re-baselined; a pure-function unit test asserts the composition contract's worked figures (§3.6) even though nothing computes them in production yet. **`tests/validation/pricing-characteristics.schema.test.ts` is deleted with its subject.** Fixtures outside the product suites also carry `pricing_model` — see §3.7. |
 
-*(Ordering update — additions to this table:)*
+**What Product Management does _not_ own, and must not acquire.** The ownership line this update draws is as load-bearing as the folder table:
 
-| Path | Owns | Notes |
-|---|---|---|
-| `app/(app)/products/orders/` | Orders list + three-step New Order wizard + manager review view. Guard: `product_orders : READ`; EDIT re-checked per action. | Thin orchestrator; no DB queries. |
-| `app/(app)/products/subscriptions/` | Subscriptions list, expandable status history, lifecycle + edit-characteristics dialogs. Guard: `product_inventory : READ` / `EDIT`. | Same conventions. |
-| `components/products/ordering/**` | Wizard steps, order table, review panel, characteristics editor, override price inputs. | Presentational; permission map passed in, never resolved here. |
-| `components/admin-nav.tsx` | "Products" `NAV_SECTIONS` entry gains two items: "Orders", "Subscriptions" (data-only diff, pm17 pattern). | Nav renders regardless of permission; guards enforce. |
-| `actions/ordering/**`, `actions/inventory/**` | Mutation entry points (create/approve/reject order; suspend/resume/terminate; edit characteristics). Guard → `safeParse` → service → `revalidatePath`. | **New folders** — deliberately not `actions/product/`, so its `EXPECTED_PRODUCT_ACTION_FILES` guardrail stays catalog-only. |
-| `services/ordering/**`, `services/inventory/**` | Order create/approve/reject use cases; subscription lifecycle + list/detail use cases. Framework-agnostic. | **Cross-module rule (revised 2026-08-09 to match the delivered ac04 precedent — `onboard-customer-accounts.ts` imports `partyRoleRepository` directly):** display/form reads call `services/customer` / `services/product` / `services/accounts`; **in-transaction precondition re-checks use the other modules' repositories' locked (`FOR UPDATE`) finders directly** — a service of another module cannot participate in this module's transaction. No cross-module SQL joins except the list-view joins declared in this module's own repositories. |
-| `db/schema/ordering.ts`, `db/schema/inventory.ts` (+ repositories, migrations, seeds) | Drizzle schemas, sequences, constraints, permission seed rows, repositories for the 5 new tables. | `inventory_status_history` and `order_item_price_override` repositories export **no update/delete, permanently**. |
-| `validation/ordering/**`, `validation/inventory/**` | Zod schemas per §1. | Parsed before any service call. |
-| `tests/**` (ordering scope) | Authz-matrix entries for both new pages; guardrail tests for repository surfaces and the two new action folders; concurrency tests (approve-vs-reject race, dual lifecycle actions). | Both pages in the matrix before ship. |
+| Concern | Owner | Why it is not here |
+| --- | --- | --- |
+| The capacity resolver (`Qbill = max(Q, committed)`, then the graduated schedule) | Bill Run (`services/billing/**` + the engine) | Product defines and stores the components; it never prices them. A pricing computation inside `services/product/**` is a boundary violation. |
+| `usage_rate` rate extraction + rate-card resolution (PC10) | Rating (`workflow-management/worker/workflow-engine/runtime/rp.py`) | A separate runtime with its own DB role; the app never imports it. |
+| The **LookUp Rate Card** table | A later phase, owner undecided | `rateCardLookUp` is a **name only** in the envelope — an unresolved string, deliberately not an FK. |
+| Any TMF620 adapter or external API | Nobody, by decision | The mapping is documented for a future adapter. `app/api/product*` never exists. |
+| `ordering.order_item_price_override` | Ordering | `negotiated_override` is a logical projection; the physical row is not reshaped (PC9). |
 
 ---
 
 ## 3. Storage Model
 
-All in Postgres, `product` schema; no file storage or cache (platform §3). Column detail is in the overview's *Data Model*. Shared core (`core.APPUSER`, RBAC, `AUDIT_LOG`, `SYSTEM_CONFIG`) reused, never duplicated (platform §4).
+### 3.1 What lives where
 
-| Data | Where | Notes |
-|---|---|---|
-| Offerings (`product.product_offering`) | Postgres | Multiple rows per product are the norm — one per version. `product_offering.family_offering_id` (nullable, self-referencing FK, indexed) links versions of the same product: `NULL` means the row **is** the family's root; a non-null value points directly at the root's id, always one hop, so "all versions of this product" is `WHERE product_offering_id = :rootId OR family_offering_id = :rootId`. `version` is **the row's sequence number within its family** — root is `1`, first branch is `2`, and so on — computed as `MAX(version)` across the resolved family + 1, assigned once at insert, never changed afterward (including for an in-place edit to an already-`DRAFT` row, which updates content and `last_modified` but not `version`). `last_edited_by` FK → `core.APPUSER`. `lifecycle_status`: `DRAFT / ACTIVE / RETIRED`; only ACTIVE selectable for billing by later modules; **at most one row per family may be `ACTIVE` at a time**. `is_bundle` is display-only (no `bundle_link` table), never user-settable, and is copied through unchanged when a row is cloned (branched). |
-| Specifications (`product.product_specifications`) | Postgres | FK → offering. Characteristics (e.g. SST/SD identifiers) in `product_spec_characteristics` **JSONB**. Unchanged in shape by the versioning model — a write against an `ACTIVE` offering is redirected by the *service layer* (branch-first) onto a freshly cloned `DRAFT` row's children, never by a change to this table. |
-| Prices (`product.product_offering_price`) | Postgres | **Immutable, insert-only rows** — a change on a `DRAFT` inserts a new row against that same row (no `version` bump; `version` is not a per-change counter, see above). A change targeting an `ACTIVE` offering instead inserts against a brand-new, branched `DRAFT` row with its own freshly assigned `version`; the original `ACTIVE` row and its prices are untouched. `start_date_time` = billing effectivity; `created_at` = insert time (differs when future-dated); `end_date_time` **derived** from successor's start, never stored. `amount` nullable when `pricing_model = tiered`; tiers in `pricing_characteristics` JSONB. Constraint: UNIQUE (`product_offering_id`, `price_type`, `start_date_time`) — with derived ends, windows never overlap by construction (supersession: a new price truncates its predecessor); unique starts keep the derivation well-defined. Backdating: a price's `start_date_time` may be up to 3 days in the past (non-blocking warning shown), rejected beyond that — enforced in the service layer (`insert-price.ts`), not the DB. |
-| IDs | Postgres sequences | Prefix + zero-padded sequence: `PRDOFR` (offering), `PRDSMD` (spec), `PRDOFP` (price); one sequence per table. |
-| Price history | Price rows themselves | Historical bill-run basis reproducible from immutable rows. **Audit log is forensics, never a rating source.** |
-| Tier storage | JSONB | May migrate to a child table if the rating engine later needs SQL-queryable tiers — deferred, not decided. |
+| Kind of state | Where | Rule under this update |
+| --- | --- | --- |
+| Pricing components | **Postgres**, `product.product_offering_price`, one row per component | The envelope is a JSONB column, not a sidecar table and not an array column (PC14; options B and C considered and set aside). |
+| Currency, unit of measure, effectivity, recurring period | **Postgres columns** on the same row | Authoritative there, **never** inside `params`. The envelope echoes `unitOfMeasure` only inside `boundTo`, for binding. |
+| The `plaSpec` catalog and the TMF620 mapping | **The codebase** — a doc-block in `pricing-component.schema.ts` | Documentation is the deliverable (PC11). No `pla_spec` table, no registry row. |
+| Negotiated overrides | **Postgres**, `ordering.order_item_price_override` | Physical shape untouched: one row per `(order_item, price_type)`, insert-only, scalar `amount` + `currency`. |
+| File storage | **None** | Unchanged from platform §3. This update stores no document, export or artifact. |
+| Cache | **None** | Unchanged. No resolved rate, component or composition result is cached anywhere. |
+| Rate-card entries | **Nowhere yet** | `rateCardLookUp` names a table that does not exist. An absent card falls back to `ratePerUnit` (PC10). |
 
-**Why a self-referencing column rather than matching on `name` for version linkage:** names change, and two unrelated offerings can legitimately share one. A flat, one-hop self-reference costs one column and one index and stays correct regardless of renames. `family_offering_id` is the only schema addition beyond v1's original 3 tables; `product_specifications` and `product_offering_price` are otherwise unchanged in shape.
+### 3.2 The reshaped price row
 
-### Ordering & Inventory storage *(Ordering update)*
+| Column | Today (delivered) | After this update |
+| --- | --- | --- |
+| `product_offering_price_id` | text PK, `PRDOFP` + padded sequence | unchanged |
+| `product_offering_id` | FK → `product_offering`, `ON DELETE cascade` | unchanged |
+| `name` | text NOT NULL | unchanged |
+| `price_type` | text NOT NULL, CHECK `recurring/usage/once` | **dropped** — superseded by `component_type`. Survives only on `ordering.order_item_price_override`, which narrows O2 to that one table. |
+| `pricing_model` | text NOT NULL, CHECK `flat/tiered` | **dropped** |
+| `amount` | numeric | **dropped** |
+| `pricing_characteristics` | jsonb `$type<TieredPricingCharacteristics>` | **dropped** |
+| `component_type` | — | **new.** text NOT NULL, CHECK-constrained to the persistable component enum, indexed. Always equals `price_component ->> '@type'`. |
+| `price_component` | — | **new.** jsonb NOT NULL, `$type<PricingComponent>`, Zod-guarded at every write including seeds. |
+| `currency` | text NOT NULL, `char_length = 3` | unchanged, and now cross-checked across the offering (VI5) |
+| `unit_of_measure` | text, closed case-sensitive list `Mbps`/`GB`/`MB`/`EA` | unchanged in domain; its *requirement* is re-keyed from `price_type` to `component_type` |
+| `recurring_charge_period_length` / `_type` | integer / text, closed set: `months` only, length ∈ (1, 3, 12) | retained; required for a `flat_fee` whose envelope `priceType` is `recurring` |
+| `gl_code`, `policy` | text | unchanged (`policy` stays NULL and stays out of the form) |
+| `start_date_time` | timestamptz NOT NULL | unchanged — billing effectivity; `end_date_time` is still **never stored** |
+| `created_at` | timestamptz NOT NULL | unchanged |
 
-New schemas `ordering` and `inventory`; the `product` schema tables above are **not modified**. Column detail and sample data are in `_updatemodule-product-ordering-inventory-plan.md` §Data & storage.
+Dropped with them: `product_offering_price_pricing_model_check`, `product_offering_price_amount_xor_tiers_check`, `product_offering_price_amount_check`, `product_offering_price_type_check`.
 
-| Data | Where | Notes |
-|---|---|---|
-| Order header | `ordering.product_order` (`PRDORD…`) | Full TMF622 status enum seeded; phase writes `ACKNOWLEDGED / PENDING / COMPLETED / REJECTED / FAILED`. `reviewed_by`/`reviewed_at` (Q18) set on approve **or** reject; CHECK `reviewed_by <> submitted_by`. |
-| Order item | `ordering.product_order_item` (`PRDORI…`) | Write-once. FKs the **exact `product_offering` version row** ordered (Q5 grandfathering) — no price/spec snapshot columns; the immutable version FK *is* the snapshot. `ordered_characteristics` JSONB (Zod-guarded). |
-| Negotiated price | `ordering.order_item_price_override` (`PRDOPO…`) | **Insert-only.** UNIQUE (item, price_type); flat price types only; currency = BAN currency. Rating contract: override row if present, else the catalog price row effective on the rating date. |
-| Subscription | `inventory.product_inventory` (`PRDINV…`) | 1:1 with order item (UNIQUE FK). Pins the offering version; denormalizes `customer_party_role_id` + `billing_account_id` for the bill-run read path. `instance_characteristics` JSONB — the only editable billing-adjacent field (audited; never a rating input). TMF637 status enum seeded; phase uses `ACTIVE / SUSPENDED / TERMINATED`. |
-| Status history | `inventory.inventory_status_history` (`PRDIVE…`) | **Append-only, gap-free** transition log; suspension windows derived from consecutive rows; `effective_date` ≠ `created_at` when backdated (≤3 days, Q19). |
-| Cross-schema FKs | → `customer.party_role`, `billing.billing_account`, `product.product_offering`, `core.APPUSER` | Platform §4 pattern; the `billing.*` FKs are the accounts-module dependency (header fallback). **No cycle/frequency column anywhere in these schemas** — cycle lives on the BAN (Q6, `billing.bill_cycle` per account-plan Q13). |
+### 3.3 Per-`component_type` completeness
+
+A per-`component_type` CHECK replaces the flat/tiered XOR — the DB mirror of VI1–VI2. It is the database's half of "a price is complete for its type, or it does not exist".
+
+| `component_type` | Stage | Row columns required | Envelope `params` required | Persistable in this table |
+| --- | --- | --- | --- | --- |
+| `usage_rate` | rating | `unit_of_measure` NOT NULL; recurring period pair NULL | `ratePerUnit` money string; `rateCardLookUp` (nullable) | yes |
+| `flat_fee` | billing | `unit_of_measure` NULL; recurring period pair present iff `priceType = 'recurring'` | `amount` money string | yes |
+| `capacity_commitment` | post_aggregation | `unit_of_measure` NOT NULL; recurring period pair NULL | `committedQuantity` finite, `> 0` | yes |
+| `capacity_motivation` | post_aggregation | `unit_of_measure` NOT NULL; recurring period pair NULL | `steps[]` non-empty; `aboveQuantity` strictly ascending, non-duplicate, `> 0`; each `ratePerUnit` a money string | yes |
+| `negotiated_override` | rating | — | `ratePerUnit` | **no** — projection only; lives in `ordering` |
+
+**The Zod union has five branches; the DB CHECK admits four.** `negotiated_override` is a logical/TMF projection, not a catalog row, so it must be excluded from the `component_type` CHECK enum. Admitting it would create a second, contradictory home for a negotiated price and break Inv. #16.
+
+### 3.4 Uniqueness index rekey
+
+```
+-- delivered
+UNIQUE (product_offering_id, price_type, start_date_time)      -- product_offering_price_type_start_unique
+-- after this update
+UNIQUE (product_offering_id, component_type, unit_of_measure, start_date_time)
+```
+
+One effective row per component per unit per start date. This is what preserves dated successors and backs VI4.
+
+> **Design note — NULL collision, resolved (G-F, Khek, 2026-09-21).** `unit_of_measure` is NULL for `flat_fee`, and a plain UNIQUE index does not collide two NULLs, so two `flat_fee` rows sharing a `start_date_time` would both be accepted. Closed with **`UNIQUE NULLS NOT DISTINCT (product_offering_id, component_type, unit_of_measure, start_date_time)`** — a UNIQUE **constraint**, not a unique index, because drizzle-orm 0.45.2 exposes `nullsNotDistinct()` only on the unique-constraint builder (`product_offering_price_component_start_unique`). The `COALESCE(unit_of_measure, '')` expression-index form proposed earlier (the `product_offering`-family precedent) was **considered and rejected**: a sentinel string is excluded either way (pm46-spec D6). Landed in `0006_product.sql` + `db/schema/product.ts` by pm46.
+
+### 3.5 JSONB governance
+
+Platform §3 allows JSONB only where every write is validated against a Zod schema for the column's declared shape, "discriminated per type column where applicable, e.g. per `pricing_model`". That rule is unchanged; **its discriminator moves from `pricing_model` to `component_type`**, and the platform doc's example becomes stale — a one-line follow-up in `context/architecture.md` §3 when this update lands.
+
+Money is a decimal string (`^\d+(\.\d+)?$`); quantities are numbers. No float ever represents money, in the envelope or in transit.
+
+### 3.6 Migration mechanics and the composition contract
+
+**Fresh install, D11 carry-over.** The product migrations are treated as not yet applied: `0006_product.sql` is edited in place, `db/schema/product.ts` is kept in sync by hand, the `0006` snapshot and `meta/_journal.json` stay unchanged, and every environment rebuilds its database. There is **no migration file and no backfill script** — their absence is a success criterion, not an omission. This relies on the verified fact that the migrator silently skips an already-applied, edited migration (`folderMillis` is compared; the `hash` column is written but never compared), so an edited `0006` reaches only databases built from scratch.
+
+**The composition contract** is defined now and computed later, in Bill Run:
+
+```
+Q      = Σ aggregated quantity at BAN level
+Qbill  = capacity_commitment ? max(Q, committedQuantity) : Q
+charge = price Qbill through capacity_motivation's schedule
+```
+
+With `ratePerUnit = 100`, `committedQuantity = 1000` and step `@1000 → 50`: `800 → 100,000`; `2000 → 150,000`; `3000 → 175,000` with a second band `@2000 → 25`. Commitment (a quantity transform) always applies before motivation (a rate schedule), by class, deterministically — no `sequence` field is added (PC12). The result is **one combined charge per product per BAN**, never one line per component (PC5).
+
+### 3.7 Cross-runtime consequence of the column drops
+
+`product.product_offering_price` is read by two non-application runtimes and by Ordering. **Grants are table-level `SELECT`, not column-scoped** (`db/bootstrap/rating-db-roles.sql` step 7; `db/bootstrap/billrun-db-roles.sql` step 8), so the two new columns are readable with **no bootstrap role change** — the reshape is grant-transparent. The *drops* are not: they break reader SQL at parse time.
+
+| Reader | Runtime / role | Depends on | Consequence |
+| --- | --- | --- | --- |
+| `workflow-management/worker/workflow-engine/runtime/rp.py` (RP price-resolution window) | `rating_runtime` | selects `popp.amount`, `popp.pricing_model`; **partitions the effectivity window by `popp.price_type`** | Breaks on all three drops. Rating's extraction rework is a later phase, but the SQL must at minimum be re-keyed to `component_type` in the same release, or the rating flow fails. |
+| `workflow-management/flows/bill-run-processor/bill_run_processing.template.yml` | `billrun_runtime` | as-of selection on `price_type = 'recurring'`, the `pricing_model = 'flat'` filter, the catalog `amount` | Same. Its bm29 recurring resolver reads `flat_fee.params.amount` after the reshape. |
+| `services/ordering/order-preconditions.ts` | `app_runtime` | `price.priceType === override.priceType && price.pricingModel === 'flat'` to validate an override target | **Re-keyed by pm50 (2026-09-22, G-G authorization granted).** Override target resolution now reads `component_type` (`usage_rate` / `flat_fee` + the envelope `priceType` for the two `flat_fee` cases) via an explicit `Record<OverridePriceType, {...}>` lookup — pm50-spec D2/D3. |
+| `validation/ordering/create-order.schema.ts` | `app_runtime` | documents the `flat` + `price_type` contract in comments | **Updated by pm50.** Contract text now describes the `usage_rate`/`flat_fee` component targets; the DB CHECK it mirrors is on the `ordering` table and is unchanged. |
+
+**Test fixtures reach further still.** A repo sweep for `pricing_model` / `pricingModel` finds it seeded or asserted in the **rating** suites (`rm08-rp-price-resolution-snapshot`, `rm09-rl-guarded-transactional-load`, `rm10-supersession-reprocessing`, `rm13-e2e-journey`), the **bill-run** suites (`billrun-phase3-journey`, `billrun-recurring-aggregation`, `billrun-verification-reconciliation`, and the shared `tests/db/helpers/billrun-aggregate.ts`), the **ordering** suites (`create-order`, `review-order`, `ordering-read`, `subscription-lifecycle`), `ship-gate-guardrails`, and `db/seeds/sample/seed-billrun-sample.ts`. Reshaping the column set breaks each of them; none belongs to this module, and none is optional.
+
+This is the single largest hazard in the update: **the blast radius of the drops is wider than the module.** Treat the reader inventory above — production and fixtures both — as the checklist, not the module's own file list.
+
+### 3.8 Unchanged storage
+
+Offerings and specifications, the three-table shape, the `PRDOFR`/`PRDSMD`/`PRDOFP` sequences, the cascade FKs, the DRAFT-guard trigger, the expression unique indexes, the retirement gate, and all of `ordering`/`inventory` are untouched. Historical billing basis is still reconstructed from price rows; **the audit log is forensics, never a rating or pricing source.**
 
 ---
 
 ## 4. Authentication & Access Model
 
-Auth mechanics unchanged (platform §5: Better-Auth sessions, live per-request permission resolution, 3-layer defense in depth). Module specifics:
+Auth mechanics are inherited unchanged from platform §5 — Better-Auth DB-backed sessions, status and effective permissions loaded per request, never cached, never in the session.
 
-- **Single `products` permission**, page-level, code-seeded via migration. READ gates the View Product page **including prices** — no pricing-visibility split. EDIT gates offering/specification create-edit, branching, and price add on Manage Products; DELETE gates retirement and discard.
-- Page guards: `requirePermission('products', 'READ')` at `/products/product-offering`; `requirePermission('products', 'EDIT')` at `/products/manage-products` (retire/discard actions additionally re-check `DELETE`). No grant → `/no-access` (deny by default).
-- Nav visibility follows the platform convention: items render regardless of permission; the guard enforces.
+**This update adds no permission, no level semantics, no page guard and no route.** Component authoring is ordinary DRAFT price editing under the existing split.
 
-*(Ordering update)* Two additional code-seeded permissions with **no overlap** against `products` — a catalog grant confers no ordering access and vice versa: `product_orders` (orders list, order creation, approval) and `product_inventory` (subscriptions list, lifecycle, characteristics). **Approval is permission + role + identity:** approve/reject requires `product_orders : EDIT` **and** the MANAGER role **and** reviewer ≠ submitter — enforced in the service, backstopped by the DB CHECK. This is the module's first role-conditioned authorization (precedent: accounts-plan Q7); the role is an *additional* condition, not a new permission level. Approval also re-runs the **entire submission validation set** under row locks at approval time — a `PENDING` order approved days later must not instantiate against stale state.
+| Action | Level | Note |
+| --- | --- | --- |
+| Add / update / delete a pricing component on a `DRAFT` version | `products : EDIT` | Unchanged from the delivered price-write rules; the payload changes, the gate does not. |
+| View a version's components on View Product | `products : READ` | READ still gates everything, including prices. No pricing-visibility split, and no separate gate for the capacity components. |
+| Discard a `DRAFT`/`TESTING` version (cascading its components away) | `products : DELETE` | Unchanged. |
 
-### Permission matrix
+**The write boundary is unchanged and doubly enforced.** The action re-resolves the live ACTIVE principal and re-checks the level → the service re-reads `lifecycle_status` under `FOR UPDATE` inside the transaction → the repository refuses a non-`DRAFT` parent → the §3.8 trigger refuses a direct SQL write. The new offering-level validator (VI3–VI5) runs **inside** that same transaction, after the lock, because it reads sibling rows.
 
-| Page (route) | Access | Required permission : level |
-|---|---|---|
-| `/products/product-offering` (View Product — list + detail + specs + prices) | Authenticated | `products` : **READ** |
-| `/products/manage-products` (Manage Products — create / edit / branch / activate) | Authenticated | `products` : **EDIT** |
-| `/products/manage-products` — retire / discard | Authenticated | `products` : **DELETE** |
-| `/products/orders` (list + detail) *(Ordering update)* | Authenticated | `product_orders` : **READ** |
-| — create order (wizard submit) *(Ordering update)* | Authenticated | `product_orders` : **EDIT** |
-| — approve / reject a `PENDING` order *(Ordering update)* | Authenticated | `product_orders` : **EDIT** + **MANAGER role** + reviewer ≠ submitter |
-| `/products/subscriptions` (list + history) *(Ordering update)* | Authenticated | `product_inventory` : **READ** |
-| — suspend / resume / terminate / edit characteristics *(Ordering update)* | Authenticated | `product_inventory` : **EDIT** |
+**No machine-to-machine surface is added.** No bearer-token endpoint, no `app/api/product*`, no external TMF620 API. The authz sweep gains no route, and the route × level matrix is unchanged.
+
+**No ownership model change.** Components are catalog data owned by the version, not by a user; `last_edited_by` on the offering remains the only actor column. Customers (MNOs) remain domain data, not tenants — RLS stays unused.
 
 ---
 
 ## 5. Background Tasks & AI
 
-**None.** No AI/ML components (platform §6 stands). No module jobs: price effectivity is resolved at query time from `start_date_time` (per-request computation, not a job).
+**None, in this phase or any prior one. No AI/ML components anywhere in this module.**
 
-**Audit events.** View Product reads are never audited. Manage Products mutations write one audit event per action, inside the same transaction as the data change: `PRODUCT_OFFERING_CREATED`, `PRODUCT_OFFERING_UPDATED`, `PRODUCT_OFFERING_BRANCHED`, `PRODUCT_OFFERING_ACTIVATED`, `PRODUCT_OFFERING_SUPERSEDED`, `PRODUCT_OFFERING_RETIRED`, `PRODUCT_OFFERING_DISCARDED`, `PRODUCT_SPECIFICATION_CREATED`, `PRODUCT_SPECIFICATION_UPDATED`, `PRODUCT_SPECIFICATION_DELETED`, `PRODUCT_PRICE_ADDED`. An optional free-text reason on activation/retirement/discard is carried in the audit event's `afterData` payload (`transitionReason`), not a new `product_offering` column.
+- No job, sweeper or scheduled task is added. Component effectivity is resolved at query time from `start_date_time`, exactly as prices always were.
+- The composition contract (§3.6) is a **pure function tested in isolation**, not a background task, and in this phase nothing in production calls it.
+- The later-phase compute — the bill-run capacity resolver and RP's rate extraction — runs in the **workflow engine**, a non-application runtime that never executes in-process (platform §6). Nothing about that arrangement changes here.
 
-*(Ordering update)* Subscription instantiation is **not a job** — it runs inside the order-completion (or approval) request transaction; no schedulers or queues are added (the first scheduled job in this product line would be the future bill run, out of scope — see `_newmodule-billing-billrun-plan.md`). New audit events, written transactionally like the above: `PRODUCT_ORDER_CREATED / _PENDING_APPROVAL / _APPROVED / _REJECTED / _COMPLETED / _FAILED`, `PRODUCT_INVENTORY_CREATED / _CHARACTERISTICS_UPDATED / _SUSPENDED / _RESUMED / _TERMINATED`.
+**Audit.** No new event type. `PRODUCT_PRICE_ADDED`, `PRODUCT_PRICE_UPDATED` and `PRODUCT_PRICE_DELETED` keep their names; their before/after payloads now carry `component_type` + the `price_component` envelope in place of `price_type` / `pricing_model` / `amount`. One event per mutation, in the same transaction as the data change. View Product reads are still never audited.
 
 ---
 
 ## 6. Module Invariants
 
-Platform Invariants (`architecture.md` §7) all apply. Additional rules this module must never violate; each is testable and CI-enforceable:
+Platform invariants (`architecture.md` §7) all apply, including the Inv. #18 carve-out that lets a `DRAFT` version's prices be edited and hard-deleted. Module invariants 1–29 from the delivered baseline continue to apply, with the amendments below. Each rule here is testable and CI-enforceable.
 
-1. **Price rows are immutable and insert-only.** No code path UPDATEs or DELETEs a `product_offering_price` row, in any phase. The price repository exports no `update*`/`delete*` — ever; `insertPrice` is its only write.
-2. **No overlapping effectivity.** Effectivity windows are derived `[start_date_time, successor start)`; two prices of the same `price_type` on one offering must never share a `start_date_time` — enforced by a DB UNIQUE constraint on (`product_offering_id`, `price_type`, `start_date_time`), not only app logic; violating seeds/inserts fail. Derived windows never overlap because a new price supersedes — truncates — its predecessor from its start instant; a start inside an existing window is legitimate by construction. Backdating: a new price's `start_date_time` may be up to 3 days in the past (accepted with a non-blocking UI warning); beyond that, the write is rejected (`BACKDATED_START_TOO_FAR`) — a service-layer check (`insert-price.ts`), not a DB constraint, since the DB has no way to express "within tolerance of the current instant at write time."
-3. **`end_date_time` is never stored.** A price's end is derived from its successor's `start_date_time`. No `end_date_time` or `last_update` column exists on the price table.
-4. **JSONB is schema-guarded.** Every write of `pricing_characteristics` or `product_spec_characteristics` — including seeds — is validated by the Zod schema for its `pricing_model`/spec shape first; tiered tiers must be contiguous and non-overlapping. No unvalidated JSONB reaches the DB.
-5. **`amount` and tiers are mutually exclusive.** `pricing_model = flat` ⇒ `amount` NOT NULL; `pricing_model = tiered` ⇒ `amount` NULL and tiers present in JSONB. Enforced by a DB CHECK constraint; Zod mirrors it.
-6. **Only ACTIVE offerings are billable, and at most one per family.** Later modules (Customer, Billing Service, Bill Run) may reference only `lifecycle_status = ACTIVE` offerings for billing selection. At most one row per version family may be `ACTIVE` at any time; activating a version automatically retires whichever other version in its family was previously active, in the same transaction.
-7. **The audit log is never a rating or pricing source.** Historical billing basis is reconstructed exclusively from immutable price rows + `start_date_time`.
-8. **`version` is a row's sequence number within its version family**, assigned once at insert and never changed afterward. Versioned offering rows are the norm, not an exception — `family_offering_id` (§3) makes every query that needs "all versions of this product" or "the current active version" explicitly version-aware (e.g. `findActiveInFamily`).
-9. **Product tables live in the `product` schema** and reference the shared core by FK (`last_edited_by` → `core.APPUSER`). The module creates no user, role, permission, session, config, or audit tables (platform Inv. #10 restated for emphasis) — the `family_offering_id` column is an addition to an existing table, not a new one.
-10. **READ gates everything on the View Product page.** Prices are never visible to a principal lacking `products : READ`; no partial rendering of specs/prices under a weaker check.
-11. **Writes flow exclusively through the mutation stack.** Every production code path that mutates a product table does so through `actions/product/**` → `services/product/*-write.service.ts` → repositories, gated by `products : EDIT`/`DELETE`. No other entry point exists.
-12. **The route-group rename changed no URL.** `(admin)` → `(app)` (pm01) left every existing Administration URL and the authz matrix results byte-identical; CI proves existing pages pass unchanged.
-13. **Single-active-per-family is enforced transactionally, not by a single DB constraint.** A plain unique index on `family_offering_id` can't cleanly cover "the root itself is `ACTIVE`, one of its branches also tries to activate," because the root's `family_offering_id` is `NULL` and NULLs don't collide in a unique index. `activateOffering` row-locks the family (`findActiveInFamily(...).for("update")`) and re-checks "is there currently another `ACTIVE` row in this family?" **inside** the transaction before flipping status — the same defense-in-depth pattern `roles-write.service.ts`'s `deleteRole` uses to close a race window. This is a deliberate, documented trade-off, not an oversight.
-14. **Editing an `ACTIVE` offering never mutates it in place.** There is no in-place write path for an `ACTIVE` offering's own fields, its specifications, or its prices. Any such edit first clones the offering plus all of its specifications and all of its prices into a new `DRAFT` row (`branchOfferingAsDraft`), then applies the edit to that clone. The original `ACTIVE` row and everything attached to it are provably untouched — the same "immutable, insert instead of update" discipline established for prices alone (Inv. #1), extended to the offering and its specifications whenever the source is live.
+**Landed by pm46 (2026-09-21):** Inv. **#2**, **#4** and **#28** are amended, **#5** is retired, and **#30–#44** are in force — the schema below (§3.2–§3.5) is now live in `0006_product.sql` + `db/schema/product.ts`, not a proposal. This is pm46 **landing** the text (workflow §7.1); it is not, by itself, **G-B**'s formal sign-off — `prodmgmt-ai-workflow-rules.md`'s own gate tracker still carries G-B as open, and that approval is tracked there, not manufactured here.
 
-*Invariants 15–22 are introduced by the Ordering & Inventory update; #16 and #18 strengthen platform Inv. #18 for this module's tables. Their CI-enforceable test homes are code-standards §9 guardrails 15–22 (pm34 ship gate).*
+### Amended or retired by this update
 
-15. **Order items and subscriptions are write-once at the billing-relevant core.** `product_offering_id`, `quantity`, `start_date`, `ordered_characteristics`, and every override row never change after creation; corrections are terminate + re-order. Sole exception: `inventory.instance_characteristics` (audited, descriptive, never rated).
-16. **Every price a customer pays is either an immutable catalog price row or an insert-only, manager-approved override row.** No third source; no editable price column exists anywhere. Rating resolves override-else-catalog per price type. An order with an override reaches `COMPLETED` only through the approval path.
-17. **A catalog version referenced by any subscription is a rating source regardless of `lifecycle_status`.** Grandfathering (Q5) makes `RETIRED` rows live billing data; no code path may assume `ACTIVE`-only when reading a pinned version. (Extends Inv. #6: "only ACTIVE offerings are billable" governs *selection at order time*; once pinned, the referenced version remains rateable for that subscription's lifetime.)
-18. **`inventory_status_history` is append-only and gap-free.** Every status an instance ever held appears as a transition row; the `status` column is always derivable from the latest row; the repository permanently exports no update/delete.
-19. **One transaction per user action, TOCTOU-checked.** Order completion, approval, suspend, resume, and terminate each commit all their rows atomically, with every precondition re-read under `FOR UPDATE` inside the transaction. Approval re-runs the full submission validation, not a status flip.
-20. **Cycle lives on the BAN.** No cycle, frequency, or bill-run column may be added to `ordering.*` or `inventory.*` tables (Q6; the catalog is `billing.bill_cycle`, account-plan Q13).
-21. **All billing dates are inclusive-billed.** `start_date` = first billed day; `end_date` = last billed day; suspension `effective_date` = first non-billed day; resume-day treatment is reserved to the bill-run phase (Q17/Q20). Backdating any of them beyond 3 days is rejected (Q19).
-22. **Reviewer ≠ submitter, enforced server-side.** The approval service rejects self-review independently of the UI; the DB CHECK on `reviewed_by` backstops it.
+| # | Rule | Change |
+| --- | --- | --- |
+| 2 | No overlapping effectivity | **Amended.** The uniqueness key becomes `(offering, component_type, unit_of_measure, start_date_time)` (§3.4). The derived window `[start, successor start)` and the 3-day backdating rejection are unchanged. |
+| 4 | JSONB is schema-guarded | **Amended.** The guarded column is `price_component`, discriminated on `component_type`, validated by a `strictObject` union branch. Tier contiguity is carried over as VI1 (ascending, non-duplicate `steps`). |
+| 5 | `amount` and tiers are mutually exclusive | **Retired.** Both columns are gone; replaced by the per-`component_type` completeness CHECK (§3.3). |
+| 16 | Every price a customer pays is an immutable catalog row or an insert-only, approved override | **Reaffirmed, explicitly.** The override's physical row is not reshaped. This update creates no third price source. |
+| 28 | A price is complete for its type, or it does not exist | **Amended.** Completeness is now keyed to `component_type`, not `price_type` (§3.3), and still binds seeds as tightly as user input. |
+
+### New — introduced by the Pricing Components update
+
+30. **One component per row, and the row never disagrees with the envelope.** `component_type` always equals `price_component ->> '@type'`. A row whose discriminator and envelope disagree is a corruption, not a variant — asserted in the database and in tests.
+31. **The Zod discriminated union is the only writer of `price_component`.** Every write — action, service, seed, fixture — parses first. Each branch is a `strictObject`: an unknown key is **rejected, never silently stripped**. The DB CHECK is the backstop, never the primary guard.
+32. **Money is a decimal string; quantities are numbers; currency and unit live on columns.** No float represents money anywhere in the envelope. `currency` and `unit_of_measure` are authoritative on the row; `params` never restates them, and `boundTo.unitOfMeasure` exists only to express binding.
+33. **A `post_aggregation` modifier never stands alone.** (VI3) A `capacity_commitment` or `capacity_motivation` requires a rating-stage `usage_rate` of the **same `unit_of_measure`** on the same offering; its base rate would otherwise be unresolvable. This is an offering-level check, enforced in the price-write services inside the DRAFT lock.
+34. **Exactly one `usage_rate` is effective per `(offering, unit_of_measure)` at any instant.** (VI4) Dated successors are allowed; ambiguity is not. Index-backed by §3.4.
+35. **One currency per offering's combinable components.** (VI5) A modifier never mixes currencies with its base component.
+36. **Components compose into one charge per product per BAN.** (PC5) No component is ever its own bill line. An internal base / top-up / discount breakdown may be retained for audit; it is not a line.
+37. **Apply order is canonical, by stage then class.** (PC12) Quantity transforms (`capacity_commitment`) apply before rate schedules (`capacity_motivation`). No `sequence` column exists; adding one is a reviewed decision, not a convenience.
+38. **The envelope's `priceType` is never mapped onto a `price_type` column.** (PC13) They are different axes — TMF (`usage` / `recurring` / `oneTime` / `discount` / `commitment`) versus the legacy column (`recurring` / `usage` / `once`, now surviving only on `ordering.order_item_price_override`). No code or document may equate them silently.
+39. **`negotiated_override` is a projection, never a catalog row.** It is excluded from the `component_type` CHECK enum and cannot be inserted into `product_offering_price`. Its physical storage — one insert-only row per `(order_item, price_type)` in `ordering` — is unchanged (PC9).
+40. **TMF620 alignment is documentation, never a runtime dependency.** No adapter, no SDK, no external API, no `app/api/product*` — in this phase or any other. Every `@type` carries a `plaSpec` doc-block and the mapping table lives in `pricing-component.schema.ts` (PC11); that catalog *is* the compliance artifact.
+41. **`tiered` no longer exists anywhere.** `pricing_model`, `tierSchema`, `tieredPricingCharacteristicsSchema` and `TieredPricingCharacteristics` are absent from schema, validation, types, seeds, tests and UI. Guardrail-enforced by absence, not by convention.
+42. **`rateCardLookUp` is a name, not a reference.** It is an unresolved string with no FK and no table behind it. An absent card or a `"default"` entry falls back to `ratePerUnit`; a null `rateCardLookUp` always uses `ratePerUnit` (PC10). Nothing may treat it as resolvable until the rate-card phase exists.
+43. **Product defines and stores components; it never prices them.** No pricing computation — no capacity resolver, no schedule evaluation, no rate-card lookup — lives in `services/product/**` or `db/**`. The composition contract is tested here as a pure function and executed in Bill Run.
+44. **`specVersion` is present on every stored envelope.** It is the forward-migration hook; a reader that ignores it is a defect, and a shape change without incrementing it is a breaking change disguised as a patch.
+
+### Guardrail re-scoping
+
+| Guardrail | Change |
+| --- | --- |
+| 2 — price immutability | Unchanged in substance; its fixtures move to the component payload. Still asserts `updatePrice` / `deletePrice` refuse a non-`DRAFT` parent, including on a direct SQL write. |
+| 13 — schema-diff | Re-baselined to the reshaped price table: the two new columns, the per-`component_type` CHECK, the rekeyed uniqueness index, and the four dropped columns. |
+| 16 — grandfathering | Extended: a pinned subscription's resolved components must be byte-identical after an activation, envelope included. |
+| **new** — no `tiered` residue | Asserts the absence of `pricing_model`, `tierSchema`, `tieredPricingCharacteristicsSchema` and `TieredPricingCharacteristics` across the repository (Inv. #41). |
+| **new** — override shape frozen | Asserts `ordering.order_item_price_override` still exposes exactly its scalar `amount` + `currency`, insert-only surface (Inv. #39). |
+
+---
+
+## 7. Known gaps this update does **not** close
+
+Recorded so a future reader does not re-derive them. Each maps to an open item in `_updatemodule-product-pricing-components-plan.md`.
+
+- **Nothing bills the capacity components.** The resolver, the `customer_bill_line` mapping, proration of `committedQuantity`, the combined-charge rounding policy, and the BAN aggregation grain are all undecided (O7–O9). Until then the UI shows a non-blocking not-yet-billable warning (O10) — a user can author a component the system cannot yet charge for. That is a deliberate, declared state, not a defect.
+- **Base-rate semantics under a varying rate card are undefined** (O1, extended by O6). When `rateCardLookUp` yields different per-UDR rates, "the base rate" the capacity modifiers compute against — effective, weighted, or the declared `ratePerUnit` — is a bill-run decision. The same question applies when a negotiated override displaces the catalog rate.
+- **Effectivity-aware binding resolution is unspecified** (O5). VI4 guarantees one effective `usage_rate` per unit *at an instant*; which one a modifier binds to across a period containing a dated successor is not yet decided.
+- **`once` → `oneTime` is deferred** (O2). The envelope uses the TMF value; `ordering.order_item_price_override.price_type` still stores `once`. Two vocabularies coexist until that rename lands — which is exactly why Inv. #38 exists.
+- **Unit of measure still has no shared vocabulary.** `product.product_offering_price.unit_of_measure`, `rating.udr_rated.udr_usage_unit` and `billing.customer_bill_line.unit` remain three independent columns, and the unit on a bill line still comes from the rating feed, never from the price. The capacity components bind **by unit** (PC4 / VI3), which makes that divergence newly consequential — a same-unit match that is only textually same-unit.
+- **`Mbps` is a rate, not a quantity.** A per-Mbps commitment or motivation needs a stated basis (per month, per peak sample) that is still not modelled — and the capacity components are quantity-based, so this is now a live modelling question rather than a latent one.

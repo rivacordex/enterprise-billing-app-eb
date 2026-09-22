@@ -4,9 +4,36 @@ import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { BACKDATING_TOLERANCE_DAYS } from "@/validation/backdating-tolerance";
 import type { Database } from "@/db/client";
-import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
+import type {
+  CreateOrderInput,
+  OverridePriceType,
+} from "@/validation/ordering/create-order.schema";
+import type { ComponentType, EnvelopePriceType } from "@/types/product";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// pm50-spec D2/D3 — one explicit, total lookup translating the override's
+// legacy `price_type` axis onto the catalog's `component_type` axis. This is
+// a TRANSLATION between two axes, not an equivalence (Inv. #38): never derive
+// one from the other anywhere else (e.g. no `'once'.startsWith('one')`
+// coincidence match). `envelopePriceType` is absent for `usage` because
+// `usage_rate`'s envelope `priceType` is always the literal `'usage'` — no
+// second predicate is needed, "which component types are in the mapping at
+// all" already carries the old `pricing_model = 'flat'` clause (D2's table).
+//
+// The capacity modifiers (`capacity_commitment`/`capacity_motivation`) are
+// deliberately absent from this map — an override replaces a rate, never a
+// floor or a schedule, so an override naming one can never resolve. Whether
+// an override displaces the base rate a modifier computes against is O6, a
+// bill-run open item this unit does not answer — do not "complete" this map.
+const OVERRIDE_TARGET_BY_PRICE_TYPE: Record<
+  OverridePriceType,
+  { componentType: ComponentType; envelopePriceType?: EnvelopePriceType }
+> = {
+  usage: { componentType: "usage_rate" },
+  recurring: { componentType: "flat_fee", envelopePriceType: "recurring" },
+  once: { componentType: "flat_fee", envelopePriceType: "oneTime" },
+};
 
 export const ORDER_PRECONDITION_ERROR_CODES = [
   "CUSTOMER_NOT_ACTIVE",
@@ -87,12 +114,19 @@ export async function checkOrderPreconditions(
     return { ok: false, code: "NO_PRICE_ROWS" };
   }
 
-  // Overrides — each targeted price type must exist on the version as a flat
-  // price, and its currency must match the BAN's.
+  // Overrides — each targeted price type must exist on the version as a
+  // matching component, and its currency must match the BAN's. The envelope
+  // `priceType` is read off the already-parsed `component` the read model
+  // hands back (pm49 D2) — never re-parsed here, and never inferred from the
+  // row's charge-period columns (a `flat_fee` with no period is `oneTime`,
+  // not a broken recurring price, §4.18).
   for (const override of input.overrides ?? []) {
+    const target = OVERRIDE_TARGET_BY_PRICE_TYPE[override.priceType];
     const targetExists = prices.some(
       (price) =>
-        price.priceType === override.priceType && price.pricingModel === "flat",
+        price.componentType === target.componentType &&
+        (target.envelopePriceType === undefined ||
+          price.component.priceType === target.envelopePriceType),
     );
     if (!targetExists) {
       return { ok: false, code: "OVERRIDE_PRICE_TYPE_INVALID" };
