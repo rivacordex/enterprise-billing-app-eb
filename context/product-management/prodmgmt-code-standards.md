@@ -247,7 +247,7 @@ services/product/
   create-offering.ts, update-offering.ts
   add-specification.ts, update-specification.ts, delete-specification.ts
   insert-price.ts, update-price.ts, delete-price.ts    # (pm38, pm49)
-  validate-offering-components.ts     # (pm49, new)  VI3/VI4/VI5 — tx-first (§2.14)
+  validate-offering-components.ts     # (pm49)  VI3/VI4/VI5 — tx-first (§2.14)
   submit-for-testing.ts, return-to-draft.ts            # (pm42)
   activate-offering.ts, obsolete-offering.ts, retire-offering.ts, delete-offering.ts
 db/schema/product.ts                  # 3 tables; component_type + price_component; per-type CHECK
