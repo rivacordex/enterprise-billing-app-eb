@@ -318,7 +318,7 @@ negotiated_override ───► RP base-rate override (O6)
 ## Open items
 
 - **O1** — Base-rate semantics when `rateCardLookUp` varies the per-unit rate across UDRs (effective/weighted vs `ratePerUnit`). Owner: bill-run phase.
-- **O2** — `once` → `oneTime` migration (`price_type` CHECK on `product_offering_price` and `ordering.order_item_price_override`, plus the TS enum). Owner: storage phase.
+- **O2** — `once` → `oneTime` migration (`price_type` CHECK on `ordering.order_item_price_override`, plus the TS enum; the `product_offering_price.price_type` column was dropped by PC14, so it is no longer in O2's scope). Owner: storage phase.
 - **O3 — RESOLVED by PC14 + fresh-install:** `amount` and `pricing_model` are dropped in place in `0006_product.sql`; no phased retirement, no backfill.
 - **O4 — Physical representation (RESOLVED → PC14, Option A):** reshape the row to `component_type` + `price_component` jsonb, one row per component, `0006_product.sql` edited in place under fresh-install. Alternatives considered and set aside: **B** — a `product_offering_price_component` sidecar for the `capacity_*` modifiers; **C** — a single `pricing_components jsonb[]` column.
 - **O5** — Effectivity-aware binding resolution when dated/successor `usage_rate` rows exist for one unit (VI4). Owner: bill-run/resolution phase.

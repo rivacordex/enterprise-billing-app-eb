@@ -391,12 +391,11 @@ describe.skipIf(!databaseUrl)(
           overrideAmount: null,
           effectiveAmount: "1000.00",
         });
-        // usage: tiered — no scalar list amount, never overridable.
-        expect(byType.get("usage")).toMatchObject({
-          listAmount: null,
-          overrideAmount: null,
-          effectiveAmount: null,
-        });
+        // The capacity_motivation is a rating modifier — never an override
+        // target, no scalar list amount — so it is not an order price line
+        // (pm50 D2). Only the two flat_fee lines (recurring + once) are emitted.
+        expect(byType.get("usage")).toBeUndefined();
+        expect(detail!.prices).toHaveLength(2);
       });
 
       it("selects only the currently-effective catalog row (future successor excluded)", async () => {

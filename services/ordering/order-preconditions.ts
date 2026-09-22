@@ -4,11 +4,9 @@ import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { BACKDATING_TOLERANCE_DAYS } from "@/validation/backdating-tolerance";
 import type { Database } from "@/db/client";
-import type {
-  CreateOrderInput,
-  OverridePriceType,
-} from "@/validation/ordering/create-order.schema";
+import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
 import type { ComponentType, EnvelopePriceType } from "@/types/product";
+import type { OverridePriceType } from "@/types/ordering";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

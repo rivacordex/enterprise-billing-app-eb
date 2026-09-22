@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { OVERRIDE_PRICE_TYPES } from "@/types/ordering";
 import { inclusiveBilledDateSchema } from "@/validation/backdating-tolerance";
 import { characteristicsRecordSchema } from "@/validation/characteristics.schema";
 
@@ -11,17 +12,13 @@ import { characteristicsRecordSchema } from "@/validation/characteristics.schema
 // rule this wire schema enforces, rather than duplicating the literal.
 export const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
 
-// The override's own price-type vocabulary — the ordering column's legacy
-// values (`recurring`/`usage`/`once`), matching
-// `order_item_price_override_price_type_check` on the `ordering` table
-// (unchanged by pm50). Declared locally rather than imported from
-// `@/types/product`: pm47 deleted that module's identically-named
-// `PRICE_TYPES`/`PriceType` when the *catalog* dropped its own `price_type`
-// column — that was always a different axis from this one (pm50-spec D3,
-// Inv. #38), and importing a shared name papered over the distinction. Same
-// three values, same order — no behaviour change.
-export const OVERRIDE_PRICE_TYPES = ["recurring", "usage", "once"] as const;
-export type OverridePriceType = (typeof OVERRIDE_PRICE_TYPES)[number];
+// `OVERRIDE_PRICE_TYPES` — the override's own `recurring`/`usage`/`once` axis,
+// matching the `order_item_price_override_price_type_check` DB CHECK (unchanged
+// by pm50) — now lives in `@/types/ordering` with the module's other domain
+// unions (§2.1). It is deliberately separate from the catalog's component axis
+// (Inv. #38): pm47 deleted the catalog's identically-named `PRICE_TYPES`, and
+// `once` here is never equated with the envelope's `oneTime`. This schema
+// derives its enum from that tuple, never a hand-written duplicate.
 
 // A negotiated per-line override. `priceType` must be one of the DB-supported
 // lowercase catalog values (`recurring`/`usage`/`once`, OVERRIDE_PRICE_TYPES) —

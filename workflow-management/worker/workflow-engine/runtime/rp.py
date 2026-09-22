@@ -247,6 +247,31 @@ class Resolution:
     udr_price_override_ref: str | None
 
 
+# The measured-usage unit a feed profile emits (PRP's ``udr_usage_unit``, e.g.
+# RAN's ``"MBPS"``) is a DIFFERENT vocabulary from the catalog's
+# ``product_offering_price.unit_of_measure`` (``product.UNITS_OF_MEASURE``:
+# ``Mbps``/``GB``/``MB``/``EA``). The resolution join matches the two by EXACT
+# equality (``pw.unit_of_measure = r.usage_unit``), so a feed token must be
+# translated to its catalog token BEFORE it reaches the join — otherwise a
+# case-only skew (``MBPS`` vs ``Mbps``) makes every record LOOKUP_MISS. This is a
+# DOMAIN mapping, not a generic casefold: a unit's canonical catalog spelling is
+# business data owned here, kept explicitly separate from the feed vocabulary and
+# never silently equated by string case (same posture as the two price-type
+# vocabularies, code-standards §6.21). An unmapped token passes through
+# unchanged, so an unknown unit still simply LOOKUP_MISSes (its prior behaviour)
+# rather than resolving against the wrong lane.
+_FEED_UNIT_TO_CATALOG: dict[str, str] = {
+    "MBPS": "Mbps",
+}
+
+
+def _to_catalog_unit(feed_unit: str) -> str:
+    """Translate a feed's measured-usage unit to the catalog ``unit_of_measure``
+    vocabulary the price-resolution join matches against. Unknown units pass
+    through unchanged (they LOOKUP_MISS, as before) — never case-folded."""
+    return _FEED_UNIT_TO_CATALOG.get(feed_unit, feed_unit)
+
+
 def resolve_chunk(
     conn: psycopg.Connection,
     line_nos: list[int],
@@ -259,7 +284,10 @@ def resolve_chunk(
     from the map — the caller raises ``LOOKUP_MISS`` for it (D3). ``usage_units``
     is matched against each price window's ``unit_of_measure`` (pm51-spec D2/D5)
     so an offering carrying more than one ``usage_rate`` lane at different units
-    (e.g. GB and Mbps) can never join a record to more than one active rate."""
+    (e.g. GB and Mbps) can never join a record to more than one active rate. Each
+    feed unit is translated to the catalog vocabulary (``_to_catalog_unit``)
+    before the join, since a feed's measured-unit spelling (e.g. ``MBPS``) is a
+    separate vocabulary from the catalog's (``Mbps``)."""
     rows = db.fetch(
         conn,
         _RESOLVE_SQL,
@@ -267,7 +295,9 @@ def resolve_chunk(
             "line_nos": line_nos,
             "inventory_ids": inventory_ids,
             "start_datetimes": start_datetimes,
-            "usage_units": usage_units,
+            # Feed vocabulary → catalog vocabulary before the exact-equality join
+            # (e.g. RAN "MBPS" → catalog "Mbps"); see _to_catalog_unit.
+            "usage_units": [_to_catalog_unit(u) for u in usage_units],
         },
     )
     resolved: dict[int, Resolution] = {}
