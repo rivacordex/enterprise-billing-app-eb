@@ -212,15 +212,15 @@ export const productOfferingPrice = product.table(
     ),
     check(
       "product_offering_price_usage_rate_check",
-      sql`component_type <> 'usage_rate' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,ratePerUnit}'), 'missing') = 'string' AND price_component #>> '{params,ratePerUnit}' ~ '^[0-9]+(\.[0-9]+)?$')`,
+      sql`component_type <> 'usage_rate' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,ratePerUnit}'), 'missing') = 'string' AND price_component #>> '{params,ratePerUnit}' ~ '^[0-9]+(\\.[0-9]+)?$')`,
     ),
     check(
       "product_offering_price_flat_fee_check",
-      sql`component_type <> 'flat_fee' OR (unit_of_measure IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,amount}'), 'missing') = 'string' AND price_component #>> '{params,amount}' ~ '^[0-9]+(\.[0-9]+)?$' AND COALESCE(price_component ->> 'priceType', '') IN ('recurring', 'oneTime') AND ((price_component ->> 'priceType' = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_component ->> 'priceType' = 'oneTime' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)))`,
+      sql`component_type <> 'flat_fee' OR (unit_of_measure IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,amount}'), 'missing') = 'string' AND price_component #>> '{params,amount}' ~ '^[0-9]+(\\.[0-9]+)?$' AND COALESCE(price_component ->> 'priceType', '') IN ('recurring', 'oneTime') AND ((price_component ->> 'priceType' = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_component ->> 'priceType' = 'oneTime' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)))`,
     ),
     check(
       "product_offering_price_capacity_commitment_check",
-      sql`component_type <> 'capacity_commitment' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,committedQuantity}'), 'missing') = 'number' AND (price_component #>> '{params,committedQuantity}')::numeric > 0)`,
+      sql`component_type <> 'capacity_commitment' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND CASE WHEN jsonb_typeof(price_component #> '{params,committedQuantity}') = 'number' THEN (price_component #>> '{params,committedQuantity}')::numeric > 0 ELSE false END)`,
     ),
     check(
       "product_offering_price_capacity_motivation_check",

@@ -28,6 +28,8 @@ The repository parses the JSONB **once**, at the read boundary, with `persistabl
 
 The `lead()` window partitions by `(product_offering_id, component_type, unit_of_measure)` — the same key as pm46's `NULLS NOT DISTINCT` unique constraint (§2.6, §6.4). This is the whole point of the rekey: a newly added `capacity_motivation` must not appear to supersede the `usage_rate` beside it, and a `flat_fee` (NULL unit) forms its own lane. `endDateTime` remains **derived, never stored** (Inv. #3); `effectivityStatus` remains derived from it.
 
+**Known gap, carried from pm46 (not fixed here).** A `flat_fee` lane does not yet split on envelope `priceType`, so a `recurring` and a `oneTime` flat fee starting the same date fall into the same `(component_type='flat_fee', unit_of_measure=NULL)` lane and can appear to supersede one another though they are unrelated charges. The correct lane key adds `price_component ->> 'priceType'` for `flat_fee`; the UI's rendering key (`prodmgmt-ui-context.md` §4) must track whatever this partition ends up being. Closing it is a follow-up unit against the repository's `lead()` window and pm46's uniqueness constraint together, not a pm49 change.
+
 Ordering changes with the partition: rows come back ordered by `component_type`, then `unit_of_measure`, then `start_date_time`, then id — deterministic, and grouped the way the panels render.
 
 ### D4. `validateOfferingComponents` — one file, one function, three codes, `tx` first
