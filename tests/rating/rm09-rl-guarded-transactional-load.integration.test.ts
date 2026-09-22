@@ -33,6 +33,7 @@ import {
 } from "@/db/schema/ordering";
 import { productInventory } from "@/db/schema/inventory";
 import { udrRated } from "@/db/schema/rating/udr-rated";
+import type { UsageRateComponent } from "@/validation/product/pricing-component.schema";
 import { udrBatch } from "@/db/schema/rating/udr-batch";
 
 // rm09-spec §Verification checklist + code-standards §10 tests OWNED by rm09:
@@ -97,6 +98,25 @@ const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 const NOW = "2026-08-20T00:00:00Z";
 const CURRENCY = "MYR";
 const OTHER_CURRENCY = "USD";
+
+// pm51-spec D6 — component-envelope builder replacing the pre-reshape flat
+// usage price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
+// `buildPriceEnvelope` builds in production).
+function usageRateEnvelope(
+  ratePerUnit: string,
+  unitOfMeasure: "Mbps",
+): UsageRateComponent {
+  return {
+    "@type": "usage_rate",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType: "usage",
+    appliesAt: "rating",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { ratePerUnit, rateCardLookUp: null },
+  };
+}
 
 function statements(path: string): string[] {
   return readFileSync(path, "utf8")
@@ -249,7 +269,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const myrAccount = await makeAccount(CURRENCY);
       const usdAccount = await makeAccount(OTHER_CURRENCY);
 
-      // OFF1 with a usage price in MYR.
+      // OFF1 with a usage price in MYR. Inserted DRAFT, priced, then flipped
+      // to ACTIVE — pm36's DRAFT-guard trigger refuses a price write once
+      // the parent offering leaves DRAFT (same pattern as
+      // `db/seeds/demo/product-demo.ts`).
       const [off1] = await db
         .insert(productOffering)
         .values({
@@ -257,20 +280,25 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           isBundle: false,
           isSellable: true,
           billingOnly: false,
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
           lastEditedBy: userId,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
       const off1Id = off1!.productOfferingId;
+      // pm51-spec D6 — re-keyed, same rate/currency/start date.
       await db.insert(productOfferingPrice).values({
         productOfferingId: off1Id,
         name: "OFF1 usage",
-        priceType: "usage",
-        pricingModel: "flat",
-        amount: "0.0050",
+        componentType: "usage_rate",
+        priceComponent: usageRateEnvelope("0.0050", "Mbps"),
+        unitOfMeasure: "Mbps",
         currency: CURRENCY,
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off1Id));
 
       const makeSubscription = async (
         acctId: string,
