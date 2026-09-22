@@ -565,16 +565,18 @@ export const productOfferingRepository = {
         sourcePrices.map((price) => ({
           productOfferingId: offeringId,
           name: price.name,
-          priceType: price.priceType,
+          // Re-keyed to the component envelope (pm49 I2) — the branch copies
+          // the already-persisted, already-validated envelope verbatim; it is
+          // not re-parsed (§2.18, the envelope is parsed once, at its
+          // original write).
+          componentType: price.componentType,
+          priceComponent: price.priceComponent,
           recurringChargePeriodLength: price.recurringChargePeriodLength,
           recurringChargePeriodType: price.recurringChargePeriodType,
           unitOfMeasure: price.unitOfMeasure,
-          amount: price.amount,
           currency: price.currency,
           glCode: price.glCode,
-          pricingModel: price.pricingModel,
           policy: price.policy,
-          pricingCharacteristics: price.pricingCharacteristics,
           startDateTime: price.startDateTime,
           // Copied, not defaulted — "byte-identical in content" (Design).
           createdAt: price.createdAt,

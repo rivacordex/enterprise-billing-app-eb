@@ -6,6 +6,11 @@ import {
   toPriceWriteData,
 } from "@/db/repositories/product-offering-price";
 import { isUniqueViolation } from "@/lib/db-errors";
+import {
+  validateOfferingComponents,
+  type ValidateOfferingComponentsResult,
+} from "@/services/product/validate-offering-components";
+import type { UnitOfMeasure } from "@/types/product";
 import type { InsertPriceInput } from "@/validation/product/insert-price.schema";
 
 // Same tolerance value as insert-price.schema.ts's own copy — declared
@@ -23,7 +28,37 @@ export type InsertPriceResult =
   | { ok: false; code: "OFFERING_NOT_FOUND" }
   | { ok: false; code: "OFFERING_RETIRED" }
   | { ok: false; code: "BACKDATED_START_TOO_FAR" }
-  | { ok: false; code: "DUPLICATE_START" };
+  | { ok: false; code: "DUPLICATE_START" }
+  | {
+      ok: false;
+      code: "MODIFIER_WITHOUT_BASE_RATE";
+      unitOfMeasure: UnitOfMeasure;
+    }
+  | { ok: false; code: "AMBIGUOUS_BASE_RATE" }
+  | {
+      ok: false;
+      code: "CURRENCY_MISMATCH";
+      existingCurrency: string;
+      candidateCurrency: string;
+    };
+
+// Carries a component-validator refusal out of the transaction so it can be
+// turned into a typed result rather than committing a partial write. Needed
+// because insertPrice may have already branched a new DRAFT (a real write)
+// before the validator runs (pm49-spec D9) — a plain early `return` would
+// commit that branch even though the price it was for was refused, so
+// refusal here must THROW to roll the whole transaction back, mirroring
+// update-price.ts's own `BackdatedStartTooFarError` sentinel.
+class OfferingComponentViolationError extends Error {
+  constructor(
+    public readonly result: Exclude<
+      ValidateOfferingComponentsResult,
+      { ok: true }
+    >,
+  ) {
+    super(`offering component violation: ${result.code}`);
+  }
+}
 
 // pm15-spec §3.4. Branch-first when the target offering is ACTIVE (Design);
 // adding a price never needs to "locate a counterpart" the way pm14's
@@ -47,11 +82,10 @@ export async function insertPrice(
     return { ok: false, code: "BACKDATED_START_TOO_FAR" };
   }
 
-  // pm38-spec I4 — the per-price-type completeness columns come from the parsed
-  // discriminated input (recurring → charge period, usage → unit, once →
-  // neither), shared with updatePrice via toPriceWriteData so the two writes can
-  // never disagree on which columns each type fills. This is what satisfies
-  // pm35's DB CHECKs (a null period on a recurring price is now illegal).
+  // pm49-spec I1.2 (carrying forward pm38-spec I4's intent) — the component
+  // envelope and the per-component-type completeness columns come from the
+  // parsed discriminated input, shared with updatePrice via toPriceWriteData
+  // so the two writes can never disagree on which columns each type fills.
   const priceData = toPriceWriteData(input);
 
   try {
@@ -78,6 +112,24 @@ export async function insertPrice(
           await productOfferingRepository.branchOfferingAsDraft(tx, offeringId);
         targetOfferingId = branchedId;
         branched = true;
+      }
+
+      // pm49-spec D9/I4.2 — the validator runs against the branched draft's
+      // component set, not the source version's: the branch happens
+      // mid-transaction and the offering id changes underneath it.
+      const validation = await validateOfferingComponents(
+        tx,
+        targetOfferingId,
+        {
+          kind: "insert",
+          componentType: priceData.componentType,
+          unitOfMeasure: priceData.unitOfMeasure,
+          currency: priceData.currency,
+          startDateTime: priceData.startDateTime,
+        },
+      );
+      if (!validation.ok) {
+        throw new OfferingComponentViolationError(validation);
       }
 
       const { productOfferingPriceId } =
@@ -109,11 +161,17 @@ export async function insertPrice(
       };
     });
   } catch (err) {
-    // A second price of the same type at the same start on this offering hits
-    // the UNIQUE (offering, price_type, start_date_time) index (Inv. #2) — the
-    // same collision updatePrice translates, surfaced here as a typed result
-    // instead of a raw error (pm38 review symmetry fix).
-    if (isUniqueViolation(err, "product_offering_price_type_start_unique")) {
+    if (err instanceof OfferingComponentViolationError) {
+      return err.result;
+    }
+    // A second component of the same type/unit at the same start on this
+    // offering hits the UNIQUE (offering, component_type, unit_of_measure,
+    // start_date_time) constraint (Inv. #2) — the same collision updatePrice
+    // translates, surfaced here as a typed result instead of a raw error
+    // (pm38 review symmetry fix). Renamed with pm46's constraint rekey.
+    if (
+      isUniqueViolation(err, "product_offering_price_component_start_unique")
+    ) {
       return { ok: false, code: "DUPLICATE_START" };
     }
     throw err; // anything else is a genuine, unexpected failure — fail loud

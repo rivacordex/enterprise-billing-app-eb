@@ -6,6 +6,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
 import { insertPrice } from "@/services/product/insert-price";
+import type { UnitOfMeasure } from "@/types/product";
 import { insertPriceSchema } from "@/validation/product/insert-price.schema";
 
 export type InsertPriceActionResult =
@@ -25,6 +26,18 @@ export type InsertPriceActionResult =
   | { ok: false; code: "OFFERING_RETIRED" }
   | { ok: false; code: "BACKDATED_START_TOO_FAR" }
   | { ok: false; code: "DUPLICATE_START" }
+  | {
+      ok: false;
+      code: "MODIFIER_WITHOUT_BASE_RATE";
+      unitOfMeasure: UnitOfMeasure;
+    }
+  | { ok: false; code: "AMBIGUOUS_BASE_RATE" }
+  | {
+      ok: false;
+      code: "CURRENCY_MISMATCH";
+      existingCurrency: string;
+      candidateCurrency: string;
+    }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
@@ -65,7 +78,11 @@ export async function insertPriceAction(
   }
 
   if (!result.ok) {
-    return { ok: false, code: result.code };
+    // Returned as-is (not `{ ok: false, code: result.code }`) — pm49's three
+    // violation codes carry extra fields (`unitOfMeasure` /
+    // `existingCurrency`+`candidateCurrency`) the UI needs (code-standards
+    // §3.7); dropping to `code` alone would silently discard them.
+    return result;
   }
 
   // Both product pages, matching create-offering.action.ts (pm19) and
