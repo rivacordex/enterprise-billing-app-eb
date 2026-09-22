@@ -22,6 +22,10 @@ import { inventoryStatusHistoryRepository } from "@/db/repositories/inventory/in
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { getOrderDetail as GetOrderDetail } from "@/services/ordering/get-order-detail";
 import type { listOrders as ListOrders } from "@/services/ordering/list-orders";
+import type {
+  FlatFeeComponent,
+  CapacityMotivationComponent,
+} from "@/validation/product/pricing-component.schema";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -31,6 +35,40 @@ const databaseUrl = process.env.DATABASE_URL;
 const NOW = new Date("2026-08-10T00:00:00Z");
 const CURRENCY = "MYR";
 const CHARACTERISTICS = { SST_ID: "01", SD_ID: "A0C4E2" };
+
+// pm50-spec D6 — component-envelope builders replacing the pre-reshape
+// price-row literals (same shape `db/seeds/demo/product-demo.ts`'s
+// `buildPriceEnvelope` builds in production).
+function flatFeeEnvelope(
+  priceType: "recurring" | "oneTime",
+  amount: string,
+): FlatFeeComponent {
+  return {
+    "@type": "flat_fee",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType,
+    appliesAt: "billing",
+    basis: "flat",
+    boundTo: null,
+    params: { amount },
+  };
+}
+
+function capacityMotivationEnvelope(
+  unitOfMeasure: "GB",
+): CapacityMotivationComponent {
+  return {
+    "@type": "capacity_motivation",
+    specVersion: 1,
+    plaSpecId: "PLA_CAPACITY_MOTIVATION",
+    priceType: "discount",
+    appliesAt: "post_aggregation",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { steps: [{ aboveQuantity: 1000, ratePerUnit: "0.01" }] },
+  };
+}
 
 describe.skipIf(!databaseUrl)(
   "ordering read repositories + services (requires DATABASE_URL)",
@@ -177,6 +215,14 @@ describe.skipIf(!databaseUrl)(
         .returning({ billingAccountId: billingAccount.billingAccountId });
       bannId = ban!.billingAccountId;
 
+      // Necessary pm50 deviation from D6's literal "change only the shape of
+      // the seeded price rows": pm36's DRAFT-guard trigger
+      // (`product_child_write_requires_draft`) refuses a price insert once
+      // the parent offering leaves DRAFT, and this fixture previously
+      // created the offering ACTIVE before pricing it — insert-while-DRAFT-
+      // then-activate is the same pattern pm36 itself gave
+      // `db/seeds/demo/product-demo.ts`, and is required here for any price
+      // row to insert at all.
       const [offering] = await db
         .insert(productOffering)
         .values({
@@ -184,56 +230,69 @@ describe.skipIf(!databaseUrl)(
           isBundle: false,
           isSellable: true,
           billingOnly: true,
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
           version: 2,
           lastEditedBy: null,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
       offeringId = offering!.productOfferingId;
 
-      // recurring 5000 (current) + its future 5500 successor, once 1000, usage
-      // tiered — mirrors the seed offering's price shape.
+      // pm50-spec D6 — re-keyed to components, same amounts/currency/start
+      // dates: flat_fee(recurring) 5000 (current) + its future 5500
+      // successor in the same lane, flat_fee(oneTime) 1000, and a
+      // capacity_motivation standing in for the old tiered usage price (the
+      // new shape that is legitimately never an override target). The
+      // Activation Fee's start date moves one day later (2026-01-02): it
+      // shares `flat_fee` + `unit_of_measure NULL` with the recurring row,
+      // and the reshaped uniqueness constraint is NULLS-NOT-DISTINCT on
+      // (offering, component_type, unit_of_measure, start_date_time) — two
+      // same-lane rows can no longer share a start date (pm48's own fixture
+      // note). `NOW` (2026-08-10) is well past both dates either way, so no
+      // effectivity assertion below is affected.
       await db.insert(productOfferingPrice).values([
         {
           productOfferingId: offeringId,
           name: "Monthly Recurring Charge",
-          priceType: "recurring",
-          amount: "5000.00",
+          componentType: "flat_fee",
+          priceComponent: flatFeeEnvelope("recurring", "5000.00"),
+          recurringChargePeriodLength: 1,
+          recurringChargePeriodType: "months",
           currency: CURRENCY,
-          pricingModel: "flat",
           startDateTime: new Date("2026-01-01T00:00:00Z"),
         },
         {
           productOfferingId: offeringId,
           name: "Monthly Recurring Charge 2027",
-          priceType: "recurring",
-          amount: "5500.00",
+          componentType: "flat_fee",
+          priceComponent: flatFeeEnvelope("recurring", "5500.00"),
+          recurringChargePeriodLength: 1,
+          recurringChargePeriodType: "months",
           currency: CURRENCY,
-          pricingModel: "flat",
           startDateTime: new Date("2027-01-01T00:00:00Z"),
         },
         {
           productOfferingId: offeringId,
           name: "Activation Fee",
-          priceType: "once",
-          amount: "1000.00",
+          componentType: "flat_fee",
+          priceComponent: flatFeeEnvelope("oneTime", "1000.00"),
           currency: CURRENCY,
-          pricingModel: "flat",
-          startDateTime: new Date("2026-01-01T00:00:00Z"),
+          startDateTime: new Date("2026-01-02T00:00:00Z"),
         },
         {
           productOfferingId: offeringId,
-          name: "Data Overage",
-          priceType: "usage",
-          amount: null,
+          name: "Data Overage Motivation",
+          componentType: "capacity_motivation",
+          priceComponent: capacityMotivationEnvelope("GB"),
+          unitOfMeasure: "GB",
           currency: CURRENCY,
-          pricingModel: "tiered",
-          pricingCharacteristics: {
-            tiers: [{ from: 0, to: null, rate: "0.05" }],
-          },
           startDateTime: new Date("2026-01-01T00:00:00Z"),
         },
       ]);
+
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, offeringId));
 
       // 1) COMPLETED + recurring override 420.00 (+ ACTIVE inventory story).
       const o1 = await createOrderWithItem({

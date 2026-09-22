@@ -29,6 +29,7 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { approveOrder as ApproveOrder } from "@/services/ordering/review-order";
 import type { rejectOrder as RejectOrder } from "@/services/ordering/review-order";
 import type { createOrder as CreateOrder } from "@/services/ordering/create-order";
+import type { FlatFeeComponent } from "@/validation/product/pricing-component.schema";
 
 // pm30-spec §3 — live-DB integration + concurrency proof for `approveOrder` /
 // `rejectOrder`. Happy approve (instantiation + reviewed stamps), reject
@@ -45,6 +46,25 @@ const NOW = new Date("2026-08-10T00:00:00Z");
 const CURRENCY = "MYR";
 const RACE_RUNS = 4; // spec: run each race ≥ 4× with consistent outcomes
 
+// pm50-spec D6 — component-envelope builder replacing the pre-reshape flat
+// price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
+// `buildPriceEnvelope` builds in production).
+function flatFeeEnvelope(
+  priceType: "recurring" | "oneTime",
+  amount: string,
+): FlatFeeComponent {
+  return {
+    "@type": "flat_fee",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType,
+    appliesAt: "billing",
+    basis: "flat",
+    boundTo: null,
+    params: { amount },
+  };
+}
+
 describe.skipIf(!databaseUrl)(
   "approveOrder / rejectOrder (pm30-spec §3, requires DATABASE_URL)",
   () => {
@@ -58,7 +78,7 @@ describe.skipIf(!databaseUrl)(
     let managerId: string; // holds MANAGER, ≠ submitter
     let managerRoleId: string;
     let cycleId: string;
-    let goodOfferingId: string; // ACTIVE, billing-only, sellable; flat recurring price
+    let goodOfferingId: string; // ACTIVE, billing-only, sellable; flat_fee(recurring) component
 
     async function newAppUser(name: string): Promise<string> {
       const [row] = await db
@@ -140,6 +160,14 @@ describe.skipIf(!databaseUrl)(
     }
 
     async function newOffering(): Promise<string> {
+      // Necessary pm50 deviation from D6's literal "change only the shape of
+      // the seeded price rows": pm36's DRAFT-guard trigger
+      // (`product_child_write_requires_draft`) refuses a price insert once
+      // the parent offering leaves DRAFT, and this fixture previously
+      // created the offering ACTIVE before pricing it — insert-while-DRAFT-
+      // then-activate is the same pattern pm36 itself gave
+      // `db/seeds/demo/product-demo.ts`, and is required here for any price
+      // row to insert at all.
       const [offering] = await db
         .insert(productOffering)
         .values({
@@ -147,21 +175,27 @@ describe.skipIf(!databaseUrl)(
           isBundle: false,
           isSellable: true,
           billingOnly: true,
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
           version: 1,
           lastEditedBy: null,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
       const offeringId = offering!.productOfferingId;
+      // pm50-spec D6 — re-keyed, same amount/currency/start date.
       await db.insert(productOfferingPrice).values({
         productOfferingId: offeringId,
         name: "Monthly Recurring Charge",
-        priceType: "recurring",
-        amount: "5000.00",
+        componentType: "flat_fee",
+        priceComponent: flatFeeEnvelope("recurring", "5000.00"),
+        recurringChargePeriodLength: 1,
+        recurringChargePeriodType: "months",
         currency: CURRENCY,
-        pricingModel: "flat",
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, offeringId));
       return offeringId;
     }
 

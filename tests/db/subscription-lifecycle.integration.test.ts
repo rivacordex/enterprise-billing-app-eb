@@ -24,6 +24,7 @@ import type { terminateSubscription as TerminateSubscription } from "@/services/
 import type { updateInstanceCharacteristics as UpdateInstanceCharacteristics } from "@/services/inventory/update-instance-characteristics";
 import type { listSubscriptions as ListSubscriptions } from "@/services/inventory/list-subscriptions";
 import type { getSubscriptionDetail as GetSubscriptionDetail } from "@/services/inventory/get-subscription-detail";
+import type { FlatFeeComponent } from "@/validation/product/pricing-component.schema";
 
 // pm32-spec §3 — live-DB integration + concurrency proof for the four
 // lifecycle write services plus the two read services. `PMSUBVERIFY-` prefix
@@ -32,6 +33,25 @@ import type { getSubscriptionDetail as GetSubscriptionDetail } from "@/services/
 const databaseUrl = process.env.DATABASE_URL;
 const CURRENCY = "MYR";
 const RACE_RUNS = 4; // spec: run each race ≥ 4× with consistent outcomes
+
+// pm50-spec D6 — component-envelope builder replacing the pre-reshape flat
+// price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
+// `buildPriceEnvelope` builds in production).
+function flatFeeEnvelope(
+  priceType: "recurring" | "oneTime",
+  amount: string,
+): FlatFeeComponent {
+  return {
+    "@type": "flat_fee",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType,
+    appliesAt: "billing",
+    basis: "flat",
+    boundTo: null,
+    params: { amount },
+  };
+}
 
 describe.skipIf(!databaseUrl)(
   "subscription lifecycle + read services (pm32-spec §3, requires DATABASE_URL)",
@@ -48,7 +68,7 @@ describe.skipIf(!databaseUrl)(
 
     let actorId: string;
     let cycleId: string;
-    let goodOfferingId: string; // ACTIVE, billing-only, sellable; flat recurring price
+    let goodOfferingId: string; // ACTIVE, billing-only, sellable; flat_fee(recurring) component
 
     async function newAppUser(name: string): Promise<string> {
       const [row] = await db
@@ -114,6 +134,16 @@ describe.skipIf(!databaseUrl)(
     async function newOffering(
       lifecycleStatus: "ACTIVE" | "RETIRED" = "ACTIVE",
     ): Promise<string> {
+      // Necessary pm50 deviation from D6's literal "change only the shape of
+      // the seeded price rows": pm36's DRAFT-guard trigger
+      // (`product_child_write_requires_draft`) refuses a price insert once
+      // the parent offering leaves DRAFT, and this fixture previously
+      // created the offering ACTIVE before pricing it — insert-while-DRAFT-
+      // then-activate is the same pattern pm36 itself gave
+      // `db/seeds/demo/product-demo.ts`, and is required here for any price
+      // row to insert at all. No caller of this helper actually requests
+      // `RETIRED` (only the default `ACTIVE`), so flipping straight to the
+      // caller's requested status after pricing is safe.
       const [offering] = await db
         .insert(productOffering)
         .values({
@@ -121,21 +151,27 @@ describe.skipIf(!databaseUrl)(
           isBundle: false,
           isSellable: true,
           billingOnly: true,
-          lifecycleStatus,
+          lifecycleStatus: "DRAFT",
           version: 1,
           lastEditedBy: null,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
       const offeringId = offering!.productOfferingId;
+      // pm50-spec D6 — re-keyed, same amount/currency/start date.
       await db.insert(productOfferingPrice).values({
         productOfferingId: offeringId,
         name: "Monthly Recurring Charge",
-        priceType: "recurring",
-        amount: "5000.00",
+        componentType: "flat_fee",
+        priceComponent: flatFeeEnvelope("recurring", "5000.00"),
+        recurringChargePeriodLength: 1,
+        recurringChargePeriodType: "months",
         currency: CURRENCY,
-        pricingModel: "flat",
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus })
+        .where(eq(productOffering.productOfferingId, offeringId));
       return offeringId;
     }
 
