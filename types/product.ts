@@ -215,24 +215,29 @@ export type SpecificationCard = {
   characteristics: ProductSpecCharacteristics; // flat string record (pm02 §3.6)
 };
 
-// pm47-spec I3: `PriceCard` is not reshaped here — that's pm49's, together
-// with the repository that populates it. `priceType`/`pricingModel`/`amount`/
-// `pricingCharacteristics` are removed because their backing types
-// (`PriceType`/`PricingModel`/`TieredPricingCharacteristics`) are deleted by
-// this unit; the new `componentType`/`priceComponent` fields are deliberately
-// NOT added early.
+// pm49-spec D2/I6: the read model carries the parsed component and nothing
+// legacy. `componentType` + `component` replace the four dropped columns
+// (`priceType`/`pricingModel`/`amount`/`pricingCharacteristics`, gone since
+// pm47) — the component's money lives in its envelope, never in a `PriceCard`
+// field, because the two axes (component type vs. the deleted row-level
+// price type) must never be conflated (Inv. #38). `component` is parsed once,
+// at the repository read boundary, with `persistablePricingComponentSchema`
+// (D2) — a page or a component imports the envelope type-only (§2.18) and
+// never re-parses it.
 export type PriceCard = {
   productOfferingPriceId: string;
   name: string;
+  componentType: ComponentType;
+  component: PricingComponent;
   currency: string;
+  unitOfMeasure: string | null;
   recurringChargePeriodLength: number | null;
   recurringChargePeriodType: string | null;
-  unitOfMeasure: string | null;
   glCode: string | null;
   policy: string | null; // carried, semantics deferred (workflow §5.1)
   startDateTime: Date;
   createdAt: Date;
-  endDateTime: Date | null; // derived; null = open-ended (Inv. #3)
+  endDateTime: Date | null; // derived per (component_type, unit_of_measure) lane; null = open-ended (Inv. #3)
   effectivityStatus: EffectivityStatus; // Design #10
 };
 

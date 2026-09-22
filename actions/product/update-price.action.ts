@@ -6,6 +6,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
 import { updatePrice } from "@/services/product/update-price";
+import type { UnitOfMeasure } from "@/types/product";
 import { updatePriceSchema } from "@/validation/product/update-price.schema";
 
 export type UpdatePriceActionResult =
@@ -24,6 +25,18 @@ export type UpdatePriceActionResult =
   | { ok: false; code: "OFFERING_NOT_DRAFT" }
   | { ok: false; code: "BACKDATED_START_TOO_FAR" }
   | { ok: false; code: "DUPLICATE_START" }
+  | {
+      ok: false;
+      code: "MODIFIER_WITHOUT_BASE_RATE";
+      unitOfMeasure: UnitOfMeasure;
+    }
+  | { ok: false; code: "AMBIGUOUS_BASE_RATE" }
+  | {
+      ok: false;
+      code: "CURRENCY_MISMATCH";
+      existingCurrency: string;
+      candidateCurrency: string;
+    }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
@@ -63,7 +76,10 @@ export async function updatePriceAction(
   }
 
   if (!result.ok) {
-    return { ok: false, code: result.code };
+    // Returned as-is — pm49's three violation codes carry extra fields the
+    // UI needs (code-standards §3.7); `{ ok: false, code: result.code }`
+    // would silently discard them.
+    return result;
   }
 
   revalidatePath("/products/manage-products");
