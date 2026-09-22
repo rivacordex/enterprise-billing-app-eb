@@ -34,6 +34,12 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { BACKDATING_TOLERANCE_DAYS } from "@/validation/backdating-tolerance";
 import type { createOrder as CreateOrder } from "@/services/ordering/create-order";
 import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
+import type {
+  FlatFeeComponent,
+  UsageRateComponent,
+  CapacityCommitmentComponent,
+  CapacityMotivationComponent,
+} from "@/validation/product/pricing-component.schema";
 
 // pm28-spec §4 — live-DB integration proof for `createOrder`. Standard path
 // (atomic completion), override path (PENDING park), every §1 precondition
@@ -46,6 +52,72 @@ const databaseUrl = process.env.DATABASE_URL;
 // default start dates below stay inside the 3-day backdating tolerance.
 const NOW = new Date("2026-08-10T00:00:00Z");
 const CURRENCY = "MYR";
+
+// pm50-spec D6 — component-envelope builders replacing the pre-reshape
+// price-row literals, one per component type this file seeds. Same shape
+// `db/seeds/demo/product-demo.ts`'s `buildPriceEnvelope` builds in production.
+function flatFeeEnvelope(
+  priceType: "recurring" | "oneTime",
+  amount: string,
+): FlatFeeComponent {
+  return {
+    "@type": "flat_fee",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType,
+    appliesAt: "billing",
+    basis: "flat",
+    boundTo: null,
+    params: { amount },
+  };
+}
+
+function usageRateEnvelope(
+  ratePerUnit: string,
+  unitOfMeasure: "GB",
+): UsageRateComponent {
+  return {
+    "@type": "usage_rate",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType: "usage",
+    appliesAt: "rating",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { ratePerUnit, rateCardLookUp: null },
+  };
+}
+
+function capacityCommitmentEnvelope(
+  unitOfMeasure: "GB",
+  committedQuantity: number,
+): CapacityCommitmentComponent {
+  return {
+    "@type": "capacity_commitment",
+    specVersion: 1,
+    plaSpecId: "PLA_CAPACITY_COMMITMENT",
+    priceType: "commitment",
+    appliesAt: "post_aggregation",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { committedQuantity },
+  };
+}
+
+function capacityMotivationEnvelope(
+  unitOfMeasure: "GB",
+): CapacityMotivationComponent {
+  return {
+    "@type": "capacity_motivation",
+    specVersion: 1,
+    plaSpecId: "PLA_CAPACITY_MOTIVATION",
+    priceType: "discount",
+    appliesAt: "post_aggregation",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { steps: [{ aboveQuantity: 1000, ratePerUnit: "0.01" }] },
+  };
+}
 
 describe.skipIf(!databaseUrl)(
   "createOrder (pm28-spec §4, requires DATABASE_URL)",
@@ -61,7 +133,7 @@ describe.skipIf(!databaseUrl)(
     // several precondition tests that only need one axis to be "bad."
     let goodPartyRoleId: string;
     let goodBanId: string;
-    let goodOfferingId: string; // ACTIVE, billing-only, sellable; flat recurring + tiered usage prices
+    let goodOfferingId: string; // ACTIVE, billing-only, sellable; flat_fee(recurring) + capacity_motivation components
 
     async function newAppUser(name: string): Promise<string> {
       const [row] = await db
@@ -134,8 +206,23 @@ describe.skipIf(!databaseUrl)(
       lifecycleStatus: "DRAFT" | "ACTIVE" | "RETIRED";
       isSellable?: boolean;
       billingOnly?: boolean;
-      prices?: "none" | "flat-and-tiered";
+      prices?:
+        | "none"
+        | "flat-and-capacity"
+        | "components-full"
+        | "capacity-and-usage";
     }): Promise<string> {
+      // Necessary pm50 deviation from D6's literal "change only the shape of
+      // the seeded price rows": pm36's DRAFT-guard trigger
+      // (`product_child_write_requires_draft`) refuses a price insert once
+      // the parent offering leaves DRAFT, and this fixture previously
+      // created the offering ACTIVE before pricing it — already flagged as
+      // debt by pm36's own tracker note ("the trigger widens the option-C
+      // co-land scope") but never actually fixed here. It must be fixed now:
+      // no shape of price row is insertable at all otherwise, so "repair the
+      // four suites" (D6) is unreachable without also reordering to
+      // insert-while-DRAFT-then-activate (the same pattern pm36 itself gave
+      // `db/seeds/demo/product-demo.ts`).
       const [offering] = await db
         .insert(productOffering)
         .values({
@@ -143,37 +230,112 @@ describe.skipIf(!databaseUrl)(
           isBundle: false,
           isSellable: opts.isSellable ?? true,
           billingOnly: opts.billingOnly ?? true,
-          lifecycleStatus: opts.lifecycleStatus,
+          lifecycleStatus: "DRAFT",
           version: 1,
           lastEditedBy: null,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
       const offeringId = offering!.productOfferingId;
 
-      if ((opts.prices ?? "flat-and-tiered") === "flat-and-tiered") {
+      const priceSet = opts.prices ?? "flat-and-capacity";
+
+      if (priceSet === "flat-and-capacity") {
+        // pm50-spec D6 — the flat recurring price is a byte-identical re-key
+        // (same amount, currency, start date); the old tiered "Data Overage"
+        // usage price is replaced with a capacity_motivation, which is the
+        // new shape that is legitimately never an override target — keeping
+        // this fixture's "not a valid override target" intent alive rather
+        // than deleting the case. No `usage_rate` here on purpose: a `usage`
+        // override against this offering must still resolve to nothing.
         await db.insert(productOfferingPrice).values([
           {
             productOfferingId: offeringId,
             name: "Monthly Recurring Charge",
-            priceType: "recurring",
-            amount: "5000.00",
+            componentType: "flat_fee",
+            priceComponent: flatFeeEnvelope("recurring", "5000.00"),
+            recurringChargePeriodLength: 1,
+            recurringChargePeriodType: "months",
             currency: CURRENCY,
-            pricingModel: "flat",
             startDateTime: new Date("2026-01-01T00:00:00Z"),
           },
           {
             productOfferingId: offeringId,
-            name: "Data Overage",
-            priceType: "usage",
-            amount: null,
+            name: "Data Overage Motivation",
+            componentType: "capacity_motivation",
+            priceComponent: capacityMotivationEnvelope("GB"),
+            unitOfMeasure: "GB",
             currency: CURRENCY,
-            pricingModel: "tiered",
-            pricingCharacteristics: {
-              tiers: [{ from: 0, to: null, rate: "0.05" }],
-            },
             startDateTime: new Date("2026-01-01T00:00:00Z"),
           },
         ]);
+      } else if (priceSet === "components-full") {
+        // pm50-spec I4 — supports the usage/once override-resolution cases:
+        // a flat_fee(recurring), a flat_fee(oneTime) and a usage_rate all on
+        // one version. The two flat_fee rows need distinct start dates (both
+        // carry `unit_of_measure = NULL`, and the reshaped uniqueness
+        // constraint is NULLS-NOT-DISTINCT on
+        // (offering, component_type, unit_of_measure, start_date_time) —
+        // pm48's own fixture note).
+        await db.insert(productOfferingPrice).values([
+          {
+            productOfferingId: offeringId,
+            name: "Monthly Recurring Charge",
+            componentType: "flat_fee",
+            priceComponent: flatFeeEnvelope("recurring", "5000.00"),
+            recurringChargePeriodLength: 1,
+            recurringChargePeriodType: "months",
+            currency: CURRENCY,
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+          {
+            productOfferingId: offeringId,
+            name: "Activation Fee",
+            componentType: "flat_fee",
+            priceComponent: flatFeeEnvelope("oneTime", "250.00"),
+            currency: CURRENCY,
+            startDateTime: new Date("2026-01-02T00:00:00Z"),
+          },
+          {
+            productOfferingId: offeringId,
+            name: "Data Usage Rate",
+            componentType: "usage_rate",
+            priceComponent: usageRateEnvelope("0.05", "GB"),
+            unitOfMeasure: "GB",
+            currency: CURRENCY,
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+        ]);
+      } else if (priceSet === "capacity-and-usage") {
+        // pm50-spec I4 — an offering carrying only capacity modifiers plus a
+        // usage_rate (no flat_fee at all): a recurring override must be
+        // refused (no flat_fee target), a usage override must be accepted.
+        await db.insert(productOfferingPrice).values([
+          {
+            productOfferingId: offeringId,
+            name: "Data Usage Rate",
+            componentType: "usage_rate",
+            priceComponent: usageRateEnvelope("0.05", "GB"),
+            unitOfMeasure: "GB",
+            currency: CURRENCY,
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+          {
+            productOfferingId: offeringId,
+            name: "Commitment",
+            componentType: "capacity_commitment",
+            priceComponent: capacityCommitmentEnvelope("GB", 1000),
+            unitOfMeasure: "GB",
+            currency: CURRENCY,
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+        ]);
+      }
+
+      if (opts.lifecycleStatus !== "DRAFT") {
+        await db
+          .update(productOffering)
+          .set({ lifecycleStatus: opts.lifecycleStatus })
+          .where(eq(productOffering.productOfferingId, offeringId));
       }
 
       return offeringId;
@@ -366,6 +528,78 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    describe("override target resolution (pm50-spec D2/I4)", () => {
+      it("resolves a usage override against a usage_rate component and validates", async () => {
+        const offeringId = await newOffering({
+          lifecycleStatus: "ACTIVE",
+          prices: "components-full",
+        });
+        const result = await createOrder(
+          baseInput({
+            productOfferingId: offeringId,
+            overrides: [
+              { priceType: "usage", amount: "0.03", currency: CURRENCY },
+            ],
+          }),
+          actorId,
+          () => NOW,
+        );
+        expect(result.ok).toBe(true);
+      });
+
+      it("resolves a once override against a oneTime flat_fee component and validates", async () => {
+        const offeringId = await newOffering({
+          lifecycleStatus: "ACTIVE",
+          prices: "components-full",
+        });
+        const result = await createOrder(
+          baseInput({
+            productOfferingId: offeringId,
+            overrides: [
+              { priceType: "once", amount: "200.00", currency: CURRENCY },
+            ],
+          }),
+          actorId,
+          () => NOW,
+        );
+        expect(result.ok).toBe(true);
+      });
+
+      it("an offering with only capacity modifiers + a usage_rate: recurring override refused, usage override accepted", async () => {
+        const offeringId = await newOffering({
+          lifecycleStatus: "ACTIVE",
+          prices: "capacity-and-usage",
+        });
+
+        const recurringResult = await createOrder(
+          baseInput({
+            productOfferingId: offeringId,
+            overrides: [
+              { priceType: "recurring", amount: "10.00", currency: CURRENCY },
+            ],
+          }),
+          actorId,
+          () => NOW,
+        );
+        expect(recurringResult).toEqual({
+          ok: false,
+          code: "OVERRIDE_PRICE_TYPE_INVALID",
+        });
+
+        const usageResult = await createOrder(
+          baseInput({
+            productOfferingId: offeringId,
+            overrides: [
+              { priceType: "usage", amount: "0.03", currency: CURRENCY },
+            ],
+          }),
+          actorId,
+          () => NOW,
+        );
+        expect(usageResult.ok).toBe(true);
+      });
+    });
+
     describe("precondition error codes (pm28-spec §1)", () => {
       it("CUSTOMER_NOT_ACTIVE — VALIDATED party", async () => {
         const validatedPartyRoleId = await newPartyRole(
@@ -462,7 +696,7 @@ describe.skipIf(!databaseUrl)(
         expect(await countOrdersFor(goodPartyRoleId)).toBe(before);
       });
 
-      it("OVERRIDE_PRICE_TYPE_INVALID — override targets a tiered price type", async () => {
+      it("OVERRIDE_PRICE_TYPE_INVALID — override targets a component absent on the pinned version", async () => {
         const before = await countOrdersFor(goodPartyRoleId);
 
         const result = await createOrder(

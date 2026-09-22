@@ -176,23 +176,39 @@ WITH _chunk AS (
 ),
 price_windows AS (
     SELECT popp.product_offering_id,
-           popp.price_type,
+           popp.component_type,
            popp.product_offering_price_id,
-           popp.amount,
+           (popp.price_component #>> '{params,ratePerUnit}')::numeric AS amount,
            popp.currency,
-           -- pricing_model stays in the window (spec §2) but is NOT surfaced: the
-           -- v1 FLAT calc needs no branch on it — an unratable price (a `tiered`
-           -- row, amount NULL by product_offering_price_amount_xor_tiers_check)
-           -- already falls out as effective_amount NULL below → LOOKUP_MISS. It
-           -- is where a future non-FLAT calc (# STUB:, D5) would read the model.
-           popp.pricing_model,
+           -- component_type stays in the window (pm51-spec D3) but is NOT
+           -- branched on: v1 still computes FLAT only. The component's `@type`
+           -- is now the discriminator a future non-FLAT calc (# STUB:, D5)
+           -- would branch on. `rateCardLookUp` — present in the envelope,
+           -- non-null on some rows — is DELIBERATELY not read here: no rate-
+           -- card join, resolution or fallback exists in this query or
+           -- anywhere in this file (Inv. #42, PC10, H3).
+           --
+           -- A `usage_rate`'s `ratePerUnit` is NOT NULL by CHECK, so — unlike
+           -- the old `tiered`-row-with-NULL-amount case this window used to
+           -- fall through on — a malformed rate can no longer produce a NULL
+           -- `effective_amount` here. LOOKUP_MISS below now fires only for its
+           -- two real causes: no `usage_rate` on the offering at all, or none
+           -- whose window contains the record's `start_datetime` — both are
+           -- the JOIN below simply finding no row (pm51-spec D4).
            popp.start_date_time AS eff_from,
            lead(popp.start_date_time) OVER (
-               PARTITION BY popp.product_offering_id, popp.price_type
+               -- Partitioned by unit_of_measure too (not just component_type):
+               -- an offering may carry more than one `usage_rate` lane (e.g.
+               -- distinct metered units), and without this key a dated
+               -- successor in one lane could wrongly truncate another lane's
+               -- `eff_to` (pm51-spec D2/D5; mirrors pm46's own
+               -- product_offering_price_component_start_unique key).
+               PARTITION BY popp.product_offering_id, popp.component_type,
+                            popp.unit_of_measure
                ORDER BY popp.start_date_time
            ) AS eff_to
     FROM product.product_offering_price popp
-    WHERE popp.price_type = 'usage'
+    WHERE popp.component_type = 'usage_rate'
 )
 SELECT r.line_no,
        pw.product_offering_price_id       AS udr_price_ref,

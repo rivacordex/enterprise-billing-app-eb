@@ -283,13 +283,14 @@ tasks:
           #    — the offering id is denormalized on inventory.product_inventory, so 3
           #    subs of one offering + 500 of another collapse to 2 lines, not 503.
           #  * RECURRING (bm29): for each ACTIVE subscription whose offering INTENDS a
-          #    recurring charge (has a price_type='recurring' product_offering_price, or
-          #    an order_item_price_override), resolve the as-of recurring price
-          #    (product.product_offering_price via the lead(start_date_time) window — the
-          #    window is NOT filtered to pricing_model='flat' so a current 'tiered' price
-          #    is SEEN and D33-failed rather than masked by an older flat row; the flat
-          #    resolver rates 'flat', a 'tiered' as-of price with no flat override fails
-          #    HARD), COALESCE an ordering.order_item_price_override over the catalog
+          #    recurring charge (has a flat_fee product_offering_price whose envelope
+          #    priceType='recurring', or an order_item_price_override), resolve the as-of
+          #    recurring price (product.product_offering_price via the lead(start_date_time)
+          #    window, scoped to component_type='flat_fee' — the only component type that
+          #    can carry a recurring scalar amount post-reshape (PC8/PC14); the old
+          #    graduated 'tiered' shape no longer exists as a product_offering_price row,
+          #    so there is nothing left to mask or D33-fail on that axis), COALESCE an
+          #    ordering.order_item_price_override over the catalog
           #    amount, map the recurring charge period onto the account's bill-cycle
           #    frequency, multiply by product_inventory.quantity, and write ONE RECURRING
           #    line per (product_offering_id) (udr_type NULL) rolled across the account's
@@ -400,17 +401,19 @@ tasks:
                 --     index prunes the scan) COALESCE'd with an order_item_price_override;
                 --     period_factor maps the recurring charge period onto the account's
                 --     bill-cycle frequency (1 for the built monthly=monthly case).
-                --     unit_price NULL marks an unresolvable/tiered subscription (for an
-                --     offering that DOES intend recurring) for the D33 check below.
+                --     unit_price NULL marks a not-found recurring subscription (for an
+                --     offering that DOES intend recurring) for the D33 check below — the
+                --     old 'tiered' shape no longer exists as a product_offering_price row
+                --     (PC8/PC14), so component_type='flat_fee' is the only source of a
+                --     recurring scalar amount and there is nothing left to distinguish.
                 CREATE TEMP TABLE _bm29_resolved ON COMMIT DROP AS
                   WITH asof AS (
-                    SELECT offering_id, unit_price, price_ref, pricing_model,
+                    SELECT offering_id, unit_price, price_ref,
                            effective_date, currency, rc_len, rc_type
                     FROM (
                       SELECT pop.product_offering_id                       AS offering_id,
-                             pop.amount                                    AS unit_price,
+                             (pop.price_component #>> '{params,amount}')::numeric AS unit_price,
                              pop.product_offering_price_id                 AS price_ref,
-                             pop.pricing_model                             AS pricing_model,
                              (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
                              pop.currency                                  AS currency,
                              pop.recurring_charge_period_length            AS rc_len,
@@ -420,7 +423,8 @@ tasks:
                                ORDER BY pop.start_date_time
                              )                                            AS next_effective
                       FROM   product.product_offering_price pop
-                      WHERE  pop.price_type = 'recurring'
+                      WHERE  pop.component_type = 'flat_fee'
+                        AND  pop.price_component ->> 'priceType' = 'recurring'
                         -- Prune the window scan to THIS account's offerings so the
                         -- product_offering_price offering index is usable (the lead()
                         -- window still sees each kept offering's full price history).
@@ -436,7 +440,6 @@ tasks:
                   SELECT pi.product_offering_id                                   AS product_offering_id,
                          COALESCE(oipo.amount, a.unit_price)::numeric(18,6)       AS unit_price,
                          COALESCE(oipo.order_item_price_override_id, a.price_ref) AS price_ref,
-                         a.pricing_model                                          AS pricing_model,
                          a.effective_date                                         AS effective_date,
                          COALESCE(oipo.currency, a.currency)                      AS currency,
                          ba.currency                                             AS account_currency,
@@ -483,33 +486,32 @@ tasks:
                         OR EXISTS (
                              SELECT 1 FROM product.product_offering_price pop2
                              WHERE  pop2.product_offering_id = pi.product_offering_id
-                               AND  pop2.price_type = 'recurring')
+                               AND  pop2.component_type = 'flat_fee'
+                               AND  pop2.price_component ->> 'priceType' = 'recurring')
                          );
 
                 -- 0c. bm29 / D33 (Inv #28): fail THIS account HARD if any freshly
-                --     resolved subscription has no as-of price (RECURRING_PRICE_NOT_FOUND),
-                --     is tiered with no flat override (RECURRING_PRICE_UNSUPPORTED), or is
-                --     priced in a currency other than the account's
+                --     resolved subscription has no as-of price (RECURRING_PRICE_NOT_FOUND)
+                --     or is priced in a currency other than the account's
                 --     (RECURRING_CURRENCY_MISMATCH — the recurring analog of bm27's USAGE
                 --     currency assertion; v1 is single-currency and product_offering_price
                 --     /order_item_price_override currencies are not tied to the account,
                 --     so a foreign price must never be summed into the bill). RAISE rolls
                 --     the whole transaction back -> no bill produced. Never substitute
-                --     zero, never skip a subscription silently.
+                --     zero, never skip a subscription silently. (RECURRING_PRICE_UNSUPPORTED
+                --     / 'tiered' is retired: the graduated shape no longer exists as a
+                --     product_offering_price row post-reshape, PC8/PC14 — every recurring
+                --     row is flat_fee by the DB's own completeness CHECK, so there is
+                --     nothing left to distinguish from NOT_FOUND.)
                 DO $$
                 DECLARE
-                  v_unsupported       int;
                   v_not_found         int;
                   v_currency_mismatch int;
                 BEGIN
-                  SELECT count(*) FILTER (WHERE unit_price IS NULL AND pricing_model = 'tiered'),
-                         count(*) FILTER (WHERE unit_price IS NULL AND pricing_model IS DISTINCT FROM 'tiered'),
+                  SELECT count(*) FILTER (WHERE unit_price IS NULL),
                          count(*) FILTER (WHERE unit_price IS NOT NULL AND currency IS DISTINCT FROM account_currency)
-                    INTO v_unsupported, v_not_found, v_currency_mismatch
+                    INTO v_not_found, v_currency_mismatch
                   FROM   _bm29_resolved;
-                  IF v_unsupported > 0 THEN
-                    RAISE EXCEPTION 'RECURRING_PRICE_UNSUPPORTED (HARD): % subscription(s) priced tiered — the flat resolver cannot rate them (D33/Inv #28)', v_unsupported;
-                  END IF;
                   IF v_not_found > 0 THEN
                     RAISE EXCEPTION 'RECURRING_PRICE_NOT_FOUND (HARD): % subscription(s) have no as-of recurring price (D33/Inv #28)', v_not_found;
                   END IF;

@@ -93,7 +93,7 @@ export async function insertPrice(
       // Re-fetched through tx, immediately before the branch decision (post-
       // ship fix) — a pre-transaction read via `db` would let the offering's
       // lifecycleStatus go stale between this read and the write below.
-      const offering = await productOfferingRepository.findDetailById(
+      const offering = await productOfferingRepository.findDetailByIdForUpdate(
         tx,
         offeringId,
       );
