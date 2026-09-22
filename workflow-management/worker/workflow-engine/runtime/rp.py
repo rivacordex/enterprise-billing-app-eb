@@ -171,12 +171,14 @@ WITH _chunk AS (
     SELECT * FROM unnest(
         %(line_nos)s::bigint[],
         %(inventory_ids)s::text[],
-        %(start_datetimes)s::timestamptz[]
-    ) AS t(line_no, product_inventory_id, start_datetime)
+        %(start_datetimes)s::timestamptz[],
+        %(usage_units)s::text[]
+    ) AS t(line_no, product_inventory_id, start_datetime, usage_unit)
 ),
 price_windows AS (
     SELECT popp.product_offering_id,
            popp.component_type,
+           popp.unit_of_measure,
            popp.product_offering_price_id,
            (popp.price_component #>> '{params,ratePerUnit}')::numeric AS amount,
            popp.currency,
@@ -225,6 +227,7 @@ JOIN   ordering.product_order_item poi
 -- product_offering_id FK), never the current offering (code-standards §6.1).
 JOIN   price_windows pw
        ON pw.product_offering_id = poi.product_offering_id
+       AND pw.unit_of_measure = r.usage_unit
        AND pw.eff_from <= r.start_datetime
        AND (r.start_datetime < pw.eff_to OR pw.eff_to IS NULL)   -- [start, end)
 LEFT JOIN ordering.order_item_price_override oipo
@@ -249,10 +252,14 @@ def resolve_chunk(
     line_nos: list[int],
     inventory_ids: list[str],
     start_datetimes: list[datetime],
+    usage_units: list[str],
 ) -> dict[int, Resolution]:
     """Run the as-of query once for the whole chunk (D11), returning a
     ``line_no -> Resolution`` map. A record with no matching row is simply absent
-    from the map — the caller raises ``LOOKUP_MISS`` for it (D3)."""
+    from the map — the caller raises ``LOOKUP_MISS`` for it (D3). ``usage_units``
+    is matched against each price window's ``unit_of_measure`` (pm51-spec D2/D5)
+    so an offering carrying more than one ``usage_rate`` lane at different units
+    (e.g. GB and Mbps) can never join a record to more than one active rate."""
     rows = db.fetch(
         conn,
         _RESOLVE_SQL,
@@ -260,6 +267,7 @@ def resolve_chunk(
             "line_nos": line_nos,
             "inventory_ids": inventory_ids,
             "start_datetimes": start_datetimes,
+            "usage_units": usage_units,
         },
     )
     resolved: dict[int, Resolution] = {}
@@ -524,7 +532,9 @@ def process_chunks(
 
         # ONE set-based as-of query for the whole chunk (Inv #10, no per-record
         # fan-out). Resolve against the PINNED version through the price chain.
-        resolved = resolve_chunk(conn, line_nos, subscriber_refs, start_datetimes)
+        resolved = resolve_chunk(
+            conn, line_nos, subscriber_refs, start_datetimes, units
+        )
 
         rated: list[RatedRecord] = []
         for i, line_no in enumerate(line_nos):
