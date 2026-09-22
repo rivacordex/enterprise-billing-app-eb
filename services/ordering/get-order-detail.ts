@@ -4,7 +4,12 @@ import { productOfferingPriceRepository } from "@/db/repositories/product-offeri
 import { orderItemPriceOverrideRepository } from "@/db/repositories/ordering/order-item-price-override.repository";
 import { productOrderItemRepository } from "@/db/repositories/ordering/product-order-item.repository";
 import { productOrderRepository } from "@/db/repositories/ordering/product-order.repository";
-import type { OrderDetail, OrderPriceLine } from "@/types/ordering";
+import type {
+  OrderDetail,
+  OrderPriceLine,
+  OverridePriceType,
+} from "@/types/ordering";
+import type { PricingComponent } from "@/types/product";
 
 // A catalog price row is effective on `now` when its window `[start,
 // successorStart)` contains `now` — start already reached, no successor yet
@@ -19,6 +24,28 @@ function isEffectiveNow(
   if (startDateTime > now) return false;
   if (endDateTime !== null && endDateTime <= now) return false;
   return true;
+}
+
+// Maps a catalog component to the override price-type axis and its scalar list
+// amount, or `null` when the component is not an order price line at all — the
+// `capacity_*` modifiers are never an override target and carry no scalar list
+// amount (pm50 D2). This is the inverse of pm50's OVERRIDE_TARGET_BY_PRICE_TYPE
+// in order-preconditions.ts; the two axes stay explicitly separate (Inv. #38),
+// `once` never equated with the envelope's `oneTime`.
+function toPricedComponent(
+  component: PricingComponent,
+): { priceType: OverridePriceType; listAmount: string } | null {
+  switch (component["@type"]) {
+    case "usage_rate":
+      return { priceType: "usage", listAmount: component.params.ratePerUnit };
+    case "flat_fee":
+      return {
+        priceType: component.priceType === "recurring" ? "recurring" : "once",
+        listAmount: component.params.amount,
+      };
+    default:
+      return null; // capacity_commitment / capacity_motivation
+  }
 }
 
 // Backs the order detail view. Assembles header + item + the resolved
@@ -57,21 +84,28 @@ export async function getOrderDetail(
     overrides.map((o) => [o.priceType, o.amount] as const),
   );
 
-  // One line per price_type effective today, catalog list amount as the base,
-  // the override (flat types only) layered on top. Ordered by price_type for a
-  // stable read (the catalog query already returns price_type-major order).
+  // One line per override-eligible component effective today, the envelope's own
+  // money as the list amount and the override layered on top (Inv. #16). Each
+  // component maps to the override price-type axis via `toPricedComponent` — the
+  // `capacity_*` modifiers map to nothing and are dropped (not order lines).
+  // Ordered by the catalog query's (component_type, unit_of_measure, start) key
+  // for a stable read.
   const prices: OrderPriceLine[] = priceRows
     .filter((row) => isEffectiveNow(row.startDateTime, row.endDateTime, now))
-    .map((row) => {
-      const overrideAmount = overrideByType.get(row.priceType) ?? null;
-      return {
-        priceType: row.priceType,
-        priceName: row.name,
-        listAmount: row.amount,
-        currency: row.currency,
-        overrideAmount,
-        effectiveAmount: overrideAmount ?? row.amount,
-      };
+    .flatMap((row) => {
+      const priced = toPricedComponent(row.component);
+      if (!priced) return [];
+      const overrideAmount = overrideByType.get(priced.priceType) ?? null;
+      return [
+        {
+          priceType: priced.priceType,
+          priceName: row.name,
+          listAmount: priced.listAmount,
+          currency: row.currency,
+          overrideAmount,
+          effectiveAmount: overrideAmount ?? priced.listAmount,
+        },
+      ];
     });
 
   return {

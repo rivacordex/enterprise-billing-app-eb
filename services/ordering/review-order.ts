@@ -11,8 +11,11 @@ import {
 import { instantiateOrder } from "@/services/ordering/instantiate-order";
 import type { Database } from "@/db/client";
 import type { CreateOrderInput } from "@/validation/ordering/create-order.schema";
-import type { OrderStatus, ProductOrder } from "@/types/ordering";
-import type { PriceType } from "@/types/product";
+import type {
+  OrderStatus,
+  OverridePriceType,
+  ProductOrder,
+} from "@/types/ordering";
 
 const MANAGER_ROLE = "MANAGER";
 
@@ -111,7 +114,7 @@ export async function approveOrder(
     // source shared with pm28's submit — re-runs verbatim under locks at
     // approval time (spec Design: "Approval is not a status flip"). The
     // override `priceType` came in through the validated wire schema, so it is
-    // always a valid `PriceType`.
+    // always a valid `OverridePriceType`.
     const input: CreateOrderInput = {
       customerPartyRoleId: order.customerPartyRoleId,
       billingAccountId: order.billingAccountId,
@@ -120,7 +123,7 @@ export async function approveOrder(
       startDate: item.startDate,
       characteristics: item.orderedCharacteristics ?? undefined,
       overrides: overrides.map((o) => ({
-        priceType: o.priceType as PriceType,
+        priceType: o.priceType as OverridePriceType,
         amount: o.amount,
         currency: o.currency,
       })),

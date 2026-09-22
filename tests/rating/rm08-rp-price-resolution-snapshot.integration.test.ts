@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -24,6 +25,11 @@ import {
   orderItemPriceOverride,
 } from "@/db/schema/ordering";
 import { productInventory } from "@/db/schema/inventory";
+import type {
+  UsageRateComponent,
+  FlatFeeComponent,
+  CapacityMotivationComponent,
+} from "@/validation/product/pricing-component.schema";
 
 // rm08-spec §Verification checklist + code-standards §10 test #13 (OWNED by rm08):
 //   #13 Price snapshot reproducibility — a record rated, then re-rated after the
@@ -90,6 +96,53 @@ const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 // A fixed reference instant so OUT_OF_RANGE never depends on wall-clock time.
 const NOW = "2026-08-20T00:00:00Z";
 const CURRENCY = "MYR";
+
+// pm51-spec D6/I3 — component-envelope builder replacing the pre-reshape flat
+// usage price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
+// `buildPriceEnvelope` builds in production).
+function usageRateEnvelope(
+  ratePerUnit: string,
+  unitOfMeasure: "Mbps",
+): UsageRateComponent {
+  return {
+    "@type": "usage_rate",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType: "usage",
+    appliesAt: "rating",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { ratePerUnit, rateCardLookUp: null },
+  };
+}
+
+function flatFeeEnvelope(amount: string): FlatFeeComponent {
+  return {
+    "@type": "flat_fee",
+    specVersion: 1,
+    plaSpecId: null,
+    priceType: "recurring",
+    appliesAt: "billing",
+    basis: "flat",
+    boundTo: null,
+    params: { amount },
+  };
+}
+
+function capacityMotivationEnvelope(
+  unitOfMeasure: "Mbps",
+): CapacityMotivationComponent {
+  return {
+    "@type": "capacity_motivation",
+    specVersion: 1,
+    plaSpecId: "PLA_CAPACITY_MOTIVATION",
+    priceType: "discount",
+    appliesAt: "post_aggregation",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { steps: [{ aboveQuantity: 1000, ratePerUnit: "0.01" }] },
+  };
+}
 
 function statements(path: string): string[] {
   return readFileSync(path, "utf8")
@@ -186,6 +239,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // Fixture ids resolved at seed time (never hardcoded).
     let invA: string; // pinned to OFF1, no usage override
     let invB: string; // pinned to OFF1, with a usage override
+    let invC: string; // pinned to OFF3 (flat_fee + capacity_motivation, no usage_rate)
+    let off1Id: string;
     let priceP1Id: string; // OFF1 usage @ 2026-01-01, amount 0.0035
     let priceP2Id: string; // OFF1 usage @ 2026-08-01, amount 0.0050
 
@@ -261,7 +316,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .returning({ billingAccountId: billingAccount.billingAccountId });
       const billingAccountId = ban!.billingAccountId;
 
-      // The PINNED offering (OFF1) with a two-row usage price chain.
+      // The PINNED offering (OFF1) with a two-row usage price chain. Inserted
+      // DRAFT, priced, then flipped to ACTIVE (pm36's DRAFT-guard trigger
+      // refuses a price write once the parent offering leaves DRAFT — the
+      // same insert-then-activate pattern `db/seeds/demo/product-demo.ts`
+      // uses; pm51-spec D6 re-keys only the price shape, but no shape of
+      // price row is insertable into an ACTIVE offering at all).
       const [off1] = await db
         .insert(productOffering)
         .values({
@@ -269,19 +329,21 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           isBundle: false,
           isSellable: true,
           billingOnly: false,
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
           lastEditedBy: userId,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
-      const off1Id = off1!.productOfferingId;
+      off1Id = off1!.productOfferingId;
+      // pm51-spec D6 — re-keyed to a usage_rate component, same rates,
+      // currency and start dates as the pre-reshape flat usage prices.
       const [p1] = await db
         .insert(productOfferingPrice)
         .values({
           productOfferingId: off1Id,
           name: "OFF1 usage P1",
-          priceType: "usage",
-          pricingModel: "flat",
-          amount: "0.0035",
+          componentType: "usage_rate",
+          priceComponent: usageRateEnvelope("0.0035", "Mbps"),
+          unitOfMeasure: "Mbps",
           currency: CURRENCY,
           startDateTime: new Date("2026-01-01T00:00:00Z"),
         })
@@ -294,9 +356,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .values({
           productOfferingId: off1Id,
           name: "OFF1 usage P2",
-          priceType: "usage",
-          pricingModel: "flat",
-          amount: "0.0050",
+          componentType: "usage_rate",
+          priceComponent: usageRateEnvelope("0.0050", "Mbps"),
+          unitOfMeasure: "Mbps",
           currency: CURRENCY,
           startDateTime: new Date("2026-08-01T00:00:00Z"),
         })
@@ -304,6 +366,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
         });
       priceP2Id = p2!.productOfferingPriceId;
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off1Id));
 
       // A decoy branched offering (OFF2) with a very different usage price. The
       // order items are pinned to OFF1, so this must NEVER be resolved (#2).
@@ -314,24 +380,75 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           isBundle: false,
           isSellable: true,
           billingOnly: false,
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
           version: 2,
           lastEditedBy: userId,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
+      const off2Id = off2!.productOfferingId;
       await db.insert(productOfferingPrice).values({
-        productOfferingId: off2!.productOfferingId,
+        productOfferingId: off2Id,
         name: "OFF2 usage decoy",
-        priceType: "usage",
-        pricingModel: "flat",
-        amount: "9.9999",
+        componentType: "usage_rate",
+        priceComponent: usageRateEnvelope("9.9999", "Mbps"),
+        unitOfMeasure: "Mbps",
         currency: CURRENCY,
         startDateTime: new Date("2026-01-01T00:00:00Z"),
       });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off2Id));
 
-      // Two subscriptions pinned to OFF1: A (no override), B (usage override).
+      // pm51-spec D4/I3 — an offering with only a flat_fee + capacity
+      // modifiers, no usage_rate at all. A usage record against it must
+      // still LOOKUP_MISS: the old "unratable price" NULL-amount path is
+      // gone (a usage_rate's ratePerUnit is NOT NULL by CHECK), so this
+      // proves the miss now comes purely from the join finding no row.
+      const [off3] = await db
+        .insert(productOffering)
+        .values({
+          name: "rm08-OFF3",
+          isBundle: false,
+          isSellable: true,
+          billingOnly: false,
+          lifecycleStatus: "DRAFT",
+          version: 3,
+          lastEditedBy: userId,
+        })
+        .returning({ productOfferingId: productOffering.productOfferingId });
+      const off3Id = off3!.productOfferingId;
+      await db.insert(productOfferingPrice).values([
+        {
+          productOfferingId: off3Id,
+          name: "OFF3 flat fee",
+          componentType: "flat_fee",
+          priceComponent: flatFeeEnvelope("10.00"),
+          recurringChargePeriodLength: 1,
+          recurringChargePeriodType: "months",
+          currency: CURRENCY,
+          startDateTime: new Date("2026-01-01T00:00:00Z"),
+        },
+        {
+          productOfferingId: off3Id,
+          name: "OFF3 motivation",
+          componentType: "capacity_motivation",
+          priceComponent: capacityMotivationEnvelope("Mbps"),
+          unitOfMeasure: "Mbps",
+          currency: CURRENCY,
+          startDateTime: new Date("2026-01-01T00:00:00Z"),
+        },
+      ]);
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off3Id));
+
+      // Subscriptions: A/B pinned to OFF1 (no override / usage override); C
+      // pinned to OFF3 (D4's no-usage_rate LOOKUP_MISS case).
       const makeSubscription = async (
         withOverride: string | null,
+        offeringId: string = off1Id,
       ): Promise<string> => {
         const [order] = await db
           .insert(productOrder)
@@ -347,7 +464,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           .insert(productOrderItem)
           .values({
             productOrderId: order!.productOrderId,
-            productOfferingId: off1Id, // PINNED to OFF1
+            productOfferingId: offeringId,
             quantity: 1,
             startDate: "2026-01-01",
           })
@@ -369,7 +486,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
             productOrderItemId: itemId,
             customerPartyRoleId: partyRoleId,
             billingAccountId,
-            productOfferingId: off1Id,
+            productOfferingId: offeringId,
             quantity: 1,
             status: "ACTIVE",
             startDate: "2026-01-01",
@@ -384,6 +501,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // (unlike the sub-cent catalog amount). 0.07 is distinct from either
       // catalog price (0.0035 / 0.0050), proving COALESCE(override, catalog).
       invB = await makeSubscription("0.07"); // usage override 0.07
+      invC = await makeSubscription(null, off3Id);
     }
 
     beforeAll(async () => {
@@ -613,6 +731,45 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(r3?.udr_price_ref).toBe(priceP2Id);
     });
 
+    it("pm51-spec D5 — a capacity_motivation dated between two usage_rate rows changes nothing", async () => {
+      // Insert a capacity_motivation on OFF1's same unit, dated between P1
+      // (2026-01-01) and P2 (2026-08-01). If the window's PARTITION BY
+      // omitted unit_of_measure, or a filter/partition gap let a
+      // non-usage_rate row leak into the usage_rate lane, this could
+      // truncate P1's eff_to or otherwise shift resolution — it must not.
+      // OFF1 is already ACTIVE (pm36's DRAFT-guard trigger refuses a price
+      // write against it), so this direct-SQL bypass flips it back to DRAFT
+      // for the insert and immediately re-activates it — the same
+      // "mutate the catalog directly to simulate a correction" pattern test
+      // #13 below already uses.
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "DRAFT" })
+        .where(eq(productOffering.productOfferingId, off1Id));
+      await db.insert(productOfferingPrice).values({
+        productOfferingId: off1Id,
+        name: "OFF1 motivation (noise)",
+        componentType: "capacity_motivation",
+        priceComponent: capacityMotivationEnvelope("Mbps"),
+        unitOfMeasure: "Mbps",
+        currency: CURRENCY,
+        startDateTime: new Date("2026-04-01T00:00:00Z"),
+      });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off1Id));
+
+      const { rows } = rateFixture("20260825b");
+      // Same rows, same price refs as test "2/4/6" above — byte-identical.
+      const r1 = byKey(rows, invA, "2026-08-14");
+      expect(r1?.udr_usage_rate).toBe("0.0050");
+      expect(r1?.udr_price_ref).toBe(priceP2Id);
+      const r2 = byKey(rows, invA, "2026-03-01");
+      expect(r2?.udr_usage_rate).toBe("0.0035");
+      expect(r2?.udr_price_ref).toBe(priceP1Id);
+    });
+
     it("5. udr_currency comes from the resolved price row", () => {
       const { rows } = rateFixture("20260816");
       expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
@@ -713,6 +870,22 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(parsed.perceived_severity).toBeNull();
     });
 
+    it("pm51-spec D4 — an offering with only a flat_fee + capacity modifiers (no usage_rate) yields LOOKUP_MISS", () => {
+      const csv = [`2026-08-14T10:00:00Z,${invC},CU,S,42`];
+      const path = writeCsv("RAN_USAGE_20260829.csv", csv);
+      const prpManifestUri = runPrp(path, "prp-nousagerate");
+      const rpExecId = "rp-nousagerate";
+      const rpManifestUri = runRp(prpManifestUri, rpExecId);
+      const manifest = readManifest(rpManifestUri);
+      expect(manifest.rated_count).toBe(0);
+      expect(manifest.lookup_miss_count).toBe(1);
+      // One summarised process_log line (Inv #11), same shape as the other
+      // LOOKUP_MISS cause below.
+      const lines = logLinesFor("RP", rpExecId);
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(firstLine(lines)).event_code).toBe("LOOKUP_MISS");
+    });
+
     // -----------------------------------------------------------------
     // #13 — price snapshot reproducibility (the headline).
     // -----------------------------------------------------------------
@@ -727,8 +900,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // Change the underlying catalog price row AND the override — exactly the
       // mutation #13 guards against. (product_offering_price is insert-only in
       // the app, but the test mutates it directly to simulate the passage of
-      // time / a catalog correction.)
-      await sql`UPDATE product.product_offering_price SET amount = '0.9999' WHERE product_offering_price_id = ${priceP2Id}`;
+      // time / a catalog correction.) pm51-spec D6 — the envelope's
+      // `params.ratePerUnit` replaces the dropped `amount` column.
+      await sql`UPDATE product.product_offering_price SET price_component = jsonb_set(price_component, '{params,ratePerUnit}', '"0.9999"') WHERE product_offering_price_id = ${priceP2Id}`;
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.55' WHERE price_type = 'usage'`;
 
       // The already-rated row's snapshotted inputs are unchanged, and the amount
@@ -748,7 +922,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // of truth for the original charge.
 
       // Restore for any later assertions in this file.
-      await sql`UPDATE product.product_offering_price SET amount = '0.0050' WHERE product_offering_price_id = ${priceP2Id}`;
+      await sql`UPDATE product.product_offering_price SET price_component = jsonb_set(price_component, '{params,ratePerUnit}', '"0.0050"') WHERE product_offering_price_id = ${priceP2Id}`;
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.07' WHERE price_type = 'usage'`;
     });
 

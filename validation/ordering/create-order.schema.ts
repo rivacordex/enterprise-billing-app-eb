@@ -1,8 +1,8 @@
 import { z } from "zod";
 
+import { OVERRIDE_PRICE_TYPES } from "@/types/ordering";
 import { inclusiveBilledDateSchema } from "@/validation/backdating-tolerance";
 import { characteristicsRecordSchema } from "@/validation/characteristics.schema";
-import { PRICE_TYPES } from "@/types/product";
 
 // Up-to-2-decimal positive money string, capped at 10 integer digits so it
 // fits numeric(12,2)'s max (9999999999.99) — the regex enforces the bound
@@ -12,20 +12,33 @@ import { PRICE_TYPES } from "@/types/product";
 // rule this wire schema enforces, rather than duplicating the literal.
 export const MONEY_2DP_REGEX = /^\d{1,10}(\.\d{1,2})?$/;
 
+// `OVERRIDE_PRICE_TYPES` — the override's own `recurring`/`usage`/`once` axis,
+// matching the `order_item_price_override_price_type_check` DB CHECK (unchanged
+// by pm50) — now lives in `@/types/ordering` with the module's other domain
+// unions (§2.1). It is deliberately separate from the catalog's component axis
+// (Inv. #38): pm47 deleted the catalog's identically-named `PRICE_TYPES`, and
+// `once` here is never equated with the envelope's `oneTime`. This schema
+// derives its enum from that tuple, never a hand-written duplicate.
+
 // A negotiated per-line override. `priceType` must be one of the DB-supported
-// lowercase catalog values (`recurring`/`usage`/`once`, PRICE_TYPES) — the same
-// set the `order_item_price_override_price_type_check` DB CHECK enforces, so an
-// uppercase or unsupported value is rejected at the shape layer before it can
-// reach the constraint. The *deeper* checks — that the type actually exists on
-// the pinned offering as `pricing_model = flat`, and `currency` = BAN currency
-// — stay **service-checked** (architecture §1): they need DB state, not shape.
+// lowercase catalog values (`recurring`/`usage`/`once`, OVERRIDE_PRICE_TYPES) —
+// the same set the `order_item_price_override_price_type_check` DB CHECK
+// enforces, so an uppercase or unsupported value is rejected at the shape
+// layer before it can reach the constraint. The *deeper* check — that the
+// pinned offering actually carries a matching `usage_rate` / `flat_fee`
+// component, and `currency` = BAN currency — stays **service-checked**
+// (architecture §1): it needs DB state, not shape. (pm50-spec D5: the
+// `order_item_price_override_price_type_check` CHECK this mirrors lives on
+// the `ordering` table and is unchanged by the catalog reshape; `once` here
+// is never equated with the envelope's `oneTime` — they're deliberately two
+// vocabularies, O2 deferred.)
 const overrideSchema = z.object({
   priceType: z
     .string()
     .trim()
     .min(1, "Price type is required")
     .pipe(
-      z.enum(PRICE_TYPES, {
+      z.enum(OVERRIDE_PRICE_TYPES, {
         error: "Price type must be one of: recurring, usage, once",
       }),
     ),

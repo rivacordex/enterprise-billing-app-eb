@@ -117,8 +117,10 @@ CREATE TABLE "product"."product_offering_price" (
 	    unit_of_measure IS NOT NULL
 	    AND recurring_charge_period_length IS NULL
 	    AND recurring_charge_period_type IS NULL
-	    AND COALESCE(jsonb_typeof(price_component #> '{params,committedQuantity}'), 'missing') = 'number'
-	    AND (price_component #>> '{params,committedQuantity}')::numeric > 0
+	    AND CASE WHEN jsonb_typeof(price_component #> '{params,committedQuantity}') = 'number'
+	             THEN (price_component #>> '{params,committedQuantity}')::numeric > 0
+	             ELSE false
+	        END
 	  )
 	),
 	CONSTRAINT "product_offering_price_capacity_motivation_check" CHECK (

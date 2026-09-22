@@ -64,7 +64,7 @@ Two deliberate exclusions (same rules as User Management), applying to **both** 
 
 ## 4. Price Effectivity States
 
-A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure)` lane (the rekeyed uniqueness index, PC14) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, and each lane computes Current / Future-dated / Superseded independently:
+A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure)` lane (the rekeyed uniqueness index, PC14) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, and each lane computes Current / Future-dated / Superseded independently. **Known gap, flagged for follow-up:** the `flat_fee` lane does not yet split on envelope `priceType`, so a `recurring` and a `oneTime` flat fee starting the same date share one lane and can appear to supersede one another though they are unrelated charges (`_updatemodule-product-pricing-components-plan.md` D6/pm46, pm49 D3) — render/lane logic must pick up `priceType` as part of the `flat_fee` key once that follow-up unit closes it.
 
 | State | Rule | Treatment |
 |---|---|---|

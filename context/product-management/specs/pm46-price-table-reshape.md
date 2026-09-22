@@ -94,6 +94,8 @@ ALTER TABLE product.product_offering_price
 
 `unit_of_measure` is NULL on every `flat_fee` row and a plain UNIQUE treats two NULLs as distinct, so without `NULLS NOT DISTINCT` two identical `flat_fee` rows sharing a `start_date_time` would both insert and VI4 would silently not hold. This follows the repo's own `0013_gl_mapping_nulls_not_distinct.sql` precedent. **A sentinel `unit_of_measure` string and a `COALESCE` expression index are both excluded** (§6.4); architecture §3.4/§7, which proposed the expression form, are corrected by this unit.
 
+**Known gap, flagged for follow-up (not fixed by pm46).** The identity above — `(component_type, unit_of_measure, start_date_time)` — is not yet the full lane key for `flat_fee`. Every `flat_fee` row has `unit_of_measure = NULL` regardless of its envelope `priceType` (`recurring` vs `oneTime`), so a recurring flat fee and a one-time flat fee that happen to share a `start_date_time` collide under this constraint even though they are not duplicates (a real pattern: a monthly service fee + a one-time install fee, same effective date). The correct lane key for `flat_fee` is `(component_type, unit_of_measure, price_component ->> 'priceType')`, not `(component_type, unit_of_measure)` alone. pm49's effectivity partition (its D3) and the UI's rendering key (`prodmgmt-ui-context.md` §4) must use that same key once this is closed. Neither the DB uniqueness constraint nor the repository's `lead()` window implements it yet; closing it touches the live `0006_product.sql` constraint and needs its own gate-C-authorized follow-up unit, not a doc-only correction.
+
 **It becomes a UNIQUE constraint, not a unique index — verified, not stylistic.** drizzle-orm 0.45.2 exposes `nullsNotDistinct()` on the **unique-constraint** builder only (`node_modules/drizzle-orm/pg-core/unique-constraint.d.ts`), not on `uniqueIndex()`. A UNIQUE constraint creates its own implicit unique index, so nothing is lost; what changes is that the frozen object name is a constraint name, and guardrail 13 records it as such (D8).
 
 **The `lead()` window must partition on the same key.** Once uniqueness is per `(component_type, unit_of_measure)`, the derived-end window in the repository (pm49) and in both runtime readers (pm51, pm52) partitions by `(product_offering_id, component_type, unit_of_measure)`. That is what makes §2.6's per-lane effectivity correct and stops a `capacity_motivation` from superseding the `usage_rate` beside it. pm46 does not touch those files; it records the requirement so the units that do cannot get it wrong.
@@ -153,19 +155,22 @@ In `CREATE TABLE "product"."product_offering_price"`:
 	    unit_of_measure IS NOT NULL
 	    AND recurring_charge_period_length IS NULL
 	    AND recurring_charge_period_type IS NULL
+	    AND COALESCE(jsonb_typeof(price_component #> '{params,ratePerUnit}'), 'missing') = 'string'
 	    AND price_component #>> '{params,ratePerUnit}' ~ '^[0-9]+(\.[0-9]+)?$'
 	  )
 	),
 	CONSTRAINT "product_offering_price_flat_fee_check" CHECK (
 	  component_type <> 'flat_fee' OR (
 	    unit_of_measure IS NULL
+	    AND COALESCE(jsonb_typeof(price_component #> '{params,amount}'), 'missing') = 'string'
 	    AND price_component #>> '{params,amount}' ~ '^[0-9]+(\.[0-9]+)?$'
+	    AND COALESCE(price_component ->> 'priceType', '') IN ('recurring', 'oneTime')
 	    AND (
 	      (price_component ->> 'priceType' = 'recurring'
 	         AND recurring_charge_period_length IS NOT NULL
 	         AND recurring_charge_period_type IS NOT NULL)
 	      OR
-	      (price_component ->> 'priceType' <> 'recurring'
+	      (price_component ->> 'priceType' = 'oneTime'
 	         AND recurring_charge_period_length IS NULL
 	         AND recurring_charge_period_type IS NULL)
 	    )
@@ -176,8 +181,10 @@ In `CREATE TABLE "product"."product_offering_price"`:
 	    unit_of_measure IS NOT NULL
 	    AND recurring_charge_period_length IS NULL
 	    AND recurring_charge_period_type IS NULL
-	    AND jsonb_typeof(price_component #> '{params,committedQuantity}') = 'number'
-	    AND (price_component #>> '{params,committedQuantity}')::numeric > 0
+	    AND CASE WHEN jsonb_typeof(price_component #> '{params,committedQuantity}') = 'number'
+	             THEN (price_component #>> '{params,committedQuantity}')::numeric > 0
+	             ELSE false
+	        END
 	  )
 	),
 	CONSTRAINT "product_offering_price_capacity_motivation_check" CHECK (
@@ -195,22 +202,40 @@ In `CREATE TABLE "product"."product_offering_price"`:
 ```sql
 CREATE FUNCTION product.pricing_steps_ok(steps jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $fn$
+  -- Every `::numeric` cast below is CASE-guarded by its own
+  -- `jsonb_typeof(...) = 'number'` test. CASE is the only construct PostgreSQL
+  -- guarantees evaluates its WHEN branches in order, so a non-numeric
+  -- `aboveQuantity` reaching this function (a raw-SQL write bypassing Zod, the
+  -- backstop's whole point) fails these predicates cleanly instead of raising
+  -- `invalid input syntax for type numeric` from an eagerly-evaluated cast in a
+  -- sibling AND/OR operand — an evaluation order Postgres does not promise
+  -- (hardened post-pm46, 2026-09-22; Zod still rejects it first on every real
+  -- write path).
   SELECT steps IS NOT NULL
      AND jsonb_typeof(steps) = 'array'
      AND jsonb_array_length(steps) > 0
      AND NOT EXISTS (
            SELECT 1
            FROM   jsonb_array_elements(steps) AS s(v)
-           WHERE  jsonb_typeof(s.v -> 'aboveQuantity') <> 'number'
-              OR  (s.v ->> 'aboveQuantity')::numeric <= 0
+           WHERE  COALESCE(jsonb_typeof(s.v -> 'aboveQuantity'), 'missing') <> 'number'
+              OR  CASE WHEN jsonb_typeof(s.v -> 'aboveQuantity') = 'number'
+                       THEN (s.v ->> 'aboveQuantity')::numeric <= 0
+                       ELSE false
+                  END
+              OR  COALESCE(jsonb_typeof(s.v -> 'ratePerUnit'), 'missing') <> 'string'
               OR  COALESCE(s.v ->> 'ratePerUnit', '') !~ '^[0-9]+(\.[0-9]+)?$'
          )
      AND (
            SELECT COALESCE(bool_and(prev IS NULL OR cur > prev), true)
            FROM (
-             SELECT (s.v ->> 'aboveQuantity')::numeric AS cur,
-                    lag((s.v ->> 'aboveQuantity')::numeric) OVER (ORDER BY s.ord) AS prev
-             FROM   jsonb_array_elements(steps) WITH ORDINALITY AS s(v, ord)
+             SELECT cur, lag(cur) OVER (ORDER BY ord) AS prev
+             FROM (
+               SELECT s.ord,
+                      CASE WHEN jsonb_typeof(s.v -> 'aboveQuantity') = 'number'
+                           THEN (s.v ->> 'aboveQuantity')::numeric
+                      END AS cur
+               FROM   jsonb_array_elements(steps) WITH ORDINALITY AS s(v, ord)
+             ) g
            ) t
          );
 $fn$;

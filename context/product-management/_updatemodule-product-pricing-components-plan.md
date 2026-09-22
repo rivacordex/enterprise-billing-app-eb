@@ -2,7 +2,7 @@
 
 **Module:** Product Management — pricing-component standardization (extends the Manage Products rebuild, `prodmgmt-update-overview.md`)
 **Users:** Revenue Operations (permission `products`, EDIT/DELETE) at the Manage Product level.
-**Status:** Design. Locks decisions **PC1–PC13**; validation invariants **VI1–VI5**; open items **O1–O10** (O4 needs a user decision before build).
+**Status:** Design. Locks decisions **PC1–PC13**; validation invariants **VI1–VI5**; open items **O1–O10** (O4 resolved — see PC14).
 **Scope now:** the JSON shape of every pricing component at the Manage Product level, its TMForum projection, **and the Product Management storage & implementation design** (schema, validation, services, UI, seeds — designed here, built later). **Not** in scope to *build* now: the bill-run computation, the rating engine's extraction logic (stubbed template only today), the LookUp Rate Card table, and any TMF620 API/adapter.
 **Companion docs:** `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`, `prodmgmt-update-overview.md`, `bm29-real-aggregation-recurring-price-resolver.md` (recurring consumer), `rm01`/`rm08` (rating + usage-price consumers), `db/schema/rating/udr-rated.ts` (aggregation source).
 
@@ -33,7 +33,7 @@ The envelope is a deliberate **1:1 projection of a TMF620 `pricingLogicAlgorithm
 - **PC11 — Document the envelope in the codebase.** One `plaSpec` description per `@type` lives in the doc-block of a new `validation/product/pricing-component.schema.ts` (where flat/tiered invariants live today), referenced by `plaSpecId`, and cross-linked from the product-management `AGENTS.md`, the rating module docs, and `README.md`. The `plaSpec` catalog *is* the required documentation.
 - **PC12 — Deterministic apply order.** Within `post_aggregation`, components apply by class: **quantity-transform** (`capacity_commitment`) before **rate-schedule** (`capacity_motivation`). Order is canonical per stage-then-class; no `sequence` field is added yet. A `sequence: integer` is introduced only when a solution needs arbitrary ordering among same-class components (deferred; recorded so it is a considered omission, not a gap).
 - **PC14 — Physical storage: reshape the row (O4 resolved).** `product_offering_price` holds **one row per component**: a `component_type text` discriminator (= `@type`, CHECK-constrained, indexable) plus a `price_component jsonb` envelope (`$type<PricingComponent>`), retaining `currency`, `unit_of_measure`, `start_date_time` and the recurring-period columns. `pricing_model`, `amount` and `pricing_characteristics` are **dropped**. A per-`component_type` completeness CHECK replaces the flat/tiered XOR (the DB mirror of VI1–VI2). Legacy `price_type` on the offering price is **dropped** in favour of `component_type`; `price_type` survives only on `ordering.order_item_price_override` (so O2 now scopes to that one table). Edited in place in `0006_product.sql` under fresh-install — no migration, no backfill.
-- **PC13 — Envelope `priceType` ≠ column `price_type`.** The envelope's `priceType` is the **TMF axis** (`usage`/`recurring`/`oneTime`/`discount`/`commitment`). It is *not* the legacy `product_offering_price.price_type` column (`recurring`/`usage`/`once`). The modifier components (`capacity_commitment`, `capacity_motivation`, `negotiated_override`) have **no legacy `price_type`** — they do not fit that column's CHECK and therefore cannot be persisted as ordinary price rows. Their storage home is a storage-phase decision (**O4**). Docs and code must never map one axis onto the other silently.
+- **PC13 — Envelope `priceType` ≠ column `price_type`.** The envelope's `priceType` is the **TMF axis** (`usage`/`recurring`/`oneTime`/`discount`/`commitment`). It is *not* the legacy `product_offering_price.price_type` column (`recurring`/`usage`/`once`). The modifier components (`capacity_commitment`, `capacity_motivation`, `negotiated_override`) have **no legacy `price_type`** — they do not fit that column's CHECK and therefore cannot be persisted as ordinary price rows. Their storage home is `component_type` + `price_component` storage (**O4, resolved by PC14**), except `negotiated_override`, which stays a logical projection over `ordering.order_item_price_override` (PC9). Docs and code must never map one axis onto the other silently.
 
 ---
 
@@ -212,7 +212,7 @@ Enforced by Zod at the write boundary (PC2), mirrored by the DB in the storage p
 - **VI1 — `capacity_motivation.steps`** is non-empty; `aboveQuantity` strictly ascending, non-duplicate, and `> 0`; each `ratePerUnit` a money string (`^\d+(\.\d+)?$`). This is Inv. #4 (tier contiguity) carried over from the dropped `tiered` model.
 - **VI2 — `capacity_commitment.committedQuantity`** is a finite number `> 0`.
 - **VI3 — Base-component presence (cross-component).** Any `post_aggregation` modifier requires a rating-stage `usage_rate` of the **same `unitOfMeasure`** on the same offering — otherwise its base rate is unresolvable (PC4). This is a new **offering-level** validation; existing price validation is per-row.
-- **VI4 — Unambiguous binding.** For a given (offering, `unitOfMeasure`), exactly one `usage_rate` is *effective* at any instant. Dated successors are allowed (per the rebuild), but a modifier must resolve to exactly one base rate for the period (resolution detail: **O5**).
+- **VI4 — Unambiguous binding.** For a given (offering, `unitOfMeasure`), exactly one `usage_rate` is *effective* at any instant. Dated successors are allowed (per the rebuild), but a modifier must resolve to exactly one base rate at the candidate's exact `start_date_time` — validated instant-by-instant, never as a period-wide rule.
 - **VI5 — Single currency.** All combinable components of one offering share one `currency` (the column). A modifier never mixes currencies with its base component.
 
 ---
@@ -251,7 +251,7 @@ Author `usage_rate` (+ `rateCardLookUp`), `flat_fee`, `capacity_commitment`, `ca
 
 Seeds emit the envelope; the fresh-install CHECKs reject a malformed component. `types/product.ts` exports the `PricingComponent` union and drops `TieredPricingCharacteristics`.
 
-**Coverage:** with the above, Product Management is fully covered at plan level. The single open decision is **O4** (physical representation); everything else is derivable from plan intention + codebase.
+**Coverage:** with the above, Product Management is fully covered at plan level. **O4** (physical representation) is resolved (PC14); everything else is derivable from plan intention + codebase.
 
 ---
 
@@ -307,8 +307,8 @@ negotiated_override ───► RP base-rate override (O6)
 
 ## Out of scope / touchpoints (later phases)
 
-- **Storage *design* is now in-plan** (see "Product Management — storage & implementation"); only *building* it is later. The physical representation is the O4 decision.
-- **`once` → `oneTime` (O2):** touches the `product_offering_price.price_type` CHECK and the `ordering` override CHECK plus the TS enum — a schema decision, not a pure JSON change.
+- **Storage *design* is now in-plan** (see "Product Management — storage & implementation"); only *building* it is later. The physical representation was the O4 decision, now resolved by PC14.
+- **`once` → `oneTime` (O2):** touches the `ordering.order_item_price_override.price_type` CHECK plus the TS enum — a schema decision, not a pure JSON change.
 - **Base-rate meaning under a varying rate card (O1):** when `rateCardLookUp` yields per-UDR rates, "the base rate" for `capacity_commitment`/`capacity_motivation` is ambiguous (effective/weighted vs `ratePerUnit`). Decide in the bill-run phase.
 - **Standardization rollout (O3):** whether retiring the `amount` column + `pricing_model` happens in one migration or phased.
 - **The LookUp Rate Card table**, the **bill-run computation**, the **rating extraction logic**, and any **TMF620 adapter** — all separate.
@@ -318,7 +318,7 @@ negotiated_override ───► RP base-rate override (O6)
 ## Open items
 
 - **O1** — Base-rate semantics when `rateCardLookUp` varies the per-unit rate across UDRs (effective/weighted vs `ratePerUnit`). Owner: bill-run phase.
-- **O2** — `once` → `oneTime` migration (`price_type` CHECK on `product_offering_price` and `ordering.order_item_price_override`, plus the TS enum). Owner: storage phase.
+- **O2** — `once` → `oneTime` migration (`price_type` CHECK on `ordering.order_item_price_override`, plus the TS enum; the `product_offering_price.price_type` column was dropped by PC14, so it is no longer in O2's scope). Owner: storage phase.
 - **O3 — RESOLVED by PC14 + fresh-install:** `amount` and `pricing_model` are dropped in place in `0006_product.sql`; no phased retirement, no backfill.
 - **O4 — Physical representation (RESOLVED → PC14, Option A):** reshape the row to `component_type` + `price_component` jsonb, one row per component, `0006_product.sql` edited in place under fresh-install. Alternatives considered and set aside: **B** — a `product_offering_price_component` sidecar for the `capacity_*` modifiers; **C** — a single `pricing_components jsonb[]` column.
 - **O5** — Effectivity-aware binding resolution when dated/successor `usage_rate` rows exist for one unit (VI4). Owner: bill-run/resolution phase.

@@ -17,6 +17,16 @@ export const ORDER_STATUSES = [
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+// The negotiated-override price-type axis (`recurring`/`usage`/`once`) — the
+// values the `ordering.order_item_price_override.price_type` CHECK enforces.
+// This is the ordering module's OWN vocabulary, deliberately separate from the
+// catalog's component axis (Inv. #38); the Zod override schema derives its enum
+// from this tuple, never a hand-written duplicate (§2.1). pm50 declared it in
+// `create-order.schema.ts` only to dodge the deleted catalog `PriceType`; its
+// proper home is here with the other ordering domain unions.
+export const OVERRIDE_PRICE_TYPES = ["recurring", "usage", "once"] as const;
+export type OverridePriceType = (typeof OVERRIDE_PRICE_TYPES)[number];
+
 export type {
   ProductOrder,
   ProductOrderInsert,
@@ -25,8 +35,6 @@ export type {
   OrderItemPriceOverride,
   OrderItemPriceOverrideInsert,
 } from "@/db/schema";
-
-import type { PriceType } from "@/types/product";
 
 // Read models (pm26) — composed shapes services return, never raw Drizzle rows
 // (code-standards §2.7).
@@ -60,12 +68,16 @@ export type OrderListPage = {
 
 // One resolved price line on an order detail. The rating contract (Inv. #16)
 // is computed here, once, for every consumer: `effectiveAmount` is the override
-// if present, else the catalog list amount (null for a tiered price type, which
-// carries no scalar amount and is never overridable).
+// if present, else the catalog list amount. Only override-eligible components
+// become lines — `usage_rate` (→ `usage`) and `flat_fee` (→ `recurring`/`once`),
+// each carrying a scalar amount; the `capacity_*` modifiers are never an
+// override target and are not emitted as order lines (pm50 D2). `listAmount`
+// stays nullable for read-model stability, though a rendered line always
+// carries a scalar today.
 export type OrderPriceLine = {
-  priceType: PriceType;
+  priceType: OverridePriceType;
   priceName: string;
-  listAmount: string | null; // null for tiered (numeric → string, general §2.15)
+  listAmount: string | null; // numeric → string (general §2.15)
   currency: string;
   overrideAmount: string | null;
   effectiveAmount: string | null;
