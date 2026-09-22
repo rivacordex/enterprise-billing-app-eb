@@ -39,6 +39,9 @@ Re-key RP's price-resolution window from the dropped `price_type` / `pricing_mod
 | `popp.pricing_model` (carried, unused) | **removed entirely** — see D3 |
 | `PARTITION BY popp.product_offering_id, popp.price_type` | `PARTITION BY popp.product_offering_id, popp.component_type, popp.unit_of_measure` |
 | `oipo.price_type = 'usage'` (ordering table) | **unchanged** — that column is not dropped (PC13) |
+| *(new)* the outer `[eff_from, eff_to)` join | also matches `pw.unit_of_measure = <record's usage unit>` |
+
+**The join needs the unit match too, not only the partition.** Partitioning the `lead()` window by `unit_of_measure` (above) stops a dated successor in one unit lane from truncating another lane's `eff_to` — but on its own it does not stop the outer join from matching a record to *every* lane that is otherwise in-window. An offering carrying two concurrent `usage_rate` components at different units (e.g. `GB` and `Mbps`, same `start_date_time`, neither superseding the other) would join one `_chunk` record to both rows, fanning it out — a design invariant this file states up front ("the join never fans out per record", Inv #10) and a `LOOKUP_MISS`/double-charge hazard if broken. `_chunk` therefore also carries each record's own usage unit (already available as `RatedRecord.udr_usage_unit`/the chunk frame's `udr_usage_unit` column) end to end, and the outer join adds `AND pw.unit_of_measure = r.usage_unit` alongside `pw.product_offering_id = poi.product_offering_id`.
 
 Everything else holds: the `[eff_from, eff_to)` as-of join, `COALESCE(oipo.amount, …)`, the pinned-version join through `poi.product_offering_id`, the currency column, the chunking, the `LOOKUP_MISS` path and every `process_log` line.
 
