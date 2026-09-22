@@ -6,6 +6,15 @@ CREATE SEQUENCE "product"."product_offering_seq" INCREMENT BY 1 MINVALUE 1 MAXVA
 CREATE SEQUENCE "product"."product_specifications_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE FUNCTION product.pricing_steps_ok(steps jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $fn$
+  -- Every `::numeric` cast below is CASE-guarded by its own
+  -- `jsonb_typeof(...) = 'number'` test. CASE is the only construct PostgreSQL
+  -- guarantees evaluates its WHEN branches in order, so a non-numeric
+  -- `aboveQuantity` reaching this function (a raw-SQL write bypassing Zod, the
+  -- backstop's whole point) fails these predicates cleanly instead of raising
+  -- `invalid input syntax for type numeric` from an eagerly-evaluated cast in a
+  -- sibling AND/OR operand — an evaluation order Postgres does not promise
+  -- (hardened post-pm46, 2026-09-22; Zod still rejects it first on every real
+  -- write path).
   SELECT steps IS NOT NULL
      AND jsonb_typeof(steps) = 'array'
      AND jsonb_array_length(steps) > 0
@@ -13,16 +22,24 @@ LANGUAGE sql IMMUTABLE AS $fn$
            SELECT 1
            FROM   jsonb_array_elements(steps) AS s(v)
            WHERE  COALESCE(jsonb_typeof(s.v -> 'aboveQuantity'), 'missing') <> 'number'
-              OR  (s.v ->> 'aboveQuantity')::numeric <= 0
+              OR  CASE WHEN jsonb_typeof(s.v -> 'aboveQuantity') = 'number'
+                       THEN (s.v ->> 'aboveQuantity')::numeric <= 0
+                       ELSE false
+                  END
               OR  COALESCE(jsonb_typeof(s.v -> 'ratePerUnit'), 'missing') <> 'string'
               OR  COALESCE(s.v ->> 'ratePerUnit', '') !~ '^[0-9]+(\.[0-9]+)?$'
          )
      AND (
            SELECT COALESCE(bool_and(prev IS NULL OR cur > prev), true)
            FROM (
-             SELECT (s.v ->> 'aboveQuantity')::numeric AS cur,
-                    lag((s.v ->> 'aboveQuantity')::numeric) OVER (ORDER BY s.ord) AS prev
-             FROM   jsonb_array_elements(steps) WITH ORDINALITY AS s(v, ord)
+             SELECT cur, lag(cur) OVER (ORDER BY ord) AS prev
+             FROM (
+               SELECT s.ord,
+                      CASE WHEN jsonb_typeof(s.v -> 'aboveQuantity') = 'number'
+                           THEN (s.v ->> 'aboveQuantity')::numeric
+                      END AS cur
+               FROM   jsonb_array_elements(steps) WITH ORDINALITY AS s(v, ord)
+             ) g
            ) t
          );
 $fn$;
