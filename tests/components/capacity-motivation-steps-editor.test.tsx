@@ -35,7 +35,7 @@ describe("CapacityMotivationStepsEditor", () => {
   it("renders as a row list with an accessible name, never a JSON textarea", () => {
     render(
       <Harness
-        initial={[{ aboveQuantity: "1000", ratePerUnit: "50" }]}
+        initial={[{ id: "s1", aboveQuantity: "1000", ratePerUnit: "50" }]}
         onChange={vi.fn()}
       />,
     );
@@ -47,21 +47,23 @@ describe("CapacityMotivationStepsEditor", () => {
     expect(screen.getByLabelText("Rate per unit")).toHaveValue("50");
   });
 
-  it("Add appends a row", async () => {
+  it("Add appends a row with a fresh, client-only id", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
       <Harness
-        initial={[{ aboveQuantity: "1000", ratePerUnit: "50" }]}
+        initial={[{ id: "s1", aboveQuantity: "1000", ratePerUnit: "50" }]}
         onChange={onChange}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: "Add step" }));
     expect(onChange).toHaveBeenCalledWith([
-      { aboveQuantity: "1000", ratePerUnit: "50" },
-      { aboveQuantity: "", ratePerUnit: "" },
+      { id: "s1", aboveQuantity: "1000", ratePerUnit: "50" },
+      { id: expect.any(String), aboveQuantity: "", ratePerUnit: "" },
     ]);
+    const [, appended] = onChange.mock.calls[0]![0] as StepRow[];
+    expect(appended!.id).not.toBe("s1");
   });
 
   it("Remove removes the targeted row when more than one remains", async () => {
@@ -70,8 +72,8 @@ describe("CapacityMotivationStepsEditor", () => {
     render(
       <Harness
         initial={[
-          { aboveQuantity: "1000", ratePerUnit: "50" },
-          { aboveQuantity: "2000", ratePerUnit: "25" },
+          { id: "s1", aboveQuantity: "1000", ratePerUnit: "50" },
+          { id: "s2", aboveQuantity: "2000", ratePerUnit: "25" },
         ]}
         onChange={onChange}
       />,
@@ -79,7 +81,7 @@ describe("CapacityMotivationStepsEditor", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove step 1" }));
     expect(onChange).toHaveBeenCalledWith([
-      { aboveQuantity: "2000", ratePerUnit: "25" },
+      { id: "s2", aboveQuantity: "2000", ratePerUnit: "25" },
     ]);
   });
 
@@ -88,10 +90,14 @@ describe("CapacityMotivationStepsEditor", () => {
     const onChange = vi.fn();
     render(
       <Harness
-        initial={[{ aboveQuantity: "1000", ratePerUnit: "50" }]}
+        initial={[{ id: "s1", aboveQuantity: "1000", ratePerUnit: "50" }]}
         onChange={onChange}
       />,
     );
+
+    expect(
+      screen.queryByText("At least one step is required."),
+    ).not.toBeInTheDocument();
 
     const removeButton = screen.getByRole("button", { name: "Remove step 1" });
     expect(removeButton).not.toBeDisabled();
@@ -109,8 +115,8 @@ describe("CapacityMotivationStepsEditor", () => {
     render(
       <Harness
         initial={[
-          { aboveQuantity: "2000", ratePerUnit: "25" },
-          { aboveQuantity: "1000", ratePerUnit: "50" },
+          { id: "s1", aboveQuantity: "2000", ratePerUnit: "25" },
+          { id: "s2", aboveQuantity: "1000", ratePerUnit: "50" },
         ]}
         onChange={onChange}
       />,
@@ -120,14 +126,14 @@ describe("CapacityMotivationStepsEditor", () => {
     await user.clear(secondAbove);
     await user.type(secondAbove, "500");
     expect(onChange).not.toHaveBeenCalledWith([
-      { aboveQuantity: "500", ratePerUnit: "50" },
-      { aboveQuantity: "2000", ratePerUnit: "25" },
+      { id: "s2", aboveQuantity: "500", ratePerUnit: "50" },
+      { id: "s1", aboveQuantity: "2000", ratePerUnit: "25" },
     ]);
 
     await user.tab();
     expect(onChange).toHaveBeenLastCalledWith([
-      { aboveQuantity: "500", ratePerUnit: "50" },
-      { aboveQuantity: "2000", ratePerUnit: "25" },
+      { id: "s2", aboveQuantity: "500", ratePerUnit: "50" },
+      { id: "s1", aboveQuantity: "2000", ratePerUnit: "25" },
     ]);
   });
 
@@ -135,8 +141,8 @@ describe("CapacityMotivationStepsEditor", () => {
     render(
       <Harness
         initial={[
-          { aboveQuantity: "1000", ratePerUnit: "50" },
-          { aboveQuantity: "1000", ratePerUnit: "25" },
+          { id: "s1", aboveQuantity: "1000", ratePerUnit: "50" },
+          { id: "s2", aboveQuantity: "1000", ratePerUnit: "25" },
         ]}
         onChange={vi.fn()}
       />,

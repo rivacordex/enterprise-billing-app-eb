@@ -317,6 +317,16 @@ export function EditablePrices({
               unitOfMeasure: result.unitOfMeasure,
               componentType: values.componentType,
             });
+          } else if (values.componentType === "usage_rate") {
+            setViolation({
+              code: "MODIFIER_WITHOUT_BASE_RATE",
+              unitOfMeasure: result.unitOfMeasure,
+              componentType: findOrphanedModifierType(
+                prices,
+                editingId ?? "",
+                result.unitOfMeasure,
+              ),
+            });
           }
           break;
         case "AMBIGUOUS_BASE_RATE":

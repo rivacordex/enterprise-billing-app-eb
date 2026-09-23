@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -7,16 +8,40 @@ import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
 export interface StepRow {
+  // Client-only React key, generated fresh per row (never derived from
+  // server data) so focus survives commitOrder's reordering on blur.
+  // Stripped before the server payload is built (toInsertPriceInput).
+  id: string;
   aboveQuantity: string;
   ratePerUnit: string;
 }
 
-export const EMPTY_STEP_ROW: StepRow = { aboveQuantity: "", ratePerUnit: "" };
+let stepRowSeq = 0;
+export function createStepRowId(): string {
+  stepRowSeq += 1;
+  return `step-${stepRowSeq}`;
+}
+
+export const EMPTY_STEP_ROW: StepRow = {
+  id: "step-0",
+  aboveQuantity: "",
+  ratePerUnit: "",
+};
+
+export interface StepRowFieldErrors {
+  aboveQuantity?: { message?: string };
+  ratePerUnit?: { message?: string };
+}
 
 export interface CapacityMotivationStepsEditorProps {
   value: StepRow[];
   onChange: (rows: StepRow[]) => void;
   disabled?: boolean;
+  // pm55-spec CodeRabbit fix — per-row RHF field errors (steps.N.*) and the
+  // steps-array-level error (steps.root), passed through from price-form so
+  // this leaf renders the same messages the schema already computes.
+  rowErrors?: (StepRowFieldErrors | undefined)[];
+  listError?: { message?: string } | undefined;
 }
 
 const TOUCH_ICON = "[@media(pointer:coarse)]:size-11";
@@ -56,7 +81,14 @@ export function CapacityMotivationStepsEditor({
   value,
   onChange,
   disabled,
+  rowErrors,
+  listError,
 }: CapacityMotivationStepsEditorProps): React.JSX.Element {
+  // pm55-spec CodeRabbit fix — the "at least one step" alert only fires once
+  // the user actually tries to remove the last row, not merely because the
+  // list happens to be down to one (e.g. right after a fresh mount).
+  const [removeRefused, setRemoveRefused] = useState(false);
+
   function updateRow(index: number, patch: Partial<StepRow>): void {
     onChange(value.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
@@ -66,12 +98,17 @@ export function CapacityMotivationStepsEditor({
   }
 
   function removeRow(index: number): void {
-    if (value.length === 1) return;
+    if (value.length === 1) {
+      setRemoveRefused(true);
+      return;
+    }
     onChange(value.filter((_, i) => i !== index));
   }
 
   const minRowsMessage =
-    value.length === 1 ? "At least one step is required." : null;
+    removeRefused && value.length === 1
+      ? "At least one step is required."
+      : null;
 
   return (
     <fieldset className="flex flex-col gap-2">
@@ -80,18 +117,20 @@ export function CapacityMotivationStepsEditor({
       </legend>
       {value.map((row, index) => {
         const duplicate = duplicateMessage(value, index);
+        const aboveQuantityError = rowErrors?.[index]?.aboveQuantity;
+        const ratePerUnitError = rowErrors?.[index]?.ratePerUnit;
         return (
-          <div key={index} className="flex items-end gap-2">
+          <div key={row.id} className="flex items-end gap-2">
             <Field>
-              <FieldLabel htmlFor={`step-above-${index}`}>
+              <FieldLabel htmlFor={`step-above-${row.id}`}>
                 Above quantity
               </FieldLabel>
               <Input
-                id={`step-above-${index}`}
+                id={`step-above-${row.id}`}
                 type="text"
                 inputMode="decimal"
                 className="tabular-nums"
-                aria-invalid={duplicate !== null}
+                aria-invalid={duplicate !== null || !!aboveQuantityError}
                 disabled={disabled}
                 value={row.aboveQuantity}
                 onChange={(e) =>
@@ -99,21 +138,28 @@ export function CapacityMotivationStepsEditor({
                 }
                 onBlur={commitRowOrder}
               />
-              <FieldError errors={duplicate ? [{ message: duplicate }] : []} />
+              <FieldError
+                errors={[
+                  duplicate ? { message: duplicate } : undefined,
+                  aboveQuantityError,
+                ]}
+              />
             </Field>
             <Field>
-              <FieldLabel htmlFor={`step-rate-${index}`}>
+              <FieldLabel htmlFor={`step-rate-${row.id}`}>
                 Rate per unit
               </FieldLabel>
               <Input
-                id={`step-rate-${index}`}
+                id={`step-rate-${row.id}`}
                 type="text"
+                aria-invalid={!!ratePerUnitError}
                 value={row.ratePerUnit}
                 disabled={disabled}
                 onChange={(e) =>
                   updateRow(index, { ratePerUnit: e.target.value })
                 }
               />
+              <FieldError errors={[ratePerUnitError]} />
             </Field>
             <Button
               type="button"
@@ -134,13 +180,22 @@ export function CapacityMotivationStepsEditor({
         variant="outline"
         size="sm"
         disabled={disabled}
-        onClick={() => onChange([...value, { ...EMPTY_STEP_ROW }])}
+        onClick={() => {
+          setRemoveRefused(false);
+          onChange([
+            ...value,
+            { ...EMPTY_STEP_ROW, id: createStepRowId() },
+          ]);
+        }}
       >
         <Plus size={14} aria-hidden />
         Add step
       </Button>
       <FieldError
-        errors={minRowsMessage ? [{ message: minRowsMessage }] : []}
+        errors={[
+          minRowsMessage ? { message: minRowsMessage } : undefined,
+          listError,
+        ]}
       />
     </fieldset>
   );

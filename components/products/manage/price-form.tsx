@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ComponentTypePicker } from "@/components/products/manage/component-type-picker";
 import {
   CapacityMotivationStepsEditor,
+  createStepRowId,
   type StepRow,
 } from "@/components/products/manage/capacity-motivation-steps-editor";
 import { PRICING_COMPONENT_BADGE_VARIANTS } from "@/components/products/pricing-component-badge";
@@ -100,7 +101,11 @@ const priceFormObjectSchema = z.object({
   recurringChargePeriodLength: z.string(),
   committedQuantity: z.string(),
   steps: z.array(
-    z.object({ aboveQuantity: z.string(), ratePerUnit: z.string() }),
+    z.object({
+      id: z.string(),
+      aboveQuantity: z.string(),
+      ratePerUnit: z.string(),
+    }),
   ),
   startDateTime: z.string().min(1, "Start date is required"),
 });
@@ -239,7 +244,9 @@ function makePriceFormSchema(baselineStartDate?: string) {
   });
 }
 
-const DEFAULT_STEP_ROW: StepRow = { aboveQuantity: "", ratePerUnit: "" };
+function emptyStepRow(): StepRow {
+  return { id: createStepRowId(), aboveQuantity: "", ratePerUnit: "" };
+}
 
 function defaultFormValues(): PriceFormValues {
   return {
@@ -254,7 +261,7 @@ function defaultFormValues(): PriceFormValues {
     amount: "",
     recurringChargePeriodLength: "1",
     committedQuantity: "",
-    steps: [{ ...DEFAULT_STEP_ROW }],
+    steps: [emptyStepRow()],
     startDateTime: todayLocalDate(),
   };
 }
@@ -301,6 +308,7 @@ export function priceCardToFormValues(price: PriceCard): PriceFormValues {
       return {
         ...base,
         steps: price.component.params.steps.map((step) => ({
+          id: createStepRowId(),
           aboveQuantity: String(step.aboveQuantity),
           ratePerUnit: step.ratePerUnit,
         })),
@@ -512,7 +520,7 @@ export function PriceForm({
       setValue("committedQuantity", "");
     }
     if (componentType !== "capacity_motivation") {
-      setValue("steps", [{ ...DEFAULT_STEP_ROW }]);
+      setValue("steps", [emptyStepRow()]);
     }
     if (!showsUnitOfMeasure(componentType)) {
       setValue("unitOfMeasure", "");
@@ -901,6 +909,10 @@ export function PriceForm({
                   value={field.value}
                   onChange={field.onChange}
                   disabled={isSubmitting}
+                  rowErrors={field.value.map(
+                    (_, index) => errors.steps?.[index],
+                  )}
+                  listError={errors.steps?.root}
                 />
               )}
             />
