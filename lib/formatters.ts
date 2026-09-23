@@ -55,15 +55,30 @@ export function formatMoney(
 // so the formatter stays pure. Used for the flat price amount — no inline
 // `toFixed`, no hand-built currency strings, no hardcoded symbols. Tier `rate`
 // is JSONB and prints as stored text (pm08-spec §2.5), so it does NOT pass
-// through here.
+// through here. `Intl.NumberFormat`'s currency style defaults to the
+// currency's usual fraction digits (2 for MYR/USD), which truncates a
+// sub-cent rate (e.g. a usage rate stored as "0.0125"); the digit count is
+// widened to the stored decimal string's own scale when it exceeds the
+// currency's default (never narrowed below it, so a whole-number amount like
+// "100" still renders with the currency's normal "100.00"), and only the
+// numeric value — never the string — is handed to `format`.
 export function formatCurrency(
   amount: string,
   currency: string,
   locale: string,
 ): string {
+  const decimalPlaces = amount.includes(".") ? amount.split(".")[1]!.length : 0;
+  const { maximumFractionDigits: defaultFractionDigits } =
+    new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+    }).resolvedOptions();
+  const fractionDigits = Math.max(decimalPlaces, defaultFractionDigits ?? 2);
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   }).format(Number(amount));
 }
 

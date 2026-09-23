@@ -4,20 +4,59 @@ import { describe, expect, it } from "vitest";
 import { PricesPanel } from "@/components/products/prices-panel";
 import type { PriceCard } from "@/types/product";
 
-function makePrice(overrides: Partial<PriceCard> = {}): PriceCard {
+const LOCALE = "en-MY";
+const TIMEZONE = "UTC";
+
+function usageRatePrice(overrides: Partial<PriceCard> = {}): PriceCard {
   return {
     productOfferingPriceId: "PRDOFP000001",
-    name: "Monthly Recurring Charge",
-    priceType: "recurring",
-    pricingModel: "flat",
-    amount: "5000.00",
+    name: "Base Usage Rate",
+    componentType: "usage_rate",
+    component: {
+      "@type": "usage_rate",
+      specVersion: 1,
+      plaSpecId: "PLA_USAGE_RATE",
+      priceType: "usage",
+      appliesAt: "rating",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: "EA" },
+      params: { ratePerUnit: "100", rateCardLookUp: "ENTERPRISE_EA_CARD" },
+    },
     currency: "MYR",
+    unitOfMeasure: "EA",
+    recurringChargePeriodLength: null,
+    recurringChargePeriodType: null,
+    glCode: null,
+    policy: null,
+    startDateTime: new Date("2026-01-01T00:00:00.000Z"),
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    endDateTime: null,
+    effectivityStatus: "current",
+    ...overrides,
+  };
+}
+
+function flatFeePrice(overrides: Partial<PriceCard> = {}): PriceCard {
+  return {
+    productOfferingPriceId: "PRDOFP000002",
+    name: "Monthly Recurring Charge",
+    componentType: "flat_fee",
+    component: {
+      "@type": "flat_fee",
+      specVersion: 1,
+      plaSpecId: null,
+      priceType: "recurring",
+      appliesAt: "billing",
+      basis: "flat",
+      boundTo: null,
+      params: { amount: "2000.00" },
+    },
+    currency: "MYR",
+    unitOfMeasure: null,
     recurringChargePeriodLength: 1,
     recurringChargePeriodType: "months",
-    unitOfMeasure: null,
     glCode: "GL-4100",
     policy: null,
-    pricingCharacteristics: null,
     startDateTime: new Date("2026-01-01T00:00:00.000Z"),
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     endDateTime: new Date("2027-01-01T00:00:00.000Z"),
@@ -26,62 +65,176 @@ function makePrice(overrides: Partial<PriceCard> = {}): PriceCard {
   };
 }
 
-const LOCALE = "en-US";
-const TIMEZONE = "UTC";
+function capacityCommitmentPrice(
+  overrides: Partial<PriceCard> = {},
+): PriceCard {
+  return {
+    productOfferingPriceId: "PRDOFP000003",
+    name: "Target Capacity Commitment",
+    componentType: "capacity_commitment",
+    component: {
+      "@type": "capacity_commitment",
+      specVersion: 1,
+      plaSpecId: "PLA_CAPACITY_COMMITMENT",
+      priceType: "commitment",
+      appliesAt: "post_aggregation",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: "EA" },
+      params: { committedQuantity: 1000 },
+    },
+    currency: "MYR",
+    unitOfMeasure: "EA",
+    recurringChargePeriodLength: null,
+    recurringChargePeriodType: null,
+    glCode: null,
+    policy: null,
+    startDateTime: new Date("2026-01-01T00:00:00.000Z"),
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    endDateTime: null,
+    effectivityStatus: "current",
+    ...overrides,
+  };
+}
+
+function capacityMotivationPrice(
+  overrides: Partial<PriceCard> = {},
+): PriceCard {
+  return {
+    productOfferingPriceId: "PRDOFP000004",
+    name: "Target Capacity Motivation",
+    componentType: "capacity_motivation",
+    component: {
+      "@type": "capacity_motivation",
+      specVersion: 1,
+      plaSpecId: "PLA_CAPACITY_MOTIVATION",
+      priceType: "discount",
+      appliesAt: "post_aggregation",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: "EA" },
+      params: {
+        steps: [
+          { aboveQuantity: 1000, ratePerUnit: "50" },
+          { aboveQuantity: 2000, ratePerUnit: "25" },
+        ],
+      },
+    },
+    currency: "MYR",
+    unitOfMeasure: "EA",
+    recurringChargePeriodLength: null,
+    recurringChargePeriodType: null,
+    glCode: null,
+    policy: null,
+    startDateTime: new Date("2026-01-01T00:00:00.000Z"),
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    endDateTime: null,
+    effectivityStatus: "current",
+    ...overrides,
+  };
+}
+
+// pm48's "Demo — Enterprise Capacity Plan" offering (pm53-spec I5.2): a
+// usage_rate + capacity_commitment + capacity_motivation sharing the EA lane,
+// plus a recurring flat_fee.
+function demoOfferingPrices(): PriceCard[] {
+  return [
+    usageRatePrice(),
+    capacityCommitmentPrice(),
+    capacityMotivationPrice(),
+    flatFeePrice(),
+  ];
+}
 
 describe("PricesPanel", () => {
-  it("renders one card per price with its mono id eyebrow, name, and price-type badge", () => {
+  it("renders the pm48 demo offering's four components with the spec's exact figures", () => {
+    render(
+      <PricesPanel
+        prices={demoOfferingPrices()}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+
+    expect(screen.getByText(/RM\s?100\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/\/ EA/)).toBeInTheDocument();
+    expect(screen.getByText("committed 1,000 EA")).toBeInTheDocument();
+    expect(
+      screen.getByText("base 100; above 1000: 50; above 2000: 25"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ENTERPRISE_EA_CARD")).toBeInTheDocument();
+    expect(screen.getByText(/RM\s?2,000\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/\/ 1 months/)).toBeInTheDocument();
+  });
+
+  it("shows no currency symbol anywhere in the capacity_commitment card", () => {
+    render(
+      <PricesPanel
+        prices={[capacityCommitmentPrice()]}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+    const card = screen.getByText("committed 1,000 EA").closest("div");
+    expect(card?.textContent).not.toMatch(/RM|MYR/);
+  });
+
+  it("renders the correct badge label for each of the four demo components", () => {
+    render(
+      <PricesPanel
+        prices={demoOfferingPrices()}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+    expect(screen.getByText("Usage rate")).toBeInTheDocument();
+    expect(screen.getByText("Target capacity commitment")).toBeInTheDocument();
+    expect(screen.getByText("Target capacity motivation")).toBeInTheDocument();
+    expect(screen.getByText("Recurring charge")).toBeInTheDocument();
+  });
+
+  it("renders a bare amount with no unit for a oneTime flat_fee", () => {
     render(
       <PricesPanel
         prices={[
-          makePrice({ productOfferingPriceId: "PRDOFP000001" }),
-          makePrice({
-            productOfferingPriceId: "PRDOFP000002",
+          flatFeePrice({
+            productOfferingPriceId: "PRDOFP000005",
             name: "Activation Fee",
-            priceType: "once",
+            component: {
+              "@type": "flat_fee",
+              specVersion: 1,
+              plaSpecId: null,
+              priceType: "oneTime",
+              appliesAt: "billing",
+              basis: "flat",
+              boundTo: null,
+              params: { amount: "500.00" },
+            },
+            recurringChargePeriodLength: null,
+            recurringChargePeriodType: null,
           }),
         ]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
     );
-
-    expect(screen.getByText("PRDOFP000001")).toBeInTheDocument();
-    expect(screen.getByText("PRDOFP000002")).toBeInTheDocument();
-    expect(screen.getByText("Activation Fee")).toBeInTheDocument();
-    expect(screen.getAllByText("Recurring")).toHaveLength(1);
-    expect(screen.getByText("Once")).toBeInTheDocument();
+    expect(screen.getByText("One-time charge")).toBeInTheDocument();
+    expect(screen.getByText(/RM\s?500\.00/)).toBeInTheDocument();
+    expect(screen.queryByText("Charge period")).not.toBeInTheDocument();
   });
 
-  it("shows the formatCurrency amount and currency code for a flat price, and no tier text", () => {
-    render(
-      <PricesPanel
-        prices={[makePrice({ amount: "5000.00", currency: "MYR" })]}
-        locale="en-MY"
-        timezone={TIMEZONE}
-      />,
-    );
-
-    expect(screen.getByText("RM 5,000.00")).toBeInTheDocument();
-    expect(screen.getByText("MYR")).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-  });
-
-  it("shows tiers as plain text and no flat-amount line for a tiered price, never the literal (tiered)", () => {
-    render(
+  it('renders a null rate card as a muted "default rate" with no link, button or href', () => {
+    const { container } = render(
       <PricesPanel
         prices={[
-          makePrice({
-            name: "Data Overage",
-            priceType: "usage",
-            pricingModel: "tiered",
-            amount: null,
-            unitOfMeasure: "GB",
-            pricingCharacteristics: {
-              tiers: [
-                { from: 0, to: 1000, rate: "0.05" },
-                { from: 1000, to: null, rate: "0.03" },
-              ],
+          usageRatePrice({
+            component: {
+              "@type": "usage_rate",
+              specVersion: 1,
+              plaSpecId: null,
+              priceType: "usage",
+              appliesAt: "rating",
+              basis: "quantity",
+              boundTo: { unitOfMeasure: "EA" },
+              params: { ratePerUnit: "100", rateCardLookUp: null },
             },
           }),
         ]}
@@ -89,22 +242,143 @@ describe("PricesPanel", () => {
         timezone={TIMEZONE}
       />,
     );
+    expect(screen.getByText("default rate")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(container.querySelector("[href]")).toBeNull();
+  });
 
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.getByText(/0–1000: 0\.05/)).toBeInTheDocument();
-    expect(screen.getByText(/1000–and above: 0\.03/)).toBeInTheDocument();
-    expect(screen.queryByText("(tiered)")).not.toBeInTheDocument();
+  it("computes effectivity per lane: a capacity_motivation does not supersede the usage_rate beside it", () => {
+    render(
+      <PricesPanel
+        prices={[
+          usageRatePrice({
+            productOfferingPriceId: "PRDOFP000010",
+            effectivityStatus: "superseded",
+            // Distinct from the current sibling's "100" (below) so a wrong
+            // pick by findBaseRate (e.g. array order rather than matching
+            // effectivityStatus) is detectable in the motivation card's text.
+            component: {
+              "@type": "usage_rate",
+              specVersion: 1,
+              plaSpecId: "PLA_USAGE_RATE",
+              priceType: "usage",
+              appliesAt: "rating",
+              basis: "quantity",
+              boundTo: { unitOfMeasure: "EA" },
+              params: {
+                ratePerUnit: "999",
+                rateCardLookUp: "ENTERPRISE_EA_CARD",
+              },
+            },
+          }),
+          usageRatePrice({
+            productOfferingPriceId: "PRDOFP000011",
+            effectivityStatus: "current",
+            startDateTime: new Date("2026-08-01T00:00:00.000Z"),
+          }),
+          capacityMotivationPrice({
+            productOfferingPriceId: "PRDOFP000012",
+            effectivityStatus: "current",
+          }),
+        ]}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+
+    const supersededCard = screen.getByText("PRDOFP000010").closest("div");
+    const successorCard = screen.getByText("PRDOFP000011").closest("div");
+    const motivationCard = screen.getByText("PRDOFP000012").closest("div");
+
+    expect(supersededCard).toHaveClass("text-muted-foreground");
+    expect(screen.getAllByText("Superseded")).toHaveLength(1);
+    expect(successorCard).toHaveClass("border-l-[color:var(--color-cyan-500)]");
+    expect(motivationCard).toHaveClass(
+      "border-l-[color:var(--color-cyan-500)]",
+    );
+    expect(motivationCard?.textContent).not.toContain("Superseded");
+    expect(motivationCard?.textContent).toContain("base 100");
+    expect(motivationCard?.textContent).not.toContain("base 999");
+  });
+
+  it("renders nothing for a badge whose componentType disagrees with the envelope @type (D2 guard)", () => {
+    render(
+      <PricesPanel
+        prices={[
+          flatFeePrice({
+            componentType: "flat_fee",
+            component: {
+              "@type": "flat_fee",
+              specVersion: 1,
+              plaSpecId: null,
+              // @ts-expect-error -- deliberately corrupt for the D2 guard test
+              priceType: "usage",
+              appliesAt: "billing",
+              basis: "flat",
+              boundTo: null,
+              params: { amount: "2000.00" },
+            },
+          }),
+        ]}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+    expect(screen.queryByText("Recurring charge")).not.toBeInTheDocument();
+    expect(screen.queryByText("One-time charge")).not.toBeInTheDocument();
+  });
+
+  it("omits the badge entirely when componentType disagrees with the envelope @type", () => {
+    render(
+      <PricesPanel
+        prices={[flatFeePrice({ componentType: "usage_rate" })]}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+    expect(screen.queryByText("Recurring charge")).not.toBeInTheDocument();
+    expect(screen.queryByText("One-time charge")).not.toBeInTheDocument();
+    expect(screen.queryByText("Usage rate")).not.toBeInTheDocument();
+  });
+
+  it("never leaks a raw component_type/@type value or a derived envelope field into user-facing text", () => {
+    const { container } = render(
+      <PricesPanel
+        prices={demoOfferingPrices()}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+    const forbidden = [
+      "usage_rate",
+      "flat_fee",
+      "capacity_commitment",
+      "capacity_motivation",
+      "specVersion",
+      "plaSpecId",
+      "appliesAt",
+      "basis",
+      "boundTo",
+    ];
+    const text = container.textContent ?? "";
+    for (const value of forbidden) {
+      expect(text).not.toContain(value);
+    }
+    for (const el of container.querySelectorAll("[title], [aria-label]")) {
+      const title = el.getAttribute("title") ?? "";
+      const ariaLabel = el.getAttribute("aria-label") ?? "";
+      for (const value of forbidden) {
+        expect(title).not.toContain(value);
+        expect(ariaLabel).not.toContain(value);
+      }
+    }
   });
 
   it("shows the Charge period row only when recurringChargePeriodLength is non-null", () => {
     const { rerender } = render(
       <PricesPanel
-        prices={[
-          makePrice({
-            recurringChargePeriodLength: 1,
-            recurringChargePeriodType: "months",
-          }),
-        ]}
+        prices={[flatFeePrice()]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -114,12 +388,7 @@ describe("PricesPanel", () => {
 
     rerender(
       <PricesPanel
-        prices={[
-          makePrice({
-            recurringChargePeriodLength: null,
-            recurringChargePeriodType: null,
-          }),
-        ]}
+        prices={[capacityCommitmentPrice()]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -130,17 +399,17 @@ describe("PricesPanel", () => {
   it("shows the Unit of measure row only when non-null", () => {
     const { rerender } = render(
       <PricesPanel
-        prices={[makePrice({ unitOfMeasure: "GB" })]}
+        prices={[usageRatePrice()]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
     );
     expect(screen.getByText("Unit of measure")).toBeInTheDocument();
-    expect(screen.getByText("GB")).toBeInTheDocument();
+    expect(screen.getAllByText("EA").length).toBeGreaterThan(0);
 
     rerender(
       <PricesPanel
-        prices={[makePrice({ unitOfMeasure: null })]}
+        prices={[flatFeePrice()]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -151,7 +420,7 @@ describe("PricesPanel", () => {
   it("shows the GL code row only when non-null", () => {
     const { rerender } = render(
       <PricesPanel
-        prices={[makePrice({ glCode: "GL-4100" })]}
+        prices={[flatFeePrice({ glCode: "GL-4100" })]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -161,7 +430,7 @@ describe("PricesPanel", () => {
 
     rerender(
       <PricesPanel
-        prices={[makePrice({ glCode: null })]}
+        prices={[flatFeePrice({ glCode: null })]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -172,7 +441,7 @@ describe("PricesPanel", () => {
   it("shows the Policy row only when non-null", () => {
     const { rerender } = render(
       <PricesPanel
-        prices={[makePrice({ policy: "no-refund" })]}
+        prices={[flatFeePrice({ policy: "no-refund" })]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -182,7 +451,7 @@ describe("PricesPanel", () => {
 
     rerender(
       <PricesPanel
-        prices={[makePrice({ policy: null })]}
+        prices={[flatFeePrice({ policy: null })]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,
@@ -190,25 +459,11 @@ describe("PricesPanel", () => {
     expect(screen.queryByText("Policy")).not.toBeInTheDocument();
   });
 
-  it("styles a current price with a cyan left border and no tag", () => {
-    render(
-      <PricesPanel
-        prices={[makePrice({ effectivityStatus: "current" })]}
-        locale={LOCALE}
-        timezone={TIMEZONE}
-      />,
-    );
-    const card = screen.getByText("PRDOFP000001").closest("div");
-    expect(card).toHaveClass("border-l-[color:var(--color-cyan-500)]");
-    expect(screen.queryByText(/Starts /)).not.toBeInTheDocument();
-    expect(screen.queryByText("Superseded")).not.toBeInTheDocument();
-  });
-
   it('shows a "Starts …" info tag for a future price', () => {
     render(
       <PricesPanel
         prices={[
-          makePrice({
+          flatFeePrice({
             effectivityStatus: "future",
             startDateTime: new Date("2027-01-01T00:00:00.000Z"),
           }),
@@ -220,51 +475,11 @@ describe("PricesPanel", () => {
     expect(screen.getByText(/Starts /)).toBeInTheDocument();
   });
 
-  it('mutes the card and shows a "Superseded" tag for a superseded price', () => {
-    render(
-      <PricesPanel
-        prices={[makePrice({ effectivityStatus: "superseded" })]}
-        locale={LOCALE}
-        timezone={TIMEZONE}
-      />,
-    );
-    expect(screen.getByText("Superseded")).toBeInTheDocument();
-    const card = screen.getByText("PRDOFP000001").closest("div");
-    expect(card).toHaveClass("text-muted-foreground");
-  });
-
-  it("styles multiple simultaneously-current prices as each current (no single-current assumption)", () => {
-    render(
-      <PricesPanel
-        prices={[
-          makePrice({
-            productOfferingPriceId: "PRDOFP000001",
-            priceType: "recurring",
-            effectivityStatus: "current",
-          }),
-          makePrice({
-            productOfferingPriceId: "PRDOFP000003",
-            priceType: "usage",
-            name: "Data Usage",
-            effectivityStatus: "current",
-          }),
-        ]}
-        locale={LOCALE}
-        timezone={TIMEZONE}
-      />,
-    );
-
-    const cardOne = screen.getByText("PRDOFP000001").closest("div");
-    const cardTwo = screen.getByText("PRDOFP000003").closest("div");
-    expect(cardOne).toHaveClass("border-l-[color:var(--color-cyan-500)]");
-    expect(cardTwo).toHaveClass("border-l-[color:var(--color-cyan-500)]");
-  });
-
   it("renders both start and end datetimes when endDateTime is non-null", () => {
     render(
       <PricesPanel
         prices={[
-          makePrice({
+          flatFeePrice({
             startDateTime: new Date("2026-01-01T00:00:00.000Z"),
             endDateTime: new Date("2027-01-01T00:00:00.000Z"),
             createdAt: new Date("2025-11-15T00:00:00.000Z"),
@@ -282,7 +497,7 @@ describe("PricesPanel", () => {
   it('renders "Open-ended" (not "Never") when endDateTime is null', () => {
     render(
       <PricesPanel
-        prices={[makePrice({ endDateTime: null })]}
+        prices={[flatFeePrice({ endDateTime: null })]}
         locale={LOCALE}
         timezone={TIMEZONE}
       />,

@@ -315,9 +315,10 @@ tasks:
           # SQL-recomputes tax from subtotal when it lands). Money is summed in SQL
           # (numeric), never JS float. D33 HARD-FAIL (Inv #28): a subscription whose
           # offering INTENDS a recurring charge but has no as-of price (and no prior
-          # snapshot), a tiered as-of price with no flat override, or a price in a
-          # currency other than the account's, RAISEs RECURRING_PRICE_NOT_FOUND /
-          # _UNSUPPORTED / RECURRING_CURRENCY_MISMATCH — ON_ERROR_STOP
+          # snapshot), whose as-of flat_fee has become a one-time charge with no
+          # override (pm52/D4 — the successor of the old tiered-as-of-price arm), or
+          # a price in a currency other than the account's, RAISEs
+          # RECURRING_PRICE_NOT_FOUND / _UNSUPPORTED / RECURRING_CURRENCY_MISMATCH — ON_ERROR_STOP
           # + set -e fail the task and roll the transaction back, so NO bill (not even
           # the USAGE lines) is produced for that account; on_error POSTs the HARD
           # finding, every other account stays billable. Runs as billrun_runtime; SELECT
@@ -402,29 +403,38 @@ tasks:
                 --     period_factor maps the recurring charge period onto the account's
                 --     bill-cycle frequency (1 for the built monthly=monthly case).
                 --     unit_price NULL marks a not-found recurring subscription (for an
-                --     offering that DOES intend recurring) for the D33 check below — the
-                --     old 'tiered' shape no longer exists as a product_offering_price row
-                --     (PC8/PC14), so component_type='flat_fee' is the only source of a
-                --     recurring scalar amount and there is nothing left to distinguish.
+                --     offering that DOES intend recurring) for the D33 check below.
+                --     pm52/D3: the window is filtered on component_type = 'flat_fee'
+                --     ONLY, never on the envelope priceType — a flat_fee 'oneTime' row
+                --     and a flat_fee 'recurring' row share one uniqueness lane (pm46's
+                --     (offering, component_type, unit_of_measure, start_date_time) key,
+                --     unit_of_measure NULL for both), so a priceType-filtered window
+                --     would silently resolve an older, superseded recurring price when
+                --     a later oneTime row shares the lane — exactly the masking hazard
+                --     the pre-reshape 'tiered' comment used to warn about. So this
+                --     window sees the lane's current row regardless of its priceType,
+                --     carries envelope_price_type out, and D33 tests it on the
+                --     RESOLVED as-of row (pm52/D4), not in this WHERE clause.
                 CREATE TEMP TABLE _bm29_resolved ON COMMIT DROP AS
                   WITH asof AS (
-                    SELECT offering_id, unit_price, price_ref,
+                    SELECT offering_id, unit_price, price_ref, envelope_price_type,
                            effective_date, currency, rc_len, rc_type
                     FROM (
                       SELECT pop.product_offering_id                       AS offering_id,
                              (pop.price_component #>> '{params,amount}')::numeric AS unit_price,
                              pop.product_offering_price_id                 AS price_ref,
+                             pop.price_component ->> 'priceType'           AS envelope_price_type,
                              (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
                              pop.currency                                  AS currency,
                              pop.recurring_charge_period_length            AS rc_len,
                              pop.recurring_charge_period_type              AS rc_type,
                              lead((pop.start_date_time AT TIME ZONE 'UTC')::date) OVER (
-                               PARTITION BY pop.product_offering_id
+                               PARTITION BY pop.product_offering_id, pop.component_type,
+                                            pop.unit_of_measure
                                ORDER BY pop.start_date_time
                              )                                            AS next_effective
                       FROM   product.product_offering_price pop
                       WHERE  pop.component_type = 'flat_fee'
-                        AND  pop.price_component ->> 'priceType' = 'recurring'
                         -- Prune the window scan to THIS account's offerings so the
                         -- product_offering_price offering index is usable (the lead()
                         -- window still sees each kept offering's full price history).
@@ -440,6 +450,8 @@ tasks:
                   SELECT pi.product_offering_id                                   AS product_offering_id,
                          COALESCE(oipo.amount, a.unit_price)::numeric(18,6)       AS unit_price,
                          COALESCE(oipo.order_item_price_override_id, a.price_ref) AS price_ref,
+                         a.envelope_price_type                                   AS envelope_price_type,
+                         (oipo.order_item_price_override_id IS NOT NULL)         AS has_override,
                          a.effective_date                                         AS effective_date,
                          COALESCE(oipo.currency, a.currency)                      AS currency,
                          ba.currency                                             AS account_currency,
@@ -491,29 +503,39 @@ tasks:
                          );
 
                 -- 0c. bm29 / D33 (Inv #28): fail THIS account HARD if any freshly
-                --     resolved subscription has no as-of price (RECURRING_PRICE_NOT_FOUND)
-                --     or is priced in a currency other than the account's
+                --     resolved subscription has no as-of price (RECURRING_PRICE_NOT_FOUND),
+                --     resolves to a one-time flat fee with no override
+                --     (RECURRING_PRICE_UNSUPPORTED — pm52/D4: the structural successor of
+                --     the old "as-of price is a shape this resolver cannot rate" arm. A
+                --     flat_fee 'oneTime' row can supersede a flat_fee 'recurring' row in
+                --     the same lane (pm52/D3's masking hazard) — when that happens here,
+                --     fail loudly rather than silently billing the superseded recurring
+                --     price. An override always wins regardless of the catalog's resolved
+                --     shape, so an overridden subscription is never flagged here.), or is
+                --     priced in a currency other than the account's
                 --     (RECURRING_CURRENCY_MISMATCH — the recurring analog of bm27's USAGE
                 --     currency assertion; v1 is single-currency and product_offering_price
                 --     /order_item_price_override currencies are not tied to the account,
                 --     so a foreign price must never be summed into the bill). RAISE rolls
                 --     the whole transaction back -> no bill produced. Never substitute
-                --     zero, never skip a subscription silently. (RECURRING_PRICE_UNSUPPORTED
-                --     / 'tiered' is retired: the graduated shape no longer exists as a
-                --     product_offering_price row post-reshape, PC8/PC14 — every recurring
-                --     row is flat_fee by the DB's own completeness CHECK, so there is
-                --     nothing left to distinguish from NOT_FOUND.)
+                --     zero, never skip a subscription silently.
                 DO $$
                 DECLARE
                   v_not_found         int;
+                  v_unsupported       int;
                   v_currency_mismatch int;
                 BEGIN
                   SELECT count(*) FILTER (WHERE unit_price IS NULL),
+                         count(*) FILTER (WHERE unit_price IS NOT NULL AND NOT has_override
+                                                  AND envelope_price_type IS DISTINCT FROM 'recurring'),
                          count(*) FILTER (WHERE unit_price IS NOT NULL AND currency IS DISTINCT FROM account_currency)
-                    INTO v_not_found, v_currency_mismatch
+                    INTO v_not_found, v_unsupported, v_currency_mismatch
                   FROM   _bm29_resolved;
                   IF v_not_found > 0 THEN
                     RAISE EXCEPTION 'RECURRING_PRICE_NOT_FOUND (HARD): % subscription(s) have no as-of recurring price (D33/Inv #28)', v_not_found;
+                  END IF;
+                  IF v_unsupported > 0 THEN
+                    RAISE EXCEPTION 'RECURRING_PRICE_UNSUPPORTED (HARD): % subscription(s) resolve to the offering''s current flat fee being a one-time charge, with no override (D33/Inv #28)', v_unsupported;
                   END IF;
                   IF v_currency_mismatch > 0 THEN
                     RAISE EXCEPTION 'RECURRING_CURRENCY_MISMATCH (HARD): % subscription(s) priced in a currency other than the account currency (D33/Inv #28)', v_currency_mismatch;

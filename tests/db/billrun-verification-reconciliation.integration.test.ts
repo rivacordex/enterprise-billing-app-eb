@@ -14,6 +14,7 @@ import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
+import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
 import { runVerification } from "@/tests/db/helpers/billrun-verify";
@@ -138,18 +139,31 @@ describe.skipIf(!databaseUrl)(
       return off!.productOfferingId;
     }
 
+    // pm52-spec D2: component_type='flat_fee' + envelope priceType='recurring',
+    // amount read from price_component#>>'{params,amount}'.
     async function newRecurringPrice(
       offeringId: string,
       amount: string,
       startIso: string,
     ): Promise<string> {
+      const envelope = {
+        "@type": "flat_fee",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "recurring",
+        appliesAt: "billing",
+        basis: "flat",
+        boundTo: null,
+        params: { amount },
+      };
       const [row] = await sql<{ product_offering_price_id: string }[]>`
         INSERT INTO product.product_offering_price
-          (product_offering_id, name, price_type, recurring_charge_period_length,
-           recurring_charge_period_type, amount, currency, pricing_model, start_date_time)
+          (product_offering_id, name, component_type, price_component,
+           recurring_charge_period_length, recurring_charge_period_type,
+           currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM30 Recurring', 'recurring', 1, 'months',
-           ${amount}, 'MYR', 'flat', ${startIso}::timestamptz)
+          (${offeringId}, 'BM30 Recurring', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
+           1, 'months', 'MYR', ${startIso}::timestamptz)
         RETURNING product_offering_price_id
       `;
       return row!.product_offering_price_id;
