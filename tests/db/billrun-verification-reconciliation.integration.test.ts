@@ -14,6 +14,7 @@ import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
+import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
 import { runVerification } from "@/tests/db/helpers/billrun-verify";
@@ -161,7 +162,7 @@ describe.skipIf(!databaseUrl)(
            recurring_charge_period_length, recurring_charge_period_type,
            currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM30 Recurring', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM30 Recurring', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            1, 'months', 'MYR', ${startIso}::timestamptz)
         RETURNING product_offering_price_id
       `;

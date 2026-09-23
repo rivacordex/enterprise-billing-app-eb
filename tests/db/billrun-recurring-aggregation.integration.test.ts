@@ -14,6 +14,7 @@ import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
+import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
 
@@ -175,7 +176,7 @@ describe.skipIf(!databaseUrl)(
            recurring_charge_period_length, recurring_charge_period_type,
            currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM29 Recurring', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM29 Recurring', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            1, 'months', ${currency}, ${startIso}::timestamptz)
         RETURNING product_offering_price_id
       `;
@@ -206,7 +207,7 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO product.product_offering_price
           (product_offering_id, name, component_type, price_component, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM29 One-time', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM29 One-time', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            'MYR', ${startIso}::timestamptz)
         RETURNING product_offering_price_id
       `;
@@ -236,7 +237,7 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO product.product_offering_price
           (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM52 Usage Rate', 'usage_rate', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM52 Usage Rate', 'usage_rate', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            ${unitOfMeasure}, 'MYR', ${startIso}::timestamptz)
       `;
     }
@@ -263,7 +264,7 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO product.product_offering_price
           (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM52 Capacity Commitment', 'capacity_commitment', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM52 Capacity Commitment', 'capacity_commitment', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            ${unitOfMeasure}, 'MYR', ${startIso}::timestamptz)
       `;
     }
@@ -294,7 +295,7 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO product.product_offering_price
           (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM52 Capacity Motivation', 'capacity_motivation', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM52 Capacity Motivation', 'capacity_motivation', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            ${unitOfMeasure}, 'MYR', ${startIso}::timestamptz)
       `;
     }

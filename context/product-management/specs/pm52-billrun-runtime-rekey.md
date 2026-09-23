@@ -144,7 +144,7 @@ Run a full bill run against a database built from empty and seeded by pm48, and 
 
 Authorization
 
-- [ ] G-G authorization and bill-run-owner sign-off recorded, naming exactly the seven files, with D4's option chosen in writing.
+- [ ] G-G authorization and bill-run-owner sign-off recorded, naming exactly the six files, with D4's option chosen in writing.
 - [ ] `git diff --stat` touches no other billing, workflow or bootstrap file.
 
 Behaviour (unchanged, proved by numbers)

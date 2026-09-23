@@ -72,6 +72,36 @@ export async function runAggregation(
           ) w
           WHERE  w.effective_date <= ${periodStart}::date
             AND  (w.next_effective > ${periodStart}::date OR w.next_effective IS NULL)
+        ),
+        recurring_asof AS (
+          -- The as-of RECURRING flat_fee price, resolved independently of asof
+          -- above. asof's "a" may be a oneTime row (D3's un-filtered window)
+          -- whose rc_len/rc_type are NULL by construction -- period_factor must
+          -- never derive cadence from that row when an override supplies the
+          -- amount, so this re-runs the as-of window filtered to
+          -- priceType='recurring' (the pre-pm52 shape) as the applicable
+          -- recurring catalog price.
+          SELECT offering_id, rc_len, rc_type
+          FROM (
+            SELECT pop.product_offering_id                       AS offering_id,
+                   pop.recurring_charge_period_length            AS rc_len,
+                   pop.recurring_charge_period_type              AS rc_type,
+                   (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
+                   lead((pop.start_date_time AT TIME ZONE 'UTC')::date) OVER (
+                     PARTITION BY pop.product_offering_id, pop.component_type,
+                                  pop.unit_of_measure
+                     ORDER BY pop.start_date_time
+                   )                                            AS next_effective
+            FROM   product.product_offering_price pop
+            WHERE  pop.component_type = 'flat_fee'
+              AND  pop.price_component ->> 'priceType' = 'recurring'
+              AND  pop.product_offering_id IN (
+                     SELECT product_offering_id
+                     FROM   inventory.product_inventory
+                     WHERE  billing_account_id = ${ban} AND status = 'ACTIVE')
+          ) w
+          WHERE  w.effective_date <= ${periodStart}::date
+            AND  (w.next_effective > ${periodStart}::date OR w.next_effective IS NULL)
         )
         SELECT pi.product_offering_id                                   AS product_offering_id,
                COALESCE(oipo.amount, a.unit_price)::numeric(18,6)       AS unit_price,
@@ -88,7 +118,8 @@ export async function runAggregation(
                     WHEN 'quarterly' THEN 3
                     WHEN 'annually'  THEN 12
                   END)::numeric
-                 / NULLIF(a.rc_len * CASE lower(COALESCE(a.rc_type, ''))
+                 / NULLIF(COALESCE(ra.rc_len, a.rc_len)
+                          * CASE lower(COALESCE(ra.rc_type, a.rc_type, ''))
                                        WHEN 'month'     THEN 1
                                        WHEN 'months'    THEN 1
                                        WHEN 'quarter'   THEN 3
@@ -104,6 +135,7 @@ export async function runAggregation(
         JOIN   billing.billing_account ba ON ba.billing_account_id = pi.billing_account_id
         JOIN   billing.bill_cycle bc       ON bc.bill_cycle_id = ba.ref_bill_cycle_id
         LEFT   JOIN asof a ON a.offering_id = pi.product_offering_id
+        LEFT   JOIN recurring_asof ra ON ra.offering_id = pi.product_offering_id
         LEFT   JOIN ordering.order_item_price_override oipo
                ON oipo.product_order_item_id = pi.product_order_item_id
               AND oipo.price_type = 'recurring'

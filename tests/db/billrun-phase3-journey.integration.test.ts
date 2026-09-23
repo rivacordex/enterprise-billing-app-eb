@@ -14,6 +14,7 @@ import { billRun } from "@/db/schema/billing/bill-run";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { document } from "@/db/schema/billing/documents";
 import { productOffering } from "@/db/schema/product";
+import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
@@ -245,7 +246,7 @@ describe.skipIf(!databaseUrl)(
            recurring_charge_period_length, recurring_charge_period_type,
            currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM35 Recurring', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM35 Recurring', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            1, 'months', ${CURRENCY}, ${startIso}::timestamptz)
       `;
     }
@@ -275,7 +276,7 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO product.product_offering_price
           (product_offering_id, name, component_type, price_component, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM35 One-time', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+          (${offeringId}, 'BM35 One-time', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            ${CURRENCY}, ${startIso}::timestamptz)
       `;
     }

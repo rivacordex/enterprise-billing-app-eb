@@ -255,6 +255,22 @@ describe("PricesPanel", () => {
           usageRatePrice({
             productOfferingPriceId: "PRDOFP000010",
             effectivityStatus: "superseded",
+            // Distinct from the current sibling's "100" (below) so a wrong
+            // pick by findBaseRate (e.g. array order rather than matching
+            // effectivityStatus) is detectable in the motivation card's text.
+            component: {
+              "@type": "usage_rate",
+              specVersion: 1,
+              plaSpecId: "PLA_USAGE_RATE",
+              priceType: "usage",
+              appliesAt: "rating",
+              basis: "quantity",
+              boundTo: { unitOfMeasure: "EA" },
+              params: {
+                ratePerUnit: "999",
+                rateCardLookUp: "ENTERPRISE_EA_CARD",
+              },
+            },
           }),
           usageRatePrice({
             productOfferingPriceId: "PRDOFP000011",
@@ -282,6 +298,8 @@ describe("PricesPanel", () => {
       "border-l-[color:var(--color-cyan-500)]",
     );
     expect(motivationCard?.textContent).not.toContain("Superseded");
+    expect(motivationCard?.textContent).toContain("base 100");
+    expect(motivationCard?.textContent).not.toContain("base 999");
   });
 
   it("renders nothing for a badge whose componentType disagrees with the envelope @type (D2 guard)", () => {
@@ -309,6 +327,19 @@ describe("PricesPanel", () => {
     );
     expect(screen.queryByText("Recurring charge")).not.toBeInTheDocument();
     expect(screen.queryByText("One-time charge")).not.toBeInTheDocument();
+  });
+
+  it("omits the badge entirely when componentType disagrees with the envelope @type", () => {
+    render(
+      <PricesPanel
+        prices={[flatFeePrice({ componentType: "usage_rate" })]}
+        locale={LOCALE}
+        timezone={TIMEZONE}
+      />,
+    );
+    expect(screen.queryByText("Recurring charge")).not.toBeInTheDocument();
+    expect(screen.queryByText("One-time charge")).not.toBeInTheDocument();
+    expect(screen.queryByText("Usage rate")).not.toBeInTheDocument();
   });
 
   it("never leaks a raw component_type/@type value or a derived envelope field into user-facing text", () => {

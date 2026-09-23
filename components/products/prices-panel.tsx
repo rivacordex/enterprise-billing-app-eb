@@ -44,15 +44,24 @@ function stepsText(steps: Step[], baseRate: string | null): string {
 
 // The same-unit `usage_rate` sibling a `capacity_motivation` schedule reads
 // its base rate from (D5) — a per-lane read, never a global "the" usage rate.
+// Among same-unit siblings, prefer the one sharing the motivation card's own
+// effectivityStatus (so a superseded motivation reads its superseded base,
+// not a newer/older one), falling back to the current sibling.
 function findBaseRate(
   prices: PriceCard[],
-  unitOfMeasure: string | null,
+  motivationCard: PriceCard,
 ): string | null {
-  const sibling = prices.find(
+  const siblings = prices.filter(
     (candidate) =>
       candidate.componentType === "usage_rate" &&
-      candidate.unitOfMeasure === unitOfMeasure,
+      candidate.unitOfMeasure === motivationCard.unitOfMeasure,
   );
+  const sibling =
+    siblings.find(
+      (candidate) =>
+        candidate.effectivityStatus === motivationCard.effectivityStatus,
+    ) ??
+    siblings.find((candidate) => candidate.effectivityStatus === "current");
   if (sibling === undefined || sibling.component["@type"] !== "usage_rate") {
     return null;
   }
@@ -127,7 +136,7 @@ function renderAmount(
       );
 
     case "capacity_motivation": {
-      const baseRate = findBaseRate(allPrices, unitOfMeasure);
+      const baseRate = findBaseRate(allPrices, price);
       return (
         <p className="font-mono text-body-sm text-foreground tabular-nums">
           {stepsText(component.params.steps, baseRate)}
@@ -183,10 +192,12 @@ export function PricesPanel({
             <span className="text-body font-semibold text-foreground">
               {price.name}
             </span>
-            <PricingComponentBadge
-              componentType={price.componentType}
-              priceType={price.component.priceType}
-            />
+            {price.componentType === price.component["@type"] ? (
+              <PricingComponentBadge
+                componentType={price.componentType}
+                priceType={price.component.priceType}
+              />
+            ) : null}
             <PriceEffectivityTag
               price={price}
               locale={locale}

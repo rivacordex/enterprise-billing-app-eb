@@ -109,7 +109,7 @@ Re-key to per-lane input (D7). It consumes `effectivityStatus`/`endDateTime` fro
 
 ### I5. Tests
 
-1. **`tests/components/pricing-component-badge.test.tsx` (new).** All five variants render with the right label and icon; `flat_fee` switches on the envelope `priceType` and **not** on the presence of a charge period (assert a `recurring` `flat_fee` with no period renders as one-time, and that a `oneTime` one is never labelled recurring because a period exists); the map is total (a type-level assertion that adding a `ComponentType` breaks the build).
+1. **`tests/components/pricing-component-badge.test.tsx` (new).** All five variants render with the right label and icon; `flat_fee` switches on the envelope `priceType` and **not** on the presence of a charge period (assert a `recurring` `flat_fee` with no period renders as recurring, and that a `oneTime` one is never labelled recurring because a period exists); the map is total (a type-level assertion that adding a `ComponentType` breaks the build).
 2. **`tests/components/prices-panel.test.tsx` (updated).** Renders pm48's four-component demo offering: `RM 100.00 / EA`; `committed 1,000 EA` with no currency symbol anywhere in that card; `base 100; above 1000: 50; above 2000: 25`; the `rateCardLookUp` name in mono; `RM 2,000.00 / month`.
 3. **Per-lane effectivity (D7).** With a dated successor `usage_rate` and a `capacity_motivation`: the superseded `usage_rate` is muted and tagged, the successor is Current, and the `capacity_motivation` is **Current, not Superseded**.
 4. **Null rate card** renders the muted "default rate" and no link, no button, no `href`.
