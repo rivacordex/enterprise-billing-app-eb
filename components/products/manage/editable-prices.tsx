@@ -10,27 +10,35 @@ import { insertPriceAction } from "@/actions/product/insert-price.action";
 import { updatePriceAction } from "@/actions/product/update-price.action";
 import { InlineRowEditor } from "@/components/products/manage/inline-row-editor";
 import { buildManageProductsHref } from "@/components/products/manage/manage-products-href";
+import { OfferingComponentErrorBanner } from "@/components/products/manage/offering-component-error-banner";
+import type { OfferingComponentBannerViolation } from "@/components/products/manage/offering-component-error-banner";
 import {
   PriceForm,
   priceCardToFormValues,
 } from "@/components/products/manage/price-form";
+import { renderPriceAmount } from "@/components/products/price-amount";
 import {
   PriceEffectivityTag,
   effectivityAccentClass,
 } from "@/components/products/price-effectivity";
-import { PriceTypeBadge } from "@/components/products/price-type-badge";
+import { PricingComponentBadge } from "@/components/products/pricing-component-badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDatetime } from "@/lib/formatters";
+import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
-import type { LifecycleStatus, PriceCard } from "@/types/product";
+import type {
+  ComponentType,
+  LifecycleStatus,
+  PriceCard,
+  UnitOfMeasure,
+} from "@/types/product";
 import type { InsertPriceInput } from "@/validation/product/insert-price.schema";
-import type { Tier } from "@/validation/product/pricing-characteristics.schema";
 
-// pm41 I2. The DRAFT-only client editor rendered by ManagePricesPanel (which
-// stays a server component). One row edits at a time (D2); Save/Cancel are
-// explicit; the typed action result updates the view (I3). Effectivity tags,
-// backdating/unbillable warnings and tier rendering all come from the reused
-// components — this unit adds no new copy.
+// pm41 I2, reworked pm54/pm55 for the pricing-components update. The
+// DRAFT-only client editor rendered by ManagePricesPanel (which stays a
+// server component). One row edits at a time (D2); Save/Cancel are explicit;
+// the typed action result updates the view (I3). The offering-level banner
+// (pm54 D4) renders exclusively from the last action result — never from
+// client-side VI3–VI5 evaluation — and disables Save while it's present.
 //
 // Mid-edit races: a RETIRED/non-DRAFT race returns OFFERING_RETIRED /
 // OFFERING_NOT_DRAFT → the reload banner; an ACTIVE race on ADD branches a new
@@ -48,6 +56,11 @@ const BACKDATED_MESSAGE =
 const TOUCH_ICON = "[@media(pointer:coarse)]:size-11";
 const TOUCH_TARGET = "[@media(pointer:coarse)]:min-h-[44px]";
 
+const MODIFIER_COMPONENT_TYPES: readonly ComponentType[] = [
+  "capacity_commitment",
+  "capacity_motivation",
+];
+
 type ActiveEditor =
   | { kind: "none" }
   | { kind: "edit"; id: string }
@@ -57,9 +70,62 @@ type PendingAction =
   | { kind: "activate"; target: ActiveEditor }
   | { kind: "delete"; id: string };
 
-function tierText(tier: Tier): string {
-  const to = tier.to === null ? "and above" : String(tier.to);
-  return `${tier.from}–${to}: ${tier.rate}`;
+// pm55-spec D4/I3 — the four not-yet-billable warnings, kept in one place
+// (beside the component's other copy) so the "exactly four copies" rule
+// stays checkable and a future wording change is one edit. Warning-tinted,
+// inline under the component row, and never block the save.
+function notYetBillableWarnings(price: PriceCard): string[] {
+  const warnings: string[] = [];
+
+  if (price.componentType === "capacity_commitment") {
+    warnings.push(
+      "Bill run does not apply a capacity commitment yet — this component is stored but not billed.",
+    );
+  }
+  if (price.componentType === "capacity_motivation") {
+    warnings.push(
+      "Bill run does not apply a capacity motivation yet — usage bills at the base rate until then.",
+    );
+  }
+  if (
+    price.component["@type"] === "usage_rate" &&
+    price.component.params.rateCardLookUp !== null
+  ) {
+    warnings.push(
+      `No rate card exists yet — ${price.component.params.rateCardLookUp} falls back to the rate per unit.`,
+    );
+  }
+  if (
+    MODIFIER_COMPONENT_TYPES.includes(price.componentType) &&
+    price.unitOfMeasure === "Mbps"
+  ) {
+    warnings.push(
+      "A capacity component in Mbps has no agreed basis yet; confirm what the committed quantity means before this version goes live.",
+    );
+  }
+
+  return warnings;
+}
+
+// A delete's MODIFIER_WITHOUT_BASE_RATE names the unit but not which
+// remaining component now lacks a base rate (pm49's result carries only the
+// unit) — read it back from the still-visible sibling rows, the same
+// "read what was just submitted" rule the add/edit path applies to its own
+// form values.
+function findOrphanedModifierType(
+  prices: PriceCard[],
+  excludeId: string,
+  unitOfMeasure: UnitOfMeasure,
+): Extract<ComponentType, "capacity_commitment" | "capacity_motivation"> {
+  const orphan = prices.find(
+    (price) =>
+      price.productOfferingPriceId !== excludeId &&
+      MODIFIER_COMPONENT_TYPES.includes(price.componentType) &&
+      price.unitOfMeasure === unitOfMeasure,
+  );
+  return orphan?.componentType === "capacity_motivation"
+    ? "capacity_motivation"
+    : "capacity_commitment";
 }
 
 export interface EditablePricesProps {
@@ -97,6 +163,8 @@ export function EditablePrices({
     string,
     string[]
   > | null>(null);
+  const [violation, setViolation] =
+    useState<OfferingComponentBannerViolation | null>(null);
   const [staleBanner, setStaleBanner] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{
     id: string;
@@ -138,6 +206,7 @@ export function EditablePrices({
   function applyActivate(next: ActiveEditor): void {
     setFormError(null);
     setServerFieldErrors(null);
+    setViolation(null);
     setDirty(false);
     setDeleting(null);
     setActive(next);
@@ -148,11 +217,13 @@ export function EditablePrices({
     setDirty(false);
     setFormError(null);
     setServerFieldErrors(null);
+    setViolation(null);
     setDeleting({ id, busy: false, error: null });
   }
 
   function cancelDelete(id: string): void {
     setDeleting(null);
+    setViolation(null);
     pendingFocusRef.current = id;
   }
 
@@ -173,6 +244,7 @@ export function EditablePrices({
     setDirty(false);
     setFormError(null);
     setServerFieldErrors(null);
+    setViolation(null);
     setPending(null);
     setDeleting(null);
     pendingFocusRef.current = focusTarget;
@@ -201,6 +273,7 @@ export function EditablePrices({
     setIsSubmitting(true);
     setFormError(null);
     setServerFieldErrors(null);
+    setViolation(null);
     try {
       const result = editingId
         ? await updatePriceAction(editingId, values)
@@ -234,6 +307,33 @@ export function EditablePrices({
         case "BACKDATED_START_TOO_FAR":
           setServerFieldErrors({ startDateTime: [BACKDATED_MESSAGE] });
           break;
+        case "MODIFIER_WITHOUT_BASE_RATE":
+          if (
+            values.componentType === "capacity_commitment" ||
+            values.componentType === "capacity_motivation"
+          ) {
+            setViolation({
+              code: "MODIFIER_WITHOUT_BASE_RATE",
+              unitOfMeasure: result.unitOfMeasure,
+              componentType: values.componentType,
+            });
+          }
+          break;
+        case "AMBIGUOUS_BASE_RATE":
+          if (values.componentType === "usage_rate") {
+            setViolation({
+              code: "AMBIGUOUS_BASE_RATE",
+              unitOfMeasure: values.unitOfMeasure,
+            });
+          }
+          break;
+        case "CURRENCY_MISMATCH":
+          setViolation({
+            code: "CURRENCY_MISMATCH",
+            existingCurrency: result.existingCurrency,
+            candidateCurrency: result.candidateCurrency,
+          });
+          break;
         case "OFFERING_NOT_DRAFT":
         case "OFFERING_RETIRED":
           setStaleBanner(STALE_MESSAGE);
@@ -257,6 +357,7 @@ export function EditablePrices({
 
   async function handleDeleteConfirm(id: string): Promise<void> {
     setDeleting({ id, busy: true, error: null });
+    setViolation(null);
     try {
       const result = await deletePriceAction(id);
       if (result.ok) {
@@ -277,6 +378,26 @@ export function EditablePrices({
         setStaleBanner(STALE_MESSAGE);
         pendingFocusRef.current = "add";
         router.refresh();
+      } else if (result.code === "MODIFIER_WITHOUT_BASE_RATE") {
+        setViolation({
+          code: "MODIFIER_WITHOUT_BASE_RATE",
+          unitOfMeasure: result.unitOfMeasure,
+          componentType: findOrphanedModifierType(
+            prices,
+            id,
+            result.unitOfMeasure,
+          ),
+        });
+        setDeleting({ id, busy: false, error: null });
+      } else if (
+        result.code === "AMBIGUOUS_BASE_RATE" ||
+        result.code === "CURRENCY_MISMATCH"
+      ) {
+        // Deleting can only ever shrink the ambiguity/currency sets
+        // (services/product/validate-offering-components.ts) — unreachable
+        // in practice, kept so the exhaustive switch has nowhere silent to
+        // fall through to.
+        setDeleting({ id, busy: false, error: KEPT_INPUT_MESSAGE });
       } else {
         setDeleting({ id, busy: false, error: KEPT_INPUT_MESSAGE });
       }
@@ -289,6 +410,8 @@ export function EditablePrices({
 
   return (
     <div className="mt-2 flex flex-col gap-2">
+      <OfferingComponentErrorBanner violation={violation} />
+
       {staleBanner ? (
         <div
           role="status"
@@ -343,6 +466,7 @@ export function EditablePrices({
                     isSubmitting={isSubmitting}
                     saveLabel="Save"
                     formError={formError}
+                    saveDisabled={violation !== null}
                     onCancel={closeEditor}
                   >
                     <PriceForm
@@ -356,6 +480,7 @@ export function EditablePrices({
                       }
                       isSubmitting={isSubmitting}
                       onDirtyChange={setDirty}
+                      onValuesChange={() => setViolation(null)}
                       serverFieldErrors={serverFieldErrors}
                     />
                   </InlineRowEditor>
@@ -369,6 +494,7 @@ export function EditablePrices({
               locale,
               timezone,
             );
+            const warnings = notYetBillableWarnings(price);
             return (
               <li
                 key={price.productOfferingPriceId}
@@ -382,33 +508,39 @@ export function EditablePrices({
                     <span className="text-body-sm font-medium text-foreground">
                       {price.name}
                     </span>
-                    <PriceTypeBadge priceType={price.priceType} />
+                    {price.componentType === price.component["@type"] ? (
+                      <PricingComponentBadge
+                        componentType={price.componentType}
+                        priceType={price.component.priceType}
+                      />
+                    ) : null}
                     <PriceEffectivityTag
                       price={price}
                       locale={locale}
                       timezone={timezone}
                     />
                   </div>
-                  <p className="mt-0.5 text-body-sm text-muted-foreground tabular-nums">
-                    {price.pricingModel === "tiered" &&
-                    price.pricingCharacteristics
-                      ? price.pricingCharacteristics.tiers
-                          .map(tierText)
-                          .join("; ")
-                      : price.amount !== null
-                        ? formatCurrency(price.amount, price.currency, locale)
-                        : null}
-                    {price.recurringChargePeriodLength !== null
-                      ? ` / ${price.recurringChargePeriodLength} ${price.recurringChargePeriodType ?? ""}`.trimEnd()
-                      : null}
-                    {price.unitOfMeasure !== null
-                      ? ` / ${price.unitOfMeasure}`
-                      : null}
-                    {" · "}
-                    <time dateTime={price.startDateTime.toISOString()}>
-                      {startLabel}
-                    </time>
-                  </p>
+                  <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 text-body-sm text-muted-foreground">
+                    {renderPriceAmount(price, prices, locale)}
+                    <span>
+                      ·{" "}
+                      <time dateTime={price.startDateTime.toISOString()}>
+                        {startLabel}
+                      </time>
+                    </span>
+                  </div>
+                  {warnings.length > 0 ? (
+                    <ul className="mt-1 flex flex-col gap-1">
+                      {warnings.map((warning) => (
+                        <li
+                          key={warning}
+                          className="rounded-[var(--radius)] bg-[color:var(--bg-warning)] px-2 py-1 text-body-sm text-[color:var(--text-warning)]"
+                        >
+                          {warning}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                   {isConfirming ? (
                     <div className="mt-1.5 flex flex-col gap-1">
                       <span className="text-body-sm text-foreground">
@@ -437,7 +569,7 @@ export function EditablePrices({
                           variant="destructive"
                           size="sm"
                           className={TOUCH_TARGET}
-                          disabled={deleting?.busy}
+                          disabled={deleting?.busy || violation !== null}
                           onClick={() =>
                             void handleDeleteConfirm(
                               price.productOfferingPriceId,
@@ -507,6 +639,7 @@ export function EditablePrices({
             isSubmitting={isSubmitting}
             saveLabel="Add price"
             formError={formError}
+            saveDisabled={violation !== null}
             onCancel={closeEditor}
           >
             <PriceForm
@@ -516,6 +649,7 @@ export function EditablePrices({
               onSubmit={(values) => handleSave(values, null)}
               isSubmitting={isSubmitting}
               onDirtyChange={setDirty}
+              onValuesChange={() => setViolation(null)}
               serverFieldErrors={serverFieldErrors}
             />
           </InlineRowEditor>

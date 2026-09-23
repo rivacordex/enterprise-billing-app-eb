@@ -225,15 +225,15 @@ components/products/manage/
   family-table.tsx                    # (pm39)  FamilyTable
   version-bar.tsx                     # (pm40)  VersionBar
   manage-specifications-panel.tsx     # (pm41)  server
-  manage-prices-panel.tsx             # (pm41, pm51) server; hosts the banner
+  manage-prices-panel.tsx             # (pm41, pm54) server; hosts the banner
   editable-specifications.tsx         # (pm41)  client leaf
-  editable-prices.tsx                 # (pm41, pm51/52) client leaf
+  editable-prices.tsx                 # (pm41, pm54/55) client leaf
   component-type-picker.tsx           # (pm54, new)  ComponentTypePicker
   offering-component-error-banner.tsx # (pm54, new)  OfferingComponentErrorBanner (VI3–VI5)
   capacity-motivation-steps-editor.tsx # (pm55, new) CapacityMotivationStepsEditor
   version-action-header.tsx           # (pm41)
   offering-form.tsx, specification-form.tsx
-  price-form.tsx                      # (pm51/52) one sub-form per component_type
+  price-form.tsx                      # (pm54/55) one sub-form per component_type
   create-offering-dialog.tsx, activate-offering-dialog.tsx
   submit-for-testing-dialog.tsx       # (pm42)
   obsolete-offering-dialog.tsx        # (pm43)

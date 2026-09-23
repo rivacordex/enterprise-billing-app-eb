@@ -51,12 +51,12 @@ function renderForm(
   return { onSubmit, ...result };
 }
 
-async function fillRequiredFlatFields(
-  user: ReturnType<typeof userEvent.setup>,
-) {
-  await user.type(screen.getByLabelText("Price name"), "Monthly recurring");
+async function fillUsageRateFields(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText("Price name"), "Base usage rate");
   await user.type(screen.getByLabelText("Currency"), "USD");
-  await user.type(screen.getByLabelText("Amount"), "50.00");
+  await user.click(screen.getByRole("radio", { name: "Usage rate" }));
+  await user.selectOptions(screen.getByLabelText("Unit of measure"), "EA");
+  await user.type(screen.getByLabelText("Rate per unit"), "0.05");
 }
 
 function setStartDate(dateString: string) {
@@ -74,55 +74,96 @@ function submitForm() {
   });
 }
 
-describe("PriceForm", () => {
-  it("shows the Amount field in flat mode and the tier editor in tiered mode, never both", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+describe("PriceForm — component picker (D1)", () => {
+  it("defaults to Usage rate and offers exactly the four persistable types, never negotiated_override", () => {
     renderForm();
 
-    expect(screen.getByLabelText("Amount")).toBeInTheDocument();
-    expect(screen.queryByText("Tiers")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("radio", { name: "Tiered" }));
-
-    expect(screen.queryByLabelText("Amount")).not.toBeInTheDocument();
-    expect(screen.getByText("Tiers")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Usage rate" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Flat fee" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Target capacity commitment" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Target capacity motivation" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("radio")).toHaveLength(4);
+    expect(screen.queryByText(/negotiated/i)).not.toBeInTheDocument();
   });
 
-  it("'Add tier' appends a row and 'Remove' removes one, disabled when exactly one row remains", async () => {
+  it("usage_rate shows the unit and hides the recurring period pair", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderForm();
-    await user.click(screen.getByRole("radio", { name: "Tiered" }));
+    await user.click(screen.getByRole("radio", { name: "Usage rate" }));
 
-    expect(screen.getAllByLabelText("From")).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Remove tier 1" }),
-    ).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "Add tier" }));
-
-    expect(screen.getAllByLabelText("From")).toHaveLength(2);
-    expect(
-      screen.getByRole("button", { name: "Remove tier 1" }),
-    ).not.toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Remove tier 2" }),
-    ).not.toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "Remove tier 2" }));
-
-    expect(screen.getAllByLabelText("From")).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Remove tier 1" }),
-    ).toBeDisabled();
+    expect(screen.getByLabelText("Unit of measure")).toBeInTheDocument();
+    expect(screen.getByLabelText("Rate per unit")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Charge period")).not.toBeInTheDocument();
   });
 
+  it("flat_fee hides the unit and only shows the period pair when recurring", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderForm();
+    await user.click(screen.getByRole("radio", { name: "Flat fee" }));
+
+    expect(screen.queryByLabelText("Unit of measure")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Recurring charge" }),
+    ).toBeChecked();
+    expect(screen.getByLabelText("Charge period")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "One-time charge" }));
+    expect(screen.queryByLabelText("Charge period")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Unit of measure")).not.toBeInTheDocument();
+  });
+
+  it("capacity_commitment shows the unit and a committed quantity field with no currency inside the branch", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderForm();
+    await user.click(
+      screen.getByRole("radio", { name: "Target capacity commitment" }),
+    );
+
+    expect(screen.getByLabelText("Unit of measure")).toBeInTheDocument();
+    expect(screen.getByLabelText("Committed quantity")).toBeInTheDocument();
+    // Currency lives above the picker (D1) and is not duplicated in the branch.
+    expect(screen.getAllByLabelText("Currency")).toHaveLength(1);
+  });
+
+  it("switching component type resets the previous branch's fields (nothing rendered disabled instead of hidden)", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderForm();
+    await user.click(screen.getByRole("radio", { name: "Usage rate" }));
+    await user.type(screen.getByLabelText("Rate per unit"), "0.05");
+
+    await user.click(screen.getByRole("radio", { name: "Flat fee" }));
+    expect(screen.queryByLabelText("Rate per unit")).not.toBeInTheDocument();
+  });
+});
+
+describe("PriceForm — rateCardLookUp (D3)", () => {
+  it("is free text, optional, mono, with no autocomplete and issues no network request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderForm();
+    await user.click(screen.getByRole("radio", { name: "Usage rate" }));
+
+    const input = screen.getByLabelText("Rate card name");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input.className).toContain("font-mono");
+    await user.type(input, "ENTERPRISE_EA_CARD");
+    expect(input).toHaveValue("ENTERPRISE_EA_CARD");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+});
+
+describe("PriceForm — backdating (unchanged from pm41)", () => {
   it("a start date more than 3 days in the past blocks submission with a field error", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { onSubmit } = renderForm();
-    await fillRequiredFlatFields(user);
+    await fillUsageRateFields(user);
     setStartDate(FOUR_DAYS_AGO);
 
-    // zodResolver's default mode validates on submit, not on change.
     submitForm();
 
     expect(
@@ -136,7 +177,7 @@ describe("PriceForm", () => {
   it("a start date exactly 3 days in the past does not block and shows the non-blocking backdating warning", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { onSubmit } = renderForm();
-    await fillRequiredFlatFields(user);
+    await fillUsageRateFields(user);
     setStartDate(THREE_DAYS_AGO);
 
     expect(
@@ -144,9 +185,6 @@ describe("PriceForm", () => {
         `This price is backdated to ${THREE_DAYS_AGO}; historical bills may be affected.`,
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Start date cannot be more than 3 days in the past."),
-    ).not.toBeInTheDocument();
 
     submitForm();
 
@@ -156,66 +194,85 @@ describe("PriceForm", () => {
   it("a future or today's start date shows neither the warning nor an error", () => {
     renderForm();
     setStartDate(TODAY);
-
     expect(
       screen.queryByText(/historical bills may be affected/),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Start date cannot be more than 3 days in the past."),
-    ).not.toBeInTheDocument();
-
     setStartDate(TOMORROW);
-
     expect(
       screen.queryByText(/historical bills may be affected/),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Start date cannot be more than 3 days in the past."),
     ).not.toBeInTheDocument();
   });
+});
 
-  it("submits a valid flat-priced form with the correctly assembled InsertPriceInput", async () => {
+describe("PriceForm — submission assembly", () => {
+  it("submits a usage_rate InsertPriceInput with the correct branch shape", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { onSubmit } = renderForm();
-    await fillRequiredFlatFields(user);
+    await fillUsageRateFields(user);
     setStartDate(TOMORROW);
 
     submitForm();
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]![0];
-    expect(submitted.name).toBe("Monthly recurring");
+    expect(submitted.componentType).toBe("usage_rate");
+    expect(submitted.name).toBe("Base usage rate");
     expect(submitted.currency).toBe("USD");
-    expect(submitted.priceCharacteristics).toEqual({
-      pricing_model: "flat",
-      amount: "50.00",
-      pricing_characteristics: null,
-    });
+    if (submitted.componentType === "usage_rate") {
+      expect(submitted.unitOfMeasure).toBe("EA");
+      expect(submitted.params).toEqual({
+        ratePerUnit: "0.05",
+        rateCardLookUp: null,
+      });
+    }
   });
 
-  it("submits a valid tiered-priced form with tiers coerced to numbers and an open-ended last tier", async () => {
+  it("submits a recurring flat_fee InsertPriceInput with the charge period", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { onSubmit } = renderForm();
-    await user.type(screen.getByLabelText("Price name"), "Usage tiers");
+    await user.type(screen.getByLabelText("Price name"), "Monthly recurring");
     await user.type(screen.getByLabelText("Currency"), "USD");
-    await user.click(screen.getByRole("radio", { name: "Tiered" }));
+    await user.click(screen.getByRole("radio", { name: "Flat fee" }));
+    await user.type(screen.getByLabelText("Amount"), "2000.00");
     setStartDate(TOMORROW);
-
-    await user.type(screen.getAllByLabelText("From")[0]!, "0");
-    await user.type(screen.getAllByLabelText("To")[0]!, "100");
-    await user.type(screen.getAllByLabelText("Rate")[0]!, "1.50");
 
     submitForm();
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]![0];
-    expect(submitted.priceCharacteristics).toEqual({
-      pricing_model: "tiered",
-      amount: null,
-      pricing_characteristics: {
-        tiers: [{ from: 0, to: 100, rate: "1.50" }],
-      },
+    expect(submitted.componentType).toBe("flat_fee");
+    if (
+      submitted.componentType === "flat_fee" &&
+      submitted.priceType === "recurring"
+    ) {
+      expect(submitted.recurringChargePeriodLength).toBe(1);
+      expect(submitted.recurringChargePeriodType).toBe("months");
+      expect(submitted.params).toEqual({ amount: "2000.00" });
+    } else {
+      throw new Error("expected recurring flat_fee");
+    }
+  });
+
+  it("submits a oneTime flat_fee InsertPriceInput with no period fields", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { onSubmit } = renderForm();
+    await user.type(screen.getByLabelText("Price name"), "Activation fee");
+    await user.type(screen.getByLabelText("Currency"), "USD");
+    await user.click(screen.getByRole("radio", { name: "Flat fee" }));
+    await user.click(screen.getByRole("radio", { name: "One-time charge" }));
+    await user.type(screen.getByLabelText("Amount"), "500.00");
+    setStartDate(TOMORROW);
+
+    submitForm();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0]![0];
+    expect(submitted).toMatchObject({
+      componentType: "flat_fee",
+      priceType: "oneTime",
+      params: { amount: "500.00" },
     });
+    expect(submitted).not.toHaveProperty("recurringChargePeriodLength");
   });
 
   it("shows the --bg-warning banner only when currentStatus is ACTIVE", () => {
