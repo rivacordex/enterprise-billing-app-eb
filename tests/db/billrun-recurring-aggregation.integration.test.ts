@@ -18,14 +18,16 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
 
 // bm29-spec §Implementation §6 / Verification checklist — the DB-gated RECURRING
-// aggregation regression. The app-repo "flow-double" (bm21/bm28 pattern): it
-// performs the SAME `billrun_runtime` writes the real bill_run_processing flow's
-// Aggregation stage now performs for the RECURRING source (resolve each ACTIVE
-// subscription's flat recurring price as-of the run period via the lead() window,
-// COALESCE an order_item_price_override over the catalog amount, × quantity, one
-// line per offering rolled across subscriptions; a price snapshot READ-not-re-
-// resolved on rerun; the D33 HARD-fail branch), so the behaviour is provable
-// without a live Kestra. It asserts:
+// aggregation regression. Re-keyed by pm52 onto the pricing-components envelope
+// (component_type='flat_fee' + price_component->>'priceType', pm46/pm47/pm49).
+// The app-repo "flow-double" (bm21/bm28 pattern): it performs the SAME
+// `billrun_runtime` writes the real bill_run_processing flow's Aggregation stage
+// now performs for the RECURRING source (resolve each ACTIVE subscription's
+// flat_fee recurring price as-of the run period via the lead() window, COALESCE
+// an order_item_price_override over the catalog amount, × quantity, one line per
+// offering rolled across subscriptions; a price snapshot READ-not-re-resolved on
+// rerun; the D33 HARD-fail branch), so the behaviour is provable without a live
+// Kestra. It asserts:
 //   * a recurring-only account bills its subscriptions (× quantity), no usage, and
 //     stores the price snapshot on the line;
 //   * a mixed account (same offering, usage + recurring) shows exactly 2 lines
@@ -34,9 +36,14 @@ import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
 //   * a rerun after a BACKDATED product_offering_price insert reproduces the
 //     ORIGINAL amounts — the snapshot is read, never re-resolved (Inv #20/D19);
 //   * an order_item_price_override wins over the catalog amount;
-//   * a `tiered` price fails the account HARD (RECURRING_PRICE_UNSUPPORTED) and a
-//     missing price fails HARD (RECURRING_PRICE_NOT_FOUND) — no bill produced,
-//     never zero-substituted (D33/Inv #28).
+//   * a `oneTime` flat_fee dated after a `recurring` one on the same offering is
+//     SEEN, not masked — it fails the account HARD (RECURRING_PRICE_UNSUPPORTED,
+//     pm52-spec D3/D4) rather than silently billing the superseded recurring
+//     price, and a missing price fails HARD (RECURRING_PRICE_NOT_FOUND) — no
+//     bill produced, never zero-substituted (D33/Inv #28);
+//   * a usage_rate + capacity_commitment + capacity_motivation on a billed
+//     offering change no line, amount or count — the capacity components stay
+//     stored and unbilled (pm52-spec D5, Inv #43).
 //
 // It runs on the superuser DATABASE_URL connection (like the bm28 double), so it
 // exercises the aggregation LOGIC, not the billrun_runtime grants — those are
@@ -141,38 +148,154 @@ describe.skipIf(!databaseUrl)(
       return off!.productOfferingId;
     }
 
-    // A flat recurring catalog price effective from `startIso` (monthly period);
-    // `currency` defaults to the account currency (MYR) — pass a different code to
-    // exercise the RECURRING_CURRENCY_MISMATCH HARD check.
+    // A flat_fee `recurring` catalog price effective from `startIso` (monthly
+    // period); `currency` defaults to the account currency (MYR) — pass a
+    // different code to exercise the RECURRING_CURRENCY_MISMATCH HARD check
+    // (pm52-spec D2: component_type='flat_fee' + envelope priceType='recurring',
+    // amount read from price_component#>>'{params,amount}').
     async function newRecurringPrice(
       offeringId: string,
       amount: string,
       startIso: string,
       currency = "MYR",
     ): Promise<string> {
+      const envelope = {
+        "@type": "flat_fee",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "recurring",
+        appliesAt: "billing",
+        basis: "flat",
+        boundTo: null,
+        params: { amount },
+      };
       const [row] = await sql<{ product_offering_price_id: string }[]>`
         INSERT INTO product.product_offering_price
-          (product_offering_id, name, price_type, recurring_charge_period_length,
-           recurring_charge_period_type, amount, currency, pricing_model, start_date_time)
+          (product_offering_id, name, component_type, price_component,
+           recurring_charge_period_length, recurring_charge_period_type,
+           currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM29 Recurring', 'recurring', 1, 'months',
-           ${amount}, ${currency}, 'flat', ${startIso}::timestamptz)
+          (${offeringId}, 'BM29 Recurring', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+           1, 'months', ${currency}, ${startIso}::timestamptz)
         RETURNING product_offering_price_id
       `;
       return row!.product_offering_price_id;
     }
 
-    // A tiered recurring price (amount NULL by the amount_xor_tiers CHECK) — the
-    // flat resolver cannot rate it (D33 → RECURRING_PRICE_UNSUPPORTED).
-    async function newTieredPrice(offeringId: string): Promise<void> {
+    // A flat_fee `oneTime` catalog price effective from `startIso` — no charge
+    // period, no unit (pm46 completeness CHECK). Used for the D3 masking-hazard
+    // case: dated after a `recurring` flat_fee on the same offering, it shares
+    // that row's uniqueness lane (both flat_fee, unit_of_measure NULL) and
+    // supersedes it in the as-of window.
+    async function newOneTimePrice(
+      offeringId: string,
+      amount: string,
+      startIso: string,
+    ): Promise<string> {
+      const envelope = {
+        "@type": "flat_fee",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "oneTime",
+        appliesAt: "billing",
+        basis: "flat",
+        boundTo: null,
+        params: { amount },
+      };
+      const [row] = await sql<{ product_offering_price_id: string }[]>`
+        INSERT INTO product.product_offering_price
+          (product_offering_id, name, component_type, price_component, currency, start_date_time)
+        VALUES
+          (${offeringId}, 'BM29 One-time', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+           'MYR', ${startIso}::timestamptz)
+        RETURNING product_offering_price_id
+      `;
+      return row!.product_offering_price_id;
+    }
+
+    // A usage_rate component (pm52-spec D5) — visible to the resolver's window
+    // scan but excluded by its component_type = 'flat_fee' filter, so it can
+    // never be resolved as a recurring charge and never trip D33.
+    async function newUsageRate(
+      offeringId: string,
+      unitOfMeasure: string,
+      ratePerUnit: string,
+      startIso: string,
+    ): Promise<void> {
+      const envelope = {
+        "@type": "usage_rate",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "usage",
+        appliesAt: "rating",
+        basis: "quantity",
+        boundTo: { unitOfMeasure },
+        params: { ratePerUnit, rateCardLookUp: null },
+      };
       await sql`
         INSERT INTO product.product_offering_price
-          (product_offering_id, name, price_type, recurring_charge_period_length,
-           recurring_charge_period_type, amount, currency, pricing_model,
-           pricing_characteristics, start_date_time)
+          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM29 Tiered', 'recurring', 1, 'months',
-           NULL, 'MYR', 'tiered', ${JSON.stringify({ tiers: [] })}::jsonb, '2026-01-01T00:00:00Z'::timestamptz)
+          (${offeringId}, 'BM52 Usage Rate', 'usage_rate', ${JSON.stringify(envelope)}::jsonb,
+           ${unitOfMeasure}, 'MYR', ${startIso}::timestamptz)
+      `;
+    }
+
+    // A capacity_commitment component — same visibility/exclusion as
+    // newUsageRate above (pm52-spec D5).
+    async function newCapacityCommitment(
+      offeringId: string,
+      unitOfMeasure: string,
+      committedQuantity: number,
+      startIso: string,
+    ): Promise<void> {
+      const envelope = {
+        "@type": "capacity_commitment",
+        specVersion: 1,
+        plaSpecId: "PLA_CAPACITY_COMMITMENT",
+        priceType: "commitment",
+        appliesAt: "post_aggregation",
+        basis: "quantity",
+        boundTo: { unitOfMeasure },
+        params: { committedQuantity },
+      };
+      await sql`
+        INSERT INTO product.product_offering_price
+          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
+        VALUES
+          (${offeringId}, 'BM52 Capacity Commitment', 'capacity_commitment', ${JSON.stringify(envelope)}::jsonb,
+           ${unitOfMeasure}, 'MYR', ${startIso}::timestamptz)
+      `;
+    }
+
+    // A capacity_motivation component — same visibility/exclusion as
+    // newUsageRate above (pm52-spec D5).
+    async function newCapacityMotivation(
+      offeringId: string,
+      unitOfMeasure: string,
+      startIso: string,
+    ): Promise<void> {
+      const envelope = {
+        "@type": "capacity_motivation",
+        specVersion: 1,
+        plaSpecId: "PLA_CAPACITY_MOTIVATION",
+        priceType: "discount",
+        appliesAt: "post_aggregation",
+        basis: "quantity",
+        boundTo: { unitOfMeasure },
+        params: {
+          steps: [
+            { aboveQuantity: 1000, ratePerUnit: "50" },
+            { aboveQuantity: 2000, ratePerUnit: "25" },
+          ],
+        },
+      };
+      await sql`
+        INSERT INTO product.product_offering_price
+          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
+        VALUES
+          (${offeringId}, 'BM52 Capacity Motivation', 'capacity_motivation', ${JSON.stringify(envelope)}::jsonb,
+           ${unitOfMeasure}, 'MYR', ${startIso}::timestamptz)
       `;
     }
 
@@ -558,28 +681,36 @@ describe.skipIf(!databaseUrl)(
     }, 120_000);
 
     it(
-      "[CRITICAL] a tiered price fails the account HARD (RECURRING_PRICE_UNSUPPORTED) " +
-        "and produces no bill; a missing price fails HARD (RECURRING_PRICE_NOT_FOUND) " +
+      "[CRITICAL] a oneTime flat_fee dated after a recurring one is SEEN, not " +
+        "masked — the resolver fails HARD (RECURRING_PRICE_UNSUPPORTED) rather " +
+        "than silently billing the superseded recurring price " +
+        "(pm52-spec D3/D4); a missing price fails HARD (RECURRING_PRICE_NOT_FOUND) " +
         "(D33/Inv #28)",
       async () => {
-        // Tiered → UNSUPPORTED.
-        const tieredBan = await newAccount("Tiered");
-        const tieredOff = await newOffering("Tiered Offering");
-        const tieredRun = "BRN-BM29-05";
-        await newTieredPrice(tieredOff);
-        await newRun(tieredRun);
+        // A oneTime flat_fee dated after a recurring one shares its uniqueness
+        // lane (both flat_fee, unit_of_measure NULL) and supersedes it in the
+        // as-of window — the offering's CURRENT flat fee is a one-time charge,
+        // not a recurring one, so the account fails loudly (D4 option A) rather
+        // than the resolver falling back to the older recurring price.
+        const oneTimeBan = await newAccount("OneTimeSupersedes");
+        const oneTimeOff = await newOffering("One-Time-Supersedes Offering");
+        const oneTimeRun = "BRN-BM29-05";
+        await newRecurringPrice(oneTimeOff, "20.00", "2026-01-01T00:00:00Z");
+        await newOneTimePrice(oneTimeOff, "500.00", "2026-03-01T00:00:00Z");
+        await newRun(oneTimeRun);
         await newInventory({
           piId: "PRDINV-BM29-T0",
-          ban: tieredBan,
-          offeringId: tieredOff,
+          ban: oneTimeBan,
+          offeringId: oneTimeOff,
           quantity: 1,
           orderItemId: "_bm29-oi-T0",
         });
-        await expect(aggregate(tieredRun, tieredBan, 1)).rejects.toThrow(
+        await expect(aggregate(oneTimeRun, oneTimeBan, 1)).rejects.toThrow(
           /RECURRING_PRICE_UNSUPPORTED/,
         );
-        // No bill produced — the transaction rolled back (never zero-substituted).
-        expect(await readBill(tieredRun, tieredBan)).toBeUndefined();
+        // No bill produced — the transaction rolled back (never zero-substituted,
+        // and the 20.00 recurring price was NEVER silently billed).
+        expect(await readBill(oneTimeRun, oneTimeBan)).toBeUndefined();
 
         // No AS-OF price → NOT_FOUND. The offering INTENDS a recurring charge (it
         // has a recurring price) but that price is FUTURE-dated (starts after the
@@ -715,6 +846,44 @@ describe.skipIf(!databaseUrl)(
         expect(bySource.RECURRING!.offeringId).toBe(recOff);
         expect(bySource.RECURRING!.netAmount).toBe("15.00");
         expect(bill!.subtotal).toBe("35.00");
+      },
+      120_000,
+    );
+
+    it(
+      "[CRITICAL] a usage_rate + capacity_commitment + capacity_motivation on a " +
+        "billed offering change no bill line, amount or count (pm52-spec D5 — " +
+        "the capacity components stay stored and unbilled)",
+      async () => {
+        const ban = await newAccount("CapacityVisible");
+        const off = await newOffering("Capacity-Visible Offering");
+        const runId = "BRN-BM29-10";
+        await newRecurringPrice(off, "20.00", "2026-01-01T00:00:00Z");
+        await newUsageRate(off, "EA", "5.00", "2026-01-01T00:00:00Z");
+        await newCapacityCommitment(off, "EA", 1000, "2026-01-01T00:00:00Z");
+        await newCapacityMotivation(off, "EA", "2026-01-01T00:00:00Z");
+        await newRun(runId);
+        await newInventory({
+          piId: "PRDINV-BM29-CV0",
+          ban,
+          offeringId: off,
+          quantity: 1,
+          orderItemId: "_bm29-oi-CV0",
+        });
+
+        await aggregate(runId, ban, 1);
+
+        const bill = await readBill(runId, ban);
+        expect(bill).toBeDefined();
+        const lines = await readLines(bill!.customerBillId);
+
+        // Exactly the same single RECURRING line as a flat_fee-only offering
+        // would produce — the capacity components are invisible to this
+        // resolver's component_type = 'flat_fee' filter.
+        expect(lines).toHaveLength(1);
+        expect(lines[0]!.source).toBe("RECURRING");
+        expect(lines[0]!.netAmount).toBe("20.00");
+        expect(bill!.subtotal).toBe("20.00");
       },
       120_000,
     );

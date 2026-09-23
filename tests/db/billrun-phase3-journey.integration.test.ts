@@ -222,30 +222,61 @@ describe.skipIf(!databaseUrl)(
       return off!.productOfferingId;
     }
 
+    // pm52-spec D2: component_type='flat_fee' + envelope priceType='recurring',
+    // amount read from price_component#>>'{params,amount}'.
     async function newRecurringPrice(
       offeringId: string,
       amount: string,
+      startIso = "2026-01-01T00:00:00Z",
     ): Promise<void> {
+      const envelope = {
+        "@type": "flat_fee",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "recurring",
+        appliesAt: "billing",
+        basis: "flat",
+        boundTo: null,
+        params: { amount },
+      };
       await sql`
         INSERT INTO product.product_offering_price
-          (product_offering_id, name, price_type, recurring_charge_period_length,
-           recurring_charge_period_type, amount, currency, pricing_model, start_date_time)
+          (product_offering_id, name, component_type, price_component,
+           recurring_charge_period_length, recurring_charge_period_type,
+           currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM35 Recurring', 'recurring', 1, 'months',
-           ${amount}, ${CURRENCY}, 'flat', '2026-01-01T00:00:00Z'::timestamptz)
+          (${offeringId}, 'BM35 Recurring', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+           1, 'months', ${CURRENCY}, ${startIso}::timestamptz)
       `;
     }
 
-    async function newTieredPrice(offeringId: string): Promise<void> {
+    // pm52-spec D3/D4: a `oneTime` flat_fee dated after a `recurring` one shares
+    // its uniqueness lane (both flat_fee, unit_of_measure NULL) and supersedes
+    // it in the as-of window — the offering's CURRENT flat fee becomes a
+    // one-time charge, which the flat resolver cannot rate as recurring
+    // (RECURRING_PRICE_UNSUPPORTED). This is the structural successor of the
+    // old `pricing_model = 'tiered'` case this test used to exercise.
+    async function newOneTimePrice(
+      offeringId: string,
+      amount: string,
+      startIso: string,
+    ): Promise<void> {
+      const envelope = {
+        "@type": "flat_fee",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "oneTime",
+        appliesAt: "billing",
+        basis: "flat",
+        boundTo: null,
+        params: { amount },
+      };
       await sql`
         INSERT INTO product.product_offering_price
-          (product_offering_id, name, price_type, recurring_charge_period_length,
-           recurring_charge_period_type, amount, currency, pricing_model,
-           pricing_characteristics, start_date_time)
+          (product_offering_id, name, component_type, price_component, currency, start_date_time)
         VALUES
-          (${offeringId}, 'BM35 Tiered', 'recurring', 1, 'months',
-           NULL, ${CURRENCY}, 'tiered', ${JSON.stringify({ tiers: [] })}::jsonb,
-           '2026-01-01T00:00:00Z'::timestamptz)
+          (${offeringId}, 'BM35 One-time', 'flat_fee', ${JSON.stringify(envelope)}::jsonb,
+           ${CURRENCY}, ${startIso}::timestamptz)
       `;
     }
 
@@ -524,8 +555,8 @@ describe.skipIf(!databaseUrl)(
       "materialise → trigger → claim → real USAGE+RECURRING aggregation → " +
         "verify → PROCESSED → review (lines + orphan on the exception surface) → " +
         "reject → rerun → reprocess → approve (four-eyes) → post (content " +
-        "checksum) → distribute (fail → rerun) → COMPLETED; D33 tiered account " +
-        "SKIPPED",
+        "checksum) → distribute (fail → rerun) → COMPLETED; D33 unsupported " +
+        "(one-time-supersedes-recurring) account SKIPPED",
       async () => {
         // ---- Fixtures. ----------------------------------------------------
         // The BILLED account: a recurring-priced offering + 2 unclaimed usage
@@ -538,11 +569,19 @@ describe.skipIf(!databaseUrl)(
         await insertUnclaimedUsage(billedInventory);
         await insertUnclaimedUsage(billedInventory);
 
-        // The D33 account: a `tiered` recurring price the flat resolver cannot
-        // rate → aggregation HARD-fails → PROCESSING_FAILED → SKIPPED at approve.
+        // The D33 account: a `oneTime` flat_fee dated after a `recurring` one on
+        // the same offering — seen, not masked, by the as-of window (pm52-spec
+        // D3) — so the flat resolver cannot rate the offering's current price as
+        // recurring → aggregation HARD-fails → PROCESSING_FAILED → SKIPPED at
+        // approve.
         const banTiered = await newBillingAccount("Tiered");
         const tieredOffering = await newOffering("BM35 Tiered Offering");
-        await newTieredPrice(tieredOffering);
+        await newRecurringPrice(
+          tieredOffering,
+          "10.00",
+          "2026-01-01T00:00:00Z",
+        );
+        await newOneTimePrice(tieredOffering, "500.00", "2026-02-01T00:00:00Z");
         await newInventory("PRDINV-BM35-TIERED-0", banTiered, tieredOffering);
 
         // An unresolvable orphan: an unclaimed live RATED usage row whose
@@ -574,7 +613,7 @@ describe.skipIf(!databaseUrl)(
         const billedStatus = await processBilledAccount(runId, banBilled, 1);
         expect(billedStatus).toBe("PROCESSED");
 
-        // ---- Drive the D33 account: aggregation HARD-fails (tiered). --------
+        // ---- Drive the D33 account: aggregation HARD-fails (unsupported). ---
         for (const stage of ["validation", "collection"]) {
           expect(
             (
@@ -603,7 +642,7 @@ describe.skipIf(!databaseUrl)(
           error_class: "HARD",
           error_code: "RECURRING_PRICE_UNSUPPORTED",
           error_detail:
-            "tiered recurring price is unratable by the flat resolver (D33)",
+            "the offering's current flat fee is a one-time charge (D33)",
         });
         expect(tieredFail.status).toBe(200);
         expect(
