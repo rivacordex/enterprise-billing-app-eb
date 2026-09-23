@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, X } from "lucide-react";
 import { z } from "zod";
 
-import { Button } from "@/components/ui/button";
+import { ComponentTypePicker } from "@/components/products/manage/component-type-picker";
+import {
+  CapacityMotivationStepsEditor,
+  createStepRowId,
+  type StepRow,
+} from "@/components/products/manage/capacity-motivation-steps-editor";
+import { PRICING_COMPONENT_BADGE_VARIANTS } from "@/components/products/pricing-component-badge";
 import {
   Field,
   FieldError,
@@ -16,10 +21,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
-  PRICE_TYPES,
-  PRICING_MODELS,
+  COMPONENT_TYPES,
   RECURRING_PERIOD_LENGTHS,
   UNITS_OF_MEASURE,
+  type ComponentType,
   type PriceCard,
   type RecurringPeriodLength,
   type UnitOfMeasure,
@@ -31,13 +36,7 @@ import type { InsertPriceInput } from "@/validation/product/insert-price.schema"
 // "small, multi-caller constant, not worth a shared module" call (Design §2.5).
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
-const PRICE_TYPE_LABELS: Record<(typeof PRICE_TYPES)[number], string> = {
-  recurring: "Recurring",
-  usage: "Usage",
-  once: "Once",
-};
-
-// pm38-spec I6 — helper text for each charge period, so the user sees the cycle
+// pm54-spec I6 — helper text for each charge period, so the user sees the cycle
 // a length maps onto (prodmgmt-architecture §3.2: (1, months) → monthly,
 // (3, months) → quarterly, (12, months) → annually).
 const PERIOD_LENGTH_HELP: Record<RecurringPeriodLength, string> = {
@@ -50,6 +49,12 @@ const RECURRING_PERIOD_LENGTH_STRINGS: readonly string[] =
   RECURRING_PERIOD_LENGTHS.map((length) => String(length));
 
 const MONEY_REGEX = /^\d+(\.\d+)?$/;
+
+function isPositiveFiniteNumber(raw: string): boolean {
+  if (raw.trim() === "") return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0;
+}
 
 // Local calendar date (not UTC — `toISOString()` can land on the wrong day
 // near midnight local time when local and UTC dates differ), matching the
@@ -73,102 +78,148 @@ function dateToLocalInput(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-// pm22-spec §2.4, extended by pm38-spec I6. Validates only the checks meaningful
-// on this flat, pre-assembly shape — the per-price-type completeness rules
-// (charge period for recurring, unit for usage) and the flat/tiered money
-// checks. Tier contiguity and the open-ended-only-on-last rule stay defined
-// exactly once, in tieredPricingCharacteristicsSchema (reused, not re-declared,
-// by the Server Action's own insertPriceSchema/updatePriceSchema round-trip at
-// submit time).
+// pm54-spec I2, extended by pm55-spec I2. Validates only the checks meaningful
+// on this flat, pre-assembly shape — the per-component-type completeness rules
+// (D1's field-visibility table) and the money/quantity checks. The server's
+// own `insertPriceSchema`/`updatePriceSchema` round-trip at submit time
+// (pm47's price-input.schema.ts union) is the authoritative check — this is a
+// fast, live, field-level mirror of it (Design §2.5).
 const priceFormObjectSchema = z.object({
   name: z
     .string()
     .trim()
     .min(1, "Price name is required")
     .max(200, "Price name must be 200 characters or fewer"),
-  priceType: z.enum(PRICE_TYPES),
-  recurringChargePeriodLength: z.string(),
-  unitOfMeasure: z.string(),
   currency: z.string().trim().length(3, "Currency must be a 3-letter code"),
   glCode: z.string().trim().max(50, "GL code must be 50 characters or fewer"),
-  startDateTime: z.string().min(1, "Start date is required"),
-  pricingModel: z.enum(PRICING_MODELS),
+  componentType: z.enum(COMPONENT_TYPES),
+  priceType: z.enum(["recurring", "oneTime"]),
+  unitOfMeasure: z.string(),
+  ratePerUnit: z.string(),
+  rateCardLookUp: z.string(),
   amount: z.string(),
-  tiers: z.array(
-    z.object({ from: z.string(), to: z.string(), rate: z.string() }),
+  recurringChargePeriodLength: z.string(),
+  committedQuantity: z.string(),
+  steps: z.array(
+    z.object({
+      id: z.string(),
+      aboveQuantity: z.string(),
+      ratePerUnit: z.string(),
+    }),
   ),
+  startDateTime: z.string().min(1, "Start date is required"),
 });
 
 type PriceFormValues = z.infer<typeof priceFormObjectSchema>;
 
-// pm22-spec §2.4, extended by pm38-spec I6, amended pm41 review #1. The backdating
-// tolerance is applied only when the start date actually changes from
-// `baselineStartDate` (the edit's pre-filled original). Re-saving a row without
-// touching its start — e.g. correcting an amount on a draft branched from a
-// long-live version — is not a new backdate and must not be blocked; the add
-// flow passes no baseline, so any past start beyond tolerance is still caught.
-// Mirrors the authoritative service-layer rule in services/product/update-price.ts.
+// pm54-spec I2, extended pm55-spec I2. The backdating tolerance is applied
+// only when the start date actually changes from `baselineStartDate` (the
+// edit's pre-filled original) — pm41 review #1's rule, unchanged by this
+// unit. Mirrors the authoritative service-layer rule in
+// services/product/update-price.ts.
 function makePriceFormSchema(baselineStartDate?: string) {
   return priceFormObjectSchema.superRefine((value, ctx) => {
-    if (
-      value.priceType === "recurring" &&
-      !RECURRING_PERIOD_LENGTH_STRINGS.includes(
-        value.recurringChargePeriodLength,
-      )
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Charge period must be 1, 3 or 12 months",
-        path: ["recurringChargePeriodLength"],
-      });
-    }
-    if (
-      value.priceType === "usage" &&
-      !(UNITS_OF_MEASURE as readonly string[]).includes(value.unitOfMeasure)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Choose a unit of measure for a usage price",
-        path: ["unitOfMeasure"],
-      });
-    }
-
-    if (value.pricingModel === "flat" && !MONEY_REGEX.test(value.amount)) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Enter a valid amount.",
-        path: ["amount"],
-      });
-    }
-    if (value.pricingModel === "tiered") {
-      if (value.tiers.length === 0) {
+    if (value.componentType === "usage_rate") {
+      if (
+        !(UNITS_OF_MEASURE as readonly string[]).includes(value.unitOfMeasure)
+      ) {
         ctx.addIssue({
           code: "custom",
-          message: "Add at least one tier.",
-          path: ["tiers"],
+          message: "Choose a unit of measure for this price",
+          path: ["unitOfMeasure"],
         });
       }
-      value.tiers.forEach((tier, index) => {
-        if (!MONEY_REGEX.test(tier.from)) {
+      if (!MONEY_REGEX.test(value.ratePerUnit)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Enter a valid rate.",
+          path: ["ratePerUnit"],
+        });
+      }
+    }
+
+    if (value.componentType === "flat_fee") {
+      if (!MONEY_REGEX.test(value.amount)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Enter a valid amount.",
+          path: ["amount"],
+        });
+      }
+      if (
+        value.priceType === "recurring" &&
+        !RECURRING_PERIOD_LENGTH_STRINGS.includes(
+          value.recurringChargePeriodLength,
+        )
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Charge period must be 1, 3 or 12 months",
+          path: ["recurringChargePeriodLength"],
+        });
+      }
+    }
+
+    if (value.componentType === "capacity_commitment") {
+      if (
+        !(UNITS_OF_MEASURE as readonly string[]).includes(value.unitOfMeasure)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Choose a unit of measure for this price",
+          path: ["unitOfMeasure"],
+        });
+      }
+      if (!isPositiveFiniteNumber(value.committedQuantity)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Enter a quantity greater than 0.",
+          path: ["committedQuantity"],
+        });
+      }
+    }
+
+    if (value.componentType === "capacity_motivation") {
+      if (
+        !(UNITS_OF_MEASURE as readonly string[]).includes(value.unitOfMeasure)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Choose a unit of measure for this price",
+          path: ["unitOfMeasure"],
+        });
+      }
+      if (value.steps.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Add at least one step.",
+          path: ["steps"],
+        });
+      }
+      const seen = new Set<string>();
+      value.steps.forEach((step, index) => {
+        if (!isPositiveFiniteNumber(step.aboveQuantity)) {
           ctx.addIssue({
             code: "custom",
-            message: "Enter a valid number.",
-            path: ["tiers", index, "from"],
+            message: "Enter a quantity greater than 0.",
+            path: ["steps", index, "aboveQuantity"],
           });
+        } else {
+          const key = String(Number(step.aboveQuantity));
+          if (seen.has(key)) {
+            ctx.addIssue({
+              code: "custom",
+              message: `Duplicate threshold — a step already exists for ${key}.`,
+              path: ["steps", index, "aboveQuantity"],
+            });
+          }
+          seen.add(key);
         }
-        if (!MONEY_REGEX.test(tier.rate)) {
+        if (!MONEY_REGEX.test(step.ratePerUnit)) {
           ctx.addIssue({
             code: "custom",
             message: "Enter a valid rate.",
-            path: ["tiers", index, "rate"],
-          });
-        }
-        const trimmedTo = tier.to.trim();
-        if (trimmedTo !== "" && !MONEY_REGEX.test(trimmedTo)) {
-          ctx.addIssue({
-            code: "custom",
-            message: "Enter a valid number.",
-            path: ["tiers", index, "to"],
+            path: ["steps", index, "ratePerUnit"],
           });
         }
       });
@@ -193,34 +244,79 @@ function makePriceFormSchema(baselineStartDate?: string) {
   });
 }
 
-// pm41 D6 — a stored PriceCard mapped back into the flat form shape, so the
-// inline editor pre-fills the same fields the add flow starts empty. Each
-// branch of the discriminated read model fills exactly the fields its
-// `priceType` carries; the hidden groups keep the add flow's benign defaults
-// (period "1", unit "") so a later type-switch has something valid to show.
-export function priceCardToFormValues(price: PriceCard): PriceFormValues {
+function emptyStepRow(): StepRow {
+  return { id: createStepRowId(), aboveQuantity: "", ratePerUnit: "" };
+}
+
+function defaultFormValues(): PriceFormValues {
   return {
+    name: "",
+    currency: "",
+    glCode: "",
+    componentType: "usage_rate",
+    priceType: "recurring",
+    unitOfMeasure: "",
+    ratePerUnit: "",
+    rateCardLookUp: "",
+    amount: "",
+    recurringChargePeriodLength: "1",
+    committedQuantity: "",
+    steps: [emptyStepRow()],
+    startDateTime: todayLocalDate(),
+  };
+}
+
+// pm54-spec D9 / pm55-spec §4.21 — a stored PriceCard mapped back into the
+// flat form shape, so the inline editor pre-fills the same fields the add
+// flow starts empty. Only the fields the component's own `@type` carries are
+// filled; envelope-derived fields (specVersion, plaSpecId, appliesAt, basis,
+// boundTo) are never collected, displayed or echoed anywhere in this form.
+export function priceCardToFormValues(price: PriceCard): PriceFormValues {
+  const base: PriceFormValues = {
+    ...defaultFormValues(),
     name: price.name,
-    priceType: price.priceType,
+    currency: price.currency,
+    glCode: price.glCode ?? "",
+    componentType: price.componentType,
+    startDateTime: dateToLocalInput(price.startDateTime),
+    unitOfMeasure: price.unitOfMeasure ?? "",
     recurringChargePeriodLength:
       price.recurringChargePeriodLength !== null
         ? String(price.recurringChargePeriodLength)
         : "1",
-    unitOfMeasure: price.unitOfMeasure ?? "",
-    currency: price.currency,
-    glCode: price.glCode ?? "",
-    startDateTime: dateToLocalInput(price.startDateTime),
-    pricingModel: price.pricingModel,
-    amount: price.amount ?? "",
-    tiers:
-      price.pricingModel === "tiered" && price.pricingCharacteristics
-        ? price.pricingCharacteristics.tiers.map((tier) => ({
-            from: String(tier.from),
-            to: tier.to === null ? "" : String(tier.to),
-            rate: tier.rate,
-          }))
-        : [{ from: "0", to: "", rate: "" }],
   };
+
+  switch (price.component["@type"]) {
+    case "usage_rate":
+      return {
+        ...base,
+        ratePerUnit: price.component.params.ratePerUnit,
+        rateCardLookUp: price.component.params.rateCardLookUp ?? "",
+      };
+    case "flat_fee":
+      return {
+        ...base,
+        priceType: price.component.priceType,
+        amount: price.component.params.amount,
+      };
+    case "capacity_commitment":
+      return {
+        ...base,
+        committedQuantity: String(price.component.params.committedQuantity),
+      };
+    case "capacity_motivation":
+      return {
+        ...base,
+        steps: price.component.params.steps.map((step) => ({
+          id: createStepRowId(),
+          aboveQuantity: String(step.aboveQuantity),
+          ratePerUnit: step.ratePerUnit,
+        })),
+      };
+    // Never reaches this table (Inv. #39) — kept for exhaustiveness only.
+    case "negotiated_override":
+      return base;
+  }
 }
 
 export interface PriceFormProps {
@@ -243,35 +339,37 @@ export interface PriceFormProps {
   // pm41 D2 — reports RHF dirtiness up so the panel can prompt-to-discard when a
   // second row is activated mid-edit.
   onDirtyChange?: (dirty: boolean) => void;
+  // pm54-spec D4 — bubbles every field change up so the panel can clear a
+  // stale offering-level banner as soon as the user starts correcting the
+  // form, without this module re-evaluating VI3–VI5 itself.
+  onValuesChange?: () => void;
   // pm41 review #7 — server-returned field errors (a VALIDATION_ERROR's
   // fieldErrors, or a synthesised { startDateTime } for DUPLICATE_START /
   // BACKDATED_START_TOO_FAR). Keyed messages are attached to their field via
-  // RHF setError (aria-invalid + FieldError), meeting spec I3's "field error on
-  // the row/start date"; any key with no matching field renders in a residual
-  // list so nothing is dropped.
+  // RHF setError (aria-invalid + FieldError); any key with no matching field
+  // renders in a residual list so nothing is dropped.
   serverFieldErrors?: Record<string, string[]> | null;
 }
 
 // The form fields a server error key can be attached to (pm41 review #7). A key
-// outside this set (e.g. a nested priceCharacteristics path) has no input to
-// mark, so it falls through to the residual list.
+// outside this set (e.g. a nested `params.*` path) has no input to mark, so it
+// falls through to the residual list.
 const PRICE_SERVER_FIELDS: readonly (keyof PriceFormValues)[] = [
   "name",
-  "priceType",
-  "recurringChargePeriodLength",
-  "unitOfMeasure",
   "currency",
   "glCode",
-  "amount",
+  "componentType",
+  "priceType",
+  "unitOfMeasure",
+  "recurringChargePeriodLength",
   "startDateTime",
-  "tiers",
 ];
 
-// pm22-spec §3.3, extended by pm38-spec I6. Assembles the flat form shape into
-// the discriminated InsertPriceInput — the one place the two representations
-// meet. Each branch carries exactly the completeness columns its `priceType`
-// allows: recurring gets its charge period (type fixed to `months`), usage its
-// unit, `once` neither.
+// pm54-spec I2. Assembles the flat form shape into the discriminated
+// InsertPriceInput — the one place the two representations meet. Each branch
+// carries exactly the row columns and `params` its `componentType` allows
+// (pm47's price-input.schema.ts union), so an impossible combination is
+// untypeable on the server side too.
 //
 // pm41 review #3 — when editing, the date input is day-only, so a stored start
 // with a time-of-day component would be silently flattened to local midnight on
@@ -283,25 +381,6 @@ function toInsertPriceInput(
   values: PriceFormValues,
   baselineStartDateTime?: Date,
 ): InsertPriceInput {
-  const priceCharacteristics =
-    values.pricingModel === "flat"
-      ? {
-          pricing_model: "flat" as const,
-          amount: values.amount,
-          pricing_characteristics: null,
-        }
-      : {
-          pricing_model: "tiered" as const,
-          amount: null,
-          pricing_characteristics: {
-            tiers: values.tiers.map((tier) => ({
-              from: Number(tier.from),
-              to: tier.to.trim() === "" ? null : Number(tier.to),
-              rate: tier.rate,
-            })),
-          },
-        };
-
   const startDateTime =
     baselineStartDateTime &&
     values.startDateTime === dateToLocalInput(baselineStartDateTime)
@@ -313,27 +392,75 @@ function toInsertPriceInput(
     currency: values.currency.toUpperCase(),
     glCode: values.glCode.trim() === "" ? null : values.glCode.trim(),
     startDateTime,
-    priceCharacteristics,
   };
 
-  if (values.priceType === "recurring") {
-    return {
-      priceType: "recurring",
-      recurringChargePeriodLength: Number(
-        values.recurringChargePeriodLength,
-      ) as RecurringPeriodLength,
-      recurringChargePeriodType: "months",
-      ...core,
-    };
+  switch (values.componentType) {
+    case "usage_rate":
+      return {
+        componentType: "usage_rate",
+        unitOfMeasure: values.unitOfMeasure as UnitOfMeasure,
+        params: {
+          ratePerUnit: values.ratePerUnit,
+          rateCardLookUp:
+            values.rateCardLookUp.trim() === ""
+              ? null
+              : values.rateCardLookUp.trim(),
+        },
+        ...core,
+      };
+    case "flat_fee":
+      if (values.priceType === "recurring") {
+        return {
+          componentType: "flat_fee",
+          priceType: "recurring",
+          recurringChargePeriodLength: Number(
+            values.recurringChargePeriodLength,
+          ) as RecurringPeriodLength,
+          recurringChargePeriodType: "months",
+          params: { amount: values.amount },
+          ...core,
+        };
+      }
+      return {
+        componentType: "flat_fee",
+        priceType: "oneTime",
+        params: { amount: values.amount },
+        ...core,
+      };
+    case "capacity_commitment":
+      return {
+        componentType: "capacity_commitment",
+        unitOfMeasure: values.unitOfMeasure as UnitOfMeasure,
+        params: { committedQuantity: Number(values.committedQuantity) },
+        ...core,
+      };
+    case "capacity_motivation":
+      return {
+        componentType: "capacity_motivation",
+        unitOfMeasure: values.unitOfMeasure as UnitOfMeasure,
+        params: {
+          steps: values.steps.map((step) => ({
+            aboveQuantity: Number(step.aboveQuantity),
+            ratePerUnit: step.ratePerUnit,
+          })),
+        },
+        ...core,
+      };
   }
-  if (values.priceType === "usage") {
-    return {
-      priceType: "usage",
-      unitOfMeasure: values.unitOfMeasure as UnitOfMeasure,
-      ...core,
-    };
-  }
-  return { priceType: "once", ...core };
+}
+
+// pm54-spec D1: which row-level fields a branch shows. A field that's NULL
+// for a branch is hidden, not disabled (§4.11) — the same rule the read-only
+// panels follow.
+function showsUnitOfMeasure(componentType: ComponentType): boolean {
+  return componentType !== "flat_fee";
+}
+
+function showsRecurringPeriod(
+  componentType: ComponentType,
+  priceType: PriceFormValues["priceType"],
+): boolean {
+  return componentType === "flat_fee" && priceType === "recurring";
 }
 
 export function PriceForm({
@@ -345,6 +472,7 @@ export function PriceForm({
   defaultValues,
   baselineStartDateTime,
   onDirtyChange,
+  onValuesChange,
   serverFieldErrors,
 }: PriceFormProps): React.JSX.Element {
   // Backdating is gated on a change from the pre-filled start (pm41 review #1);
@@ -358,50 +486,80 @@ export function PriceForm({
     register,
     handleSubmit,
     control,
-    getValues,
     setValue,
     setError,
     formState: { errors, isDirty },
   } = useForm<PriceFormValues>({
     resolver,
-    defaultValues: defaultValues ?? {
-      name: "",
-      priceType: "recurring",
-      recurringChargePeriodLength: "1",
-      unitOfMeasure: "",
-      currency: "",
-      glCode: "",
-      startDateTime: todayLocalDate(),
-      pricingModel: "flat",
-      amount: "",
-      tiers: [{ from: "0", to: "", rate: "" }],
-    },
+    defaultValues: defaultValues ?? defaultFormValues(),
   });
 
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: "tiers",
-  });
-
+  const componentType = useWatch({ control, name: "componentType" });
   const priceType = useWatch({ control, name: "priceType" });
-  const pricingModel = useWatch({ control, name: "pricingModel" });
   const recurringChargePeriodLength = useWatch({
     control,
     name: "recurringChargePeriodLength",
   });
   const startDateTime = useWatch({ control, name: "startDateTime" });
 
-  // pm38-spec I6 — clear and hide the type-specific groups when the type
-  // changes, so a switched type can never submit a stale unit or period.
-  // Idempotent, so running on mount (recurring default) is harmless.
+  // pm54-spec D1/I2 — clear and hide the branch-specific fields when the
+  // component type (or, for flat_fee, the charge type) changes, so a
+  // switched branch can never submit a stale, mismatched value. Idempotent,
+  // so running on mount is harmless.
   useEffect(() => {
-    if (priceType !== "usage") setValue("unitOfMeasure", "");
-    if (priceType !== "recurring") setValue("recurringChargePeriodLength", "1");
-  }, [priceType, setValue]);
+    if (componentType !== "usage_rate") {
+      setValue("ratePerUnit", "");
+      setValue("rateCardLookUp", "");
+    }
+    if (componentType !== "flat_fee") {
+      setValue("amount", "");
+      setValue("priceType", "recurring");
+      setValue("recurringChargePeriodLength", "1");
+    }
+    if (componentType !== "capacity_commitment") {
+      setValue("committedQuantity", "");
+    }
+    if (componentType !== "capacity_motivation") {
+      setValue("steps", [emptyStepRow()]);
+    }
+    if (!showsUnitOfMeasure(componentType)) {
+      setValue("unitOfMeasure", "");
+    }
+  }, [componentType, setValue]);
+
+  useEffect(() => {
+    if (componentType === "flat_fee" && priceType !== "recurring") {
+      setValue("recurringChargePeriodLength", "1");
+    }
+  }, [componentType, priceType, setValue]);
 
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
+
+  // pm54-spec D4 — every field change (including a radio-driven picker or
+  // charge-type switch, which fires no native DOM "change" event) clears a
+  // stale offering-level banner in the parent. `useWatch({ control })` with
+  // no `name` subscribes to the whole form, so this fires on any field.
+  const allValues = useWatch({ control });
+  const skipFirstValuesChange = useRef(true);
+  // `onValuesChange` is a fresh closure on every parent render (it typically
+  // closes over `setViolation`), so it must not sit in this effect's own
+  // dependency array — that would re-fire on a prop-identity change alone,
+  // immediately clearing a violation the parent just set in response to
+  // *this* form's own submit. A ref holds the latest callback instead, so
+  // the effect only reacts to an actual value change.
+  const onValuesChangeRef = useRef(onValuesChange);
+  useEffect(() => {
+    onValuesChangeRef.current = onValuesChange;
+  });
+  useEffect(() => {
+    if (skipFirstValuesChange.current) {
+      skipFirstValuesChange.current = false;
+      return;
+    }
+    onValuesChangeRef.current?.();
+  }, [allValues]);
 
   // pm41 review #7 — attach server field errors to their inputs (aria-invalid +
   // FieldError) via setError. RHF clears these on the next submit's
@@ -448,16 +606,6 @@ export function PriceForm({
     return null;
   })();
 
-  // pm38-spec D5 / ui-context §4 — the two unbillable-but-legal shapes save with
-  // a warning, never a block (§1.19). Nothing downstream bills a tiered
-  // recurring price (bm29 fails the account), and rating v1 is FLAT-only.
-  const unbillableWarning =
-    pricingModel === "tiered" && priceType === "recurring"
-      ? "Nothing bills a tiered recurring price yet — this version will fail its bill run."
-      : pricingModel === "tiered" && priceType === "usage"
-        ? "Usage rating charges a flat amount today; tiers are stored but not applied."
-        : null;
-
   const periodHelp = RECURRING_PERIOD_LENGTH_STRINGS.includes(
     recurringChargePeriodLength ?? "",
   )
@@ -499,88 +647,6 @@ export function PriceForm({
           <FieldError errors={[errors.name]} />
         </Field>
 
-        <Field>
-          <FieldLabel htmlFor="price-type">Price type</FieldLabel>
-          <select
-            id="price-type"
-            aria-invalid={!!errors.priceType}
-            disabled={isSubmitting}
-            className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
-            {...register("priceType")}
-          >
-            {PRICE_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {PRICE_TYPE_LABELS[type]}
-              </option>
-            ))}
-          </select>
-          <FieldError errors={[errors.priceType]} />
-        </Field>
-
-        {priceType === "recurring" && (
-          <Field orientation="responsive">
-            <Field>
-              <FieldLabel htmlFor="price-period-length">
-                Charge period
-              </FieldLabel>
-              <select
-                id="price-period-length"
-                aria-invalid={!!errors.recurringChargePeriodLength}
-                disabled={isSubmitting}
-                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm tabular-nums"
-                {...register("recurringChargePeriodLength")}
-              >
-                {RECURRING_PERIOD_LENGTHS.map((length) => (
-                  <option key={length} value={String(length)}>
-                    {length}
-                  </option>
-                ))}
-              </select>
-              {periodHelp && (
-                <p className="text-caption text-[color:var(--text-muted)]">
-                  {periodHelp}
-                </p>
-              )}
-              <FieldError errors={[errors.recurringChargePeriodLength]} />
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="price-period-type">Period unit</FieldLabel>
-              {/* Fixed to `months` (the only mapped period type, O1 resolved);
-                  rendered read-only until a second value exists. */}
-              <Input
-                id="price-period-type"
-                type="text"
-                value="months"
-                readOnly
-                tabIndex={-1}
-                aria-label="Period unit (fixed to months)"
-              />
-            </Field>
-          </Field>
-        )}
-
-        {priceType === "usage" && (
-          <Field>
-            <FieldLabel htmlFor="price-unit">Unit of measure</FieldLabel>
-            <select
-              id="price-unit"
-              aria-invalid={!!errors.unitOfMeasure}
-              disabled={isSubmitting}
-              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
-              {...register("unitOfMeasure")}
-            >
-              <option value="">Select a unit…</option>
-              {UNITS_OF_MEASURE.map((unit) => (
-                <option key={unit} value={unit}>
-                  {unit}
-                </option>
-              ))}
-            </select>
-            <FieldError errors={[errors.unitOfMeasure]} />
-          </Field>
-        )}
-
         <Field orientation="responsive">
           <Field>
             <FieldLabel htmlFor="price-currency">Currency</FieldLabel>
@@ -611,131 +677,246 @@ export function PriceForm({
         </Field>
 
         <Field>
-          <FieldLabel>Pricing model</FieldLabel>
+          <FieldLabel>Component type</FieldLabel>
           <Controller
             control={control}
-            name="pricingModel"
+            name="componentType"
             render={({ field }) => (
-              <RadioGroup
-                className="grid-flow-col justify-start gap-4"
+              <ComponentTypePicker
                 value={field.value}
+                onChange={field.onChange}
                 disabled={isSubmitting}
-                onValueChange={field.onChange}
-              >
-                <label className="flex items-center gap-2 text-body-sm">
-                  <RadioGroupItem value="flat" /> Flat
-                </label>
-                <label className="flex items-center gap-2 text-body-sm">
-                  <RadioGroupItem value="tiered" /> Tiered
-                </label>
-              </RadioGroup>
+              />
             )}
           />
         </Field>
 
-        {unbillableWarning && (
-          <div className="rounded-[var(--radius)] bg-[color:var(--bg-warning)] px-3 py-2 text-body-sm text-[color:var(--text-warning)]">
-            {unbillableWarning}
-          </div>
+        {componentType === "usage_rate" && (
+          <>
+            <Field>
+              <FieldLabel htmlFor="price-unit">Unit of measure</FieldLabel>
+              <select
+                id="price-unit"
+                aria-invalid={!!errors.unitOfMeasure}
+                disabled={isSubmitting}
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                {...register("unitOfMeasure")}
+              >
+                <option value="">Select a unit…</option>
+                {UNITS_OF_MEASURE.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+              <FieldError errors={[errors.unitOfMeasure]} />
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="price-rate">Rate per unit</FieldLabel>
+              <Input
+                id="price-rate"
+                type="text"
+                placeholder="0.05"
+                aria-invalid={!!errors.ratePerUnit}
+                disabled={isSubmitting}
+                {...register("ratePerUnit")}
+              />
+              <FieldError errors={[errors.ratePerUnit]} />
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="price-rate-card">Rate card name</FieldLabel>
+              <Input
+                id="price-rate-card"
+                type="text"
+                autoComplete="off"
+                placeholder="Optional"
+                className="font-mono"
+                aria-invalid={!!errors.rateCardLookUp}
+                disabled={isSubmitting}
+                {...register("rateCardLookUp")}
+              />
+              <p className="text-caption text-[color:var(--text-muted)]">
+                The rate card isn&apos;t built yet — leaving this blank means
+                the rate per unit above applies.
+              </p>
+              <FieldError errors={[errors.rateCardLookUp]} />
+            </Field>
+          </>
         )}
 
-        {pricingModel === "flat" && (
-          <Field>
-            <FieldLabel htmlFor="price-amount">Amount</FieldLabel>
-            <Input
-              id="price-amount"
-              type="text"
-              placeholder="50000.00"
-              aria-invalid={!!errors.amount}
-              disabled={isSubmitting}
-              {...register("amount")}
+        {componentType === "flat_fee" && (
+          <>
+            <Field>
+              <FieldLabel>Charge type</FieldLabel>
+              <Controller
+                control={control}
+                name="priceType"
+                render={({ field }) => (
+                  <RadioGroup
+                    className="grid-flow-col justify-start gap-4"
+                    value={field.value}
+                    disabled={isSubmitting}
+                    onValueChange={field.onChange}
+                  >
+                    <label className="flex items-center gap-2 text-body-sm">
+                      <RadioGroupItem value="recurring" />
+                      {
+                        PRICING_COMPONENT_BADGE_VARIANTS.flat_fee.recurring
+                          .label
+                      }
+                    </label>
+                    <label className="flex items-center gap-2 text-body-sm">
+                      <RadioGroupItem value="oneTime" />
+                      {PRICING_COMPONENT_BADGE_VARIANTS.flat_fee.oneTime.label}
+                    </label>
+                  </RadioGroup>
+                )}
+              />
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="price-amount">Amount</FieldLabel>
+              <Input
+                id="price-amount"
+                type="text"
+                placeholder="50000.00"
+                aria-invalid={!!errors.amount}
+                disabled={isSubmitting}
+                {...register("amount")}
+              />
+              <FieldError errors={[errors.amount]} />
+            </Field>
+
+            {showsRecurringPeriod(componentType, priceType) && (
+              <Field orientation="responsive">
+                <Field>
+                  <FieldLabel htmlFor="price-period-length">
+                    Charge period
+                  </FieldLabel>
+                  <select
+                    id="price-period-length"
+                    aria-invalid={!!errors.recurringChargePeriodLength}
+                    disabled={isSubmitting}
+                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm tabular-nums"
+                    {...register("recurringChargePeriodLength")}
+                  >
+                    {RECURRING_PERIOD_LENGTHS.map((length) => (
+                      <option key={length} value={String(length)}>
+                        {length}
+                      </option>
+                    ))}
+                  </select>
+                  {periodHelp && (
+                    <p className="text-caption text-[color:var(--text-muted)]">
+                      {periodHelp}
+                    </p>
+                  )}
+                  <FieldError errors={[errors.recurringChargePeriodLength]} />
+                </Field>
+
+                <Field>
+                  <FieldLabel htmlFor="price-period-type">
+                    Period unit
+                  </FieldLabel>
+                  {/* Fixed to `months` (the only mapped period type, O1
+                      resolved); rendered read-only until a second value
+                      exists. */}
+                  <Input
+                    id="price-period-type"
+                    type="text"
+                    value="months"
+                    readOnly
+                    tabIndex={-1}
+                    aria-label="Period unit (fixed to months)"
+                  />
+                </Field>
+              </Field>
+            )}
+          </>
+        )}
+
+        {componentType === "capacity_commitment" && (
+          <>
+            <Field>
+              <FieldLabel htmlFor="price-unit">Unit of measure</FieldLabel>
+              <select
+                id="price-unit"
+                aria-invalid={!!errors.unitOfMeasure}
+                disabled={isSubmitting}
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                {...register("unitOfMeasure")}
+              >
+                <option value="">Select a unit…</option>
+                {UNITS_OF_MEASURE.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+              <FieldError errors={[errors.unitOfMeasure]} />
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="price-committed-quantity">
+                Committed quantity
+              </FieldLabel>
+              <Input
+                id="price-committed-quantity"
+                type="text"
+                inputMode="decimal"
+                className="tabular-nums"
+                aria-invalid={!!errors.committedQuantity}
+                disabled={isSubmitting}
+                {...register("committedQuantity")}
+              />
+              <p className="text-caption text-[color:var(--text-muted)]">
+                The customer is billed for at least this quantity, even when
+                they use less.
+              </p>
+              <FieldError errors={[errors.committedQuantity]} />
+            </Field>
+          </>
+        )}
+
+        {componentType === "capacity_motivation" && (
+          <>
+            <Field>
+              <FieldLabel htmlFor="price-unit">Unit of measure</FieldLabel>
+              <select
+                id="price-unit"
+                aria-invalid={!!errors.unitOfMeasure}
+                disabled={isSubmitting}
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                {...register("unitOfMeasure")}
+              >
+                <option value="">Select a unit…</option>
+                {UNITS_OF_MEASURE.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+              <FieldError errors={[errors.unitOfMeasure]} />
+            </Field>
+
+            <Controller
+              control={control}
+              name="steps"
+              render={({ field }) => (
+                <CapacityMotivationStepsEditor
+                  value={field.value}
+                  onChange={field.onChange}
+                  disabled={isSubmitting}
+                  rowErrors={field.value.map(
+                    (_, index) => errors.steps?.[index],
+                  )}
+                  listError={errors.steps?.root}
+                />
+              )}
             />
-            <FieldError errors={[errors.amount]} />
-          </Field>
-        )}
-
-        {pricingModel === "tiered" && (
-          <fieldset className="flex flex-col gap-2">
-            <legend className="text-body-sm font-medium text-foreground">
-              Tiers
-            </legend>
-            {fields.map((field, index) => (
-              <div key={field.id} className="flex items-end gap-2">
-                <Field>
-                  <FieldLabel htmlFor={`tier-from-${index}`}>From</FieldLabel>
-                  <Input
-                    id={`tier-from-${index}`}
-                    type="text"
-                    aria-invalid={!!errors.tiers?.[index]?.from}
-                    disabled={isSubmitting}
-                    {...register(`tiers.${index}.from`)}
-                  />
-                  <FieldError errors={[errors.tiers?.[index]?.from]} />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor={`tier-to-${index}`}>To</FieldLabel>
-                  <Input
-                    id={`tier-to-${index}`}
-                    type="text"
-                    placeholder="Open-ended"
-                    aria-invalid={!!errors.tiers?.[index]?.to}
-                    disabled={isSubmitting}
-                    {...register(`tiers.${index}.to`)}
-                  />
-                  <FieldError errors={[errors.tiers?.[index]?.to]} />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor={`tier-rate-${index}`}>Rate</FieldLabel>
-                  <Input
-                    id={`tier-rate-${index}`}
-                    type="text"
-                    aria-invalid={!!errors.tiers?.[index]?.rate}
-                    disabled={isSubmitting}
-                    {...register(`tiers.${index}.rate`)}
-                  />
-                  <FieldError errors={[errors.tiers?.[index]?.rate]} />
-                </Field>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Remove tier ${index + 1}`}
-                  disabled={isSubmitting || fields.length === 1}
-                  onClick={() => remove(index)}
-                >
-                  <X size={14} aria-hidden />
-                </Button>
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isSubmitting}
-              onClick={() => {
-                // Seed the new row's `from` from the previous row's *current*
-                // `to` value when non-empty (Design §2.6) — read via
-                // getValues, not the useFieldArray `fields` snapshot, since
-                // registered tier inputs are uncontrolled and `fields` only
-                // tracks each row's value as of the last append/remove.
-                const lastIndex = fields.length - 1;
-                const previousTo =
-                  lastIndex >= 0
-                    ? getValues(`tiers.${lastIndex}.to`)
-                    : undefined;
-                append({
-                  from:
-                    previousTo && previousTo.trim() !== "" ? previousTo : "",
-                  to: "",
-                  rate: "",
-                });
-              }}
-            >
-              <Plus size={14} aria-hidden />
-              Add tier
-            </Button>
-            <FieldError errors={[errors.tiers as { message?: string }]} />
-          </fieldset>
+          </>
         )}
 
         <Field>

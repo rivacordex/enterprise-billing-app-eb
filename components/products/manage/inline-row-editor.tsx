@@ -16,6 +16,13 @@ export interface InlineRowEditorProps {
   // Field-level errors live inside the wrapped form (RHF), never here.
   formError: string | null;
   onCancel: () => void;
+  // pm54-spec D4 — disables Save only (never Cancel) while an offering-level
+  // banner (OfferingComponentErrorBanner) is present above the panel. A
+  // flagged, minimal extension of this shared shell: pm54's own boundary
+  // doesn't name this file, but "Save disabled while the banner is present"
+  // has no other seam to attach to without duplicating the Save/Cancel
+  // footer pm41 review #15 already consolidated here.
+  saveDisabled?: boolean;
   // The reused field-group form (PriceForm / SpecificationForm).
   children: React.ReactNode;
 }
@@ -32,6 +39,7 @@ export function InlineRowEditor({
   saveLabel,
   formError,
   onCancel,
+  saveDisabled = false,
   children,
 }: InlineRowEditorProps): React.JSX.Element {
   const saveRef = useRef<HTMLButtonElement | null>(null);
@@ -52,7 +60,7 @@ export function InlineRowEditor({
       if (event.nativeEvent.isComposing) return;
       if (event.metaKey || event.ctrlKey) {
         event.preventDefault();
-        saveRef.current?.click();
+        if (!saveDisabled) saveRef.current?.click();
       } else if ((event.target as HTMLElement).tagName === "INPUT") {
         // Multi-field row: a bare Enter must not submit prematurely (D2).
         event.preventDefault();
@@ -88,7 +96,7 @@ export function InlineRowEditor({
           variant="outline"
           size="sm"
           className={TOUCH_TARGET}
-          disabled={isSubmitting}
+          disabled={isSubmitting || saveDisabled}
         >
           {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
           {saveLabel}
