@@ -2,7 +2,7 @@
 
 **Module:** Product Management — pricing-component standardization (extends the Manage Products rebuild)
 **Users:** Billing Operations authoring catalog prices (permission `products`, level EDIT) at the Manage Product level.
-**Status:** Planned — JSON definitions and Product Management storage design locked in `_updatemodule-product-pricing-components-plan.md` (decisions PC1–PC14, invariants VI1–VI5, open items O1–O10; O3/O4 resolved).
+**Status (2026-09-24, pm56 ship gate):** Implemented — pm46–pm55 built, locally unit/integration/type/lint-verified on `dev1` (evidence table in `prodmgmt-progress-tracker.md`). **Not "Delivered"** — pm56-spec D7 conditions that word on Part 3 and Part 4 both being genuinely in `main`, and they are not: `git ls-tree`/`git merge-base` against `origin/main` at this gate show `main` still on the pre-reshape schema (`pricingModel` column, no `pricing-component.schema.ts`), `merge-base(dev1, origin/main)` = `e2bb187` (Part 1). **G-0 stays open; G-A is restated open for the same reason (D7).** Delivered/Verified becomes true the day G-0 closes and this line is corrected in the same change that closes it — not before. JSON definitions and Product Management storage design locked in `_updatemodule-product-pricing-components-plan.md` (decisions PC1–PC14, invariants VI1–VI5, open items O1–O10; O3/O4 resolved).
 **Companion docs:** `_updatemodule-product-pricing-components-plan.md` (authoritative), `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`, `prodmgmt-project-overview.md`.
 
 ## Overview

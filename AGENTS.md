@@ -31,6 +31,8 @@ or making any architectural decision related to Product Module:
 
 Update `context/product-management/prodmgmt-progress-tracker.md` after each meaningful implementation change.
 
+**Pricing Components (Product Management).** The TMF620 `plaSpec` catalog and mapping table for every price component type (`usage_rate` / `flat_fee` / `capacity_commitment` / `capacity_motivation` / `negotiated_override`) lives as the doc-block in `validation/product/pricing-component.schema.ts` — that file, not a separate document, is the compliance artifact (code-standards §1.28, §7.5). Resolves pm47-spec I7's cross-link, deferred at pm47 for lack of a linkable home; landed at the pm56 ship gate.
+
 Read also the general context document to support the changes as referenced by the context files above:
 1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  
 2. `context/code-standards.md`— implementation rules and conventions
