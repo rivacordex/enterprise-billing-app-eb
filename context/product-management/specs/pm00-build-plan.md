@@ -224,3 +224,51 @@ Supersedes Part 3's register above for every item Part 4 touches; items untouche
 | **Unresolved — `tests/db/product-delete-offering.integration.test.ts`, newly confirmed red at pm56** | 6/7 failing, same root cause as `product-release-path`/`product-withdrawal-path`. Out of pm56's boundary. | Same fixture-sweep unit as above. |
 | **Unresolved — `prettier --check` red on one pm55 file** | `components/products/manage/capacity-motivation-steps-editor.tsx` fails `prettier --check` (found live at this gate). Out of pm56's boundary (no production-code edits). | Its owning unit (pm55) or a formatting-only follow-up. |
 
+---
+
+## Part 5 — Rate Card Lookup update (pm57–pm71)
+
+Stands up a RevOps-managed lookup table (`product.ratecard_version` + `product.RATECARD_RAN_USAGE_LKP`) and its upload/diff/activate/rollback/carry-forward lifecycle and UI at `/products/rate-card`. Spec: `prodmgmt-update-overview.md` (Rate Card Lookup, v2). Decisions: the RC-series (as revised), invariants **RV1–RV4/RV9**, open items **OR3/OR4/OR7′/OR-RET** in `_updatemodule-ratecard-lookup-plan-v2.md`. Sits alongside Part 4 — makes **no** `product_offering_price` change, so it carries no dependency on the pricing branch (RC12). Nothing consumes the table in this part: the rating consumer is a following-sprint deliverable, owned by Rating Management.
+
+**This section is added by pm57 itself, closing G-RC1.** `prodmgmt-ai-workflow-rules.md` §0.1 recorded G-RC1 as the blocking gate for "no unit numbers exist for this update" and named this exact twelve-unit cut (its §0.2) as the breakdown to propose. No prior commit had actually landed that proposal here, so `pm57-spec`'s own header line ("G-RC1 — CLOSED by the pm00-build-plan.md overwrite") was ahead of the tree until this edit. Recorded as a doc/code disagreement found and fixed in the same change set (workflow-rules §7.10), not silently assumed.
+
+### Gate table
+
+| Gate | What it blocks | Status (2026-09-24) |
+| --- | --- | --- |
+| **G-RC1** | Unit numbers for this Part | **CLOSED by this section.** The twelve-unit cut below is `prodmgmt-ai-workflow-rules.md` §0.2's proposal, recorded here with its own gates. |
+| ~~**G-RC2**~~ | The merge point (OR11) | **WITHDRAWN (2026-09-24).** v2 makes no `product_offering_price` change and touches no shared pricing-branch code — there is no merge-point question to record. Retained as a struck row only so the numbering resolves. |
+| **G-RC3** | The `PERMISSIONS` row, `types/rbac.ts`, nav, the authz-matrix rows (OR3) | **OPEN.** No decision found recorded anywhere in the tree as of pm57. Architecture §4 and code-standards §8 are written on the *recommendation* (`ratecard`, distinct from `products`), not on a decision — *Owner: user.* |
+| **G-RC4** | `parse-csv.ts` and the dependency add (OR4) | **OPEN.** No parser library is pinned; `package.json` names none. |
+| ~~**G-RC5**~~ | The third `lead()` partition site | **WITHDRAWN.** v2 makes no `rp.py` amend. Retained as a struck row only. |
+
+### Units
+
+Twelve units, one pass each, in this order — `prodmgmt-ai-workflow-rules.md` §0.2's cut, unchanged. **pm58, pm59 and pm69 are withdrawn under v2** (the `product_offering_price` partition amend, `AMBIGUOUS_RATE_CARD`, and `service_code` authoring — none built, since v2 touches no delivered table).
+
+| #    | Unit                                                         | Visible result                                                                                      | Depends on |
+| ---- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------- |
+| **pm57** | **Migration + Drizzle mirror** — `0041_ratecard_ran_usage_lkp.sql`: both tables, both partial unique indexes, the as-of index. **G-RC3 open at authoring time, so the `PERMISSIONS` row is deferred (I6 split)** — it ships in a follow-up migration the instant G-RC3 clears, before pm67. | Schema lands and is verified against a database built from empty. | — |
+| pm60 | Validation — `validation/product/ratecard.schema.ts`: row schema, file schema, the `RateCardIssue` line-number contract, `RateCardIssueSeverity`. | Pure, testable, no DB write. | pm57 |
+| pm61 | Parser — `services/product/ratecard/parse-csv.ts` and the pinned dependency (G-RC4). | A dependency change is its own unit. | pm60, G-RC4 |
+| pm62 | Repository — `db/repositories/ratecard.ts`: `insertVersion`, `insertLookupRows`, `setVersionStatus`, `carryForwardRetiredRows`, the reads. No row-level write of any name. | Guardrail 37 asserts the exported surface. | pm57 |
+| pm63 | Upload — `services/product/ratecard/upload-version.ts` + its action + the one set-based referential query. | One mutation, one audit event, one permission level. | pm61, pm62 |
+| pm64 | Diff — `diff-versions.ts`, in memory. | Read-only; makes the DRAFT gate reviewable before Activate exists. | pm62 |
+| pm65 | Activate + carry-forward — `activate-version.ts` + its action. | The subtlest piece; its own unit, tests and review. | pm63, pm64 |
+| pm66 | Rollback — `rollback-version.ts` + its action. | A separate mutation, a separate audit event. | pm65 |
+| pm67 | Page and read UI — the route, the guard, `RateCardVersionTable`, `RateCardStatusBadge`, `RateCardRowPreview`, `NAV_REGISTRY` + `NAV_ICONS`. **G-RC3 must be closed before this unit** — the page's permission guard needs the decided name. | The read path before any write UI. | pm63–pm66, G-RC3 |
+| pm68 | Write UI — `UploadVersionDialog`, `UploadErrorTable`, `RateCardDiffPanel`, `ActivateVersionDialog`, `RollbackVersionDialog`, and the `next.config.ts` raise. | The first `<input type="file">` in the tree. | pm67 |
+| pm70 | Demo seed — one card version aligned with pm48's four-component offering. | Seed failures trace to the seed, not the schema. | pm68 |
+| pm71 | Ship gate — guardrails 35–37/39–40 landed, 1/13 re-scoped, the §8 sweep, the doc amendments, Appendix A rows A10–A13 cleared by grep. | Never folded into the last feature unit. | pm57–pm70 |
+
+**Hand-off register (Part 5, opened at pm57)**
+
+| Ref | Deferred item | Trigger that reopens it |
+| --- | --- | --- |
+| **pm57-D5/C8** | An abandoned `DRAFT` blocks the next upload for its `card_name` until it is activated — the accepted cost of shipping the one-open-DRAFT partial index in Phase A, which has no discard and no `ratecard : DELETE`. | Revisit only by reopening C2 (whether Phase A needs a discard path), not by dropping the index quietly. |
+| **pm57-D9 finding** | `rating_runtime`'s and `billrun_runtime`'s grants on the `product` schema (`db/bootstrap/{rating,billrun}-db-roles.sql`) are each an **enumerated per-table list** (rm03-spec D9: "never `ON ALL TABLES`") that does not name either new rate-card table. `app_runtime` reaches both automatically via the existing schema-wide default privilege, so the app itself is unaffected — but **neither engine role can read the two new tables today**, verified empirically in `tests/db/product-ratecard-schema.integration.test.ts` rather than assumed from pm57-spec D9's "grant-transparent, same as pm46" text (that text is accurate for `app_runtime` only). No bootstrap file was edited on this unit's own initiative, per its own D9 instruction ("a finding to raise, not a bootstrap edit to make on initiative"). | The rating-consumer unit that first needs `rating_runtime` (or a bill-run unit needing `billrun_runtime`) to read either table — that unit adds the one-line enumerated grant, reviewed, exactly as rm03-spec D9 asks. |
+| **pm57 permission deferral** | The `ratecard` `PERMISSIONS` row, the `types/rbac.ts` member, the `NAV_REGISTRY` entry and the four authz-matrix rows all wait on **G-RC3** (still open — no decision recorded anywhere in the tree). | G-RC3 clearing — the follow-up migration lands beside it, before pm67. |
+| **G-RC2, withdrawn (recorded here with its date per pm57-spec I4.5)** | v1's merge-point question (OR11) does not exist in v2 — no shared pricing-branch code is touched. | Reopens only if a future revision reintroduces a `product_offering_price` change. |
+
+
+

@@ -288,6 +288,13 @@
       "when": 1788282429615,
       "tag": "0040_product_family_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790010829615,
+      "tag": "0041_ratecard_ran_usage_lkp",
+      "breakpoints": true
     }
   ]
 }

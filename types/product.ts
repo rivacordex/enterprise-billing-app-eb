@@ -136,6 +136,24 @@ export type RecurringPeriodType = (typeof RECURRING_PERIOD_TYPES)[number];
 export const RECURRING_PERIOD_LENGTHS = [1, 3, 12] as const;
 export type RecurringPeriodLength = (typeof RECURRING_PERIOD_LENGTHS)[number];
 
+// pm57-spec D7 / code-standards §2.19 — declared in lifecycle order, as
+// const, exactly like LIFECYCLE_STATUSES above. This is a SEPARATE union
+// from LifecycleStatus and never widens it: the two sets share three
+// spellings (DRAFT/ACTIVE/SUPERSEDED vs. DRAFT/ACTIVE/OBSOLETE) and no
+// semantics, and LifecycleStatus is a total-Record key across the module
+// (§2.2) — reusing it would silently give a card version an OBSOLETE branch
+// and an offering a SUPERSEDED one. `RateCardIssueSeverity` (the other union
+// code-standards §2.19 lists alongside this one) is pm60's — validation's
+// unit, not this schema unit's — and is deliberately not declared here; the
+// split across two units is intentional, not an omission (D7).
+export const RATE_CARD_VERSION_STATUSES = [
+  "DRAFT",
+  "ACTIVE",
+  "SUPERSEDED",
+  "REJECTED",
+] as const;
+export type RateCardVersionStatus = (typeof RATE_CARD_VERSION_STATUSES)[number];
+
 export type {
   ProductOffering,
   ProductOfferingInsert,

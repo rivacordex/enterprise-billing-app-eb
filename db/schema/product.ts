@@ -2,14 +2,17 @@ import {
   type AnyPgColumn,
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
+  numeric,
   pgSchema,
   text,
   timestamp,
   unique,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -42,6 +45,9 @@ export const productOfferingPriceSeq = product.sequence(
   "product_offering_price_seq",
   { startWith: 1 },
 );
+export const ratecardVersionSeq = product.sequence("ratecard_version_seq", {
+  startWith: 1,
+});
 
 // The two expression unique indexes below are declared here AND in
 // 0040_product_family_guards.sql (the SQL of record). That migration ALSO adds
@@ -229,6 +235,130 @@ export const productOfferingPrice = product.table(
   ],
 );
 
+// pm57-spec D2/I1/I2 — physical DDL of record is
+// db/migrations/0041_ratecard_ran_usage_lkp.sql; this is the hand-synced
+// mirror (no drizzle-kit generate, code-standards §6.25). One row per
+// upload. `snapshotDate` is the file's hoisted Date column — constant
+// across the file, NEVER stored per row, NEVER used for matching, and the
+// sole source of retired_at on the child table (RC17, Inv. #49).
+// `status = 'REJECTED'` and `rejectSummary` have no writer in this delivery
+// (code-standards §1.42) — a failed upload writes nothing, including no
+// version row. Both exist for a future asynchronous ingest.
+export const ratecardVersion = product.table(
+  "ratecard_version",
+  {
+    ratecardVersionId: text("ratecard_version_id")
+      .primaryKey()
+      .default(
+        sql`'RCV' || lpad(nextval('product.ratecard_version_seq')::text, 8, '0')`,
+      ),
+    cardName: text("card_name").notNull(),
+    versionNum: integer("version_num").notNull(),
+    status: text("status").notNull(),
+    snapshotDate: date("snapshot_date", { mode: "string" }).notNull(),
+    sourceFile: text("source_file").notNull(),
+    fileChecksum: text("file_checksum"),
+    rowCount: integer("row_count").notNull(),
+    carriedRowCount: integer("carried_row_count").notNull().default(0),
+    uploadedBy: text("uploaded_by").references(() => appuser.id, {
+      onDelete: "set null",
+    }),
+    uploadedAt: timestamp("uploaded_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .default(sql`now()`),
+    activatedBy: text("activated_by").references(() => appuser.id, {
+      onDelete: "set null",
+    }),
+    activatedAt: timestamp("activated_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    supersededByVersionId: text("superseded_by_version_id"),
+    rejectSummary: jsonb("reject_summary"),
+  },
+  (t) => [
+    unique("ratecard_version_card_name_version_num_unique").on(
+      t.cardName,
+      t.versionNum,
+    ),
+    check(
+      "ratecard_version_status_check",
+      sql`status IN ('DRAFT','ACTIVE','SUPERSEDED','REJECTED')`,
+    ),
+    // At most one live version per card, enforced by the index, not by
+    // application code (RV1, Inv. #45) — the direct analogue of
+    // product_offering_one_active_per_family.
+    uniqueIndex("ratecard_version_one_active_per_card")
+      .on(t.cardName)
+      .where(sql`${t.status} = 'ACTIVE'`),
+    // C8, decided (pm57-spec D5, option A): at most one open DRAFT per card.
+    // The accepted cost — an abandoned draft blocks the next upload until
+    // activated, since Phase A has no discard and no `ratecard : DELETE` —
+    // is recorded in the hand-off register, not hidden.
+    uniqueIndex("ratecard_version_one_draft_per_card")
+      .on(t.cardName)
+      .where(sql`${t.status} = 'DRAFT'`),
+  ],
+);
+
+// pm57-spec D3/I1/I2 — the rows of one version. ULID default
+// (core.generate_ulid()), not a padded sequence: ~5,500 rows per upload has
+// no use for a human-readable id, the id is never displayed, and a shared
+// sequence would be the upload's bottleneck (code-standards §6.24). One FK
+// only. `lkpSubscriberRefId` carries a product_inventory.product_inventory_id
+// VALUE, not a reference — no FK (RC14, Inv. #57), same no-FK stance as
+// rating.udr_rated (Inv. #17): a superseded version must survive a
+// subscription's removal. `serviceCode` and `ratePerUnit` are plain columns
+// with no CHECK and no meaning — stored as uploaded, nothing consumes them
+// (D3/D4, code-standards §1.45/§3.2). No capacity column, no currency
+// column (RC4, Inv. #53).
+export const ratecardRanUsageLkp = product.table(
+  "ratecard_ran_usage_lkp",
+  {
+    ratecardRanUsageLkpId: uuid("ratecard_ran_usage_lkp_id")
+      .primaryKey()
+      .default(sql`core.generate_ulid()`),
+    ratecardVersionId: text("ratecard_version_id")
+      .notNull()
+      .references(() => ratecardVersion.ratecardVersionId, {
+        onDelete: "cascade",
+      }),
+    mnoPublicKey: text("mno_public_key").notNull(),
+    commercialUnitPublicKey: text("commercial_unit_public_key").notNull(),
+    polygonId: text("polygon_id").notNull(),
+    polygonStartDate: date("polygon_start_date", { mode: "string" }).notNull(),
+    lkpSubscriberRefId: text("lkp_subscriber_ref_id").notNull(),
+    serviceCode: text("service_code"),
+    ratePerUnit: numeric("rate_per_unit", {
+      mode: "string",
+      precision: 18,
+      scale: 6,
+    }),
+    retiredAt: date("retired_at", { mode: "string" }),
+  },
+  (t) => [
+    unique("ratecard_ran_usage_lkp_row_key_unique").on(
+      t.ratecardVersionId,
+      t.mnoPublicKey,
+      t.commercialUnitPublicKey,
+      t.polygonId,
+      t.polygonStartDate,
+    ),
+    // The rating consumer's as-of join key (code-standards §6.28) — created
+    // now though nothing consumes it in this delivery (§6.31).
+    index("ratecard_ran_usage_lkp_as_of_idx").on(
+      t.ratecardVersionId,
+      t.mnoPublicKey,
+      t.commercialUnitPublicKey,
+      t.polygonId,
+      sql`${t.polygonStartDate} DESC`,
+    ),
+  ],
+);
+
 export type ProductOffering = typeof productOffering.$inferSelect;
 export type ProductOfferingInsert = typeof productOffering.$inferInsert;
 export type ProductSpecification = typeof productSpecifications.$inferSelect;
@@ -237,3 +367,7 @@ export type ProductSpecificationInsert =
 export type ProductOfferingPrice = typeof productOfferingPrice.$inferSelect;
 export type ProductOfferingPriceInsert =
   typeof productOfferingPrice.$inferInsert;
+export type RatecardVersion = typeof ratecardVersion.$inferSelect;
+export type RatecardVersionInsert = typeof ratecardVersion.$inferInsert;
+export type RatecardRanUsageLkp = typeof ratecardRanUsageLkp.$inferSelect;
+export type RatecardRanUsageLkpInsert = typeof ratecardRanUsageLkp.$inferInsert;

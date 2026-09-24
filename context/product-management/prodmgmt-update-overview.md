@@ -1,106 +1,120 @@
-# Product Management — Update Overview (Pricing Components: Capacity Commitment & Motivation)
+# Product Management — Update Overview (Rate Card Lookup)
 
-**Module:** Product Management — pricing-component standardization (extends the Manage Products rebuild)
-**Users:** Billing Operations authoring catalog prices (permission `products`, level EDIT) at the Manage Product level.
-**Status (2026-09-24, pm56 ship gate):** Implemented — pm46–pm55 built, locally unit/integration/type/lint-verified on `dev1` (evidence table in `prodmgmt-progress-tracker.md`). **Not "Delivered"** — pm56-spec D7 conditions that word on Part 3 and Part 4 both being genuinely in `main`, and they are not: `git ls-tree`/`git merge-base` against `origin/main` at this gate show `main` still on the pre-reshape schema (`pricingModel` column, no `pricing-component.schema.ts`), `merge-base(dev1, origin/main)` = `e2bb187` (Part 1). **G-0 stays open; G-A is restated open for the same reason (D7).** Delivered/Verified becomes true the day G-0 closes and this line is corrected in the same change that closes it — not before. JSON definitions and Product Management storage design locked in `_updatemodule-product-pricing-components-plan.md` (decisions PC1–PC14, invariants VI1–VI5, open items O1–O10; O3/O4 resolved).
-**Companion docs:** `_updatemodule-product-pricing-components-plan.md` (authoritative), `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`, `prodmgmt-project-overview.md`.
+**Module:** Product Management — the `RATECARD_RAN_USAGE_LKP` reference table, surfaced as **Products → Rate Card**. Stands up a RevOps-managed lookup table with an upload/diff/activate/rollback/carry-forward lifecycle and its UI; the rating engine's consumption of the table is a following-sprint deliverable, not part of this update.
+**Users:** Revenue Operations — upload, review, activate and roll back rate card versions.
+**Status:** Design (v2). The RC-series (as revised), invariants **RV1–RV4 / RV9**, and open items **OR3 / OR4 / OR7′ / OR-RET** are locked in `_updatemodule-ratecard-lookup-plan-v2.md`. **No blocking open items remain.**
+**Supersedes:** the previous Pricing Components update overview. That update's authoritative text remains `_updatemodule-product-pricing-components-plan.md` plus specs `pm46`–`pm56`; its prior overview is recoverable at commit `7ebcc67`.
+**Companion docs:** `_updatemodule-ratecard-lookup-plan-v2.md` (authoritative), `_updatemodule-product-pricing-components-plan.md` (PC10), `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`.
+
+---
 
 ## Overview
 
-This update replaces the catalog's two ad-hoc price shapes — a scalar `amount` column for flat prices and a `tiers[]` array for tiered prices — with **one standardized, composable pricing-component model**: every price on a product offering is a self-describing JSON object under a single envelope, discriminated by an `@type` field. It adds two algorithmic components authored at the Manage Product level — **Target Capacity Commitment** (a minimum billable-quantity floor) and **Target Capacity Motivation** (a graduated per-unit discount above a target quantity) — that combine with the base usage rate to price aggregated usage at BAN level during a later bill run. Each component projects 1:1 onto a TMF620 `pricingLogicAlgorithm`, so the model is TMForum-aligned without exposing any TMF API. This update covers **only** the JSON definitions and their Product Management persistence (schema, validation, services, UI, seeds); the bill-run computation, the rating engine's rate extraction, and the LookUp Rate Card table are explicitly later phases.
+This update stands up a RevOps-managed lookup table that records, for any unit of RAN usage, **which subscriber reference it belongs to and which service it is**. Revenue Operations uploads a CSV keyed on `(MNO public key, commercial unit public key, polygon ID)` — the same three columns that already form the UDR's `udr_key` — effective-dated by polygon start date; each upload becomes a version that is validated and previewable as `DRAFT` and takes effect only when explicitly activated. One lookup row carries an `lkp_subscriber_ref_id` and a `service_code`, both plain stored columns. The scope of this update is the table plus its full version lifecycle — upload, diff, activate, carry-forward and rollback — and the `/products/rate-card` UI, **and it stops there**. Nothing consumes the table: the rating engine's resolution of a UDR against the lookup is a following-sprint deliverable and no part of it is built here.
+
+---
 
 ## Goals
 
-1. Define one JSON **envelope** for every pricing component — `@type`, `specVersion`, `plaSpecId`, `priceType`, `appliesAt`, `basis`, `boundTo`, `params` — replacing `pricing_model` / `amount` / `pricing_characteristics`.
-2. Add **Target Capacity Commitment**: bill `max(aggregatedQuantity, committedQuantity)`, so a customer under-using the committed capacity is still charged for it.
-3. Add **Target Capacity Motivation**: a graduated per-unit rate — base rate below a target quantity, a reduced rate above it — expressed as an ascending `steps[]` array supporting N discount bands.
-4. Turn the base usage rate into a `usage_rate` component, adding a `rateCardLookUp` reference (a LookUp Rate Card name, resolved by rating later) with `ratePerUnit` as the default and fallback rate.
-5. Drop `pricing_model = 'tiered'`; the graduated concept lives on in `capacity_motivation.steps`.
-6. Fold `flat` into the envelope (`usage_rate` for usage, `flat_fee` for recurring/once); document the negotiated override as a `negotiated_override` projection **without** reshaping its physical row.
-7. Align to TMF620: each algorithmic component is a `pricingLogicAlgorithm` (named by `plaSpecId`); each plain-price component is a scalar `ProductOfferingPrice`; document one `plaSpec` per `@type` in the codebase.
-8. Persist components by reshaping `product_offering_price` to `component_type` + `price_component` jsonb (Option A), edited in place in `0006_product.sql` under the fresh-install assumption — no migration, no backfill.
-9. Enforce cross-component validity at the write boundary: a modifier requires a same-unit `usage_rate`; one currency per offering; exactly one effective `usage_rate` per unit.
-10. Produce **one combined product charge per product per BAN** — components adjust a single running charge, not one bill line per component.
+1. Store an effective-dated lookup from `(mno_public_key, commercial_unit_public_key, polygon_id)` to `lkp_subscriber_ref_id` and `service_code`, versioned per upload, in `product.ratecard_version` + `product.RATECARD_RAN_USAGE_LKP`.
+2. Give RevOps a self-service upload at **Products → Rate Card** that validates a ~5,000–5,500 row CSV synchronously and reports row-level errors without writing anything on failure.
+3. Make activation a deliberate, separate act: an upload lands as `DRAFT`, is diffable against the current `ACTIVE`, and only becomes live when a user activates it.
+4. Guarantee exactly one `ACTIVE` version per card name via a partial unique index, so "which card is live" always has one answer.
+5. Keep the `ACTIVE` version **self-sufficient** — carry rows retired upstream forward at activation with a `retired_at` date, so the lookup for a period before a polygon was decommissioned is still present.
+6. Stand up the table and its lifecycle only. This update builds no consumer: no rating resolution, no price-row selection, and no change to `product_offering_price` — those belong to a following sprint.
+
+---
 
 ## Core User Flow
 
-1. A Billing Operations user (`products : EDIT`) opens **Products → Manage Products**, selects a family, and opens or branches a `DRAFT` version.
-2. In the pricing panel they add a **base usage rate** component: unit `EA`, `ratePerUnit` `"100"`, and optionally a `rateCardLookUp` name (the rate card itself is a later phase; absent → the flat `ratePerUnit` applies).
-3. They add a **Target Capacity Commitment** component: `committedQuantity` `1000`.
-4. They add a **Target Capacity Motivation** component: `steps` `[{ "aboveQuantity": 1000, "ratePerUnit": "50" }]`, optionally a second band such as `{ "aboveQuantity": 2000, "ratePerUnit": "25" }`.
-5. On save, the form validates the components together — each modifier binds to the same-unit `usage_rate`, all share one currency, and `steps` are strictly ascending — and rejects any violation before write.
-6. Each component is persisted as one `product_offering_price` row (`component_type` + `price_component` jsonb). A non-blocking **not-yet-billable warning** is shown, because bill-run support for the capacity components lands in a later phase.
-7. The user submits the version for testing and activates it as usual; the components travel with the version and are grandfathered by the subscription's pinned version.
-8. **(Later phase, defined here for reference)** At bill run, the components resolve to one combined charge per product per BAN: `Qbill = max(aggregatedQuantity, 1000)`, priced through `100` up to `1000` then `50` above — so `800 EA → 100,000` and `2000 EA → 150,000` (`+ 25 × (Q − 2000)` with the second band).
+1. A Revenue Operations user opens **Products → Rate Card**. The version list shows every version for the card with its status (`DRAFT` / `ACTIVE` / `SUPERSEDED` / `REJECTED`), snapshot date, row count, and who uploaded and activated it.
+2. They click **Upload new version** and pick a CSV — roughly 5,000–5,500 rows, about 0.5 MB.
+3. The server action parses and validates the whole file in one request: header matches the expected columns; the `Date` column is constant across every row; no duplicate `(mno, cu, polygon, polygon_start_date)` key; every distinct `lkp_subscriber_ref_id` resolves in `inventory.product_inventory` with a usable status and a date window covering the row's `polygon_start_date`.
+4. **On failure**, a row-level error table appears — row number, column, value, reason — and **no version is created**. The user fixes the file and uploads again.
+5. **On success**, the version is created as `DRAFT` — validated, previewable, and never the `ACTIVE` version any future reader would resolve against. The file's `Date` is hoisted to the version header as `snapshot_date`; it is not stored per row.
+6. The user reviews the rows and the **diff against the current `ACTIVE`**: subscription reassignments and service-code changes are listed first, then additions, then keys absent from the upload — labelled **Retiring**, with what will happen to them.
+7. They click **Activate**. A confirmation names the version being superseded, the change counts, how many polygons will be carried forward as retired, and states that re-rating an earlier period will use this version.
+8. In one transaction the service promotes the `DRAFT` to `ACTIVE`, demotes the prior `ACTIVE` to `SUPERSEDED`, and copies every key present in the outgoing version but absent from the upload into the new version with `retired_at = <new version's snapshot_date>`, preserving any `retired_at` already set. `carried_row_count` is written to the version header. An audit event is recorded in the same transaction.
+9. If the activation was a mistake, the user re-activates any `SUPERSEDED` version from the version list; versions are immutable, so rollback is a status change, not an edit.
+
+---
 
 ## Features
 
-### Component envelope
+### Lookup table and versioning
 
-- A single JSON envelope for every component: `@type` (discriminator), `specVersion`, `plaSpecId` (null for plain-price components), `priceType`, `appliesAt` (`rating` / `post_aggregation` / `billing`), `basis` (`quantity` / `flat`), `boundTo`, `params`.
-- Validated by a Zod discriminated union on `@type`, each branch a `strictObject` (an unknown key is rejected, never stripped); the DB CHECK is the backstop.
-- Money as decimal strings (`"100"`, `"50"`); quantities as numbers; `currency` and `unit_of_measure` stay on the row columns.
+- `product.ratecard_version` — one row per upload: `ratecard_version_id` (`RCV` + 8 digits), `card_name`, `version_num`, `status`, `snapshot_date`, `source_file`, `file_checksum`, `row_count`, `carried_row_count`, uploader/activator and timestamps, `superseded_by_version_id`, `reject_summary`.
+- `product.RATECARD_RAN_USAGE_LKP` — one row per mapping: `mno_public_key`, `commercial_unit_public_key`, `polygon_id`, `polygon_start_date`, `lkp_subscriber_ref_id`, `service_code`, `rate_per_unit` (a plain nullable column), `retired_at`.
+- Partial unique index on `card_name WHERE status = 'ACTIVE'` — at most one live version per card, enforced by the database rather than by application code.
+- Versions are immutable once activated; a correction is a new upload, and any superseded version can be re-activated.
 
-### The five components
+### Effective dating
 
-- `usage_rate` (rating) — `params: { ratePerUnit, rateCardLookUp }`; the base per-unit rate that feeds rating.
-- `flat_fee` (billing) — `params: { amount }`; fixed recurring/`oneTime` charge; scalar POP.
-- `capacity_commitment` (post_aggregation) — `params: { committedQuantity }`; the quantity floor.
-- `capacity_motivation` (post_aggregation) — `params: { steps: [{ aboveQuantity, ratePerUnit }] }`; the graduated rate schedule.
-- `negotiated_override` (rating, ordering table) — `params: { ratePerUnit }`; **physical row unchanged**, projection only.
+- Row grain is `(mno_public_key, commercial_unit_public_key, polygon_id, polygon_start_date)`; `polygon_start_date` is the as-of key.
+- The window is `[polygon_start_date, next polygon_start_date for the same key)`, closed on the right also by `retired_at`; `polygon_start_date` is the as-of key a future consumer would read against.
+- The file's `Date` column is the snapshot/extract date, constant across the file, hoisted to the version header, and never used for matching.
 
-### Capacity mechanics
+### Retirement carry-forward
 
-- Commitment applies a quantity floor; motivation applies a graduated rate schedule; the two compose as a transform pipeline (`Qbill = max(Q, committed)`, then price through the schedule) — correct even when `committedQuantity` exceeds the first step.
-- The result is one combined product charge; an internal base / top-up / discount breakdown may be retained for audit but is not separate bill lines.
+- Uploads are current-state: retired polygons never appear, because the polygon list is filtered during CUPS file filtering at the mediation layer, upstream of the card.
+- At activation, keys present in the outgoing `ACTIVE` version but absent from the upload are copied forward with `retired_at = COALESCE(source.retired_at, new snapshot_date)`.
+- `retired_at` comes from `snapshot_date`, not the wall clock, so a version activated late records the same `retired_at` as one activated on time.
+- A polygon that reappears under the same keys is simply uploaded again with `retired_at = NULL`; un-retirement needs no special handling.
 
-### TMF620 alignment
+### Upload and ingest
 
-- `@type` + `plaSpecId` → `pricingLogicAlgorithm`; plain-price components → a scalar `ProductOfferingPrice.price`.
-- `priceType` uses TMF values (`usage`, `recurring`, `oneTime`, `discount`) plus the documented extension `commitment` for the capacity floor.
-- `boundTo` → a `popRelationship` (allowance/discount); `negotiated_override` → a `ProductPrice.priceAlteration`.
-- One `plaSpec` description per `@type`, referenced by `plaSpecId`, is the in-codebase source of truth.
+- Synchronous server action — no Kestra, no `landing/`, no staging table, no streaming. At ~0.5 MB the file is parsed and inserted in one request.
+- `serverActions.bodySizeLimit` raised to `4mb` in `next.config.ts` (the Next default is 1 MB).
+- Rows insert in 1,000-row batches inside a single transaction; Postgres caps a statement at 65,535 bind parameters and 5,500 × 8 columns = 44,000 is uncomfortably close.
 
-### Storage (Product Management)
+### Validation
 
-- `product_offering_price` reshaped to `component_type text` (= `@type`, CHECK-constrained, indexed) + `price_component jsonb` (`$type<PricingComponent>`), retaining `currency`, `unit_of_measure`, `start_date_time`, recurring-period columns.
-- `pricing_model`, `amount`, `pricing_characteristics`, and the legacy `price_type` column are dropped; a per-`component_type` completeness CHECK replaces the flat/tiered XOR.
-- The uniqueness index rekeys to `(product_offering_id, component_type, unit_of_measure, start_date_time)`, preserving dated successors.
+- Row and file schemas as Zod `strictObject`s in `validation/product/ratecard.schema.ts`, matching pm47's house style — an unknown key is rejected, never stripped.
+- Subscriber-reference checks split by severity: an `lkp_subscriber_ref_id` that is unknown, or resolves to a status `TERMINATED` / `CANCELLED` / `ABORTED`, or has a `polygon_start_date` outside the subscription's `[start_date, end_date]` window → **error**, upload refused. Status `SUSPENDED` or `PENDING_*` → **warning**, shown on the draft review, does not block.
+- Carried-forward rows are never re-validated; their subscriptions may legitimately be terminated.
 
-### Validation (write boundary)
+### UI — `/products/rate-card`
 
-- `steps` non-empty, `aboveQuantity` strictly ascending / non-duplicate / `> 0`, each `ratePerUnit` a money string.
-- `committedQuantity` a finite number `> 0`.
-- A `post_aggregation` modifier requires a same-unit `usage_rate` on the offering; exactly one effective `usage_rate` per `(offering, unit)`; a single currency across an offering's components.
+- A fifth item in the Products section of `lib/nav-registry.ts` with an icon in `components/nav-icons.ts`.
+- Version list, upload dialog, row preview, diff against `ACTIVE`, activate confirmation, rollback, and a row-level error table on rejection.
+
+---
 
 ## In Scope
 
-- The envelope and its Zod discriminated union in a new `validation/product/pricing-component.schema.ts`, replacing `pricing-characteristics.schema.ts`; `tierSchema` and `tieredPricingCharacteristicsSchema` deleted.
-- The five component definitions, including `capacity_commitment.committedQuantity` and `capacity_motivation.steps[]`, and the `usage_rate` `rateCardLookUp` field with its default/fallback precedence (definition only).
-- Reshape of `product_offering_price` to `component_type` + `price_component` jsonb, the per-`component_type` CHECK, and the uniqueness-index rekey — edited in place in `0006_product.sql` under fresh-install (no migration, no backfill).
-- DRAFT-only component writes reusing the pm38 service guard and the pm36 DRAFT-guard trigger; a new offering-level validator enforcing VI3–VI5 in the price-write services.
-- Manage Products pricing-panel authoring for the new components, with the not-yet-billable warning.
-- Seeds (`db/seeds/product.ts`, `demo/`, `sample/`) emitting the envelope; `types/product.ts` exporting `PricingComponent` and dropping `TieredPricingCharacteristics`.
-- Dropping `pricing_model = 'tiered'` and its CHECK arm.
-- One `plaSpec` doc-block per `@type` and the documented TMF620 mapping table (documentation, not an adapter).
+- `product.ratecard_version` and `product.RATECARD_RAN_USAGE_LKP` in a new forward-only migration `0041_ratecard_ran_usage_lkp.sql`, with the hand-written Drizzle mirror. `0006_product.sql` is **not** reopened.
+- `validation/product/ratecard.schema.ts` — row schema, file schema, and the referential/status/window checks.
+- `services/product/ratecard/{upload-version,activate-version,rollback-version,diff-versions}.ts` and `db/repositories/product/ratecard.repository.ts`.
+- The `/products/rate-card` page, nav entry, icon, and RBAC wiring.
+- `next.config.ts` `bodySizeLimit` raise.
+- A demo seed card version aligned with the four-component demo offering pm48 seeds.
+- One audit event per upload, activate and rollback, in the same transaction as the write.
+
+---
 
 ## Out of Scope
 
-- The bill-run computation: the capacity resolver, the `customer_bill_line` mapping, proration, rounding, and the BAN aggregation grain (O7–O9).
-- The rating engine's rate extraction (`rp.py`) and any `PER_UNIT` / rate-card `udr_rate_detail` variant — rating currently has stubbed extraction only.
-- The **LookUp Rate Card table** — referenced by name in `rateCardLookUp`; built and seeded separately.
-- Any TMF620 external API or adapter — the mapping is documented for a future adapter; no adapter is built, and `app/api/product*` never exists.
-- Reshaping the negotiated override's physical storage — it stays one row per `(order_item, price_type)`, insert-only, scalar `amount` + `currency` (Inv. #16).
-- The `once` → `oneTime` rename on `ordering.order_item_price_override` (deferred, O2).
-- Base-rate resolution semantics when a rate card or a negotiated override varies the per-unit rate the capacity modifiers compute against (O1/O6) — a bill-run decision.
+- **Any consumer of the table.** No rating resolution, no as-of lookup, no per-UDR match, no reject events, no `udr_rated` stamping. The table is stood up and left; consumption is a following-sprint deliverable.
+- **Any change to `product_offering_price`.** No `service_code` column, no uniqueness-constraint rekey, no `lead()` partition amendment, no `AMBIGUOUS_RATE_CARD`. Price-row selection is not part of this update.
+- **Capacity.** No `capacity_mbps` column, not in the table and not in the upload contract. Capacity semantics stay post-aggregation in `capacity_commitment` / `capacity_motivation`.
+- **The negotiated override, entirely.** `ordering.order_item_price_override` is not read, modified, reshaped or reasoned about.
+- **Row-level authoring.** Upload is the only write path; there is no in-UI editing of individual card rows.
+- **The bill-run capacity resolver**, the `customer_bill_line` mapping, proration, rounding and the BAN aggregation grain.
+- **Any TMF620 API or adapter.**
+- **Editing `0006_product.sql`** — pm00's G-C authorization was scoped to `pm46` and does not extend here.
+- **Async ingest** — Kestra, `landing/`, staging tables and streaming are all set aside at this volume; the schema is identical if a future feed forces the change.
+
+---
 
 ## Success Criteria
 
-- `npm run db:migrate` on an empty database produces `product_offering_price` with `component_type` + `price_component` and the per-`component_type` CHECK; `pricing_model`, `amount`, `pricing_characteristics`, and the legacy `price_type` column no longer exist; no backfill script exists.
-- A `usage_rate`, a `capacity_commitment`, and a `capacity_motivation` can be authored on a `DRAFT` version and saved as three rows; the same components on a `TESTING`/`ACTIVE`/`OBSOLETE`/`RETIRED` version are refused by the repository and by the trigger.
-- Each malformed component is rejected by Zod **and** at the database: non-ascending or duplicate `steps`, `committedQuantity ≤ 0`, a modifier with no same-unit `usage_rate`, and two components of one offering in different currencies.
-- A `capacity_motivation` `steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }]` plus a `capacity_commitment` `committedQuantity: 1000` over a `usage_rate` `ratePerUnit: "100"` reproduces the worked figures (`800 → 100,000`, `2000 → 150,000`, and `3000 → 175,000` with a `@25` second band) — asserted by a pure-function unit test of the composition contract, even though the bill-run wiring is a later phase.
-- `pricing_model = 'tiered'`, `tierSchema`, and `TieredPricingCharacteristics` no longer exist anywhere in the codebase (guardrail).
-- The negotiated override's physical shape is unchanged — still one row per `(order_item, price_type)`, insert-only — confirmed by the existing exported-surface guardrail.
-- Every `@type` has a `plaSpec` doc-block and the TMF620 mapping table is documented in `pricing-component.schema.ts`, cross-linked from the module `AGENTS.md` and `README.md`.
-- `npm run typecheck`, `lint`, and the full test suite pass; the schema-diff guardrail is green against the reshaped `product_offering_price`.
+- `npm run db:migrate` on an empty database produces both tables and the partial unique index on `card_name WHERE status = 'ACTIVE'`. `0006_product.sql` and `product_offering_price` are untouched.
+- Uploading a valid ~5,400-row CSV creates exactly one `DRAFT` version, inserts its rows in 1,000-row batches inside one transaction, and leaves the current `ACTIVE` version untouched and still active.
+- Each of these is refused and **creates no version**: a duplicate `(mno, cu, polygon, polygon_start_date)`; a `Date` column that varies across rows; a missing expected column; an unknown `lkp_subscriber_ref_id`; a subscription whose status is `TERMINATED`, `CANCELLED` or `ABORTED`; a `polygon_start_date` outside the subscription's date window.
+- A subscription with status `SUSPENDED` or `PENDING_ACTIVE` produces a warning on the draft review and does **not** block activation.
+- Activating a version promotes it to `ACTIVE`, demotes the prior version to `SUPERSEDED`, and inserts one carried-forward row for every key present in the outgoing version and absent from the upload, each with `retired_at` equal to the new version's `snapshot_date` — asserted including the case where the source row already had a `retired_at`, which must be preserved rather than re-dated.
+- Attempting to activate a second version while one is `ACTIVE` is refused by the partial unique index, not merely by application code.
+- Re-activating a `SUPERSEDED` version restores it to `ACTIVE` and demotes the current one; no row of either version is edited.
+- One audit event per upload, activate and rollback, written in the same transaction as the write.
+- A user holding only READ on the rate-card permission can view versions and rows but cannot upload, activate or roll back.
+- `npm run typecheck`, `lint` and the full test suite pass; the schema-diff guardrail is green against both new tables.

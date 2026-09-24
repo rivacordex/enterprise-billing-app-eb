@@ -701,6 +701,90 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(entry!.when).toBeGreaterThan(prior!.when);
   });
 
+  // Guardrail 13, re-baselined a THIRD time (pm57-spec I3/D1-D5) — the two
+  // new rate-card tables, both partial unique indexes on ratecard_version,
+  // the RV2 row-key uniqueness constraint, the cascade FK, and the as-of
+  // index, in both the SQL of record (0041) and the Drizzle mirror. Exact
+  // diff, not a removal. Guardrail 39 (one ACTIVE per card, enforced by the
+  // index — Inv. #45) is proven live against Postgres in
+  // tests/db/product-ratecard-schema.integration.test.ts; this file asserts
+  // only the static shape, matching every other guardrail-13 baseline here.
+  it("0041 + db/schema/product.ts freeze the rate-card schema (pm57 D1-D5)", () => {
+    const migrationSource = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        "db",
+        "migrations",
+        "0041_ratecard_ran_usage_lkp.sql",
+      ),
+      "utf8",
+    );
+    const schemaSource = fs.readFileSync(
+      path.join(REPO_ROOT, "db", "schema", "product.ts"),
+      "utf8",
+    );
+
+    const NAMES = [
+      "ratecard_version",
+      "ratecard_ran_usage_lkp",
+      "ratecard_version_card_name_version_num_unique",
+      "ratecard_version_one_active_per_card",
+      "ratecard_version_one_draft_per_card",
+      "ratecard_ran_usage_lkp_row_key_unique",
+      "ratecard_ran_usage_lkp_as_of_idx",
+    ];
+    for (const name of NAMES) {
+      expect(migrationSource).toContain(name);
+      expect(schemaSource).toContain(name);
+    }
+
+    // The cascade FK on the child table, and no FK anywhere on
+    // lkp_subscriber_ref_id (RC14, Inv. #57).
+    expect(migrationSource).toMatch(
+      /FOREIGN KEY \("ratecard_version_id"\) REFERENCES "product"\."ratecard_version"/,
+    );
+    expect(migrationSource).toContain("ON DELETE cascade");
+    expect(migrationSource).not.toMatch(
+      /lkp_subscriber_ref_id["`)\s]*REFERENCES/i,
+    );
+
+    // No capacity column, no currency column on either table (RC4, Inv. #53).
+    expect(migrationSource.toLowerCase()).not.toContain("capacity");
+    expect(migrationSource.toLowerCase()).not.toContain("currency");
+
+    // ULID default on the high-volume child; padded-sequence default on the
+    // version header — the two conventions deliberately sitting side by
+    // side (code-standards §6.24).
+    expect(migrationSource).toContain("core.generate_ulid()");
+    expect(migrationSource).toContain(
+      "'RCV' || lpad(nextval('product.ratecard_version_seq')::text, 8, '0')",
+    );
+
+    // G-RC3 is open at authoring time (I6 split) — no PERMISSIONS row ships
+    // in this migration. A follow-up migration adds it once the permission
+    // name clears.
+    expect(migrationSource.toUpperCase()).not.toContain(
+      "INSERT INTO CORE.PERMISSIONS",
+    );
+
+    // The journal carries a 0041 entry sorting after 0040's.
+    const journal = JSON.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "db", "migrations", "meta", "_journal.json"),
+        "utf8",
+      ),
+    ) as { entries: { tag: string; when: number }[] };
+    const entry = journal.entries.find(
+      (e) => e.tag === "0041_ratecard_ran_usage_lkp",
+    );
+    const prior = journal.entries.find(
+      (e) => e.tag === "0040_product_family_guards",
+    );
+    expect(entry).toBeDefined();
+    expect(prior).toBeDefined();
+    expect(entry!.when).toBeGreaterThan(prior!.when);
+  });
+
   // pm36-spec Dependencies (Grants). The trigger runs as invoker and its
   // internal SELECT reads product.product_offering; rating_runtime and
   // billrun_runtime hold SELECT on the product read tables but must never gain
