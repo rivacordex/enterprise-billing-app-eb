@@ -36,13 +36,13 @@ Three gates. Clear them in the order of the table. The numbering is fixed becaus
 
 | Gate | Section | What it blocks | Status (2026-09-24) |
 | --- | --- | --- | --- |
-| **G-RC1** | §0.2 | **Everything.** No unit numbers exist. | **OPEN — blocking** |
+| **G-RC1** | §0.2 | **Everything.** No unit numbers exist. | **CLOSED — Part 5 recorded in `pm00-build-plan.md` (pm57–pm71); pm57 landed** |
 | ~~**G-RC2**~~ | — | ~~The merge point (OR11).~~ | **WITHDRAWN — v2 touches no shared pricing branch code** |
 | **G-RC3** | §0.4 | The migration's `PERMISSIONS` row, `types/rbac.ts`, nav, authz matrix (OR3). | **OPEN — recommendation only** |
 | **G-RC4** | §0.5 | `parse-csv.ts` and the dependency add (OR4). | **OPEN** |
 | ~~**G-RC5**~~ | — | ~~The third `lead()` partition site — now shipped code.~~ | **WITHDRAWN — v2 makes no `rp.py` amend** |
 
-1. **G-RC1 — this update has no authorised unit numbers. Get Part 5 written before you write code.** `pm00-build-plan.md` Part 4 authorises **pm46–pm56** and stops there; there is no Part 5 and no spec file for any rate-card unit. Code-standards §7 already marks the rate-card file tree *"unit numbers unassigned; pm00-build-plan.md stops at pm56."* **Do not invent a unit number, do not reuse a pm4x number, and do not build the update as one undifferentiated change because no list exists.** Propose the unit breakdown of §0.2 to the user, get it recorded in `pm00-build-plan.md` as Part 5 with its own gates and per-unit specs, then build from that list. Until it exists, the only work authorised here is planning.
+1. **G-RC1 — closed.** The unit breakdown of §0.2 was recorded in `pm00-build-plan.md` as Part 5 (pm57–pm71), and pm57 (migration + Drizzle mirror) has landed. Build proceeds unit by unit from that list, in order, one unit per pass: do not merge two rows, and do not start a row whose predecessor is not committed and verified.
 2. **G-RC3 — Get the permission name decided (OR3).** `ratecard` as a new `PERMISSION_NAMES` member, or reuse `products : EDIT`. Architecture §4 and code-standards §8 are both written on the **recommendation**, not on a decision. Write no `PERMISSIONS` seed row, no `types/rbac.ts` edit, no `NAV_REGISTRY` entry and no authz-matrix row until it is decided. **If it reverses to reusing `products`, rewrite the reasoning paragraphs in architecture §4 and code-standards §8 — do not delete them.**
 3. **G-RC4 — Get the file format and parser pinned (OR4).** CSV is recommended; no library is chosen and `package.json` has none. This is the update's **only new runtime dependency**, and a dependency change is its own requested unit under general §5.6. Pin it explicitly, with type coercion off, before `parse-csv.ts` is written.
 

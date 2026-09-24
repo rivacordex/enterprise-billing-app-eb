@@ -29,7 +29,7 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 
 1. A Revenue Operations user opens **Products → Rate Card**. The version list shows every version for the card with its status (`DRAFT` / `ACTIVE` / `SUPERSEDED` / `REJECTED`), snapshot date, row count, and who uploaded and activated it.
 2. They click **Upload new version** and pick a CSV — roughly 5,000–5,500 rows, about 0.5 MB.
-3. The server action parses and validates the whole file in one request: header matches the expected columns; the `Date` column is constant across every row; no duplicate `(mno, cu, polygon, polygon_start_date)` key; every distinct `lkp_subscriber_ref_id` resolves in `inventory.product_inventory` with a usable status and a date window covering the row's `polygon_start_date`.
+3. The server action parses and validates the whole file structurally, in one request: header matches the expected columns; the `Date` column is constant across every row; no duplicate `(mno, cu, polygon, polygon_start_date)` key. `lkp_subscriber_ref_id` is stored as uploaded — `NOT NULL`, no FK, no referential check (D-A1).
 4. **On failure**, a row-level error table appears — row number, column, value, reason — and **no version is created**. The user fixes the file and uploads again.
 5. **On success**, the version is created as `DRAFT` — validated, previewable, and never the `ACTIVE` version any future reader would resolve against. The file's `Date` is hoisted to the version header as `snapshot_date`; it is not stored per row.
 6. The user reviews the rows and the **diff against the current `ACTIVE`**: subscription reassignments and service-code changes are listed first, then additions, then keys absent from the upload — labelled **Retiring**, with what will happen to them.
@@ -70,8 +70,8 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 ### Validation
 
 - Row and file schemas as Zod `strictObject`s in `validation/product/ratecard.schema.ts`, matching pm47's house style — an unknown key is rejected, never stripped.
-- Subscriber-reference checks split by severity: an `lkp_subscriber_ref_id` that is unknown, or resolves to a status `TERMINATED` / `CANCELLED` / `ABORTED`, or has a `polygon_start_date` outside the subscription's `[start_date, end_date]` window → **error**, upload refused. Status `SUSPENDED` or `PENDING_*` → **warning**, shown on the draft review, does not block.
-- Carried-forward rows are never re-validated; their subscriptions may legitimately be terminated.
+- `lkp_subscriber_ref_id` carries no referential check against `inventory.product_inventory` — no FK, no existence check, no subscription status or date-window requirement (D-A1). It is stored as uploaded.
+- A `file_checksum` matching an earlier version is the one remaining **warning**: shown on the draft review, never blocking. Re-uploading the same file is legitimate — after a rollback, for instance.
 
 ### UI — `/products/rate-card`
 
@@ -83,8 +83,8 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 ## In Scope
 
 - `product.ratecard_version` and `product.RATECARD_RAN_USAGE_LKP` in a new forward-only migration `0041_ratecard_ran_usage_lkp.sql`, with the hand-written Drizzle mirror. `0006_product.sql` is **not** reopened.
-- `validation/product/ratecard.schema.ts` — row schema, file schema, and the referential/status/window checks.
-- `services/product/ratecard/{upload-version,activate-version,rollback-version,diff-versions}.ts` and `db/repositories/product/ratecard.repository.ts`.
+- `validation/product/ratecard.schema.ts` — row schema and file schema.
+- `services/product/ratecard/{upload-version,activate-version,rollback-version,diff-versions}.ts` and `db/repositories/ratecard.ts`.
 - The `/products/rate-card` page, nav entry, icon, and RBAC wiring.
 - `next.config.ts` `bodySizeLimit` raise.
 - A demo seed card version aligned with the four-component demo offering pm48 seeds.
@@ -110,8 +110,8 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 
 - `npm run db:migrate` on an empty database produces both tables and the partial unique index on `card_name WHERE status = 'ACTIVE'`. `0006_product.sql` and `product_offering_price` are untouched.
 - Uploading a valid ~5,400-row CSV creates exactly one `DRAFT` version, inserts its rows in 1,000-row batches inside one transaction, and leaves the current `ACTIVE` version untouched and still active.
-- Each of these is refused and **creates no version**: a duplicate `(mno, cu, polygon, polygon_start_date)`; a `Date` column that varies across rows; a missing expected column; an unknown `lkp_subscriber_ref_id`; a subscription whose status is `TERMINATED`, `CANCELLED` or `ABORTED`; a `polygon_start_date` outside the subscription's date window.
-- A subscription with status `SUSPENDED` or `PENDING_ACTIVE` produces a warning on the draft review and does **not** block activation.
+- Each of these is refused and **creates no version**: a duplicate `(mno, cu, polygon, polygon_start_date)`; a `Date` column that varies across rows; a missing expected column.
+- A `file_checksum` matching an earlier version produces a warning on the draft review and does **not** block activation.
 - Activating a version promotes it to `ACTIVE`, demotes the prior version to `SUPERSEDED`, and inserts one carried-forward row for every key present in the outgoing version and absent from the upload, each with `retired_at` equal to the new version's `snapshot_date` — asserted including the case where the source row already had a `retired_at`, which must be preserved rather than re-dated.
 - Attempting to activate a second version while one is `ACTIVE` is refused by the partial unique index, not merely by application code.
 - Re-activating a `SUPERSEDED` version restores it to `ACTIVE` and demotes the current one; no row of either version is edited.

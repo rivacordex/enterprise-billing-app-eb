@@ -255,7 +255,7 @@ The three categories render **in one view** (chip row plus a per-row column), so
 | Banner | Tint | Icon | Placement | Blocking |
 |---|---|---|---|---|
 | Upload rejected — no version created | `--bg-danger` / `--text-danger` | ban | Top of the error dialog body | The upload already failed |
-| Validation passed, with warnings | `--bg-info` / `--text-info` | check-circle | Top of the Validation tab | Never — `SUSPENDED` / `PENDING_*` warnings do not block activation |
+| Validation passed, with warnings | `--bg-info` / `--text-info` | check-circle | Top of the Validation tab | Never — a `file_checksum` matching an earlier version does not block activation |
 | Carry-forward summary (`n` polygons closed at `<date>`) | `--bg-info` / `--text-info` | archive | Inside the Activate confirmation | Never |
 | Re-rating an earlier period will use this version | `--bg-warning` / `--text-warning` | history | Inside the Activate confirmation | Never |
 

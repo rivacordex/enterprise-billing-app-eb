@@ -95,9 +95,9 @@ Gated on **G-RC3**. When it clears as `ratecard`:
 
 ### D9. Grants: verify, and do not edit a bootstrap file
 
-`rm03` already grants `rating_runtime` `SELECT` on the `product` schema (RC8), so both new tables are readable as created — the same grant-transparency the pm46 reshape relied on. **`db/bootstrap/rating-db-roles.sql` and `db/bootstrap/billrun-db-roles.sql` are not edited** (workflow §6.13): a unit editing one has misdiagnosed a reader break as a permission problem.
+`app_runtime`'s `product.*` grant is schema-wide (`bootstrap-db-roles.sql`'s `ALL TABLES` grant plus its `ALTER DEFAULT PRIVILEGES` for the schema), so both new tables are readable by the app role as created — the same grant-transparency the pm46 reshape relied on. `rating_runtime` and `billrun_runtime` are not: `rating-db-roles.sql` (rm03) and `billrun-db-roles.sql` (bm14) each grant them `SELECT` on an **enumerated** per-table list only (`product.product_offering`, `product.product_offering_price`), never `ALL TABLES`, and set no default privileges for the `product` schema — so as created, neither engine role can read `ratecard_version` or `RATECARD_RAN_USAGE_LKP`. **`db/bootstrap/rating-db-roles.sql` and `db/bootstrap/billrun-db-roles.sql` are not edited** by this unit (workflow §6.13): no consumer exists yet, so there is nothing to grant a read for. A future consumer adds its own explicit per-table grant to the relevant bootstrap file as its own reviewed change.
 
-That said, the module has paid for this once — pm09's deployed 500 (`42501: permission denied for schema product`) came from exactly this assumption. So **verify the grants empirically** on a database built from empty (I6.11). If either new table is *not* reachable by the app role or by `rating_runtime`, that is a **finding to raise**, not a bootstrap edit to make on initiative.
+That said, the module has paid for a wrong assumption here once already — pm09's deployed 500 (`42501: permission denied for schema product`) — so this is **verified empirically**, not just reasoned from the SQL, on a database built from empty (I6.11): `app_runtime` reaches both new tables automatically; `rating_runtime` and `billrun_runtime` do not. That gap is a **finding to raise**, not a bootstrap edit to make on initiative.
 
 ### D10. No backfill — asserted, not merely omitted
 

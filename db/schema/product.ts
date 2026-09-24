@@ -19,6 +19,7 @@ import { sql } from "drizzle-orm";
 import { appuser } from "@/db/schema/identity";
 import type { ProductSpecCharacteristics } from "@/validation/product/product-spec-characteristics.schema";
 import type { PricingComponent } from "@/validation/product/pricing-component.schema";
+import type { RateCardVersionStatus } from "@/types/product";
 
 export const product = pgSchema("product");
 
@@ -254,7 +255,7 @@ export const ratecardVersion = product.table(
       ),
     cardName: text("card_name").notNull(),
     versionNum: integer("version_num").notNull(),
-    status: text("status").notNull(),
+    status: text("status").notNull().$type<RateCardVersionStatus>(),
     snapshotDate: date("snapshot_date", { mode: "string" }).notNull(),
     sourceFile: text("source_file").notNull(),
     fileChecksum: text("file_checksum"),
