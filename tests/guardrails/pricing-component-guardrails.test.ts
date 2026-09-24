@@ -8,6 +8,7 @@ import {
   capacityMotivationComponentSchema,
   flatFeeComponentSchema,
   negotiatedOverrideComponentSchema,
+  persistablePricingComponentSchema,
   usageRateComponentSchema,
 } from "@/validation/product/pricing-component.schema";
 
@@ -319,18 +320,34 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
     expect(columnNames).toEqual(
       expect.arrayContaining(["amount", "currency", "priceType"]),
     );
-    expect(columnNames).not.toEqual(
-      expect.arrayContaining(["componentType", "priceComponent", "params"]),
-    );
+    expect(columnNames).not.toContain("componentType");
+    expect(columnNames).not.toContain("priceComponent");
+    expect(columnNames).not.toContain("params");
     expect(schemaSource).toContain(
       "order_item_price_override_item_type_unique",
     );
 
     // negotiated_override is a branch of PricingComponent (the TMF
     // projection) but is excluded from persistablePricingComponentSchema —
-    // the type-level proof it can never be written to
-    // product.product_offering_price (pm47-spec D3, this file's own import
-    // at top confirms the export exists).
+    // proven behaviourally here (a valid negotiated_override envelope is
+    // rejected by the persistable union), not merely by the schema existing
+    // (pm47-spec D3).
     expect(negotiatedOverrideComponentSchema).toBeDefined();
+    const validNegotiatedOverride = {
+      "@type": "negotiated_override",
+      specVersion: 1,
+      plaSpecId: null,
+      priceType: "discount",
+      appliesAt: "rating",
+      basis: "quantity",
+      boundTo: { priceType: "usage", unitOfMeasure: "EA" },
+      params: { ratePerUnit: "1" },
+    };
+    expect(negotiatedOverrideComponentSchema.safeParse(validNegotiatedOverride).success).toBe(
+      true,
+    );
+    expect(
+      persistablePricingComponentSchema.safeParse(validNegotiatedOverride).success,
+    ).toBe(false);
   });
 });
