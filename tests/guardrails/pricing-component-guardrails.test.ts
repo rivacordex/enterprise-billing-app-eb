@@ -165,18 +165,14 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       }
     }
 
-    // KNOWN, FLAGGED, NOT FIXED HERE. After pm56a swept the pre-pm46 test
-    // fixtures and excluded the guardrails dir (above), the ONLY residue this
-    // scan still finds is the New Order Wizard chain —
-    // `components/products/ordering/{new-order-wizard,override-price-fields,
-    // wizard-step-offer,wizard-form-types}` and its co-located test
-    // `tests/components/new-order-wizard.test.tsx` — which still read the
-    // deleted `PriceCard.pricingModel`/`.priceType`/`.amount` and the deleted
-    // `PriceType` import (the same 12 files/12 errors `tsc --noEmit` names).
-    // That chain is production code owned by **pm56b** and needs a fresh G-G
-    // grant, so this guardrail asserts the real, still-incomplete state rather
-    // than excluding it to appear green (workflow §6.9 — never relax a gate to
-    // pass); it turns green when pm56b lands. See `specs/pm56a-fixture-sweep.md`
+    // GREEN as of pm56b (2026-09-25). The tiered/pricing_model/PriceType
+    // residue is fully gone: pm56a swept the pre-pm46 test fixtures and
+    // excluded the guardrails dir (above); pm56b re-keyed the New Order Wizard
+    // chain (`components/products/ordering/**` + its test) off the deleted
+    // `PriceCard.pricingModel`/`.priceType`/`.amount` and the deleted
+    // `PriceType` import onto the pm47 envelope. `tsc --noEmit` is clean
+    // repo-wide. This assertion was never weakened to reach green (workflow
+    // §6.9) — the residue was actually removed. See `specs/pm56a-fixture-sweep.md`
     // / `specs/pm56b-ordering-wizard-rekey.md` and the Part 4 hand-off register.
     expect(offenders.sort()).toEqual([]);
   });

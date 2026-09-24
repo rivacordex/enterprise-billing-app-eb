@@ -24,6 +24,7 @@ import { WizardStepAccount } from "@/components/products/ordering/wizard-step-ac
 import { WizardStepCustomer } from "@/components/products/ordering/wizard-step-customer";
 import { WizardStepOffer } from "@/components/products/ordering/wizard-step-offer";
 import type { WizardFormValues } from "@/components/products/ordering/wizard-form-types";
+import { overrideLaneOf } from "@/components/products/ordering/price-override";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,7 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { inclusiveBilledDateSchema } from "@/validation/backdating-tolerance";
 import { MONEY_2DP_REGEX } from "@/validation/ordering/create-order.schema";
-import { PRICE_TYPES } from "@/types/product";
+import { OVERRIDE_PRICE_TYPES } from "@/types/ordering";
 import type { OfferingDetail } from "@/types/product";
 import type { CustomerSearchResult } from "@/types/customer";
 import type { CreateOrderActionResult } from "@/actions/ordering/create-order.action";
@@ -58,7 +59,7 @@ const wizardFormSchema = z
     ),
     overrides: z.array(
       z.object({
-        priceType: z.enum(PRICE_TYPES),
+        priceType: z.enum(OVERRIDE_PRICE_TYPES),
         amount: z.string(),
       }),
     ),
@@ -270,15 +271,16 @@ export function NewOrderWizard({
         ) as Record<string, string>;
         form.setValue("characteristicsList", recordToList(merged));
 
-        // One override slot per current, flat price — fixed-size, reset
-        // whenever the selected offer changes (tiered rows get no slot).
-        const flatPrices = detail.prices.filter(
-          (p) => p.effectivityStatus === "current" && p.pricingModel === "flat",
-        );
-        form.setValue(
-          "overrides",
-          flatPrices.map((p) => ({ priceType: p.priceType, amount: "" })),
-        );
+        // One override slot per current, overridable price — fixed-size, reset
+        // whenever the selected offer changes. Only usage_rate + flat_fee have
+        // a lane (pm50's OVERRIDE_TARGET_BY_PRICE_TYPE); capacity components get
+        // no slot (pm56b — replaces the old `pricingModel === "flat"` filter).
+        const overrideSeeds = detail.prices.flatMap((p) => {
+          if (p.effectivityStatus !== "current") return [];
+          const lane = overrideLaneOf(p);
+          return lane === null ? [] : [{ priceType: lane, amount: "" }];
+        });
+        form.setValue("overrides", overrideSeeds);
       })
       .catch(() => {
         // As with the accounts effect: a rejected read must still clear the
