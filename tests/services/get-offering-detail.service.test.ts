@@ -18,6 +18,7 @@ import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { productSpecificationRepository } from "@/db/repositories/product-specification";
 import { getOfferingDetail } from "@/services/product/get-offering-detail";
+import type { PriceCard } from "@/types/product";
 
 const mockFindDetailById = vi.mocked(productOfferingRepository.findDetailById);
 const mockFindByOfferingId = vi.mocked(
@@ -43,20 +44,27 @@ const NOW = new Date("2026-07-04T00:00:00Z");
 
 function priceRow(
   overrides: { startDateTime?: Date; endDateTime?: Date | null } = {},
-) {
+): Omit<PriceCard, "effectivityStatus"> {
   return {
     productOfferingPriceId: "PRDOFP000001",
     name: "Monthly Recurring Charge",
-    priceType: "recurring" as const,
-    pricingModel: "flat" as const,
-    amount: "5000.00",
+    componentType: "flat_fee" as const,
+    component: {
+      "@type": "flat_fee" as const,
+      specVersion: 1,
+      plaSpecId: null,
+      priceType: "recurring" as const,
+      appliesAt: "billing" as const,
+      basis: "flat" as const,
+      boundTo: null,
+      params: { amount: "5000.00" },
+    },
     currency: "MYR",
     recurringChargePeriodLength: 1,
     recurringChargePeriodType: "months",
     unitOfMeasure: null,
     glCode: "GL-4100",
     policy: null,
-    pricingCharacteristics: null,
     startDateTime: overrides.startDateTime ?? new Date("2026-01-01T00:00:00Z"),
     createdAt: new Date("2026-01-01T00:00:00Z"),
     endDateTime: overrides.endDateTime ?? null,

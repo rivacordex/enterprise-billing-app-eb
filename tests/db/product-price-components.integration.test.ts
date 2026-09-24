@@ -729,6 +729,75 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow(/product_offering_price_component_type_check/);
     });
 
+    // -- updatePrice colliding onto an existing sibling's
+    // (component_type, unit_of_measure, start_date_time) surfaces the rekeyed
+    // UNIQUE (pm46) as the service's typed DUPLICATE_START. Two flat_fee rows
+    // (NULL unit, one lane) at different starts pass the cross-row validator —
+    // flat_fee is neither a modifier nor a base rate — so the collision is the
+    // unique index, not a VI3–VI5 refusal.
+
+    it("updatePrice colliding onto another price's (component_type, unit, start) is DUPLICATE_START", async () => {
+      const offeringId = await createOffering("pm56 duplicate start");
+      const first = await insertPrice(
+        offeringId,
+        flatFeeRecurringInput({ startDateTime: START, amount: "100.00" }),
+        actorId,
+      );
+      const second = await insertPrice(
+        offeringId,
+        flatFeeRecurringInput({ startDateTime: LATER_START, amount: "200.00" }),
+        actorId,
+      );
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+
+      // Move the second row's start back onto the first row's start — same
+      // (flat_fee, NULL unit, START) key the first row already owns.
+      const collided = await updatePrice(
+        second.productOfferingPriceId,
+        flatFeeRecurringInput({ startDateTime: START, amount: "200.00" }),
+        actorId,
+      );
+      expect(collided).toMatchObject({ ok: false, code: "DUPLICATE_START" });
+    });
+
+    // -- §3.5 trigger backstop: a raw SQL UPDATE and a raw SQL DELETE of an
+    // existing price whose parent has been flipped to ACTIVE are each refused
+    // by product_child_write_requires_draft — the DB guard the services'
+    // DRAFT-lock mirrors.
+
+    it("raw SQL UPDATE and DELETE of a price on an ACTIVE parent are refused by the §3.5 trigger", async () => {
+      const offeringId = await createOffering("pm56 trigger update delete");
+      const inserted = await insertPrice(
+        offeringId,
+        flatFeeOneTimeInput({ startDateTime: START }),
+        actorId,
+      );
+      expect(inserted.ok).toBe(true);
+      if (!inserted.ok) return;
+
+      // Flip the parent to ACTIVE directly — the trigger guards the child
+      // tables only, not the offering row's own status column.
+      await sql`
+        UPDATE product.product_offering
+        SET lifecycle_status = 'ACTIVE'
+        WHERE product_offering_id = ${offeringId}`;
+
+      await expect(
+        sql`
+          UPDATE product.product_offering_price
+          SET name = 'renamed'
+          WHERE product_offering_price_id = ${inserted.productOfferingPriceId}`,
+      ).rejects.toThrow(/product_child_write_requires_draft/);
+
+      await expect(
+        sql`
+          DELETE FROM product.product_offering_price
+          WHERE product_offering_price_id = ${inserted.productOfferingPriceId}`,
+      ).rejects.toThrow(/product_child_write_requires_draft/);
+    });
+
     // -- I7.7: audit — exactly one event per mutation, carrying the envelope.
 
     it("writes exactly one PRODUCT_PRICE_ADDED audit event carrying component_type and the envelope", async () => {

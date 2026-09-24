@@ -8,7 +8,7 @@ Known, unresolved defects and debts in the Product Management module that are **
 
 ## PM-ISS-001 — Product integration-test fixtures still insert the pre-pm46/pm47 price-row shape (8 suites red)
 
-**Status:** OPEN. **Owner:** **pm56a** (scoped 2026-09-24, `specs/pm56a-fixture-sweep.md`) — the `tests/**` fixture sweep; this issue is its authoritative failing-file list. **Discovered:** 2026-09-24, running the product integration suites against the disposable test DB (`docker-compose.test.yml`, `.env.test`, port 5434) during the pm54/pm55 review-fix pass. **Severity:** medium — it blocks the pm46–pm54 G-E close-out (the DB-backed suite cannot go green), but ships no runtime defect: the app code and its DB-free unit/component suites are green; only stale **test fixtures** are wrong.
+**Status:** **RESOLVED (2026-09-24, pm56a).** Fixed by the pm56a fixture sweep (`specs/pm56a-fixture-sweep.md`) — see the Resolution note at the end. **Owner:** pm56a. **Discovered:** 2026-09-24, running the product integration suites against the disposable test DB (`docker-compose.test.yml`, `.env.test`, port 5434) during the pm54/pm55 review-fix pass. **Severity:** medium — it blocked the pm46–pm54 G-E close-out (the DB-backed suite could not go green), but shipped no runtime defect: the app code and its DB-free unit/component suites were green; only stale **test fixtures** were wrong.
 
 **Symptom.** The product-module integration suites are red against a correctly-migrated test DB — **67 failing / 92 passing across the 13 product files (8 files red, 5 green):**
 
@@ -46,4 +46,6 @@ node --env-file=.env.test node_modules/vitest/vitest.mjs run \
   --config vitest.integration.config.ts product
 docker compose -f docker-compose.test.yml down -v
 ```
-Expect all 13 product files green. (A full close-out also needs the same sweep applied to the non-product integration suites the tracker lists — ordering/rating/billing fixtures with the identical drift — before the pm46–pm54 G-E green claim can be made.)
+Expect all product files green. (A full close-out also needs the same sweep applied to the non-product integration suites the tracker lists — ordering/rating/billing fixtures with the identical drift — before the pm46–pm54 G-E green claim can be made.)
+
+**Resolution (2026-09-24, pm56a).** The eight red files are green or gone: six repaired in place to the `component_type` + `price_component` envelope (`product-withdrawal-path`, `product-release-path`, `product-delete-offering`, `product-family-guards`, `product-schema.integration`, `product-repositories.integration`); two deleted as superseded with their unique cases migrated into the already-green suites (`product-price-writes` → `product-price-components`'s new `DUPLICATE_START` + raw-SQL trigger cases; `product-price-constraints` → `product-price-component-constraints`'s new `period_value_check` + `unit_value_check` cases). **Verified against the disposable test DB from empty: `product-*.integration.test.ts` = 11 files / 166 tests, all green.** The product count is now **11** (13 − 2 superseded), not 13. `product-schema.integration`'s table/sequence assertion was also updated for pm57's two rate-card tables. The non-product integration suites with the identical drift (ordering/rating/billing) remain for their own sweeps before the G-E close-out.

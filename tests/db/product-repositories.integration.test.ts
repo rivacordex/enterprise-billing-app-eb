@@ -16,7 +16,6 @@ import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { productSpecificationRepository } from "@/db/repositories/product-specification";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
-import { priceCharacteristicsSchema } from "@/validation/product/pricing-characteristics.schema";
 import { productSpecCharacteristicsSchema } from "@/validation/product/product-spec-characteristics.schema";
 import type { getOfferingDetail as GetOfferingDetail } from "@/services/product/get-offering-detail";
 import type { addSpecification as AddSpecification } from "@/services/product/add-specification";
@@ -24,9 +23,8 @@ import type { updateSpecification as UpdateSpecification } from "@/services/prod
 import type { deleteSpecification as DeleteSpecification } from "@/services/product/delete-specification";
 import type { insertPrice as InsertPrice } from "@/services/product/insert-price";
 import type { updateOffering as UpdateOffering } from "@/services/product/update-offering";
-import type { activateOffering as ActivateOffering } from "@/services/product/activate-offering";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import type { LifecycleStatus } from "@/types/product";
+import type { LifecycleStatus, UnitOfMeasure } from "@/types/product";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -41,7 +39,6 @@ describe.skipIf(!databaseUrl)(
     let deleteSpecification: typeof DeleteSpecification;
     let insertPrice: typeof InsertPrice;
     let updateOffering: typeof UpdateOffering;
-    let activateOffering: typeof ActivateOffering;
     let editorUserId: string;
 
     beforeAll(async () => {
@@ -74,7 +71,6 @@ describe.skipIf(!databaseUrl)(
         deleteSpecificationMod,
         insertPriceMod,
         updateOfferingMod,
-        activateOfferingMod,
       ] = await Promise.all([
         import("@/services/product/get-offering-detail"),
         import("@/services/product/add-specification"),
@@ -82,7 +78,6 @@ describe.skipIf(!databaseUrl)(
         import("@/services/product/delete-specification"),
         import("@/services/product/insert-price"),
         import("@/services/product/update-offering"),
-        import("@/services/product/activate-offering"),
       ]);
       getOfferingDetail = getOfferingDetailMod.getOfferingDetail;
       addSpecification = addSpecificationMod.addSpecification;
@@ -90,7 +85,6 @@ describe.skipIf(!databaseUrl)(
       deleteSpecification = deleteSpecificationMod.deleteSpecification;
       insertPrice = insertPriceMod.insertPrice;
       updateOffering = updateOfferingMod.updateOffering;
-      activateOffering = activateOfferingMod.activateOffering;
 
       const [user] = await db
         .insert(appuser)
@@ -140,26 +134,77 @@ describe.skipIf(!databaseUrl)(
       return row!.productOfferingId;
     }
 
+    // Flips an offering's own lifecycle_status directly. The §3.5 trigger
+    // (pm36) guards the CHILD tables only, not the offering row's own status
+    // column, so a fixture may seed children while the parent is DRAFT and
+    // then promote the parent here — the same seed-DRAFT-then-flip pattern the
+    // component write-path suite uses.
+    async function setLifecycleStatus(
+      offeringId: string,
+      lifecycleStatus: LifecycleStatus,
+    ): Promise<void> {
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus })
+        .where(eq(productOffering.productOfferingId, offeringId));
+    }
+
+    // Reshaped for the pm46 component model. The three legacy `priceType`
+    // values now map onto the reshaped component grammar: "recurring" → a
+    // flat_fee recurring (1/months period, NULL unit), "once" → a flat_fee
+    // oneTime (no period, NULL unit), "usage" → a usage_rate carrying a unit
+    // (defaults to "EA"; callers that need a distinct lane pass their own).
+    // Builds `componentType` + the `price_component` envelope + the row's own
+    // completeness columns exactly as the write path would (mirrors
+    // db/repositories/product-offering-price.ts's buildComponentEnvelope).
     async function insertFlatPrice(data: {
       productOfferingId: string;
       priceType: "recurring" | "usage" | "once";
       startDateTime: Date;
       amount: string;
+      unitOfMeasure?: UnitOfMeasure;
       name?: string;
     }): Promise<void> {
-      const characteristics = priceCharacteristicsSchema.parse({
-        pricing_model: "flat",
-        amount: data.amount,
-        pricing_characteristics: null,
-      });
+      if (data.priceType === "usage") {
+        const unitOfMeasure = data.unitOfMeasure ?? "EA";
+        await db.insert(productOfferingPrice).values({
+          productOfferingId: data.productOfferingId,
+          name: data.name ?? "usage price",
+          componentType: "usage_rate",
+          priceComponent: {
+            "@type": "usage_rate",
+            specVersion: 1,
+            plaSpecId: null,
+            priceType: "usage",
+            appliesAt: "rating",
+            basis: "quantity",
+            boundTo: { unitOfMeasure },
+            params: { ratePerUnit: data.amount, rateCardLookUp: null },
+          },
+          unitOfMeasure,
+          currency: "MYR",
+          startDateTime: data.startDateTime,
+        });
+        return;
+      }
+      const isRecurring = data.priceType === "recurring";
       await db.insert(productOfferingPrice).values({
         productOfferingId: data.productOfferingId,
         name: data.name ?? `${data.priceType} price`,
-        priceType: data.priceType,
+        componentType: "flat_fee",
+        priceComponent: {
+          "@type": "flat_fee",
+          specVersion: 1,
+          plaSpecId: null,
+          priceType: isRecurring ? "recurring" : "oneTime",
+          appliesAt: "billing",
+          basis: "flat",
+          boundTo: null,
+          params: { amount: data.amount },
+        },
+        recurringChargePeriodLength: isRecurring ? 1 : null,
+        recurringChargePeriodType: isRecurring ? "months" : null,
         currency: "MYR",
-        pricingModel: characteristics.pricing_model,
-        amount: characteristics.amount,
-        pricingCharacteristics: characteristics.pricing_characteristics,
         startDateTime: data.startDateTime,
       });
     }
@@ -211,27 +256,38 @@ describe.skipIf(!databaseUrl)(
       }));
     }
 
-    async function insertTieredPrice(data: {
+    // "tiered" no longer exists in the pm46 component model, and effectivity
+    // windows are now keyed on (component_type, unit_of_measure) rather than
+    // the old price_type partition. This helper's sole surviving purpose is
+    // "a price in a DIFFERENT effectivity lane than the flat_fee chain", so it
+    // now inserts a usage_rate carrying its own unit — its own (usage_rate,
+    // <unit>) lane, distinct from the flat_fee lane.
+    async function insertUsageLanePrice(data: {
       productOfferingId: string;
-      priceType: "recurring" | "usage" | "once";
+      unitOfMeasure: UnitOfMeasure;
       startDateTime: Date;
+      ratePerUnit?: string;
       name?: string;
     }): Promise<void> {
-      const characteristics = priceCharacteristicsSchema.parse({
-        pricing_model: "tiered",
-        amount: null,
-        pricing_characteristics: {
-          tiers: [{ from: 0, to: null, rate: "0.05" }],
-        },
-      });
       await db.insert(productOfferingPrice).values({
         productOfferingId: data.productOfferingId,
-        name: data.name ?? `${data.priceType} tiered price`,
-        priceType: data.priceType,
+        name: data.name ?? "usage lane price",
+        componentType: "usage_rate",
+        priceComponent: {
+          "@type": "usage_rate",
+          specVersion: 1,
+          plaSpecId: null,
+          priceType: "usage",
+          appliesAt: "rating",
+          basis: "quantity",
+          boundTo: { unitOfMeasure: data.unitOfMeasure },
+          params: {
+            ratePerUnit: data.ratePerUnit ?? "0.05",
+            rateCardLookUp: null,
+          },
+        },
+        unitOfMeasure: data.unitOfMeasure,
         currency: "MYR",
-        pricingModel: characteristics.pricing_model,
-        amount: characteristics.amount,
-        pricingCharacteristics: characteristics.pricing_characteristics,
         startDateTime: data.startDateTime,
       });
     }
@@ -547,8 +603,13 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("derived effectivity from real SQL", () => {
-      it("LEAD window derives ends per partition; a different price_type does not truncate the chain", async () => {
-        const offeringId = await insertOffering({ name: "DETAIL Main" });
+      it("LEAD window derives ends per (component_type, unit) lane; a different-lane price does not truncate the chain", async () => {
+        // DRAFT so the §3.5 trigger (pm36) permits the child price inserts;
+        // the derived-end window read is status-agnostic.
+        const offeringId = await insertOffering({
+          name: "DETAIL Main",
+          lifecycleStatus: "DRAFT",
+        });
         await insertFlatPrice({
           productOfferingId: offeringId,
           priceType: "recurring",
@@ -570,11 +631,12 @@ describe.skipIf(!databaseUrl)(
           amount: "120.00",
           name: "Recurring Future",
         });
-        // Different price_type, start date interleaved with the recurring
-        // chain — must not truncate it if partitioning is correct.
-        await insertTieredPrice({
+        // A different lane (usage_rate in EA), start date interleaved with the
+        // flat_fee chain — must not truncate it if the (component_type,
+        // unit_of_measure) partitioning is correct.
+        await insertUsageLanePrice({
           productOfferingId: offeringId,
-          priceType: "usage",
+          unitOfMeasure: "EA",
           startDateTime: new Date("2026-06-01T00:00:00Z"),
           name: "Usage Overage",
         });
@@ -599,9 +661,12 @@ describe.skipIf(!databaseUrl)(
       });
 
       it("getOfferingDetail marks the chain superseded/current/future and never filters rows", async () => {
+        // DRAFT so the §3.5 trigger permits the child spec/price inserts; the
+        // detail read and its effectivity marking are status-agnostic.
         const offeringId = await insertOffering({
           name: "DETAIL Assembly",
           lastEditedBy: editorUserId,
+          lifecycleStatus: "DRAFT",
         });
         const characteristics = productSpecCharacteristicsSchema.parse({
           SST_ID: "01",
@@ -670,87 +735,18 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
-    // pm24-spec §3.1 pre-flight audit: guardrails 8/9/14 (code-standards-
-    // phase2 §9) were verified against a live DB during pm12/13/14/15/16's
-    // own development, but only via disposable, uncommitted scripts (per
-    // each unit's progress-tracker note) — never captured as a permanent,
-    // committed CI proof. pm24's ledger marks these rows "INHERIT — audit
-    // present & green"; that audit found no such test existed. Added here,
-    // under the owning behavior's own file, rather than invented as a
-    // pm24-local workaround (pm24-spec §2.1's explicit boundary).
-    describe("activateOffering (guardrail 8: single-active-per-family)", () => {
-      it("activating a sibling draft retires the prior ACTIVE version in the same transaction", async () => {
-        const rootId = await insertOffering({
-          name: "GATE8 Root",
-          lifecycleStatus: "DRAFT",
-        });
-        await insertFlatPrice({
-          productOfferingId: rootId,
-          priceType: "recurring",
-          startDateTime: new Date(),
-          amount: "10.00",
-        });
-        await insertSpecRow({ productOfferingId: rootId, name: "Slice" });
-
-        const first = await activateOffering(rootId, {}, editorUserId);
-        expect(first).toMatchObject({ ok: true, supersededOfferingId: null });
-
-        const { offeringId: draftId } = await db.transaction((tx) =>
-          productOfferingRepository.branchOfferingAsDraft(tx, rootId),
-        );
-
-        const second = await activateOffering(draftId, {}, editorUserId);
-        expect(second).toMatchObject({
-          ok: true,
-          supersededOfferingId: rootId,
-        });
-
-        const rootRow = await productOfferingRepository.findDetailById(
-          db,
-          rootId,
-        );
-        const draftRow = await productOfferingRepository.findDetailById(
-          db,
-          draftId,
-        );
-        expect(rootRow?.lifecycleStatus).toBe("RETIRED");
-        expect(draftRow?.lifecycleStatus).toBe("ACTIVE");
-      });
-
-      it("two near-simultaneous activations on sibling drafts leave exactly one ACTIVE member in the family", async () => {
-        const rootId = await insertOffering({
-          name: "GATE8 Race Root",
-          lifecycleStatus: "DRAFT",
-        });
-        await insertFlatPrice({
-          productOfferingId: rootId,
-          priceType: "recurring",
-          startDateTime: new Date(),
-          amount: "10.00",
-        });
-        await insertSpecRow({ productOfferingId: rootId, name: "Slice" });
-
-        const { offeringId: draftA } = await db.transaction((tx) =>
-          productOfferingRepository.branchOfferingAsDraft(tx, rootId),
-        );
-        const { offeringId: draftB } = await db.transaction((tx) =>
-          productOfferingRepository.branchOfferingAsDraft(tx, rootId),
-        );
-
-        const [resultA, resultB] = await Promise.all([
-          activateOffering(draftA, {}, editorUserId),
-          activateOffering(draftB, {}, editorUserId),
-        ]);
-        expect(resultA.ok).toBe(true);
-        expect(resultB.ok).toBe(true);
-
-        const familyRows = await findFamilyRows(rootId);
-        const activeRows = familyRows.filter(
-          (r) => r.lifecycleStatus === "ACTIVE",
-        );
-        expect(activeRows).toHaveLength(1);
-      });
-    });
+    // pm56a: the two former "activateOffering (guardrail 8: single-active-per-
+    // family)" cases here were DELETED as obsolete. Both drove activation
+    // through a DRAFT → activateOffering → ACTIVE path that pm42 replaced with
+    // DRAFT → submitForTesting → TESTING → activateOffering → ACTIVE:
+    // activateOffering now refuses any non-TESTING predecessor with
+    // OFFERING_NOT_TESTING, and a superseded prior version becomes OBSOLETE,
+    // not RETIRED. The second case additionally branched one family twice
+    // (draftA + draftB) to race two activations — structurally impossible
+    // under pm36's one-open-per-family unique index. Guardrail 8 is proved
+    // with the correct pm42 semantics in product-release-path.integration.
+    // test.ts ("activation with a sibling supersedes it to OBSOLETE …" and
+    // the concurrent-activation case), so this coverage is not lost.
 
     describe("branch-not-mutate (guardrail 9)", () => {
       it("editing an ACTIVE offering's fields leaves the original row byte-identical and produces exactly one new sibling DRAFT", async () => {
@@ -800,14 +796,18 @@ describe.skipIf(!databaseUrl)(
       });
 
       it("adding a specification to an ACTIVE offering leaves existing specs untouched and clones them into one new sibling DRAFT", async () => {
+        // Seed the existing spec while DRAFT (the §3.5 trigger forbids a child
+        // write against a non-DRAFT parent), then flip the parent to ACTIVE so
+        // the service under test takes its branch-on-ACTIVE path.
         const originalId = await insertOffering({
           name: "GATE9 AddSpec Original",
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
         });
         await insertSpecRow({
           productOfferingId: originalId,
           name: "Existing Spec",
         });
+        await setLifecycleStatus(originalId, "ACTIVE");
         const beforeSpecs =
           await productSpecificationRepository.findByOfferingId(db, originalId);
 
@@ -846,13 +846,14 @@ describe.skipIf(!databaseUrl)(
       it("updating a specification on an ACTIVE offering leaves the original spec row byte-identical and updates only the cloned counterpart", async () => {
         const originalId = await insertOffering({
           name: "GATE9 UpdateSpec Original",
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
         });
         const specId = await insertSpecRow({
           productOfferingId: originalId,
           name: "Mutable Spec",
           defaultValue: "old-value",
         });
+        await setLifecycleStatus(originalId, "ACTIVE");
         const beforeSpecs =
           await productSpecificationRepository.findByOfferingId(db, originalId);
 
@@ -890,7 +891,7 @@ describe.skipIf(!databaseUrl)(
       it("deleting a specification on an ACTIVE offering leaves the original spec row untouched and removes only the cloned counterpart", async () => {
         const originalId = await insertOffering({
           name: "GATE9 DeleteSpec Original",
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
         });
         const keepId = await insertSpecRow({
           productOfferingId: originalId,
@@ -900,6 +901,7 @@ describe.skipIf(!databaseUrl)(
           productOfferingId: originalId,
           name: "Remove Spec",
         });
+        await setLifecycleStatus(originalId, "ACTIVE");
         const beforeSpecs =
           await productSpecificationRepository.findByOfferingId(db, originalId);
 
@@ -931,7 +933,7 @@ describe.skipIf(!databaseUrl)(
       it("inserting a price on an ACTIVE offering leaves the original price row untouched and produces exactly one new sibling DRAFT", async () => {
         const originalId = await insertOffering({
           name: "GATE9 InsertPrice Original",
-          lifecycleStatus: "ACTIVE",
+          lifecycleStatus: "DRAFT",
         });
         await insertFlatPrice({
           productOfferingId: originalId,
@@ -940,6 +942,7 @@ describe.skipIf(!databaseUrl)(
           amount: "50.00",
           name: "Existing Price",
         });
+        await setLifecycleStatus(originalId, "ACTIVE");
         const beforePrices = await db
           .select()
           .from(productOfferingPrice)
@@ -949,16 +952,12 @@ describe.skipIf(!databaseUrl)(
           originalId,
           {
             name: "New Price",
-            priceType: "usage",
+            componentType: "usage_rate",
             unitOfMeasure: "GB",
             currency: "MYR",
             glCode: null,
             startDateTime: new Date(),
-            priceCharacteristics: priceCharacteristicsSchema.parse({
-              pricing_model: "flat",
-              amount: "5.00",
-              pricing_characteristics: null,
-            }),
+            params: { ratePerUnit: "5.00", rateCardLookUp: null },
           },
           editorUserId,
         );
@@ -1012,17 +1011,14 @@ describe.skipIf(!databaseUrl)(
           offeringId,
           {
             name: "Successor Price",
+            componentType: "flat_fee",
             priceType: "recurring",
             recurringChargePeriodLength: 1,
             recurringChargePeriodType: "months",
             currency: "MYR",
             glCode: null,
             startDateTime: new Date(),
-            priceCharacteristics: priceCharacteristicsSchema.parse({
-              pricing_model: "flat",
-              amount: "60.00",
-              pricing_characteristics: null,
-            }),
+            params: { amount: "60.00" },
           },
           editorUserId,
         );

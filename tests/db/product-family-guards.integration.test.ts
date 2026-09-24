@@ -112,9 +112,20 @@ describe.skipIf(!databaseUrl)(
     ): Promise<unknown> {
       return sql`
         INSERT INTO product.product_offering_price
-          (product_offering_id, name, price_type, amount, currency, pricing_model, start_date_time)
+          (product_offering_id, name, component_type, price_component, currency, start_date_time)
         VALUES (
-          ${offeringId}, ${opts.name}, ${"once"}, ${"10.00"}, ${"MYR"}, ${"flat"},
+          ${offeringId}, ${opts.name}, ${"flat_fee"},
+          ${JSON.stringify({
+            "@type": "flat_fee",
+            specVersion: 1,
+            plaSpecId: null,
+            priceType: "oneTime",
+            appliesAt: "billing",
+            basis: "flat",
+            boundTo: null,
+            params: { amount: "10.00" },
+          })}::jsonb,
+          ${"MYR"},
           ${opts.startDateTime ?? "2026-01-01T00:00:00Z"}
         )`;
     }
@@ -422,8 +433,17 @@ describe.skipIf(!databaseUrl)(
         await tx.unsafe("SET LOCAL ROLE app_runtime");
         await tx`
           INSERT INTO product.product_offering_price
-            (product_offering_id, name, price_type, amount, currency, pricing_model, start_date_time)
-          VALUES (${parent}, ${"role-ok"}, ${"once"}, ${"10.00"}, ${"MYR"}, ${"flat"}, ${"2026-03-01T00:00:00Z"})`;
+            (product_offering_id, name, component_type, price_component, currency, start_date_time)
+          VALUES (${parent}, ${"role-ok"}, ${"flat_fee"}, ${JSON.stringify({
+            "@type": "flat_fee",
+            specVersion: 1,
+            plaSpecId: null,
+            priceType: "oneTime",
+            appliesAt: "billing",
+            basis: "flat",
+            boundTo: null,
+            params: { amount: "10.00" },
+          })}::jsonb, ${"MYR"}, ${"2026-03-01T00:00:00Z"})`;
       });
       const [row] = await sql<{ count: string }[]>`
         SELECT count(*)::text AS count FROM product.product_offering_price
@@ -442,8 +462,19 @@ describe.skipIf(!databaseUrl)(
           await tx.unsafe("SET LOCAL ROLE app_runtime");
           await tx`
             INSERT INTO product.product_offering_price
-              (product_offering_id, name, price_type, amount, currency, pricing_model, start_date_time)
-            VALUES (${parent}, ${"role-blocked"}, ${"once"}, ${"10.00"}, ${"MYR"}, ${"flat"}, ${"2026-03-01T00:00:00Z"})`;
+              (product_offering_id, name, component_type, price_component, currency, start_date_time)
+            VALUES (${parent}, ${"role-blocked"}, ${"flat_fee"}, ${JSON.stringify(
+              {
+                "@type": "flat_fee",
+                specVersion: 1,
+                plaSpecId: null,
+                priceType: "oneTime",
+                appliesAt: "billing",
+                basis: "flat",
+                boundTo: null,
+                params: { amount: "10.00" },
+              },
+            )}::jsonb, ${"MYR"}, ${"2026-03-01T00:00:00Z"})`;
         });
       } catch (e) {
         err = e;

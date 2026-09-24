@@ -141,11 +141,21 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       "tests",
     ].map((d) => path.join(REPO_ROOT, d));
 
-    const SELF = path.resolve(__filename);
+    // pm56a/I3 (D3) — exclude `tests/guardrails/**` from the walk, a
+    // deliberate §7.10 deviation from pm56-spec D1's literal `tests/` root.
+    // A sibling guardrail that *names* a dropped token to assert its absence
+    // (e.g. product-module-boundaries.test.ts's DROPPED_COLUMNS/DROPPED_CHECKS
+    // arrays) is the enforcement layer, not residue — scanning the guardrails
+    // for the vocabulary they enforce is a category error that would keep this
+    // gate red forever. NOT a §6.9 relaxation: the assertion and pattern list
+    // are unchanged, and real residue (production code + any non-guardrail
+    // fixture) is still caught. This file lives under that dir, so this also
+    // subsumes the former self-exclusion.
+    const GUARDRAILS_DIR = path.join(REPO_ROOT, "tests", "guardrails");
     const offenders: string[] = [];
     for (const root of SCAN_ROOTS) {
       for (const file of collectFiles(root)) {
-        if (path.resolve(file) === SELF) continue;
+        if (path.resolve(file).startsWith(GUARDRAILS_DIR + path.sep)) continue;
         const stripped = stripComments(fs.readFileSync(file, "utf8"));
         for (const [name, re] of PATTERNS) {
           if (re.test(stripped)) {
@@ -155,18 +165,19 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       }
     }
 
-    // KNOWN, FLAGGED, NOT FIXED HERE (D-header — this unit changes no
-    // production code): the ordering-wizard chain and its own tests still
-    // carry the pre-pm47 PriceCard shape (pricingModel/priceType/amount) and
-    // the deleted `PriceType` import — tracked since pm47-spec's own
-    // deviations paragraph, restated at pm53/pm54/pm55 as "the
-    // ordering-wizard chain, unrelated PriceCard shape, still awaiting its
-    // own unit," and confirmed still true by this gate's own `tsc --noEmit`
-    // run (35 errors, the identical file set). No unit in pm46-pm56 owns
-    // components/products/ordering/**, so this guardrail asserts the real,
-    // current, FAILING state rather than excluding it to appear green
-    // (workflow §6.9 — never relax a gate to pass). See this unit's evidence
-    // table / hand-off register for the disposition.
+    // KNOWN, FLAGGED, NOT FIXED HERE. After pm56a swept the pre-pm46 test
+    // fixtures and excluded the guardrails dir (above), the ONLY residue this
+    // scan still finds is the New Order Wizard chain —
+    // `components/products/ordering/{new-order-wizard,override-price-fields,
+    // wizard-step-offer,wizard-form-types}` and its co-located test
+    // `tests/components/new-order-wizard.test.tsx` — which still read the
+    // deleted `PriceCard.pricingModel`/`.priceType`/`.amount` and the deleted
+    // `PriceType` import (the same 12 files/12 errors `tsc --noEmit` names).
+    // That chain is production code owned by **pm56b** and needs a fresh G-G
+    // grant, so this guardrail asserts the real, still-incomplete state rather
+    // than excluding it to appear green (workflow §6.9 — never relax a gate to
+    // pass); it turns green when pm56b lands. See `specs/pm56a-fixture-sweep.md`
+    // / `specs/pm56b-ordering-wizard-rekey.md` and the Part 4 hand-off register.
     expect(offenders.sort()).toEqual([]);
   });
 
