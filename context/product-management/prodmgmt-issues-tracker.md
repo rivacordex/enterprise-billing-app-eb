@@ -8,9 +8,9 @@ Known, unresolved defects and debts in the Product Management module that are **
 
 ## PM-ISS-001 — Product integration-test fixtures still insert the pre-pm46/pm47 price-row shape (8 suites red)
 
-**Status:** OPEN. **Discovered:** 2026-09-24, running the product integration suites against the disposable test DB (`docker-compose.test.yml`, `.env.test`, port 5434) during the pm54/pm55 review-fix pass. **Severity:** medium — it blocks the pm46–pm54 G-E close-out (the DB-backed suite cannot go green), but ships no runtime defect: the app code and its DB-free unit/component suites are green; only stale **test fixtures** are wrong.
+**Status:** OPEN. **Owner:** **pm56a** (scoped 2026-09-24, `specs/pm56a-fixture-sweep.md`) — the `tests/**` fixture sweep; this issue is its authoritative failing-file list. **Discovered:** 2026-09-24, running the product integration suites against the disposable test DB (`docker-compose.test.yml`, `.env.test`, port 5434) during the pm54/pm55 review-fix pass. **Severity:** medium — it blocks the pm46–pm54 G-E close-out (the DB-backed suite cannot go green), but ships no runtime defect: the app code and its DB-free unit/component suites are green; only stale **test fixtures** are wrong.
 
-**Symptom.** The product-module integration suites are red against a correctly-migrated test DB — **67 failing / 92 passing across the 13 product files (8 files red, 5 green)** — the 13 that existed at the time of the run; pm57 has since added a 14th (`tests/db/product-ratecard-schema.integration.test.ts`), which is new-shape and unaffected by this drift but has not itself been run against a live database yet (see the pm57 entry in `prodmgmt-progress-tracker.md`):
+**Symptom.** The product-module integration suites are red against a correctly-migrated test DB — **67 failing / 92 passing across the 13 product files (8 files red, 5 green):**
 
 | Suite | Result | Failure family |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ PostgresError: null value in column "component_type" of relation
 
 **The pattern to copy (the 5 green suites already do it).** `product-price-components`, `product-price-component-constraints`, `product-seed-components`, `product-family-page`, and `manage-products-query-budget` insert the pm47 shape correctly and pass. The reference for a correct fixture write is `db/seeds/demo/product-demo.ts` (branch DRAFT → insert the discriminated `price_component` → flip ACTIVE) and `tests/db/helpers/billrun-aggregate.ts` (parse each envelope through `persistablePricingComponentSchema` before `JSON.stringify`).
 
-**Fix owed (two axes, per the option-C note).** For each red suite, reshape every `product_offering_price` insert to (1) supply `component_type` + a schema-valid `price_component` envelope (pm47's discriminated union), and (2) insert-while-DRAFT-then-activate wherever the pm36 §3.5 DRAFT-guard trigger applies; update `product-schema`'s unique-key assertion to the current `(product_offering_id, component_type, unit_of_measure, start_date_time)` shape and drop the `price_type` references in `product-family-guards`. This is the "option-C co-land" debt — it belongs to whichever unit next reworks these fixtures, or to an explicit sweep, not to the UI authoring units.
+**Fix owed (two axes, per the option-C note).** For each red suite, reshape every `product_offering_price` insert to (1) supply `component_type` + a schema-valid `price_component` envelope (pm47's discriminated union), and (2) insert-while-DRAFT-then-activate wherever the pm36 §3.5 DRAFT-guard trigger applies; update `product-schema`'s unique-key assertion to the current `(product_offering_id, component_type, unit_of_measure, start_date_time)` shape and drop the `price_type` references in `product-family-guards`. This is the "option-C co-land" debt — now scoped as **pm56a** (`specs/pm56a-fixture-sweep.md`), an explicit `tests/**` sweep, not the UI authoring units. (The ordering-wizard production chain is the separate **pm56b**; the two together are what turn guardrail 31 green.)
 
 **Verify when fixed:**
 ```
@@ -46,4 +46,4 @@ node --env-file=.env.test node_modules/vitest/vitest.mjs run \
   --config vitest.integration.config.ts product
 docker compose -f docker-compose.test.yml down -v
 ```
-Expect all 13 product files green (14 including pm57’s new rate-card suite, which needs a first live run rather than a fixture repair). (A full close-out also needs the same sweep applied to the non-product integration suites the tracker lists — ordering/rating/billing fixtures with the identical drift — before the pm46–pm54 G-E green claim can be made.)
+Expect all 13 product files green. (A full close-out also needs the same sweep applied to the non-product integration suites the tracker lists — ordering/rating/billing fixtures with the identical drift — before the pm46–pm54 G-E green claim can be made.)

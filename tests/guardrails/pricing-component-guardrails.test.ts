@@ -37,18 +37,68 @@ function collectFiles(dir: string): string[] {
   return files;
 }
 
-// Strips `//` line comments and `/* */` block comments (crude but sufficient
-// for TS/TSX source with no such sequence inside a string literal in this
-// codebase's style) so a doc comment that *names* a deleted identifier to
-// explain its absence — e.g. types/product.ts's "Deleted: PricingModel and
-// PriceType" note — is not itself flagged as residue. What remains is real
-// code: an import, a property access, a type reference or a string literal.
+// Strips `//` line comments and `/* */` block comments so a doc comment that
+// *names* a deleted identifier to explain its absence — e.g. types/product.ts's
+// "Deleted: PricingModel and PriceType" note — is not itself flagged as
+// residue. What remains is real code: an import, a property access, a type
+// reference or a string literal (a `"tiered"` literal IS residue and is kept).
+//
+// This is a single-pass scanner rather than two blind regexes because the
+// blind form strips `//` and `/* */` *inside* string literals and URLs too
+// (`"https://…"` → truncated at the `//`), which silently hides real residue
+// after such a sequence on the same line. The scanner tracks string state and
+// only treats `//`/`/*` as a comment in code context, so a token after a URL
+// or inside a string is still seen. Known, accepted limit: a regex literal
+// containing an unescaped `//` or `/*` can still be misread as a comment — rare,
+// and the residue patterns are unlikely to co-occur with one; the blind form
+// had the same gap and worse.
 function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+    // Line comment — drop to end of line, keep the newline.
+    if (c === "/" && next === "/") {
+      i += 2;
+      while (i < n && source[i] !== "\n") i++;
+      continue;
+    }
+    // Block comment — drop through `*/`, preserving interior newlines.
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) {
+        if (source[i] === "\n") out += "\n";
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    // String literal (single/double/template) — copy verbatim, honouring
+    // escapes, so `//` and `/*` inside a string or URL are never mistaken for
+    // a comment and a residue token inside a string is preserved.
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < n) {
+        const s = source[i];
+        out += s;
+        if (s === "\\") {
+          if (i + 1 < n) out += source[i + 1];
+          i += 2;
+          continue;
+        }
+        i++;
+        if (s === quote) break;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", () => {
@@ -251,7 +301,7 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
   // typed codes reaching a caller live-DB, through insert/update/delete, are
   // already proven in tests/db/product-price-components.integration.test.ts
   // (pm49) — referenced, not re-implemented, and re-run by this ship gate.
-  it("guardrail 33 — all three price-write services call validateOfferingComponents after the DRAFT gate (VI3-VI5)", () => {
+  it("guardrail 33 — all three price-write services import + call validateOfferingComponents exactly once, and no VI3-VI5 copy exists elsewhere (structural; the after-DRAFT-gate ordering and typed codes are proven live in product-price-components.integration.test.ts)", () => {
     for (const file of [
       "insert-price.ts",
       "update-price.ts",
@@ -284,7 +334,16 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
     expect(validatorSource).toMatch(
       /export\s+(?:async\s+function|const)\s+validateOfferingComponents\s*[=(]/,
     );
-    expect(validatorSource.match(/^\s*tx\s*[:,]/m)).not.toBeNull();
+    // `tx` is the first parameter (code-standards §2.14) — anchored to the
+    // declaration and tolerant of the signature's formatting (multi-line or
+    // single-line, `function` or arrow/async), so a purely cosmetic reformat
+    // of a still-correct signature does not falsely fail this gate.
+    expect(
+      validatorSource.match(
+        /validateOfferingComponents\s*(?:=\s*(?:async\s*)?)?\(\s*tx\s*[:,)]/,
+      ),
+      "validateOfferingComponents must take tx as its first parameter (§2.14)",
+    ).not.toBeNull();
 
     const otherServiceFiles = collectFiles(
       path.join(REPO_ROOT, "services", "product"),
@@ -343,11 +402,13 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       boundTo: { priceType: "usage", unitOfMeasure: "EA" },
       params: { ratePerUnit: "1" },
     };
-    expect(negotiatedOverrideComponentSchema.safeParse(validNegotiatedOverride).success).toBe(
-      true,
-    );
     expect(
-      persistablePricingComponentSchema.safeParse(validNegotiatedOverride).success,
+      negotiatedOverrideComponentSchema.safeParse(validNegotiatedOverride)
+        .success,
+    ).toBe(true);
+    expect(
+      persistablePricingComponentSchema.safeParse(validNegotiatedOverride)
+        .success,
     ).toBe(false);
   });
 });

@@ -486,6 +486,8 @@ The authz matrix (guardrail 1) extends to every row of §8. The pricing update a
 
 **(rate card)** This update **does** add rows to the authz matrix — four, for `/products/rate-card` (§8). Do not carry the pricing update's "adds no row" sentence forward into this one's ship gate.
 
+**Scoped for closure (2026-09-24).** The residue guardrail 31 asserts is now owned, not just flagged: the pre-pm46/47 **test** fixtures → **pm56a** (`specs/pm56a-fixture-sweep.md`, PM-ISS-001), which also narrows guardrail 31's scan to exclude `tests/guardrails/**` (a sibling guardrail that *names* a dropped token to assert its absence is the enforcement layer, not residue — a recorded §7.10 deviation from D1's literal `tests/` root, not a §6.9 relaxation); the **production** ordering-wizard chain → **pm56b** (`specs/pm56b-ordering-wizard-rekey.md`, needs a fresh G-G grant). Guardrail 31 flips green when both land. Separately, a pm56 review-fix pass (2026-09-24) hardened this file's own test logic — `stripComments` no longer strips `//`/`/* */` inside string literals or URLs (was hiding real residue); guardrail 33's name now states its structural-only intent (behaviour proven in `product-price-components.integration.test.ts`); and the `tx`-first-parameter check is now tolerant of the validator signature's formatting. No guardrail assertion was weakened.
+
 ---
 
 ## Appendix A — Superseded wording and the code/tests that still assert the old rules
