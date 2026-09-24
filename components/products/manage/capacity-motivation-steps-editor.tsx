@@ -64,11 +64,19 @@ function commitOrder(rows: StepRow[]): StepRow[] {
 // rows). Named by the duplicated value, on the later (offending) row only —
 // an earlier row that already held the value first is never itself flagged.
 function duplicateMessage(rows: StepRow[], index: number): string | null {
-  const current = rows[index]!.aboveQuantity.trim();
-  if (current === "") return null;
-  const isDuplicate = rows
-    .slice(0, index)
-    .some((row) => row.aboveQuantity.trim() === current);
+  const raw = rows[index]!.aboveQuantity.trim();
+  if (raw === "") return null;
+  const current = Number(raw);
+  // Normalise numerically, matching the schema's own duplicate key
+  // (price-form's steps superRefine compares on String(Number(...))), so the
+  // live editor and the submit-time check agree — "1000" and "1e3" are the
+  // same threshold to both, and the message names the same value the schema
+  // would (FieldError dedupes when they coincide).
+  if (!Number.isFinite(current)) return null;
+  const isDuplicate = rows.slice(0, index).some((row) => {
+    const other = row.aboveQuantity.trim();
+    return other !== "" && Number(other) === current;
+  });
   return isDuplicate
     ? `Duplicate threshold — a step already exists for ${current}.`
     : null;
@@ -90,6 +98,10 @@ export function CapacityMotivationStepsEditor({
   const [removeRefused, setRemoveRefused] = useState(false);
 
   function updateRow(index: number, patch: Partial<StepRow>): void {
+    // Editing any row clears the transient "at least one step" notice — it
+    // belongs to the moment of a refused removal, not to every render where
+    // the list happens to hold one row.
+    setRemoveRefused(false);
     onChange(value.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
@@ -182,10 +194,7 @@ export function CapacityMotivationStepsEditor({
         disabled={disabled}
         onClick={() => {
           setRemoveRefused(false);
-          onChange([
-            ...value,
-            { ...EMPTY_STEP_ROW, id: createStepRowId() },
-          ]);
+          onChange([...value, { ...EMPTY_STEP_ROW, id: createStepRowId() }]);
         }}
       >
         <Plus size={14} aria-hidden />

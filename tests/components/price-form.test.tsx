@@ -275,6 +275,43 @@ describe("PriceForm — submission assembly", () => {
     expect(submitted).not.toHaveProperty("recurringChargePeriodLength");
   });
 
+  it("submits a capacity_motivation InsertPriceInput, keeping the steps ascending even when entered out of order", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { onSubmit } = renderForm();
+    await user.type(screen.getByLabelText("Price name"), "Capacity motivation");
+    await user.type(screen.getByLabelText("Currency"), "USD");
+    await user.click(
+      screen.getByRole("radio", { name: "Target capacity motivation" }),
+    );
+    await user.selectOptions(screen.getByLabelText("Unit of measure"), "EA");
+    setStartDate(TOMORROW);
+
+    // First band: threshold 2000.
+    await user.type(screen.getAllByLabelText("Above quantity")[0]!, "2000");
+    await user.type(screen.getAllByLabelText("Rate per unit")[0]!, "25");
+
+    // Second band entered *below* the first: fill its rate, then its
+    // threshold, and submit WITHOUT blurring the threshold — so the editor's
+    // on-blur reorder never runs and the list reaches submit in descending
+    // order. The form must still emit an ascending payload (pm55 D2).
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await user.type(screen.getAllByLabelText("Rate per unit")[1]!, "50");
+    await user.type(screen.getAllByLabelText("Above quantity")[1]!, "1000");
+
+    submitForm();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0]![0];
+    expect(submitted.componentType).toBe("capacity_motivation");
+    if (submitted.componentType === "capacity_motivation") {
+      expect(submitted.unitOfMeasure).toBe("EA");
+      expect(submitted.params.steps).toEqual([
+        { aboveQuantity: 1000, ratePerUnit: "50" },
+        { aboveQuantity: 2000, ratePerUnit: "25" },
+      ]);
+    }
+  });
+
   it("shows the --bg-warning banner only when currentStatus is ACTIVE", () => {
     const { unmount } = renderForm({ currentStatus: "DRAFT" });
     expect(screen.queryByText(/is active\. Saving will not/)).toBeNull();

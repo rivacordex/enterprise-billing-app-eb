@@ -100,6 +100,37 @@ function flatFeePrice(overrides: Partial<PriceCard> = {}): PriceCard {
   };
 }
 
+function capacityCommitmentPrice(
+  overrides: Partial<PriceCard> = {},
+): PriceCard {
+  return {
+    productOfferingPriceId: "PRDOFP000003",
+    name: "Commitment",
+    componentType: "capacity_commitment",
+    component: {
+      "@type": "capacity_commitment",
+      specVersion: 1,
+      plaSpecId: "PLA_CAPACITY_COMMITMENT",
+      priceType: "commitment",
+      appliesAt: "post_aggregation",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: "EA" },
+      params: { committedQuantity: 1000 },
+    },
+    currency: "MYR",
+    unitOfMeasure: "EA",
+    recurringChargePeriodLength: null,
+    recurringChargePeriodType: null,
+    glCode: "GL-4100",
+    policy: null,
+    startDateTime: new Date(2026, 6, 23),
+    createdAt: new Date(2026, 6, 23),
+    endDateTime: null,
+    effectivityStatus: "current",
+    ...overrides,
+  };
+}
+
 function renderPanel(canEdit: boolean, prices: PriceCard[]): void {
   render(
     <ManagePricesPanel
@@ -308,6 +339,69 @@ describe("ManagePricesPanel / EditablePrices — authoring", () => {
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
+  it("preserves a non-midnight stored start on an amount-only edit (review #3)", async () => {
+    mockUpdate.mockResolvedValue({
+      ok: true,
+      offeringId: OFFERING_ID,
+      productOfferingPriceId: "PRDOFP000002",
+      backdated: false,
+    });
+    // A stored start with a time-of-day component, >3 days before "now".
+    const start = new Date(2026, 6, 10, 9, 30, 0);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderPanel(true, [flatFeePrice({ startDateTime: start })]);
+
+    await user.click(screen.getByRole("button", { name: /^Edit Monthly/ }));
+    await user.clear(screen.getByLabelText("Amount"));
+    await user.type(screen.getByLabelText("Amount"), "150.00");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith(
+        "PRDOFP000002",
+        expect.objectContaining({
+          // The exact original instant is round-tripped — not flattened to
+          // local midnight — so the service reads it as unchanged (no
+          // backdating, no silent time-shift).
+          startDateTime: start,
+          componentType: "flat_fee",
+          params: { amount: "150.00" },
+        }),
+      );
+    });
+  });
+
+  it("activating a second row while the first is dirty prompts to discard (review #4/#5)", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderPanel(true, [
+      usageRatePrice({
+        productOfferingPriceId: "PRDOFP000001",
+        name: "Price A",
+      }),
+      flatFeePrice({ productOfferingPriceId: "PRDOFP000002", name: "Price B" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: /^Edit Price A/ }));
+    await user.clear(screen.getByLabelText("Rate per unit"));
+    await user.type(screen.getByLabelText("Rate per unit"), "0.99"); // dirty
+    await user.click(screen.getByRole("button", { name: /^Edit Price B/ }));
+
+    expect(
+      screen.getByText("Discard unsaved changes to this price?"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(
+      screen.queryByText("Discard unsaved changes to this price?"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Edit Price B/ }));
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(
+      screen.getByRole("button", { name: /^Edit Price A/ }),
+    ).toBeInTheDocument();
+  });
+
   it("renders no editing controls when canEdit is false", () => {
     renderPanel(false, [flatFeePrice()]);
 
@@ -385,6 +479,38 @@ describe("ManagePricesPanel / EditablePrices — the offering-level banner (D4)"
     expect(screen.getByRole("button", { name: "Add price" })).toBeDisabled();
   });
 
+  it("MODIFIER_WITHOUT_BASE_RATE from retyping a base usage_rate as a flat_fee names the orphaned modifier and disables Save", async () => {
+    // Editing the offering's only EA usage_rate into a flat_fee removes the
+    // base rate the sibling capacity_commitment depends on; the server refuses
+    // it. The submitted componentType is flat_fee (neither a modifier nor a
+    // usage_rate), so the banner must still resolve — reading the orphaned
+    // modifier back from the visible rows — not silently no-op.
+    mockUpdate.mockResolvedValue({
+      ok: false,
+      code: "MODIFIER_WITHOUT_BASE_RATE",
+      unitOfMeasure: "EA",
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderPanel(true, [usageRatePrice(), capacityCommitmentPrice()]);
+
+    await user.click(
+      screen.getByRole("button", { name: /^Edit Base usage rate/ }),
+    );
+    await user.click(screen.getByRole("radio", { name: "Flat fee" }));
+    await user.click(screen.getByRole("radio", { name: "One-time charge" }));
+    await user.type(screen.getByLabelText("Amount"), "50.00");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Target capacity commitment needs a base usage rate in EA. Add one before saving.",
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
   it("does not appear until the action returns, and a client-side field edit alone never raises it", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderPanel(true, []);
@@ -396,7 +522,14 @@ describe("ManagePricesPanel / EditablePrices — the offering-level banner (D4)"
     );
     await user.selectOptions(screen.getByLabelText("Unit of measure"), "EA");
 
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // Assert on the banner's own copy, not role="alert" — FieldError also
+    // carries role="alert", so a bare alert query could pass for the wrong
+    // reason (or match an unrelated field error).
+    expect(
+      screen.queryByText(
+        /needs a base usage rate|cannot be mixed in|effective on that date/,
+      ),
+    ).not.toBeInTheDocument();
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
@@ -432,7 +565,7 @@ describe("ManagePricesPanel / EditablePrices — the offering-level banner (D4)"
         screen.getByRole("button", { name: "Add price" }),
       ).not.toBeDisabled(),
     );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot be mixed in/)).not.toBeInTheDocument();
   });
 });
 
