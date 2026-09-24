@@ -1,20 +1,20 @@
 # Enterprise Billing App — Product Management Module
 ## UI Context: Module-Specific Tokens & Rules
 
-> **Inherits the shared brand system from `context/ui-context.md` unchanged** — brand scales, neutrals, base semantic tokens, typography, radius, and elevation are defined there and are not redefined here. This file contains only the semantic wiring of those tokens to Product Management domain objects, plus this module's exclusions. Per code-standards §4.3, define any new variables in `globals.css`; never hardcode hex in a component. Covers both View Product (read-only) and Manage Products (CRUD). The **pricing-components update** (`_updatemodule-product-pricing-components-plan.md`, `prodmgmt-update-overview.md`) adds **no new color, typography, radius or elevation token** either — it rekeys the existing wiring (§2, §4, §5, §7) from the dropped `price_type` column onto `component_type`, and every hue it needs already exists in the shared file.
+> **Inherits the shared brand system from `context/ui-context.md` unchanged** — brand scales, neutrals, base semantic tokens, typography, radius, and elevation are defined there and are not redefined here. This file contains only the semantic wiring of those tokens to Product Management domain objects, plus this module's exclusions. Per code-standards §4.3, define any new variables in `globals.css`; never hardcode hex in a component. Covers both View Product (read-only) and Manage Products (CRUD). The **pricing-components update** (`_updatemodule-product-pricing-components-plan.md`, `prodmgmt-update-overview.md`) adds **no new color, typography, radius or elevation token** either — it rekeys the existing wiring (§2, §4, §5, §7) from the dropped `price_type` column onto `component_type`, and every hue it needs already exists in the shared file. The **rate card lookup update** (`_updatemodule-ratecard-lookup-plan-v2.md`, `prodmgmt-update-overview.md`, `prodmgmt-architecture.md`) adds **no new color, typography, radius or elevation token either** — the whole `/products/rate-card` surface (§10) is assembled from shared hues. It adds §10 and changes nothing else already written here: `rateCardLookUp` stays a validated **name only** (no referent — Inv. #42 unamended) and `service_code` is not added to `product_offering_price`. This delivery stands up the `RATECARD_RAN_USAGE_LKP` table and its read/write surfaces; the rating consumer is a following-sprint deliverable.
 
 ---
 
 ## 0. Module Scope & Exclusions
 
-Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | TESTING | ACTIVE | OBSOLETE | RETIRED` → `LifecycleBadge`), **pricing component type** (`usage_rate | flat_fee | capacity_commitment | capacity_motivation` → `PricingComponentBadge`, which replaces `PriceTypeBadge` once `price_type` is dropped — §2), **offering flags** (bundle / sellable / billing-only chips), **spec JSONB entries and `capacity_motivation.steps`** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, and the Manage Products table/dialogs/forms.
+Module-specific semantic wiring below covers: **lifecycle status** (`DRAFT | TESTING | ACTIVE | OBSOLETE | RETIRED` → `LifecycleBadge`), **pricing component type** (`usage_rate | flat_fee | capacity_commitment | capacity_motivation` → `PricingComponentBadge`, which replaces `PriceTypeBadge` once `price_type` is dropped — §2), **offering flags** (bundle / sellable / billing-only chips), **spec JSONB entries and `capacity_motivation.steps`** (rendered as plain text), **price effectivity states**, the four-section View Product page surfaces, the Manage Products table/dialogs/forms, and — rate card update — the **Rate Card version lifecycle, upload, row-preview and diff surfaces** (§10).
 
 > **Scope note:** the planned **Product Ordering & Inventory update** (Orders/Subscriptions pages) is wired here — pm27 (§8) wires the Orders list: `OrderStatusBadge` (TMF622 order states) and the negotiated-price indicator; pm31 wires the manager review-screen treatment (reuses §8's tokens, no new ones). pm33 (§9) wires the Subscriptions page: `SubscriptionStatusBadge` (TMF637 subscription states) and the status-history sub-row treatment. `mockup-product-ordering.html` (referenced in the planning docs) is not present in this repo — pm33 follows the Manage Products family-expand affordance (§7) as the closest in-repo precedent for the status-history sub-rows instead.
 
 Two deliberate exclusions (same rules as User Management), applying to **both** product pages:
 
 1. **The AI / Iris-violet family and `--gradient-ai` are NOT used anywhere in Product Management.** Neither page has AI/ML components; the AI tokens (ui-context §4) remain reserved. Defining them in `globals.css` is fine; using them here is a scope violation.
-2. **Marketing gradients stay off both product pages.** `/products/product-offering` and `/products/manage-products` are data-dense admin screens — keep them flat. `--gradient-chrome` remains fine in the shared nav/sidebar chrome (unchanged by the "Products" nav section).
+2. **Marketing gradients stay off every product page.** `/products/product-offering`, `/products/manage-products` and `/products/rate-card` are data-dense admin screens — keep them flat. `--gradient-chrome` remains fine in the shared nav/sidebar chrome (unchanged by the "Products" nav section).
 
 ---
 
@@ -64,7 +64,7 @@ Two deliberate exclusions (same rules as User Management), applying to **both** 
 
 ## 4. Price Effectivity States
 
-A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure)` lane (the rekeyed uniqueness index, PC14) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, and each lane computes Current / Future-dated / Superseded independently. **Known gap, flagged for follow-up:** the `flat_fee` lane does not yet split on envelope `priceType`, so a `recurring` and a `oneTime` flat fee starting the same date share one lane and can appear to supersede one another though they are unrelated charges (`_updatemodule-product-pricing-components-plan.md` D6/pm46, pm49 D3) — render/lane logic must pick up `priceType` as part of the `flat_fee` key once that follow-up unit closes it.
+A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure)` lane (the rekeyed uniqueness index, PC14) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, and each lane computes Current / Future-dated / Superseded independently:
 
 | State | Rule | Treatment |
 |---|---|---|
@@ -74,17 +74,17 @@ A price's end is derived from its successor's `start_date_time`; cards signal te
 
 `capacity_motivation.steps` render each step's threshold and rate as plain inline text in ascending order (e.g. `base 100; above 1000: 50; above 2000: 25`), semicolon-separated — no table. This inherits the density rule the dropped tiered rendering established (revised 2026-07-09 — density pass); `pricing_model = 'tiered'` no longer exists (PC8). A `capacity_commitment` renders as `committed 1,000 EA` — quantity and unit only, **no currency**, because the component carries no money.
 
-**`rateCardLookUp` renders as a name, never as a reference (Inv. #42).** No link, no lookup affordance, no autocomplete, no "view rate card" action — the table it names does not exist. It is a plain mono string beside the rate; anything that implies resolvability is a defect, not a nicety, until the rate-card phase lands.
+**`rateCardLookUp` renders as a name only (Inv. #42, unamended).** Nothing in this delivery resolves it, so the rule stands in full: **no link, no lookup affordance, nothing that implies resolvability**. It is **free text with no FK**, so the authoring form gets **no autocomplete and no typeahead**. It renders as plain `--font-mono` text, with a muted *"default rate"* beside it when null (§5). A card is routinely named on an offering before any version is uploaded, and whether a future consumer should check that the name resolves to a stored version is OR5 — out of scope here.
 
 A future-dated price can only be added while the version is `DRAFT`, so the "Future-dated" tag appears on a `DRAFT` version's panel and on the fixed schedule a released version carries — never as something a user can add to a live version.
 
-**Not-yet-billable warning (O10).** A component that saves but nothing downstream can bill yet reuses the `--bg-warning`/`--text-warning` treatment of §7's warnings, inline under the component row. The two tiered copies are **retired with `pricing_model = 'tiered'`**; the surviving cases are the two capacity modifiers plus the unbuilt rate card: *"Bill run does not apply a capacity commitment yet — this component is stored but not billed."*, *"Bill run does not apply a capacity motivation yet — usage bills at the base rate until then."*, and *"No rate card exists yet — `<name>` falls back to the rate per unit."* A fourth case comes from an open modelling gap (architecture §7): the capacity components are **quantity**-based, but `Mbps` is a rate, so a commitment or motivation in `Mbps` has no stated basis (per month? per peak sample?) — *"A capacity component in Mbps has no agreed basis yet; confirm what the committed quantity means before this version goes live."* It warns rather than blocks, because the unit list is closed and no rule forbids the combination. Warning only, all four: none blocks the save. A missing charge period, a unit outside the list, or an unmapped period is still a `FieldError`, not this banner — as are the cross-component rules (§7), which block it.
+**Not-yet-billable warning (O10).** A component that saves but nothing downstream can bill yet reuses the `--bg-warning`/`--text-warning` treatment of §7's warnings, inline under the component row. The two tiered copies are **retired with `pricing_model = 'tiered'`**; the surviving cases are the two capacity modifiers: *"Bill run does not apply a capacity commitment yet — this component is stored but not billed."* and *"Bill run does not apply a capacity motivation yet — usage bills at the base rate until then."* (The rate card update does **not** touch this pricing panel — a `usage_rate` naming a `rateCardLookUp` is unaffected here.) A third case comes from an open modelling gap (architecture §7): the capacity components are **quantity**-based, but `Mbps` is a rate, so a commitment or motivation in `Mbps` has no stated basis (per month? per peak sample?) — *"A capacity component in Mbps has no agreed basis yet; confirm what the committed quantity means before this version goes live."* It warns rather than blocks, because the unit list is closed and no rule forbids the combination. Warning only, all four: none blocks the save. A missing charge period, a unit outside the list, or an unmapped period is still a `FieldError`, not this banner — as are the cross-component rules (§7), which block it.
 
 ---
 
 ## 5. Module Typography & Surface Notes
 
-Use `--font-mono` for the sequence IDs (`PRDOFR…`, `PRDSMD…`, `PRDOFP…`), GL codes, SST/SD values, and `version`; enable `tabular-nums` on amounts, step thresholds/rates, committed quantities, charge-period lengths, and the version column — identical on Manage Products' table. Amount rendering is keyed to `component_type`, not to a price type: a `usage_rate` renders `ratePerUnit / unit` (`RM 0.05 / GB`), a `recurring` `flat_fee` renders `amount / period` (`RM 5,000.00 / month`), and a `oneTime` `flat_fee` renders the bare `amount` — **no unit**, since `unit_of_measure` is NULL on every `flat_fee` row (architecture §3.3). Unit and period are read from the row's columns, never from `params` and never inferred; the unit keeps its stored casing exactly (`Mbps`, never `MBPS`). Amounts render `--text-h4` weight 600 with currency code in `--text-caption` muted. **Pricing-components update:** envelope money is a **decimal string** (`"100"`) — format it for display with the row's `currency` and never re-parse it to a different precision; `committedQuantity` and every `steps[].aboveQuantity` are numbers and take `tabular-nums` like the amounts; a `rateCardLookUp` name renders in `--font-mono` alongside the sequence IDs, with a muted "default rate" beside it when null. Raw `component_type` / `@type` values are never shown — the §2 badge label is the user-facing name, and the derived envelope fields (`specVersion`, `plaSpecId`, `appliesAt`, `basis`, `boundTo`) are never surfaced at all. Selected offering row uses the shared `--surface-selected`; View Product's sections 2–4 are `--surface-card` on `--surface-app` with `--border-default`.
+Use `--font-mono` for the sequence IDs (`PRDOFR…`, `PRDSMD…`, `PRDOFP…`), GL codes, SST/SD values, and `version`; enable `tabular-nums` on amounts, step thresholds/rates, committed quantities, charge-period lengths, and the version column — identical on Manage Products' table. Amount rendering is keyed to `component_type`, not to a price type: a `usage_rate` renders `ratePerUnit / unit` (`RM 0.05 / GB`), a `recurring` `flat_fee` renders `amount / period` (`RM 5,000.00 / month`), and a `oneTime` `flat_fee` renders the bare `amount` — **no unit**, since `unit_of_measure` is NULL on every `flat_fee` row (architecture §3.3). Unit and period are read from the row's columns, never from `params` and never inferred; the unit keeps its stored casing exactly (`Mbps`, never `MBPS`). Amounts render `--text-h4` weight 600 with currency code in `--text-caption` muted. **Pricing-components update:** envelope money is a **decimal string** (`"100"`) — format it for display with the row's `currency` and never re-parse it to a different precision; `committedQuantity` and every `steps[].aboveQuantity` are numbers and take `tabular-nums` like the amounts; a `rateCardLookUp` name renders in `--font-mono` alongside the sequence IDs, with a muted "default rate" beside it when null. **Rate card update:** `RCV########` version ids and the `PRDINV########` `lkp_subscriber_ref_id` values the lookup rows carry join the mono set, and `tabular-nums` extends to row counts and diff change counts. Raw `component_type` / `@type` values are never shown — the §2 badge label is the user-facing name, and the derived envelope fields (`specVersion`, `plaSpecId`, `appliesAt`, `basis`, `boundTo`) are never surfaced at all. Selected offering row uses the shared `--surface-selected`; View Product's sections 2–4 are `--surface-card` on `--surface-app` with `--border-default`.
 
 `--action-cta-bg` is used exactly once across the module: the "New offering" button in the Manage Products page header. It remains the **only** accent-filled primary action on that page (per the shared design system's "one accent button per view" rule) — every other action (Edit, Add price, Activate) uses the quieter secondary/ghost treatment; only Retire/Discard use the danger role, and only inside their confirmation dialogs. (The Activate-confirmation dialog's own "Activate" button is the one other place an accent button appears — acceptable since it never renders in the same view as the page-header CTA.)
 
@@ -210,3 +210,92 @@ Patterns for `/products/subscriptions`. No `--action-cta-bg` on this page — su
 **Terminate confirmation.** A danger `AlertDialog` (`alert-triangle` icon in `--text-danger`, danger-role confirm button — the Discard/Retire dialog's construction, §7), since termination is destructive and irreversible. Copy pattern: *"Terminating ends billing after `<end date>`. This cannot be undone."* Suspend and Resume are plain (non-danger) confirmation dialogs — reversible lifecycle moves, not terminal ones.
 
 **Edit characteristics.** Reuses the Ordering wizard's `CharacteristicsEditor` (§8's sibling component, `components/products/ordering/characteristics-editor.tsx`) unmodified against `instance_characteristics`. Body copy states plainly that the edit never affects pricing: characteristics are descriptive only and are never a rating input (architecture §3, `instance_characteristics` row).
+
+---
+
+## 10. Rate Card — Version Lifecycle, Upload & Diff (rate card lookup update)
+
+Patterns for `/products/rate-card`, the fifth Products page. This delivery stands up the `RATECARD_RAN_USAGE_LKP` table and its read/write surfaces; the rating consumer that reads the table is a following-sprint deliverable. Nothing here is a new token: every hue is a shared semantic pair already used elsewhere in this file. **Nav:** lucide `TableProperties` in `components/nav-icons.ts` (the mockup's tabler `table-options`) — a table-with-settings glyph, no collision with `Package` / `PackagePlus` / `ClipboardList` / `Layers`. The entry is hidden when `ratecard : READ` is denied, never shown locked (the existing `NAV_REGISTRY` convention).
+
+### 10.1 `RateCardStatusBadge`
+
+A **separate total record from `LifecycleBadge`**, not a reuse of it — same pill construction (§1: `--radius-pill`, `-bg` tint, `-fg` text, icon + label) but a different four-value vocabulary, so the two must not share a type. `DRAFT`, `ACTIVE` and `SUPERSEDED` deliberately keep §1's hues and icons, because the words mean the same thing here:
+
+| `status` | Meaning | Base / icon color | `-fg` text | `-bg` tint | Icon |
+|---|---|---|---|---|---|
+| `DRAFT` | Uploaded and validated; previewable; **invisible to every rating run** until activated | `#E08600` warning-500 | `#8A5200` warning-700 | `#FEF4E6` warning-50 | pencil-line |
+| `ACTIVE` | The one live version for this card name — DB-enforced by the partial unique index | `#1F9D57` success-500 | `#0F5C32` success-700 | `#E6F6EC` success-50 | check-circle |
+| `SUPERSEDED` | Replaced by a later activation; immutable and **re-activatable** (rollback) | `#4C5462` neutral-600 | `#353B46` neutral-700 | `#EEF0F4` neutral-100 | history (render row muted) |
+| `REJECTED` | Defined in the column, **unreachable in v1** — a failed upload inserts nothing (RC7), so no version ever reaches this status | `#D92D2D` danger-500 | `#8A1717` danger-700 | `#FDEAEA` danger-50 | x-circle |
+
+**`DRAFT` takes warning, not info — the mockup is superseded here.** `mockup-product-rate-card.html` tints Draft with info-50/info-700. That is rejected: `DRAFT` must mean one thing app-wide, info is §1's `TESTING` hue (which has no rate-card analogue, so borrowing it would make the same word read differently on two Products pages), and a card draft is precisely shared §3.4's *pending — awaiting a decision*. The consequence is that warning is then **spoken for on this page** (Draft badge, the validation tab's warning count).
+
+`REJECTED` gets a variant for totality, exactly as §8's four unwritten order states do — present so the union is closed, not because the phase writes it.
+
+### 10.2 Diff categories (`RateCardDiffBadge`)
+
+The three categories render **in one view** (chip row plus a per-row column), so they must be mutually distinguishable by hue *and* icon. Ordered by billing consequence, which is the order the diff itself uses:
+
+| Category | Meaning | `-fg` text | `-bg` tint | Icon |
+|---|---|---|---|---|
+| Added | A key absent from the current `ACTIVE` version | `#0F5C32` success-700 | `#E6F6EC` success-50 | plus |
+| Changed | A key present in both versions whose value differs | `#0C4084` info-700 | `#E7F1FD` info-50 | pencil-line |
+| Retiring | Present in the outgoing version, absent from the upload — carried forward and closed at `snapshot_date` | `#8A1717` danger-700 | `#FDEAEA` danger-50 | archive |
+
+**Retiring takes danger, a deliberate departure from §1.** §1 renders end-of-life (`OBSOLETE` / `RETIRED`) as neutral and muted; here that would bury the only change a user cannot undo without a rollback — traffic after `snapshot_date` stops resolving. The copy carries the nuance so danger never reads as *deleted*: *"carried forward, closed at `<snapshot_date>` — earlier periods still resolve"*, with the date in `--text-primary` weight 500 and the qualifier in `--text-muted`. The label is **"Retiring"**, never "Removed" or "Deleted".
+
+**Changed-value cells** show both states inline: the old value `--text-muted` with `line-through`, the new value `--text-primary` weight 500, both `--font-mono`. No red/green fill on the cell itself — the row's category badge already carries the color.
+
+### 10.3 The rate-per-unit column
+
+`rate_per_unit` is a plain **optional** column on the row preview: render the value in `--font-mono` when present, and a plain `—` in `--text-muted` when null — the same not-applicable treatment used everywhere else in the module. No italic, no "base rate" placeholder, no reserved-column rationale.
+
+### 10.4 Page banners
+
+| Banner | Tint | Icon | Placement | Blocking |
+|---|---|---|---|---|
+| Upload rejected — no version created | `--bg-danger` / `--text-danger` | ban | Top of the error dialog body | The upload already failed |
+| Validation passed, with warnings | `--bg-info` / `--text-info` | check-circle | Top of the Validation tab | Never — a `file_checksum` matching an earlier version does not block activation |
+| Carry-forward summary (`n` polygons closed at `<date>`) | `--bg-info` / `--text-info` | archive | Inside the Activate confirmation | Never |
+| Re-rating an earlier period will use this version | `--bg-warning` / `--text-warning` | history | Inside the Activate confirmation | Never |
+
+### 10.5 Version list, selected-version header, tabs
+
+**Version list.** One row per version, newest first: `RCV########` (mono), `RateCardStatusBadge`, snapshot date, row count (`tabular-nums`), uploader / activator and timestamps. The selected row takes `--surface-selected`; a `SUPERSEDED` row renders muted, per §1's convention for superseded things. A "One Active version per card" note sits in the card header in `--text-muted` with a `lock` icon — it states a DB guarantee, so it is informational, not a warning.
+
+**Selected-version header** carries a metadata strip — `--surface-sunken`, `--text-overline` labels over `--text-primary` weight 500 values — for card name, snapshot date, row count, checksum (mono, middle-truncated `a91f…3c02`), validation result and the version it replaces. Dates render ISO (`YYYY-MM-DD`) throughout this page rather than localized: `snapshot_date` and `polygon_start_date` are **match keys read out of a file**, not human-facing schedule dates.
+
+**Tabs — a new pattern for this module.** Rows / Diff vs Active / Validation, each with a count chip. Underline tabs: `--radius-none`, inactive `--text-muted`, active `--text-link` with a 2px `--color-primary-500` bottom border, on `--surface-card` above a `--border-default` hairline. Tabs rather than §7's version bar because these are **three views of one version**, not a selection among records — the version bar's job is already done by the list above. Tab state is URL-driven (`?tab=`), matching the module's deep-link convention (code-standards §3.5).
+
+### 10.6 Actions, CTA budget and dialogs
+
+| Action | Icon | Color role | Shown on |
+|---|---|---|---|
+| Upload new version | `upload` | `--action-primary-bg` (**indigo, not CTA**) | Page header, always |
+| Download template | `download` | secondary outline | Page header, always |
+| Activate version | `check-circle` | `--action-cta-bg` | `DRAFT` only |
+| Discard draft | `trash` | `--text-danger` | `DRAFT` only |
+| Roll back to this version | `history` | `--text-secondary` (quiet) | `SUPERSEDED` only |
+| Export rows / diff / errors | `download` | secondary outline | Per tab, and the error dialog |
+| — | — | — | `ACTIVE` shows no mutating action at all — versions are immutable, and replacing one is an upload, not an edit |
+
+**`--action-cta-bg` is used exactly once on this page: "Activate version".** This is the **first page in the module where the accent is not on a creation button** — "Upload new version" creates a record and therefore takes `--action-primary-bg`, per the shared §3.3 rule that record-creation triggers never take the CTA. Activation is the single featured confirm and the only act on the page with billing consequence, so the budget is spent exactly where the rule intends. The mockup agrees.
+
+**Dialogs.**
+
+| Dialog | Pattern | Body copy | Confirm |
+|---|---|---|---|
+| Upload | Plain, `upload` icon in `--text-link` | Drop zone (2px dashed `--border-strong` on `--surface-sunken`, `--radius-md`, `file-spreadsheet` in `--text-disabled`), card-name select, and a hint: *"Uploads land as **Draft**. Nothing is used by a rating run until you activate it."* | "Upload & validate", `--action-primary-bg` |
+| Upload rejected | **Not** an `AlertDialog` — a plain dialog with `alert-triangle` in `--text-danger`; the failure already happened, there is nothing to confirm | Danger banner *"No version was created. Fix the file and upload again."* then a Row / Column / Reason table — row numbers `tabular-nums`, column names `--font-mono`, reason in plain body text quoting the validator verbatim (*"snapshot_date is not a valid date"*) | "Close", `--action-primary-bg`; "Export errors" secondary |
+| Activate | Plain confirmation, **not danger** (§7's Activate-confirmation construction) | Names the superseded version, then the three §10.2 change counts in a metadata strip, then the carry-forward info banner and the re-rate warning banner (§10.4) | "Activate", `--action-cta-bg` |
+| Roll back | Plain confirmation, **not danger** — versions are immutable, so nothing is lost and the move is itself reversible | Names the version being demoted and repeats the same change counts, computed in the other direction | "Roll back", `--action-cta-bg` |
+| Discard draft | Danger `AlertDialog` (§7's `DeleteVersionDialog` construction) | *"Discarding `<RCV…>` deletes this version and its `<n>` rows. It never went live and this cannot be undone."* | "Discard version" |
+
+Activate and Roll back each carry an accent confirm and **never co-render** (a version cannot be both `DRAFT` and `SUPERSEDED`), so the one-accent-per-view rule holds — the same allowance §5 already grants the catalog's Activate dialog.
+
+### 10.7 Read-only, empty and touch treatments
+
+- **`ratecard : READ` only** — the version list, row preview, diff and validation tabs all render in full; every action in §10.6 is **absent, not disabled**, the rule §7 already follows for non-editable panels.
+- **Two distinct empty states**, as §6 requires of the families table: *no versions yet for this card* ("No versions yet. Upload a CSV to create the first one.", pointing at the header button without repeating it) must read differently from *no rows match this filter* ("No rows match \"`<q>`\"" plus a quiet "Clear filters").
+- **Row preview and diff are paginated and filterable** — 5,400 rows never render at once, and the footer states `Showing 1–n of N` in `--text-muted`.
+- **Touch targets** follow §7: 28px icon buttons at fine pointer, a 44px minimum hit area under `@media (pointer: coarse)`. The drop zone is already well past 44px.
