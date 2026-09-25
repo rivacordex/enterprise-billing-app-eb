@@ -48,10 +48,10 @@ function collectFiles(dir: string): string[] {
 // (`"https://…"` → truncated at the `//`), which silently hides real residue
 // after such a sequence on the same line. The scanner tracks string state and
 // only treats `//`/`/*` as a comment in code context, so a token after a URL
-// or inside a string is still seen. Known, accepted limit: a regex literal
-// containing an unescaped `//` or `/*` can still be misread as a comment — rare,
-// and the residue patterns are unlikely to co-occur with one; the blind form
-// had the same gap and worse.
+// or inside a string is still seen, and it consumes backslash escapes so a
+// regex literal's escaped slash (`/^\//`) is not misread as `//`. Residual
+// limit: a regex literal with an *unescaped* `//` or `/*` (rare) can still trip
+// the comment branch; the blind form had that gap and worse.
 function stripComments(source: string): string {
   let out = "";
   let i = 0;
@@ -72,6 +72,16 @@ function stripComments(source: string): string {
         if (source[i] === "\n") out += "\n";
         i++;
       }
+      i += 2;
+      continue;
+    }
+    // Backslash escape in code context — outside a string/comment the only
+    // place a backslash appears is a regex literal, so consume the escaped
+    // char. This keeps an escaped slash `\/` (e.g. in `/^\//`, live in the
+    // scanned `tests/` tree) from being read as the start of a `//` comment.
+    if (c === "\\") {
+      out += c;
+      if (i + 1 < n) out += source[i + 1];
       i += 2;
       continue;
     }

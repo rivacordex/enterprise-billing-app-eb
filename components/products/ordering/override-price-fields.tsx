@@ -10,6 +10,7 @@ import type { WizardFormValues } from "@/components/products/ordering/wizard-for
 import {
   overrideLaneOf,
   overrideListAmount,
+  overridableLanes,
 } from "@/components/products/ordering/price-override";
 
 export interface OverridePriceFieldsProps {
@@ -42,6 +43,7 @@ export function OverridePriceFields({
   } = useFormContext<WizardFormValues>();
 
   const overrides = useWatch({ control, name: "overrides" }) ?? [];
+  const overridable = overridableLanes(prices);
 
   return (
     <fieldset className="flex flex-col gap-2">
@@ -51,7 +53,9 @@ export function OverridePriceFields({
 
       {prices.map((price) => {
         const lane = overrideLaneOf(price);
-        if (lane === null) {
+        // Not overridable when the component has no lane (capacity), or when the
+        // lane is shared by more than one current price (ambiguous, pm56b D2.1).
+        if (lane === null || !overridable.has(lane)) {
           return (
             <div
               key={price.productOfferingPriceId}

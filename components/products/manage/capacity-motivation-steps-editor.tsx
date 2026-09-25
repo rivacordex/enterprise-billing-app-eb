@@ -46,6 +46,20 @@ export interface CapacityMotivationStepsEditorProps {
 
 const TOUCH_ICON = "[@media(pointer:coarse)]:size-11";
 
+// A plain positive decimal — the shape the quantity/money fields accept
+// (price-form's `MONEY_REGEX`). Exponent/hex forms are excluded.
+const POSITIVE_DECIMAL = /^\d+(\.\d+)?$/;
+
+// A well-formed, finite positive threshold: `POSITIVE_DECIMAL` bounds the shape
+// and `Number.isFinite` bounds the magnitude (a long-enough digit string parses
+// to `Infinity`). Both the reorder and the duplicate check below use this so the
+// live editor agrees with the submit-time schema (price-form's
+// `isPositiveFiniteNumber`) on what counts as a valid threshold — an exponent/hex
+// or overflowing value is a *format* error there, never a reorder or a duplicate.
+function isFiniteThreshold(raw: string): boolean {
+  return POSITIVE_DECIMAL.test(raw) && Number.isFinite(Number(raw));
+}
+
 // pm55-spec D2. Reorders on commit of the edited row (blur), not on every
 // keystroke — a row with an empty/unparseable threshold is left where it is,
 // never reordered on a partial entry.
@@ -53,7 +67,7 @@ function commitOrder(rows: StepRow[]): StepRow[] {
   const parsed = rows.map((row) => {
     const trimmed = row.aboveQuantity.trim();
     const n = Number(trimmed);
-    return { row, valid: trimmed !== "" && Number.isFinite(n), n };
+    return { row, valid: isFiniteThreshold(trimmed), n };
   });
   if (parsed.some((entry) => !entry.valid)) return rows;
   return parsed.sort((a, b) => a.n - b.n).map((entry) => entry.row);
@@ -65,17 +79,18 @@ function commitOrder(rows: StepRow[]): StepRow[] {
 // an earlier row that already held the value first is never itself flagged.
 function duplicateMessage(rows: StepRow[], index: number): string | null {
   const raw = rows[index]!.aboveQuantity.trim();
-  if (raw === "") return null;
+  // Only a valid positive decimal participates in duplicate detection. An
+  // exponent/hex form (e.g. "1e3", "0x10") is an invalid threshold the form
+  // schema rejects as a *format* error first (price-form's steps superRefine,
+  // via `isPositiveFiniteNumber`), before it ever computes its duplicate key —
+  // so treating such a value as a numeric duplicate here would both mask that
+  // format error and disagree with the schema. Apply the same rule to earlier
+  // rows so only well-formed thresholds are compared.
+  if (!isFiniteThreshold(raw)) return null;
   const current = Number(raw);
-  // Normalise numerically, matching the schema's own duplicate key
-  // (price-form's steps superRefine compares on String(Number(...))), so the
-  // live editor and the submit-time check agree — "1000" and "1e3" are the
-  // same threshold to both, and the message names the same value the schema
-  // would (FieldError dedupes when they coincide).
-  if (!Number.isFinite(current)) return null;
   const isDuplicate = rows.slice(0, index).some((row) => {
     const other = row.aboveQuantity.trim();
-    return other !== "" && Number(other) === current;
+    return isFiniteThreshold(other) && Number(other) === current;
   });
   return isDuplicate
     ? `Duplicate threshold — a step already exists for ${current}.`

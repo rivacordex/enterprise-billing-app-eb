@@ -56,7 +56,11 @@ function isPositiveFiniteNumber(raw: string): boolean {
   // quantity field never silently swallows hex/exponent forms the decimal
   // input never intends (Number("0x10") → 16, Number("1e3") → 1000).
   if (!MONEY_REGEX.test(trimmed)) return false;
-  return Number(trimmed) > 0;
+  // `MONEY_REGEX` bounds the shape but not the magnitude — a long enough digit
+  // string still parses to `Infinity` (`Number("9".repeat(400))`), which would
+  // slip past a bare `> 0`. Require a finite value so the name's promise holds.
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value > 0;
 }
 
 // Local calendar date (not UTC — `toISOString()` can land on the wrong day

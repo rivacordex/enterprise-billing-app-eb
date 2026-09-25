@@ -24,7 +24,10 @@ import { WizardStepAccount } from "@/components/products/ordering/wizard-step-ac
 import { WizardStepCustomer } from "@/components/products/ordering/wizard-step-customer";
 import { WizardStepOffer } from "@/components/products/ordering/wizard-step-offer";
 import type { WizardFormValues } from "@/components/products/ordering/wizard-form-types";
-import { overrideLaneOf } from "@/components/products/ordering/price-override";
+import {
+  overrideLaneOf,
+  overridableLanes,
+} from "@/components/products/ordering/price-override";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -275,10 +278,19 @@ export function NewOrderWizard({
         // whenever the selected offer changes. Only usage_rate + flat_fee have
         // a lane (pm50's OVERRIDE_TARGET_BY_PRICE_TYPE); capacity components get
         // no slot (pm56b — replaces the old `pricingModel === "flat"` filter).
-        const overrideSeeds = detail.prices.flatMap((p) => {
-          if (p.effectivityStatus !== "current") return [];
+        // A lane shared by two current prices is ambiguous and gets no slot
+        // (pm56b D2.1), so at most one override per lane is ever seeded. The
+        // overridable set and the seeds are both computed from the same current
+        // subset `OverridePriceFields` renders, so seed and render never diverge.
+        const currentPrices = detail.prices.filter(
+          (p) => p.effectivityStatus === "current",
+        );
+        const overridable = overridableLanes(currentPrices);
+        const overrideSeeds = currentPrices.flatMap((p) => {
           const lane = overrideLaneOf(p);
-          return lane === null ? [] : [{ priceType: lane, amount: "" }];
+          return lane !== null && overridable.has(lane)
+            ? [{ priceType: lane, amount: "" }]
+            : [];
         });
         form.setValue("overrides", overrideSeeds);
       })

@@ -109,6 +109,11 @@ export function WizardStepOffer({
   const currentPrices =
     offeringDetail?.prices.filter((p) => p.effectivityStatus === "current") ??
     [];
+  // `renderPriceAmount` reads the full price list to resolve a capacity_motivation
+  // card's base rate from its same-unit `usage_rate` sibling (any status),
+  // matching the shared contract in `prices-panel`; the list below still shows
+  // only current prices.
+  const allPrices = offeringDetail?.prices ?? [];
 
   return (
     <div className="space-y-4">
@@ -201,7 +206,7 @@ export function WizardStepOffer({
                   >
                     <span>{price.name}</span>
                     <div className="text-right">
-                      {renderPriceAmount(price, currentPrices, locale)}
+                      {renderPriceAmount(price, allPrices, locale)}
                     </div>
                   </div>
                 ))}

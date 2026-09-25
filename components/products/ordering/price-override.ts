@@ -23,6 +23,28 @@ export function overrideLaneOf(price: PriceCard): OverridePriceType | null {
   }
 }
 
+// pm56b D2.1 — a lane is overridable only when **exactly one** current price
+// maps to it. A negotiated override resolves against a single scalar catalog
+// row (Inv. #16), so a lane carrying two current prices — e.g. two `usage_rate`
+// rows in different units, both mapping to the `usage` lane — is ambiguous and
+// is offered read-only rather than mis-wiring the two rows onto one override
+// slot (and tripping `create-order.schema`'s "at most one override per price
+// type"). Only current prices count; a superseded/future row never claims a lane.
+export function overridableLanes(prices: PriceCard[]): Set<OverridePriceType> {
+  const counts = new Map<OverridePriceType, number>();
+  for (const price of prices) {
+    if (price.effectivityStatus !== "current") continue;
+    const lane = overrideLaneOf(price);
+    if (lane === null) continue;
+    counts.set(lane, (counts.get(lane) ?? 0) + 1);
+  }
+  const lanes = new Set<OverridePriceType>();
+  for (const [lane, n] of counts) {
+    if (n === 1) lanes.add(lane);
+  }
+  return lanes;
+}
+
 // The scalar list amount a negotiated override strikes through: `usage_rate`'s
 // per-unit rate or `flat_fee`'s amount. `null` for the non-overridable capacity
 // components, which show no list amount.
