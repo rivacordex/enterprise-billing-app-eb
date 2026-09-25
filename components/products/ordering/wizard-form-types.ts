@@ -1,4 +1,4 @@
-import type { PriceType } from "@/types/product";
+import type { OverridePriceType } from "@/types/ordering";
 
 // pm29-spec §Implementation-2. The UI-only shape backing the wizard's Step 3
 // react-hook-form instance (Design — "local zodResolver on createOrderSchema
@@ -11,5 +11,5 @@ export type WizardFormValues = {
   quantity: number;
   startDate: string;
   characteristicsList: { key: string; value: string }[];
-  overrides: { priceType: PriceType; amount: string }[];
+  overrides: { priceType: OverridePriceType; amount: string }[];
 };

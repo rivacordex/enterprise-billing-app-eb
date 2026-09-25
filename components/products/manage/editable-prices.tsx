@@ -175,6 +175,7 @@ export function EditablePrices({
   const editTriggers = useRef<Map<string, HTMLButtonElement | null>>(new Map());
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
   const pendingFocusRef = useRef<string | "add" | null>(null);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const target = pendingFocusRef.current;
@@ -186,6 +187,15 @@ export function EditablePrices({
         : (editTriggers.current.get(target) ?? addButtonRef.current);
     el?.focus();
   }, [active, deleting]);
+
+  // When the blocking banner appears, move focus to it. A save/delete that
+  // returns a violation disables the control that had focus (Save, or the
+  // delete confirmation's Delete button), which would otherwise strand focus
+  // on <body>; focusing the danger alert both announces the refusal and keeps
+  // keyboard focus on the explanation of why the action was blocked.
+  useEffect(() => {
+    if (violation !== null) bannerRef.current?.focus();
+  }, [violation]);
 
   function requestActivate(next: ActiveEditor): void {
     if (active.kind !== "none" && dirty) {
@@ -312,12 +322,19 @@ export function EditablePrices({
             values.componentType === "capacity_commitment" ||
             values.componentType === "capacity_motivation"
           ) {
+            // The submitted row IS the modifier that lacks a base rate.
             setViolation({
               code: "MODIFIER_WITHOUT_BASE_RATE",
               unitOfMeasure: result.unitOfMeasure,
               componentType: values.componentType,
             });
-          } else if (values.componentType === "usage_rate") {
+          } else {
+            // The submitted row is a base component (usage_rate) or a flat_fee
+            // that replaced one — either way it removed or retyped the base
+            // rate a sibling modifier depends on. pm49's result carries only
+            // the unit (pm54 D4), so read back which modifier now lacks a base
+            // from the still-visible rows — the same "read what was just
+            // submitted" rule the delete path applies.
             setViolation({
               code: "MODIFIER_WITHOUT_BASE_RATE",
               unitOfMeasure: result.unitOfMeasure,
@@ -420,7 +437,7 @@ export function EditablePrices({
 
   return (
     <div className="mt-2 flex flex-col gap-2">
-      <OfferingComponentErrorBanner violation={violation} />
+      <OfferingComponentErrorBanner violation={violation} ref={bannerRef} />
 
       {staleBanner ? (
         <div

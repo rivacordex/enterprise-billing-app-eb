@@ -37,18 +37,78 @@ function collectFiles(dir: string): string[] {
   return files;
 }
 
-// Strips `//` line comments and `/* */` block comments (crude but sufficient
-// for TS/TSX source with no such sequence inside a string literal in this
-// codebase's style) so a doc comment that *names* a deleted identifier to
-// explain its absence — e.g. types/product.ts's "Deleted: PricingModel and
-// PriceType" note — is not itself flagged as residue. What remains is real
-// code: an import, a property access, a type reference or a string literal.
+// Strips `//` line comments and `/* */` block comments so a doc comment that
+// *names* a deleted identifier to explain its absence — e.g. types/product.ts's
+// "Deleted: PricingModel and PriceType" note — is not itself flagged as
+// residue. What remains is real code: an import, a property access, a type
+// reference or a string literal (a `"tiered"` literal IS residue and is kept).
+//
+// This is a single-pass scanner rather than two blind regexes because the
+// blind form strips `//` and `/* */` *inside* string literals and URLs too
+// (`"https://…"` → truncated at the `//`), which silently hides real residue
+// after such a sequence on the same line. The scanner tracks string state and
+// only treats `//`/`/*` as a comment in code context, so a token after a URL
+// or inside a string is still seen, and it consumes backslash escapes so a
+// regex literal's escaped slash (`/^\//`) is not misread as `//`. Residual
+// limit: a regex literal with an *unescaped* `//` or `/*` (rare) can still trip
+// the comment branch; the blind form had that gap and worse.
 function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+    // Line comment — drop to end of line, keep the newline.
+    if (c === "/" && next === "/") {
+      i += 2;
+      while (i < n && source[i] !== "\n") i++;
+      continue;
+    }
+    // Block comment — drop through `*/`, preserving interior newlines.
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) {
+        if (source[i] === "\n") out += "\n";
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    // Backslash escape in code context — outside a string/comment the only
+    // place a backslash appears is a regex literal, so consume the escaped
+    // char. This keeps an escaped slash `\/` (e.g. in `/^\//`, live in the
+    // scanned `tests/` tree) from being read as the start of a `//` comment.
+    if (c === "\\") {
+      out += c;
+      if (i + 1 < n) out += source[i + 1];
+      i += 2;
+      continue;
+    }
+    // String literal (single/double/template) — copy verbatim, honouring
+    // escapes, so `//` and `/*` inside a string or URL are never mistaken for
+    // a comment and a residue token inside a string is preserved.
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < n) {
+        const s = source[i];
+        out += s;
+        if (s === "\\") {
+          if (i + 1 < n) out += source[i + 1];
+          i += 2;
+          continue;
+        }
+        i++;
+        if (s === quote) break;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", () => {
@@ -91,11 +151,21 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       "tests",
     ].map((d) => path.join(REPO_ROOT, d));
 
-    const SELF = path.resolve(__filename);
+    // pm56a/I3 (D3) — exclude `tests/guardrails/**` from the walk, a
+    // deliberate §7.10 deviation from pm56-spec D1's literal `tests/` root.
+    // A sibling guardrail that *names* a dropped token to assert its absence
+    // (e.g. product-module-boundaries.test.ts's DROPPED_COLUMNS/DROPPED_CHECKS
+    // arrays) is the enforcement layer, not residue — scanning the guardrails
+    // for the vocabulary they enforce is a category error that would keep this
+    // gate red forever. NOT a §6.9 relaxation: the assertion and pattern list
+    // are unchanged, and real residue (production code + any non-guardrail
+    // fixture) is still caught. This file lives under that dir, so this also
+    // subsumes the former self-exclusion.
+    const GUARDRAILS_DIR = path.join(REPO_ROOT, "tests", "guardrails");
     const offenders: string[] = [];
     for (const root of SCAN_ROOTS) {
       for (const file of collectFiles(root)) {
-        if (path.resolve(file) === SELF) continue;
+        if (path.resolve(file).startsWith(GUARDRAILS_DIR + path.sep)) continue;
         const stripped = stripComments(fs.readFileSync(file, "utf8"));
         for (const [name, re] of PATTERNS) {
           if (re.test(stripped)) {
@@ -105,18 +175,15 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       }
     }
 
-    // KNOWN, FLAGGED, NOT FIXED HERE (D-header — this unit changes no
-    // production code): the ordering-wizard chain and its own tests still
-    // carry the pre-pm47 PriceCard shape (pricingModel/priceType/amount) and
-    // the deleted `PriceType` import — tracked since pm47-spec's own
-    // deviations paragraph, restated at pm53/pm54/pm55 as "the
-    // ordering-wizard chain, unrelated PriceCard shape, still awaiting its
-    // own unit," and confirmed still true by this gate's own `tsc --noEmit`
-    // run (35 errors, the identical file set). No unit in pm46-pm56 owns
-    // components/products/ordering/**, so this guardrail asserts the real,
-    // current, FAILING state rather than excluding it to appear green
-    // (workflow §6.9 — never relax a gate to pass). See this unit's evidence
-    // table / hand-off register for the disposition.
+    // GREEN as of pm56b (2026-09-25). The tiered/pricing_model/PriceType
+    // residue is fully gone: pm56a swept the pre-pm46 test fixtures and
+    // excluded the guardrails dir (above); pm56b re-keyed the New Order Wizard
+    // chain (`components/products/ordering/**` + its test) off the deleted
+    // `PriceCard.pricingModel`/`.priceType`/`.amount` and the deleted
+    // `PriceType` import onto the pm47 envelope. `tsc --noEmit` is clean
+    // repo-wide. This assertion was never weakened to reach green (workflow
+    // §6.9) — the residue was actually removed. See `specs/pm56a-fixture-sweep.md`
+    // / `specs/pm56b-ordering-wizard-rekey.md` and the Part 4 hand-off register.
     expect(offenders.sort()).toEqual([]);
   });
 
@@ -251,7 +318,7 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
   // typed codes reaching a caller live-DB, through insert/update/delete, are
   // already proven in tests/db/product-price-components.integration.test.ts
   // (pm49) — referenced, not re-implemented, and re-run by this ship gate.
-  it("guardrail 33 — all three price-write services call validateOfferingComponents after the DRAFT gate (VI3-VI5)", () => {
+  it("guardrail 33 — all three price-write services import + call validateOfferingComponents exactly once, and no VI3-VI5 copy exists elsewhere (structural; the after-DRAFT-gate ordering and typed codes are proven live in product-price-components.integration.test.ts)", () => {
     for (const file of [
       "insert-price.ts",
       "update-price.ts",
@@ -284,7 +351,16 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
     expect(validatorSource).toMatch(
       /export\s+(?:async\s+function|const)\s+validateOfferingComponents\s*[=(]/,
     );
-    expect(validatorSource.match(/^\s*tx\s*[:,]/m)).not.toBeNull();
+    // `tx` is the first parameter (code-standards §2.14) — anchored to the
+    // declaration and tolerant of the signature's formatting (multi-line or
+    // single-line, `function` or arrow/async), so a purely cosmetic reformat
+    // of a still-correct signature does not falsely fail this gate.
+    expect(
+      validatorSource.match(
+        /validateOfferingComponents\s*(?:=\s*(?:async\s*)?)?\(\s*tx\s*[:,)]/,
+      ),
+      "validateOfferingComponents must take tx as its first parameter (§2.14)",
+    ).not.toBeNull();
 
     const otherServiceFiles = collectFiles(
       path.join(REPO_ROOT, "services", "product"),
@@ -343,11 +419,13 @@ describe("pricing-component guardrails (pm56 ship gate, code-standards §9)", ()
       boundTo: { priceType: "usage", unitOfMeasure: "EA" },
       params: { ratePerUnit: "1" },
     };
-    expect(negotiatedOverrideComponentSchema.safeParse(validNegotiatedOverride).success).toBe(
-      true,
-    );
     expect(
-      persistablePricingComponentSchema.safeParse(validNegotiatedOverride).success,
+      negotiatedOverrideComponentSchema.safeParse(validNegotiatedOverride)
+        .success,
+    ).toBe(true);
+    expect(
+      persistablePricingComponentSchema.safeParse(validNegotiatedOverride)
+        .success,
     ).toBe(false);
   });
 });

@@ -240,9 +240,9 @@ The three categories render **in one view** (chip row plus a per-row column), so
 |---|---|---|---|---|
 | Added | A key absent from the current `ACTIVE` version | `#0F5C32` success-700 | `#E6F6EC` success-50 | plus |
 | Changed | A key present in both versions whose value differs | `#0C4084` info-700 | `#E7F1FD` info-50 | pencil-line |
-| Retiring | Present in the outgoing version, absent from the upload — carried forward and closed at `snapshot_date` | `#8A1717` danger-700 | `#FDEAEA` danger-50 | archive |
+| Removed | Present in the current `ACTIVE` version, absent from the upload — not in the new version; stays readable in the superseded one (D-A7) | `#8A1717` danger-700 | `#FDEAEA` danger-50 | archive |
 
-**Retiring takes danger, a deliberate departure from §1.** §1 renders end-of-life (`OBSOLETE` / `RETIRED`) as neutral and muted; here that would bury the only change a user cannot undo without a rollback — traffic after `snapshot_date` stops resolving. The copy carries the nuance so danger never reads as *deleted*: *"carried forward, closed at `<snapshot_date>` — earlier periods still resolve"*, with the date in `--text-primary` weight 500 and the qualifier in `--text-muted`. The label is **"Retiring"**, never "Removed" or "Deleted".
+**Removed takes danger, a deliberate departure from §1.** §1 renders end-of-life (`OBSOLETE` / `RETIRED`) as neutral and muted; here that would bury the only change a user cannot undo without a rollback — the key is absent from the version going live. The label is **"Removed"**, never "Deleted": the row is not destroyed, it remains in the superseded version. There is no carry-forward copy and no closing date (D-A7).
 
 **Changed-value cells** show both states inline: the old value `--text-muted` with `line-through`, the new value `--text-primary` weight 500, both `--font-mono`. No red/green fill on the cell itself — the row's category badge already carries the color.
 
@@ -255,15 +255,14 @@ The three categories render **in one view** (chip row plus a per-row column), so
 | Banner | Tint | Icon | Placement | Blocking |
 |---|---|---|---|---|
 | Upload rejected — no version created | `--bg-danger` / `--text-danger` | ban | Top of the error dialog body | The upload already failed |
-| Validation passed, with warnings | `--bg-info` / `--text-info` | check-circle | Top of the Validation tab | Never — a `file_checksum` matching an earlier version does not block activation |
-| Carry-forward summary (`n` polygons closed at `<date>`) | `--bg-info` / `--text-info` | archive | Inside the Activate confirmation | Never |
-| Re-rating an earlier period will use this version | `--bg-warning` / `--text-warning` | history | Inside the Activate confirmation | Never |
+| Validation passed, with warnings | `--bg-info` / `--text-info` | check-circle | Top of the Validation tab | Never — the only warning is a duplicate-upload checksum match, which does not block activation |
+| Removed rows stay readable in the superseded version, which can be rolled back to | `--bg-info` / `--text-info` | info | Inside the Activate confirmation | Never |
 
 ### 10.5 Version list, selected-version header, tabs
 
 **Version list.** One row per version, newest first: `RCV########` (mono), `RateCardStatusBadge`, snapshot date, row count (`tabular-nums`), uploader / activator and timestamps. The selected row takes `--surface-selected`; a `SUPERSEDED` row renders muted, per §1's convention for superseded things. A "One Active version per card" note sits in the card header in `--text-muted` with a `lock` icon — it states a DB guarantee, so it is informational, not a warning.
 
-**Selected-version header** carries a metadata strip — `--surface-sunken`, `--text-overline` labels over `--text-primary` weight 500 values — for card name, snapshot date, row count, checksum (mono, middle-truncated `a91f…3c02`), validation result and the version it replaces. Dates render ISO (`YYYY-MM-DD`) throughout this page rather than localized: `snapshot_date` and `polygon_start_date` are **match keys read out of a file**, not human-facing schedule dates.
+**Selected-version header** carries a metadata strip — `--surface-sunken`, `--text-overline` labels over `--text-primary` weight 500 values — for card name, snapshot date, row count, checksum (mono, middle-truncated `a91f…3c02`), validation result and the version it replaces. Dates render ISO (`YYYY-MM-DD`) throughout this page rather than localized: `polygon_start_date` is a **match key read out of the file**, and `snapshot_date` is the **upload's calendar date** stamped by the server (D-A8) — neither is a human-facing schedule date. The `snapshot_date` label may read "Snapshot date" or "Uploaded on"; the value stays ISO.
 
 **Tabs — a new pattern for this module.** Rows / Diff vs Active / Validation, each with a count chip. Underline tabs: `--radius-none`, inactive `--text-muted`, active `--text-link` with a 2px `--color-primary-500` bottom border, on `--surface-card` above a `--border-default` hairline. Tabs rather than §7's version bar because these are **three views of one version**, not a selection among records — the version bar's job is already done by the list above. Tab state is URL-driven (`?tab=`), matching the module's deep-link convention (code-standards §3.5).
 
@@ -286,8 +285,8 @@ The three categories render **in one view** (chip row plus a per-row column), so
 | Dialog | Pattern | Body copy | Confirm |
 |---|---|---|---|
 | Upload | Plain, `upload` icon in `--text-link` | Drop zone (2px dashed `--border-strong` on `--surface-sunken`, `--radius-md`, `file-spreadsheet` in `--text-disabled`), card-name select, and a hint: *"Uploads land as **Draft**. Nothing is used by a rating run until you activate it."* | "Upload & validate", `--action-primary-bg` |
-| Upload rejected | **Not** an `AlertDialog` — a plain dialog with `alert-triangle` in `--text-danger`; the failure already happened, there is nothing to confirm | Danger banner *"No version was created. Fix the file and upload again."* then a Row / Column / Reason table — row numbers `tabular-nums`, column names `--font-mono`, reason in plain body text quoting the validator verbatim (*"snapshot_date is not a valid date"*) | "Close", `--action-primary-bg`; "Export errors" secondary |
-| Activate | Plain confirmation, **not danger** (§7's Activate-confirmation construction) | Names the superseded version, then the three §10.2 change counts in a metadata strip, then the carry-forward info banner and the re-rate warning banner (§10.4) | "Activate", `--action-cta-bg` |
+| Upload rejected | **Not** an `AlertDialog` — a plain dialog with `alert-triangle` in `--text-danger`; the failure already happened, there is nothing to confirm | Danger banner *"No version was created. Fix the file and upload again."* then a Row / Column / Reason table — row numbers `tabular-nums`, column names `--font-mono`, reason in plain body text quoting the validator verbatim (*"Polygon Start Date must be a real date in YYYY-MM-DD form"*) | "Close", `--action-primary-bg`; "Export errors" secondary |
+| Activate | Plain confirmation, **not danger** (§7's Activate-confirmation construction) | Names the superseded version, then the three §10.2 change counts (added / changed / removed) in a metadata strip, then the removed-rows note (§10.4) | "Activate", `--action-cta-bg` |
 | Roll back | Plain confirmation, **not danger** — versions are immutable, so nothing is lost and the move is itself reversible | Names the version being demoted and repeats the same change counts, computed in the other direction | "Roll back", `--action-cta-bg` |
 | Discard draft | Danger `AlertDialog` (§7's `DeleteVersionDialog` construction) | *"Discarding `<RCV…>` deletes this version and its `<n>` rows. It never went live and this cannot be undone."* | "Discard version" |
 

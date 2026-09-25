@@ -25,21 +25,20 @@ function redirectError(target: string): Error & { digest: string } {
 
 const OFFERING_ID = "PRDOFR000001";
 
-// pm38: the recurring branch is now discriminated and strict — it requires a
-// charge period (length ∈ 1/3/12, type `months`) and forbids `unitOfMeasure`.
+// pm47-spec D7: the flat_fee recurring branch is discriminated on
+// `componentType` + `priceType` and strict — it requires a charge period
+// (length ∈ 1/3/12, type `months`), carries its money in `params.amount`, and
+// forbids `unitOfMeasure`.
 const VALID_INPUT = {
+  componentType: "flat_fee" as const,
+  priceType: "recurring" as const,
   name: "Monthly recurring",
-  priceType: "recurring",
   recurringChargePeriodLength: 1,
-  recurringChargePeriodType: "months",
+  recurringChargePeriodType: "months" as const,
   currency: "USD",
   glCode: null,
+  params: { amount: "50.00" },
   startDateTime: new Date(),
-  priceCharacteristics: {
-    pricing_model: "flat",
-    amount: "50.00",
-    pricing_characteristics: null,
-  },
 };
 
 beforeEach(() => {

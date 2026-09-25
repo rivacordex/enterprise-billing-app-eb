@@ -13,7 +13,7 @@ import {
 import type { WizardFormValues } from "@/components/products/ordering/wizard-form-types";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { formatCurrency } from "@/lib/formatters";
+import { renderPriceAmount } from "@/components/products/price-amount";
 import { BACKDATING_TOLERANCE_DAYS } from "@/validation/backdating-tolerance";
 import type { OfferingDetail } from "@/types/product";
 
@@ -109,6 +109,11 @@ export function WizardStepOffer({
   const currentPrices =
     offeringDetail?.prices.filter((p) => p.effectivityStatus === "current") ??
     [];
+  // `renderPriceAmount` reads the full price list to resolve a capacity_motivation
+  // card's base rate from its same-unit `usage_rate` sibling (any status),
+  // matching the shared contract in `prices-panel`; the list below still shows
+  // only current prices.
+  const allPrices = offeringDetail?.prices ?? [];
 
   return (
     <div className="space-y-4">
@@ -197,19 +202,12 @@ export function WizardStepOffer({
                 {currentPrices.map((price) => (
                   <div
                     key={price.productOfferingPriceId}
-                    className="flex items-center justify-between text-body-sm"
+                    className="flex items-center justify-between gap-2 text-body-sm"
                   >
-                    <span>
-                      {price.name}{" "}
-                      <span className="text-muted-foreground">
-                        ({price.priceType})
-                      </span>
-                    </span>
-                    <span className="tabular-nums">
-                      {price.amount !== null
-                        ? formatCurrency(price.amount, price.currency, locale)
-                        : "tiered"}
-                    </span>
+                    <span>{price.name}</span>
+                    <div className="text-right">
+                      {renderPriceAmount(price, allPrices, locale)}
+                    </div>
                   </div>
                 ))}
               </fieldset>

@@ -263,6 +263,36 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow("product_offering_price_envelope_type_check");
     });
 
+    it("rejects a recurring flat_fee whose recurring_charge_period_length is 6 (not 1/3/12)", async () => {
+      const offeringId = await createOffering("pm46 flat_fee period 6");
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "flat_fee",
+          priceComponent: flatFeeEnvelope({
+            priceType: "recurring",
+            params: { amount: "5000" },
+          }),
+          periodLength: 6,
+          periodType: "months",
+        }),
+      ).rejects.toThrow("product_offering_price_period_value_check");
+    });
+
+    it("rejects a usage_rate whose unit_of_measure is 'XX' (not Mbps/GB/MB/EA)", async () => {
+      const offeringId = await createOffering("pm46 usage_rate bad unit");
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "usage_rate",
+          priceComponent: usageRateEnvelope({
+            boundTo: { unitOfMeasure: "XX" },
+          }),
+          unitOfMeasure: "XX",
+        }),
+      ).rejects.toThrow("product_offering_price_unit_value_check");
+    });
+
     it("rejects usage_rate with NULL unit_of_measure", async () => {
       const offeringId = await createOffering("pm46 usage_rate null unit");
       await expect(

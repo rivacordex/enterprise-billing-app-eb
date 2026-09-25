@@ -90,16 +90,23 @@ const OFFERING_DETAIL = {
     {
       productOfferingPriceId: "PRDOFP00000001",
       name: "Monthly fee",
-      priceType: "recurring" as const,
-      pricingModel: "flat" as const,
-      amount: "50.00",
+      componentType: "flat_fee" as const,
+      component: {
+        "@type": "flat_fee",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "recurring",
+        appliesAt: "billing",
+        basis: "flat",
+        boundTo: null,
+        params: { amount: "50.00" },
+      } as const,
       currency: "USD",
       recurringChargePeriodLength: 1,
-      recurringChargePeriodType: "month",
+      recurringChargePeriodType: "months",
       unitOfMeasure: null,
       glCode: null,
       policy: null,
-      pricingCharacteristics: null,
       startDateTime: new Date("2020-01-01"),
       createdAt: new Date("2020-01-01"),
       endDateTime: null,
@@ -319,5 +326,111 @@ describe("NewOrderWizard — submit", () => {
       "Order PRDORD00000001 completed",
     );
     expect(mockRefresh).toHaveBeenCalled();
+  });
+});
+
+describe("NewOrderWizard — override eligibility (pm56b D2.1)", () => {
+  function usageRateCard(id: string, unit: "GB" | "MB", rate: string) {
+    return {
+      productOfferingPriceId: id,
+      name: `Usage (${unit})`,
+      componentType: "usage_rate" as const,
+      component: {
+        "@type": "usage_rate",
+        specVersion: 1,
+        plaSpecId: null,
+        priceType: "usage",
+        appliesAt: "rating",
+        basis: "quantity",
+        boundTo: { unitOfMeasure: unit },
+        params: { ratePerUnit: rate, rateCardLookUp: null },
+      } as const,
+      currency: "USD",
+      recurringChargePeriodLength: null,
+      recurringChargePeriodType: null,
+      unitOfMeasure: unit,
+      glCode: null,
+      policy: null,
+      startDateTime: new Date("2020-01-01"),
+      createdAt: new Date("2020-01-01"),
+      endDateTime: null,
+      effectivityStatus: "current" as const,
+    };
+  }
+
+  const CAPACITY_CARD = {
+    productOfferingPriceId: "PRDOFP00000009",
+    name: "Committed capacity",
+    componentType: "capacity_commitment" as const,
+    component: {
+      "@type": "capacity_commitment",
+      specVersion: 1,
+      plaSpecId: "PLA_CAPACITY_COMMITMENT",
+      priceType: "commitment",
+      appliesAt: "post_aggregation",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: "EA" },
+      params: { committedQuantity: 1000 },
+    } as const,
+    currency: "USD",
+    recurringChargePeriodLength: null,
+    recurringChargePeriodType: null,
+    unitOfMeasure: "EA",
+    glCode: null,
+    policy: null,
+    startDateTime: new Date("2020-01-01"),
+    createdAt: new Date("2020-01-01"),
+    endDateTime: null,
+    effectivityStatus: "current" as const,
+  };
+
+  async function reachStep3(user: ReturnType<typeof userEvent.setup>) {
+    await openAndSelectCustomer(user);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText(/Acme main account/);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.type(screen.getByLabelText("Search offers"), "fiber");
+    await screen.findByText("Fiber 100");
+    await user.click(screen.getByRole("button", { name: /Fiber 100/ }));
+    await screen.findByText("Current effective prices");
+  }
+
+  it("two current usage_rate prices in different units share the 'usage' lane and are both read-only", async () => {
+    mockGetOfferingDetail.mockResolvedValue({
+      ...OFFERING_DETAIL,
+      prices: [
+        usageRateCard("PRDOFP00000007", "GB", "0.10"),
+        usageRateCard("PRDOFP00000008", "MB", "0.05"),
+      ],
+    });
+    const user = userEvent.setup();
+    renderWizard();
+
+    await reachStep3(user);
+
+    // Ambiguous lane (two current prices) → neither is overridable: no
+    // negotiated-amount input, and both rows render "not overridable".
+    expect(
+      screen.queryByLabelText("Negotiated amount (USD)"),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("not overridable")).toHaveLength(2);
+  });
+
+  it("a capacity component is not overridable while a lone usage_rate is", async () => {
+    mockGetOfferingDetail.mockResolvedValue({
+      ...OFFERING_DETAIL,
+      prices: [usageRateCard("PRDOFP00000007", "GB", "0.10"), CAPACITY_CARD],
+    });
+    const user = userEvent.setup();
+    renderWizard();
+
+    await reachStep3(user);
+
+    // The lone usage_rate (unique 'usage' lane) is overridable; the capacity
+    // component has no lane and renders read-only.
+    expect(
+      screen.getByLabelText("Negotiated amount (USD)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("not overridable")).toBeInTheDocument();
   });
 });

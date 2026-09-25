@@ -30,6 +30,11 @@ export type OfferingComponentBannerViolation =
 
 export interface OfferingComponentErrorBannerProps {
   violation: OfferingComponentBannerViolation | null;
+  // The panel focuses the banner when it appears so keyboard focus is not
+  // dropped to <body> when the Save/Delete control that had focus disables
+  // (§4.19). A plain ref + tabIndex only — no hook, no state — so this stays a
+  // logic-free presentational component off the client-leaf budget (pm54 D5).
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 // D4's copy table — one entry per code, keyed off the code names (binding,
@@ -53,13 +58,16 @@ function copyFor(violation: OfferingComponentBannerViolation): string {
 // warning tint (§4), which would understate a rule that blocks the save.
 export function OfferingComponentErrorBanner({
   violation,
+  ref,
 }: OfferingComponentErrorBannerProps): React.JSX.Element | null {
   if (violation === null) return null;
 
   return (
     <div
+      ref={ref}
+      tabIndex={-1}
       role="alert"
-      className="mb-2 flex items-start gap-2 rounded-[var(--radius)] bg-[color:var(--bg-danger)] px-3 py-2 text-body-sm text-[color:var(--text-danger)]"
+      className="mb-2 flex items-start gap-2 rounded-[var(--radius)] bg-[color:var(--bg-danger)] px-3 py-2 text-body-sm text-[color:var(--text-danger)] outline-none"
     >
       <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
       <span>{copyFor(violation)}</span>

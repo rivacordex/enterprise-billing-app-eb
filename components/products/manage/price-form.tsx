@@ -51,9 +51,16 @@ const RECURRING_PERIOD_LENGTH_STRINGS: readonly string[] =
 const MONEY_REGEX = /^\d+(\.\d+)?$/;
 
 function isPositiveFiniteNumber(raw: string): boolean {
-  if (raw.trim() === "") return false;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0;
+  const trimmed = raw.trim();
+  // A plain positive decimal — the same shape the money fields accept, so a
+  // quantity field never silently swallows hex/exponent forms the decimal
+  // input never intends (Number("0x10") → 16, Number("1e3") → 1000).
+  if (!MONEY_REGEX.test(trimmed)) return false;
+  // `MONEY_REGEX` bounds the shape but not the magnitude — a long enough digit
+  // string still parses to `Infinity` (`Number("9".repeat(400))`), which would
+  // slip past a bare `> 0`. Require a finite value so the name's promise holds.
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value > 0;
 }
 
 // Local calendar date (not UTC — `toISOString()` can land on the wrong day
@@ -439,10 +446,18 @@ function toInsertPriceInput(
         componentType: "capacity_motivation",
         unitOfMeasure: values.unitOfMeasure as UnitOfMeasure,
         params: {
-          steps: values.steps.map((step) => ({
-            aboveQuantity: Number(step.aboveQuantity),
-            ratePerUnit: step.ratePerUnit,
-          })),
+          // pm55 D2 — the form keeps the steps ascending, never left for the
+          // server. The editor reorders on blur, but a save that bypasses the
+          // final blur (Cmd/Ctrl+Enter from within a step field) could submit
+          // an unsorted list; sorting here guarantees the ascending order the
+          // server's stepsSchema requires. Validation has already refused any
+          // non-positive or duplicate threshold, so this sort is total.
+          steps: values.steps
+            .map((step) => ({
+              aboveQuantity: Number(step.aboveQuantity),
+              ratePerUnit: step.ratePerUnit,
+            }))
+            .sort((a, b) => a.aboveQuantity - b.aboveQuantity),
         },
         ...core,
       };
@@ -912,7 +927,13 @@ export function PriceForm({
                   rowErrors={field.value.map(
                     (_, index) => errors.steps?.[index],
                   )}
-                  listError={errors.steps?.root}
+                  // `steps` is a Controller field (not useFieldArray), so a
+                  // schema issue at path ["steps"] — the "add at least one
+                  // step" case — lands on `errors.steps` itself, never on
+                  // `errors.steps.root` (@hookform/resolvers toNestErrors only
+                  // nests under `.root` when a `steps.<n>` field is
+                  // registered). Read it where it actually lands.
+                  listError={errors.steps as { message?: string } | undefined}
                 />
               )}
             />

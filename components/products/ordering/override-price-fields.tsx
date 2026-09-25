@@ -7,6 +7,11 @@ import { Input } from "@/components/ui/input";
 import { formatCurrency } from "@/lib/formatters";
 import type { PriceCard } from "@/types/product";
 import type { WizardFormValues } from "@/components/products/ordering/wizard-form-types";
+import {
+  overrideLaneOf,
+  overrideListAmount,
+  overridableLanes,
+} from "@/components/products/ordering/price-override";
 
 export interface OverridePriceFieldsProps {
   prices: PriceCard[];
@@ -15,14 +20,16 @@ export interface OverridePriceFieldsProps {
   isSubmitting: boolean;
 }
 
-// pm29-spec §Implementation-2. One row per **flat** price type — list amount
-// (struck when overridden) + optional negotiated input; tiered rows render
-// read-only ("not overridable" — tiers have no scalar amount to negotiate
-// against, architecture Inv. #16 only ever resolves overrides against a flat
-// catalog row). `overrides` in `WizardFormValues` is pre-seeded one entry per
-// flat price (same order as `prices`) whenever the selected offer changes
-// (`WizardStepOffer`'s effect) — a fixed-size list, not user-add/removable,
-// so this component reads/writes it by index, no `useFieldArray` needed.
+// pm29-spec §Implementation-2 (pm56b envelope re-key). One row per
+// **overridable** price — `usage_rate` + `flat_fee` — showing its list amount
+// (struck when overridden) + an optional negotiated input; capacity components
+// render read-only ("not overridable" — they carry a quantity/step shape with
+// no scalar amount to negotiate against, and Inv. #16 only ever resolves an
+// override against a scalar catalog row). `overrides` in `WizardFormValues` is
+// pre-seeded one entry per overridable price, keyed by its `OverridePriceType`
+// lane (`overrideLaneOf`), whenever the selected offer changes
+// (`WizardStepOffer`'s effect) — a fixed-size list, not user-add/removable, so
+// this component reads/writes it by index, no `useFieldArray` needed.
 export function OverridePriceFields({
   prices,
   currency,
@@ -36,6 +43,7 @@ export function OverridePriceFields({
   } = useFormContext<WizardFormValues>();
 
   const overrides = useWatch({ control, name: "overrides" }) ?? [];
+  const overridable = overridableLanes(prices);
 
   return (
     <fieldset className="flex flex-col gap-2">
@@ -44,7 +52,10 @@ export function OverridePriceFields({
       </legend>
 
       {prices.map((price) => {
-        if (price.pricingModel === "tiered") {
+        const lane = overrideLaneOf(price);
+        // Not overridable when the component has no lane (capacity), or when the
+        // lane is shared by more than one current price (ambiguous, pm56b D2.1).
+        if (lane === null || !overridable.has(lane)) {
           return (
             <div
               key={price.productOfferingPriceId}
@@ -56,9 +67,8 @@ export function OverridePriceFields({
           );
         }
 
-        const index = overrides.findIndex(
-          (o) => o.priceType === price.priceType,
-        );
+        const index = overrides.findIndex((o) => o.priceType === lane);
+        const listAmount = overrideListAmount(price);
         const overrideValue =
           index >= 0 ? (overrides[index]?.amount ?? "") : "";
         const hasOverride = overrideValue.trim() !== "";
@@ -74,8 +84,8 @@ export function OverridePriceFields({
                     : "text-foreground"
                 }
               >
-                {price.amount !== null
-                  ? formatCurrency(price.amount, price.currency, locale)
+                {listAmount !== null
+                  ? formatCurrency(listAmount, price.currency, locale)
                   : "—"}
               </span>
             </div>
