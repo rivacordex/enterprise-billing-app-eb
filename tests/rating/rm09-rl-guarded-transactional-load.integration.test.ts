@@ -150,7 +150,7 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
       "workflow-management",
       "flows",
       "rating-engine",
-      "ran-usage-rating.yaml",
+      "rating-engine-ran-usage.yaml",
     ),
     "utf8",
   );

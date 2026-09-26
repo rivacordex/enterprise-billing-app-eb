@@ -1,6 +1,6 @@
 """Rating Loader (RL) — guarded transactional load (rm09).
 
-Replaces the rm06/rm07/rm08 ``rl`` stub in ``flows/ran-usage-rating.yaml``. RL is
+Replaces the rm06/rm07/rm08 ``rl`` stub in ``flows/rating-engine-ran-usage.yaml``. RL is
 the last of the three flow sections (``prp`` → ``rp`` → ``rl``): it consumes RP's
 rated manifest (``outputs.rp.uri``) and, in **one** psycopg transaction (Inv #8),
 guards, (rm10) supersedes and bulk-inserts the rated rows at ``RATED`` — then,

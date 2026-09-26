@@ -135,7 +135,7 @@ Also builds the **local development stack**, extending the pattern already in `e
 - **Shrinking-reissue detection is merged here** because it cannot be demonstrated without supersession and is always built alongside it.
 
 ### Unit rm11 — Stranded-batch recovery
-- **Repo:** rating repo · **Boundary:** `flows/**` — `stranded-batch-reconcile`
+- **Repo:** rating repo · **Boundary:** `flows/**` — `rating-batch-reconcile`
 - **Builds:** a startup/scheduled flow finding `udr_batch` rows stuck at `PROCESSING` beyond a threshold and resolving them explicitly — releasing the claim so the file can be reprocessed — with the outcome logged and alarmed.
 - **Visible result:** a worker killed mid-load leaves the source file in `landing/`, no rows in `udr_rated`, and a stranded batch row; reconciliation resolves it and the file reprocesses cleanly. **Without this unit, a killed worker leaves a file permanently claimed and never reprocessed** — the claim constraint that protects correctness becomes the thing that blocks recovery.
 - **Depends on:** rm07 (the claim), rm09 (the transaction it recovers from).
@@ -145,7 +145,7 @@ Also builds the **local development stack**, extending the pattern already in `e
 ## Phase F — Completeness & sign-off
 
 ### Unit rm12 — Completeness and gap detection
-- **Repo:** rating repo · **Boundary:** `flows/**` — `completeness-check`
+- **Repo:** rating repo · **Boundary:** `flows/**` — `rating-completeness-check`
 - **Builds:** the **expected-cadence** configuration per `udr_type`; a scheduled check comparing `rating.udr_batch` against that expectation, raising a **clearable `FILE_NOT_RECEIVED`** at `MAJOR` with an `alarm_key`, and `FILE_LATE` at `WARNING` for an out-of-window arrival; **alarm clearing** — a later successful batch emits a `process_log` row with `event_code = 'CLEARED'` against the same `alarm_key`, **but only for codes whose catalog row has `is_auto_clearing = true`** (rm02 D5). `LOAD_BLOCKED_BILLED`, `RECON_IMBALANCE`, `SHRINKING_REISSUE`, `FILE_KEY_UNRESOLVED`, `CURRENCY_MISMATCH`, `DUPLICATE_BATCH` and `CROSS_PERIOD_SUPERSEDE` are **never** auto-cleared — a later clean batch does not make the earlier problem untrue, and clearing them erases the evidence; **superseded-never-replaced detection** — natural keys whose rows are all non-live, surfaced as usage that was retired and never re-rated.
 - **Visible result:** a file that simply never arrives raises a `MAJOR` where previously there was only silence — and the late file, when it lands, clears that alarm instead of leaving a permanent open condition. Usage superseded and never replaced is queryable rather than invisible.
 - **Depends on:** rm01 (`udr_batch`), rm02 (catalog + clearing metadata), rm10 (supersession, so there is something to detect).

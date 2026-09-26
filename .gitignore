@@ -66,7 +66,7 @@ workflow-management/worker/workflow-engine/**/__pycache__/
 # (landing/logs/reject/archive). Keep only the committed .gitkeep + README.md
 # placeholders. `landing` belongs here for the same reason as the other three:
 # it is the fourth bind mount in workflow-management/dev/docker-compose.dev.yml
-# and ran-usage-rating.yaml consumes real usage files out of it
+# and rating-engine-ran-usage.yaml consumes real usage files out of it
 # (`vars.landing_dir` -> /data/landing), so it fills with runtime input that is
 # not source.
 workflow-management/dev/landing/*

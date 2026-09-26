@@ -4,6 +4,108 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE (code-complete) — wfm02 Rating Flow-ID Harmonization (rename)**
+  (`context/workflow-management/specs/wfm02-rating-flow-rename.md`). Renamed the four
+  `rating`-namespace flow `id:`s + matching `.yaml` filenames per the D-A table
+  (`completeness-check`→`rating-completeness-check`,
+  `stranded-batch-reconcile`→`rating-batch-reconcile`, `log-sweep`→`rating-logger`,
+  `ran-usage-rating`→`rating-engine-ran-usage`) and fixed every reference that keys on
+  the old id/filename. Executed code changes §1–§7 in this repo plus the §8 doc
+  reconciliations in the code-repo `context/` copy. Flow bodies, triggers, tasks,
+  namespace `rating`, runtime module names, KV keys, and all rating invariants are
+  byte-unchanged (identity rename only; no `[CRITICAL]` invariant/grant/claim/
+  two-writer/money-math edit).
+
+  Done (§ = wfm02 spec section):
+  - [x] §1 `git mv` the four flows + edited each `id:` line (rename shows as `R` in git).
+  - [x] §2 Fixed stale in-flow comment cross-references in all four renamed flows.
+  - [x] §3 Tests: rm06/07/08/09/11/12/13 — filename joins, comment mentions, rm13
+        `FLOW_ID` const + `rating.<id>` assertion message → new names.
+  - [x] §4 Runtime docstrings: completeness_check/stranded_reconcile/log_sweep/prp/rp/rl/
+        `__init__`.py + runtime/README.md → new flow filenames. Runtime module names
+        (`log_sweep`, `stranded_reconcile`, `completeness_check`, `prp`/`rp`/`rl`) left
+        as-is (D-B); the `log-sweep:`/`completeness-check:` log-output prefixes left
+        (component prefixes, D-B); internal task id `completeness-check` left (D-B).
+  - [x] §5 `flows/rating-engine/README.md` table → new filenames.
+  - [x] §6 `.gitignore`, `dev/.env.example` (×2 incl. webhook path), `engine-access.md`
+        (×2), `workflow-engine-container-app.bicep` (×2), `azure-pipelines.yml:491`
+        illustrative comment `log-sweep`→`rating-logger`. CI `deploy_fn rating-engine
+        rating` unchanged (deploys the whole directory — new ids picked up automatically).
+  - [x] §8 Doc reconciliations (code-repo `context/` copy): `ratemgmt-code-standards.md`
+        §8 tree, `ratemgmt-progress-tracker.md` (21/22/27/38, `.py` names kept per D-B),
+        `rm00-build-plan.md` (138/148 boundary tags), `billmgmt-completed-tracker.md`
+        (391), and the product docs (`_updatemodule-product-pricing-components-plan`,
+        `prodmgmt-ai-workflow-rules`, `prodmgmt-code-standards`,
+        `_updatemodule-ratecard-lookup-plan-v2`, `pm51-rating-runtime-rekey`).
+        `wfm-architecture.md` §3/§4.1 were already renamed (pre-session edit) and match
+        the D-A target — verified, no further change needed.
+
+  Deviations / judgment calls (flagged for review):
+  - **§4 line 263 of `log_sweep.py` fixed, not left.** The spec §4 grouped `:263` with
+    the "leave — log-string prefixes" at `:266/:270/:290`, but `:263` is actually a
+    comment referencing the flow **filename** (`log-sweep.yaml's own errors/finally
+    handler`), a now-dangling path after the rename. The verification checklist forbids
+    any surviving docstring/filename reference to an old name, and §2/§4 treat filename
+    references as meaning-changing; so `:263` was retargeted to `rating-logger.yaml`.
+    The genuine `log-sweep:` log-output prefixes (`:266/:270/:290`) were left per D-B.
+  - **`wfm01-engine-restructure.md` tree (lines 23–26) left with the OLD names.** Not in
+    the §8 edit list; it is a historical build-spec body (wfm01 is DONE), so it was left
+    as a point-in-time delivery record — mirroring §8's treatment of the historical
+    `rmNN` spec bodies (wfm02 is the authority for the rename). Surface if a live-doc
+    rename is wanted there too.
+  - **`ran-usage-rating.yaml:12` `deploy_rating_flows` left unchanged.** Per §2's
+    "(see §6 note)" and §6 ("CI deploy needs no change"), this is a pipeline-stage
+    reference, not a flow-id; not in the rename's scope.
+  - **§6 webhook path change must be flagged to the (now-legacy) webhook-secret owner.**
+    The doc/comment paths moved to `…/webhook/rating/rating-engine-ran-usage/…`; rm07
+    replaced that trigger with the `landing/` file trigger so no live webhook keys on the
+    id today, but any external caller/KV secret still assuming the old path must move.
+
+  - **NOT DONE — §7 (operational).** One-time delete of the four orphaned old-id flows
+    (`ran-usage-rating`, `log-sweep`, `stranded-batch-reconcile`, `completeness-check`)
+    from every running engine (dev compose + any deployed engine), because the deploy is
+    upsert-only (`--no-delete`, D-D). Requires a live engine + confirming the Kestra CLI
+    delete verb at the D0 spike — not runnable in this session. Per D-E the first live
+    execution is still pending, so no `udr_rated` row is stamped under an old id and the
+    revision-counter reset is safe; this is the safe pre-go-live window.
+
+  - Verified: `tsc --noEmit` clean; Prettier clean on edited TS/MD; repo-root grep for
+    the four old names returns only intended survivors (log-output prefixes, internal
+    task id `completeness-check`, historical `rmNN`/wfm01 spec bodies, the wfm02 spec
+    itself).
+
+  Post-review (xhigh multi-agent code-review + live disposable-stack test run):
+  - [x] [doc consistency, applied] `runtime/README.md` log_sweep row now names its
+        invoking flow (`invoked by ../../flows/rating-logger.yaml`) like the sibling
+        stranded_reconcile/completeness_check rows — fulfils wfm02 §4 line 87, which the
+        first pass had left because the row historically named no `.yaml`. Prettier clean.
+  - Review verdict: angles A–D (line-scan, missed-reference auditor, cross-file consumer
+        tracer, YAML/format validity) all clean — 0 correctness/invariant regressions;
+        both renamed-flow YAMLs parse under js-yaml AND pyyaml; all 8 test filename joins
+        resolve to on-disk files; every four-flow doc list fully updated. Two altitude
+        notes (rm13 duplicates FLOW_ID + filename literal; the flow filename is hardcoded
+        across 5 test files rather than a shared const) are PRE-EXISTING, not introduced —
+        left as-is.
+  - **Test run — disposable DB + disposable Kestra (both torn down after):**
+    - Disposable DB: `docker-compose.test.yml` (project `ebill-test`, pg on 5434). Ran
+      the 7 rename-touched rating integration suites (rm06/07/08/09/11/12/13-no-fan-out):
+      **7 files passed, 31 passed, 54 skipped, 0 failed.** The 31 passing include the
+      static structural checks that read all four RENAMED flow files — direct rename
+      validation. The 54 skips are the `python3`-gated processor describes (this Windows
+      host has no `python3` on PATH — only `python`/`py` 3.14.0; graceful
+      `describe.skipIf(!pythonReady)`) and the rm13 live-engine describe (no `KESTRA_URL`).
+    - Disposable Kestra: `kestra/kestra:v1.3.35 server local` (H2). `kestra flow namespace
+      update rating /flows/rating-engine` **deployed all four flows** and the API
+      (`/flows/search?namespace=rating`) returned **total 4** = exactly
+      `rating.rating-batch-reconcile`, `rating.rating-completeness-check`,
+      `rating.rating-engine-ran-usage`, `rating.rating-logger` and **none of the four old
+      ids** — Kestra validates schema server-side on ingest, so this confirms every
+      renamed flow is structurally valid with its new id/namespace (D-D check shape).
+    - NOT executed (host-infra gap, not a rename risk): the `python3`-backed processor
+      bodies (rm06–rm12 DB describes) and the full rm13 no-fan-out live run — both need a
+      Linux-style host with `python3`+`polars`+`psycopg`, or the flows-deployed dev stack.
+      Run on CI for that coverage.
+
 - **DONE (code-complete, verified) — Seed refactor: mandatory/demo split,
   de-TOREMOVE, retire BILLING_VIEWER**
   (`context/_change-database-seeds-refactor-plan.md`). Implemented §3 (the stated

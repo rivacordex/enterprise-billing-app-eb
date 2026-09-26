@@ -48,7 +48,7 @@ const LANDING_HOST_DIR = process.env.RATING_LANDING_HOST_DIR;
 const CHUNK_SIZE = Number(process.env.RATING_RAN_USAGE_CHUNK_SIZE ?? 10_000);
 const RECORD_COUNT = 50_000;
 const NAMESPACE = "rating";
-const FLOW_ID = "ran-usage-rating";
+const FLOW_ID = "rating-engine-ran-usage";
 
 const liveEngineReady = Boolean(
   KESTRA_URL && KESTRA_USER && KESTRA_PASSWORD && LANDING_HOST_DIR,
@@ -61,7 +61,7 @@ function flowYaml(): string {
       "workflow-management",
       "flows",
       "rating-engine",
-      "ran-usage-rating.yaml",
+      "rating-engine-ran-usage.yaml",
     ),
     "utf8",
   );
@@ -161,7 +161,7 @@ describe.skipIf(!liveEngineReady)(
         await new Promise((r) => setTimeout(r, 2000));
       }
       throw new Error(
-        "no execution of rating.ran-usage-rating appeared within 60s of the fixture landing",
+        "no execution of rating.rating-engine-ran-usage appeared within 60s of the fixture landing",
       );
     }
 

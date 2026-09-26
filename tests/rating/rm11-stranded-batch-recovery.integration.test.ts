@@ -123,7 +123,7 @@ describe("stranded-batch reconcile (rm11-spec D1-D9 — static)", () => {
       "workflow-management",
       "flows",
       "rating-engine",
-      "stranded-batch-reconcile.yaml",
+      "rating-batch-reconcile.yaml",
     ),
     "utf8",
   );

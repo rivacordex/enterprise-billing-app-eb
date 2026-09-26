@@ -1,7 +1,7 @@
 """Completeness and gap detection (rm12) — scheduled absence/lateness check.
 
 Replaces nothing (there is no rm06 stub for this — rm12 is a new flow,
-``flows/completeness-check.yaml``, like rm11's ``stranded_reconcile``). Turns
+``flows/rating-completeness-check.yaml``, like rm11's ``stranded_reconcile``). Turns
 absence into a signal (rm12-spec D1): a file that never arrives produces no
 error, no reject and no log entry anywhere else in the pipeline — the
 completeness check is the only place "expected vs received" can be evaluated,

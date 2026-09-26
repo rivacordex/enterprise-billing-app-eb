@@ -71,7 +71,7 @@ A component-priced offering now carries `capacity_commitment` and `capacity_moti
 
 ### D8. What this unit explicitly does not do
 
-No `PER_UNIT` computation, no rate-card join, no `udr_rate_detail` variant beyond the existing `FLAT` one, no change to `udr-rated.ts`, no change to `ran-usage-rating.yaml`, no change to the `# STUB:` markers' scope, and no answer to **O1** (base-rate semantics when a rate card varies the rate) or **H1** (the `'MBPS'` vs `Mbps` unit-vocabulary divergence — now consequential, still not this unit's). Each is recorded in the hand-off register and stays there.
+No `PER_UNIT` computation, no rate-card join, no `udr_rate_detail` variant beyond the existing `FLAT` one, no change to `udr-rated.ts`, no change to `rating-engine-ran-usage.yaml`, no change to the `# STUB:` markers' scope, and no answer to **O1** (base-rate semantics when a rate card varies the rate) or **H1** (the `'MBPS'` vs `Mbps` unit-vocabulary divergence — now consequential, still not this unit's). Each is recorded in the hand-off register and stays there.
 
 ---
 

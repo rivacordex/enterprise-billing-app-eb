@@ -48,7 +48,7 @@ still inside RL's one transaction, immediately before the ``COPY``.
 
 rm11 (rating-management/specs/rm11-stranded-batch-recovery.md) adds
 ``stranded_reconcile`` — a new startup + scheduled flow
-(``flows/stranded-batch-reconcile.yaml``), not a filled-in stub. Finds
+(``flows/rating-batch-reconcile.yaml``), not a filled-in stub. Finds
 ``udr_batch`` rows stuck at ``PROCESSING`` beyond a namespace-KV threshold (a
 worker killed anywhere in the PRP -> RP -> RL chain, which shares no
 transaction across processes), fails each one to release its
@@ -58,7 +58,7 @@ the new ``BATCH_STRANDED`` code (``MAJOR``, coordinated into
 
 rm12 (rating-management/specs/rm12-completeness-gap-detection.md) adds
 ``completeness_check`` — a new scheduled flow
-(``flows/completeness-check.yaml``), not a filled-in stub. Compares
+(``flows/rating-completeness-check.yaml``), not a filled-in stub. Compares
 ``udr_batch`` against a per-``udr_type`` expected-cadence config (namespace
 KV) to raise a clearable ``FILE_NOT_RECEIVED``/``FILE_LATE``, clears them
 itself (``CLEARED``) once a later batch for that period lands and completes,

@@ -40,7 +40,7 @@ Read side by side, one says "never share" and the other says "share by default."
 | Concern | **1 · Rating engine** | **2 · Bill run — processor** | **3 · Bill run — distributor** |
 | --- | --- | --- | --- |
 | Trigger | Usage file arrives in `landing/` (file trigger) | App triggers execution #1 when the run enters `PROCESSING` | App triggers execution #2 when the run reaches `INVOICED` |
-| Flows | `ran-usage-rating`, `log-sweep`, `completeness-check`, `stranded-batch-reconcile` | `bill_run_processing` | `bill_run_distribution` |
+| Flows | `rating-engine-ran-usage`, `rating-logger`, `rating-completeness-check`, `rating-batch-reconcile` | `bill_run_processing` | `bill_run_distribution` |
 | Writes (DB role) | `rating.*` as **`rating_runtime`** | `customer_bill` (+tax) and the six `udr_rated` claim columns as **`billrun_runtime`** | none (transport only) |
 | Reads | `product`/`ordering`/`inventory`/`billing` (SELECT, 7 enumerated tables) | seeded/real `udr_rated` | stored artifact references |
 | Business logic in the flow? | **Yes** — rating logic lives in the flow definition (`rating_flow_revision` stamped per row) | **Yes** (B-fat) — bill-data compute lives in the flow (`processing_flow_revision` on `bill_run`) | **No** — transport only, but still versioned (`distribution_flow_revision`) |
@@ -64,10 +64,10 @@ The workflow-management surface is a **spin-off subdirectory of the app repo** (
 workflow-management/                # ← the spin-off subdirectory: the workflow-management surface
   flows/                            # function-first flow definitions
     rating-engine/                  # function 1
-      ran-usage-rating.yaml         # PRP → RP → RL template
-      log-sweep.yaml
-      completeness-check.yaml
-      stranded-batch-reconcile.yaml
+      rating-engine-ran-usage.yaml  # PRP → RP → RL template
+      rating-logger.yaml
+      rating-completeness-check.yaml
+      rating-batch-reconcile.yaml
       README.md
     bill-run-processor/             # function 2
       bill_run_processing.template.yml
@@ -103,7 +103,7 @@ Bill run's `# STUB:`-marked templates (the recorded billing-specific handling �
 
 | Prior statement | Location | Now |
 | --- | --- | --- |
-| `flows/` holds rating flows **flat** at the top (`ran-usage-rating.yaml`, …) | `ratemgmt-code-standards.md` §8 | flat files move under **`flows/rating-engine/`** |
+| `flows/` holds rating flows **flat** at the top (`rating-engine-ran-usage.yaml`, …) | `ratemgmt-code-standards.md` §8 | flat files move under **`flows/rating-engine/`** |
 | App-repo skeletons live under **`flows/billrun/`**, `flows/rating/` a "reserved sibling" | `bm16` Design | **`flows/bill-run-processor/`** + **`flows/bill-run-distributor/`**; **`flows/rating-engine/`** the reserved sibling |
 | "the billrun app repo carries template skeletons under `flows/billrun/`" | `billmgmt-architecture.md` §2 / `billmgmt-code-standards.md` §7 | function-first paths above |
 

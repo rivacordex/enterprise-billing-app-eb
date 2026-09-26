@@ -488,7 +488,7 @@ stages:
                 # flows on the engine that are absent from /flows. A partial
                 # checkout, a sparse-checkout misconfig, or a future refactor
                 # that drops a file would then silently remove a live flow
-                # (e.g. log-sweep) from production with a green pipeline.
+                # (e.g. rating-logger) from production with a green pipeline.
                 # `--no-delete` makes the deploy additive/upsert-only.
                 # UNCONFIRMED against v1.3.35 (same caveat class as the other
                 # kestra CLI flags — verify during the D0 spike); if the flag

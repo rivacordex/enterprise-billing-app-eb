@@ -6,7 +6,7 @@
 **Module:** Rate Card Lookup — a Revenue-Ops-managed reference table, uploaded and versioned, stood up so that a future consumer (rating) can read it. This delivery builds the table and its management surface; it does **not** build the consumer.
 **Users:** Revenue Operations — upload, review, activate, roll back.
 **Status:** Design (v2). Restated objective; `service_code` downgraded to a plain attribute; lookup table renamed; **carry-forward removed** (D-A7) — each version is exactly its uploaded file.
-**Companion docs:** `context/product-management/specs/pm00-build-plan.md`, `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`. v1's rating companions (`rm08`, `ran-usage-rating.yaml`) are **no longer referenced** — no rating work is in scope.
+**Companion docs:** `context/product-management/specs/pm00-build-plan.md`, `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`. v1's rating companions (`rm08`, `rating-engine-ran-usage.yaml`) are **no longer referenced** — no rating work is in scope.
 
 ---
 

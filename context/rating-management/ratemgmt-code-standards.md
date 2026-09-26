@@ -158,10 +158,10 @@ tests/rating/
 workflow-management/
   flows/
     rating-engine/               # function 1 — rating's flows (was a flat flows/)
-      ran-usage-rating.yaml      # the PRP/RP/RL template
-      log-sweep.yaml
-      completeness-check.yaml
-      stranded-batch-reconcile.yaml
+      rating-engine-ran-usage.yaml   # the PRP/RP/RL template
+      rating-logger.yaml
+      rating-completeness-check.yaml
+      rating-batch-reconcile.yaml
   worker/
     workflow-engine/
       Dockerfile                 # Kestra base pinned BY DIGEST + rating runtime + Postgres client (shared image)
