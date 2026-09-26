@@ -1,6 +1,6 @@
 """Rating Processor (RP) — price resolution and snapshot (rm08).
 
-Replaces the rm06/rm07 ``rp`` stub in ``flows/ran-usage-rating.yaml``. RP is the
+Replaces the rm06/rm07 ``rp`` stub in ``flows/rating-engine-ran-usage.yaml``. RP is the
 second of the three flow sections (``prp`` → ``rp`` → ``rl``): it consumes PRP's
 chunk manifest (``outputs.prp.uri``), resolves the **event-time** price for each
 validated record, snapshots the resolved inputs onto the row, computes the

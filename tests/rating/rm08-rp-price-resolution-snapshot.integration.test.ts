@@ -171,7 +171,7 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
       "workflow-management",
       "flows",
       "rating-engine",
-      "ran-usage-rating.yaml",
+      "rating-engine-ran-usage.yaml",
     ),
     "utf8",
   );

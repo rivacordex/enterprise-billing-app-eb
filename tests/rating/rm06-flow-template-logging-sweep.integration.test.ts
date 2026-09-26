@@ -33,7 +33,7 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 //
 // The DB-gated describe below shells out to the REAL `runtime.log_sweep`
 // Python module (workflow-management/worker/workflow-engine/runtime/log_sweep.py) via
-// `python3 -m runtime.log_sweep`, exactly as log-sweep.yaml's task invokes
+// `python3 -m runtime.log_sweep`, exactly as rating-logger.yaml's task invokes
 // it — this is a black-box test of the actual sweep, not a reimplementation
 // of its SQL in TypeScript. Requires `python3` on PATH with the worker's
 // requirements installed (psycopg at minimum); skipped loudly, like the
@@ -89,10 +89,10 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     "rating-engine",
   );
   const template = readFileSync(
-    join(flowsDir, "ran-usage-rating.yaml"),
+    join(flowsDir, "rating-engine-ran-usage.yaml"),
     "utf8",
   );
-  const sweepFlow = readFileSync(join(flowsDir, "log-sweep.yaml"), "utf8");
+  const sweepFlow = readFileSync(join(flowsDir, "rating-logger.yaml"), "utf8");
 
   it("2. prp/rp/rl are all real runtime modules in order, and no # STUB: markers remain in the template", () => {
     const prpIdx = template.indexOf("id: prp");
@@ -164,7 +164,7 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
     }
   });
 
-  it("log-sweep.yaml is scheduled independently, with its own error+finally handlers (D9)", () => {
+  it("rating-logger.yaml is scheduled independently, with its own error+finally handlers (D9)", () => {
     expect(sweepFlow).toMatch(/io\.kestra\.plugin\.core\.trigger\.Schedule/);
     expect(sweepFlow).toMatch(/cron:/);
     expect(sweepFlow).toMatch(/log_sweep/);
@@ -272,7 +272,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       });
     }
 
-    // Invokes the REAL sweep exactly as log-sweep.yaml's task does.
+    // Invokes the REAL sweep exactly as rating-logger.yaml's task does.
     function runSweep(workflowExecutionId: string): string {
       return execFileSync(
         "python3",
@@ -525,7 +525,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
     it("12. a deliberately crashed flow's log still sweeps — the sweep is independent of the flow that wrote it", async () => {
       // Simulates emit_terminal_log.py's own FAILED output — the mechanism a
-      // killed ran-usage-rating execution relies on (D7/D9): the flow itself
+      // killed rating-engine-ran-usage execution relies on (D7/D9): the flow itself
       // never inserts anything; only this independent sweep does.
       const batchId = "UDRBAT-RM06-CRASHED";
       const execId = "exec-crashed";

@@ -1,0 +1,226 @@
+# rm06-spec Implementation §1 (D1, D3-D7). The rating flow: three named,
+# ordered prp/rp/rl sections. rm07 replaced the `prp` STUB with the real
+# Pre-Rating Processor (claim, validate, reject); rm08 replaced the `rp` STUB
+# with the real Rating Processor (event-time price resolution + snapshot + the
+# FLAT calculation); rm09 has now replaced the `rl` STUB with the real Rating
+# Loader (BILL_APPROVED guard + CURRENCY_MISMATCH assertion + supersede-hook +
+# COPY insert in ONE transaction, then archive-after-commit). rm09 shipped the
+# supersede-hook as a no-op stub; rm10 has now replaced it with the real
+# batch-level supersession by file_key, across all partitions, in the SAME
+# transaction. Never edit this flow in the Kestra UI —
+# every change is a commit here, deployed by the pipeline's flow-deploy stage
+# (infra/azure-pipelines.yml, deploy_rating_flows) via `kestra flow namespace
+# update` (D2, code-standards §3.1).
+#
+# The `prp`, `rp` and `rl` commands below are now all REAL — they invoke
+# `python3 -m runtime.prp` / `runtime.rp` / `runtime.rl` (module form), matching
+# how the runtime package is baked into the image (../worker/Dockerfile): COPY'd
+# to /app/runtime with PYTHONPATH=/app, so the package's relative imports
+# (`from . import db, logemit`) work — invoking a script INSIDE the package by
+# its literal file path would break them.
+id: rating-engine-ran-usage
+namespace: rating
+
+# rm07 config (per rm00 §Configuration / architecture §3): OUTPUT-AFFECTING
+# values — they change which records get grouped, billed, or how identity is
+# composed — live in flow `variables`, deployed from git so they move with
+# `rating_flow_revision`. Performance-only config (chunk size) lives in the
+# namespace KV store instead (referenced in the prp command below).
+variables:
+  udr_type: RAN_USAGE
+  # The landing mount the file trigger watches (rm04's Azure Files mount /
+  # dev bind mount, default /data/landing). Not output-affecting — a location,
+  # not a rated number — but kept here so the trigger and any reprocess share one
+  # source of truth.
+  landing_dir: /data/landing
+  # file_key derivation rule per udr_type (D3) — a regex with a named `file_key`
+  # group applied to the FILENAME. `RAN_USAGE_<YYYYMMDD>[_vN].csv` ->
+  # `RAN_USAGE_<YYYYMMDD>`, so `_v2` reissues resolve to one delivery and two
+  # content dates never collide. ASSUMED naming convention — confirm with
+  # upstream (D3); a name the rule cannot parse refuses with FILE_KEY_UNRESOLVED.
+  file_key_rule: '^(?P<file_key>RAN_USAGE_\d{8})(?:_v\d+)?\.csv$'
+  # reject threshold per udr_type (D6) — fraction of parsed rows; 0 = file-level
+  # all-or-nothing. Below it the batch carries survivors (BATCH_PARTIAL); above
+  # it the whole file is refused (PARSE_FAILURE).
+  reject_threshold: "0.05"
+  # feed profile per udr_type (D1) — the column mapping + the `udr_key` column
+  # list (Open item 1, resolved as {PUBLIC_KEY, COMMERCIAL_UNIT, SITE}). A new
+  # feed adds a profile, not code. Single-line JSON so it interpolates onto the
+  # command line intact regardless of the engine's Pebble filter set. The three
+  # key columns are OPAQUE dimensions — not mapped to typed business columns,
+  # and `subscriber_ref` is null (this sample has no subscriber semantic, D1).
+  feed_profile: '{"header":["DATETIME","PUBLIC_KEY","COMMERCIAL_UNIT","SITE","USAGE_MBPS"],"event_time_column":"DATETIME","event_time_assumed_tz":"UTC","usage_column":"USAGE_MBPS","usage_unit":"MBPS","udr_key_columns":["PUBLIC_KEY","COMMERCIAL_UNIT","SITE"],"subscriber_ref":null,"interval_seconds":null,"future_tolerance_seconds":300}'
+  # rm08 (RP) config — BOTH output-affecting (architecture §3), so flow
+  # variables deployed from git that move with `rating_flow_revision`, not
+  # namespace KV.
+  # rounding_mode (D7/§5): the per-record rounding method, v1 ships ONE value as
+  # a single flow variable; still stamped per row (udr_rounding_mode) so the
+  # record stays self-describing. Must be one of udr_rated_rounding_mode_check's
+  # values: HALF_UP | HALF_EVEN | TRUNCATE.
+  rounding_mode: HALF_UP
+  # subscriber_ref_column (D3): which chunk column carries the value RP resolves
+  # the subscription from. The engine does NOT assume which key dimension is the
+  # subscriber — it is config. RP accepts a PRP key dimension name (carried in
+  # the chunk as `key__<NAME>`) or a verbatim chunk column.
+  # PLACEHOLDER / SHELL: rm08 resolves this value DIRECTLY to a
+  # product_inventory_id (a working shell, exercised by the sample test). The real
+  # design for this use case — PUBLIC_KEY -> customer party_role_specification,
+  # then a subscription lookup table keyed by the udr_key combination -> the
+  # offering to price — is deferred; see ratemgmt-progress-tracker.md Open
+  # Questions. A record that does not resolve → LOOKUP_MISS (MAJOR), not rated.
+  subscriber_ref_column: PUBLIC_KEY
+
+concurrency:
+  limit: 1 # D6 — per udr_type. One of three layers (with the
+  # UNIQUE (file_key, batch_run_num) claim and the live-row constraint,
+  # code-standards §3.7); not a substitute for either.
+
+triggers:
+  - id: landing-file
+    # rm07 D3 / Implementation §1 — the landing/ file trigger, added here
+    # (rm06 used a manual Webhook placeholder). Fires per usage file arriving in
+    # the landing mount; `concurrency: limit: 1` (above) keeps one execution per
+    # udr_type in flight, and the DB claim (Inv #7) is the real once-only guard.
+    #
+    # CAVEAT — TWO things here are UNCONFIRMED against the pinned v1.3.35 engine
+    # and are the TOP D0-spike items (same class as rm04's kestra.yml property
+    # names and rm06's kestra-CLI flags); do NOT read them as verified:
+    #   (1) the plugin id `io.kestra.plugin.fs.local.Trigger` for a mounted
+    #       landing dir, and whether a Schedule-poll + list is needed instead;
+    #   (2) THE FILE BINDING the prp task consumes below — the trigger's output
+    #       variable is NOT confirmed. Candidate expressions to verify at the
+    #       spike: `{{ trigger.uri }}` (used below), `{{ trigger.files[0].path }}`,
+    #       or `{{ trigger.uris[0] }}`. If the trigger emits a LIST of files per
+    #       fire, the flow needs a per-file ForEach rather than a single prp call.
+    # This is now FAIL-SAFE, not fail-crash: if the binding renders empty, prp
+    # exits 1 with a clear "source-file resolved to an empty path" message
+    # (runtime/prp.py main step 0) rather than deriving a blank file_key or
+    # crashing its own error handler. The BINDING contract of rm07 is the prp
+    # task's claim/validate/reject behaviour, not this trigger's literal plugin id.
+    type: io.kestra.plugin.fs.local.Trigger
+    from: "{{ vars.landing_dir | default('/data/landing') }}"
+    interval: PT1M
+    # NONE — the trigger must never move or delete the file: claiming is a DB
+    # constraint, not a filesystem op (Inv #7), and archive-after-commit is
+    # rm09's (Inv #9), never the trigger's.
+    action: NONE
+
+tasks:
+  # D4 — three named, ordered sections. Never merged, reordered, or inlined
+  # (code-standards §3.5). D5 — sections hand off by file URI through Kestra
+  # internal storage (Blob), never a record payload (code-standards §3.4).
+  - id: prp
+    # rm07 — the REAL Pre-Rating Processor (was rm06's # STUB:). Derives file_key
+    # from the filename, discards a byte-identical redelivery (DUPLICATE_BATCH),
+    # claims the batch (UNIQUE (file_key, batch_run_num)), parses + maps the CSV
+    # per the feed profile, computes the canonical udr_key, quarantines invalid
+    # rows to error/ against the reject threshold, stamps the counts, and emits a
+    # manifest file URI (outputs.prp.uri) listing the survivor Parquet chunks for
+    # rp. runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* from the
+    # container env (rm04's rating-engine-container-app.bicep); RATING_ENGINE_VERSION
+    # (D6/Inv #12) is likewise read from the container env by prp.
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
+    commands:
+      # Chunk size is namespace-KV config (D7, code-standards §3.3) — performance
+      # only, never a rated number, so it is NOT a flow variable. `{{ kv(...) }}`
+      # reads it at runtime; the default keeps a fresh namespace working.
+      - >
+        python3 -m runtime.prp
+        --source-file "{{ trigger.uri }}"
+        --udr-type "{{ vars.udr_type }}"
+        --profile '{{ vars.feed_profile }}'
+        --file-key-rule '{{ vars.file_key_rule }}'
+        --reject-threshold "{{ vars.reject_threshold }}"
+        --chunk-size "{{ kv('rating_ran_usage_chunk_size') ?? 10000 }}"
+        --workflow-execution-id "{{ execution.id }}"
+        --flow-revision "{{ flow.revision }}"
+    # emits {{ outputs.prp.uri }} (D5) — the manifest URI consumed by rp below.
+
+  - id: rp
+    # rm08 — the REAL Rating Processor (was rm06/rm07's # STUB:). Consumes PRP's
+    # manifest (outputs.prp.uri), resolves each validated record's price as-of
+    # start_datetime through the PINNED product_offering version (one set-based
+    # as-of query per chunk, never per record, Inv #10), applies any
+    # order_item_price_override, snapshots the resolved inputs onto the row
+    # (udr_usage_rate, udr_price_ref, udr_price_effective_date,
+    # udr_price_override_ref, udr_rounding_mode — D4, mandatory), computes the
+    # FLAT charge (raw numeric(18,6) + rounded numeric(18,2), quantity ignored,
+    # D5) in Decimal (never float), stamps udr_currency (D9) + the version
+    # columns (D10), and emits a rated Parquet manifest (outputs.rp.uri) for rl.
+    # RP writes nothing to rating.* — the insert is rl's one transaction (Inv #8).
+    # A record that does not resolve → LOOKUP_MISS (MAJOR), not rated (D3). A
+    # non-PROCESSING PRP manifest (DISCARDED redelivery / lost claim) is a no-op.
+    # runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* and
+    # RATING_ENGINE_VERSION (D10/Inv #12) from the container env (rm04).
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
+    commands:
+      - >
+        python3 -m runtime.rp
+        --manifest "{{ outputs.prp.uri }}"
+        --udr-type "{{ vars.udr_type }}"
+        --rounding-mode "{{ vars.rounding_mode }}"
+        --subscriber-ref-column "{{ vars.subscriber_ref_column }}"
+        --workflow-execution-id "{{ execution.id }}"
+        --flow-revision "{{ flow.revision }}"
+    # emits {{ outputs.rp.uri }} (D11) — the rated manifest URI consumed by rl.
+
+  - id: rl
+    # rm09 — the REAL Rating Loader (was rm06/rm07/rm08's # STUB:). Consumes RP's
+    # rated manifest (outputs.rp.uri) and, in ONE psycopg transaction (Inv #8):
+    # runs the BILL_APPROVED guard (any live collision → refuse the whole batch,
+    # LOAD_BLOCKED_BILLED, REFUSED, zero rows, D2/Inv #6); asserts udr_currency ==
+    # billing_account.currency (mismatch → CURRENCY_MISMATCH, REFUSED, D3); runs
+    # rm10's supersede-hook (batch-level supersession by file_key, across all
+    # partitions, status-only, D8) — CROSS_PERIOD_SUPERSEDE (WARNING) and
+    # SHRINKING_REISSUE (MAJOR) can fire here; bulk-inserts the rated
+    # rows at RATED via COPY (never per-record, backstopped by the live-row unique
+    # constraint, D4/Inv #10/#3); and reconciles parsed = rated + rejected +
+    # discarded (imbalance → RECON_IMBALANCE CRITICAL, FAILED, D5). ONLY AFTER the
+    # transaction commits (Inv #9) does it archive the raw file landing/ ->
+    # archive/ (copy-then-delete, idempotent, archive_file_path set last, D6). A
+    # non-PROCESSING manifest (DISCARDED redelivery / lost claim) is a no-op
+    # (rm07/rm08 forward contract). runtime.db reads SECRET_RATING_RUNTIME_PASSWORD
+    # + RATING_DB_* from the container env (rm04). It writes nothing to billing.*
+    # (Inv #1, grant-enforced).
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
+      # daemon; every task runs in-process (rm04-spec Implementation §6).
+    commands:
+      - >
+        python3 -m runtime.rl
+        --manifest "{{ outputs.rp.uri }}"
+        --udr-type "{{ vars.udr_type }}"
+        --landing-dir "{{ vars.landing_dir | default('/data/landing') }}"
+        --workflow-execution-id "{{ execution.id }}"
+        --flow-revision "{{ flow.revision }}"
+
+# D7 — both handlers write a terminal-outcome log line via the emitter
+# (code-standards §3.9, §7.9). There is no app HTTP endpoint to POST to
+# (this module exposes none), and a crashed flow cannot insert its own
+# crash row, so the log line — later loaded by rating-logger.yaml — is the only
+# mechanism. `errors` fires only on failure; `finally` always runs, so a
+# killed execution still reports.
+errors:
+  - id: on-error
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component RL --outcome FAILED
+        --workflow-execution-id "{{ execution.id }}"
+
+finally:
+  - id: always
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - python3 -m runtime.emit_terminal_log --component RL --outcome FINALIZED
+        --workflow-execution-id "{{ execution.id }}"

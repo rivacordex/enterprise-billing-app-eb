@@ -1,6 +1,6 @@
 """Pre-Rating Processor (PRP) — claim, validate, reject (rm07).
 
-Replaces the rm06 ``prp`` stub in ``flows/ran-usage-rating.yaml``. For the
+Replaces the rm06 ``prp`` stub in ``flows/rating-engine-ran-usage.yaml``. For the
 ``RAN_USAGE`` CSV feed this module, in order (rm07-spec D3-D6, Inv #5/#7/#10/#11):
 
 1. **Derives ``file_key`` from the filename** using a configured regex rule

@@ -63,7 +63,7 @@ const RATING_ROLES_SQL = join(
   "db/bootstrap/rating-db-roles.sql",
 );
 
-// The feed profile the flow ships for RAN_USAGE (ran-usage-rating.yaml
+// The feed profile the flow ships for RAN_USAGE (rating-engine-ran-usage.yaml
 // `vars.feed_profile`) — kept identical here so the black-box test exercises the
 // real production configuration, not a test-only one.
 const FEED_PROFILE = JSON.stringify({
@@ -118,7 +118,7 @@ describe("prp flow wiring (rm07-spec D1/D3/D6/D7 — static)", () => {
       "workflow-management",
       "flows",
       "rating-engine",
-      "ran-usage-rating.yaml",
+      "rating-engine-ran-usage.yaml",
     ),
     "utf8",
   );

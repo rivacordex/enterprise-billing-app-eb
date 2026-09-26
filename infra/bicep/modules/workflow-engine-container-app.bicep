@@ -226,7 +226,7 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             identity: workflowEngineManagedIdentityId
           }
           {
-            // rm06 — backs ran-usage-rating.yaml's Webhook trigger
+            // rm06 — backs rating-engine-ran-usage.yaml's Webhook trigger
             // `key: {{ secret('RATING_USAGE_WEBHOOK_KEY') }}` (the REQUIRED,
             // URL-embedded webhook auth token, code-standards §3.8). Unlike the
             // password secrets above (read RAW by the worker's db.py via
@@ -398,7 +398,7 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             // flow resolves it through `{{ secret('RATING_RUNTIME_PASSWORD') }}`.
             { name: 'SECRET_RATING_RUNTIME_PASSWORD', secretRef: 'rating-runtime-db-password' }
 
-            // rm06 §3.8 — ran-usage-rating.yaml's Webhook trigger resolves its
+            // rm06 §3.8 — rating-engine-ran-usage.yaml's Webhook trigger resolves its
             // required `key` via `{{ secret('RATING_USAGE_WEBHOOK_KEY') }}`.
             // This IS a real Kestra `secret()` call, so Kestra's OSS env secret
             // backend base64-DECODES this value — the KV secret must hold the

@@ -99,7 +99,7 @@ describe("completeness and gap detection (rm12-spec D1-D6 — static)", () => {
       "workflow-management",
       "flows",
       "rating-engine",
-      "completeness-check.yaml",
+      "rating-completeness-check.yaml",
     ),
     "utf8",
   );

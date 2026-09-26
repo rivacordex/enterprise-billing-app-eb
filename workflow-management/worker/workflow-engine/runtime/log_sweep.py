@@ -16,8 +16,8 @@ implementation named in the spec — it collapses outcome two into outcome
 three and permanently voids the metric. This module does not use COALESCE
 for that purpose anywhere.
 
-Runs INDEPENDENTLY of ``ran-usage-rating.yaml`` (D9) — scheduled on its own
-cron (``log-sweep.yaml``) — so a crashed rating flow still gets its terminal
+Runs INDEPENDENTLY of ``rating-engine-ran-usage.yaml`` (D9) — scheduled on its own
+cron (``rating-logger.yaml``) — so a crashed rating flow still gets its terminal
 log line loaded; a task at the end of that flow could never load that flow's
 own crash.
 
@@ -260,7 +260,7 @@ def run_sweep(
                 # file stays un-renamed for a later run / operator to inspect.
                 # Emitting a process_log row here is unsafe (the failure may BE
                 # the DB), so this surfaces on the task's stderr, which
-                # log-sweep.yaml's own errors/finally handler reports.
+                # rating-logger.yaml's own errors/finally handler reports.
                 failures += 1
                 print(
                     f"log-sweep: SKIPPED {path.name}: {type(exc).__name__}: {exc}",

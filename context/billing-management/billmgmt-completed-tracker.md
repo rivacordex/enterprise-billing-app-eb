@@ -388,7 +388,7 @@ failed. Two independent causes, both fixed; flow redeployed at revision 2.
    create its own, and Azurite provisions nothing. `kestra-setup` should create
    it (the compose comment already calls azurite "Blob emulator for Kestra's
    internal storage ONLY (kestra-internal container)" — the provisioning step
-   was never written). **This also explains the `rating.stranded-batch-reconcile`
+   was never written). **This also explains the `rating.rating-batch-reconcile`
    schedule failing every 5 minutes since stack bring-up** — its `kv()` reads hit
    the same missing container. After creating it, that flow fails on a genuine,
    previously-masked cause instead: the `rating` namespace has no

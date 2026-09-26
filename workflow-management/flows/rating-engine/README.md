@@ -4,12 +4,12 @@ The rating file-batch pipeline (PRP → RP → RL) that turns raw usage files in
 priced charge records. **Real, deployable flows** (rating v1 — the computation is
 stubbed, not the flow structure). Deployed to logical-engine namespace **`rating`**.
 
-| Flow | Purpose |
-| --- | --- |
-| `ran-usage-rating.yaml` | PRP → RP → RL template (the main rating pipeline) |
-| `log-sweep.yaml` | rm06 component-log sweep |
-| `completeness-check.yaml` | batch completeness check |
-| `stranded-batch-reconcile.yaml` | reconcile stranded batches |
+| Flow                             | Purpose                                           |
+| -------------------------------- | ------------------------------------------------- |
+| `rating-engine-ran-usage.yaml`   | PRP → RP → RL template (the main rating pipeline) |
+| `rating-logger.yaml`             | rm06 component-log sweep                          |
+| `rating-completeness-check.yaml` | batch completeness check                          |
+| `rating-batch-reconcile.yaml`    | reconcile stranded batches                        |
 
 Writes `rating.*` as the least-privilege **`rating_runtime`** role. Business logic
 lives in the flow definition, so `rating_flow_revision` is stamped on every

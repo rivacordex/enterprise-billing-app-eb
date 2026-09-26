@@ -102,14 +102,14 @@ not by the engine itself. The Billing Ops UI access provisioned above
 (steps 1-4) is for **reading** execution state and logs, not for authoring
 flows.
 
-**Secret prerequisite (rm06).** `ran-usage-rating.yaml`'s Webhook trigger
+**Secret prerequisite (rm06).** `rating-engine-ran-usage.yaml`'s Webhook trigger
 resolves its required `key` via `{{ secret('RATING_USAGE_WEBHOOK_KEY') }}`.
 Provision a Key Vault secret **`rating-usage-webhook-key`** whose value is the
 **base64-encoded** webhook token (Kestra OSS's env secret backend
 base64-decodes `SECRET_<NAME>`) — wired to the engine as
 `SECRET_RATING_USAGE_WEBHOOK_KEY` in `workflow-engine-container-app.bicep`. The
 decoded token is the last path segment of the webhook URL
-(`.../executions/webhook/rating/ran-usage-rating/<token>`); keep it secret.
+(`.../executions/webhook/rating/rating-engine-ran-usage/<token>`); keep it secret.
 Local dev uses the committed base64 dummy in `workflow-management/dev/.env.example`.
 
 **Not yet resolved** (rm06, flagged rather than assumed — see the

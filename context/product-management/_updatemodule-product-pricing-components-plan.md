@@ -267,7 +267,7 @@ Everything below is a **later phase**, outside this JSON+PM-storage scope, recor
 | `validation/rating/udr-rate-detail.schema.ts` | Add a `PER_UNIT` / rate-card variant (the `udr_rate_type` CHECK already lists `PER_UNIT`, no computation) | — |
 | `db/schema/rating/udr-rated.ts` | Likely no column change — `udr_usage_rate`, `udr_price_ref`, `udr_rated_price` already carry it; `udr_rate_type` may become `PER_UNIT` | — |
 | **LookUp Rate Card table** (new) | New table + seeds + the resolution join — its own phase | PC10 |
-| `workflow-management/flows/rating-engine/ran-usage-rating.yaml` | RP-stage wiring for the new resolution | — |
+| `workflow-management/flows/rating-engine/rating-engine-ran-usage.yaml` | RP-stage wiring for the new resolution | — |
 
 ### Billing / Bill Run (aggregation + charge computation)
 

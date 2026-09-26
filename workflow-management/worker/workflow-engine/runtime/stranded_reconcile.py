@@ -1,7 +1,7 @@
 """Stranded-batch reconcile (rm11) — startup + scheduled recovery.
 
 Replaces nothing (there is no rm06 stub for this — rm11 is a new flow,
-``flows/stranded-batch-reconcile.yaml``). Finds ``udr_batch`` rows left in a
+``flows/rating-batch-reconcile.yaml``). Finds ``udr_batch`` rows left in a
 non-terminal status (``RECEIVED``/``PROCESSING``) by a killed worker (Container
 Apps relocates containers, §9.7) and resolves them so the file reprocesses
 instead of staying permanently claimed (rm11-spec D1-D9):
@@ -55,7 +55,7 @@ instead of staying permanently claimed (rm11-spec D1-D9):
 7. **Startup and scheduled (D7).** The owning flow fires both on the Kestra
    scheduler starting (a worker relocation clears strands its predecessor
    left) and on a recurring schedule (a strand does not wait for the next file
-   to arrive) — see ``flows/stranded-batch-reconcile.yaml`` for the trigger.
+   to arrive) — see ``flows/rating-batch-reconcile.yaml`` for the trigger.
 
 Scope boundaries (ratemgmt-ai-workflow-rules.md §2.5, §3): this module makes no
 rating decision and computes no rate — it is batch-lifecycle bookkeeping, the
