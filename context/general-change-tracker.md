@@ -67,7 +67,12 @@ Update this file after every meaningful implementation change.
     upsert-only (`--no-delete`, D-D). Requires a live engine + confirming the Kestra CLI
     delete verb at the D0 spike — not runnable in this session. Per D-E the first live
     execution is still pending, so no `udr_rated` row is stamped under an old id and the
-    revision-counter reset is safe; this is the safe pre-go-live window.
+    revision-counter reset is safe; this is the safe pre-go-live window. **Required
+    before the first live execution (D-D):** delete all four old ids from EVERY engine
+    they were actually deployed to (dev compose + any CI/deployed engine) and confirm
+    none of the four old ids remain on each. The disposable-Kestra deploy check below is
+    NOT a substitute — that was a fresh engine that never held the old flows, so it
+    cannot verify live-engine cleanup.
 
   - Verified: `tsc --noEmit` clean; Prettier clean on edited TS/MD; repo-root grep for
     the four old names returns only intended survivors (log-output prefixes, internal
@@ -100,7 +105,11 @@ Update this file after every meaningful implementation change.
       `rating.rating-batch-reconcile`, `rating.rating-completeness-check`,
       `rating.rating-engine-ran-usage`, `rating.rating-logger` and **none of the four old
       ids** — Kestra validates schema server-side on ingest, so this confirms every
-      renamed flow is structurally valid with its new id/namespace (D-D check shape).
+      renamed flow is structurally valid and deploys cleanly with its new id/namespace.
+      This does NOT verify D-D live-engine cleanup (§7): the engine was a fresh
+      disposable instance that never held the old flows, so "none of the four old ids"
+      here is trivially true and says nothing about a real engine the flows were
+      previously deployed to.
     - NOT executed (host-infra gap, not a rename risk): the `python3`-backed processor
       bodies (rm06–rm12 DB describes) and the full rm13 no-fan-out live run — both need a
       Linux-style host with `python3`+`polars`+`psycopg`, or the flows-deployed dev stack.
