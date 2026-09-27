@@ -6,6 +6,20 @@ Known, unresolved defects and debts in the Product Management module that are **
 
 ---
 
+## PM-ISS-002 — Rate-card lookup-row immutability (Inv. #46) is not database-enforced
+
+**Status:** **OPEN.** **Owner:** pm57a (the schema unit) or a follow-up migration — **not** pm60. **Discovered:** 2026-09-27, building the pm60 card repository and confirming guardrail 37's database arm. **Severity:** low-to-medium — no runtime defect in the shipped Part-5 code (no consumer writes a lookup row outside the repository, and the repository exports no row-level lookup write), but the defense-in-depth the design assumes is absent.
+
+**Symptom.** `db/migrations/0041_ratecard_ran_usage_lkp.sql` (pm57a) creates `product.ratecard_ran_usage_lkp` with the row-key uniqueness constraint and the cascade FK, but **no trigger, rule or revoke**. `app_runtime` holds full DML on the `product` schema (`bootstrap-db-roles.sql`'s schema-wide grant). So a **direct** `UPDATE`/`DELETE` against a lookup row of an `ACTIVE` version **succeeds** — Postgres does not refuse it. Inv. #46 ("a lookup row is only ever inserted or removed by cascade — never edited or deleted directly") is therefore enforced in the current tree **only by the repository's exported surface** (guardrail 37's exported-surface arm, `tests/db/product-repository-exports.test.ts`, green), not by the database.
+
+**Why it belongs to pm57a, not pm60.** pm60-spec I3 is explicit: "if a trigger is required, that is a pm57a finding to raise, not a trigger to add here" (workflow §5.7 — a guardrail's need must not invent a schema object in the wrong unit). pm60 owns the repository surface, not the DDL.
+
+**Fix.** In pm57a (or a forward migration once `0041` is immutable in `main`), add a trigger analogous to product's `child_write_requires_draft` (`0040_product_family_guards.sql`) that refuses an `UPDATE`/`DELETE` of a `ratecard_ran_usage_lkp` row whose parent version is not `DRAFT` — or, more strictly, refuses any row-level `UPDATE`/`DELETE` outright (a lookup row is never edited; a version is discarded whole via the cascade). Leave `deleteDraftVersion`'s parent-row cascade path permitted.
+
+**Verify once fixed.** Flip `tests/db/ratecard-repository.integration.test.ts`'s `[FINDING pm57a] …` test from asserting the raw `UPDATE`/`DELETE` **succeeds** to asserting it is **rejected** (guardrail 37's database arm), against a database built from empty.
+
+---
+
 ## PM-ISS-001 — Product integration-test fixtures still insert the pre-pm46/pm47 price-row shape (8 suites red)
 
 **Status:** **RESOLVED (2026-09-24, pm56a).** Fixed by the pm56a fixture sweep (`specs/pm56a-fixture-sweep.md`) — see the Resolution note at the end. **Owner:** pm56a. **Discovered:** 2026-09-24, running the product integration suites against the disposable test DB (`docker-compose.test.yml`, `.env.test`, port 5434) during the pm54/pm55 review-fix pass. **Severity:** medium — it blocked the pm46–pm54 G-E close-out (the DB-backed suite could not go green), but shipped no runtime defect: the app code and its DB-free unit/component suites were green; only stale **test fixtures** were wrong.
