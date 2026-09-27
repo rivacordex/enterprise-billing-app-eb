@@ -342,10 +342,18 @@ describe("rate-card upload contract (pm58)", () => {
   });
 
   // I3.8 — the key delimiter cannot be produced by concatenating two different
-  // key tuples. Property test over adversarial values.
+  // key tuples. Concrete examples first (the ("AB","C") vs ("A","BC") case a
+  // naive `+` join would collide), then a property test over adversarial values.
   it("builds a collision-free row key across distinct tuples (property)", () => {
+    // The exact collision a delimiter-less concatenation would produce.
+    expect(rateCardRowKey("AB", "C", "x")).not.toBe(
+      rateCardRowKey("A", "BC", "x"),
+    );
+    // An identical tuple always yields the same key (so real duplicates match).
+    expect(rateCardRowKey("A", "B", "C")).toBe(rateCardRowKey("A", "B", "C"));
+
     const tuple = fc.tuple(fc.string(), fc.string(), fc.string());
-    fc.assert(
+    const counterexample = fc.check(
       fc.property(tuple, tuple, (a, b) => {
         const sameTuple = a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
         const sameKey =
@@ -355,6 +363,7 @@ describe("rate-card upload contract (pm58)", () => {
       }),
       { numRuns: 2000 },
     );
+    expect(counterexample.failed).toBe(false);
   });
 
   // I3.9 — an empty Rate per Unit or Service Code cell is accepted and stays
