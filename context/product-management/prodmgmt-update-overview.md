@@ -2,7 +2,7 @@
 
 **Module:** Product Management — the `RATECARD_RAN_USAGE_LKP` reference table, surfaced as **Products → Rate Card**. Stands up a RevOps-managed lookup table with an upload/diff/activate/rollback lifecycle and its UI; the rating engine's consumption of the table is a following-sprint deliverable, not part of this update.
 **Users:** Revenue Operations — upload, review, activate and roll back rate card versions.
-**Status:** Design (v2). The RC-series (as revised), invariants **RV1–RV3** (RV4 withdrawn by D-A8; RV9 and RC17 carry-forward removed by D-A7), and open items **OR3 / OR4 / OR-RET** (OR7′ resolved 2026-09-25) are locked in `_updatemodule-ratecard-lookup-plan-v2.md`. **No blocking open items remain.**
+**Status:** Design. Invariants **RV1–RV3** and open items **OR3 / OR4 / OR-RET** are locked in `_updatemodule-ratecard-lookup-plan-v2.md`. **No blocking open items remain.**
 **Supersedes:** the previous Pricing Components update overview. That update's authoritative text remains `_updatemodule-product-pricing-components-plan.md` plus specs `pm46`–`pm56`; its prior overview is recoverable at commit `7ebcc67`.
 **Companion docs:** `_updatemodule-ratecard-lookup-plan-v2.md` (authoritative), `_updatemodule-product-pricing-components-plan.md` (PC10), `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`.
 
@@ -10,13 +10,13 @@
 
 ## Overview
 
-This update stands up a RevOps-managed lookup table that records, for any unit of RAN usage, **which subscriber reference it belongs to and which service it is**. Revenue Operations uploads a CSV keyed on `(MNO public key, commercial unit public key, polygon ID)` — the same three columns that already form the UDR's `udr_key` — effective-dated by polygon start date; each upload becomes a version that is validated and previewable as `DRAFT` and takes effect only when explicitly activated. One lookup row carries an `lkp_subscriber_ref_id` and a `service_code`, both plain stored columns. The scope of this update is the table plus its full version lifecycle — upload, diff, activate and rollback — and the `/products/rate-card` UI, **and it stops there**. Nothing consumes the table: the rating engine's resolution of a UDR against the lookup is a following-sprint deliverable and no part of it is built here.
+This update stands up a RevOps-managed lookup table that records, for any unit of RAN usage, **which subscriber reference it belongs to and which service it is**. Revenue Operations uploads a CSV keyed on `(MNO public key, commercial unit public key, polygon ID)` — the same three columns that already form the UDR's `udr_key`; each upload becomes a version that is validated and previewable as `DRAFT` and takes effect only when explicitly activated. One lookup row carries an `lkp_subscriber_ref_id` and a `service_code`, both plain stored columns. The scope of this update is the table plus its full version lifecycle — upload, diff, activate and rollback — and the `/products/rate-card` UI, **and it stops there**. Nothing consumes the table: the rating engine's resolution of a UDR against the lookup is a following-sprint deliverable and no part of it is built here.
 
 ---
 
 ## Goals
 
-1. Store an effective-dated lookup from `(mno_public_key, commercial_unit_public_key, polygon_id)` to `lkp_subscriber_ref_id` and `service_code`, versioned per upload, in `product.ratecard_version` + `product.RATECARD_RAN_USAGE_LKP`.
+1. Store a per-upload versioned lookup keyed on `(mno_public_key, commercial_unit_public_key, polygon_id)`, carrying `lkp_subscriber_ref_id`, `service_code` and the descriptive columns, in `product.ratecard_version` + `product.RATECARD_RAN_USAGE_LKP`.
 2. Give RevOps a self-service upload at **Products → Rate Card** that validates a ~5,000–5,500 row CSV synchronously and reports row-level errors without writing anything on failure.
 3. Make activation a deliberate, separate act: an upload lands as `DRAFT`, is diffable against the current `ACTIVE`, and only becomes live when a user activates it.
 4. Guarantee exactly one `ACTIVE` version per card name via a partial unique index, so "which card is live" always has one answer.
@@ -29,9 +29,9 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 
 1. A Revenue Operations user opens **Products → Rate Card**. The version list shows every version for the card with its status (`DRAFT` / `ACTIVE` / `SUPERSEDED` / `REJECTED`), snapshot date, row count, and who uploaded and activated it.
 2. They click **Upload new version** and pick a CSV — roughly 5,000–5,500 rows, about 0.5 MB.
-3. The server action parses and validates the whole file in one request: the header is exactly the seven expected columns (`MNO Name`, `Commercial Unit ID`, `Polygon ID`, `Polygon Start Date`, `Subscriber Reference ID`, `Service Code`, `Rate per Unit` — exact text, any order; OR7′); no duplicate `(mno, cu, polygon, polygon_start_date)` key; every cell is typed per the contract, and `lkp_subscriber_ref_id` is present and non-empty. Validation is **structural only** — no cell is checked against another table (D-A1).
+3. The server action parses and validates the whole file in one request: the header is exactly the ten expected columns (`MNO Name`, `Commercial Unit ID`, `Polygon ID`, `Polygon Start Date`, `Polygon End Date`, `State`, `District`, `Subscriber Reference ID`, `Service Code`, `Rate per Unit` — exact text, any order; OR7′); no duplicate `(mno, cu, polygon)` key; every cell is typed per the contract, and `lkp_subscriber_ref_id` is present and non-empty. Validation is **structural only** — no cell is checked against another table (D-A1).
 4. **On failure**, a row-level error table appears — row number, column, value, reason — and **no version is created**. The user fixes the file and uploads again.
-5. **On success**, the version is created as `DRAFT` — validated, previewable, and never the `ACTIVE` version any future reader would resolve against. Its `snapshot_date` is the date of the upload in the app timezone, set by the service — the file has no date column (D-A8).
+5. **On success**, the version is created as `DRAFT` — validated, previewable, and never the `ACTIVE` version any future reader would resolve against. Its `snapshot_date` is the date of the upload in the app timezone, set by the service — the file has no snapshot-date column (D-A8).
 6. The user reviews the rows and the **diff against the current `ACTIVE`**: **Added** (keys new in the upload), then **Changed** (keys whose non-key columns differ), then **Removed** (keys absent from the upload) — they will not be in the new version and stay readable in the superseded one.
 7. They click **Activate**. A confirmation names the version being superseded, the change counts, and notes that removed rows stay readable in the superseded version.
 8. In one transaction the service promotes the `DRAFT` to `ACTIVE`, and demotes the prior `ACTIVE` to `SUPERSEDED` — two status flips, no row writes. An audit event is recorded in the same transaction.
@@ -44,14 +44,14 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 ### Lookup table and versioning
 
 - `product.ratecard_version` — one row per upload: `ratecard_version_id` (`RCV` + 8 digits), `card_name`, `version_num`, `status`, `snapshot_date`, `source_file`, `file_checksum`, `row_count`, uploader/activator and timestamps, `superseded_by_version_id`, `reject_summary`.
-- `product.RATECARD_RAN_USAGE_LKP` — one row per mapping: `mno_public_key`, `commercial_unit_public_key`, `polygon_id`, `polygon_start_date`, `lkp_subscriber_ref_id`, `service_code`, `rate_per_unit` (a plain nullable column).
+- `product.RATECARD_RAN_USAGE_LKP` — one row per mapping: `mno_public_key`, `commercial_unit_public_key`, `polygon_id`, `polygon_start_date`, `polygon_end_date`, `state`, `district`, `lkp_subscriber_ref_id`, `service_code`, `rate_per_unit` (plain nullable columns).
 - Partial unique index on `card_name WHERE status = 'ACTIVE'` — at most one live version per card, enforced by the database rather than by application code.
 - Versions are immutable once activated; a correction is a new upload, and any superseded version can be re-activated. A version's rows are exactly its uploaded file.
 
-### Effective dating
+### Row grain and validity dates
 
-- Row grain is `(mno_public_key, commercial_unit_public_key, polygon_id, polygon_start_date)`; `polygon_start_date` is the as-of key.
-- The window is `[polygon_start_date, next polygon_start_date for the same key)`; `polygon_start_date` is the as-of key a future consumer would read against.
+- Row grain is `(mno_public_key, commercial_unit_public_key, polygon_id)`; a polygon appears at most once per version (D-A9).
+- `polygon_start_date` and `polygon_end_date` are **descriptive** validity-window dates on the row — `polygon_start_date` required, `polygon_end_date` nullable (`NULL` = open-ended / still active). They are not part of any key or index, and nothing reads them for matching in this delivery.
 - `snapshot_date` on the version header is the **upload date** in the app timezone, set by the upload service (D-A8). The file carries no date column. `snapshot_date` is never used for matching.
 
 ### Retired polygons — no carry-forward
@@ -65,7 +65,7 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 
 - Synchronous server action — no Kestra, no `landing/`, no staging table, no streaming. At ~0.5 MB the file is parsed and inserted in one request.
 - `serverActions.bodySizeLimit` raised to `4mb` in `next.config.ts` (the Next default is 1 MB).
-- Rows insert in 1,000-row batches inside a single transaction; Postgres caps a statement at 65,535 bind parameters and 5,500 × 8 columns = 44,000 is uncomfortably close.
+- Rows insert in 1,000-row batches inside a single transaction; Postgres caps a statement at 65,535 bind parameters and 5,500 × 11 columns ≈ 60,500 would overrun it in a single statement.
 
 ### Validation
 
@@ -109,7 +109,7 @@ This update stands up a RevOps-managed lookup table that records, for any unit o
 
 - `npm run db:migrate` on an empty database produces both tables and the partial unique index on `card_name WHERE status = 'ACTIVE'`. `0006_product.sql` and `product_offering_price` are untouched.
 - Uploading a valid ~5,400-row CSV creates exactly one `DRAFT` version, inserts its rows in 1,000-row batches inside one transaction, and leaves the current `ACTIVE` version untouched and still active.
-- Each of these is refused and **creates no version**: a duplicate `(mno, cu, polygon, polygon_start_date)`; a missing expected column; an unknown column (a `Date` column included); a cell failing its type (including an empty `lkp_subscriber_ref_id`).
+- Each of these is refused and **creates no version**: a duplicate `(mno, cu, polygon)`; a missing expected column; an unknown column (a `Date` column included); a cell failing its type (including an empty `lkp_subscriber_ref_id`).
 - A `file_checksum` matching an earlier version produces a warning on the draft review and does **not** block activation. No subscription status or window is checked (D-A1).
 - Activating a version promotes it to `ACTIVE`, demotes the prior version to `SUPERSEDED`, and writes no rows — the new version's rows are exactly its uploaded file, and a key absent from the upload remains present in the superseded version.
 - Attempting to activate a second version while one is `ACTIVE` is refused by the partial unique index, not merely by application code.

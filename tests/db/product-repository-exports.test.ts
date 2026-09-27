@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { productSpecificationRepository } from "@/db/repositories/product-specification";
+import { ratecardRepository } from "@/db/repositories/ratecard";
 
 const MUTATION_NAME_PATTERN =
   /^(insert|create|update|delete|remove|set|branch)/;
@@ -46,6 +47,21 @@ const ALLOWED_PRICE_MUTATIONS = new Set([
   "deletePrice",
 ]);
 
+// pm60 (guardrail 37, exported-surface arm; Inv. #46). The card repository
+// exports EXACTLY four writes — `insertVersion`, `insertLookupRows`,
+// `setVersionStatus`, `deleteDraftVersion` — and no fifth. Crucially there is
+// NO row-level update or delete of a lookup row of any name: a lookup row is
+// only ever inserted or removed by the version's ON DELETE CASCADE. The one
+// delete export is version-level `deleteDraftVersion` (which refuses any
+// version not in DRAFT — proven on `tx` in the live-DB suite). Upload is the
+// only write path; a correction is a new upload, never a row edit.
+const ALLOWED_RATECARD_MUTATIONS = new Set([
+  "insertVersion",
+  "insertLookupRows",
+  "setVersionStatus",
+  "deleteDraftVersion",
+]);
+
 describe("product repository exports (structural)", () => {
   it("productOfferingRepository exports no update*/delete* mutation function (insertOffering, updateOfferingDraftInPlace, branchOfferingAsDraft excepted, Phase 2 pm11/pm12/pm13)", () => {
     const names = Object.keys(productOfferingRepository);
@@ -72,5 +88,28 @@ describe("product repository exports (structural)", () => {
       (n) => MUTATION_NAME_PATTERN.test(n) && !ALLOWED_PRICE_MUTATIONS.has(n),
     );
     expect(forbidden).toEqual([]);
+  });
+
+  it("ratecardRepository exports exactly the four card writes and no row-level lookup update/delete (guardrail 37, Inv. #46)", () => {
+    const names = Object.keys(ratecardRepository);
+
+    // Exactly the four allowed writes — no fifth mutation of any name.
+    const mutations = names.filter((n) => MUTATION_NAME_PATTERN.test(n));
+    expect(mutations.filter((n) => !ALLOWED_RATECARD_MUTATIONS.has(n))).toEqual(
+      [],
+    );
+    expect([...mutations].sort()).toEqual(
+      [...ALLOWED_RATECARD_MUTATIONS].sort(),
+    );
+
+    // No update*/delete* that touches a lookup row, under any spelling.
+    expect(
+      names.filter((n) => /^(update|delete).*(lookup|row)/i.test(n)),
+    ).toEqual([]);
+
+    // The ONLY delete export is the version-level, DRAFT-guarded discard.
+    expect(names.filter((n) => /^delete/i.test(n))).toEqual([
+      "deleteDraftVersion",
+    ]);
   });
 });

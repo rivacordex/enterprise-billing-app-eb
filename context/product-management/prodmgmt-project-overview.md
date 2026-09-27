@@ -2,7 +2,7 @@
 
 **Module:** Product Management (second module of the wholesale enterprise billing application)
 **Users:** Billing Operations (catalog — View Product & Manage Products) and Revenue Operations (Orders & Subscriptions; permissions `product_orders`, `product_inventory`)
-**Status:** SHIPPED — the read-only catalog (units pm01–pm09), the Manage Products CRUD fast-follow (units pm10–pm24), the **Product Ordering & Inventory update** (units pm25–pm34), and the **Manage Products rebuild & catalog lifecycle update** (units pm35–pm45) are implemented and ship-gate-verified. See the "Completed Tracker" section at the end of `prodmgmt-progress-tracker.md` for the per-unit build record. The next planned update — pricing components (capacity commitment/motivation, the component envelope) — is specced in `prodmgmt-update-overview.md` and `_updatemodule-product-pricing-components-plan.md`.
+**Status:** SHIPPED — the read-only catalog (units pm01–pm09), the Manage Products CRUD fast-follow (units pm10–pm24), the **Product Ordering & Inventory update** (units pm25–pm34), the **Manage Products rebuild & catalog lifecycle update** (units pm35–pm45), and the **Pricing Components update** (the standardized component envelope plus Target Capacity Commitment/Motivation, units pm46–pm56) are implemented and ship-gate-verified. See the "Completed Tracker" section at the end of `prodmgmt-progress-tracker.md` for the per-unit build record. The next planned update — the **Rate Card Lookup** (`RATECARD_RAN_USAGE_LKP`, a RevOps-managed versioned lookup table with an upload/diff/activate/rollback lifecycle, units pm57a and pm58–pm68) — is specced in `prodmgmt-update-overview.md` and `_updatemodule-ratecard-lookup-plan-v2.md`.
 **Companion docs:** `prodmgmt-architecture.md` (technical design, numbered **Module Invariants**), `prodmgmt-code-standards.md` (conventions)
 
 ## Overview
@@ -11,7 +11,7 @@ The Product Management module is where the business both **defines** the product
 
 **Catalog (Billing Operations):**
 
-- **View Product** (`/products/product-offering`) — a read-only catalog viewer. Displays product offerings (e.g. "5G Nationwide Service Plan"), each offering's specifications (network-slice characteristics such as SST/SD identifiers held as JSONB), and each offering's prices (recurring, usage, and one-time charges, flat or tiered) on a single four-section page.
+- **View Product** (`/products/product-offering`) — a read-only catalog viewer. Displays product offerings (e.g. "5G Nationwide Service Plan"), each offering's specifications (network-slice characteristics such as SST/SD identifiers held as JSONB), and each offering's prices (recurring, usage, and one-time charges) as standardized pricing components on a single four-section page.
 - **Manage Products** (`/products/manage-products`) — the CRUD page, rebuilt into the same four-section shape as View Product: a server-paged **families list**, a **version switcher**, a **specifications panel**, and a **pricing panel**, with editing and versioning controls in the panels. Billing Operations create an offering, edit its specifications and prices **inline while it is `DRAFT`**, and move it through a five-state lifecycle — `DRAFT → TESTING → ACTIVE → OBSOLETE → RETIRED` — using a copy-on-write versioning model rather than in-place editing of live data. The page loads only the selected version's data (2 queries on first load; a further 4 on selecting a family), not the whole catalog.
 
 **Ordering & Inventory (Revenue Operations):**
@@ -20,6 +20,8 @@ The Product Management module is where the business both **defines** the product
 - **Subscriptions** (`/products/subscriptions`) — the product inventory. Each completed order produces exactly one subscription, which pins the exact catalog offering version it was sold at (grandfathered pricing), records which BAN it bills to, and carries a suspend/resume/terminate lifecycle with an append-only status history. The subscription list is what the future bill run will rate; this module produces everything rating needs and nothing else.
 
 Editing a live (`ACTIVE`) offering never modifies that row — it branches a new `DRAFT` copy of the whole version (offering fields, all specifications, all prices) instead, and only one version of a product can be `ACTIVE` at a time, so activating a new version automatically moves whichever version was active before it to `OBSOLETE` in the same transaction. A `DRAFT` version's specifications and prices are fully editable and deletable; from `TESTING` onward the version's content is immutable, enforced by the repository **and** a database trigger, not by UI discipline alone. A released version's prices never change, so any historical bill-run basis stays reproducible. Grandfathering is the ordering-side consequence of the same guarantee: a subscription FKs the exact offering version it was sold at, and an `OBSOLETE` version — not orderable, still billed for its existing subscriptions — keeps its prices byte-identical, so later catalog activations never change an existing subscriber's price. The module reuses the shared platform core delivered by User Management: Better-Auth sessions, the code-seeded RBAC registry, the append-only audit log, and the `services/` → `db/repositories/` layering.
+
+**Pricing components (Billing Operations).** A catalog price is no longer a scalar `amount` or a `tiers[]` array but a single **standardized, composable JSON envelope** per component, discriminated by an `@type` field — the shape delivered by the Pricing Components update. Every price on an offering is a self-describing object under one envelope (`@type`, `specVersion`, `plaSpecId`, `priceType`, `appliesAt`, `basis`, `boundTo`, `params`), persisted as `product_offering_price.component_type` + `price_component` jsonb. Alongside the plain `usage_rate` and `flat_fee` components, Billing Operations author two algorithmic components at the Manage Product level: **Target Capacity Commitment** (bill `max(aggregatedQuantity, committedQuantity)`, so a customer under-using committed capacity is still charged for it) and **Target Capacity Motivation** (a graduated per-unit discount above a target quantity, expressed as an ascending `steps[]` schedule). The components compose into one combined product charge per BAN at a later bill run, and each projects 1:1 onto a TMF620 `pricingLogicAlgorithm` — TMForum-aligned without exposing any TMF API. The bill-run computation, the rating engine's rate extraction, and the Rate Card lookup (`rateCardLookUp`, resolved by rating) are separate later phases; this update defined and stored the components only.
 
 ## Goals
 
@@ -53,6 +55,14 @@ Editing a live (`ACTIVE`) offering never modifies that row — it branches a new
 20. Give subscriptions a billing-safe lifecycle: suspend, resume, and terminate actions writing an append-only, gap-free `inventory.inventory_status_history`, so the bill run can prorate around suspension windows without interpretation.
 21. Keep Revenue Operations' access separate from catalog administration: two new permissions (`product_orders`, `product_inventory`) with no grant overlap against the existing `products` permission.
 
+**Pricing components:**
+
+22. Replace the two ad-hoc price shapes (a scalar `amount` and a `tiers[]` array) with one JSON **envelope** per component, discriminated by `@type` and validated by a Zod discriminated union — an unknown key rejected, never stripped, with a DB CHECK backstop.
+23. Add **Target Capacity Commitment** (a billable-quantity floor) and **Target Capacity Motivation** (a graduated per-unit rate as an ascending `steps[]` array), authored at the Manage Product level and grandfathered by the subscription's pinned version.
+24. Turn the base usage rate into a `usage_rate` component carrying a `rateCardLookUp` reference (resolved by rating later) with `ratePerUnit` as the default/fallback, and fold flat/recurring prices into `flat_fee`; drop `pricing_model = 'tiered'` — the graduated concept lives on in `capacity_motivation.steps`.
+25. Persist components by reshaping `product_offering_price` to `component_type` + `price_component` jsonb, edited in place in `0006_product.sql` under the fresh-install assumption (no migration, no backfill), with a per-`component_type` completeness CHECK and the uniqueness index rekeyed to `(product_offering_id, component_type, unit_of_measure, start_date_time)`.
+26. Enforce cross-component validity at the write boundary — a `post_aggregation` modifier requires a same-unit `usage_rate`, exactly one effective `usage_rate` per unit, and a single currency per offering — and produce one combined product charge per product per BAN, not one bill line per component. Each `@type` projects onto a documented TMF620 `pricingLogicAlgorithm` / `ProductOfferingPrice` (documentation, not an adapter; `app/api/product*` never exists).
+
 ## Core User Flows
 
 ### Viewing the catalog (View Product)
@@ -63,7 +73,7 @@ Editing a live (`ACTIVE`) offering never modifies that row — it branches a new
 4. The user clicks a row. The selection is written to the URL (`?offering=PRDOFR000001`), making the view deep-linkable and back-button-safe.
 5. Section 2 renders the selected offering's full detail: name, lifecycle badge, version, bundle/sellable/billing-only flags, last modified, last edited by.
 6. Section 3 (bottom-left) lists the offering's specifications as cards: name, mandatory/default badges, and the `product_spec_characteristics` JSONB rendered as `key: value` text.
-7. Section 4 (bottom-right) lists the offering's prices as cards: name, price type badge (recurring / usage / once), amount and currency for flat prices or the tier bounds/rates for tiered prices, the recurring charge period or the usage unit of measure, GL code, and effectivity (`start_date_time`, derived end from the successor's start).
+7. Section 4 (bottom-right) lists the offering's prices as cards: name, price type badge (recurring / usage / once), amount and currency, the recurring charge period or the usage unit of measure, GL code, and effectivity (`start_date_time`, derived end from the successor's start). _(Pre-pm46 this card also rendered a `tiers[]` array; the Pricing Components update replaced the flat/tiered shapes with the component envelope rendered per `@type` — see **Pricing components** below.)_
 8. The user copies the URL to share the exact view with a colleague, or selects another offering. View Product itself has nothing to save — it is, and remains, read-only.
 
 ### Managing the catalog (Manage Products)
@@ -73,13 +83,21 @@ Editing a live (`ACTIVE`) offering never modifies that row — it branches a new
 3. The user searches or filters by status — both run in SQL against the paged query, no client-side row filtering — then selects a family row. The URL becomes `?family=PRDOFR000004&version=PRDOFR000011`, and three panels load for that version: offering detail, specifications, and prices grouped by price type with each row's derived effectivity (current / future / superseded).
 4. The user switches to another version of the same family from the version bar (version number + status badge per entry); only the three detail queries rerun.
 5. The user edits a version whose status is `ACTIVE`. The first edit branches a new `DRAFT` copy of the whole version — offering fields, all specifications, all prices — assigns the family's next version number, and redirects to it. The `ACTIVE` version is untouched. If the family already has an open version, the user is taken to that one; a second open version is refused.
-6. On the `DRAFT` version, the user edits inline: renames the offering, edits or deletes a specification, edits a price's amount or tiers, deletes a price row, or adds a future-dated successor price of the same type (permitted only while `DRAFT` — how a contractual step-up is set up before the customer signs).
-7. The user adds a **recurring** price (name, amount or tiers, currency, GL code, start date, and a charge period that maps onto a supported bill cycle), a **usage** price (additionally a unit of measure from `Mbps` / `GB` / `MB` / `EA`), or a **once** price (neither). A tiered recurring or tiered usage price saves with a visible warning that no downstream component can bill it yet.
+6. On the `DRAFT` version, the user edits inline: renames the offering, edits or deletes a specification, edits a price's fields, deletes a price row, or adds a future-dated successor price of the same type (permitted only while `DRAFT` — how a contractual step-up is set up before the customer signs).
+7. The user adds a **recurring** price (name, amount, currency, GL code, start date, and a charge period that maps onto a supported bill cycle), a **usage** price (additionally a unit of measure from `Mbps` / `GB` / `MB` / `EA`), or a **once** price (neither). _(This flat/tiered authoring — including the tiered-price save-with-warning — is the pre-pm46 model; the Pricing Components update replaced it with the `@type` component envelope and the capacity components, per **Authoring pricing components** above.)_
 8. The user clicks **Submit for testing**. The service re-reads status under lock and checks the release preconditions — at least one price row, at least one specification, and every mandatory specification resolved to a non-null default. The version becomes `TESTING` and its content becomes read-only. **Back to draft** returns it to `DRAFT` and editable.
 9. The user clicks **Activate**. In one transaction the version becomes `ACTIVE` and the family's previously `ACTIVE` version becomes `OBSOLETE`. New orders pick the new version; every existing subscription keeps billing from its pinned version.
 10. To stop selling a product with no replacement (`products : DELETE`), the user moves the `ACTIVE` version directly to `OBSOLETE`.
 11. To retire an `OBSOLETE` version (`products : DELETE`), the service counts subscriptions pinned to it that are not terminated (or terminated with an `end_date` today or later). Zero → the version becomes `RETIRED`, terminal. Non-zero → refused, with the blocking subscription count shown.
 12. To discard an unreleased version (`products : DELETE`), a `DRAFT` or `TESTING` version that was never `ACTIVE` is **hard-deleted** with its specifications and prices in one transaction, writing a `PRODUCT_OFFERING_DELETED` audit event with the version id, name, version number, and removed counts.
+
+### Authoring pricing components (Manage Products)
+
+1. On a `DRAFT` version's pricing panel, a Billing Operations user (`products : EDIT`) adds a **base usage rate** component: unit `EA`, `ratePerUnit` `"100"`, and optionally a `rateCardLookUp` name (the rate card itself is a later phase; absent → the flat `ratePerUnit` applies).
+2. They add a **Target Capacity Commitment** (`committedQuantity` `1000`) and a **Target Capacity Motivation** (`steps` `[{ aboveQuantity: 1000, ratePerUnit: "50" }]`, optionally a second band `{ aboveQuantity: 2000, ratePerUnit: "25" }`).
+3. On save, the form validates the components together — each modifier binds to the same-unit `usage_rate`, all share one currency, and `steps` are strictly ascending — and rejects any violation before write. Each component persists as one `product_offering_price` row (`component_type` + `price_component` jsonb); a non-blocking **not-yet-billable warning** is shown, because bill-run support for the capacity components lands in a later phase.
+4. The user submits the version for testing and activates it as usual; the components travel with the version and are grandfathered by the subscription's pinned version.
+5. **(Later phase, for reference)** At bill run the components resolve to one combined charge per product per BAN: `Qbill = max(aggregatedQuantity, 1000)`, priced through `100` up to `1000` then `50` above — so `800 EA → 100,000` and `2000 EA → 150,000` (`+ 25 × (Q − 2000)` with the second band).
 
 ### Placing an order (Orders)
 
@@ -117,7 +135,7 @@ Editing a live (`ACTIVE`) offering never modifies that row — it branches a new
 ### Prices panel (View Product)
 
 - Cards per `product_offering_price` row scoped to the selected offering.
-- Flat prices show `amount` + `currency`; tiered prices render the tier array (`[{from, to, rate}, …]`) from `pricing_characteristics` JSONB as inline `from–to: rate` text.
+- Flat prices show `amount` + `currency`; tiered prices render the tier array (`[{from, to, rate}, …]`) from `pricing_characteristics` JSONB as inline `from–to: rate` text. _(Pre-pm46 shape; the Pricing Components update replaced it with the component envelope rendered per `@type` — see **Pricing components** below.)_
 - A recurring price shows its charge period (length + type); a usage price shows its unit of measure (`Mbps` / `GB` / `MB` / `EA`); a `once` price shows neither.
 - Effectivity display: `start_date_time` per price; a price's end is derived from its successor's start (no stored `end_date_time`).
 
@@ -139,16 +157,25 @@ Editing a live (`ACTIVE`) offering never modifies that row — it branches a new
 
 - Every offering belongs to a version family, linked by `product_offering.family_offering_id` (nullable, self-referencing). The families list shows one row per family; the version bar shows the full history.
 - `version` is the row's sequence number within its family — the root is `1`, the first branch is `2`, and so on — assigned once at insert and never changed afterward.
-- At most one version per family can be `ACTIVE`, and at most one can be *open* (`DRAFT` or `TESTING`), at a time — both enforced by expression unique indexes on `COALESCE(family_offering_id, product_offering_id)` backing the in-transaction advisory lock and re-check.
+- At most one version per family can be `ACTIVE`, and at most one can be _open_ (`DRAFT` or `TESTING`), at a time — both enforced by expression unique indexes on `COALESCE(family_offering_id, product_offering_id)` backing the in-transaction advisory lock and re-check.
 - Editing an `ACTIVE` version's own fields, specifications, or prices always branches a new `DRAFT` version first — the active row and everything attached to it are never modified in place.
 
 ### Price management (Manage Products)
 
-- Add price: name, price type, pricing model (flat or tiered), currency, GL code, start date, and the per-type required fields — a **charge period** (length ∈ {1,3,12} months + type) for `recurring`, a **unit of measure** (`Mbps` / `GB` / `MB` / `EA`) for `usage`, neither for `once`.
+- Add price: name, price type, pricing model (flat or tiered), currency, GL code, start date, and the per-type required fields — a **charge period** (length ∈ {1,3,12} months + type) for `recurring`, a **unit of measure** (`Mbps` / `GB` / `MB` / `EA`) for `usage`, neither for `once`. _(This flat/tiered authoring is the pre-pm46 model; the Pricing Components update replaced it with the `@type` component envelope and the capacity components — see **Pricing components** above.)_
 - Edit and delete a price row — new capability, permitted only while the version is `DRAFT`. Several dated prices of one price type per version are permitted only while `DRAFT` (how a contractual step-up is staged).
 - A released version's prices are immutable: from `TESTING` onward, a price update or delete is refused by the repository **and** by a database trigger.
 - A new price's start date may be backdated up to 3 days with a non-blocking warning; earlier than that is rejected outright.
-- A quiet warning on price shapes nothing downstream can bill yet: tiered recurring (bm29 fails with `RECURRING_PRICE_UNSUPPORTED`) and tiered usage (rating v1 is FLAT-only).
+- _(Pre-pm46 authoring; superseded by the component envelope — see **Pricing components**.)_ A quiet warning on price shapes nothing downstream can bill yet: tiered recurring (bm29 fails with `RECURRING_PRICE_UNSUPPORTED`) and tiered usage (rating v1 is FLAT-only).
+
+### Pricing components (Manage Products / View Product)
+
+- Every price is a component under one JSON envelope (`@type`, `specVersion`, `plaSpecId`, `priceType`, `appliesAt`, `basis`, `boundTo`, `params`), stored as `product_offering_price.component_type` (CHECK-constrained, indexed) + `price_component` jsonb (`$type<PricingComponent>`); `currency`, `unit_of_measure`, `start_date_time` and the recurring-period columns stay on the row. This **replaces** the flat `amount` / `tiers[]` shapes and the dropped `pricing_model` / `pricing_characteristics` / legacy `price_type` columns.
+- Five component `@type`s: `usage_rate` (rating; `params: { ratePerUnit, rateCardLookUp }`), `flat_fee` (billing; `params: { amount }`, scalar POP), `capacity_commitment` (post-aggregation; `params: { committedQuantity }`), `capacity_motivation` (post-aggregation; `params: { steps: [{ aboveQuantity, ratePerUnit }] }`), and `negotiated_override` (rating; projection only — the physical `ordering.order_item_price_override` row is unchanged, Inv. #16).
+- A Zod discriminated union on `@type`, each branch a `strictObject` (unknown key rejected, never stripped); the per-`component_type` DB CHECK is the backstop. Money as decimal strings; quantities as numbers.
+- Cross-component validity at the write boundary (VI3–VI5): a `post_aggregation` modifier requires a same-unit `usage_rate`; exactly one effective `usage_rate` per `(offering, unit)`; a single currency across an offering's components — reusing the pm38 DRAFT-only service guard and the pm36 trigger.
+- Capacity mechanics compose as a transform pipeline (`Qbill = max(Q, committed)`, then price through the `steps` schedule), yielding one combined product charge — correct even when `committedQuantity` exceeds the first step; an internal base/top-up/discount breakdown may be retained for audit but is never separate bill lines.
+- TMF620 mapping documented as one `plaSpec` per `@type` (by `plaSpecId`) plus a mapping table in `pricing-component.schema.ts` — documentation only, no adapter, no `app/api/product*`.
 
 ### Lifecycle transitions (Manage Products)
 
