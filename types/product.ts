@@ -143,9 +143,9 @@ export type RecurringPeriodLength = (typeof RECURRING_PERIOD_LENGTHS)[number];
 // semantics, and LifecycleStatus is a total-Record key across the module
 // (§2.2) — reusing it would silently give a card version an OBSOLETE branch
 // and an offering a SUPERSEDED one. `RateCardIssueSeverity` (the other union
-// code-standards §2.19 lists alongside this one) is pm60's — validation's
-// unit, not this schema unit's — and is deliberately not declared here; the
-// split across two units is intentional, not an omission (D7).
+// code-standards §2.19 lists alongside this one) is the validation unit's
+// (pm58), declared just below; the split across two units is intentional, not
+// an omission (pm57 D7 / pm58 D5).
 export const RATE_CARD_VERSION_STATUSES = [
   "DRAFT",
   "ACTIVE",
@@ -153,6 +153,19 @@ export const RATE_CARD_VERSION_STATUSES = [
   "REJECTED",
 ] as const;
 export type RateCardVersionStatus = (typeof RATE_CARD_VERSION_STATUSES)[number];
+
+// pm58-spec D5 / code-standards §2.19 — the second of §2.19's two unions
+// (pm57 landed the first, RateCardVersionStatus). `as const`, keyed to
+// §1.41's two FIXED case lists: ERROR = every schema/file-level failure of
+// the upload contract (upload refused, no version row written); WARNING = a
+// file_checksum matching an earlier version (shown on the draft review, never
+// blocks). These lists are NOT tunable — no environment variable,
+// SYSTEM_CONFIG key or UI toggle moves a case between them (§1.41, workflow
+// §3.9). The severity is carried by consumers (the service pm61, the error
+// table pm66); the structural validator in
+// `validation/product/ratecard.schema.ts` emits only ERROR-level failures.
+export const RATE_CARD_ISSUE_SEVERITIES = ["ERROR", "WARNING"] as const;
+export type RateCardIssueSeverity = (typeof RATE_CARD_ISSUE_SEVERITIES)[number];
 
 export type {
   ProductOffering,

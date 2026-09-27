@@ -19,6 +19,7 @@ import { sql } from "drizzle-orm";
 import { appuser } from "@/db/schema/identity";
 import type { ProductSpecCharacteristics } from "@/validation/product/product-spec-characteristics.schema";
 import type { PricingComponent } from "@/validation/product/pricing-component.schema";
+import type { RejectSummary } from "@/validation/product/ratecard.schema";
 import type { RateCardVersionStatus } from "@/types/product";
 
 export const product = pgSchema("product");
@@ -277,7 +278,9 @@ export const ratecardVersion = product.table(
       mode: "date",
     }),
     supersededByVersionId: text("superseded_by_version_id"),
-    rejectSummary: jsonb("reject_summary"),
+    // pm58-spec D6 — the bounded reject-summary contract lands its inferred
+    // (output) type here; no path writes it in this delivery (§1.42).
+    rejectSummary: jsonb("reject_summary").$type<RejectSummary>(),
   },
   (t) => [
     unique("ratecard_version_card_name_version_num_unique").on(

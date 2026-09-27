@@ -33,9 +33,15 @@ Compacted deliverables; full detail in each `specs/pmXX-spec.md`.
 | pm56a | Pricing-components fixture sweep + guardrail-31 scope correction; resolved PM-ISS-001.                                                                                                  |
 | pm56b | Ordering-wizard `PriceCard` re-key — closed the last residue; repo-wide `tsc` + guardrail 31 green on `dev1`.                                                                           |
 
-## pm57a (current unit) — full detail
+## pm58 (current unit) — full detail
 
-**pm57a (Card schema — rewrite `0041` to the current design): IN PROGRESS (started 2026-09-27).** Part 5, schema unit. **Overwrites pm57** by rewriting `db/migrations/0041_ratecard_ran_usage_lkp.sql` in place (no `0042`). Boundary per `specs/pm57a-card-schema.md`: the rewritten `0041`, `db/schema/product.ts` (hand-synced), `types/product.ts` (`RateCardVersionStatus` — already present from pm57), `types/rbac.ts` (the `ratecard` member — gated on G-RC3), and the guardrail/test files that prove it. No repository, service, action, component, validation, parser, seed or page.
+**pm58 (Upload contract validation): IN PROGRESS (started 2026-09-27).** Part 5, pure-validation unit. Boundary per `specs/pm58-upload-contract-validation.md`: `validation/product/ratecard.schema.ts` (new — the upload contract as Zod: ten-column header map, strict row schema, file-level validator, the closed `RateCardUploadViolation` set, `RateCardIssue` + its line-number contract, and the bounded `rejectSummarySchema`), `RateCardIssueSeverity` in `types/product.ts` (§2.19's second union), the `reject_summary` `.$type<>()` annotation pm57 deferred, and this unit's own **pure** tests. **No database access anywhere** — no repository, service, action, parser, component, `tx`, `FormData` or file.
+
+**Header set from OR7′ (confirmed 2026-09-25):** ten columns, `Polygon ID` (not `SITE`), **no date column** (`snapshot_date` is set by the service in pm61, not read from the file — D-A8). Zod is the primary guard; the pm57a database is the backstop, never the reverse.
+
+## pm57a (delivered on `dev1`) — full detail
+
+**pm57a (Card schema — rewrite `0041` to the current design): IMPLEMENTED, DB-free-verified, committed to `dev1` (2026-09-27; docs `33ff773`, code `4ffd22c`).** Part 5, schema unit. **Overwrites pm57** by rewriting `db/migrations/0041_ratecard_ran_usage_lkp.sql` in place (no `0042`). Boundary per `specs/pm57a-card-schema.md`: the rewritten `0041`, `db/schema/product.ts` (hand-synced), `types/product.ts` (`RateCardVersionStatus` — already present from pm57), `types/rbac.ts` (the `ratecard` member — gated on G-RC3), and the guardrail/test files that prove it. No repository, service, action, component, validation, parser, seed or page.
 
 **What changes vs. the landed v1 `0041`:** adds `polygon_end_date` / `state` / `district` (descriptive); makes the row key `(ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id)` — **drops `polygon_start_date` from the key**; **drops the as-of index** (`ratecard_ran_usage_lkp_as_of_idx`); carries **no carry-forward columns** (`carried_row_count` / `retired_at` removed — D-A7/D-A9/D-A10).
 
