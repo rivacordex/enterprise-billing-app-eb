@@ -9,13 +9,17 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
-// pm57-spec I5 — live-DB proof, against a database built from EMPTY, that
-// 0041_ratecard_ran_usage_lkp.sql stands up both card tables with the two
-// partial unique indexes (RV1/C8), the RV2 row-key uniqueness constraint,
-// the cascade FK, and the no-FK stance on lkp_subscriber_ref_id — enforced
-// by Postgres, not by application code that does not exist yet (this unit
-// ships no repository/service/action). Same drop-all -> migrate-from-empty
-// reset pattern as the sibling product integration suites.
+// pm57a-spec I5/§6 — live-DB proof, against a database built from EMPTY, that
+// the REWRITTEN 0041_ratecard_ran_usage_lkp.sql stands up both card tables at
+// the current design: the two partial unique indexes (RV1/C8), the RV2
+// FOUR-column row-key uniqueness constraint (polygon_start_date OUT of the
+// key), the cascade FK, the no-FK stance on lkp_subscriber_ref_id, the three
+// descriptive columns (polygon_end_date/state/district) as plain nullable
+// attributes, and NO carry-forward columns (carried_row_count/retired_at) and
+// NO as-of index — all enforced by Postgres, not by application code that does
+// not exist yet (this unit ships no repository/service/action). Same drop-all
+// -> migrate-from-empty reset pattern as the sibling product integration
+// suites.
 const databaseUrl = process.env.DATABASE_URL;
 
 describe.skipIf(!databaseUrl)(
@@ -117,7 +121,6 @@ describe.skipIf(!databaseUrl)(
           "source_file",
           "file_checksum",
           "row_count",
-          "carried_row_count",
           "uploaded_by",
           "uploaded_at",
           "activated_by",
@@ -139,10 +142,12 @@ describe.skipIf(!databaseUrl)(
           "commercial_unit_public_key",
           "polygon_id",
           "polygon_start_date",
+          "polygon_end_date",
+          "state",
+          "district",
           "lkp_subscriber_ref_id",
           "service_code",
           "rate_per_unit",
-          "retired_at",
         ].sort(),
       );
     });
@@ -173,18 +178,85 @@ describe.skipIf(!databaseUrl)(
       await insertVersion("CARD_DRAFT_DUP", "REJECTED", 4);
     });
 
-    // I5.3 — a duplicate (version, mno, cu, polygon, polygon_start_date) is
-    // rejected (RV2).
-    it("a duplicate row key within one version is rejected (RV2)", async () => {
+    // I5.3 — a duplicate (version, mno, cu, polygon) is rejected (RV2). The
+    // row key is FOUR columns; polygon_start_date is OUT of the key (D-A9), so
+    // a second row with the same (mno, cu, polygon) but a DIFFERENT
+    // polygon_start_date still collides.
+    it("a duplicate four-column row key within one version is rejected, with polygon_start_date out of the key (RV2)", async () => {
       const versionId = await insertVersion("CARD_RV2", "DRAFT", 1);
-      await insertLkpRow(versionId);
-      await expect(insertLkpRow(versionId)).rejects.toThrow(
-        /ratecard_ran_usage_lkp_row_key_unique/,
-      );
+      await insertLkpRow(versionId, { startDate: "2026-01-01" });
+      // Same (mno, cu, polygon), same start date → collision.
+      await expect(
+        insertLkpRow(versionId, { startDate: "2026-01-01" }),
+      ).rejects.toThrow(/ratecard_ran_usage_lkp_row_key_unique/);
+      // Same (mno, cu, polygon), DIFFERENT start date → STILL a collision,
+      // because polygon_start_date is not a key component.
+      await expect(
+        insertLkpRow(versionId, { startDate: "2027-06-30" }),
+      ).rejects.toThrow(/ratecard_ran_usage_lkp_row_key_unique/);
       // The same key under a DIFFERENT version is not a collision — the
       // uniqueness is scoped per version, not global.
       const otherVersionId = await insertVersion("CARD_RV2", "SUPERSEDED", 2);
       await expect(insertLkpRow(otherVersionId)).resolves.not.toThrow();
+    });
+
+    // §6 — polygon_start_date, polygon_end_date, state and district are plain
+    // descriptive columns (D-A9/D-A10): the three new ones are nullable, accept
+    // arbitrary values, sit in no key/index, and carry no CHECK — so a second
+    // row differing ONLY in these fields (but sharing the four-column key) is
+    // still rejected, and out-of-order/NULL polygon dates are accepted.
+    it("polygon_end_date/state/district are plain descriptive columns — nullable, no CHECK, no key", async () => {
+      const versionId = await insertVersion("CARD_DESCRIPTIVE", "DRAFT", 1);
+      // Open-ended window (polygon_end_date NULL) and NULL labels are accepted.
+      await sql`
+        INSERT INTO product.ratecard_ran_usage_lkp
+          (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id,
+           polygon_start_date, polygon_end_date, state, district, lkp_subscriber_ref_id)
+        VALUES (${versionId}, 'MNO_D', 'CU_D', 'POLY_D',
+                '2026-01-01', NULL, NULL, NULL, 'PRDINV00000123')
+      `;
+      // A polygon_end_date BEFORE polygon_start_date is accepted — there is no
+      // date-order CHECK; these are descriptive, not validated here.
+      await sql`
+        INSERT INTO product.ratecard_ran_usage_lkp
+          (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id,
+           polygon_start_date, polygon_end_date, state, district, lkp_subscriber_ref_id)
+        VALUES (${versionId}, 'MNO_D', 'CU_D', 'POLY_D2',
+                '2026-12-31', '2026-01-01', 'Selangor', 'Petaling', 'PRDINV00000124')
+      `;
+      const rows = await sql<{ count: string }[]>`
+        SELECT count(*)::text AS count FROM product.ratecard_ran_usage_lkp
+        WHERE ratecard_version_id = ${versionId}
+      `;
+      expect(rows[0]?.count).toBe("2");
+
+      // Differing ONLY in the descriptive columns does not escape the
+      // four-column key — the second insert collides on (version, mno, cu,
+      // polygon), proving state/district/polygon_end_date are out of the key.
+      await expect(
+        sql`
+          INSERT INTO product.ratecard_ran_usage_lkp
+            (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id,
+             polygon_start_date, polygon_end_date, state, district, lkp_subscriber_ref_id)
+          VALUES (${versionId}, 'MNO_D', 'CU_D', 'POLY_D',
+                  '2026-01-01', '2099-01-01', 'Johor', 'Kluang', 'PRDINV00000125')
+        `,
+      ).rejects.toThrow(/ratecard_ran_usage_lkp_row_key_unique/);
+    });
+
+    // §6 — the as-of index the original 0041 created is gone. The lookup table
+    // carries exactly one non-PK index: the RV2 uniqueness constraint's
+    // backing index. (A UNIQUE constraint is backed by an index in pg_indexes.)
+    it("no as-of index exists; the only lookup index is the RV2 uniqueness backing index", async () => {
+      const indexes = await sql<{ indexname: string }[]>`
+        SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'product' AND tablename = 'ratecard_ran_usage_lkp'
+      `;
+      const names = indexes.map((i) => i.indexname);
+      expect(names).not.toContain("ratecard_ran_usage_lkp_as_of_idx");
+      expect(names).toContain("ratecard_ran_usage_lkp_row_key_unique");
+      // Only the PK and the RV2 uniqueness index back this table.
+      expect(names).toHaveLength(2);
     });
 
     // I5.4 — deleting a version cascades its rows; deleting a

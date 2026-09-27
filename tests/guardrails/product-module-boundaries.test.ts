@@ -701,15 +701,18 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(entry!.when).toBeGreaterThan(prior!.when);
   });
 
-  // Guardrail 13, re-baselined a THIRD time (pm57-spec I3/D1-D5) — the two
-  // new rate-card tables, both partial unique indexes on ratecard_version,
-  // the RV2 row-key uniqueness constraint, the cascade FK, and the as-of
-  // index, in both the SQL of record (0041) and the Drizzle mirror. Exact
-  // diff, not a removal. Guardrail 39 (one ACTIVE per card, enforced by the
-  // index — Inv. #45) is proven live against Postgres in
+  // Guardrail 13, re-baselined again (pm57a-spec I3/D1-D5) — the two rate-card
+  // tables, both partial unique indexes on ratecard_version, and the RV2
+  // FOUR-column row-key uniqueness constraint + cascade FK, in both the SQL of
+  // record (the REWRITTEN 0041) and the Drizzle mirror. pm57a rewrites 0041 in
+  // place to the current design: it ADDS polygon_end_date/state/district
+  // (descriptive), DROPS polygon_start_date from the row key, DROPS the as-of
+  // index, and carries NO carry-forward columns (carried_row_count/retired_at
+  // gone — D-A7/D-A9/D-A10). There is no 0042. Guardrail 39 (one ACTIVE per
+  // card, enforced by the index — Inv. #45) is proven live against Postgres in
   // tests/db/product-ratecard-schema.integration.test.ts; this file asserts
   // only the static shape, matching every other guardrail-13 baseline here.
-  it("0041 + db/schema/product.ts freeze the rate-card schema (pm57 D1-D5)", () => {
+  it("0041 (rewritten) + db/schema/product.ts freeze the current rate-card schema (pm57a D1-D5)", () => {
     const migrationSource = fs.readFileSync(
       path.join(
         REPO_ROOT,
@@ -731,12 +734,44 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       "ratecard_version_one_active_per_card",
       "ratecard_version_one_draft_per_card",
       "ratecard_ran_usage_lkp_row_key_unique",
-      "ratecard_ran_usage_lkp_as_of_idx",
     ];
     for (const name of NAMES) {
       expect(migrationSource).toContain(name);
       expect(schemaSource).toContain(name);
     }
+
+    // The current design ADDS three descriptive columns (D-A9/D-A10) in both
+    // homes.
+    for (const col of ["polygon_end_date", "state", "district"]) {
+      expect(migrationSource).toContain(`"${col}"`);
+    }
+    for (const col of ["polygonEndDate", "state", "district"]) {
+      expect(schemaSource).toContain(`${col}:`);
+    }
+
+    // The current design carries NO carry-forward columns and NO as-of index
+    // (D-A7 / D4) — in either home. Checked as column DECLARATIONS / the index
+    // identifier, not bare words, because the explanatory comments in both
+    // files deliberately name these to say they are absent.
+    expect(migrationSource).not.toMatch(/"carried_row_count"\s+integer/);
+    expect(migrationSource).not.toMatch(/"retired_at"\s+date/);
+    expect(migrationSource).not.toContain(
+      'INDEX "ratecard_ran_usage_lkp_as_of_idx"',
+    );
+    expect(schemaSource).not.toMatch(/carriedRowCount:\s*integer/);
+    expect(schemaSource).not.toMatch(/retiredAt:\s*date/);
+    expect(schemaSource).not.toMatch(
+      /index\("ratecard_ran_usage_lkp_as_of_idx"/,
+    );
+
+    // RV2 (D-A9): the row key is exactly the four columns, with
+    // polygon_start_date OUT of it, in the SQL of record.
+    expect(migrationSource).toContain(
+      'CONSTRAINT "ratecard_ran_usage_lkp_row_key_unique" UNIQUE("ratecard_version_id","mno_public_key","commercial_unit_public_key","polygon_id")',
+    );
+    expect(migrationSource).not.toContain(
+      '"commercial_unit_public_key","polygon_id","polygon_start_date"',
+    );
 
     // The cascade FK on the child table, and no FK anywhere on
     // lkp_subscriber_ref_id (RC14, Inv. #57).
@@ -766,6 +801,21 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(migrationSource.toUpperCase()).not.toContain(
       "INSERT INTO CORE.PERMISSIONS",
     );
+
+    // The rewrite is in place: 0041 is the ONLY rate-card migration — there is
+    // no 0042 (nor any later migration that touches the rate card).
+    const laterRateCardMigrations = fs
+      .readdirSync(path.join(REPO_ROOT, "db", "migrations"))
+      .filter((name) => /\.sql$/.test(name))
+      .filter((name) => {
+        const num = Number.parseInt(name.slice(0, 4), 10);
+        if (Number.isNaN(num) || num <= 41) return false;
+        const body = fs
+          .readFileSync(path.join(REPO_ROOT, "db", "migrations", name), "utf8")
+          .toLowerCase();
+        return body.includes("ratecard");
+      });
+    expect(laterRateCardMigrations).toEqual([]);
 
     // The journal carries a 0041 entry sorting after 0040's.
     const journal = JSON.parse(

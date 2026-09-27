@@ -239,12 +239,12 @@ export const productOfferingPrice = product.table(
 // pm57-spec D2/I1/I2 — physical DDL of record is
 // db/migrations/0041_ratecard_ran_usage_lkp.sql; this is the hand-synced
 // mirror (no drizzle-kit generate, code-standards §6.25). One row per
-// upload. `snapshotDate` is the file's hoisted Date column — constant
-// across the file, NEVER stored per row, NEVER used for matching, and the
-// sole source of retired_at on the child table (RC17, Inv. #49).
-// `status = 'REJECTED'` and `rejectSummary` have no writer in this delivery
-// (code-standards §1.42) — a failed upload writes nothing, including no
-// version row. Both exist for a future asynchronous ingest.
+// upload. `snapshotDate` is the upload date in the app timezone, set by the
+// upload service (D-A8) — NEVER read from the file, NEVER used for matching.
+// No `carriedRowCount` (D-A7). `status = 'REJECTED'` and `rejectSummary` have
+// no writer in this delivery (code-standards §1.42) — a failed upload writes
+// nothing, including no version row. Both exist for a future asynchronous
+// ingest.
 export const ratecardVersion = product.table(
   "ratecard_version",
   {
@@ -260,7 +260,6 @@ export const ratecardVersion = product.table(
     sourceFile: text("source_file").notNull(),
     fileChecksum: text("file_checksum"),
     rowCount: integer("row_count").notNull(),
-    carriedRowCount: integer("carried_row_count").notNull().default(0),
     uploadedBy: text("uploaded_by").references(() => appuser.id, {
       onDelete: "set null",
     }),
@@ -312,10 +311,12 @@ export const ratecardVersion = product.table(
 // only. `lkpSubscriberRefId` carries a product_inventory.product_inventory_id
 // VALUE, not a reference — no FK (RC14, Inv. #57), same no-FK stance as
 // rating.udr_rated (Inv. #17): a superseded version must survive a
-// subscription's removal. `serviceCode` and `ratePerUnit` are plain columns
-// with no CHECK and no meaning — stored as uploaded, nothing consumes them
-// (D3/D4, code-standards §1.45/§3.2). No capacity column, no currency
-// column (RC4, Inv. #53).
+// subscription's removal. `polygonStartDate`/`polygonEndDate` are descriptive
+// validity-window dates and `state`/`district` are descriptive labels — NOT
+// part of the row key (D-A9/D-A10). `serviceCode` and `ratePerUnit` are plain
+// columns with no CHECK and no meaning — stored as uploaded, nothing consumes
+// them (D3/D4, code-standards §1.45/§3.2). No `retiredAt`/`carriedRowCount`
+// (D-A7), no capacity column, no currency column (RC4, Inv. #53).
 export const ratecardRanUsageLkp = product.table(
   "ratecard_ran_usage_lkp",
   {
@@ -331,6 +332,9 @@ export const ratecardRanUsageLkp = product.table(
     commercialUnitPublicKey: text("commercial_unit_public_key").notNull(),
     polygonId: text("polygon_id").notNull(),
     polygonStartDate: date("polygon_start_date", { mode: "string" }).notNull(),
+    polygonEndDate: date("polygon_end_date", { mode: "string" }),
+    state: text("state"),
+    district: text("district"),
     lkpSubscriberRefId: text("lkp_subscriber_ref_id").notNull(),
     serviceCode: text("service_code"),
     ratePerUnit: numeric("rate_per_unit", {
@@ -338,24 +342,17 @@ export const ratecardRanUsageLkp = product.table(
       precision: 18,
       scale: 6,
     }),
-    retiredAt: date("retired_at", { mode: "string" }),
   },
   (t) => [
+    // RV2 (D-A9): row identity within a version is
+    // (mno_public_key, commercial_unit_public_key, polygon_id) —
+    // polygon_start_date is out of the key. This version-scoped uniqueness
+    // index is the only lookup index; there is no separate as-of index.
     unique("ratecard_ran_usage_lkp_row_key_unique").on(
       t.ratecardVersionId,
       t.mnoPublicKey,
       t.commercialUnitPublicKey,
       t.polygonId,
-      t.polygonStartDate,
-    ),
-    // The rating consumer's as-of join key (code-standards §6.28) — created
-    // now though nothing consumes it in this delivery (§6.31).
-    index("ratecard_ran_usage_lkp_as_of_idx").on(
-      t.ratecardVersionId,
-      t.mnoPublicKey,
-      t.commercialUnitPublicKey,
-      t.polygonId,
-      sql`${t.polygonStartDate} DESC`,
     ),
   ],
 );
