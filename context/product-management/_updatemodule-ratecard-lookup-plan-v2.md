@@ -1,16 +1,14 @@
-# Rate Card Lookup — `RATECARD_RAN_USAGE_LKP` (Products → Rate Card) — v2
+# Rate Card Lookup — `RATECARD_RAN_USAGE_LKP` (Products → Rate Card)
 
-**Supersedes:** `_updatemodule-ratecard-lookup-plan.md` (v1). This revision **narrows scope**: it stands up a single, end-user-managed lookup table and its upload lifecycle, and it **stops there**. It defines no consumer of the data — not rating, not bill run, not product pricing.
-
-**Type:** Update module (Product Management, `pm`-series). Adds two **new** tables and a page. Unlike v1, it **touches no delivered table** — in particular it makes **no change to `product_offering_price`** — so it is **independent of the Part 4 (pm46–pm54) atomic window**.
+**Type:** Update module (Product Management, `pm`-series). Adds two **new** tables and a page. It **touches no delivered table** — in particular it makes **no change to `product_offering_price`** — so it is **independent of the Part 4 (pm46–pm54) atomic window**.
 **Module:** Rate Card Lookup — a Revenue-Ops-managed reference table, uploaded and versioned, stood up so that a future consumer (rating) can read it. This delivery builds the table and its management surface; it does **not** build the consumer.
 **Users:** Revenue Operations — upload, review, activate, roll back.
-**Status:** Design (v2). Restated objective; `service_code` downgraded to a plain attribute; lookup table renamed; **carry-forward removed** (D-A7) — each version is exactly its uploaded file.
-**Companion docs:** `context/product-management/specs/pm00-build-plan.md`, `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`. v1's rating companions (`rm08`, `rating-engine-ran-usage.yaml`) are **no longer referenced** — no rating work is in scope.
+**Status:** Design.
+**Companion docs:** `context/product-management/specs/pm00-build-plan.md`, `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`. No rating work is in scope; the rating consumer is a separate, following-sprint deliverable.
 
 ---
 
-## 0. Objective (restated)
+## 0. Objective
 
 **Stand up a custom rate-card lookup table — `RATECARD_RAN_USAGE_LKP` — that Revenue Operations can manage (upload, review, activate, roll back), and that a rating consumer can later read.** The table must exist, be populated, and be governed by the version lifecycle **by the end of this delivery**. Nothing in this delivery *uses* the data.
 
@@ -29,41 +27,27 @@ Explicitly **not** an objective: defining how rating, bill run, or product prici
 
 ---
 
-## 1. What changed from v1 (delta summary)
+## 1. Design decisions
 
-| Area | v1 | v2 |
-|---|---|---|
-| **Objective** | key resolver feeding rating (subscription + service code + reserved rate) | **stand up the table**; consumer undefined and out of scope |
-| **Phase B (rating)** | in plan, gated on pm51 | **removed entirely** |
-| **`service_code`** | selects a `product_offering_price` row; drives a uniqueness re-key and a 3-site `lead()` partition | **plain text column** on the lookup table; **no** partitioning, **no** pricing/rating derivation |
-| **`product_offering_price`** | gains `service_code`, re-keyed, 3-site partition amend, authoring UI | **untouched** |
-| **`subscription_id`** | referential check against `inventory.product_inventory` (RV8) | **renamed `lkp_subscriber_ref_id`**, `NOT NULL`, carries a `product_inventory_id` value, **no FK**, no referential check (D-A1) |
-| **`rate_per_unit`** | reserved, `CHECK (… IS NULL)`, activation ritual, OR12 precedence | **plain nullable column**, ritual removed (see D-A2) |
-| **Lookup table name** | `product.ratecard_lookup` | **`RATECARD_RAN_USAGE_LKP`** |
-| **Part 4 coupling** | Phase A inside/after the pm46–pm54 window | **decoupled** — touches no delivered table |
-| **Table creation** | one card, name free-text (OR5 open) | **one seeded card only**; creating new lookup tables **out of scope** |
-| **Carry-forward (RC17)** | polygons absent from an upload copied into the new version with `retired_at` | **removed** — no `retired_at`, no `carried_row_count`; a version is exactly its file (D-A7) |
+The load-bearing choices for the table and its lifecycle.
 
----
-
-## 2. Decisions taken in this v2 revision — confirm before build
-
-These are the judgment calls made translating the new scope. Each is a real fork; correct any that are wrong.
-
-- **D-A1 (resolved) — `subscription_id` is renamed `lkp_subscriber_ref_id`, is `NOT NULL`, and carries a `product_inventory.product_inventory_id` value** (format `PRDINV` + 8 digits, `inventory.ts:40-44`). **No FK** — matching `rating.udr_rated`'s no-FK convention (Inv #17), where the eventual downstream sink `udr_subscriber_ref_id` is likewise plain `text`. Validated **structurally only** (present, non-empty, required per the contract); the v1 referential check against `inventory.product_inventory` status/window (RV8) is **not** reinstated — that coupling is a consumer concern, out of scope.
-- **D-A2 — `rate_per_unit` is a plain nullable numeric column.** The v1 "reserved / `CHECK (rate_per_unit IS NULL)` / activate-by-dropping-the-CHECK / OR12 precedence" machinery is removed, because it encoded future pricing significance. The empty-cell-≠-zero parser discipline (§7) is retained as ordinary data hygiene, not as a reserved-column guard. *Alternative: drop the column entirely if it carries no data in the seeded file.*
-- **D-A3 — `ratecard_version` remains the config/version tracker and is not renamed.** Only the lookup table is renamed. `ratecard_version` registers the tracked card and its versions; in Phase 1 it holds exactly one `card_name`. *Alternative: rename to `ratecard_ran_usage_version` for symmetry.*
-- **D-A4 — Storage stays in the `product` schema, spec series `pm`.** The app writes it, and it is managed from the Products surface. Unchanged from v1 RC8. *Alternative: a dedicated `reference` schema — deferred, no functional difference for this delivery.*
-- **D-A8 (resolved 2026-09-25) — `snapshot_date` is the upload date; the file has no date column.** The RevOps file carries seven columns (§7) and no `Date`. `snapshot_date` is set by the upload service to the **calendar date of the upload in the app timezone**, not read from the file. Consequences: RV4 (constant `Date`) and `SNAPSHOT_DATE_NOT_CONSTANT` are withdrawn, so the upload violation set is three members. A file uploaded late records a later `snapshot_date`. This is accepted, because nothing in this delivery reads `snapshot_date` for matching.
+- **D-A1 — `lkp_subscriber_ref_id` is `NOT NULL` and carries a `product_inventory.product_inventory_id` value** (format `PRDINV` + 8 digits, `inventory.ts:40-44`). **No FK** — matching `rating.udr_rated`'s no-FK convention (Inv #17), where the eventual downstream sink `udr_subscriber_ref_id` is likewise plain `text`. Validated **structurally only** (present, non-empty, required per the contract); there is **no** referential check against `inventory.product_inventory` — that coupling is a consumer concern, out of scope.
+- **D-A2 — `rate_per_unit` is a plain nullable numeric column.** No CHECK, no reserved rule. It is stored as uploaded when present and NULL when the cell is empty. The empty-cell-≠-zero parser discipline (§6) is ordinary data hygiene, not a reserved-column guard.
+- **D-A3 — `ratecard_version` is the config/version tracker.** It registers the tracked card and its versions; in Phase 1 it holds exactly one `card_name`.
+- **D-A4 — Storage stays in the `product` schema, spec series `pm`.** The app writes it, and it is managed from the Products surface.
 - **D-A5 — One card, seeded, fixed.** Phase 1 seeds a single `card_name` and its initial dataset. There is **no UI to create a second card or a second lookup table** (out of scope). The upload surface uploads **new versions of the one seeded card** only.
-- **D-A7 (resolved) — No carry-forward; a version is exactly its uploaded file.** Mediation already filters retired polygons out of the CUPS file upstream (v1 OR2), so the upload is the authoritative current state and a polygon absent from it is decommissioned. v1 RC17 re-inserted those absent rows into the new `ACTIVE` version with `retired_at` purely so that **rating** could still resolve past periods against the latest version alone — a consumer concern, now out of scope. v2 therefore drops RC17, the `retired_at` and `carried_row_count` columns, and RV9. History is not lost: superseded versions are retained immutably (RC11), so a key removed in v(n+1) is still present in v(n). How a future consumer resolves a past period (e.g. against the version that was `ACTIVE` at that date) is that consumer's design.
+- **D-A7 — No carry-forward; a version is exactly its uploaded file.** Mediation filters retired polygons out of the CUPS file upstream, so the upload is the authoritative current state and a polygon absent from it is decommissioned. Nothing is copied into a new version at activation, and there is no `retired_at`. History is not lost: superseded versions are retained immutably (RC11), so a key removed in v(n+1) is still present in v(n). How a future consumer resolves a past period is that consumer's design.
+- **D-A8 — `snapshot_date` is the upload date; the file has no snapshot-date column.** `snapshot_date` is set by the upload service to the **calendar date of the upload in the app timezone** — the IANA zone configured in `APP_TIMEZONE` (default `UTC`; `lib/config.ts`) — not read from the file. A file uploaded late records a later `snapshot_date`. This is accepted, because nothing in this delivery reads `snapshot_date` for matching.
+- **D-A9 — The row identity within a version is `(mno_public_key, commercial_unit_public_key, polygon_id)`.** `polygon_start_date` is **not** part of the row key: a given polygon appears **at most once per version**. `polygon_start_date` and `polygon_end_date` are descriptive validity-window dates — `polygon_start_date` required, `polygon_end_date` nullable (`NULL` = open-ended / still active) — read by no key and no index in this delivery.
+- **D-A10 — `state` and `district` are descriptive labels.** Plain nullable `text` columns, uploaded and stored, read by nothing. They are **candidate** key components for a future consumer, but carry **no** key, uniqueness or partition meaning here — for all present purposes they are plain descriptive data, like `service_code` (§4).
+- **D-A11 — an open `DRAFT` is replaced by re-upload, not blocked.** The one-`DRAFT`-per-card partial unique index means a card holds at most one open draft. If RevOps uploads the wrong file, a second upload for the same card **replaces** the open draft: inside the upload transaction the existing draft is discarded whole (a `DRAFT`-guarded version delete; its rows go by `ON DELETE CASCADE`) and the new draft is inserted. This is the recovery path — without it a single fat-fingered upload would block every future upload for the card until it was activated. It stays inside the scope rules: **no `ratecard : DELETE`, no standalone "discard" control, no fourth audit type** (the replace emits the same one upload event) and **no fourth action file** (the discard is a repository write). Lookup rows are still only inserted or cascade-removed, never edited (Inv. #46). This **reopens and resolves C2**: a discard exists, but only implicitly via re-upload.
 
 ---
 
-## 3. Scope
+## 2. Scope
 
 ### In
-- The two tables: `product.ratecard_version` (config/version tracker) and `product.RATECARD_RAN_USAGE_LKP` (rows), in one forward-only migration.
+- The two tables: `product.ratecard_version` (config/version tracker) and `product.RATECARD_RAN_USAGE_LKP` (rows), in one forward-only migration (RC12).
 - **Ability for Revenue Ops to upload files** (CSV), synchronously, as a new `DRAFT` version.
 - **Upload contract validation** — structural (header/columns, duplicate row keys, cell types). No cross-module referential validation (D-A1).
 - **CSV parser** — the one pinned dependency; coercion off; empty cell preserved.
@@ -76,8 +60,8 @@ These are the judgment calls made translating the new scope. Each is a real fork
 ### Out
 - **How the lookup data is used** — any resolution, as-of matching, or consumer logic. The table is stood up; nothing reads it.
 - **Any bill-run impact** — no aggregation, no charge computation, no `customer_bill_line`, no flow YAML.
-- **Any rating-engine change** — no `rp.py`, no card join, no lookup-miss, no `udr_rated` stamps. (All of v1 Phase B.)
-- **Any `product_offering_price` change** — no `service_code` column, no re-key, no `lead()` partition amend, no authoring form. (All of v1's ripple.)
+- **Any rating-engine change** — no `rp.py`, no card join, no lookup-miss, no `udr_rated` stamps.
+- **Any `product_offering_price` change** — no `service_code` column, no re-key, no partition amend, no authoring form.
 - **Creating / configuring / setting up new lookup tables** — Phase 1 tracks exactly one, seeded. No table-creation surface.
 - Rate-card **row authoring** (row-by-row editing) — upload is the only write path.
 - Capacity of any kind (no capacity column); currency (no currency column).
@@ -85,7 +69,7 @@ These are the judgment calls made translating the new scope. Each is a real fork
 
 ---
 
-## 4. The tables
+## 3. The tables
 
 ### `product.ratecard_version` — the config / version tracker
 
@@ -117,32 +101,37 @@ Constraints: `UNIQUE (card_name, version_num)`; a **partial unique index** on `c
 | `mno_public_key` | `text NOT NULL` | key component |
 | `commercial_unit_public_key` | `text NOT NULL` | key component |
 | `polygon_id` | `text NOT NULL` | key component |
-| `polygon_start_date` | `date NOT NULL` | key component (part of the row key) |
+| `polygon_start_date` | `date NOT NULL` | validity-window start — **descriptive, not a key component** (D-A9) |
+| `polygon_end_date` | `date` | validity-window end; `NULL` = open-ended / still active — **descriptive** (D-A9) |
+| `state` | `text` | **plain descriptive label** — candidate future key component, no meaning here (D-A10) |
+| `district` | `text` | **plain descriptive label** — candidate future key component, no meaning here (D-A10) |
 | `lkp_subscriber_ref_id` | `text NOT NULL` | the subscription — a `product_inventory.product_inventory_id` value (`PRDINV`+8 digits). **No FK** (matches `udr_rated` Inv #17); required; stored as uploaded, no referential check (D-A1) |
-| `service_code` | `text` | **plain attribute — a value in a column, no further meaning** (see §5) |
+| `service_code` | `text` | **plain attribute — a value in a column, no further meaning** (see §4) |
 | `rate_per_unit` | `numeric(18,6) NULL` | **plain nullable attribute** — no reserved ritual (D-A2) |
 
-Constraints: `UNIQUE (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id, polygon_start_date)` — the natural row key, needed for diff. Index on the same key columns for lookup. **No capacity column, no currency column.**
+Constraints: `UNIQUE (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id)` — the natural row key, needed for diff (D-A9). This version-scoped uniqueness index is the only lookup index required; **there is no separate as-of index** (with `polygon_start_date` out of the key, nothing reads rows by date). **No capacity column** (RC4), **no currency column**.
 
-> **Note on the row key vs "partitioning."** The uniqueness key above is the identity of a row *within a version*. It is not related to, and must not be confused with, v1's `service_code` partitioning of the product price table — which is **removed** (§5). `service_code` is **not** part of any key here.
+> **Note on the row key.** The uniqueness key above is the identity of a row *within a version*. `service_code`, `state`, `district`, `polygon_start_date` and `polygon_end_date` are **not** part of any key or index — they are plain columns (§4).
+
+Both tables land in one forward-only migration; `0006_product.sql` is **not** reopened (RC12).
 
 ---
 
-## 5. `service_code` — a plain column, and nothing more
+## 4. `service_code`, and the other plain columns
 
-`service_code` is a `text` column on `RATECARD_RAN_USAGE_LKP` carrying whatever value the upload provides. It is **data**. Specifically, in v2 it:
+`service_code` is a `text` column on `RATECARD_RAN_USAGE_LKP` carrying whatever value the upload provides. It is **data**. Specifically it:
 
 - is **not** part of any uniqueness key or index partition;
 - does **not** appear on `product_offering_price` (that column is not added);
 - does **not** select a price row, derive a rate, or influence any pricing or rating logic;
-- has **no** cross-row invariant (v1's `AMBIGUOUS_RATE_CARD` / same-card-name rule is removed);
+- has **no** cross-row invariant;
 - is validated **structurally only** — present/typed per the upload contract — like any other column.
 
-Every reference to `service_code` "selecting a `usage_rate` row," "narrowing within the pinned offering," or driving effectivity is **removed** from this plan. If a future consumer needs to interpret it, that is that consumer's design, out of scope here.
+`state` and `district` (D-A10), and the `polygon_start_date` / `polygon_end_date` validity dates (D-A9), are the same: uploaded, stored, structurally validated, and read by nothing in this delivery. If a future consumer needs to interpret any of them, that is that consumer's design, out of scope here.
 
 ---
 
-## 6. Lifecycle
+## 5. Lifecycle
 
 ```
    UPLOAD              REVIEW              ACTIVATE            LATER
@@ -155,24 +144,24 @@ Every reference to `service_code` "selecting a `usage_rate` row," "narrowing wit
 ```
 
 - **Upload** (RC7, RC15) — RevOps uploads a CSV (~5,000–5,500 rows, ~0.5 MB). The server parses and validates structurally; a valid file becomes a `DRAFT`; an invalid one returns a row-level error report and **writes nothing**. Synchronous server action; **no** Kestra, staging table, or streaming. Insert in 1,000-row batches inside one transaction. Raise `serverActions.bodySizeLimit` to `4mb`.
-- **DRAFT** — parsed, validated, previewable, diffable, invisible to any consumer. At most one open draft per card.
-- **Diff** — added / changed / removed rows against the current `ACTIVE`. This is the control that makes activation a review rather than a button. (Buckets are generic add/remove/change; v1's subscription/service-code billing-consequence buckets are no longer meaningful and collapse to a plain changed set — see D-A6 note below.)
+- **DRAFT** — parsed, validated, previewable, diffable, invisible to any consumer. At most one open draft per card; a new upload for the card **replaces** the open draft (D-A11).
+- **Diff** — added / changed / removed rows against the current `ACTIVE` (D-A6).
 - **Activate** (RC7) — `DRAFT` → `ACTIVE`; prior `ACTIVE` → `SUPERSEDED`. Two status flips, **no row writes** (D-A7). One transaction, one lock, status read on `tx`. At most one `ACTIVE` per card, enforced by the partial unique index.
-- **Rollback** (RC11) — re-activate a `SUPERSEDED` version; two status flips, no row edits (versions are immutable). Activate and rollback now have the same shape.
+- **Rollback** (RC11) — re-activate a `SUPERSEDED` version; two status flips, no row edits (versions are immutable). Activate and rollback have the same shape.
 
-> **D-A6 — Diff buckets.** With `subscription_id` and `service_code` now plain attributes, v1's four billing-consequence buckets (reassignment / code-change / added / retiring) lose their special meaning. v2 keeps **added / changed / removed**: *changed* is a key whose non-key columns differ; *removed* is a key in the current `ACTIVE` that is absent from the upload. With carry-forward gone (D-A7), *removed* means exactly that — the row is not in the new version and stays readable in the superseded one. Confirm this is sufficient for RevOps review.
+> **D-A6 — Diff buckets.** With `subscription_id`, `service_code`, `state` and `district` all plain attributes, the diff keeps **added / changed / removed**: *changed* is a key whose non-key columns differ; *removed* is a key in the current `ACTIVE` that is absent from the upload. With no carry-forward (D-A7), *removed* means exactly that — the row is not in the new version and stays readable in the superseded one.
 
-### No carry-forward (v1 RC17 removed — D-A7)
+### No carry-forward (D-A7)
 
 Uploads are complete current-state snapshots, and mediation has already filtered retired polygons out of them. A version's row set is **exactly its uploaded file**: nothing is copied in at activation, and there is no `retired_at`. A polygon dropped between v(n) and v(n+1) appears in the diff as *removed* and stays readable in v(n), which is retained immutably for audit and rollback.
 
 ---
 
-## 7. Validation & CSV parser
+## 6. Validation & CSV parser
 
 **Structural validation** (`validation/product/ratecard.schema.ts`) — `strictObject`, pm47 house style:
 - Header match against the expected column set; unknown column rejected, missing column = file rejected (contract changed).
-- **The column set (OR7′, confirmed 2026-09-25).** The header text is exact, case-sensitive and in any order:
+- **The column set.** The header text is exact, case-sensitive and in any order:
 
   | File header | Table column | Required |
   |---|---|---|
@@ -180,20 +169,23 @@ Uploads are complete current-state snapshots, and mediation has already filtered
   | `Commercial Unit ID` | `commercial_unit_public_key` | yes |
   | `Polygon ID` | `polygon_id` | yes |
   | `Polygon Start Date` | `polygon_start_date` (`YYYY-MM-DD`) | yes |
+  | `Polygon End Date` | `polygon_end_date` (`YYYY-MM-DD`) | no |
+  | `State` | `state` | no |
+  | `District` | `district` | no |
   | `Subscriber Reference ID` | `lkp_subscriber_ref_id` | yes |
   | `Service Code` | `service_code` | no |
   | `Rate per Unit` | `rate_per_unit` | no |
 
-  There is no date column (D-A8). pm60 D0 holds the full cell rules.
-- No duplicate row key `(mno, commercial_unit, polygon, polygon_start_date)`; report both line numbers.
-- Per-cell typing per the contract. `rate_per_unit`, if present, is an optional decimal string (no "reserved/empty" rule — D-A2).
+  There is no snapshot-date column (D-A8). pm58 D0 holds the full cell rules.
+- No duplicate row key `(mno, commercial_unit, polygon)`; report both line numbers (D-A9).
+- Per-cell typing per the contract. `rate_per_unit`, if present, is an optional decimal string. `polygon_end_date`, if present, is a strict `YYYY-MM-DD` date; `state` and `district`, if present, are plain text.
 - **No cross-module referential validation** (D-A1). No capacity field, no currency field.
 
 **CSV parser** (`services/product/ratecard/parse-csv.ts`) — the one file importing the pinned parser (exact version, coercion **off**). Every cell a string; an empty cell stays `""` (never `0`); leading-zero keys survive; dates stay `YYYY-MM-DD` strings. Buffered/synchronous at this volume; the file itself is never stored (filename + checksum only). Line numbering: header is line 1, first data row is line 2, honoured end to end.
 
 ---
 
-## 8. Services, actions, UI, seed, permission
+## 7. Services, actions, UI, seed, permission
 
 - **Services/actions:** `upload-version`, `activate-version`, `rollback-version`, `diff-versions`; repository `db/repositories/ratecard.ts` (flat path); one audit event per upload/activate/rollback in the same transaction. No row-level update/delete is exported — **upload is the only write path.**
 - **UI `/products/rate-card`:** version list (status badge, snapshot date, row count), paged/filterable row preview, diff view, upload/activate/rollback dialogs (first `<input type=file>` in the app; uncontrolled, `FormData`, never in form state). Uncached (`force-dynamic`). Read UI ships before write UI. No status banner — the table is stood up on the assumption it will be consumed (rating, a following sprint).
@@ -202,72 +194,32 @@ Uploads are complete current-state snapshots, and mediation has already filtered
 
 ---
 
-## 9. Decisions carried from v1 (still in force)
-
-- **RC3′** — Row key is `(mno_public_key, commercial_unit_public_key, polygon_id, polygon_start_date)`; `polygon_start_date` is part of the key. The v1 "as-of matching" *semantics* are a consumer concern and are **out of scope**; the columns remain as the row key for uniqueness and diff.
-- **RC4** — No capacity column.
-- **RC7** — Upload lands `DRAFT`; activation is a separate explicit act; one permission covers both.
-- **RC8 / D-A4** — Storage in `product.*`, spec series `pm`, route `/products/rate-card`.
-- **RC11** — Versions are immutable once activated; a correction is a new upload; superseded versions are retained for audit and rollback. With RC17 removed, a version is a byte-for-byte image of its file, with no exception.
-- **RC12** — One forward-only migration, `0041_ratecard_ran_usage_lkp.sql`, a new file. `0006_product.sql` is **not** reopened. **No `ALTER` on `product_offering_price`** (v2 removes v1's price-table changes).
-- **RC15** — Synchronous ingest; `bodySizeLimit: '4mb'`; 1,000-row batches in one transaction; in-memory diff.
-
-**Removed from v1:** RC1/RC2 (key-resolver-for-rating), RC5 (accepted rating drift), RC6 (lookup-miss reject), RC9 (card-name loop-break), RC13 (reserved rate), RC14 (subscription resolution), RC16 (override interaction), RC17 (carry-forward — D-A7). All concern how the data is *used*, which is out of scope.
-
----
-
-## 10. Invariants
+## 8. Invariants
 
 - **RV1** — At most one `ACTIVE` version per `card_name` (partial unique index).
-- **RV2** — Within a version, `(mno, commercial_unit, polygon, polygon_start_date)` is unique.
+- **RV2** — Within a version, `(mno_public_key, commercial_unit_public_key, polygon_id)` is unique (D-A9).
 - **RV3** — A version's rows are immutable once `ACTIVE`, and are exactly the rows of its uploaded file (rows stored = `row_count`).
-- ~~**RV4**~~ — **Withdrawn (D-A8).** *Was: `snapshot_date` is constant across an upload.* The file has no date column.
-
-**Removed from v1:** RV5, RV6, RV7 (all `service_code` ↔ `product_offering_price` couplings), RV8 (subscription referential check — D-A1), RV9 (self-sufficiency via carry-forward — D-A7).
 
 ---
 
-## 11. Impact on the existing pm57–pm71 specs
+## 9. Delivery units
 
-The v1 specs (commit a6f8745) were generated from v1. Under v2:
-
-| Spec | Fate under v2 |
-|---|---|
-| **pm57** schema + price delta | **Revise** — keep the two card tables (renamed); **drop** the `service_code` column on `product_offering_price`, the uniqueness re-key, and the price-table CHECK. Migration renamed. **D-A7:** drop `retired_at` and `carried_row_count`. |
-| **pm58** price partition amend + `AMBIGUOUS_RATE_CARD` | **Drop** — no price-table change, no cross-row card rule. |
-| **pm59** `rp.py` partition amend | **Drop** — no rating change. |
-| **pm60** upload contract validation | **Revise** — structural only; drop the reserved-column-empty rule and the subscription severity cases (D-A1/D-A2). |
-| **pm61** CSV parser | **Keep** (rename table refs). |
-| **pm62** repository | **Keep** — rename to `RATECARD_RAN_USAGE_LKP`. **D-A7:** drop `carryForwardRetiredRows`. |
-| **pm63** upload service + action | **Revise** — drop the RV8 set-based subscription query. |
-| **pm64** diff | **Revise** — generic added / changed / removed buckets (D-A6); **D-A7:** "retiring" becomes "removed". |
-| **pm65** activate + carry-forward | **Shrink (D-A7)** — becomes *activate*: two status flips, no row writes, no RV9 check. |
-| **pm66** rollback | **Keep** — carry-forward rationale simplified (D-A7). |
-| **pm67** page + read UI | **Keep** — no banner (rating consumes in a following sprint); read surface only. **D-A7:** no `retired_at` / `carried_row_count` display. |
-| **pm68** write UI + `bodySizeLimit` | **Keep** — **D-A7:** "Retiring" copy and carry-forward summary become a plain "Removed" count. |
-| **pm69** `service_code` authoring on the price form | **Drop** — no price-table involvement. |
-| **pm70** demo seed | **Elevate** — becomes the Phase 1 seed of the one tracked table. **D-A7:** second version exercises a *removed* key, not a carried one. |
-| **pm71** ship gate | **Revise** — drop guardrails tied to the price ripple (partition parity, price CHECK, authz overlap with pricing); no dependency on pm52/pm59/Part 4. **D-A7:** version-self-sufficiency guardrail becomes "a version is exactly its file". |
-
-Net effect: **pm58, pm59, pm69 drop; pm57, pm60, pm63, pm64, pm71 shrink; the Part 4 coupling disappears.** D-A7 further shrinks pm62, pm64, pm65 and pm67–pm71.
+Delivery is broken into units **pm57** (schema) and **pm58–pm68** (upload contract, parser, repository, upload service, diff, activate, rollback, page + read UI, write UI, Phase 1 seed, ship gate). Per-unit detail lives in `context/product-management/specs/pmXX-*.md` and in `pm00-build-plan.md`.
 
 ---
 
-## 12. Open items
+## 10. Open items
 
 **None blocking the table stand-up.**
 
 - **OR3 — Permission.** New `ratecard` permission vs reuse `products`. *Recommendation: new `ratecard`.*
 - **OR4 — File format / parser.** CSV; pin one library (exact version, coercion off).
-- **OR7′ — RESOLVED 2026-09-25 (product owner, from the RevOps file layout).** There are seven columns (§7). `Polygon ID` maps to `polygon_id`; `SITE` was never a column. There is no date column (D-A8). Polygon Start Date is strict `YYYY-MM-DD`.
-- **D-A1, D-A2, D-A3, D-A6** — the revision decisions in §2/§6, for confirmation.
+- **OR7′ — Column set (confirmed).** Ten columns (§6). `Polygon ID` maps to `polygon_id`; `SITE` is not a column; there is no snapshot-date column (D-A8). Dates (`Polygon Start Date`, `Polygon End Date`) are strict `YYYY-MM-DD`.
 - **OR-RET — Retention / purge policy (deferred to a later plan).** Over the long run `RATECARD_RAN_USAGE_LKP` accumulates one ~5,500-row slice per version. This is **not** a stand-up blocker: the hot path stays version-scoped by the leading `ratecard_version_id` index, so per-lookup cost does not grow with total rows. A retention/purge policy for superseded versions — and, only if it is ever needed, a partition-by-month trigger for cheap `DROP PARTITION` retention — is **to be captured and delivered in a later plan**, not here.
-
-**Retired from v1 as no longer relevant:** OR5 (card identity — resolved by D-A5, one seeded card), OR11 (Part 4 merge point — decoupled), OR12 (override precedence — no rate significance), OR1/OR2/OR8 (already closed).
 
 ---
 
-## 13. Sequencing
+## 11. Sequencing
 
 Single phase. No cross-module dependency, no Part 4 window.
 
@@ -288,3 +240,35 @@ Single phase. No cross-module dependency, no Part 4 window.
 ```
 
 **Definition of done:** `RATECARD_RAN_USAGE_LKP` and its version/config tracker exist from an empty database; Revenue Operations can upload, review, activate and roll back versions of the one seeded card through the UI; each version holds exactly its uploaded rows — and no code in this delivery reads, resolves, prices, or bills from the table; the rating consumer is a following-sprint deliverable.
+
+---
+
+## GSTACK REVIEW REPORT
+
+**/plan-eng-review** — 2026-09-27. Scope: this plan (v2) + all `context/product-management` docs + the Part 5 specs (pm57, pm57a, pm58–pm68). Verified against the live codebase on `dev1` (`cb32aa6`). Outside voice: Claude subagent (codex CLI unavailable in this environment).
+
+| Review | Runs | Status | Findings |
+|--------|------|--------|----------|
+| Eng Review (PLAN) | 1 | ISSUES RESOLVED | 8 decided + 4 folded corrections; 0 critical gaps remaining (2 closed) |
+
+**Architecture:** sound and unusually well-reasoned (DB-enforced partial unique indexes, TOCTOU lock-read-on-`tx` with 4× concurrency loops, validate-before-transaction, 1,000-row batching for the bind-param cap, honest D9 grant hand-off). The risks are deployment-mechanism and doc-drift, not design. **Performance:** no issues — query budgeting is a model; no-cache is the correct call. **Tests:** near-complete on planned paths.
+
+Decisions taken (all approved via AskUserQuestion):
+- **1A** — the pm57a in-place `0041` rewrite becomes a **verified gate (G-RC6)**: confirm no persistent/shared DB applied the original `0041` before rewriting, recorded like G-C. (Original `0041` is committed at the v1 shape.)
+- **2A** — keep the as-of-index **drop**; record in the Part 5 hand-off that the consumer inherits an index-on-populated-table migration.
+- **3A** — annotate pm60/pm65/pm57a/pm68 so **C1/C5/C6/C9 read as verify-only** (context docs are already at target state).
+- **4B** — add a **redirect banner** to `prodmgmt-progress-tracker.md`'s pm57 section (still describes the reversed v1 unit); note the pm57 integration suite is superseded by pm57a's re-baseline.
+- **5B** — rely on pm61's sequential second-upload test for the concurrent-upload race. Caveat: confirm the upload service actually catches `23505` on the DRAFT index and maps it to `{ok:false}`.
+- **6A** — add a **minimal DRAFT recovery path** (a new upload replaces the open draft: delete-then-insert rows in one tx, reuse `RATECARD_VERSION_UPLOADED`, no new audit type, no DELETE permission). Reopens/​supersedes C2 — record in pm00.
+- **7A** — **keep full Phase-1 scope** (lifecycle is the product for RevOps; per-version immutability makes a future key change a new-version migration, not a live-row rewrite). Record D-A9/D-A10 as planner calls with a reopening trigger.
+- **8A** — correct pm57a's rewrite mechanism: **regenerate `0041`'s `_journal.json` hash + snapshot** to match the rewritten SQL (not "unchanged"); add a hash-matches-SQL verification step to the 1A gate.
+
+Folded corrections (clear, no decision needed):
+- pm57a D5 / pm00 gate table: **G-RC3 blocks pm61, not pm65** — the write actions call `requirePermission('ratecard','EDIT')` and won't compile without the `rbac.ts` member.
+- pm61: state `version_num = max+1` is read on `tx` inside the transaction.
+- pm67: name which `core.appuser` stamps `uploaded_by`/`activated_by` in the seed.
+- Note the `REJECTED`-as-reserved tradeoff (kept; documented as dead-until-async-ingest).
+
+**VERDICT:** ENG CLEARED (plan-stage) — architecture and tests pass. The 8 decisions and 4 corrections above were **applied to the specs/context docs on 2026-09-27** (T1–T10): the new-migration-safety gate is recorded as **G-RC6** (G-RC5 was already taken by the withdrawn `rp.py` gate), and D-A11 (replace-open-DRAFT) is threaded through the plan, pm57a, pm60, pm61, pm66, pm68 and pm00. No CEO or design review required (backend + one internal RevOps surface; docs already carry the UI spec).
+
+NO UNRESOLVED DECISIONS
