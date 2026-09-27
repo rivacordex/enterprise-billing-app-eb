@@ -33,9 +33,15 @@ Compacted deliverables; full detail in each `specs/pmXX-spec.md`.
 | pm56a | Pricing-components fixture sweep + guardrail-31 scope correction; resolved PM-ISS-001.                                                                                                  |
 | pm56b | Ordering-wizard `PriceCard` re-key — closed the last residue; repo-wide `tsc` + guardrail 31 green on `dev1`.                                                                           |
 
-## pm58 (current unit) — full detail
+## pm59 (current unit) — full detail
 
-**pm58 (Upload contract validation): IN PROGRESS (started 2026-09-27).** Part 5, pure-validation unit. Boundary per `specs/pm58-upload-contract-validation.md`: `validation/product/ratecard.schema.ts` (new — the upload contract as Zod: ten-column header map, strict row schema, file-level validator, the closed `RateCardUploadViolation` set, `RateCardIssue` + its line-number contract, and the bounded `rejectSummarySchema`), `RateCardIssueSeverity` in `types/product.ts` (§2.19's second union), the `reject_summary` `.$type<>()` annotation pm57 deferred, and this unit's own **pure** tests. **No database access anywhere** — no repository, service, action, parser, component, `tx`, `FormData` or file.
+**pm59 (CSV parser + the pinned dependency): IN PROGRESS (started 2026-09-27).** Part 5. Boundary per `specs/pm59-csv-parser-and-pinned-dependency.md`: `services/product/ratecard/parse-csv.ts` (new — **the only file that imports the parser package**), the `package.json` exact-version pin + lockfile entry, and this unit's fixtures/tests. **No schema, no repository, no service beyond this file, no action, no component, no page.** Turns uploaded CSV bytes into `Record<string, string>` cells with coercion off (empty stays `""`, Inv. #51), the header handed over faithfully (missing/duplicate columns visible), the 1-based line number (header = line 1) attached, and the `file_checksum` computed over the raw bytes in the same pass. Validates nothing (D7) — that is pm58's.
+
+**Gate G-RC4 (library pin) — OPEN, awaiting the decision to record.** The update's only new runtime dependency; must satisfy the empty-cell discipline (a parser that coerces `""`→`0` is the wrong library). Candidates: `csv-parse/sync` (`cast: false`, Node-native synchronous — matches RC15) or `papaparse` (`dynamicTyping: false`). To be pinned to an **exact** version with coercion set explicitly off, recorded here + in `pm00-build-plan.md` with its date.
+
+## pm58 (delivered on `dev1`) — full detail
+
+**pm58 (Upload contract validation): IMPLEMENTED, verified, committed to `dev1` (2026-09-27, `7da7dba`).** Part 5, pure-validation unit. Boundary per `specs/pm58-upload-contract-validation.md`: `validation/product/ratecard.schema.ts` (new — the upload contract as Zod: ten-column header map, strict row schema, file-level validator, the closed `RateCardUploadViolation` set, `RateCardIssue` + its line-number contract, and the bounded `rejectSummarySchema`), `RateCardIssueSeverity` in `types/product.ts` (§2.19's second union), the `reject_summary` `.$type<>()` annotation pm57 deferred, and this unit's own **pure** tests. **No database access anywhere** — no repository, service, action, parser, component, `tx`, `FormData` or file.
 
 **Header set from OR7′ (confirmed 2026-09-25):** ten columns, `Polygon ID` (not `SITE`), **no date column** (`snapshot_date` is set by the service in pm61, not read from the file — D-A8). Zod is the primary guard; the pm57a database is the backstop, never the reverse.
 

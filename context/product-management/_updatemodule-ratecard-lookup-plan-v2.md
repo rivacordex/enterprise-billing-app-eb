@@ -213,7 +213,7 @@ Delivery is broken into units **pm57** (schema) and **pm58–pm68** (upload cont
 **None blocking the table stand-up.**
 
 - **OR3 — Permission.** New `ratecard` permission vs reuse `products`. *Recommendation: new `ratecard`.*
-- **OR4 — File format / parser.** CSV; pin one library (exact version, coercion off).
+- **OR4 — File format / parser (resolved 2026-09-27; G-RC4 closed).** CSV; pinned `csv-parse` at exact **7.0.3** (the `csv-parse/sync` API), coercion **off** (`cast: false`, set explicitly). Imported in exactly one file — `services/product/ratecard/parse-csv.ts` (pm59).
 - **OR7′ — Column set (confirmed).** Ten columns (§6). `Polygon ID` maps to `polygon_id`; `SITE` is not a column; there is no snapshot-date column (D-A8). Dates (`Polygon Start Date`, `Polygon End Date`) are strict `YYYY-MM-DD`.
 - **OR-RET — Retention / purge policy (deferred to a later plan).** Over the long run `RATECARD_RAN_USAGE_LKP` accumulates one ~5,500-row slice per version. This is **not** a stand-up blocker: the hot path stays version-scoped by the leading `ratecard_version_id` index, so per-lookup cost does not grow with total rows. A retention/purge policy for superseded versions — and, only if it is ever needed, a partition-by-month trigger for cheap `DROP PARTITION` retention — is **to be captured and delivered in a later plan**, not here.
 
