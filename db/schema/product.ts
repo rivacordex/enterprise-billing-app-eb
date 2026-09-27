@@ -297,10 +297,11 @@ export const ratecardVersion = product.table(
     uniqueIndex("ratecard_version_one_active_per_card")
       .on(t.cardName)
       .where(sql`${t.status} = 'ACTIVE'`),
-    // C8, decided (pm57-spec D5, option A): at most one open DRAFT per card.
-    // The accepted cost — an abandoned draft blocks the next upload until
-    // activated, since Phase A has no discard and no `ratecard : DELETE` —
-    // is recorded in the hand-off register, not hidden.
+    // At most one open DRAFT per card (C8, option A). A wrong draft is
+    // replaced by the next upload (D-A11, pm61 D12) — it does not block the
+    // card; `deleteDraftVersion` (db/repositories/ratecard.ts) discards the
+    // open draft so the re-upload can take its place. Mirrors the 0041
+    // migration comment.
     uniqueIndex("ratecard_version_one_draft_per_card")
       .on(t.cardName)
       .where(sql`${t.status} = 'DRAFT'`),

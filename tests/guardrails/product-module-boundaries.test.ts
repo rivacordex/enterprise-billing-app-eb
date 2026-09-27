@@ -750,19 +750,26 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     }
 
     // The current design carries NO carry-forward columns and NO as-of index
-    // (D-A7 / D4) — in either home. Checked as column DECLARATIONS / the index
-    // identifier, not bare words, because the explanatory comments in both
-    // files deliberately name these to say they are absent.
-    expect(migrationSource).not.toMatch(/"carried_row_count"\s+integer/);
-    expect(migrationSource).not.toMatch(/"retired_at"\s+date/);
-    expect(migrationSource).not.toContain(
-      'INDEX "ratecard_ran_usage_lkp_as_of_idx"',
-    );
-    expect(schemaSource).not.toMatch(/carriedRowCount:\s*integer/);
-    expect(schemaSource).not.toMatch(/retiredAt:\s*date/);
-    expect(schemaSource).not.toMatch(
-      /index\("ratecard_ran_usage_lkp_as_of_idx"/,
-    );
+    // (D-A7 / D4) — in either home. Strip comments FIRST, then ban the bare
+    // identifier regardless of type: the explanatory comments deliberately name
+    // these to say they are absent, and a type-qualified regex (e.g.
+    // /"retired_at"\s+date/) would miss a re-add under a different type such as
+    // `timestamp`. After stripping, any occurrence is a real re-introduction.
+    const migrationCode = migrationSource
+      .split("\n")
+      .map((line) => line.replace(/--.*$/, ""))
+      .join("\n");
+    const schemaCode = schemaSource
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((line) => line.replace(/\/\/.*$/, ""))
+      .join("\n");
+    expect(migrationCode).not.toContain('"carried_row_count"');
+    expect(migrationCode).not.toContain('"retired_at"');
+    expect(migrationCode).not.toContain("ratecard_ran_usage_lkp_as_of_idx");
+    expect(schemaCode).not.toContain("carriedRowCount");
+    expect(schemaCode).not.toContain("retiredAt");
+    expect(schemaCode).not.toContain("ratecard_ran_usage_lkp_as_of_idx");
 
     // RV2 (D-A9): the row key is exactly the four columns, with
     // polygon_start_date OUT of it, in the SQL of record.

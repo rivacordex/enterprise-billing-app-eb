@@ -73,6 +73,19 @@ export function parseRateCardCsv(bytes: Buffer): ParsedRateCardCsv {
   // headers (which `columns: true` would collapse into one object key) and lets
   // us attach our own line numbers. `cast: false` and `trim: false` are set
   // explicitly — the two switches this unit exists to hold down.
+  //
+  // `relax_column_count` is intentionally left OFF (its default). A row whose
+  // field count differs from the header (a missing/extra comma, an unquoted
+  // comma inside a value) almost always means the row's cells are MISALIGNED,
+  // not merely short — and silently accepting misaligned data would re-key or
+  // mis-price a row with no error, the worst outcome for a billing input. So
+  // csv-parse THROWS a `CsvError` (code `CSV_RECORD_INCONSISTENT_FIELDS_LENGTH`)
+  // on such a row, and this function deliberately does NOT catch it: a
+  // structurally-malformed CSV cannot be turned into trustworthy rows, which is
+  // a different failure class from a contract violation (pm58's HEADER_MISMATCH
+  // / ROW_SCHEMA_INVALID over well-formed rows). The upload action (pm61) wraps
+  // this call and surfaces the throw as a file-level "could not parse" error;
+  // it is not one of the three structural violation codes (D7).
   const records: string[][] = parse(bytes, {
     bom: true,
     cast: false,

@@ -59,19 +59,29 @@ describe.skipIf(!databaseUrl)(
       await sql_.end();
     });
 
-    function makeRows(n: number, startDate = "2026-01-01"): LookupRowInput[] {
-      return Array.from({ length: n }, (_, i) => ({
-        mnoPublicKey: `MNO-${i}`,
-        commercialUnitPublicKey: `CU-${i}`,
-        polygonId: `POLY-${i}`,
-        polygonStartDate: startDate,
-        polygonEndDate: null,
-        state: null,
-        district: null,
-        lkpSubscriberRefId: `PRDINV${String(i).padStart(8, "0")}`,
-        serviceCode: null,
-        ratePerUnit: null,
-      }));
+    // `offset` shifts the generated key space so two batches can be given
+    // disjoint keys (the row key is (version, mno, cu, polygon); polygon dates
+    // are not part of it, so reusing indices across batches would collide).
+    function makeRows(
+      n: number,
+      startDate = "2026-01-01",
+      offset = 0,
+    ): LookupRowInput[] {
+      return Array.from({ length: n }, (_, k) => {
+        const i = offset + k;
+        return {
+          mnoPublicKey: `MNO-${i}`,
+          commercialUnitPublicKey: `CU-${i}`,
+          polygonId: `POLY-${i}`,
+          polygonStartDate: startDate,
+          polygonEndDate: null,
+          state: null,
+          district: null,
+          lkpSubscriberRefId: `PRDINV${String(i).padStart(8, "0")}`,
+          serviceCode: null,
+          ratePerUnit: null,
+        };
+      });
     }
 
     // I4.1 — a version + 5,400 rows insert in batches inside ONE transaction;
@@ -118,15 +128,17 @@ describe.skipIf(!databaseUrl)(
             rowCount: 3500,
           });
           versionId = inserted.versionId;
-          // Three clean batches, then a fourth that violates NOT NULL on a key
-          // column — the whole transaction must roll back.
+          // Three clean batches (keys MNO-0..2999), then a fourth batch on a
+          // DISJOINT key range (offset 3000) with a NULL forced into a NOT NULL
+          // key column — so the fourth batch fails on the injected NULL, not on
+          // a spurious duplicate-key collision with the first three. The whole
+          // transaction must roll back.
           await ratecardRepository.insertLookupRows(
             tx,
             versionId,
             makeRows(3000),
           );
-          const bad = makeRows(500, "2026-02-01");
-          // Force a failure inside the fourth batch.
+          const bad = makeRows(500, "2026-02-01", 3000);
           (bad[10] as { mnoPublicKey: unknown }).mnoPublicKey = null;
           await ratecardRepository.insertLookupRows(tx, versionId, bad);
         }),
@@ -269,17 +281,22 @@ describe.skipIf(!databaseUrl)(
       `;
       expect(gone?.c).toBe("0");
 
-      // An ACTIVE version is immutable — the discard refuses and deletes nothing.
-      const active = await db.transaction((tx) =>
-        ratecardRepository.insertVersion(tx, {
+      // An ACTIVE version is immutable — the discard refuses and deletes
+      // nothing. It is given lookup rows so the "deletes nothing" assertion
+      // also proves the ON DELETE CASCADE never fired (not just that the
+      // version row survived).
+      const active = await db.transaction(async (tx) => {
+        const { versionId } = await ratecardRepository.insertVersion(tx, {
           cardName: "CARD_DISCARD_2",
           versionNum: 1,
           status: "ACTIVE",
           snapshotDate: "2026-01-01",
           sourceFile: "active.csv",
-          rowCount: 0,
-        }),
-      );
+          rowCount: 3,
+        });
+        await ratecardRepository.insertLookupRows(tx, versionId, makeRows(3));
+        return { versionId };
+      });
       const refused = await db.transaction((tx) =>
         ratecardRepository.deleteDraftVersion(tx, active.versionId),
       );
@@ -293,6 +310,12 @@ describe.skipIf(!databaseUrl)(
         active.versionId,
       );
       expect(survivor?.ratecardVersionId).toBe(active.versionId);
+      // The cascade did NOT fire — all three lookup rows are intact.
+      const [kept] = await sql_<{ c: string }[]>`
+        SELECT count(*)::text AS c FROM product.ratecard_ran_usage_lkp
+        WHERE ratecard_version_id = ${active.versionId}
+      `;
+      expect(kept?.c).toBe("3");
     });
 
     // I4.7 — guardrail 37, DATABASE ARM (a documented FINDING, not a rejection).
@@ -359,6 +382,153 @@ describe.skipIf(!databaseUrl)(
       expect(source).toMatch(/RATECARD_INSERT_BATCH_SIZE = 1000/);
       expect(source).not.toMatch(/process\.env/);
       expect(source).not.toMatch(/@\/lib\/config/);
+    });
+
+    // D7 — a numeric(18,6) rate_per_unit round-trips as a STRING and preserves
+    // value. Postgres scale-pads to six places on the way out, so consumers must
+    // not string-compare to the uploaded form (e.g. "0.0125" reads back padded).
+    it("round-trips rate_per_unit as a value-preserving string (mode:'string')", async () => {
+      const versionId = await db.transaction(async (tx) => {
+        const { versionId } = await ratecardRepository.insertVersion(tx, {
+          cardName: "CARD_NUMERIC",
+          versionNum: 1,
+          status: "DRAFT",
+          snapshotDate: "2026-01-01",
+          sourceFile: "n.csv",
+          rowCount: 1,
+        });
+        await ratecardRepository.insertLookupRows(tx, versionId, [
+          { ...makeRows(1)[0]!, ratePerUnit: "0.0125" },
+        ]);
+        return versionId;
+      });
+      const { rows } = await ratecardRepository.getVersionRows(db, versionId, {
+        limit: 10,
+        offset: 0,
+      });
+      expect(rows).toHaveLength(1);
+      expect(typeof rows[0]!.ratePerUnit).toBe("string");
+      expect(Number(rows[0]!.ratePerUnit)).toBe(0.0125);
+    });
+
+    // setVersionStatus is the only writer of status/provenance — flip the
+    // status and set provenance; an omitted provenance field stays null (the
+    // conditional set-object must not clobber it).
+    it("setVersionStatus flips status and sets only the provenance passed", async () => {
+      const draft = await db.transaction((tx) =>
+        ratecardRepository.insertVersion(tx, {
+          cardName: "CARD_SETSTATUS",
+          versionNum: 1,
+          status: "DRAFT",
+          snapshotDate: "2026-01-01",
+          sourceFile: "s.csv",
+          rowCount: 0,
+        }),
+      );
+      const activatedAt = new Date("2026-03-01T00:00:00.000Z");
+      await db.transaction((tx) =>
+        ratecardRepository.setVersionStatus(tx, draft.versionId, "ACTIVE", {
+          activatedAt,
+        }),
+      );
+      const after = await ratecardRepository.getVersionById(
+        db,
+        draft.versionId,
+      );
+      expect(after?.status).toBe("ACTIVE");
+      expect(after?.activatedAt?.toISOString()).toBe(activatedAt.toISOString());
+      // supersededByVersionId was not passed → stays null, not clobbered.
+      expect(after?.supersededByVersionId).toBeNull();
+    });
+
+    // listVersions: newest-first for one card, and all cards when cardName is
+    // null. findActiveForUpdate returns the ACTIVE version under a lock.
+    it("listVersions filters by card / returns all; findActiveForUpdate locks the ACTIVE row", async () => {
+      const a1 = await db.transaction((tx) =>
+        ratecardRepository.insertVersion(tx, {
+          cardName: "CARD_LIST_A",
+          versionNum: 1,
+          status: "SUPERSEDED",
+          snapshotDate: "2026-01-01",
+          sourceFile: "a1.csv",
+          rowCount: 0,
+        }),
+      );
+      const a2 = await db.transaction((tx) =>
+        ratecardRepository.insertVersion(tx, {
+          cardName: "CARD_LIST_A",
+          versionNum: 2,
+          status: "ACTIVE",
+          snapshotDate: "2026-02-01",
+          sourceFile: "a2.csv",
+          rowCount: 0,
+        }),
+      );
+      await db.transaction((tx) =>
+        ratecardRepository.insertVersion(tx, {
+          cardName: "CARD_LIST_B",
+          versionNum: 1,
+          status: "DRAFT",
+          snapshotDate: "2026-01-01",
+          sourceFile: "b1.csv",
+          rowCount: 0,
+        }),
+      );
+
+      const forA = await ratecardRepository.listVersions(db, "CARD_LIST_A");
+      expect(forA.map((v) => v.ratecardVersionId)).toEqual([
+        a2.versionId,
+        a1.versionId,
+      ]); // newest (later uploaded_at) first
+
+      const all = await ratecardRepository.listVersions(db, null);
+      expect(all.length).toBeGreaterThanOrEqual(3);
+      expect(all.some((v) => v.cardName === "CARD_LIST_B")).toBe(true);
+
+      const locked = await db.transaction((tx) =>
+        ratecardRepository.findActiveForUpdate(tx, "CARD_LIST_A"),
+      );
+      expect(locked?.ratecardVersionId).toBe(a2.versionId);
+      expect(locked?.status).toBe("ACTIVE");
+    });
+
+    // getVersionRows' ILIKE filter narrows to matching key columns and its
+    // total reflects the filtered set.
+    it("getVersionRows applies the ILIKE filter and totals the filtered set", async () => {
+      const versionId = await db.transaction(async (tx) => {
+        const { versionId } = await ratecardRepository.insertVersion(tx, {
+          cardName: "CARD_FILTER",
+          versionNum: 1,
+          status: "DRAFT",
+          snapshotDate: "2026-01-01",
+          sourceFile: "f.csv",
+          rowCount: 3,
+        });
+        await ratecardRepository.insertLookupRows(tx, versionId, [
+          { ...makeRows(1)[0]!, polygonId: "ALPHA-1" },
+          { ...makeRows(1, "2026-01-01", 1)[0]!, polygonId: "ALPHA-2" },
+          { ...makeRows(1, "2026-01-01", 2)[0]!, polygonId: "BETA-1" },
+        ]);
+        return versionId;
+      });
+      const filtered = await ratecardRepository.getVersionRows(db, versionId, {
+        limit: 10,
+        offset: 0,
+        filter: "ALPHA",
+      });
+      expect(filtered.total).toBe(2);
+      expect(filtered.rows).toHaveLength(2);
+      // A whitespace-only filter is treated as no filter (all three rows).
+      const unfiltered = await ratecardRepository.getVersionRows(
+        db,
+        versionId,
+        {
+          limit: 10,
+          offset: 0,
+          filter: "   ",
+        },
+      );
+      expect(unfiltered.total).toBe(3);
     });
   },
 );

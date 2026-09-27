@@ -282,8 +282,13 @@ export const ratecardRepository = {
     const conditions: SQL[] = [
       eq(ratecardRanUsageLkp.ratecardVersionId, versionId),
     ];
-    if (query.filter && query.filter.length > 0) {
-      const pattern = `%${escapeLikePattern(query.filter)}%`;
+    // Trim before deciding whether a filter is present: a whitespace-only
+    // filter is "no filter", not a search for a literal space (escapeLikePattern
+    // does not touch spaces, so an untrimmed " " would build ILIKE '% %' and
+    // silently narrow the preview).
+    const filter = query.filter?.trim() ?? "";
+    if (filter.length > 0) {
+      const pattern = `%${escapeLikePattern(filter)}%`;
       const match = or(
         ilike(ratecardRanUsageLkp.mnoPublicKey, pattern),
         ilike(ratecardRanUsageLkp.commercialUnitPublicKey, pattern),

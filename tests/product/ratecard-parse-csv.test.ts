@@ -179,6 +179,18 @@ describe("rate-card CSV parser (pm59)", () => {
     expect(result.rows[0]!.cells["Polygon ID"]).toBe("multi\nline");
   });
 
+  // A structurally-malformed row (field count ≠ the ten-column header) THROWS
+  // rather than being silently accepted as misaligned data. relax_column_count
+  // is intentionally off (billing-safe); pm61's upload action catches this and
+  // surfaces a file-level parse error. This documents the parser's contract so
+  // a future caller knows to wrap it.
+  it("throws on a ragged row instead of silently accepting misaligned cells", () => {
+    expect(() => parseRateCardCsv(csv(["only,three,fields"]))).toThrow();
+    // A row with MORE fields than the header also throws.
+    const tooMany = [...Array(11)].map((_, i) => `c${i}`).join(",");
+    expect(() => parseRateCardCsv(csv([tooMany]))).toThrow();
+  });
+
   // I4.11 — grep proves exactly one import of the parser package in the tree.
   it("imports csv-parse in exactly one file (the parser module)", () => {
     const importers = collectSourceFiles(REPO_ROOT).filter((file) => {

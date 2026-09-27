@@ -129,6 +129,96 @@ describe("rate-card upload contract (pm58)", () => {
     }
   });
 
+  // A duplicated EXPECTED column is HEADER_MISMATCH — the parser preserves the
+  // duplicate (pm59 D4) so it is rejected here, not silently collapsed to the
+  // first occurrence. The unknown- and missing-header checks are unaffected.
+  it("rejects a duplicated expected column as HEADER_MISMATCH", () => {
+    const headers = [...ORDERED_HEADERS, "State"]; // "State" appears twice
+    const result = validateRateCardFile(
+      fileFrom(headers, [validRowByHeader()]),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const dup = result.issues.filter(
+        (i) => i.violation === "HEADER_MISMATCH" && i.column === "State",
+      );
+      expect(dup).toHaveLength(1);
+      expect(dup[0]!.reason).toMatch(/duplicate/i);
+      // The duplicate is not misreported as unknown or missing.
+      expect(
+        result.issues.some((i) => /Unknown column "State"/.test(i.reason)),
+      ).toBe(false);
+      expect(
+        result.issues.some((i) =>
+          /Missing required column "State"/.test(i.reason),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  // A duplicated UNKNOWN column is reported ONCE (not once per occurrence),
+  // matching the single issue a duplicated expected column gets.
+  it("reports a duplicated unknown column once, not once per occurrence", () => {
+    const headers = [...ORDERED_HEADERS, "Foo", "Foo"];
+    const row = { ...validRowByHeader(), Foo: "x" };
+    const result = validateRateCardFile(fileFrom(headers, [row]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const foo = result.issues.filter(
+        (i) => i.violation === "HEADER_MISMATCH" && i.column === "Foo",
+      );
+      expect(foo).toHaveLength(1);
+    }
+  });
+
+  // A NUL byte can never be stored in a Postgres text column and is this
+  // module's row-key delimiter, so a key cell containing one is rejected at
+  // validation (ROW_SCHEMA_INVALID) rather than causing a false duplicate or an
+  // opaque insert error. Built with String.fromCharCode to keep a literal NUL
+  // out of the source file.
+  it("rejects a key cell containing a NUL byte as ROW_SCHEMA_INVALID", () => {
+    const nul = String.fromCharCode(0);
+    const row = { ...validRowByHeader(), "MNO Name": `MNO${nul}001` };
+    const result = validateRateCardFile(fileFrom(ORDERED_HEADERS, [row]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.issues.some(
+          (i) =>
+            i.violation === "ROW_SCHEMA_INVALID" &&
+            i.column === "mno_public_key",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  // Date validity is a pure day-in-month check (proleptic-Gregorian leap rule),
+  // so a validly-formatted date in ANY four-digit year is accepted (0099 must
+  // not be rejected by the old Date.UTC two-digit-year mapping), and the
+  // leap-year rule is applied correctly.
+  it("accepts a valid date in any four-digit year and applies the leap-year rule", () => {
+    for (const good of ["0099-01-01", "2024-02-29"]) {
+      const row = { ...validRowByHeader(), "Polygon Start Date": good };
+      expect(validateRateCardFile(fileFrom(ORDERED_HEADERS, [row])).ok).toBe(
+        true,
+      );
+    }
+    for (const bad of ["2026-02-29", "2023-02-29", "2026-04-31"]) {
+      const row = { ...validRowByHeader(), "Polygon Start Date": bad };
+      const result = validateRateCardFile(fileFrom(ORDERED_HEADERS, [row]));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(
+          result.issues.some(
+            (i) =>
+              i.violation === "ROW_SCHEMA_INVALID" &&
+              i.column === "polygon_start_date",
+          ),
+        ).toBe(true);
+      }
+    }
+  });
+
   // I3.4 — a case/spelling variant is HEADER_MISMATCH; a leading BOM and
   // whitespace around a header cell are accepted.
   it("treats a case/spelling variant as HEADER_MISMATCH", () => {

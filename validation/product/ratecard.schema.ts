@@ -65,21 +65,35 @@ export const RATE_CARD_TABLE_COLUMNS = Object.values(
 // A real calendar date in strict `YYYY-MM-DD` (D0 col 4/5, §2.21). The regex
 // pins the exact shape — four-two-two digits, hyphen-separated — so `2026-8-1`
 // (single digits), `01/08/2026` (wrong separator/order) and
-// `2026-08-01T00:00` (a datetime) are all refused by format. The round-trip
-// then refuses an impossible day like `2026-02-30`. The value stays a string;
-// it is never converted to a `Date` for storage or comparison.
+// `2026-08-01T00:00` (a datetime) are all refused by format. A pure
+// day-in-month check (with the proleptic-Gregorian leap rule) then refuses an
+// impossible day like `2026-02-30`. Deliberately NO `Date` object: this module
+// keeps calendar dates as strings end to end (§2.21), and
+// `new Date(Date.UTC(yy, …))` maps two-digit years 0–99 to 1900–1999, which
+// would wrongly reject a validly-formatted date such as `0099-01-01`.
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function isRealIsoDate(value: string): boolean {
   if (!ISO_DATE_RE.test(value)) return false;
   const year = Number(value.slice(0, 4));
   const month = Number(value.slice(5, 7));
   const day = Number(value.slice(8, 10));
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
+  if (month < 1 || month > 12) return false;
+  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [
+    31,
+    isLeap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return day >= 1 && day <= daysInMonth[month - 1]!;
 }
 
 // `rate_per_unit` fits the column's `numeric(18,6)` (D2): non-negative, at most
@@ -88,6 +102,17 @@ function isRealIsoDate(value: string): boolean {
 // plain valid values, never rounded to fit.
 const RATE_PER_UNIT_RE = /^\d{1,12}(\.\d{1,6})?$/;
 
+// A NUL byte (\u0000) can never be stored in a Postgres `text` column, and it
+// is also this file's row-key delimiter (ROW_KEY_DELIMITER below) — a key cell
+// containing one would both fail to persist and could collide with the
+// delimiter, producing a false DUPLICATE_ROW_KEY at the in-memory dedup that
+// runs before any insert. Zod is the primary guard (the DB is the backstop),
+// so every stored string cell rejects a NUL here with a clear error rather
+// than reaching an opaque insert failure or a spurious duplicate. This is not
+// normalisation of free-text data (§2.20); it refuses a value the storage
+// layer can never hold.
+const hasNulByte = (value: string): boolean => value.includes("\u0000");
+
 // A required cell is non-empty: a whitespace-only cell counts as empty and is
 // refused (D0). The stored value is left exactly as uploaded — the emptiness
 // test trims, the value does not.
@@ -95,12 +120,19 @@ const requiredCellSchema = z
   .string()
   .refine((value) => value.trim().length > 0, {
     message: "This required cell must not be empty or whitespace.",
+  })
+  .refine((value) => !hasNulByte(value), {
+    message: "This cell must not contain a NUL byte (\\u0000).",
   });
 
 // A plain optional string column (`state`, `district`, `service_code`): any
 // string is accepted, including "". Stored as uploaded; never trimmed, never
-// nulled here (D0 cols 6/7/9, §3.3).
-const optionalStringCellSchema = z.string();
+// nulled here (D0 cols 6/7/9, §3.3) — but a NUL byte is refused (unstorable).
+const optionalStringCellSchema = z
+  .string()
+  .refine((value) => !hasNulByte(value), {
+    message: "This cell must not contain a NUL byte (\\u0000).",
+  });
 
 const polygonStartDateCellSchema = z.string().refine(isRealIsoDate, {
   message: "Must be a real calendar date in YYYY-MM-DD format.",
@@ -206,12 +238,12 @@ export type RateCardFileResult =
   | { readonly ok: false; readonly issues: readonly RateCardIssue[] };
 
 // The row key delimiter (D3, §6.33). The key components are free-text RevOps
-// data with no printable character excluded by rule, so a naive `+`
-// concatenation would make ("AB","C") and ("A","BC") collide. We join on the
-// NUL byte ("\u0000"): a Postgres `text` column cannot store a NUL byte, so no
-// key component can ever contain one — which makes the join provably
-// injective over every value the columns can actually hold. It is not merely
-// "unlikely"; it is impossible by the storage model (§2.20).
+// data, so a naive `+` concatenation would make ("AB","C") and ("A","BC")
+// collide. We join on the NUL byte ("\u0000"), and a key component can never
+// contain one: `requiredCellSchema` rejects any cell containing a NUL (above),
+// and a Postgres `text` column cannot store one either. Because that rejection
+// runs at validation — before this in-memory dedup — the join is provably
+// injective over every value that reaches it (§2.20).
 const ROW_KEY_DELIMITER = "\u0000";
 
 export function rateCardRowKey(
@@ -246,17 +278,24 @@ export function validateRateCardFile(
     (index === 0 ? cell.replace(/^\uFEFF/, "") : cell).trim(),
   );
 
-  // 1. Header match. `headerIndex` records the first position each recognised
-  // header occupies, so a row's cell can be read positionally by header name.
+  // 1. Header match. One pass records each header's first position (so a row's
+  // cell can be read positionally by header name) and its occurrence count.
+  // Then each DISTINCT header is judged once — unknown if not in the contract,
+  // else duplicate if it appears more than once (the parser preserves duplicate
+  // headers, pm59 D4, so they are rejected here rather than silently collapsed
+  // to the first column). Reporting each distinct header once means a doubled
+  // column yields a single issue whether it is known or unknown. Missing
+  // expected columns are reported separately.
   const headerIndex = new Map<string, number>();
+  const headerCounts = new Map<string, number>();
   normalizedHeaders.forEach((header, index) => {
     if (!headerIndex.has(header)) headerIndex.set(header, index);
+    headerCounts.set(header, (headerCounts.get(header) ?? 0) + 1);
   });
   const expectedSet = new Set<string>(RATE_CARD_FILE_HEADERS);
-  const seenSet = new Set(normalizedHeaders);
 
   const headerIssues: RateCardIssue[] = [];
-  for (const header of normalizedHeaders) {
+  for (const [header, occurrences] of headerCounts) {
     if (!expectedSet.has(header)) {
       headerIssues.push({
         violation: "HEADER_MISMATCH",
@@ -265,10 +304,18 @@ export function validateRateCardFile(
         value: header,
         reason: `Unknown column "${header}" — the header does not match the rate-card upload contract.`,
       });
+    } else if (occurrences > 1) {
+      headerIssues.push({
+        violation: "HEADER_MISMATCH",
+        line: 1,
+        column: header,
+        value: header,
+        reason: `Duplicate column "${header}" — it appears ${occurrences} times; each expected column must appear exactly once.`,
+      });
     }
   }
   for (const header of RATE_CARD_FILE_HEADERS) {
-    if (!seenSet.has(header)) {
+    if (!headerCounts.has(header)) {
       headerIssues.push({
         violation: "HEADER_MISMATCH",
         line: 1,
