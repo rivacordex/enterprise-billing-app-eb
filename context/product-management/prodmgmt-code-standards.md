@@ -130,7 +130,7 @@ Items 1–20 are the catalog and Manage-rebuild standard. Items 21–34 are the 
 18. **(rate card) The upload action's shape differs from §3.7's, deliberately, and that difference is the whole security argument.** In order: `requirePermission('ratecard', 'EDIT')` → `isRedirectError` catch → take the file off `FormData` and check **extension, MIME type and byte size** before reading it → parse to rows with the pinned parser (§7.10) → `fileSchema.safeParse` → the row schema per row → one write service (no referential query — D-A1) → `revalidatePath('/products/rate-card')` → typed result. `safeParse` still runs before any service call; it simply cannot run on a file handle. **Never parse a `FormData` envelope and treat the pass as validation of the file's contents.**
 19. **(rate card) The client-side header sniff is a convenience and never a boundary.** Reading the first line in the browser to reject an obviously wrong file early is allowed; the server re-parses and re-validates the entire file unconditionally. "The client already checked it" is never a reason to skip a server check (general §1.2, §1.5).
 20. **(rate card) The file never enters react-hook-form state, and the upload form never serialises it to JSON or base64.** The picker is an uncontrolled file input inside a `form` whose `action` is the Server Action; the action receives `FormData`. This is the module's — and the application's — first file input, and the pattern is binding for whatever upload comes next.
-21. **(rate card) Three action files are added and `EXPECTED_PRODUCT_ACTION_FILES` grows by exactly three:** `upload-ratecard-version.action.ts`, `activate-ratecard-version.action.ts`, `rollback-ratecard-version.action.ts`. This is the first movement in that list since the Manage rebuild — the pricing update left it unchanged (§3.7). The guardrail asserting the list is updated in the same change set, never afterwards.
+21. **(rate card) Three action files are added and `PRODUCT_ACTION_FILES` grows by exactly three:** `upload-ratecard-version.action.ts` (**landed pm61**, the first movement in that list since the Manage rebuild — the pricing update left it unchanged, §3.7), `activate-ratecard-version.action.ts`, `rollback-ratecard-version.action.ts`. The guardrail asserting the list is updated in the same change set, never afterwards.
 22. **(rate card) Revalidate narrowly.** A card mutation revalidates `/products/rate-card` and nothing else: no catalog page reads the card, and no catalog mutation revalidates the card page.
 23. **(rate card) The query budget is part of the page contract.** First render: one versions query plus its count. Selecting a version: one paged rows query plus its count. Requesting a diff: two full row reads — the selected version and the current `ACTIVE` — and nothing more. The diff is computed in memory from those two reads (§6.29); it never issues a query per row and never one query per bucket.
 
@@ -337,9 +337,9 @@ app/(app)/products/rate-card/
   page.tsx                            # (rate card, new)  RateCardPage — guard ratecard : READ
   loading.tsx, error.tsx              # (rate card, new)
 actions/product/
-  upload-ratecard-version.action.ts   # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
-  activate-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
-  rollback-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
+  upload-ratecard-version.action.ts   # (rate card)  PRODUCT_ACTION_FILES +1 — LANDED pm61
+  activate-ratecard-version.action.ts # (rate card, new)  PRODUCT_ACTION_FILES +1
+  rollback-ratecard-version.action.ts # (rate card, new)  PRODUCT_ACTION_FILES +1
 components/products/rate-card/
   rate-card-version-table.tsx         # (rate card, new)  RateCardVersionTable — server
   rate-card-status-badge.tsx          # (rate card, new)  RateCardStatusBadge — total Record
@@ -352,14 +352,15 @@ components/products/rate-card/
   rollback-version-dialog.tsx         # (rate card, new)  RollbackVersionDialog
 services/product/ratecard/
   parse-csv.ts                        # (rate card) the ONLY importer of the CSV parser (csv-parse 7.0.3, §7.10) — LANDED pm59
-  upload-version.ts                   # (rate card, new)  parse -> validate -> DRAFT, one tx
+  upload-version.ts                   # (rate card)  parse -> validate -> DRAFT, one tx — LANDED pm61
   activate-version.ts                 # (rate card, new)  promote + demote, one tx, no row writes
   rollback-version.ts                 # (rate card, new)  re-activate a SUPERSEDED version
   diff-versions.ts                    # (rate card, new)  in-memory, three buckets
   list-versions.ts, get-version-rows.ts # (rate card, new) read models
 db/repositories/
   ratecard.ts                         # (rate card) FLAT path — §7.8; no row-level write — LANDED pm60
-db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card, new) DDL + the ratecard PERMISSIONS seed row
+db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card) the two tables' DDL — LANDED pm57a
+db/migrations/0043_ratecard_permission.sql    # (rate card) the ratecard PERMISSIONS seed row (G-RC3) — LANDED pm61
 validation/product/
   ratecard.schema.ts                  # (rate card) header map + row + file + rejectSummary schemas — LANDED pm58
 db/seeds/demo/product-demo.ts         # (rate card) one demo card version, same Zod + CHECKs

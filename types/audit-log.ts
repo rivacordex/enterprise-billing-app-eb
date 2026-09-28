@@ -115,6 +115,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // bm20 T11 — DISTRIBUTION_FAILED → COMPLETED, force-completing a
   // permanently-failing distribution: a state transition, mandatory reason.
   BILL_RUN_DISTRIBUTION_ABANDONED: "Change",
+  // pm61 — an upload creates exactly one new DRAFT ratecard_version row (or
+  // replaces an open one, D12): a new entity, like PRODUCT_OFFERING_CREATED.
+  RATECARD_VERSION_UPLOADED: "Additive",
 };
 
 // Event types removed from AUDIT_EVENT_TYPES (no longer written, no longer a

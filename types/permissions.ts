@@ -15,7 +15,8 @@ type OptionalPermissionName =
   | "product_inventory"
   | "billrun_view"
   | "billrun_operate"
-  | "billrun_approve";
+  | "billrun_approve"
+  | "ratecard";
 type CorePermissionName = Exclude<PermissionName, OptionalPermissionName>;
 
 // Core module permissions (users, roles, etc.) are always present; optional

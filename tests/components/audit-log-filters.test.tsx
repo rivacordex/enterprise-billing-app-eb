@@ -178,8 +178,12 @@ describe("AuditLogFilters", () => {
     expect(
       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
     ).toBeInTheDocument();
+    // pm61 addition
+    expect(
+      within(additive).getByText("RATECARD_VERSION_UPLOADED"),
+    ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(78); // "All events" + 77 (pm44 swapped PRODUCT_OFFERING_DISCARDED → PRODUCT_OFFERING_DELETED, net 0)
+    expect(within(select).getAllByRole("option")).toHaveLength(79); // "All events" + 78 (pm61 added RATECARD_VERSION_UPLOADED)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

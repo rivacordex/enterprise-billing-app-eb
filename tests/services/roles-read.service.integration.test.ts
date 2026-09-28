@@ -138,6 +138,7 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "billrun_view", assignedLevel: null },
           { permissionName: "billrun_operate", assignedLevel: null },
           { permissionName: "billrun_approve", assignedLevel: null },
+          { permissionName: "ratecard", assignedLevel: null },
         ]);
       });
 
@@ -169,6 +170,7 @@ describe.skipIf(!databaseUrl)(
             "billrun_view",
             "billrun_operate",
             "billrun_approve",
+            "ratecard",
           ]);
         }
       });
@@ -193,6 +195,7 @@ describe.skipIf(!databaseUrl)(
           { permissionName: "billrun_view", assignedLevel: null },
           { permissionName: "billrun_operate", assignedLevel: null },
           { permissionName: "billrun_approve", assignedLevel: null },
+          { permissionName: "ratecard", assignedLevel: null },
         ]);
       });
 

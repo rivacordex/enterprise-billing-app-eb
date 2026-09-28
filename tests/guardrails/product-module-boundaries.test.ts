@@ -53,6 +53,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "obsolete-offering.action.ts": "obsoleteOfferingAction",
     "retire-offering.action.ts": "retireOfferingAction",
     "delete-offering.action.ts": "deleteOfferingAction",
+    // pm61 — the update's first movement of this list since the Manage
+    // rebuild (code-standards §3.21); pm63/pm64 add the other two of three.
+    "upload-ratecard-version.action.ts": "uploadRatecardVersionAction",
   };
 
   it("actions/product/ exists and exports exactly this phase's action set", () => {
@@ -167,6 +170,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "obsolete-offering.ts",
     "retire-offering.ts",
     "delete-offering.ts",
+    "upload-version.ts",
   ]);
 
   it("no product read path imports the audit-log write path", () => {
@@ -809,8 +813,12 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       "INSERT INTO CORE.PERMISSIONS",
     );
 
-    // The rewrite is in place: 0041 is the ONLY rate-card migration — there is
-    // no 0042 (nor any later migration that touches the rate card).
+    // The rewrite is in place: 0041 is the ONLY migration that touches the
+    // rate-card SCHEMA — there is no 0042 (nor any later migration that
+    // creates, alters or drops either rate-card table). This is narrower than
+    // "mentions ratecard": 0043 (pm61, G-RC3) seeds the `ratecard` PERMISSIONS
+    // row that pm57a explicitly deferred (see the "follow-up migration" note
+    // above) and legitimately contains the word in an unrelated table's data.
     const laterRateCardMigrations = fs
       .readdirSync(path.join(REPO_ROOT, "db", "migrations"))
       .filter((name) => /\.sql$/.test(name))
@@ -820,7 +828,10 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
         const body = fs
           .readFileSync(path.join(REPO_ROOT, "db", "migrations", name), "utf8")
           .toLowerCase();
-        return body.includes("ratecard");
+        return (
+          body.includes("product.ratecard_version") ||
+          body.includes("product.ratecard_ran_usage_lkp")
+        );
       });
     expect(laterRateCardMigrations).toEqual([]);
 
