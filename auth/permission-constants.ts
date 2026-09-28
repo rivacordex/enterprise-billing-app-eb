@@ -18,6 +18,7 @@ export const PERMISSIONS = {
   BILLRUN_VIEW: "billrun_view",
   BILLRUN_OPERATE: "billrun_operate",
   BILLRUN_APPROVE: "billrun_approve",
+  RATECARD: "ratecard",
 } as const satisfies Record<string, PermissionName>;
 
 export const LEVELS = {

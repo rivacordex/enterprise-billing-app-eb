@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 
 describe("PermissionMatrixEditor", () => {
-  it("renders 14 rows in PERMISSION_NAMES order", () => {
+  it("renders 15 rows in PERMISSION_NAMES order", () => {
     render(<PermissionMatrixEditor role={ADMIN_ROLE} />);
     const rowLabels = screen
       .getAllByRole("row")
@@ -82,6 +82,7 @@ describe("PermissionMatrixEditor", () => {
       "Bill Runs – View",
       "Bill Runs – Operate",
       "Bill Runs – Approve",
+      "Rate Card",
     ]);
   });
 
@@ -283,6 +284,7 @@ describe("PermissionMatrixEditor", () => {
       "Permission level for Bill Runs – View",
       "Permission level for Bill Runs – Operate",
       "Permission level for Bill Runs – Approve",
+      "Permission level for Rate Card",
     ]);
   });
 });
