@@ -115,9 +115,6 @@ export async function uploadRatecardVersion(
         input.cardName,
       );
       const existingDraft = existingVersions.find((v) => v.status === "DRAFT");
-      const duplicateOf = existingVersions.find(
-        (v) => v.fileChecksum !== null && v.fileChecksum === parsed.checksum,
-      );
 
       if (existingDraft) {
         // D12/D-A11 — a wrong upload's recovery path: replace the open draft
@@ -149,6 +146,14 @@ export async function uploadRatecardVersion(
       const versionNum =
         versions.reduce((max, v) => Math.max(max, v.versionNum), 0) + 1;
 
+      // Read AFTER the draft-replace delete (when one happened): `versions`
+      // no longer contains a just-deleted draft, so a checksum match here can
+      // never point the warning at a version this same transaction just
+      // removed.
+      const duplicateOf = versions.find(
+        (v) => v.fileChecksum !== null && v.fileChecksum === parsed.checksum,
+      );
+
       const { versionId } = await ratecardRepository.insertVersion(tx, {
         cardName: input.cardName,
         versionNum,
@@ -158,6 +163,7 @@ export async function uploadRatecardVersion(
         fileChecksum: parsed.checksum,
         rowCount: fileResult.rows.length,
         uploadedBy: input.uploadedBy,
+        uploadedAt: input.uploadedAt,
       });
 
       // D0/hand-off (1) — an empty optional date/numeric cell is "" up
@@ -217,7 +223,18 @@ export async function uploadRatecardVersion(
       };
     });
   } catch (err) {
-    if (isUniqueViolation(err, "ratecard_version_one_draft_per_card")) {
+    // Two racing uploads for the same card_name can hit EITHER unique index:
+    // `ratecard_version_one_draft_per_card` when a draft already exists, or
+    // `ratecard_version_card_name_version_num_unique` when neither race
+    // participant sees an existing version yet and both compute the same
+    // `versionNum` (a brand-new card_name, or two uploads racing right after
+    // the last version's status changed). Postgres reports whichever
+    // constraint it checks first, so both names are the same conflict from
+    // this caller's point of view and both map to the same typed refusal.
+    if (
+      isUniqueViolation(err, "ratecard_version_one_draft_per_card") ||
+      isUniqueViolation(err, "ratecard_version_card_name_version_num_unique")
+    ) {
       return { ok: false, code: "CONCURRENT_UPLOAD_CONFLICT" };
     }
     throw err; // anything else is a genuine, unexpected failure — fail loud

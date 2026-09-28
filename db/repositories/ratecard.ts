@@ -50,6 +50,12 @@ export interface InsertVersionInput {
   fileChecksum?: string | null;
   rowCount: number;
   uploadedBy?: string | null;
+  // The upload instant (pm61 D4) — optional so a caller with no opinion (e.g.
+  // a fixture) still gets the column's own `now()` default. When given, it is
+  // written verbatim: the caller (pm61's upload service) derives both
+  // `uploaded_at` and `snapshot_date` from this ONE instant, and defaulting to
+  // `now()` here instead would let the two disagree across a midnight.
+  uploadedAt?: Date;
 }
 
 // The ten data fields of one lookup row (the eleventh bound column,
@@ -120,6 +126,7 @@ export const ratecardRepository = {
         fileChecksum: data.fileChecksum ?? null,
         rowCount: data.rowCount,
         uploadedBy: data.uploadedBy ?? null,
+        ...(data.uploadedAt !== undefined ? { uploadedAt: data.uploadedAt } : {}),
       })
       .returning({ versionId: ratecardVersion.ratecardVersionId });
     if (!row) {

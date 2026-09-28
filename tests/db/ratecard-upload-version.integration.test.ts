@@ -61,7 +61,12 @@ describe.skipIf(!databaseUrl)(
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql_ = postgres(databaseUrl as string, {
-        max: 1,
+        // `max: 1` (a single physical connection) would serialize the
+        // "concurrent uploads" race test below onto one connection instead
+        // of letting the two transactions actually overlap — the second
+        // `sql.begin()` would just queue behind the first's commit, so the
+        // race it exists to exercise would never happen. Needs at least 2.
+        max: 5,
         onnotice: () => {},
         debug: (_connection, query) => {
           hoisted.queries.push(query);
