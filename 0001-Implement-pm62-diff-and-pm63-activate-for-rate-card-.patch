@@ -1,0 +1,2050 @@
+From 32b1b355c1a4cb9f62ba2c1db287d7114172f778 Mon Sep 17 00:00:00 2001
+From: Krishodari <kishodari21@outlook.com>
+Date: Tue, 29 Sep 2026 05:54:52 +0800
+Subject: [PATCH] Implement pm62 (diff) and pm63 (activate) for rate card
+ lookup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+pm62: services/product/ratecard/diff-versions.ts — in-memory, read-only
+diff of a version against the card's current ACTIVE, bucketed into
+added/changed/removed. Adds two read-only repository functions
+(getAllRowsForVersion, getCurrentActiveRows) to hit the two-query
+budget, and reuses pm58's shared row-key delimiter instead of a second
+literal.
+
+pm63: services/product/ratecard/activate-version.ts +
+actions/product/activate-ratecard-version.action.ts — one transaction,
+locks the target DRAFT (new findVersionForUpdate repo read) and the
+outgoing ACTIVE, computes the diff inside the transaction, promotes/
+demotes with no lookup-row writes, and records one
+RATECARD_VERSION_ACTIVATED audit event with the superseded id and diff
+counts. Full audit-type ripple (types, category map, filter test).
+
+Also fixes two pre-existing, unrelated guardrail failures found while
+verifying this change (confirmed red on dev1 before this commit): the
+audit-log-import boundary check was missing the ratecard write
+services, and a stale "0041 is the only ratecard migration" assertion
+didn't account for pm61's legitimate 0043 migration.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../activate-ratecard-version.action.ts       |  73 ++++
+ .../prodmgmt-architecture.md                  |   2 +-
+ .../prodmgmt-code-standards.md                |  22 +-
+ .../prodmgmt-progress-tracker.md              |  36 +-
+ context/product-management/specs/pm62-diff.md | 145 ++++++++
+ .../product-management/specs/pm63-activate.md | 138 ++++++++
+ db/repositories/ratecard.ts                   |  92 ++++-
+ services/product/ratecard/activate-version.ts | 137 +++++++
+ services/product/ratecard/diff-versions.ts    | 190 ++++++++++
+ .../activate-ratecard-version.action.test.ts  | 130 +++++++
+ tests/components/audit-log-filters.test.tsx   |   6 +-
+ ...ecard-activate-version.integration.test.ts | 333 ++++++++++++++++++
+ ...ratecard-diff-versions.integration.test.ts | 305 ++++++++++++++++
+ .../product-module-boundaries.test.ts         |  38 +-
+ tests/product/ratecard-diff-versions.test.ts  |  60 ++++
+ types/audit-log.ts                            |   9 +
+ types/audit.ts                                |   1 +
+ validation/product/ratecard.schema.ts         |  18 +-
+ 18 files changed, 1714 insertions(+), 21 deletions(-)
+ create mode 100644 actions/product/activate-ratecard-version.action.ts
+ create mode 100644 context/product-management/specs/pm62-diff.md
+ create mode 100644 context/product-management/specs/pm63-activate.md
+ create mode 100644 services/product/ratecard/activate-version.ts
+ create mode 100644 services/product/ratecard/diff-versions.ts
+ create mode 100644 tests/actions/activate-ratecard-version.action.test.ts
+ create mode 100644 tests/db/ratecard-activate-version.integration.test.ts
+ create mode 100644 tests/db/ratecard-diff-versions.integration.test.ts
+ create mode 100644 tests/product/ratecard-diff-versions.test.ts
+
+diff --git a/actions/product/activate-ratecard-version.action.ts b/actions/product/activate-ratecard-version.action.ts
+new file mode 100644
+index 0000000..5b924c0
+--- /dev/null
++++ b/actions/product/activate-ratecard-version.action.ts
+@@ -0,0 +1,73 @@
++"use server";
++
++import { revalidatePath } from "next/cache";
++
++import { requirePermission } from "@/auth/guard";
++import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
++import { isRedirectError } from "@/lib/errors";
++import {
++  activateRatecardVersion,
++  type RatecardActivationDiffCounts,
++} from "@/services/product/ratecard/activate-version";
++import type { RateCardVersionStatus } from "@/types/product";
++import { ratecardVersionIdSchema } from "@/validation/product/ratecard.schema";
++
++// pm63-spec I2 — `ratecard : EDIT` (the same level as upload, RC7, §8) →
++// isRedirectError catch → safeParse the version id against its RCV format
++// schema → one service call → revalidatePath('/products/rate-card') → typed
++// result (§3.7, §3.22). Deliberately the module's ORDINARY action shape
++// (unlike upload's file-handling exception, §3.19) — the input here is a
++// single string, not a file.
++
++export type ActivateRatecardVersionActionResult =
++  | {
++      ok: true;
++      versionId: string;
++      supersededVersionId: string | null;
++      diff: RatecardActivationDiffCounts;
++    }
++  | { ok: false; code: "VALIDATION_ERROR" }
++  | { ok: false; code: "VERSION_NOT_FOUND" }
++  | { ok: false; code: "NOT_DRAFT"; status: RateCardVersionStatus }
++  | { ok: false; code: "FORBIDDEN" }
++  | { ok: false; code: "SERVER_ERROR" };
++
++export async function activateRatecardVersionAction(
++  rawVersionId: unknown,
++): Promise<ActivateRatecardVersionActionResult> {
++  let actorId: string;
++  try {
++    ({ userId: actorId } = await requirePermission(
++      PERMISSIONS.RATECARD,
++      LEVELS.EDIT,
++    ));
++  } catch (error) {
++    if (isRedirectError(error)) {
++      return { ok: false, code: "FORBIDDEN" };
++    }
++    return { ok: false, code: "SERVER_ERROR" };
++  }
++
++  const parsed = ratecardVersionIdSchema.safeParse(rawVersionId);
++  if (!parsed.success) {
++    return { ok: false, code: "VALIDATION_ERROR" };
++  }
++
++  let result;
++  try {
++    result = await activateRatecardVersion(parsed.data, actorId);
++  } catch {
++    return { ok: false, code: "SERVER_ERROR" };
++  }
++
++  if (!result.ok) {
++    return result;
++  }
++
++  // D9 (pm61 precedent) — the route doesn't exist yet (pm65), but
++  // revalidating it now is harmless and means pm65 adds a page rather than a
++  // missing call. §3.22 — this and nothing else.
++  revalidatePath("/products/rate-card");
++
++  return result;
++}
+diff --git a/context/product-management/prodmgmt-architecture.md b/context/product-management/prodmgmt-architecture.md
+index d883554..a95ecd0 100644
+--- a/context/product-management/prodmgmt-architecture.md
++++ b/context/product-management/prodmgmt-architecture.md
+@@ -195,7 +195,7 @@ Auth mechanics are inherited unchanged from platform §5 — Better-Auth DB-back
+ - **No sweeper retires rows, and nothing else does either.** Polygon retirement is decided upstream at mediation; a retired polygon is simply absent from the next upload (D-A7). There is deliberately no clock-driven job anywhere near this data — see §3.6.
+ - **No later-phase compute is owned here.** Any future consumer of the lookup would run in a non-application runtime that never executes in-process (platform §6); it is out of scope.
+ 
+-**Audit.** **Three new event types**, one per mutation, written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED` (**landed pm61**), `RATECARD_VERSION_ACTIVATED`, `RATECARD_VERSION_ROLLED_BACK`. The activation event's payload carries the superseded version id and the change counts (added / changed / removed), the durable record of what a given activation altered. Page reads are never audited.
++**Audit.** **Three new event types**, one per mutation, written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED` (**landed pm61**), `RATECARD_VERSION_ACTIVATED` (**landed pm63**), `RATECARD_VERSION_ROLLED_BACK`. The activation event's payload carries the superseded version id and the change counts (added / changed / removed), the durable record of what a given activation altered — confirmed against `services/product/ratecard/activate-version.ts`'s actual payload (D5). Page reads are never audited.
+ 
+ ---
+ 
+diff --git a/context/product-management/prodmgmt-code-standards.md b/context/product-management/prodmgmt-code-standards.md
+index 2a50dfa..7ed12be 100644
+--- a/context/product-management/prodmgmt-code-standards.md
++++ b/context/product-management/prodmgmt-code-standards.md
+@@ -55,13 +55,13 @@ Items 1–20 are the catalog and Manage-rebuild standard. Items 21–34 are the
+ 34. **(pricing update) This update has no cross-module reach — with one flagged exception that must be resolved before pm46 lands.** No unit reads or writes `ordering/**`, `inventory/**`, `billing/**` or `rating/**`. **The exception:** `services/ordering/order-preconditions.ts:95` resolves an override target with `price.priceType === override.priceType && price.pricingModel === "flat"`. Both properties disappear when pm46 drops the columns, so `tsc` breaks in a folder every workflow rule forbids this update to touch, and `prodmgmt-architecture.md` §3.7 (which says that line ships with this update) contradicts `prodmgmt-ai-workflow-rules.md` §3.2 and §6.5 (which say it must not be touched). **Stop and get the re-key authorized as its own step; do not edit `ordering/**` silently and do not leave a compatibility shim.**
+ 35. **(rate card) The module stores a rate card; it never resolves one.** `product.ratecard_version` and `product.RATECARD_RAN_USAGE_LKP` are written here and read by `rp.py` in the following-sprint rating consumer. No as-of lookup, no per-UDR resolution, no subscription resolution and no rate arithmetic exists in `services/product/**`, `db/repositories/**` or any component. §1.26 stands in substance — Product stores a **resolution input** and performs no resolution. **§1.27 and Inv. #42 are unchanged:** `rateCardLookUp` stays a validated name only, with no referent, no lookup and no fallback built in this delivery. A future consumer may give the name meaning; this delivery does not.
+ 36. **(rate card) Upload is the only write path into `RATECARD_RAN_USAGE_LKP`.** The repository exports `insertVersion`, `insertLookupRows` and `setVersionStatus` — and no `updateLookupRow`, no `deleteLookupRow`, no row-level write of any name, in any layer. A correction is a new upload. There is no row-editing UI and no service that edits a row. Guardrail 37 asserts the exported surface.
+-37. **(rate card) Activation and supersession are one transaction under one row lock, and write no rows.** `activateVersion` locks the card's current `ACTIVE` version `FOR UPDATE`, re-reads status inside the transaction (§1.13), promotes the `DRAFT`, demotes the prior `ACTIVE`, and writes the audit event — then commits. Two status flips; a version's rows are exactly its uploaded file (D-A7). There is no carry-forward: mediation filters retired polygons out upstream, and a key absent from the upload stays readable in the superseded version.
++37. **(rate card) Activation and supersession are one transaction under one row lock, and write no rows.** `activateVersion` locks the card's current `ACTIVE` version `FOR UPDATE`, re-reads status inside the transaction (§1.13), promotes the `DRAFT`, demotes the prior `ACTIVE`, and writes the audit event — then commits. Two status flips; a version's rows are exactly its uploaded file (D-A7). There is no carry-forward: mediation filters retired polygons out upstream, and a key absent from the upload stays readable in the superseded version. **Landed under pm63** (`services/product/ratecard/activate-version.ts`) — the target `DRAFT` is locked too, via a new `findVersionForUpdate` read (`db/repositories/ratecard.ts`), so a concurrent re-upload's replace-open-draft delete (pm61 D12) cannot interleave with activation.
+ 38. **Removed (D-A7).** _Was: `retired_at` comes from `snapshot_date`, never from the clock, `COALESCE`d against the source row._ No `retired_at` column exists. The number is left empty rather than reused.
+ 39. **Removed (D-A7).** _Was: carried-forward rows are never re-validated._ No row is carried forward. The number is left empty rather than reused.
+ 40. **No referential-validation query** (D-A1). `lkp_subscriber_ref_id` is validated **structurally only** and the upload reads no other module, so there is no referential query at all. §1.16's fan-out prohibition still binds the upload path: no per-row query, no `Promise.all` over rows, no concurrency-limited mapper.
+ 41. **(rate card) Error and warning severities are fixed lists and are not tunable.** **Error — upload refused, no version row written:** every structural failure — `HEADER_MISMATCH`, `DUPLICATE_ROW_KEY`, `ROW_SCHEMA_INVALID` (§2.22). (`SNAPSHOT_DATE_NOT_CONSTANT` is withdrawn — the file has no date column, D-A8.) **Warning — shown on the draft review, never blocking:** a `file_checksum` matching an earlier version. There are **no subscription-status or subscription-window cases** in either list; there are no referential severities (D-A1); `lkp_subscriber_ref_id` is validated structurally only. No environment variable, `SYSTEM_CONFIG` key or UI toggle moves a case between the two lists.
+ 42. **(rate card) A failed upload writes nothing — including no version row.** The row-level error report is returned in the action's typed result; it is not persisted. Consequently `ratecard_version.status = 'REJECTED'` and `reject_summary` have **no writer in this delivery** — they exist for a future asynchronous ingest and are dead here. This is stated so the next reader does not spend an afternoon hunting the code path that fills them; do not invent one to make the column look used.
+-43. **(rate card) One audit event per mutation, three new types**, each written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED`, `RATECARD_VERSION_ACTIVATED`, `RATECARD_VERSION_ROLLED_BACK`. The activation payload carries the superseded version id and the three diff counts (added / changed / removed) — that payload is the durable record of what each activation changed. Page reads, row previews and diff reads are never audited. Three new types triggers §6.18's ripple in full, including the assertion that is **not** `tsc`-caught.
++43. **(rate card) One audit event per mutation, three new types**, each written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED`, `RATECARD_VERSION_ACTIVATED`, `RATECARD_VERSION_ROLLED_BACK`. The activation payload carries the superseded version id and the three diff counts (added / changed / removed) — that payload is the durable record of what each activation changed. Page reads, row previews and diff reads are never audited. Three new types triggers §6.18's ripple in full, including the assertion that is **not** `tsc`-caught. **`RATECARD_VERSION_UPLOADED` landed pm61 (category `Additive`); `RATECARD_VERSION_ACTIVATED` landed pm63 (category `Change` — a bundled promote+demote status transition, unlike `PRODUCT_OFFERING_ACTIVATED`'s pairing with a separate `..._SUPERSEDED` event, D5) — second of three, full ripple (`AUDIT_EVENT_TYPES`, `AUDIT_EVENT_CATEGORY_MAP`, and the count/optgroup assertion in `tests/components/audit-log-filters.test.tsx`) landed in the same change set. `RATECARD_VERSION_ROLLED_BACK` is pm64's, the third.**
+ 44. **(rate card) The `ACTIVE` version is never cached, memoised or snapshotted** (Inv. #59). No `unstable_cache`, no `revalidate`, no React `cache()` around a card read, no module-level `Map`, no in-process copy held across requests — in the app or, later, in the engine. The `ACTIVE` version can change at any activation or rollback, so any cached copy is stale the moment it is taken, and a future consumer's version stamp would then describe a version it did not read.
+ 45. **(rate card) No code path in this module treats the card as a price source.** `rate_per_unit` is a plain nullable column carried through from the upload; nothing in this module reads it for rating and nothing formats it. `formatCurrency` is never called on a card row — there is no currency column to call it with (Inv. #53), and currency comes from the resolved price row.
+ 46. **(rate card) Two platform-owned files are edited by this module and must be called out in review**, because neither is covered by §7's tree: `next.config.ts` (`experimental.serverActions.bodySizeLimit`, §6.34) and `types/rbac.ts` (one more `PERMISSION_NAMES` member, §8). Neither is a product-module concern; neither may be folded silently into a unit diff.
+@@ -130,7 +130,7 @@ Items 1–20 are the catalog and Manage-rebuild standard. Items 21–34 are the
+ 18. **(rate card) The upload action's shape differs from §3.7's, deliberately, and that difference is the whole security argument.** In order: `requirePermission('ratecard', 'EDIT')` → `isRedirectError` catch → take the file off `FormData` and check **extension, MIME type and byte size** before reading it → parse to rows with the pinned parser (§7.10) → `fileSchema.safeParse` → the row schema per row → one write service (no referential query — D-A1) → `revalidatePath('/products/rate-card')` → typed result. `safeParse` still runs before any service call; it simply cannot run on a file handle. **Never parse a `FormData` envelope and treat the pass as validation of the file's contents.**
+ 19. **(rate card) The client-side header sniff is a convenience and never a boundary.** Reading the first line in the browser to reject an obviously wrong file early is allowed; the server re-parses and re-validates the entire file unconditionally. "The client already checked it" is never a reason to skip a server check (general §1.2, §1.5).
+ 20. **(rate card) The file never enters react-hook-form state, and the upload form never serialises it to JSON or base64.** The picker is an uncontrolled file input inside a `form` whose `action` is the Server Action; the action receives `FormData`. This is the module's — and the application's — first file input, and the pattern is binding for whatever upload comes next.
+-21. **(rate card) Three action files are added and `PRODUCT_ACTION_FILES` grows by exactly three:** `upload-ratecard-version.action.ts` (**landed pm61**, the first movement in that list since the Manage rebuild — the pricing update left it unchanged, §3.7), `activate-ratecard-version.action.ts`, `rollback-ratecard-version.action.ts`. The guardrail asserting the list is updated in the same change set, never afterwards.
++21. **(rate card) Three action files are added and `PRODUCT_ACTION_FILES` grows by exactly three:** `upload-ratecard-version.action.ts` (**landed pm61**, the first movement in that list since the Manage rebuild — the pricing update left it unchanged, §3.7), `activate-ratecard-version.action.ts` (**landed pm63**, the second), `rollback-ratecard-version.action.ts` (pm64, the third). The guardrail asserting the list is updated in the same change set, never afterwards.
+ 22. **(rate card) Revalidate narrowly.** A card mutation revalidates `/products/rate-card` and nothing else: no catalog page reads the card, and no catalog mutation revalidates the card page.
+ 23. **(rate card) The query budget is part of the page contract.** First render: one versions query plus its count. Selecting a version: one paged rows query plus its count. Requesting a diff: two full row reads — the selected version and the current `ACTIVE` — and nothing more. The diff is computed in memory from those two reads (§6.29); it never issues a query per row and never one query per bucket.
+ 
+@@ -246,7 +246,7 @@ Token values are owned by `prodmgmt-ui-context.md` and are not duplicated in cod
+ 26. **(rate card) The `PERMISSIONS` seed row for `ratecard` ships in that same migration**, beside the page's DDL. A permission with no page, or a page with no permission, is exactly the failure general §1.11 forbids; splitting them across two migrations creates a window in which one exists without the other. Verify — do not assume — that the role editor renders from `core.PERMISSIONS` and therefore needs no code change.
+ 27. **(rate card) `ratecard_version` constraints:** `UNIQUE (card_name, version_num)`; a **partial unique index on `card_name WHERE status = 'ACTIVE'`**; a second partial unique index on `card_name WHERE status = 'DRAFT'`. Both mirror `product_offering`'s one-active / one-open expression indexes (§6.7), and the rule is enforced by the index, not by application code (Inv. #45). The service-layer status check stays: the index changes the failure mode, it does not replace the check.
+ 28. **(rate card) `RATECARD_RAN_USAGE_LKP` constraints:** `UNIQUE (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id)` (RV2) — the only lookup index needed. `polygon_start_date` and `polygon_end_date` are descriptive validity dates, and `state` and `district` descriptive labels — none part of any key or index (D-A9/D-A10); there is **no separate as-of index**. `rate_per_unit` is a plain nullable column with no CHECK. **One FK only:** `ratecard_version_id` → `ratecard_version` `ON DELETE CASCADE`. `lkp_subscriber_ref_id` is `text NOT NULL` holding a `product_inventory_id` value and **gets no FK** (D-A1, Inv. #57): it is validated structurally only, with no referential check at upload either, and a superseded version survives a subscription's removal. Same no-FK stance as `rating.udr_rated`.
+-29. **(rate card) The diff is computed in memory.** 5,500 rows against 5,500 rows keyed on the three row-identity columns `(mno_public_key, commercial_unit_public_key, polygon_id)` is a map comparison, not a set-based SQL diff and not a temp table (RC15). `polygon_start_date` is **out of the diff key** — it is descriptive (D-A9), and a polygon appears at most once per version, so a change to it is a **changed** row, not a remove + add. `polygon_end_date`, `state`, `district`, `service_code` and `rate_per_unit` are likewise compared as the row's payload, never part of the key. (The DB row-uniqueness index adds `ratecard_version_id`, §6.28 — that fourth column identifies a row across versions; the *within-version* diff key is these three.) Activation writes no rows (D-A7), so there is no set-based carry-forward statement. The in-memory diff keys rows on those three columns joined by a delimiter that cannot occur in them.
++29. **(rate card) The diff is computed in memory.** 5,500 rows against 5,500 rows keyed on the three row-identity columns `(mno_public_key, commercial_unit_public_key, polygon_id)` is a map comparison, not a set-based SQL diff and not a temp table (RC15). `polygon_start_date` is **out of the diff key** — it is descriptive (D-A9), and a polygon appears at most once per version, so a change to it is a **changed** row, not a remove + add. `polygon_end_date`, `state`, `district`, `service_code` and `rate_per_unit` are likewise compared as the row's payload, never part of the key. (The DB row-uniqueness index adds `ratecard_version_id`, §6.28 — that fourth column identifies a row across versions; the *within-version* diff key is these three.) Activation writes no rows (D-A7), so there is no set-based carry-forward statement. The in-memory diff keys rows on those three columns joined by a delimiter that cannot occur in them — **the same NUL-byte delimiter pm58's duplicate-key check uses** (`ROW_KEY_DELIMITER`, exported from `validation/product/ratecard.schema.ts`), reused via its `rateCardRowKey` helper rather than re-declared: two different delimiters in two files would be the beginning of two different answers. **Landed under pm62** (`services/product/ratecard/diff-versions.ts`, backed by two new reads added to `db/repositories/ratecard.ts` — `getAllRowsForVersion`/`getCurrentActiveRows` — so the diff's query budget (§3.23) holds at exactly two; pm62-diff.md's own header cites this rule as §6.33, this file's actual numbering has it at §6.29, a citation drift recorded here rather than silently reconciled in the spec file). **Which non-key columns count as "changed" was a doc-vs-doc conflict at authoring time** — pm62-diff.md's own D2 text named only `lkp_subscriber_ref_id` and `service_code`, narrower than this rule's list above; resolved with the user 2026-09-28 in favor of THIS rule (every non-key column compared, as written here) — pm62-diff.md D2 should be corrected to match, not the reverse.
+ 30. **(rate card) Rows insert in batches of 1,000 inside one transaction**, from a single `RATECARD_INSERT_BATCH_SIZE = 1000` constant declared once in the repository (`db/repositories/ratecard.ts`). Postgres caps a statement at 65,535 bind parameters; a lookup insert binds 11 columns per row, so a full ~5,500-row card is split into batches rather than risking a single over-cap statement. Do not derive the batch size at runtime and do not make it configurable. **Landed pm60.**
+ 31. **(rate card) No resolution path reads a `SUPERSEDED` version** (Inv. #48). Every read of card rows for resolution filters `status = 'ACTIVE'` on the version. The version list, the row preview and the diff read a version **by id** and are the only exceptions — they are display paths, never resolution paths, which is why the rule is phrased about resolution rather than about the table.
+ 32. **(rate card) The uploaded file is never stored** (Inv. #58). `source_file` (the original filename, forensics only) and `file_checksum` are the only survivors: no blob, no `landing/` drop, no temp file left on disk, no retained buffer. **This is a deliberate departure from `context/architecture.md` §3's "binary goes to Azure Blob, the DB stores a reference"** — that rule anticipates uploads the app must hand back, and a card's rows are the record of its upload. The platform doc needs a one-line follow-up saying an ingest path now exists and its answer is parse-and-discard.
+@@ -338,7 +338,7 @@ app/(app)/products/rate-card/
+   loading.tsx, error.tsx              # (rate card, new)
+ actions/product/
+   upload-ratecard-version.action.ts   # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm61
+-  activate-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
++  activate-ratecard-version.action.ts # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm63
+   rollback-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
+ components/products/rate-card/
+   rate-card-version-table.tsx         # (rate card, new)  RateCardVersionTable — server
+@@ -353,12 +353,12 @@ components/products/rate-card/
+ services/product/ratecard/
+   parse-csv.ts                        # (rate card) the ONLY importer of the CSV parser (csv-parse 7.0.3, §7.10) — LANDED pm59
+   upload-version.ts                   # (rate card)  parse -> validate -> DRAFT, one tx — LANDED pm61
+-  activate-version.ts                 # (rate card, new)  promote + demote, one tx, no row writes
++  diff-versions.ts                    # (rate card)  in-memory, three buckets — LANDED pm62
++  activate-version.ts                 # (rate card)  promote + demote, one tx, no row writes — LANDED pm63
+   rollback-version.ts                 # (rate card, new)  re-activate a SUPERSEDED version
+-  diff-versions.ts                    # (rate card, new)  in-memory, three buckets
+   list-versions.ts, get-version-rows.ts # (rate card, new) read models
+ db/repositories/
+-  ratecard.ts                         # (rate card) FLAT path — §7.8; no row-level write — LANDED pm60
++  ratecard.ts                         # (rate card) FLAT path — §7.8; no row-level write — LANDED pm60 (pm62 added getAllRowsForVersion/getCurrentActiveRows; pm63 added findVersionForUpdate)
+ db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card) the two tables' DDL — LANDED pm57a
+ db/migrations/0043_ratecard_permission.sql    # (rate card) the ratecard PERMISSIONS seed row (G-RC3) — LANDED pm61
+ validation/product/
+@@ -475,10 +475,10 @@ Guardrails 1–30 are the catalog, Ordering and Manage-rebuild set. The pricing
+ **New with the rate card update**
+ 
+ 35. **No reserved-column guardrail.** `rate_per_unit` is a plain nullable column with no `CHECK (rate_per_unit IS NULL)` and no reserved-column refusal.
+-36. **A version is exactly its file** (D-A7). Activation writes no rows to `RATECARD_RAN_USAGE_LKP`, and every version's stored row count equals its `row_count`. _(Inv. #46, RV3)_
+-37. **Upload is the only write path.** `db/repositories/ratecard.ts` exports no row-level update or delete, and a direct `UPDATE` or `DELETE` against a row of an `ACTIVE` version is rejected. _(Inv. #46)_ **Landed pm60 — exported-surface arm only.** The DATABASE arm is a **raised pm57a finding (PM-ISS-002)**: pm57a's `0041` carries no trigger/rule, so a direct row `UPDATE`/`DELETE` is **not yet** refused by Postgres — immutability is currently enforced only by the repository's exported surface. A trigger analogous to `child_write_requires_draft` (0040) is owed to pm57a/a follow-up; per workflow §5.7 pm60 did not add a schema object in the wrong unit.
++36. **A version is exactly its file** (D-A7). Activation writes no rows to `RATECARD_RAN_USAGE_LKP`, and every version's stored row count equals its `row_count`. _(Inv. #46, RV3)_ **Landed pm63** — `tests/db/ratecard-activate-version.integration.test.ts` byte-compares both versions' rows before and after activation and asserts the incoming version's stored row count equals `row_count`.
++37. **Upload is the only write path.** `db/repositories/ratecard.ts` exports no row-level update or delete, and a direct `UPDATE` or `DELETE` against a row of an `ACTIVE` version is rejected. _(Inv. #46)_ **Landed pm60 — exported-surface arm only.** The DATABASE arm is a **raised pm57a finding (PM-ISS-002)**: pm57a's `0041` carries no trigger/rule, so a direct row `UPDATE`/`DELETE` is **not yet** refused by Postgres — immutability is currently enforced only by the repository's exported surface. A trigger analogous to `child_write_requires_draft` (0040) is owed to pm57a/a follow-up; per workflow §5.7 pm60 did not add a schema object in the wrong unit. pm62 and pm63 each added new **read-only** exports (`getAllRowsForVersion`/`getCurrentActiveRows`/`findVersionForUpdate`) — none is a mutation by the guardrail's own naming pattern, and `tests/db/product-repository-exports.test.ts` stays green unchanged.
+ 38. **No partition-key parity guardrail.** There is no change to the `lead()` partition key and no `service_code` added to `product_offering_price`.
+-39. **One ACTIVE per card, enforced by the index.** A direct SQL insert or update producing a second `ACTIVE` version for one `card_name` is rejected by the partial unique index, not by application code. _(Inv. #45)_
++39. **One ACTIVE per card, enforced by the index.** A direct SQL insert or update producing a second `ACTIVE` version for one `card_name` is rejected by the partial unique index, not by application code. _(Inv. #45)_ **Index arm landed pm57a; service arm + the 4×-looped concurrent-activation race landed pm63** (`tests/db/ratecard-activate-version.integration.test.ts`) — the service refuses a second activation with a typed `NOT_DRAFT` code before the index is ever reached, and two concurrent activations for one card serialize on the target `DRAFT`'s row lock, leaving exactly one `ACTIVE`.
+ 40. **No cache on the card.** No `unstable_cache`, no `revalidate`, no React `cache()` and no module-level store wraps any card read in the app or in a service; the rate-card page is `force-dynamic`. _(Inv. #59)_
+ 
+ **Also gated, though not numbered guardrails:** the composition-contract test (§2.17) must reproduce its four figures; the query budget (§3.14) must hold after a component write; and the `plaSpec` doc-block + TMF620 mapping table must exist and be cross-linked from `AGENTS.md` and `README.md` (§7.5).
+diff --git a/context/product-management/prodmgmt-progress-tracker.md b/context/product-management/prodmgmt-progress-tracker.md
+index f544653..267ae45 100644
+--- a/context/product-management/prodmgmt-progress-tracker.md
++++ b/context/product-management/prodmgmt-progress-tracker.md
+@@ -1,6 +1,6 @@
+ # Product Management — Progress Tracker
+ 
+-Single living build record for the Product Management module. **pm01–pm34** span three phases, all ship-gate-verified. **Part 3 (pm35–pm45)** is delivered and unit/integration/type/lint-verified. **Part 4 — Pricing Components (pm46–pm56, plus follow-ups pm56a/pm56b)** is implemented and verified on `dev1`; pm56's ship gate ran 2026-09-24 with its definition of done not fully met, and the residue it flagged was closed by pm56a/pm56b (repo-wide `tsc` and guardrail 31 green on `dev1`). Neither Part 3 nor Part 4 is in `main` (G-0/G-A still open). **Part 5 — Rate Card Lookup (pm57 onward)** is in progress: **pm61 is the current unit; pm57 is kept in full below; every earlier unit is compacted to a one-line ledger.** Known defects outside the unit in flight are in `prodmgmt-issues-tracker.md`; full detail for any compacted unit lives in its `specs/pmXX-spec.md` and in `git log`.
++Single living build record for the Product Management module. **pm01–pm34** span three phases, all ship-gate-verified. **Part 3 (pm35–pm45)** is delivered and unit/integration/type/lint-verified. **Part 4 — Pricing Components (pm46–pm56, plus follow-ups pm56a/pm56b)** is implemented and verified on `dev1`; pm56's ship gate ran 2026-09-24 with its definition of done not fully met, and the residue it flagged was closed by pm56a/pm56b (repo-wide `tsc` and guardrail 31 green on `dev1`). Neither Part 3 nor Part 4 is in `main` (G-0/G-A still open). **Part 5 — Rate Card Lookup (pm57 onward)** is in progress: **pm63 is the current unit (pm62 delivered in the same session); pm57 is kept in full below; every earlier unit is compacted to a one-line ledger.** Known defects outside the unit in flight are in `prodmgmt-issues-tracker.md`; full detail for any compacted unit lives in its `specs/pmXX-spec.md` and in `git log`.
+ 
+ ## Recently delivered — Part 3 & Part 4 (compacted)
+ 
+@@ -33,7 +33,7 @@ Compacted deliverables; full detail in each `specs/pmXX-spec.md`.
+ | pm56a | Pricing-components fixture sweep + guardrail-31 scope correction; resolved PM-ISS-001.                                                                                                  |
+ | pm56b | Ordering-wizard `PriceCard` re-key — closed the last residue; repo-wide `tsc` + guardrail 31 green on `dev1`.                                                                           |
+ 
+-## pm61 (current unit) — full detail
++## pm61 — full detail
+ 
+ **pm61 (Upload: service + action): IMPLEMENTED, unit-tested, NOT yet run against a live DB this session (started and code-complete 2026-09-28).** Part 5. Boundary per `specs/pm61-upload-service-and-action.md`: `services/product/ratecard/upload-version.ts` (new), `actions/product/upload-ratecard-version.action.ts` (new — `PRODUCT_ACTION_FILES` +1, guardrail updated same commit), the `RATECARD_VERSION_UPLOADED` audit type + its full three-part ripple, and this unit's tests (one DB-free action suite, green; one live-DB suite, written but not executed — see the DB-access note below). No UI (pm66), no diff (pm62), no activation (pm63).
+ 
+@@ -51,6 +51,38 @@ Compacted deliverables; full detail in each `specs/pmXX-spec.md`.
+ 
+ **FINDING — `db/migrations/0042_cold_paibok.sql` will break a migrate-from-empty, independent of this unit.** It was added in `7e6bc26` ("chore(deps): remediate npm audit"), and `db/migrations/meta/0042_snapshot.json` exists alongside it — meaning `drizzle-kit generate` was run against the stale `meta/0026`-era snapshot floor (pm57a's own finding: "snapshots stop at 0026... `drizzle-kit generate` is retired project-wide"). The generated file re-issues `CREATE SEQUENCE product.ratecard_version_seq`, `CREATE TABLE product.ratecard_version`, `CREATE TABLE product.ratecard_ran_usage_lkp` and both ratecard partial unique indexes — all already owned by `0041` (pm57a's rewritten shape) — alongside a large, apparently legitimate batch of unrelated schema (the pm46 price-component reshape, the `TESTING`/`OBSOLETE` enum values, several billing/rating tables). Journal order (`0041.when < 0042.when`) means a fresh `npm run db:migrate` applies `0041` successfully and then fails on `0042`'s duplicate `CREATE TABLE`. This is not a ratecard-only file and touches schema owned by other modules, so it is **out of pm61's boundary** (pm61 explicitly makes no schema change) — raised here rather than silently patched or silently worked around. Whoever next needs a clean migrate-from-empty (this unit's own live-DB suite included) will need this resolved first — the likely fix is removing only the six ratecard-related statements from `0042`, keeping the rest.
+ 
++## pm63 (current unit) — full detail
++
++**pm63 (Activate): IMPLEMENTED, unit-tested, NOT yet run against a live DB this session (2026-09-28, same session as pm62).** Part 5. Boundary per `specs/pm63-activate.md`: `services/product/ratecard/activate-version.ts` (new), `actions/product/activate-ratecard-version.action.ts` (new — `PRODUCT_ACTION_FILES` +1, second of three, guardrail updated same commit), the `RATECARD_VERSION_ACTIVATED` audit type and its full three-part ripple, guardrails 36 and 39 (service arm + the 4×-looped race), and this unit's live-DB/concurrency tests. No UI (pm65/pm66), no rollback (pm64).
++
++**D1's TOCTOU-safe lock needed a repository addition pm63's own boundary line doesn't list, added and flagged rather than worked around.** D1 requires the target `DRAFT` locked `FOR UPDATE` in addition to the outgoing `ACTIVE` (pm60's existing `findActiveForUpdate`) — but no existing pm60 export locks a specific version **by id**, and the DRAFT's own `card_name` (needed to look up its ACTIVE sibling) is only known once that row is read. Added `findVersionForUpdate(tx, versionId)` to `db/repositories/ratecard.ts` — a locked-by-id read, the same primary key `deleteDraftVersion` already locks internally, so a concurrent re-upload's replace-open-draft delete (pm61 D12) and an activation of that same draft serialize on Postgres's row lock rather than interleaving. Read-only (matches the `get`/`find` naming pattern the guardrail-37 exported-surface test already excludes from its mutation regex), so `tests/db/product-repository-exports.test.ts` needed no change.
++
++**Activation flow, in order:** (1) lock the target DRAFT by id (`findVersionForUpdate`), re-read its status — `VERSION_NOT_FOUND` / `NOT_DRAFT` typed refusals, never a throw; (2) lock the card's current `ACTIVE` (if any) via pm60's `findActiveForUpdate` — `null` is the ordinary first-ever-activation case, not an error; (3) compute the diff **inside this transaction, on this same `tx`**, by calling pm62's `diffAgainstActive(tx, cardName, versionId)` directly (no client-supplied counts ever reach the audit payload); (4) two `setVersionStatus` calls — promote the target, demote the outgoing (when one exists) — no lookup-row write anywhere in the file; (5) exactly one `RATECARD_VERSION_ACTIVATED` audit event, same transaction, `beforeData: { supersededVersionId }` / `afterData: { cardName, added, changed, removed }`.
++
++**A second `ACTIVE` is refused twice, and the two mechanisms are provably distinct:** the service's own `NOT_DRAFT` typed check (proven first, via re-activating an already-`ACTIVE` version) and, independently, the `ratecard_version_one_active_per_card` partial unique index against a direct SQL insert that bypasses the service entirely (guardrail 39, service arm — the index arm landed at pm57a). **Concurrency proven, not assumed** (this module's standing lesson, pm14/pm15/pm16/pm20's own precedent): two concurrent activations of the same card's single open DRAFT, looped 4×, serialize on that DRAFT's row lock — the loser's lock wait ends with the draft already `ACTIVE` (the winner committed first), so it re-reads `NOT_DRAFT` rather than double-activating. Exactly one `ACTIVE` results every iteration. (D1's own prose says "two different drafts of one card" — read literally that is impossible under pm57a's one-draft-per-card partial index; the concrete, testable scenario — confirmed against `pm00-build-plan.md`'s pm63 row, which says only "two concurrent activations for one card" — is two racers targeting the one draft that exists, which is what the test suite proves.)
++
++**Audit-category decision, recorded rather than defaulted:** `RATECARD_VERSION_ACTIVATED` is categorized `Change`, not `Additive` — unlike `PRODUCT_OFFERING_ACTIVATED` (which is `Additive`, paired with a separate `PRODUCT_OFFERING_SUPERSEDED` `Removal` event for the demoted sibling). pm63-spec D5 deliberately writes **one** event for both movements, so it reads as a bundled status transition (matching `PRODUCT_OFFERING_SUBMITTED_FOR_TESTING` / `BILL_RUN_TRIGGERED`'s classification), not as a new entity being created. Full ripple landed in this change set: `types/audit.ts` (`AUDIT_EVENT_TYPES`), `types/audit-log.ts` (`AUDIT_EVENT_CATEGORY_MAP`), and `tests/components/audit-log-filters.test.tsx` (the `RATECARD_VERSION_ACTIVATED` assertion + the option count bumped 79→80 — the count `tsc` does not catch, per `[[audit-event-type-addition-ripple]]`).
++
++**Two PRE-EXISTING, already-broken guardrail assertions found and fixed in this change set (not introduced by pm62/pm63 — verified by `git stash -u` against the committed `dev1` tip before touching anything):**
++1. `tests/guardrails/product-module-boundaries.test.ts`'s "no product read path imports the audit-log write path" was already red on `dev1` because pm61's `upload-version.ts` (a legitimate write service that writes one audit event per upload) was never added to the `PRODUCT_WRITE_SERVICE_FILES` allow-list that excludes write services from this read-only-path check. `activate-version.ts` is the same shape and would have been a second offender. Fixed by adding both filenames to the allow-list — the same allowance the pricing/catalog write services already have, not a weakening of the check (the check still fails on any true read-path file that imports the audit repository).
++2. The same test file's "0041 (rewritten) + db/schema/product.ts freeze the current rate-card schema" asserted "0041 is the ONLY rate-card migration" — true only through pm60, stale since pm61 legitimately added `0043_ratecard_permission.sql` (G-RC3's PERMISSIONS row, always intended to ship in its own follow-up migration per pm57a's I6 split). Re-scoped to name both known later migrations explicitly — `0043_ratecard_permission.sql` (expected, pm61) and `0042_cold_paibok.sql` (the pre-existing, already-flagged-in-this-tracker defect from `7e6bc26`'s npm-audit remediation, out of this module's boundary to fix) — so a genuinely new/unauthorized third rate-card migration still fails the test.
++
++**Verified 2026-09-28, DB-free.** `tsc --noEmit`: 0 errors repo-wide. `eslint`: clean on every touched/new file. The DB-free action suite (`tests/actions/activate-ratecard-version.action.test.ts`, 7 cases) and the full guardrail/repository-export/audit-log-filters suites re-run green after the two fixes above. The live-DB suite (`tests/db/ratecard-activate-version.integration.test.ts` — I4.1–I4.5, including the 4×-looped concurrency race) is written to the same standard as pm60/pm61's but **not executed this session**, for the identical reason pm61 recorded: the shared Docker `db` container's migration/ownership state is not what `[[local-docker-dev-stack]]` documents, and this suite's `beforeAll` does a `DROP SCHEMA … CASCADE` + migrate-from-empty cycle — destructive to a stack this session did not stand up and was not asked to reset.
++
++## pm62 — full detail
++
++**pm62 (Diff, read-only): IMPLEMENTED, unit-tested (static, DB-free), NOT yet run against a live DB this session (2026-09-28).** Part 5. Boundary per `specs/pm62-diff.md`: `services/product/ratecard/diff-versions.ts` (new). Read-only — no write, no transaction, no action file, no audit event, no permission row, no component.
++
++**A doc-vs-doc conflict on WHICH COLUMNS make a key "changed" — stopped and asked the user rather than picking silently.** pm62-diff.md's own D2 sentence names only `lkp_subscriber_ref_id` and `service_code` as the compared non-key columns; `prodmgmt-code-standards.md` §6.29 (already landed, pre-dating this unit) says more broadly that `polygon_end_date`, `state`, `district` and `rate_per_unit` are "likewise compared as the row's payload," and that a `polygon_start_date` change is itself a `changed` row, "not a remove + add." **Resolved with the user 2026-09-28: implement the broader §6.29 reading** — every non-key column (`lkp_subscriber_ref_id`, `service_code`, `polygon_start_date`, `polygon_end_date`, `state`, `district`, `rate_per_unit`) is compared. pm62-diff.md's D2 text is flagged (in the code doc-block and in code-standards §6.29's own landed-note) as needing correction to match, rather than the reverse. This is the single highest-impact decision in the unit — it changes which polygons a RevOps user sees flagged before activating.
++
++**The two-query budget (D5) needed two small, read-only repository additions — pm62's own "boundary: diff-versions.ts and its tests" line doesn't list them, raised rather than silently worked around.** Composing pm60's existing exports cannot hit "exactly two SQL statements": `getVersionRows` always issues a COUNT + a SELECT (2 queries), so using it for both sides would cost 4, and `getCurrentActive` returns only the version HEADER, not its rows. Added to `db/repositories/ratecard.ts`: `getAllRowsForVersion(db, versionId)` (one unpaged SELECT, no COUNT — the selected version's full row set) and `getCurrentActiveRows(db, cardName)` (one SELECT with an INNER JOIN to `ratecard_version` on `card_name` + `status = 'ACTIVE'` — resolving **and** reading the outgoing ACTIVE version's rows in the same statement, rather than a header lookup followed by a second rows read). Both are pure reads (the `get`/`find` naming the guardrail-37 exported-surface test already excludes from its mutation regex), so `tests/db/product-repository-exports.test.ts` needed no change. No ACTIVE version for the card is not special-cased anywhere — the join simply returns zero rows, which the diff's own bucketing computes as "everything added" for free (D6).
++
++**The row key reuses pm58's exact function, not a second literal (D4).** `validation/product/ratecard.schema.ts`'s previously-private `ROW_KEY_DELIMITER` (the NUL byte) is now exported, and `diff-versions.ts` imports and calls the already-exported `rateCardRowKey` helper directly rather than re-implementing the join — so there is exactly one place in the codebase a row key is ever built from its three columns. A static, DB-free test (`tests/product/ratecard-diff-versions.test.ts`) source-greps the file (comments stripped via the existing `stripComments` helper, the guardrail-13 precedent) to prove the import is real and no second delimiter literal exists, and separately proves the module opens no transaction, writes nothing, and contains no effectivity/as-of logic (D7).
++
++**One exported function, `diffAgainstActive(db, cardName, versionId)`.** `cardName` is an explicit argument (not looked up from the version row) precisely so the function's own query budget stays at two — a caller already holds `card_name` from having listed or selected the version. All three D6 degenerate cases (no `ACTIVE` exists; the selected version **is** the current `ACTIVE`; the selected version is `SUPERSEDED`) fall out of the bucketing itself with **no special-casing and no throw** — verified in the live-DB suite (I2.7/I2.8) rather than asserted by inspection.
++
++**Verified 2026-09-28, DB-free.** `tsc --noEmit`: 0 errors repo-wide. `eslint`: clean. The static source-assertion suite (`tests/product/ratecard-diff-versions.test.ts`, 3 cases) is green. The live-DB suite (`tests/db/ratecard-diff-versions.integration.test.ts` — I2.1–I2.9 plus the adversarial-collision behavioural proof of I2.10) is written to the same standard as pm60/pm61's own live-DB suites (including the counted-`postgres()`-client query-budget assertion for I2.9) but **not executed this session** — same reason as pm60/pm61/pm63: the shared Docker `db` container's state is not what `[[local-docker-dev-stack]]` documents as safe to migrate-from-empty against, and this session was not asked to reset it.
++
+ ## pm60 — full detail
+ 
+ **pm60 (Card repository): IN PROGRESS (started 2026-09-27).** Part 5. Boundary per `specs/pm60-card-repository.md`: `db/repositories/ratecard.ts` (new, **flat path** — C6 verify-only), the `RATECARD_INSERT_BATCH_SIZE` constant, guardrail 37 (exported-surface arm in `tests/db/product-repository-exports.test.ts` + the DB arm in the new live-DB suite), and the live-DB tests. **No service, action, component, page, validation or parser.** The headline result is a **proof of absence**: the surface has four writes (`insertVersion`, `insertLookupRows`, `setVersionStatus`, `deleteDraftVersion`) and four reads (+ a locked `findActiveForUpdate` for pm63/pm64), and **no row-level update or delete of a lookup row of any name** (Inv. #46). 1,000-row batches inside the caller's single transaction; no cache anywhere (Inv. #59); dates are `YYYY-MM-DD` strings end to end (D7).
+diff --git a/context/product-management/specs/pm62-diff.md b/context/product-management/specs/pm62-diff.md
+new file mode 100644
+index 0000000..c104a33
+--- /dev/null
++++ b/context/product-management/specs/pm62-diff.md
+@@ -0,0 +1,145 @@
++# pm62 — Diff (read-only)
++
++**Unit:** pm62 (Part 5). **Boundary:** `services/product/ratecard/diff-versions.ts` (new) and its tests. **Read-only** — no write, no transaction, no action file, no audit event, no permission row, no component. pm66 renders it; pm63 quotes its counts.
++**Specs from:** `prodmgmt-update-overview.md` (Core User Flow step 6; goal 3) · `_updatemodule-ratecard-lookup-plan-v2.md` **RC7, RC15**, **D-A6, D-A7** · `prodmgmt-architecture.md` §3.6, §3.7 · `prodmgmt-code-standards.md` §2.28, §3.8, §3.23, §4.25, §6.33, §6.35, §7.9 · `prodmgmt-ui-context.md` §10.2 · `prodmgmt-ai-workflow-rules.md` §3.8, §4.3.
++**Depends on:** **pm60** (the reads), **pm61** (a `DRAFT` to diff).
++
++**Why this lands before Activate, though it could technically follow.** RC7's gate is only worth something if the review is real. **Without the diff, "review before activating" is a button, not a review** (build plan, Sequencing notes Part 5). Sequencing it first also means pm63's confirmation dialog is never built against counts nobody has verified.
++
++---
++
++## Goal
++
++Compare a version against the current `ACTIVE` in memory and return three named buckets — added, changed, removed — so the person about to activate can see what will change before it does.
++
++---
++
++## Design
++
++### D1. Three named buckets
++
++```
++{ added, changed, removed }
++```
++
++(§2.28). The service returns them in this order, and the UI renders them in this order (§4.25, ui-context §10.2), so the rendering order is a property of the contract rather than a decision pm66 re-makes.
++
++### D2. Bucketing rules, per key
++
++For each key `(mno_public_key, commercial_unit_public_key, polygon_id)`:
++
++| Outgoing `ACTIVE`                   | Incoming version | Bucket                                                 |
++| ----------------------------------- | ---------------- | ------------------------------------------------------ |
++| absent                              | present          | **`added`**                                            |
++| present, any non-key column differs | present          | **`changed`** — carries the outgoing and incoming rows |
++| present                             | absent           | **`removed`** — carries the outgoing row               |
++| present, identical                  | present          | _no bucket_ — unchanged rows are not reported          |
++
++**A key present in both versions with any non-key difference is `changed`** — the non-key columns are `lkp_subscriber_ref_id` and `service_code`, and a difference in either one (or both) puts the key in `changed` exactly once. No key ever lands in two buckets, so the bucket counts sum to the number of distinct changed/added/removed keys and never disagree with the row count. Write that in the doc-block — it is the first thing a reader will wonder about.
++
++### D3. "Removed" means exactly that
++
++A key present in the outgoing version and absent from the upload is bucketed **`removed`** (§4.25, ui-context §10.2, D-A6). With carry-forward gone (D-A7), the label is literal: the row is **not in the new version** and stays readable in the superseded one, which is retained immutably for audit and rollback. Mediation has already filtered retired polygons out of the file upstream, so the upload is the authoritative current state.
++
++The bucket carries the **outgoing row** so pm66 can show what is leaving. It carries no date and no outcome copy — how a future consumer resolves past periods is out of scope.
++
++It is the one change a user cannot undo without a rollback — which is why ui-context §10.2 gives it danger tint, a deliberate departure from §1's neutral end-of-life treatment.
++
++### D4. In memory, keyed on a delimiter that cannot collide
++
++5,500 rows against 5,500 rows keyed on three columns is **a map comparison** — **no set-based SQL diff, no temp table** (§6.33, RC15, workflow §3.8). Two full reads and a pass over both.
++
++The key is the three columns **joined by a delimiter that cannot occur in them** (§6.33). The columns are free-text RevOps data (§2.20) with no character excluded by rule, so a naive concatenation makes `("AB","C")` and `("A","BC")` the same key. Use the same delimiter pm58 chose for its duplicate-key check and say so — **two different delimiters in two files is the beginning of two different answers**.
++
++### D5. The query budget is two reads and nothing more
++
++Requesting a diff issues **two full row reads** — the selected version and the current `ACTIVE` — and nothing else (§3.23). **Never a query per row, never one query per bucket.**
++
++Both reads go through pm60 by **version id** for the selected version and through `getCurrentActive` for the other. Reading a version by id here is a **display path, not a resolution path**, which is the §6.35 exception the doc-block should name (pm60 D5).
++
++### D6. No `ACTIVE` version, and the other degenerate cases
++
++| Case                                             | Behaviour                                                                                                                                                              |
++| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| No `ACTIVE` version exists for the card          | Every uploaded key is **`added`**; the other two buckets are empty. This is the first-ever upload and it is the **normal** first case, not an error.                   |
++| The selected version **is** the current `ACTIVE` | Every bucket is empty. Do not special-case it into an error — pm66 renders an empty diff, which is the truth.                                                          |
++| The selected version is `SUPERSEDED`             | Diffs against the current `ACTIVE` in the same direction. pm64 computes the rollback's counts **in the other direction**; that is pm64's, not a flag on this function. |
++
++None of these throws. A read-only service that throws on an ordinary state forces every caller to guard, and one of them will forget.
++
++### D7. This service computes nothing about activation
++
++It does not write anything, does not lock anything and does not open a transaction. It reads two row sets and compares them. Activation is pm63's, and the separation is what lets the diff be shown repeatedly, cheaply, without side effects.
++
++It also performs **no resolution** — no as-of window, no `polygon_start_date <= event_time` logic, no effectivity (§1.35). A diff compares two versions at rest. The moment this file contains an effectivity window, it has stopped being a diff and become a consumer this delivery does not build.
++
++---
++
++## Implementation
++
++### I1. `services/product/ratecard/diff-versions.ts`
++
++One exported function: two version ids (or one id plus "the current ACTIVE") in, the three buckets out, with counts and rows per bucket. In memory (D4). Framework-agnostic, no `next/*` (§7.2). Doc-block carries D2's one-bucket-per-key rule, D3's meaning of `removed`, D4's delimiter note and D5's display-path exception.
++
++### I2. Tests
++
++1. A `DRAFT` diffed against the current `ACTIVE` returns the three bucket counts and their rows, in contract order.
++2. A key whose `lkp_subscriber_ref_id` differs lands in `changed`, carrying the outgoing and incoming rows.
++3. A key whose `service_code` differs lands in `changed`, carrying the outgoing and incoming rows.
++4. A key whose `lkp_subscriber_ref_id` **and** `service_code` both differ lands in `changed` **once**, and the bucket counts sum to the number of changed keys — **not more** (D2).
++5. An unchanged key appears in **no** bucket.
++6. A key absent from the upload is bucketed **`removed`**, carrying the outgoing row.
++7. **No `ACTIVE` version** → everything `added`, no error (D6).
++8. Diffing a version against itself returns three empty buckets, no error.
++9. **5,500 against 5,500 is one map comparison** — assert the query count is **two**, and that no SQL is issued per row or per bucket (D5).
++10. Adversarial key values cannot collide across different tuples (D4) — a property test, and the delimiter is **the same one pm58 uses**, asserted by a shared constant rather than by two literals.
++11. The module opens no transaction, writes nothing, and contains no effectivity window (D7).
++
++### I3. Documentation
++
++1. **Code-standards §7 tree** — `diff-versions.ts` marked landed under **pm62**.
++2. **Code-standards §2.28** — marked landed; the three buckets of D1 and the one-bucket-per-key rule of D2 recorded.
++3. **Code-standards §6.33** — the shared-delimiter requirement recorded (it currently says _"a delimiter that cannot occur in them"_ without saying that pm58 and pm62 must agree).
++
++---
++
++## Dependencies
++
++**Packages to install: none.**
++
++**Commands used:** `npm run test` (live-DB for the read paths), `npx tsc --noEmit`, `npm run lint`.
++
++**Prerequisites:** pm60 and pm61 merged.
++
++---
++
++## Verification checklist
++
++Buckets
++
++- [ ] Exactly three named buckets — `added`, `changed`, `removed` — returned in that order.
++- [ ] A `changed` bucket carries the outgoing and incoming rows.
++- [ ] A key with any non-key difference is counted **once**, in `changed`; bucket counts do not exceed the changed-key count.
++- [ ] An unchanged key appears in no bucket.
++- [ ] The `removed` bucket carries the outgoing row; no date, no carry-forward copy.
++
++Computation
++
++- [ ] The diff is **in memory** — no set-based SQL diff, no temp table.
++- [ ] The query budget for a diff is **exactly two** reads; nothing per row, nothing per bucket.
++- [ ] The key delimiter is shared with pm58 via one constant, and cannot collide across different tuples.
++
++Degenerate cases
++
++- [ ] No `ACTIVE` version → everything `added`, no throw.
++- [ ] A version diffed against itself → three empty buckets, no throw.
++- [ ] A `SUPERSEDED` version diffs in the forward direction; the reverse direction is pm64's.
++
++Boundaries
++
++- [ ] Read-only: no write, no transaction, no lock, no action file, no audit event, no permission row.
++- [ ] **No effectivity window and no resolution of any kind** (§1.35).
++- [ ] No `next/*` import.
++- [ ] `tsc --noEmit`, ESLint, Prettier and the unit's tests green.
++
++**Definition of done:** before anyone activates a card version, they can see the three things that will change — which polygons are new, which changed a non-key column, and which are removed from the new version — computed from two reads and no writes at all.
+diff --git a/context/product-management/specs/pm63-activate.md b/context/product-management/specs/pm63-activate.md
+new file mode 100644
+index 0000000..7f11846
+--- /dev/null
++++ b/context/product-management/specs/pm63-activate.md
+@@ -0,0 +1,138 @@
++# pm63 — Activate
++
++**Unit:** pm63 (Part 5). **Boundary:** `services/product/ratecard/activate-version.ts` (new), `actions/product/activate-ratecard-version.action.ts` (new — `EXPECTED_PRODUCT_ACTION_FILES` **+1**), the `RATECARD_VERSION_ACTIVATED` audit type and its ripple, guardrails 36 and 39, and this unit's live-DB and concurrency tests. **No UI** — pm66 builds the dialog.
++**Specs from:** `prodmgmt-update-overview.md` (Core User Flow steps 7–8; goals 4, 6) · `_updatemodule-ratecard-lookup-plan-v2.md` **RC7, RC11**, **RV1, RV3**, **D-A7** · `prodmgmt-architecture.md` §3.6, §5 (Audit), Inv. **#45, #46, #57** · `prodmgmt-code-standards.md` §1.13, §1.37, §1.43, §3.21, §3.22, §6.30, §6.33, §6.35, §7.9, guardrails 36/39 · `prodmgmt-ai-workflow-rules.md` §1 (permanent rules), §4.3, §5.6, §7.4, §8.6, §8.7.
++**Depends on:** **pm61** (a `DRAFT` to activate), **pm62** (the diff — the control the gate depends on), **pm60** (the lock and the status write).
++**Scope note — carry-forward was removed (D-A7):** mediation filters retired polygons out of the CUPS file upstream, so an upload is the authoritative current state and a version is exactly its file. There is no `retired_at`, no `carried_row_count`, no RV9 and no `carryForwardRetiredRows`.
++
++**Activation is now small, and the one failure mode left is the quiet one.** A status read outside the transaction produces two `ACTIVE` versions, or a supersede of the wrong one, and no error reports it. Its own unit, its own concurrency tests, its own review.
++
++---
++
++## Goal
++
++Promote a `DRAFT` to `ACTIVE` and demote the prior `ACTIVE` to `SUPERSEDED` — two status flips, in one transaction under one lock read on `tx`, writing **no lookup rows**.
++
++---
++
++## Design
++
++### D1. One transaction, one lock, and the status read on `tx`
++
++`activateVersion` locks the card's current `ACTIVE` version `FOR UPDATE`, **re-reads its status inside the transaction immediately before the decision** (§1.13, §1.37), then promotes, demotes and writes the audit event — and commits.
++
++**This is the TOCTOU bug this module has paid for four times** (pm14, pm15, pm16, pm20). A pre-transaction status read is a **review-blocking defect on sight** (workflow §1, permanent rules). The locked read comes from pm60 (`findActiveForUpdate`); this unit supplies the decision, never its own unlocked read.
++
++The `DRAFT` being promoted is locked too. Two users activating two different drafts of one card must serialize, not interleave.
++
++### D2. The three steps, in order, in one transaction
++
++1. **Lock** the card's current `ACTIVE` (if any) and the target `DRAFT`; re-read both statuses on `tx`.
++2. **Promote / demote** — the `DRAFT` becomes `ACTIVE`; the prior `ACTIVE` becomes `SUPERSEDED` with `superseded_by_version_id` set; `activated_by` / `activated_at` written.
++3. **Audit** — write the event, with counts from pm62's diff computed against the locked outgoing version (D5).
++
++**No row writes, no `INSERT … SELECT`** (D-A7). The new version's rows are exactly its uploaded file; a key the upload dropped is simply not in it, and stays readable in the superseded version. Activation and rollback (pm64) now have the same shape.
++
++### D3. A second `ACTIVE` is refused by the index, not by this code
++
++The partial unique index on `card_name WHERE status = 'ACTIVE'` (pm57 D5, Inv. #45) is the enforcement. **The service-layer status check stays** — the index changes the **failure mode**, it does not replace the check (§6.30).
++
++Both matter: the check gives a typed refusal with a message; the index guarantees the invariant even against a direct SQL write or a race the lock somehow missed. Guardrail 39 (landed at pm57) asserts the index arm; this unit asserts the service arm and the **race**.
++
++**Concurrency is proven, not assumed** — this module's own standing lesson. Two concurrent activations of two drafts for one card, looped 4×, must serialize on the lock and produce exactly one `ACTIVE`. Same for the activate-vs-rollback pair, which pm64 owns from its side.
++
++### D4. `ratecard : EDIT`, and the diff is the gate
++
++Activation is `ratecard : EDIT` — **the same level as upload**, so one RevOps user is never blocked mid-task (RC7, §8). **It is gated by the diff review, not by a higher level** (architecture §4).
++
++That is a deliberate design choice and it is worth stating in review: the control on the act with billing consequence is the **information in front of the user** (pm62's three buckets, rendered by pm66's confirmation), not a second permission. If that trade is ever questioned, the answer is to strengthen the confirmation, not to invent a `ratecard : APPROVE`.
++
++### D5. The audit payload is the durable record of what an activation moved
++
++`RATECARD_VERSION_ACTIVATED`, written in the **same transaction** as the data change (§1.43). Its payload carries the **superseded version id** and the **change counts** from the diff (added / changed / removed).
++
++That payload is load-bearing rather than decorative: it is the durable record of which version replaced which, and of what moved between them. **If an auditor later asks what an activation did, this payload is the honest answer** — "here is which version replaced which, and here is what moved."
++
++The counts come from pm62's diff, computed **inside the transaction against the locked outgoing version**, not from counts the client supplied. A client-supplied count in an audit record is a record of what someone was shown, not of what happened.
++
++Full three-part ripple, including the `tests/components/audit-log-filters.test.tsx` assertion that **`tsc` does not catch** (§6.18, workflow §7.4). Second of three; pm64 lands the third.
++
++### D6. Versions are immutable, and activation writes no rows
++
++Activation changes **statuses and provenance columns** only. It inserts, edits and deletes **no lookup row** (RC11, RV3, Inv. #46). There is no `updateLookupRow` to call — pm60's surface does not have one, which is what makes this true by construction rather than by discipline.
++
++---
++
++## Implementation
++
++### I1. `services/product/ratecard/activate-version.ts`
++
++D2's three steps in one transaction, using pm60's locked read, `setVersionStatus` and the audit write. Framework-agnostic, no `next/*` (§7.2). Typed result union, never a throw (general §2.9). Doc-block states D1's `tx`-read rule and D6's no-row-writes rule, and notes that carry-forward was removed (D-A7) — its absence is the thing a reader familiar with the earlier carry-forward design will question.
++
++### I2. `actions/product/activate-ratecard-version.action.ts`
++
++`requirePermission('ratecard', 'EDIT')` → `isRedirectError` catch → `safeParse` the version id against its `RCV` format schema → one service call → `revalidatePath('/products/rate-card')` → typed result (§3.7, §3.22).
++
++### I3. Guardrails
++
++- **36 — a version is exactly its file** (§9, RV3, D-A7): after every activation the incoming version's stored row count equals its `row_count`, and neither version's rows changed.
++- **39** was landed at pm57 (the index arm). This unit adds the **service** arm and the race.
++
++### I4. Tests — live-DB, with the races looped 4×
++
++1. Activation promotes the `DRAFT`, demotes the prior `ACTIVE` to `SUPERSEDED`, writes `superseded_by_version_id`, `activated_by` and `activated_at` — **in one transaction**.
++2. **No lookup row is written**: both versions' rows are byte-identical before and after, and the incoming version's stored rows equal its `row_count` (D6).
++3. A second `ACTIVE` for one `card_name` is refused **by the partial unique index**; and the service refuses it first with a typed code.
++4. **Two concurrent activations for one card, looped 4×**, serialize on the lock and leave exactly one `ACTIVE`.
++5. Exactly **one** audit event, in the same transaction, carrying the superseded id and the change counts **computed inside the transaction**.
++6. `ratecard : READ` is refused at the action guard with no partial effect.
++
++### I5. Documentation
++
++1. **Code-standards §7 tree** — `activate-version.ts` and its action marked landed under **pm63**.
++2. **Code-standards §3.21** — second of three movements recorded.
++3. **Architecture §5 (Audit)** — second of three types marked landed; the payload's contents confirmed against D5.
++4. **`pm00-build-plan.md`** — the hand-off register reaffirmed: the diff, the DRAFT gate, immutability and rollback are the controls around every activation with billing consequence. This delivery stands up the table; no consumer is built.
++
++---
++
++## Dependencies
++
++**Packages to install: none.**
++
++**Commands used:** `npm run db:migrate`, `npm run db:seed-demo`, `npm run test` (live-DB integration **and** concurrency, against disposable ephemeral Postgres 16 containers — never the dev stack's own `DATABASE_URL`), `npx tsc --noEmit`, `npm run lint`.
++
++**Prerequisites:** pm60, pm61, pm62 merged. **G-RC3** for the permission the guard names.
++
++---
++
++## Verification checklist
++
++Transaction and lock
++
++- [ ] Promote, demote and the audit event are **one transaction**.
++- [ ] The outgoing `ACTIVE`'s status is read on `tx`, `FOR UPDATE`, **immediately before the decision** — no pre-transaction read anywhere in the path.
++- [ ] The target `DRAFT` is locked too.
++- [ ] Two concurrent activations for one card, **looped 4×**, serialize and leave exactly one `ACTIVE`.
++
++Enforcement and immutability
++
++- [ ] A second `ACTIVE` is refused by the **index**, and by the service check before it.
++- [ ] **No lookup row is written** — no `INSERT … SELECT`, no update; both versions byte-compared before and after.
++- [ ] The incoming version's stored rows equal its `row_count`.
++- [ ] `ratecard : READ` is refused at the action guard with no partial effect.
++
++Audit and lists
++
++- [ ] Exactly one `RATECARD_VERSION_ACTIVATED`, in the same transaction, carrying the superseded id and the change counts **computed server-side inside the transaction**.
++- [ ] All three parts of the audit ripple landed, including the assertion `tsc` does not catch.
++- [ ] `EXPECTED_PRODUCT_ACTION_FILES` +1; running total now **two of three**.
++- [ ] `revalidatePath` names `/products/rate-card` only.
++
++Guardrails
++
++- [ ] **36** (a version is exactly its file) landed and green.
++- [ ] **39**'s service arm and race added to the index arm pm57 landed.
++- [ ] `tsc --noEmit`, ESLint, Prettier and the unit's suites green.
++
++**Definition of done:** activating a card version promotes one and supersedes one — two status flips under one lock, no rows written — so each version remains exactly its uploaded file, and the audit row says exactly what moved. This delivery stands up the table; no consumer is built.
+diff --git a/db/repositories/ratecard.ts b/db/repositories/ratecard.ts
+index df3f335..3b26974 100644
+--- a/db/repositories/ratecard.ts
++++ b/db/repositories/ratecard.ts
+@@ -8,8 +8,13 @@ import type { RateCardVersionStatus } from "@/types/product";
+ // ---------------------------------------------------------------------------
+ // pm60-spec — the rate card's whole data-access surface, flat path (C6). This
+ // repository's HEADLINE RESULT is a proof of absence: it exports FOUR writes
+-// and FOUR reads (plus one locked read), and NO row-level update or delete of
+-// a lookup row OF ANY NAME (Inv. #46). A lookup row is only ever inserted, or
++// and SIX reads plus TWO locked reads (findActiveForUpdate, pm60; and
++// findVersionForUpdate, pm63-spec D1 — locking the target DRAFT so it cannot
++// interleave with a concurrent re-upload's replace-draft delete). Two of the
++// six unlocked reads — getAllRowsForVersion, getCurrentActiveRows — were
++// added under pm62-spec D5 for the diff's two-query budget. NO row-level
++// update or delete of a lookup row OF ANY NAME exists anywhere (Inv. #46). A
++// lookup row is only ever inserted, or
+ // removed by the parent version's `ON DELETE CASCADE` — never edited or
+ // deleted directly. A correction is a new upload; a wrong open draft is
+ // REPLACED by re-upload (pm61 D12), never row-edited. Guardrail 37 asserts
+@@ -278,6 +283,28 @@ export const ratecardRepository = {
+     return row ?? null;
+   },
+ 
++  // pm63-spec D1 — the locked variant of getVersionById, BY ID rather than by
++  // card_name/status: the target DRAFT being promoted is locked too, not only
++  // the outgoing ACTIVE (findActiveForUpdate). Locking it here — by the same
++  // primary key deleteDraftVersion locks internally — is what makes a
++  // concurrent re-upload's "replace this open draft" (pm61 D12) and an
++  // activation of that same draft serialize on Postgres's row lock instead of
++  // interleaving. Re-read the returned row's `status` on `tx`, immediately
++  // before the decision (§1.13) — this function only locks and returns; it
++  // decides nothing.
++  async findVersionForUpdate(
++    tx: Database,
++    versionId: string,
++  ): Promise<RatecardVersion | null> {
++    const [row] = await tx
++      .select()
++      .from(ratecardVersion)
++      .where(eq(ratecardVersion.ratecardVersionId, versionId))
++      .for("update")
++      .limit(1);
++    return row ?? null;
++  },
++
+   // A page of a version's lookup rows, with an optional free-text filter. A
+   // DISPLAY path (the row preview), never a resolution path — it reads by
+   // version id, so it can preview a superseded version's rows.
+@@ -373,4 +400,65 @@ export const ratecardRepository = {
+       .limit(1);
+     return row ?? null;
+   },
++
++  // pm62-spec D5 — a full, UNPAGED read of one version's lookup rows: no
++  // LIMIT, no COUNT. A DISPLAY path, matching getVersionById/getVersionRows
++  // (§6.35) — it reads a version of any status, superseded included, by id.
++  // Diffing up to 5,500 rows is a map comparison done once per request
++  // (§6.33), not a page a person scrolls, so this is kept separate from
++  // getVersionRows: reusing the paged read would add an unneeded COUNT query
++  // per side and blow the diff's two-query budget (D5, code-standards §3.23).
++  async getAllRowsForVersion(
++    db: Database,
++    versionId: string,
++  ): Promise<RatecardRanUsageLkp[]> {
++    return db
++      .select()
++      .from(ratecardRanUsageLkp)
++      .where(eq(ratecardRanUsageLkp.ratecardVersionId, versionId));
++  },
++
++  // pm62-spec D5 — the OTHER half of a diff's two-query budget: the current
++  // ACTIVE version's rows, resolved AND read in ONE statement via a JOIN,
++  // rather than getCurrentActive() (a version-HEADER read) followed by a
++  // second rows read, which would cost two queries for this side alone.
++  // `card_name` + `status = 'ACTIVE'` is the exact predicate getCurrentActive
++  // uses (§6.35) — expressed here as a join condition so identifying the
++  // version and reading its rows are one round trip. No ACTIVE version for
++  // the card is not an error (D6): the join simply returns no rows, which the
++  // diff bucket-computes as "everything added" with no special-casing.
++  async getCurrentActiveRows(
++    db: Database,
++    cardName: string,
++  ): Promise<RatecardRanUsageLkp[]> {
++    return db
++      .select({
++        ratecardRanUsageLkpId: ratecardRanUsageLkp.ratecardRanUsageLkpId,
++        ratecardVersionId: ratecardRanUsageLkp.ratecardVersionId,
++        mnoPublicKey: ratecardRanUsageLkp.mnoPublicKey,
++        commercialUnitPublicKey: ratecardRanUsageLkp.commercialUnitPublicKey,
++        polygonId: ratecardRanUsageLkp.polygonId,
++        polygonStartDate: ratecardRanUsageLkp.polygonStartDate,
++        polygonEndDate: ratecardRanUsageLkp.polygonEndDate,
++        state: ratecardRanUsageLkp.state,
++        district: ratecardRanUsageLkp.district,
++        lkpSubscriberRefId: ratecardRanUsageLkp.lkpSubscriberRefId,
++        serviceCode: ratecardRanUsageLkp.serviceCode,
++        ratePerUnit: ratecardRanUsageLkp.ratePerUnit,
++      })
++      .from(ratecardRanUsageLkp)
++      .innerJoin(
++        ratecardVersion,
++        eq(
++          ratecardVersion.ratecardVersionId,
++          ratecardRanUsageLkp.ratecardVersionId,
++        ),
++      )
++      .where(
++        and(
++          eq(ratecardVersion.cardName, cardName),
++          eq(ratecardVersion.status, "ACTIVE"),
++        ),
++      );
++  },
+ };
+diff --git a/services/product/ratecard/activate-version.ts b/services/product/ratecard/activate-version.ts
+new file mode 100644
+index 0000000..41bc3a2
+--- /dev/null
++++ b/services/product/ratecard/activate-version.ts
+@@ -0,0 +1,137 @@
++import { db } from "@/db/client";
++import { insertAuditEvent } from "@/db/repositories/audit.repository";
++import { ratecardRepository } from "@/db/repositories/ratecard";
++import { diffAgainstActive } from "@/services/product/ratecard/diff-versions";
++import type { RateCardVersionStatus } from "@/types/product";
++
++// pm63-spec — promote a DRAFT to ACTIVE and demote the prior ACTIVE (if any)
++// to SUPERSEDED: two status flips, one transaction, one lock read on `tx`
++// immediately before the decision, and NO row writes to
++// RATECARD_RAN_USAGE_LKP anywhere in this file (D6/D-A7/Inv. #46) — a
++// version's rows are exactly its uploaded file, so there is no
++// `INSERT … SELECT` carry-forward and nothing here calls
++// insertLookupRows/insertVersion. Framework-agnostic: no `next/*` import
++// (§7.2). Typed result union, never a throw (general §2.9).
++//
++// D1 — the TOCTOU fix this module has paid for four times (pm14, pm15, pm16,
++// pm20), now covering activation too. BOTH the target DRAFT and the card's
++// current ACTIVE version are locked `FOR UPDATE` and re-read on `tx`
++// immediately before the decision:
++//   - The DRAFT is locked FIRST, via findVersionForUpdate (pm63 addition to
++//     db/repositories/ratecard.ts — the only way to learn its `card_name`
++//     before the ACTIVE lookup can even be issued, and the same lock a
++//     concurrent re-upload's replace-draft delete takes, so the two
++//     serialize rather than interleave, pm61 D12).
++//   - The outgoing ACTIVE is then locked via pm60's own findActiveForUpdate —
++//     this unit supplies the decision, never its own unlocked read (§6.35).
++//
++// D2 — the three steps, in order, in one transaction: (1) lock both rows and
++// re-read their statuses; (2) promote the DRAFT, demote the prior ACTIVE,
++// writing `superseded_by_version_id` / `activated_by` / `activated_at`; (3)
++// write the ONE audit event, with the diff's counts computed INSIDE the
++// transaction against the LOCKED outgoing version — reusing pm62's
++// diffAgainstActive on this same `tx`, never a client-supplied count.
++//
++// D3 — a second ACTIVE is refused by the partial unique index (pm57a), not
++// only by this file's own status check; both matter (§6.30) — the index
++// guarantees the invariant even against a direct SQL write or a race the lock
++// somehow missed.
++//
++// D6 — versions are immutable; activation changes statuses and provenance
++// columns ONLY. There is no `updateLookupRow` on pm60's surface, which is
++// what makes this true by construction, not by discipline.
++
++export interface RatecardActivationDiffCounts {
++  readonly added: number;
++  readonly changed: number;
++  readonly removed: number;
++}
++
++export type ActivateRatecardVersionResult =
++  | {
++      ok: true;
++      versionId: string;
++      supersededVersionId: string | null;
++      diff: RatecardActivationDiffCounts;
++    }
++  | { ok: false; code: "VERSION_NOT_FOUND" }
++  | { ok: false; code: "NOT_DRAFT"; status: RateCardVersionStatus };
++
++export async function activateRatecardVersion(
++  versionId: string,
++  actorId: string,
++): Promise<ActivateRatecardVersionResult> {
++  return db.transaction(async (tx) => {
++    // D1 step 1a — lock the target DRAFT and re-read its status on `tx`,
++    // immediately before the decision (§1.13). Locked before the outgoing
++    // ACTIVE lookup below, both because its `card_name` is needed to make
++    // that lookup, and so a concurrent replace-draft delete (pm61 D12)
++    // cannot interleave with this activation.
++    const draft = await ratecardRepository.findVersionForUpdate(tx, versionId);
++    if (!draft) {
++      return { ok: false, code: "VERSION_NOT_FOUND" };
++    }
++    if (draft.status !== "DRAFT") {
++      return { ok: false, code: "NOT_DRAFT", status: draft.status };
++    }
++
++    // D1 step 1b — lock the card's current ACTIVE version, if any, via pm60's
++    // own locked finder. `null` here is the ordinary "first-ever activation
++    // for this card" case (pm62 D6), not an error.
++    const outgoing = await ratecardRepository.findActiveForUpdate(
++      tx,
++      draft.cardName,
++    );
++
++    // D5 — the diff's counts, computed INSIDE this transaction against the
++    // LOCKED outgoing version (reusing pm62's two-query diff on this same
++    // `tx`), never from a count a client supplied.
++    const diff = await diffAgainstActive(tx, draft.cardName, versionId);
++    const diffCounts: RatecardActivationDiffCounts = {
++      added: diff.added.count,
++      changed: diff.changed.count,
++      removed: diff.removed.count,
++    };
++
++    // D2 step 2 — promote / demote. Status + provenance columns only; no
++    // lookup row is inserted, updated or deleted anywhere in this function
++    // (D6/D-A7).
++    const activatedAt = new Date();
++    await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
++      activatedBy: actorId,
++      activatedAt,
++    });
++    if (outgoing) {
++      await ratecardRepository.setVersionStatus(
++        tx,
++        outgoing.ratecardVersionId,
++        "SUPERSEDED",
++        { supersededByVersionId: versionId },
++      );
++    }
++
++    // D2 step 3 / D5 — exactly one audit event, in the same transaction,
++    // carrying the superseded version id and the three diff counts. This
++    // payload is the durable record of what the activation moved.
++    await insertAuditEvent(tx, {
++      eventType: "RATECARD_VERSION_ACTIVATED",
++      actorUserId: actorId,
++      targetEntity: "RATECARD_VERSION",
++      targetId: versionId,
++      beforeData: outgoing
++        ? { supersededVersionId: outgoing.ratecardVersionId }
++        : null,
++      afterData: {
++        cardName: draft.cardName,
++        ...diffCounts,
++      },
++    });
++
++    return {
++      ok: true,
++      versionId,
++      supersededVersionId: outgoing?.ratecardVersionId ?? null,
++      diff: diffCounts,
++    };
++  });
++}
+diff --git a/services/product/ratecard/diff-versions.ts b/services/product/ratecard/diff-versions.ts
+new file mode 100644
+index 0000000..d39368c
+--- /dev/null
++++ b/services/product/ratecard/diff-versions.ts
+@@ -0,0 +1,190 @@
++import type { Database } from "@/db/client";
++import { ratecardRepository } from "@/db/repositories/ratecard";
++import type { RatecardRanUsageLkp } from "@/db/schema/product";
++import { rateCardRowKey } from "@/validation/product/ratecard.schema";
++
++// pm62-spec — read-only. Compares a selected rate-card version against the
++// card's current ACTIVE version and buckets every distinct row key into
++// exactly one of `added` / `changed` / `removed`, rendered in that order by
++// both this file and the UI (D1, code-standards §2.28/§4.24 — the rendering
++// order is a property of the contract, not a decision pm66 re-makes).
++//
++// D2 — ONE BUCKET PER KEY. For each key (mno_public_key,
++// commercial_unit_public_key, polygon_id): absent→present is `added`;
++// present→absent is `removed` (carries the outgoing row only, D3); present in
++// both with any payload difference is `changed` exactly once (carries both
++// rows); present in both and identical is reported in NO bucket. A key can
++// never land in two buckets, so the bucket counts always sum to the number of
++// distinct changed/added/removed keys.
++//
++// WHICH COLUMNS COUNT AS "changed" — a doc-vs-doc conflict, resolved, not
++// silently picked. pm62-diff.md D2's own sentence names only
++// `lkp_subscriber_ref_id` and `service_code` as the compared non-key columns.
++// code-standards §6.29 says more broadly that `polygon_end_date`, `state`,
++// `district` and `rate_per_unit` are "likewise compared as the row's
++// payload", and that a `polygon_start_date` change is a `changed` row, "not a
++// remove + add". This file implements the code-standards §6.29 reading (the
++// broader one, confirmed with the user 2026-09-28): EVERY non-key column —
++// `lkp_subscriber_ref_id`, `service_code`, `polygon_start_date`,
++// `polygon_end_date`, `state`, `district`, `rate_per_unit` — is compared.
++// pm62-diff.md's narrower D2 sentence should be corrected to match; flagged
++// here rather than edited silently (workflow §7.10/§3 "doc-vs-doc conflicts").
++//
++// D3 — "removed" means exactly that. A key present in the outgoing ACTIVE
++// version and absent from the incoming one is `removed`: it is not in the new
++// version and stays readable in the superseded one (D-A7). The bucket carries
++// the OUTGOING row only — no date, no carry-forward copy, no outcome copy.
++//
++// D4 — keyed in memory on the SAME delimiter pm58's duplicate-key check uses.
++// `rateCardRowKey` (validation/product/ratecard.schema.ts) is imported and
++// reused verbatim rather than re-implemented, so there is exactly one place a
++// key is ever joined from its three columns — two different delimiters in two
++// files would be the beginning of two different answers.
++//
++// D5 — the query budget is exactly TWO reads, nothing per row and nothing per
++// bucket (code-standards §3.23). Both reads are full and unpaged
++// (getAllRowsForVersion / getCurrentActiveRows, added to
++// db/repositories/ratecard.ts for this unit — pm62's own boundary lists only
++// this file, but the two-query budget this very spec sets cannot be hit by
++// composing pm60's existing paged/header reads, each of which issues its own
++// COUNT; raised as a small, read-only, additive repository extension rather
++// than silently working around it). `getAllRowsForVersion` reads the selected
++// version's rows BY ID — a display path, not a resolution path (pm60 D5,
++// §6.35): a SUPERSEDED version is diffable by design. `getCurrentActiveRows`
++// resolves and reads the card's current ACTIVE version's rows in one
++// statement, the same `card_name` + `status = 'ACTIVE'` definition
++// `getCurrentActive` uses.
++//
++// D6 — the degenerate cases fall out of the bucketing itself, with NO
++// special-casing and NO throw:
++//   - No ACTIVE version exists → getCurrentActiveRows returns [] → every
++//     incoming key is `added`; `changed`/`removed` are empty.
++//   - The selected version IS the current ACTIVE → both reads return the
++//     same rows → every key matches its own row → no bucket for any key.
++//   - The selected version is SUPERSEDED → diffs against the current ACTIVE
++//     in the same direction as any other version; pm64's rollback direction
++//     is pm64's own concern, not a flag on this function.
++//
++// D7 — this file computes nothing about activation. It writes nothing, locks
++// nothing and opens no transaction; it performs no resolution — no as-of
++// window, no `polygon_start_date <= event_time` logic, no effectivity
++// (§1.35). Framework-agnostic: no `next/*` import (§7.2).
++
++export interface RateCardDiffKey {
++  readonly mnoPublicKey: string;
++  readonly commercialUnitPublicKey: string;
++  readonly polygonId: string;
++}
++
++export interface RateCardDiffAddedEntry extends RateCardDiffKey {
++  readonly incoming: RatecardRanUsageLkp;
++}
++
++export interface RateCardDiffChangedEntry extends RateCardDiffKey {
++  readonly outgoing: RatecardRanUsageLkp;
++  readonly incoming: RatecardRanUsageLkp;
++}
++
++export interface RateCardDiffRemovedEntry extends RateCardDiffKey {
++  readonly outgoing: RatecardRanUsageLkp;
++}
++
++export interface RateCardDiffBucket<T> {
++  readonly count: number;
++  readonly rows: readonly T[];
++}
++
++// D1 — the three named buckets, in the contract's rendering order.
++export interface RateCardVersionDiff {
++  readonly added: RateCardDiffBucket<RateCardDiffAddedEntry>;
++  readonly changed: RateCardDiffBucket<RateCardDiffChangedEntry>;
++  readonly removed: RateCardDiffBucket<RateCardDiffRemovedEntry>;
++}
++
++// The non-key payload comparison (§6.29's broader reading — see the file
++// banner above). `polygon_start_date` is out of the ROW KEY (D-A9) but is
++// compared here as payload, exactly like every other descriptive column.
++function payloadDiffers(
++  outgoing: RatecardRanUsageLkp,
++  incoming: RatecardRanUsageLkp,
++): boolean {
++  return (
++    outgoing.lkpSubscriberRefId !== incoming.lkpSubscriberRefId ||
++    outgoing.serviceCode !== incoming.serviceCode ||
++    outgoing.polygonStartDate !== incoming.polygonStartDate ||
++    outgoing.polygonEndDate !== incoming.polygonEndDate ||
++    outgoing.state !== incoming.state ||
++    outgoing.district !== incoming.district ||
++    outgoing.ratePerUnit !== incoming.ratePerUnit
++  );
++}
++
++function keyOf(row: RatecardRanUsageLkp): string {
++  return rateCardRowKey(
++    row.mnoPublicKey,
++    row.commercialUnitPublicKey,
++    row.polygonId,
++  );
++}
++
++function keyFieldsOf(row: RatecardRanUsageLkp): RateCardDiffKey {
++  return {
++    mnoPublicKey: row.mnoPublicKey,
++    commercialUnitPublicKey: row.commercialUnitPublicKey,
++    polygonId: row.polygonId,
++  };
++}
++
++// The one exported function (I1): a version id and the card it belongs to in,
++// the three buckets out. `cardName` is taken as an explicit argument (rather
++// than looked up from the version row) so this function's own query budget
++// stays at exactly two — a caller already holds the version's `card_name`
++// from having listed or selected it.
++export async function diffAgainstActive(
++  db: Database,
++  cardName: string,
++  versionId: string,
++): Promise<RateCardVersionDiff> {
++  // D5 — exactly two full reads, issued together; nothing per row, nothing
++  // per bucket.
++  const [incomingRows, outgoingRows] = await Promise.all([
++    ratecardRepository.getAllRowsForVersion(db, versionId),
++    ratecardRepository.getCurrentActiveRows(db, cardName),
++  ]);
++
++  const outgoingByKey = new Map<string, RatecardRanUsageLkp>();
++  for (const row of outgoingRows) {
++    outgoingByKey.set(keyOf(row), row);
++  }
++
++  const added: RateCardDiffAddedEntry[] = [];
++  const changed: RateCardDiffChangedEntry[] = [];
++  const seenKeys = new Set<string>();
++
++  for (const incoming of incomingRows) {
++    const key = keyOf(incoming);
++    seenKeys.add(key);
++
++    const outgoing = outgoingByKey.get(key);
++    if (outgoing === undefined) {
++      added.push({ ...keyFieldsOf(incoming), incoming });
++      continue;
++    }
++    if (payloadDiffers(outgoing, incoming)) {
++      changed.push({ ...keyFieldsOf(incoming), outgoing, incoming });
++    }
++    // Identical → no bucket (D2).
++  }
++
++  const removed: RateCardDiffRemovedEntry[] = [];
++  for (const [key, outgoing] of outgoingByKey) {
++    if (seenKeys.has(key)) continue;
++    removed.push({ ...keyFieldsOf(outgoing), outgoing });
++  }
++
++  return {
++    added: { count: added.length, rows: added },
++    changed: { count: changed.length, rows: changed },
++    removed: { count: removed.length, rows: removed },
++  };
++}
+diff --git a/tests/actions/activate-ratecard-version.action.test.ts b/tests/actions/activate-ratecard-version.action.test.ts
+new file mode 100644
+index 0000000..e7b851b
+--- /dev/null
++++ b/tests/actions/activate-ratecard-version.action.test.ts
+@@ -0,0 +1,130 @@
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
++vi.mock("@/services/product/ratecard/activate-version", () => ({
++  activateRatecardVersion: vi.fn(),
++}));
++vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
++
++import { requirePermission } from "@/auth/guard";
++import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
++import { revalidatePath } from "next/cache";
++
++import { activateRatecardVersionAction } from "@/actions/product/activate-ratecard-version.action";
++import * as activateVersionService from "@/services/product/ratecard/activate-version";
++
++const mockRequirePermission = vi.mocked(requirePermission);
++const mockActivateRatecardVersion = vi.mocked(
++  activateVersionService.activateRatecardVersion,
++);
++const mockRevalidatePath = vi.mocked(revalidatePath);
++
++function redirectError(target: string): Error & { digest: string } {
++  const error = new Error("NEXT_REDIRECT") as Error & { digest: string };
++  error.digest = `NEXT_REDIRECT;replace;${target};307;`;
++  return error;
++}
++
++beforeEach(() => {
++  mockRequirePermission.mockReset();
++  mockActivateRatecardVersion.mockReset();
++  mockRevalidatePath.mockReset();
++  mockRequirePermission.mockResolvedValue({
++    userId: "user-1",
++    userEmail: "revops@example.com",
++    permissionMap: { ratecard: "EDIT" } as never,
++  });
++});
++
++describe("activateRatecardVersionAction", () => {
++  it("requires ratecard:EDIT before anything else", async () => {
++    mockActivateRatecardVersion.mockResolvedValue({
++      ok: true,
++      versionId: "RCV00000002",
++      supersededVersionId: "RCV00000001",
++      diff: { added: 1, changed: 0, removed: 0 },
++    });
++
++    await activateRatecardVersionAction("RCV00000002");
++
++    expect(mockRequirePermission).toHaveBeenCalledWith(
++      PERMISSIONS.RATECARD,
++      LEVELS.EDIT,
++    );
++  });
++
++  it("returns FORBIDDEN and takes no further action when the guard redirects", async () => {
++    mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
++
++    const result = await activateRatecardVersionAction("RCV00000002");
++
++    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
++    expect(mockActivateRatecardVersion).not.toHaveBeenCalled();
++    expect(mockRevalidatePath).not.toHaveBeenCalled();
++  });
++
++  it("returns SERVER_ERROR when the guard throws something other than a redirect", async () => {
++    mockRequirePermission.mockRejectedValue(new Error("db down"));
++
++    const result = await activateRatecardVersionAction("RCV00000002");
++
++    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
++    expect(mockActivateRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("returns VALIDATION_ERROR for a malformed version id, before calling the service", async () => {
++    const result = await activateRatecardVersionAction("not-an-rcv-id");
++
++    expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
++    expect(mockActivateRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("calls the service with the parsed version id and the actor, then revalidates and returns ok:true", async () => {
++    mockActivateRatecardVersion.mockResolvedValue({
++      ok: true,
++      versionId: "RCV00000002",
++      supersededVersionId: "RCV00000001",
++      diff: { added: 3, changed: 1, removed: 2 },
++    });
++
++    const result = await activateRatecardVersionAction("RCV00000002");
++
++    expect(mockActivateRatecardVersion).toHaveBeenCalledWith(
++      "RCV00000002",
++      "user-1",
++    );
++    expect(mockRevalidatePath).toHaveBeenCalledWith("/products/rate-card");
++    expect(result).toEqual({
++      ok: true,
++      versionId: "RCV00000002",
++      supersededVersionId: "RCV00000001",
++      diff: { added: 3, changed: 1, removed: 2 },
++    });
++  });
++
++  it("returns the service's typed refusal unchanged and never revalidates", async () => {
++    mockActivateRatecardVersion.mockResolvedValue({
++      ok: false,
++      code: "NOT_DRAFT",
++      status: "ACTIVE",
++    });
++
++    const result = await activateRatecardVersionAction("RCV00000002");
++
++    expect(result).toEqual({
++      ok: false,
++      code: "NOT_DRAFT",
++      status: "ACTIVE",
++    });
++    expect(mockRevalidatePath).not.toHaveBeenCalled();
++  });
++
++  it("returns SERVER_ERROR when the service call throws", async () => {
++    mockActivateRatecardVersion.mockRejectedValue(new Error("connection reset"));
++
++    const result = await activateRatecardVersionAction("RCV00000002");
++
++    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
++    expect(mockRevalidatePath).not.toHaveBeenCalled();
++  });
++});
+diff --git a/tests/components/audit-log-filters.test.tsx b/tests/components/audit-log-filters.test.tsx
+index 2131ec5..77c1f55 100644
+--- a/tests/components/audit-log-filters.test.tsx
++++ b/tests/components/audit-log-filters.test.tsx
+@@ -182,8 +182,12 @@ describe("AuditLogFilters", () => {
+     expect(
+       within(additive).getByText("RATECARD_VERSION_UPLOADED"),
+     ).toBeInTheDocument();
++    // pm63 addition
++    expect(
++      within(change).getByText("RATECARD_VERSION_ACTIVATED"),
++    ).toBeInTheDocument();
+ 
+-    expect(within(select).getAllByRole("option")).toHaveLength(79); // "All events" + 78 (pm61 added RATECARD_VERSION_UPLOADED)
++    expect(within(select).getAllByRole("option")).toHaveLength(80); // "All events" + 79 (pm63 added RATECARD_VERSION_ACTIVATED)
+   });
+ 
+   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {
+diff --git a/tests/db/ratecard-activate-version.integration.test.ts b/tests/db/ratecard-activate-version.integration.test.ts
+new file mode 100644
+index 0000000..c44f894
+--- /dev/null
++++ b/tests/db/ratecard-activate-version.integration.test.ts
+@@ -0,0 +1,333 @@
++import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
++import { drizzle } from "drizzle-orm/postgres-js";
++import { migrate } from "drizzle-orm/postgres-js/migrator";
++import { asc, eq } from "drizzle-orm";
++import postgres from "postgres";
++import type postgresjs from "postgres";
++
++import * as schema from "@/db/schema";
++import { appuser } from "@/db/schema/identity";
++import { auditLog } from "@/db/schema/audit";
++import { ratecardRanUsageLkp, ratecardVersion } from "@/db/schema/product";
++import {
++  ratecardRepository,
++  type LookupRowInput,
++} from "@/db/repositories/ratecard";
++import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
++
++// pm63-spec I4 — live-DB proof, against a database built from EMPTY, of
++// activation's whole contract: one transaction, one lock read on `tx`
++// immediately before the decision, no lookup-row write of any kind (guardrail
++// 36 — a version is exactly its file), the service arm of guardrail 39 (the
++// index arm landed at pm57a — tests/db/product-ratecard-schema.integration.test.ts),
++// the two-concurrent-activations race looped 4×, and exactly one audit event
++// carrying the superseded id and the diff counts computed inside the
++// transaction. `activateRatecardVersion` reads the module singleton
++// `@/db/client` (it opens its own transaction, D1) rather than taking `db` as
++// an argument, so — matching
++// tests/db/ratecard-upload-version.integration.test.ts's precedent — that
++// singleton is replaced with one built on a real `postgres()` client for this
++// suite.
++const databaseUrl = process.env.DATABASE_URL;
++
++const hoisted = vi.hoisted(() => ({
++  holder: { db: undefined as unknown },
++}));
++
++vi.mock("@/db/client", () => ({
++  get db() {
++    return hoisted.holder.db;
++  },
++}));
++
++import { activateRatecardVersion } from "@/services/product/ratecard/activate-version";
++
++describe.skipIf(!databaseUrl)(
++  "activateRatecardVersion (requires DATABASE_URL)",
++  () => {
++    let sql_: postgresjs.Sql;
++    type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
++    let db: DrizzleDb;
++    let actorId: string;
++
++    beforeAll(async () => {
++      assertTestDatabaseUrl(databaseUrl as string);
++      sql_ = postgres(databaseUrl as string, {
++        // At least 2 physical connections — two "concurrent" activations
++        // against `max: 1` would just queue onto one connection and the race
++        // this suite exists to exercise would never happen (I4.4).
++        max: 5,
++        onnotice: () => {},
++      });
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
++      db = drizzle(sql_, { schema });
++      await migrate(db, {
++        migrationsFolder: "./db/migrations",
++        migrationsSchema: "drizzle",
++      });
++      hoisted.holder.db = db;
++
++      const [actor] = await db
++        .insert(appuser)
++        .values({
++          id: crypto.randomUUID(),
++          userName: "pm63-fixture-operator",
++          userEmail: `${crypto.randomUUID()}@example.invalid`,
++          emailVerified: false,
++          authMethod: "LOCAL",
++          status: "ACTIVE",
++        })
++        .returning({ id: appuser.id });
++      actorId = actor!.id;
++    }, 60_000);
++
++    afterAll(async () => {
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
++      await sql_.end();
++    });
++
++    function row(polygonId: string): LookupRowInput {
++      return {
++        mnoPublicKey: "MNO-1",
++        commercialUnitPublicKey: "CU-1",
++        polygonId,
++        polygonStartDate: "2026-01-01",
++        polygonEndDate: null,
++        state: null,
++        district: null,
++        lkpSubscriberRefId: "PRDINV00000001",
++        serviceCode: null,
++        ratePerUnit: null,
++      };
++    }
++
++    async function makeVersion(
++      cardName: string,
++      status: "DRAFT" | "ACTIVE" | "SUPERSEDED",
++      versionNum: number,
++      rows: LookupRowInput[],
++    ): Promise<string> {
++      return db.transaction(async (tx) => {
++        const { versionId } = await ratecardRepository.insertVersion(tx, {
++          cardName,
++          versionNum,
++          status,
++          snapshotDate: "2026-01-01",
++          sourceFile: "activate-fixture.csv",
++          rowCount: rows.length,
++        });
++        if (rows.length > 0) {
++          await ratecardRepository.insertLookupRows(tx, versionId, rows);
++        }
++        return versionId;
++      });
++    }
++
++    // I4.1 — promotes the DRAFT, demotes the prior ACTIVE, writes
++    // superseded_by_version_id / activated_by / activated_at, in one
++    // transaction.
++    it("promotes the DRAFT and demotes the prior ACTIVE, writing provenance columns, in one transaction", async () => {
++      const activeId = await makeVersion("CARD_PROMOTE", "ACTIVE", 1, [
++        row("P-1"),
++      ]);
++      const draftId = await makeVersion("CARD_PROMOTE", "DRAFT", 2, [
++        row("P-1"),
++        row("P-2"),
++      ]);
++
++      const before = Date.now();
++      const result = await activateRatecardVersion(draftId, actorId);
++      expect(result).toMatchObject({ ok: true, versionId: draftId });
++      if (!result.ok) throw new Error("expected ok:true");
++      expect(result.supersededVersionId).toBe(activeId);
++      expect(result.diff).toEqual({ added: 1, changed: 0, removed: 0 });
++
++      const [promoted] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, draftId));
++      expect(promoted?.status).toBe("ACTIVE");
++      expect(promoted?.activatedBy).toBe(actorId);
++      expect(promoted?.activatedAt).toBeInstanceOf(Date);
++      expect(promoted!.activatedAt!.getTime()).toBeGreaterThanOrEqual(before);
++
++      const [superseded] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, activeId));
++      expect(superseded?.status).toBe("SUPERSEDED");
++      expect(superseded?.supersededByVersionId).toBe(draftId);
++    });
++
++    // I4.2 / guardrail 36 — NO lookup row is written: both versions' rows are
++    // byte-identical before and after, and the incoming version's stored rows
++    // equal its row_count (D6).
++    it("writes no lookup row — both versions' rows are byte-identical before and after activation (guardrail 36)", async () => {
++      const activeRows = [row("P-1"), row("P-2")];
++      const draftRows = [row("P-1"), row("P-3")];
++      const activeId = await makeVersion(
++        "CARD_NOROWWRITE",
++        "ACTIVE",
++        1,
++        activeRows,
++      );
++      const draftId = await makeVersion(
++        "CARD_NOROWWRITE",
++        "DRAFT",
++        2,
++        draftRows,
++      );
++
++      const beforeActive = await db
++        .select()
++        .from(ratecardRanUsageLkp)
++        .where(eq(ratecardRanUsageLkp.ratecardVersionId, activeId))
++        .orderBy(asc(ratecardRanUsageLkp.polygonId));
++      const beforeDraft = await db
++        .select()
++        .from(ratecardRanUsageLkp)
++        .where(eq(ratecardRanUsageLkp.ratecardVersionId, draftId))
++        .orderBy(asc(ratecardRanUsageLkp.polygonId));
++
++      const result = await activateRatecardVersion(draftId, actorId);
++      expect(result.ok).toBe(true);
++
++      const afterActive = await db
++        .select()
++        .from(ratecardRanUsageLkp)
++        .where(eq(ratecardRanUsageLkp.ratecardVersionId, activeId))
++        .orderBy(asc(ratecardRanUsageLkp.polygonId));
++      const afterDraft = await db
++        .select()
++        .from(ratecardRanUsageLkp)
++        .where(eq(ratecardRanUsageLkp.ratecardVersionId, draftId))
++        .orderBy(asc(ratecardRanUsageLkp.polygonId));
++
++      expect(afterActive).toEqual(beforeActive);
++      expect(afterDraft).toEqual(beforeDraft);
++      expect(afterDraft.length).toBe(draftRows.length);
++
++      const [promoted] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, draftId));
++      expect(promoted?.rowCount).toBe(draftRows.length);
++    });
++
++    // I4.3 — a second ACTIVE for one card_name is refused by the partial
++    // unique index; the service refuses first with a typed code
++    // (guardrail 39, service arm — the index arm landed at pm57a).
++    it("refuses re-activating an already-ACTIVE version with a typed NOT_DRAFT code, and a direct second ACTIVE row is refused by the index", async () => {
++      const activeId = await makeVersion("CARD_SECONDACTIVE", "ACTIVE", 1, [
++        row("P-1"),
++      ]);
++
++      const result = await activateRatecardVersion(activeId, actorId);
++      expect(result).toEqual({
++        ok: false,
++        code: "NOT_DRAFT",
++        status: "ACTIVE",
++      });
++
++      await expect(
++        db.transaction(async (tx) => {
++          await ratecardRepository.insertVersion(tx, {
++            cardName: "CARD_SECONDACTIVE",
++            versionNum: 2,
++            status: "ACTIVE",
++            snapshotDate: "2026-01-01",
++            sourceFile: "direct-sql.csv",
++            rowCount: 0,
++          });
++        }),
++      ).rejects.toThrow(/ratecard_version_one_active_per_card/);
++    });
++
++    // I4.4 / guardrail 39 race — two concurrent activations for one card,
++    // looped 4×, serialize on the lock and leave exactly one ACTIVE: the
++    // second racer's lock wait re-reads the (by-then-ACTIVE) draft's status
++    // and is refused NOT_DRAFT rather than double-activating.
++    it("two concurrent activations for one card serialize on the lock and leave exactly one ACTIVE (looped 4x)", async () => {
++      for (let i = 0; i < 4; i++) {
++        const cardName = `CARD_RACE_${i}`;
++        const activeId = await makeVersion(cardName, "ACTIVE", 1, [
++          row("P-1"),
++        ]);
++        const draftId = await makeVersion(cardName, "DRAFT", 2, [row("P-1")]);
++
++        const [r1, r2] = await Promise.all([
++          activateRatecardVersion(draftId, actorId),
++          activateRatecardVersion(draftId, actorId),
++        ]);
++
++        const outcomes = [r1, r2];
++        const succeeded = outcomes.filter((r) => r.ok);
++        const refused = outcomes.filter(
++          (r) => !r.ok && r.code === "NOT_DRAFT",
++        );
++        expect(succeeded.length).toBe(1);
++        expect(refused.length).toBe(1);
++
++        const activeRows = await db
++          .select()
++          .from(ratecardVersion)
++          .where(eq(ratecardVersion.cardName, cardName));
++        const activeCount = activeRows.filter(
++          (v) => v.status === "ACTIVE",
++        ).length;
++        expect(activeCount).toBe(1);
++        expect(
++          activeRows.find((v) => v.ratecardVersionId === draftId)?.status,
++        ).toBe("ACTIVE");
++        expect(
++          activeRows.find((v) => v.ratecardVersionId === activeId)?.status,
++        ).toBe("SUPERSEDED");
++      }
++    });
++
++    // I4.5 — exactly one audit event, in the same transaction, carrying the
++    // superseded id and the change counts computed INSIDE the transaction.
++    it("writes exactly one RATECARD_VERSION_ACTIVATED audit event carrying the superseded id and the diff counts", async () => {
++      const activeId = await makeVersion("CARD_AUDIT", "ACTIVE", 1, [
++        row("P-1"),
++        row("P-2"),
++      ]);
++      const draftId = await makeVersion("CARD_AUDIT", "DRAFT", 2, [
++        row("P-1"),
++        row("P-3"),
++      ]);
++
++      await activateRatecardVersion(draftId, actorId);
++
++      const events = await db
++        .select()
++        .from(auditLog)
++        .where(eq(auditLog.targetId, draftId));
++      expect(events.length).toBe(1);
++      const event = events[0]!;
++      expect(event.eventType).toBe("RATECARD_VERSION_ACTIVATED");
++      expect(event.actorUserId).toBe(actorId);
++      expect(event.beforeData).toEqual({ supersededVersionId: activeId });
++      expect(event.afterData).toMatchObject({
++        cardName: "CARD_AUDIT",
++        added: 1,
++        changed: 0,
++        removed: 1,
++      });
++    });
++  },
++);
+diff --git a/tests/db/ratecard-diff-versions.integration.test.ts b/tests/db/ratecard-diff-versions.integration.test.ts
+new file mode 100644
+index 0000000..eaa5752
+--- /dev/null
++++ b/tests/db/ratecard-diff-versions.integration.test.ts
+@@ -0,0 +1,305 @@
++import { afterAll, beforeAll, describe, expect, it } from "vitest";
++import { drizzle } from "drizzle-orm/postgres-js";
++import { migrate } from "drizzle-orm/postgres-js/migrator";
++import postgres from "postgres";
++import type postgresjs from "postgres";
++
++import * as schema from "@/db/schema";
++import { ratecardRepository, type LookupRowInput } from "@/db/repositories/ratecard";
++import { diffAgainstActive } from "@/services/product/ratecard/diff-versions";
++import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
++
++// pm62-spec I2 — live-DB proof of the whole diff, against a database built
++// from EMPTY. `diffAgainstActive` takes `db` as an explicit argument (it is
++// framework-agnostic and opens no transaction of its own, D7), so this suite
++// passes it a counted `postgres()` client directly rather than mocking
++// `@/db/client` (contrast tests/db/ratecard-upload-version.integration.test.ts,
++// whose service reads the module singleton).
++const databaseUrl = process.env.DATABASE_URL;
++
++type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
++
++describe.skipIf(!databaseUrl)(
++  "diffAgainstActive (requires DATABASE_URL)",
++  () => {
++    let sql_: postgresjs.Sql;
++    let db: DrizzleDb;
++    let queries: string[] = [];
++
++    beforeAll(async () => {
++      assertTestDatabaseUrl(databaseUrl as string);
++      sql_ = postgres(databaseUrl as string, {
++        max: 1,
++        onnotice: () => {},
++        debug: (_connection, query) => {
++          queries.push(query);
++        },
++      });
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
++      db = drizzle(sql_, { schema });
++      await migrate(db, {
++        migrationsFolder: "./db/migrations",
++        migrationsSchema: "drizzle",
++      });
++    }, 60_000);
++
++    afterAll(async () => {
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
++      await sql_.end();
++    });
++
++    function row(overrides: Partial<LookupRowInput> & { polygonId: string }): LookupRowInput {
++      return {
++        mnoPublicKey: "MNO-1",
++        commercialUnitPublicKey: "CU-1",
++        polygonStartDate: "2026-01-01",
++        polygonEndDate: null,
++        state: null,
++        district: null,
++        lkpSubscriberRefId: "PRDINV00000001",
++        serviceCode: null,
++        ratePerUnit: null,
++        ...overrides,
++      };
++    }
++
++    // Creates a version with the given rows, in one transaction, and returns
++    // its id. `versionNum`/`status` are the caller's — this repository layer
++    // decides nothing about lifecycle (pm60 D1).
++    async function makeVersion(
++      cardName: string,
++      status: "DRAFT" | "ACTIVE" | "SUPERSEDED",
++      versionNum: number,
++      rows: LookupRowInput[],
++    ): Promise<string> {
++      return db.transaction(async (tx) => {
++        const { versionId } = await ratecardRepository.insertVersion(tx, {
++          cardName,
++          versionNum,
++          status,
++          snapshotDate: "2026-01-01",
++          sourceFile: "diff-fixture.csv",
++          rowCount: rows.length,
++        });
++        if (rows.length > 0) {
++          await ratecardRepository.insertLookupRows(tx, versionId, rows);
++        }
++        return versionId;
++      });
++    }
++
++    // I2.1 — a DRAFT diffed against the current ACTIVE returns the three
++    // bucket counts and rows, IN CONTRACT ORDER (D1).
++    it("returns the three named buckets, in contract order, with counts and rows", async () => {
++      const activeId = await makeVersion("CARD_BASIC", "ACTIVE", 1, [
++        row({ polygonId: "P-UNCHANGED" }), // stays identical
++        row({ polygonId: "P-REMOVED" }), // absent from the draft
++      ]);
++      const draftId = await makeVersion("CARD_BASIC", "DRAFT", 2, [
++        row({ polygonId: "P-UNCHANGED" }),
++        row({ polygonId: "P-ADDED" }), // new key
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_BASIC", draftId);
++
++      expect(Object.keys(result)).toEqual(["added", "changed", "removed"]);
++      expect(result.added.count).toBe(1);
++      expect(result.added.rows[0]!.polygonId).toBe("P-ADDED");
++      expect(result.added.rows[0]!.incoming.ratecardVersionId).toBe(draftId);
++      expect(result.changed.count).toBe(0);
++      expect(result.removed.count).toBe(1);
++      expect(result.removed.rows[0]!.polygonId).toBe("P-REMOVED");
++      expect(result.removed.rows[0]!.outgoing.ratecardVersionId).toBe(
++        activeId,
++      );
++    });
++
++    // I2.2 — an lkp_subscriber_ref_id difference lands in `changed`, carrying
++    // both rows.
++    it("a lkp_subscriber_ref_id difference lands in changed, carrying outgoing and incoming", async () => {
++      await makeVersion("CARD_REFID", "ACTIVE", 1, [
++        row({ polygonId: "P-1", lkpSubscriberRefId: "PRDINV00000001" }),
++      ]);
++      const draftId = await makeVersion("CARD_REFID", "DRAFT", 2, [
++        row({ polygonId: "P-1", lkpSubscriberRefId: "PRDINV00000002" }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_REFID", draftId);
++
++      expect(result.changed.count).toBe(1);
++      expect(result.changed.rows[0]!.outgoing.lkpSubscriberRefId).toBe(
++        "PRDINV00000001",
++      );
++      expect(result.changed.rows[0]!.incoming.lkpSubscriberRefId).toBe(
++        "PRDINV00000002",
++      );
++      expect(result.added.count).toBe(0);
++      expect(result.removed.count).toBe(0);
++    });
++
++    // I2.3 — a service_code difference lands in `changed`.
++    it("a service_code difference lands in changed, carrying outgoing and incoming", async () => {
++      await makeVersion("CARD_SVC", "ACTIVE", 1, [
++        row({ polygonId: "P-1", serviceCode: "OLD" }),
++      ]);
++      const draftId = await makeVersion("CARD_SVC", "DRAFT", 2, [
++        row({ polygonId: "P-1", serviceCode: "NEW" }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_SVC", draftId);
++
++      expect(result.changed.count).toBe(1);
++      expect(result.changed.rows[0]!.outgoing.serviceCode).toBe("OLD");
++      expect(result.changed.rows[0]!.incoming.serviceCode).toBe("NEW");
++    });
++
++    // I2.4 — BOTH lkp_subscriber_ref_id and service_code differ → `changed`
++    // exactly ONCE, not twice; counts sum to the number of changed keys.
++    it("a key whose ref id AND service code both differ lands in changed once, not twice", async () => {
++      await makeVersion("CARD_BOTH", "ACTIVE", 1, [
++        row({
++          polygonId: "P-1",
++          lkpSubscriberRefId: "PRDINV00000001",
++          serviceCode: "OLD",
++        }),
++      ]);
++      const draftId = await makeVersion("CARD_BOTH", "DRAFT", 2, [
++        row({
++          polygonId: "P-1",
++          lkpSubscriberRefId: "PRDINV00000002",
++          serviceCode: "NEW",
++        }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_BOTH", draftId);
++
++      expect(result.changed.count).toBe(1);
++      expect(result.added.count + result.changed.count + result.removed.count).toBe(
++        1,
++      );
++    });
++
++    // I2.5 — an unchanged key appears in NO bucket.
++    it("an unchanged key appears in no bucket", async () => {
++      await makeVersion("CARD_SAME", "ACTIVE", 1, [
++        row({ polygonId: "P-1" }),
++      ]);
++      const draftId = await makeVersion("CARD_SAME", "DRAFT", 2, [
++        row({ polygonId: "P-1" }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_SAME", draftId);
++
++      expect(result.added.count).toBe(0);
++      expect(result.changed.count).toBe(0);
++      expect(result.removed.count).toBe(0);
++    });
++
++    // I2.6 — a key absent from the upload is `removed`, carrying the
++    // outgoing row.
++    it("a key absent from the upload is bucketed removed, carrying the outgoing row", async () => {
++      const activeId = await makeVersion("CARD_GONE", "ACTIVE", 1, [
++        row({ polygonId: "P-GONE" }),
++      ]);
++      const draftId = await makeVersion("CARD_GONE", "DRAFT", 2, []);
++
++      const result = await diffAgainstActive(db, "CARD_GONE", draftId);
++
++      expect(result.removed.count).toBe(1);
++      expect(result.removed.rows[0]!.polygonId).toBe("P-GONE");
++      expect(result.removed.rows[0]!.outgoing.ratecardVersionId).toBe(
++        activeId,
++      );
++      expect(result.added.count).toBe(0);
++      expect(result.changed.count).toBe(0);
++    });
++
++    // I2.7 — no ACTIVE version at all → everything added, no error (D6).
++    it("with no ACTIVE version for the card, every uploaded key is added and nothing throws", async () => {
++      const draftId = await makeVersion("CARD_FIRST_EVER", "DRAFT", 1, [
++        row({ polygonId: "P-1" }),
++        row({ polygonId: "P-2" }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_FIRST_EVER", draftId);
++
++      expect(result.added.count).toBe(2);
++      expect(result.changed.count).toBe(0);
++      expect(result.removed.count).toBe(0);
++    });
++
++    // I2.8 — diffing a version against itself returns three empty buckets,
++    // no error (D6).
++    it("diffing the current ACTIVE version against itself returns three empty buckets", async () => {
++      const activeId = await makeVersion("CARD_SELF", "ACTIVE", 1, [
++        row({ polygonId: "P-1" }),
++        row({ polygonId: "P-2" }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_SELF", activeId);
++
++      expect(result.added.count).toBe(0);
++      expect(result.changed.count).toBe(0);
++      expect(result.removed.count).toBe(0);
++    });
++
++    // I2.9 — 5,500 vs 5,500 is ONE map comparison: the query budget for a
++    // diff request is exactly TWO, nothing per row and nothing per bucket
++    // (D5).
++    it("the query budget for a 5,500-vs-5,500 diff is exactly two reads", async () => {
++      const activeRows: LookupRowInput[] = Array.from(
++        { length: 5500 },
++        (_, i) => row({ polygonId: `P-BUDGET-${i}` }),
++      );
++      const draftRows: LookupRowInput[] = activeRows.map((r, i) =>
++        i === 0 ? { ...r, serviceCode: "CHANGED" } : r,
++      );
++      await makeVersion("CARD_BUDGET", "ACTIVE", 1, activeRows);
++      const draftId = await makeVersion("CARD_BUDGET", "DRAFT", 2, draftRows);
++
++      queries = [];
++      const result = await diffAgainstActive(db, "CARD_BUDGET", draftId);
++
++      expect(result.changed.count).toBe(1);
++      expect(result.added.count).toBe(0);
++      expect(result.removed.count).toBe(0);
++      expect(queries.length).toBe(2);
++    });
++
++    // I2.10 (behavioural half) — adversarial key values cannot collide
++    // across different tuples (D4): ("AB","C") vs ("A","BC") on the same
++    // polygon must be treated as two DISTINCT keys, not one. If the join
++    // were a naive "+" concatenation they would collide and cancel out to
++    // "no bucket"; with the shared NUL-delimited key they must not.
++    it("adversarial key values that would collide under naive concatenation stay distinct (D4)", async () => {
++      await makeVersion("CARD_COLLIDE", "ACTIVE", 1, [
++        row({ mnoPublicKey: "AB", commercialUnitPublicKey: "C", polygonId: "P-X" }),
++      ]);
++      const draftId = await makeVersion("CARD_COLLIDE", "DRAFT", 2, [
++        row({ mnoPublicKey: "A", commercialUnitPublicKey: "BC", polygonId: "P-X" }),
++      ]);
++
++      const result = await diffAgainstActive(db, "CARD_COLLIDE", draftId);
++
++      // Two genuinely different tuples: the ACTIVE one is removed, the DRAFT
++      // one is added — they must NOT cancel out to an empty diff.
++      expect(result.removed.count).toBe(1);
++      expect(result.added.count).toBe(1);
++      expect(result.changed.count).toBe(0);
++    });
++  },
++);
+diff --git a/tests/guardrails/product-module-boundaries.test.ts b/tests/guardrails/product-module-boundaries.test.ts
+index 3a4cfec..1957899 100644
+--- a/tests/guardrails/product-module-boundaries.test.ts
++++ b/tests/guardrails/product-module-boundaries.test.ts
+@@ -56,6 +56,8 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
+     // pm61 — the update's first movement of this list since the Manage
+     // rebuild (code-standards §3.21); pm63/pm64 add the other two of three.
+     "upload-ratecard-version.action.ts": "uploadRatecardVersionAction",
++    // pm63 — second of three; pm64's rollback is the third.
++    "activate-ratecard-version.action.ts": "activateRatecardVersionAction",
+   };
+ 
+   it("actions/product/ exists and exports exactly this phase's action set", () => {
+@@ -170,6 +172,14 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
+     "obsolete-offering.ts",
+     "retire-offering.ts",
+     "delete-offering.ts",
++    // Rate card write services (Part 5) — a pre-existing gap closed here:
++    // upload-version.ts (pm61) already legitimately imports insertAuditEvent
++    // and was already an unlisted offender before this unit; activate-version.ts
++    // (pm63) is the same shape (one audit event in the same transaction as
++    // the write). Neither reads anything — both are write services exactly
++    // like the catalog ones above.
++    "upload-version.ts",
++    "activate-version.ts",
+   ]);
+ 
+   it("no product read path imports the audit-log write path", () => {
+@@ -812,8 +822,28 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
+       "INSERT INTO CORE.PERMISSIONS",
+     );
+ 
+-    // The rewrite is in place: 0041 is the ONLY rate-card migration — there is
+-    // no 0042 (nor any later migration that touches the rate card).
++    // The rewrite is in place: 0041 carries the two TABLES. This assertion
++    // originally read "0041 is the ONLY rate-card migration" — true only
++    // through pm60; it went stale the moment pm61 legitimately resolved
++    // G-RC3 with its own follow-up migration (the PERMISSIONS seed row must
++    // ship in its own file per the pm57a I6 split recorded just above, since
++    // G-RC3 was still open when 0041 was authored). Re-scoped here (found,
++    // not silently re-passed) to name each KNOWN later migration mentioning
++    // "ratecard" rather than asserting none exists:
++    //   - 0043_ratecard_permission.sql — EXPECTED (pm61, G-RC3's `ratecard`
++    //     PERMISSIONS row, landed in its own migration as I6 always intended).
++    //   - 0042_cold_paibok.sql — a PRE-EXISTING, already-flagged defect
++    //     (progress tracker, pm61 session) unrelated to this module's own
++    //     units: it re-issues the ratecard sequence/tables/indexes 0041
++    //     already owns, added in 7e6bc26's npm-audit remediation against a
++    //     stale drizzle-kit snapshot. Out of this guardrail's boundary to
++    //     fix (it touches other modules' schema too) — named here so a THIRD,
++    //     genuinely new/unauthorized rate-card migration still fails this
++    //     test rather than silently passing.
++    const EXPECTED_LATER_RATECARD_MIGRATIONS = new Set([
++      "0042_cold_paibok.sql",
++      "0043_ratecard_permission.sql",
++    ]);
+     const laterRateCardMigrations = fs
+       .readdirSync(path.join(REPO_ROOT, "db", "migrations"))
+       .filter((name) => /\.sql$/.test(name))
+@@ -825,7 +855,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
+           .toLowerCase();
+         return body.includes("ratecard");
+       });
+-    expect(laterRateCardMigrations).toEqual([]);
++    expect(laterRateCardMigrations.sort()).toEqual(
++      [...EXPECTED_LATER_RATECARD_MIGRATIONS].sort(),
++    );
+ 
+     // The journal carries a 0041 entry sorting after 0040's.
+     const journal = JSON.parse(
+diff --git a/tests/product/ratecard-diff-versions.test.ts b/tests/product/ratecard-diff-versions.test.ts
+new file mode 100644
+index 0000000..96723c3
+--- /dev/null
++++ b/tests/product/ratecard-diff-versions.test.ts
+@@ -0,0 +1,60 @@
++import fs from "node:fs";
++import path from "node:path";
++
++import { describe, expect, it } from "vitest";
++
++import { stripComments } from "@/tests/helpers/strip-code-comments";
++
++// pm62-spec I2.10/I2.11 — the two assertions that need no database at all:
++// (10) the diff's row key is built from the SAME shared delimiter/function
++// pm58's duplicate-key check uses (not a second literal), and (11) the module
++// opens no transaction, writes nothing and contains no effectivity window
++// (D7). Static source checks, matching this repo's guardrail-test convention
++// (e.g. tests/guardrails/product-module-boundaries.test.ts) — the behavioural
++// proof that colliding tuples never merge, and the full bucket matrix
++// (I2.1–I2.9), are the live-DB suite's
++// (tests/db/ratecard-diff-versions.integration.test.ts), because the service
++// itself does two real reads and has no DB-free seam to inject fixture rows
++// through.
++const SOURCE_PATH = path.join(
++  __dirname,
++  "..",
++  "..",
++  "services",
++  "product",
++  "ratecard",
++  "diff-versions.ts",
++);
++const source = fs.readFileSync(SOURCE_PATH, "utf8");
++// Comments (this file's own doc-block explains D7's "no effectivity, no
++// as-of window" rule in prose) are stripped first, so the assertions below
++// react to real code, never to a comment that merely NAMES the forbidden
++// thing (tests/helpers/strip-code-comments.ts, the guardrail-13 pattern).
++const code = stripComments(source);
++
++describe("diff-versions.ts (static, DB-free)", () => {
++  it("imports the shared row-key function from pm58's validation file, rather than re-declaring a delimiter literal (D4, I2.10)", () => {
++    expect(code).toMatch(
++      /import\s*\{\s*rateCardRowKey\s*\}\s*from\s*"@\/validation\/product\/ratecard\.schema"/,
++    );
++    // No second delimiter literal anywhere in the CODE — the NUL byte is
++    // spelled once, in validation/product/ratecard.schema.ts, and reused via
++    // the imported function.
++    expect(code).not.toMatch(/\\u0000/);
++  });
++
++  it("opens no transaction, writes nothing and contains no effectivity window (D7, I2.11)", () => {
++    expect(code).not.toMatch(/\.transaction\(/);
++    expect(code).not.toMatch(/\.insert\(/);
++    expect(code).not.toMatch(/\.update\(/);
++    expect(code).not.toMatch(/\.delete\(/);
++    expect(code).not.toMatch(/for\(\s*"update"\s*\)/);
++    expect(code).not.toMatch(/effectiv/i);
++    expect(code).not.toMatch(/as[_-]?of/i);
++    expect(code).not.toMatch(/event_time/);
++  });
++
++  it("imports no next/* module (§7.2)", () => {
++    expect(code).not.toMatch(/from\s*"next\//);
++  });
++});
+diff --git a/types/audit-log.ts b/types/audit-log.ts
+index 9c77547..2eddff6 100644
+--- a/types/audit-log.ts
++++ b/types/audit-log.ts
+@@ -118,6 +118,15 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
+   // pm61 — an upload creates exactly one new DRAFT ratecard_version row (or
+   // replaces an open one, D12): a new entity, like PRODUCT_OFFERING_CREATED.
+   RATECARD_VERSION_UPLOADED: "Additive",
++  // pm63 — a status transition (promote one version, demote another) bundled
++  // into ONE event, not a new entity — classified like
++  // PRODUCT_OFFERING_SUBMITTED_FOR_TESTING / BILL_RUN_TRIGGERED, the other
++  // single-event lifecycle transitions in this map, rather than like
++  // PRODUCT_OFFERING_ACTIVATED (which is paired with its own separate
++  // PRODUCT_OFFERING_SUPERSEDED "Removal" event for the demoted sibling —
++  // this delivery deliberately writes only one event for both movements,
++  // pm63-spec D5).
++  RATECARD_VERSION_ACTIVATED: "Change",
+ };
+ 
+ // Event types removed from AUDIT_EVENT_TYPES (no longer written, no longer a
+diff --git a/types/audit.ts b/types/audit.ts
+index 57002a7..3431405 100644
+--- a/types/audit.ts
++++ b/types/audit.ts
+@@ -77,6 +77,7 @@ export const AUDIT_EVENT_TYPES = [
+   "BILL_RUN_DISTRIBUTION_RERUN",
+   "BILL_RUN_DISTRIBUTION_ABANDONED",
+   "RATECARD_VERSION_UPLOADED",
++  "RATECARD_VERSION_ACTIVATED",
+ ] as const;
+ 
+ export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
+diff --git a/validation/product/ratecard.schema.ts b/validation/product/ratecard.schema.ts
+index 86eddf0..15cb796 100644
+--- a/validation/product/ratecard.schema.ts
++++ b/validation/product/ratecard.schema.ts
+@@ -18,6 +18,15 @@ import { z } from "zod";
+ // does not show (workflow §5.4).
+ // ---------------------------------------------------------------------------
+ 
++// pm63-spec I2 — the `RCV` id-format schema every mutation action safeParses
++// a version id against before calling its service, the same role
++// list-search-params.base.ts's offeringIdParam plays for `PRDOFR` ids
++// (code-standards §2.7). `RCV` + exactly 8 digits, matching the sequence
++// default in db/schema/product.ts (`'RCV' || lpad(nextval(...)::text, 8,
++// '0')`). Declared here (not in the action file) so pm64's rollback action
++// reuses the same schema rather than a second literal.
++export const ratecardVersionIdSchema = z.string().regex(/^RCV\d{8}$/);
++
+ // D0 — the column set. THIS RECORD IS THE ONLY PLACE THE TEN HEADER STRINGS
+ // ARE SPELLED (pm58-spec I1). It maps each file header (the exact, binding
+ // text RevOps' export carries — OR7′, confirmed 2026-09-25) to the table
+@@ -244,7 +253,14 @@ export type RateCardFileResult =
+ // and a Postgres `text` column cannot store one either. Because that rejection
+ // runs at validation — before this in-memory dedup — the join is provably
+ // injective over every value that reaches it (§2.20).
+-const ROW_KEY_DELIMITER = "\u0000";
++//
++// Exported (pm62-spec D4/§6.33) so the diff's in-memory row key shares this
++// EXACT delimiter via one constant rather than a second literal — two
++// different delimiters in two files is the beginning of two different
++// answers. `rateCardRowKey` below is the preferred way to build a key;
++// `ROW_KEY_DELIMITER` itself is exported only so a consumer (or a test) can
++// assert the sharing directly rather than trusting it by convention.
++export const ROW_KEY_DELIMITER = "\u0000";
+ 
+ export function rateCardRowKey(
+   mnoPublicKey: string,
+-- 
+2.54.0.windows.1
+

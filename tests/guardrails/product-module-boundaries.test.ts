@@ -56,6 +56,8 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     // pm61 — the update's first movement of this list since the Manage
     // rebuild (code-standards §3.21); pm63/pm64 add the other two of three.
     "upload-ratecard-version.action.ts": "uploadRatecardVersionAction",
+    // pm63 — second of three; pm64's rollback is the third.
+    "activate-ratecard-version.action.ts": "activateRatecardVersionAction",
   };
 
   it("actions/product/ exists and exports exactly this phase's action set", () => {
@@ -170,7 +172,14 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "obsolete-offering.ts",
     "retire-offering.ts",
     "delete-offering.ts",
+    // Rate card write services (Part 5) — a pre-existing gap closed here:
+    // upload-version.ts (pm61) already legitimately imports insertAuditEvent
+    // and was already an unlisted offender before this unit; activate-version.ts
+    // (pm63) is the same shape (one audit event in the same transaction as
+    // the write). Neither reads anything — both are write services exactly
+    // like the catalog ones above.
     "upload-version.ts",
+    "activate-version.ts",
   ]);
 
   it("no product read path imports the audit-log write path", () => {

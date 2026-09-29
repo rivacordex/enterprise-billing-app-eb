@@ -195,7 +195,7 @@ Auth mechanics are inherited unchanged from platform §5 — Better-Auth DB-back
 - **No sweeper retires rows, and nothing else does either.** Polygon retirement is decided upstream at mediation; a retired polygon is simply absent from the next upload (D-A7). There is deliberately no clock-driven job anywhere near this data — see §3.6.
 - **No later-phase compute is owned here.** Any future consumer of the lookup would run in a non-application runtime that never executes in-process (platform §6); it is out of scope.
 
-**Audit.** **Three new event types**, one per mutation, written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED` (**landed pm61**), `RATECARD_VERSION_ACTIVATED`, `RATECARD_VERSION_ROLLED_BACK`. The activation event's payload carries the superseded version id and the change counts (added / retiring / changed), the durable record of what a given activation altered. Page reads are never audited.
+**Audit.** **Three new event types**, one per mutation, written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED` (**landed pm61**), `RATECARD_VERSION_ACTIVATED` (**landed pm63**), `RATECARD_VERSION_ROLLED_BACK`. The activation event's payload carries the superseded version id and the change counts (added / changed / removed), the durable record of what a given activation altered — confirmed against `services/product/ratecard/activate-version.ts`'s actual payload (D5). Page reads are never audited.
 
 ---
 
