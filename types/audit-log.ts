@@ -118,6 +118,15 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // pm61 — an upload creates exactly one new DRAFT ratecard_version row (or
   // replaces an open one, D12): a new entity, like PRODUCT_OFFERING_CREATED.
   RATECARD_VERSION_UPLOADED: "Additive",
+  // pm63 — a status transition (promote one version, demote another) bundled
+  // into ONE event, not a new entity — classified like
+  // PRODUCT_OFFERING_SUBMITTED_FOR_TESTING / BILL_RUN_TRIGGERED, the other
+  // single-event lifecycle transitions in this map, rather than like
+  // PRODUCT_OFFERING_ACTIVATED (which is paired with its own separate
+  // PRODUCT_OFFERING_SUPERSEDED "Removal" event for the demoted sibling —
+  // this delivery deliberately writes only one event for both movements,
+  // pm63-spec D5).
+  RATECARD_VERSION_ACTIVATED: "Change",
 };
 
 // Event types removed from AUDIT_EVENT_TYPES (no longer written, no longer a

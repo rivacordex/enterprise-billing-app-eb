@@ -18,6 +18,15 @@ import { z } from "zod";
 // does not show (workflow §5.4).
 // ---------------------------------------------------------------------------
 
+// pm63-spec I2 — the `RCV` id-format schema every mutation action safeParses
+// a version id against before calling its service, the same role
+// list-search-params.base.ts's offeringIdParam plays for `PRDOFR` ids
+// (code-standards §2.7). `RCV` + exactly 8 digits, matching the sequence
+// default in db/schema/product.ts (`'RCV' || lpad(nextval(...)::text, 8,
+// '0')`). Declared here (not in the action file) so pm64's rollback action
+// reuses the same schema rather than a second literal.
+export const ratecardVersionIdSchema = z.string().regex(/^RCV\d{8}$/);
+
 // D0 — the column set. THIS RECORD IS THE ONLY PLACE THE TEN HEADER STRINGS
 // ARE SPELLED (pm58-spec I1). It maps each file header (the exact, binding
 // text RevOps' export carries — OR7′, confirmed 2026-09-25) to the table
@@ -244,7 +253,14 @@ export type RateCardFileResult =
 // and a Postgres `text` column cannot store one either. Because that rejection
 // runs at validation — before this in-memory dedup — the join is provably
 // injective over every value that reaches it (§2.20).
-const ROW_KEY_DELIMITER = "\u0000";
+//
+// Exported (pm62-spec D4/§6.33) so the diff's in-memory row key shares this
+// EXACT delimiter via one constant rather than a second literal — two
+// different delimiters in two files is the beginning of two different
+// answers. `rateCardRowKey` below is the preferred way to build a key;
+// `ROW_KEY_DELIMITER` itself is exported only so a consumer (or a test) can
+// assert the sharing directly rather than trusting it by convention.
+export const ROW_KEY_DELIMITER = "\u0000";
 
 export function rateCardRowKey(
   mnoPublicKey: string,

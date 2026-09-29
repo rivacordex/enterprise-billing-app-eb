@@ -8,8 +8,13 @@ import type { RateCardVersionStatus } from "@/types/product";
 // ---------------------------------------------------------------------------
 // pm60-spec — the rate card's whole data-access surface, flat path (C6). This
 // repository's HEADLINE RESULT is a proof of absence: it exports FOUR writes
-// and FOUR reads (plus one locked read), and NO row-level update or delete of
-// a lookup row OF ANY NAME (Inv. #46). A lookup row is only ever inserted, or
+// and SIX reads plus TWO locked reads (findActiveForUpdate, pm60; and
+// findVersionForUpdate, pm63-spec D1 — locking the target DRAFT so it cannot
+// interleave with a concurrent re-upload's replace-draft delete). Two of the
+// six unlocked reads — getAllRowsForVersion, getCurrentActiveRows — were
+// added under pm62-spec D5 for the diff's two-query budget. NO row-level
+// update or delete of a lookup row OF ANY NAME exists anywhere (Inv. #46). A
+// lookup row is only ever inserted, or
 // removed by the parent version's `ON DELETE CASCADE` — never edited or
 // deleted directly. A correction is a new upload; a wrong open draft is
 // REPLACED by re-upload (pm61 D12), never row-edited. Guardrail 37 asserts
@@ -278,6 +283,28 @@ export const ratecardRepository = {
     return row ?? null;
   },
 
+  // pm63-spec D1 — the locked variant of getVersionById, BY ID rather than by
+  // card_name/status: the target DRAFT being promoted is locked too, not only
+  // the outgoing ACTIVE (findActiveForUpdate). Locking it here — by the same
+  // primary key deleteDraftVersion locks internally — is what makes a
+  // concurrent re-upload's "replace this open draft" (pm61 D12) and an
+  // activation of that same draft serialize on Postgres's row lock instead of
+  // interleaving. Re-read the returned row's `status` on `tx`, immediately
+  // before the decision (§1.13) — this function only locks and returns; it
+  // decides nothing.
+  async findVersionForUpdate(
+    tx: Database,
+    versionId: string,
+  ): Promise<RatecardVersion | null> {
+    const [row] = await tx
+      .select()
+      .from(ratecardVersion)
+      .where(eq(ratecardVersion.ratecardVersionId, versionId))
+      .for("update")
+      .limit(1);
+    return row ?? null;
+  },
+
   // A page of a version's lookup rows, with an optional free-text filter. A
   // DISPLAY path (the row preview), never a resolution path — it reads by
   // version id, so it can preview a superseded version's rows.
@@ -372,5 +399,66 @@ export const ratecardRepository = {
       .for("update")
       .limit(1);
     return row ?? null;
+  },
+
+  // pm62-spec D5 — a full, UNPAGED read of one version's lookup rows: no
+  // LIMIT, no COUNT. A DISPLAY path, matching getVersionById/getVersionRows
+  // (§6.35) — it reads a version of any status, superseded included, by id.
+  // Diffing up to 5,500 rows is a map comparison done once per request
+  // (§6.33), not a page a person scrolls, so this is kept separate from
+  // getVersionRows: reusing the paged read would add an unneeded COUNT query
+  // per side and blow the diff's two-query budget (D5, code-standards §3.23).
+  async getAllRowsForVersion(
+    db: Database,
+    versionId: string,
+  ): Promise<RatecardRanUsageLkp[]> {
+    return db
+      .select()
+      .from(ratecardRanUsageLkp)
+      .where(eq(ratecardRanUsageLkp.ratecardVersionId, versionId));
+  },
+
+  // pm62-spec D5 — the OTHER half of a diff's two-query budget: the current
+  // ACTIVE version's rows, resolved AND read in ONE statement via a JOIN,
+  // rather than getCurrentActive() (a version-HEADER read) followed by a
+  // second rows read, which would cost two queries for this side alone.
+  // `card_name` + `status = 'ACTIVE'` is the exact predicate getCurrentActive
+  // uses (§6.35) — expressed here as a join condition so identifying the
+  // version and reading its rows are one round trip. No ACTIVE version for
+  // the card is not an error (D6): the join simply returns no rows, which the
+  // diff bucket-computes as "everything added" with no special-casing.
+  async getCurrentActiveRows(
+    db: Database,
+    cardName: string,
+  ): Promise<RatecardRanUsageLkp[]> {
+    return db
+      .select({
+        ratecardRanUsageLkpId: ratecardRanUsageLkp.ratecardRanUsageLkpId,
+        ratecardVersionId: ratecardRanUsageLkp.ratecardVersionId,
+        mnoPublicKey: ratecardRanUsageLkp.mnoPublicKey,
+        commercialUnitPublicKey: ratecardRanUsageLkp.commercialUnitPublicKey,
+        polygonId: ratecardRanUsageLkp.polygonId,
+        polygonStartDate: ratecardRanUsageLkp.polygonStartDate,
+        polygonEndDate: ratecardRanUsageLkp.polygonEndDate,
+        state: ratecardRanUsageLkp.state,
+        district: ratecardRanUsageLkp.district,
+        lkpSubscriberRefId: ratecardRanUsageLkp.lkpSubscriberRefId,
+        serviceCode: ratecardRanUsageLkp.serviceCode,
+        ratePerUnit: ratecardRanUsageLkp.ratePerUnit,
+      })
+      .from(ratecardRanUsageLkp)
+      .innerJoin(
+        ratecardVersion,
+        eq(
+          ratecardVersion.ratecardVersionId,
+          ratecardRanUsageLkp.ratecardVersionId,
+        ),
+      )
+      .where(
+        and(
+          eq(ratecardVersion.cardName, cardName),
+          eq(ratecardVersion.status, "ACTIVE"),
+        ),
+      );
   },
 };
