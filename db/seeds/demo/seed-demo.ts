@@ -4,12 +4,13 @@ import postgres from "postgres";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import * as schema from "@/db/schema";
+import { db as appDb } from "@/db/client";
 import {
   assertNonProductionUrl,
   type NonProdGuardContext,
 } from "@/db/seeds/lib/non-prod-guard";
 
-import { seedProductDemo } from "./product-demo";
+import { seedProductDemo, seedRateCardDemo } from "./product-demo";
 import { seedOrderingDemo } from "./ordering-demo";
 
 // Standalone script (`npm run db:seed-demo`) — never imported by application
@@ -57,9 +58,20 @@ async function main(): Promise<void> {
       await seedOrderingDemo(tx);
     });
 
+    // pm67 — the rate-card demo runs on the application db pool (@/db/client),
+    // NOT this script's own client: pm61/pm63's upload + activate services open
+    // their own transactions there, so it must run AFTER the product/ordering
+    // transaction has committed (the appuser it FKs must already be visible on
+    // a separate connection). It manages its own commits via those services.
+    await seedRateCardDemo();
+
     logger.info("Demo data seeded successfully.");
   } finally {
     await client.end();
+    // seedRateCardDemo used the shared application pool; close it too so this
+    // one-shot script exits promptly instead of idling the pool out to its
+    // timeout (the billrun-live-kestra-smoke script uses the same pattern).
+    await appDb.$client.end({ timeout: 5 }).catch(() => {});
   }
 }
 

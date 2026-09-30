@@ -366,7 +366,7 @@ db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card) the two tables' DDL 
 db/migrations/0043_ratecard_permission.sql    # (rate card) the ratecard PERMISSIONS seed row (G-RC3) — LANDED pm61
 validation/product/
   ratecard.schema.ts                  # (rate card) header map + row + file + rejectSummary schemas — LANDED pm58
-db/seeds/demo/product-demo.ts         # (rate card) one demo card version, same Zod + CHECKs
+db/seeds/demo/product-demo.ts         # (rate card) one demo card version (RAN_USAGE: 1 ACTIVE + 1 SUPERSEDED via the real upload+activate path), same Zod + CHECKs — LANDED pm67 (+ one-line wiring in db/seeds/demo/seed-demo.ts)
 next.config.ts                        # (rate card) experimental.serverActions.bodySizeLimit: '4mb' — §1.46/§6.34 — LANDED pm66
 types/rbac.ts                         # (rate card) one more PERMISSION_NAMES member — §1.46, §8
 lib/nav-registry.ts, components/nav-icons.ts # (rate card) fifth Products entry + its TableProperties icon — LANDED pm65

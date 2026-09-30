@@ -59,6 +59,15 @@ const BOUNDARIES_ELEMENTS = [
   // every other seed under `db/seeds/**` stays repository-only and is bound
   // by the general "db" rule below.
   { type: "db-seed-sample", mode: "full", pattern: "db/seeds/sample/**" },
+  // Carved out ahead of the general "db" pattern, same reasoning as
+  // `db-seed-sample` above (pm67-spec D2): the opt-in demo seed
+  // (`db/seeds/demo/**`) drives the application's own rate-card upload +
+  // activate service path so the seeded card is created exactly the way a
+  // RevOps user would create it (guards, status flips and audit trail
+  // exercised), rather than by a hand-set `status = 'ACTIVE'` insert. Every
+  // other seed under `db/seeds/**` stays repository-only under the general
+  // "db" rule below.
+  { type: "db-seed-demo", mode: "full", pattern: "db/seeds/demo/**" },
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
   { type: "types", mode: "full", pattern: "types/**" },
@@ -253,6 +262,26 @@ const eslintConfig = defineConfig([
                 to: {
                   type: [
                     "db-seed-sample",
+                    "db",
+                    "services",
+                    "validation",
+                    "types",
+                    "lib",
+                  ],
+                },
+              },
+            },
+            {
+              // pm67-spec D2 — the opt-in demo seed reaches "services" to drive
+              // the real rate-card upload + activate path (see the element
+              // carve-out comment above). Same allowance shape as
+              // `db-seed-sample`; "db-seed-demo" self-import covers
+              // seed-demo.ts importing product-demo.ts/ordering-demo.ts.
+              from: { type: "db-seed-demo" },
+              allow: {
+                to: {
+                  type: [
+                    "db-seed-demo",
                     "db",
                     "services",
                     "validation",

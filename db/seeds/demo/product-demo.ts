@@ -18,6 +18,16 @@ import type {
   UnitOfMeasure,
 } from "@/types/product";
 import type { Database } from "@/db/client";
+import { db as appDb } from "@/db/client";
+import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
+import { ratecardRepository } from "@/db/repositories/ratecard";
+import { uploadRatecardVersion } from "@/services/product/ratecard/upload-version";
+import { activateRatecardVersion } from "@/services/product/ratecard/activate-version";
+import {
+  RATE_CARD_FILE_HEADERS,
+  RATE_CARD_HEADER_MAP,
+  type RateCardTableColumn,
+} from "@/validation/product/ratecard.schema";
 
 const CURRENCY = "MYR"; // SYSTEM_CONFIG.default_currency (0005 seed)
 
@@ -467,4 +477,306 @@ export async function seedProductDemo(tx: Database): Promise<void> {
   }
 
   logger.info("db:seed-demo: product demo catalog seeded.");
+}
+
+// ---------------------------------------------------------------------------
+// pm67 — the Phase 1 seed of the ONE tracked rate card (`RAN_USAGE`).
+//
+// This seeds ONE `ACTIVE` and one `SUPERSEDED` version of the single seeded
+// card (D-A5), created **through the real upload + activate services** (D2) —
+// pm61's `uploadRatecardVersion` and pm63's `activateRatecardVersion`, called
+// as SERVICES (no `requirePermission`: a seed runs with full DB access, not a
+// user session). A seed that hand-wrote `status = 'ACTIVE'` would pass every
+// test here and prove nothing about the system it seeds. Every write is parsed
+// through the SAME Zod as a user upload (Inv. #4, D1), so a malformed fixture
+// fails at Zod before any insert; the card guards, the one-ACTIVE-per-card
+// index and the four audit events are all exercised by the seed itself.
+//
+// It stands up data, not a consumer (§3.7): nothing reads the table.
+// ---------------------------------------------------------------------------
+
+// The single tracked card (D-A5). There is no surface to create a second card.
+export const RAN_USAGE_CARD_NAME = "RAN_USAGE";
+
+// The get-or-created principal whose id stamps `uploaded_by` / `activated_by`
+// on every version and every audit row (plan v2:269 resolved here). A real,
+// already-seeded appuser rather than NULL (D2) — self-provisioned via the
+// shared seed helper (the `ordering-demo` / sample precedent) so
+// `db:migrate && db:seed-demo` works on a GENUINELY EMPTY database (I3.1): the
+// break-glass admin from `db:seed` is not created by `migrate`, so this seed
+// names and ensures its own operator rather than looking one up that may not
+// exist.
+export const RATE_CARD_DEMO_OPERATOR = {
+  userName: "Demo — Rate Card Operator",
+  userEmail: "demo-ratecard-operator@example.invalid",
+} as const;
+
+// A demo upload row keyed by TABLE COLUMN (the values of pm58's
+// RATE_CARD_HEADER_MAP). Every field is a string exactly as a CSV cell is; an
+// empty optional cell is "" and stays "" through the row schema (→ NULL at the
+// service, never `0` — Inv. #51).
+export type DemoRateCardRow = Record<RateCardTableColumn, string>;
+
+function demoRow(
+  mnoPublicKey: string,
+  commercialUnitPublicKey: string,
+  polygonId: string,
+  polygonStartDate: string,
+  polygonEndDate: string,
+  state: string,
+  district: string,
+  lkpSubscriberRefId: string,
+  serviceCode: string,
+  ratePerUnit: string,
+): DemoRateCardRow {
+  return {
+    mno_public_key: mnoPublicKey,
+    commercial_unit_public_key: commercialUnitPublicKey,
+    polygon_id: polygonId,
+    polygon_start_date: polygonStartDate,
+    polygon_end_date: polygonEndDate,
+    state,
+    district,
+    lkp_subscriber_ref_id: lkpSubscriberRefId,
+    service_code: serviceCode,
+    rate_per_unit: ratePerUnit,
+  };
+}
+
+// Small and honest about being small (D4) — seven rows covering the interesting
+// shapes, NOT 5,400 (volume is proved by pm60/pm61's live-DB tests, not here).
+// Row key is (mno_public_key, commercial_unit_public_key, polygon_id) (RV2);
+// `lkp_subscriber_ref_id` values are `PRDINV`+8-digit shaped but carry no
+// referential meaning (D-A1).
+export const RAN_USAGE_V1_ROWS: DemoRateCardRow[] = [
+  // A plain mapping — the ordinary case: no validity/geo, no service code, no
+  // rate. Empty optional cells stay empty (→ NULL, never 0).
+  demoRow(
+    "MNO-1",
+    "CU-1001",
+    "POLY-0001",
+    "2026-01-01",
+    "",
+    "",
+    "",
+    "PRDINV00000001",
+    "",
+    "",
+  ),
+  // The descriptive columns populated (polygon_end_date / state / district)
+  // AND a service code AND a rate — the fully-described shape (D-A9/D-A10).
+  demoRow(
+    "MNO-1",
+    "CU-1001",
+    "POLY-0002",
+    "2026-01-01",
+    "2026-12-31",
+    "State-1",
+    "District-A",
+    "PRDINV00000002",
+    "SVC-DATA",
+    "0.050000",
+  ),
+  // The empty-descriptive counterpart: same validity start, geo/end left empty
+  // — empty-cell hygiene alongside the populated row above.
+  demoRow(
+    "MNO-1",
+    "CU-1002",
+    "POLY-0003",
+    "2026-02-01",
+    "",
+    "",
+    "",
+    "PRDINV00000003",
+    "",
+    "",
+  ),
+  // service_code pair (A): a row carrying a service code ...
+  demoRow(
+    "MNO-2",
+    "CU-2001",
+    "POLY-0101",
+    "2026-03-01",
+    "",
+    "",
+    "",
+    "PRDINV00000010",
+    "SVC-VOICE",
+    "",
+  ),
+  // ... and (B) one identical in EVERY non-key column but with `service_code`
+  // empty — proof that service_code is a plain, optional column and not part of
+  // the row key (D-A6). Only the mandatory key component (polygon_id) differs.
+  demoRow(
+    "MNO-2",
+    "CU-2001",
+    "POLY-0102",
+    "2026-03-01",
+    "",
+    "",
+    "",
+    "PRDINV00000010",
+    "",
+    "",
+  ),
+  // rate_per_unit populated on an otherwise empty-descriptive row (a plain
+  // nullable column, D-A2) — empty vs populated proves empty-cell-≠-zero.
+  demoRow(
+    "MNO-3",
+    "CU-3001",
+    "POLY-0201",
+    "2026-04-01",
+    "",
+    "",
+    "",
+    "PRDINV00000020",
+    "",
+    "1.250000",
+  ),
+  // A fully-populated row REMOVED in v2 (the one removed key of D6): present in
+  // the SUPERSEDED version, absent from the ACTIVE one, never carried forward
+  // (D-A7).
+  demoRow(
+    "MNO-3",
+    "CU-3001",
+    "POLY-0202",
+    "2026-05-01",
+    "2027-06-30",
+    "State-2",
+    "District-B",
+    "PRDINV00000021",
+    "SVC-DATA",
+    "2.000000",
+  ),
+];
+
+// The one key removed between v1 and v2 (D6). Named explicitly so the diff's
+// `removed = 1` is checkable by eye and the removal is unambiguous.
+export const RAN_USAGE_REMOVED_KEY = {
+  mno_public_key: "MNO-3",
+  commercial_unit_public_key: "CU-3001",
+  polygon_id: "POLY-0202",
+} as const;
+
+// v2 is v1 with EXACTLY ONE key removed and nothing else changed, so the diff
+// against the outgoing ACTIVE reports removed = 1, added = 0, changed = 0. The
+// newer version's stored row count equals its file's `row_count` — the removed
+// key adds nothing to it (D6 / RV3).
+export const RAN_USAGE_V2_ROWS: DemoRateCardRow[] = RAN_USAGE_V1_ROWS.filter(
+  (row) =>
+    !(
+      row.mno_public_key === RAN_USAGE_REMOVED_KEY.mno_public_key &&
+      row.commercial_unit_public_key ===
+        RAN_USAGE_REMOVED_KEY.commercial_unit_public_key &&
+      row.polygon_id === RAN_USAGE_REMOVED_KEY.polygon_id
+    ),
+);
+
+// RFC-4180 minimal quoting. None of the demo cells need it today (no comma,
+// quote or newline in any value), but quote defensively so a future edit that
+// introduces one cannot silently misalign a row — which the parser would then
+// reject outright (`relax_column_count` is off by design, pm59).
+function csvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+// Builds the upload CSV bytes for a set of demo rows. The header line is built
+// from pm58's `RATE_CARD_FILE_HEADERS` / `RATE_CARD_HEADER_MAP`, IMPORTED — the
+// ten header strings are never re-typed here (I2, §2.24). Each column's cell is
+// read by mapping the file header back to its table column, so header order and
+// header↔column mapping have exactly one source of truth.
+export function buildRateCardDemoCsv(rows: DemoRateCardRow[]): Buffer {
+  const headerLine = RATE_CARD_FILE_HEADERS.map(csvCell).join(",");
+  const dataLines = rows.map((row) =>
+    RATE_CARD_FILE_HEADERS.map((header) =>
+      csvCell(row[RATE_CARD_HEADER_MAP[header]]),
+    ).join(","),
+  );
+  return Buffer.from([headerLine, ...dataLines].join("\n") + "\n", "utf8");
+}
+
+// Upload a version through pm61's service, then activate it through pm63's —
+// the real path (D2). A refusal at either step is a bug in the FIXTURE (a seed
+// is held to the same Zod + guards as user input, D1), surfaced loudly rather
+// than swallowed. Returns the new version's id.
+async function uploadAndActivateDemoVersion(
+  rows: DemoRateCardRow[],
+  sourceFile: string,
+  actorId: string,
+  uploadedAt: Date,
+): Promise<string> {
+  const uploaded = await uploadRatecardVersion({
+    cardName: RAN_USAGE_CARD_NAME,
+    bytes: buildRateCardDemoCsv(rows),
+    sourceFile,
+    uploadedBy: actorId,
+    uploadedAt,
+  });
+  if (!uploaded.ok) {
+    throw new Error(
+      `db:seed-demo: rate-card upload of ${sourceFile} was refused (${uploaded.code}).`,
+    );
+  }
+
+  const activated = await activateRatecardVersion(uploaded.versionId, actorId);
+  if (!activated.ok) {
+    throw new Error(
+      `db:seed-demo: activation of ${uploaded.versionId} was refused (${activated.code}).`,
+    );
+  }
+
+  return uploaded.versionId;
+}
+
+// Seeds ONE `ACTIVE` + one `SUPERSEDED` version of `RAN_USAGE` through the real
+// upload + activate path (D2), for the rows of D4, with exactly one key removed
+// between the two (D6).
+//
+// Runs on the application `@/db/client` pool, NOT the caller's transaction: the
+// upload/activate services open their OWN transactions on that pool, and the
+// `appuser` they FK-reference must be COMMITTED before they run — a different
+// connection cannot see an uncommitted outer transaction. `seed-demo.ts` calls
+// this AFTER the product/ordering transaction has committed. Idempotent: skips
+// wholesale if `RAN_USAGE` already has any version (mirrors the catalog seed's
+// existence check).
+export async function seedRateCardDemo(): Promise<void> {
+  const existing = await ratecardRepository.listVersions(
+    appDb,
+    RAN_USAGE_CARD_NAME,
+  );
+  if (existing.length > 0) {
+    logger.info(
+      "db:seed-demo: rate-card demo (RAN_USAGE) already seeded, skipping.",
+    );
+    return;
+  }
+
+  const actorId = await getOrCreateAppUser(
+    appDb,
+    RATE_CARD_DEMO_OPERATOR.userName,
+    RATE_CARD_DEMO_OPERATOR.userEmail,
+  );
+
+  // The REAL clock (D6), captured ONCE so both versions record the same
+  // seed-run `snapshot_date` in the app timezone (D-A8). Deliberately NOT
+  // pm61's fixed-instant test parameter (pm61 D4): backdating v1 would show a
+  // history that never happened and put a clock override into non-test code.
+  const uploadedAt = new Date();
+
+  const supersededVersionId = await uploadAndActivateDemoVersion(
+    RAN_USAGE_V1_ROWS,
+    "demo-ran-usage-v1.csv",
+    actorId,
+    uploadedAt,
+  );
+  const activeVersionId = await uploadAndActivateDemoVersion(
+    RAN_USAGE_V2_ROWS,
+    "demo-ran-usage-v2.csv",
+    actorId,
+    uploadedAt,
+  );
+
+  logger.info(
+    `db:seed-demo: rate-card demo seeded — RAN_USAGE ${supersededVersionId} (SUPERSEDED) → ${activeVersionId} (ACTIVE).`,
+  );
 }
