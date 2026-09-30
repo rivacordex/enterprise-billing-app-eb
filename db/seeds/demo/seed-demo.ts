@@ -17,8 +17,11 @@ import { seedOrderingDemo } from "./ordering-demo";
 // code, never part of `db:setup` (D2: demo data is opt-in). Orchestrates the two
 // demo seeds in one transaction, mirroring the `accounts/` orchestrator; runs
 // product-demo BEFORE ordering-demo because the story looks its offering up by
-// name. Depends on `db:seed-rbac`/`db:migrate` having run. Guarded so it cannot
-// run against production by accident (mirrors `sample/seed-billrun-sample.ts`).
+// name. Depends on `db:migrate` + `db:seed-rbac` + **`db:seed`** having run —
+// the rate-card demo (pm67) stamps the system/ADMIN break-glass user created by
+// `db:seed` as its upload/activate actor (D2), and refuses if it is absent.
+// Guarded so it cannot run against production by accident (mirrors
+// `sample/seed-billrun-sample.ts`).
 
 // Shared prod-write guard context (db/seeds/lib/non-prod-guard.ts). This seed
 // touches only DATABASE_URL.

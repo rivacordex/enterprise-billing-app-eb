@@ -13,13 +13,16 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { todayInZone } from "@/lib/timezone";
 import { RATE_CARD_FILE_HEADERS } from "@/validation/product/ratecard.schema";
 
-// pm67-spec I3 — live-DB proof that `db:migrate && db:seed-demo` on an EMPTY
-// database stands up one ACTIVE + one SUPERSEDED version of the single tracked
-// card `RAN_USAGE`, created THROUGH THE REAL upload + activate services (D2).
+// pm67-spec I3 — live-DB proof that the demo seed stands up one ACTIVE + one
+// SUPERSEDED version of the single tracked card `RAN_USAGE`, created THROUGH THE
+// REAL upload + activate services (D2). The seed attributes uploads/activations
+// to the system/ADMIN break-glass user (D2), so `beforeAll` provisions that
+// admin (the "empty-database provisioning" concern, kept separate from the
+// seed's attribution) before invoking the seed.
 //
 // `@/db/client`'s singleton `db` is replaced with the test connection (the
 // upload-version integration precedent) so both the services AND the seed's own
-// reads (getOrCreateAppUser, listVersions — all keyed off the SAME `db` import)
+// reads (the admin lookup, listVersions — all keyed off the SAME `db` import)
 // run against it. `getAppTimezone` is mocked to a fixed zone so `snapshot_date`
 // is deterministic (the seed itself passes the real clock — D6 — which we then
 // read back).
@@ -46,8 +49,8 @@ import {
   RAN_USAGE_V1_ROWS,
   RAN_USAGE_V2_ROWS,
   RAN_USAGE_REMOVED_KEY,
-  RATE_CARD_DEMO_OPERATOR,
 } from "@/db/seeds/demo/product-demo";
+import { loadBootstrapAdminConfig } from "@/db/seeds/seed-admin.config";
 import { uploadRatecardVersion } from "@/services/product/ratecard/upload-version";
 
 describe.skipIf(!databaseUrl)(
@@ -56,6 +59,7 @@ describe.skipIf(!databaseUrl)(
     let sql_: postgresjs.Sql;
     type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
     let db: DrizzleDb;
+    let adminId: string;
 
     async function dropAll(): Promise<void> {
       for (const s of [
@@ -83,10 +87,27 @@ describe.skipIf(!databaseUrl)(
       });
       hoisted.holder.db = db;
 
-      // The whole point of the unit: migrate + seed-demo on an EMPTY database,
-      // no db:seed (no break-glass admin) and no db:setup-partman. The seed
-      // self-provisions its operator and the audit default partition (0001)
-      // absorbs the four events.
+      // Provision the system/ADMIN break-glass user the seed attributes to (D2)
+      // — this is the "empty-database provisioning" concern, kept SEPARATE from
+      // the seed's attribution logic: the seed looks the admin up (by
+      // BOOTSTRAP_ADMIN_EMAIL) and refuses if absent, so the test stands it up
+      // here, the same way `db:seed` (seed-admin.ts) does in a real setup. No
+      // db:setup-partman is run; the audit default partition (0001) absorbs the
+      // four events.
+      const { BOOTSTRAP_ADMIN_EMAIL } = loadBootstrapAdminConfig();
+      const [admin] = await db
+        .insert(appuser)
+        .values({
+          id: crypto.randomUUID(),
+          userName: "System Administrator",
+          userEmail: BOOTSTRAP_ADMIN_EMAIL,
+          emailVerified: false,
+          authMethod: "LOCAL",
+          status: "ACTIVE",
+        })
+        .returning({ id: appuser.id });
+      adminId = admin!.id;
+
       await seedRateCardDemo();
     }, 60_000);
 
@@ -146,18 +167,12 @@ describe.skipIf(!databaseUrl)(
       );
 
       // Lineage: the superseded v1 points at the ACTIVE v2; v2 points at
-      // nothing. Both name the real operator (D2), never NULL.
+      // nothing. Both name the system/ADMIN user (D2), never NULL.
       expect(v1!.supersededByVersionId).toBe(v2!.ratecardVersionId);
       expect(v2!.supersededByVersionId).toBeNull();
-      const [operator] = await db
-        .select({ id: appuser.id })
-        .from(appuser)
-        .where(eq(appuser.userEmail, RATE_CARD_DEMO_OPERATOR.userEmail))
-        .limit(1);
-      expect(operator).toBeDefined();
       for (const v of [v1!, v2!]) {
-        expect(v.uploadedBy).toBe(operator!.id);
-        expect(v.activatedBy).toBe(operator!.id);
+        expect(v.uploadedBy).toBe(adminId);
+        expect(v.activatedBy).toBe(adminId);
       }
     });
 
@@ -271,17 +286,12 @@ describe.skipIf(!databaseUrl)(
     it("a malformed seed fails at Zod before the insert, writing no version row (I3.6, D1)", async () => {
       const malformedCardName = "RAN_USAGE_MALFORMED_TEST";
       const bad = { ...RAN_USAGE_V1_ROWS[0]!, rate_per_unit: "-5" }; // sign is invalid
-      const [operator] = await db
-        .select({ id: appuser.id })
-        .from(appuser)
-        .where(eq(appuser.userEmail, RATE_CARD_DEMO_OPERATOR.userEmail))
-        .limit(1);
 
       const result = await uploadRatecardVersion({
         cardName: malformedCardName,
         bytes: buildRateCardDemoCsv([bad]),
         sourceFile: "bad.csv",
-        uploadedBy: operator!.id,
+        uploadedBy: adminId,
         uploadedAt: new Date(),
       });
       expect(result.ok).toBe(false);

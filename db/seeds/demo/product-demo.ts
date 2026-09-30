@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 
 import { logger } from "@/lib/logger";
 import { buildCsv } from "@/lib/csv";
@@ -20,7 +20,8 @@ import type {
 } from "@/types/product";
 import type { Database } from "@/db/client";
 import { db as appDb } from "@/db/client";
-import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
+import { appuser } from "@/db/schema/identity";
+import { loadBootstrapAdminConfig } from "@/db/seeds/seed-admin.config";
 import { ratecardRepository } from "@/db/repositories/ratecard";
 import { uploadRatecardVersion } from "@/services/product/ratecard/upload-version";
 import { activateRatecardVersion } from "@/services/product/ratecard/activate-version";
@@ -500,19 +501,6 @@ export async function seedProductDemo(tx: Database): Promise<void> {
 // The single tracked card (D-A5). There is no surface to create a second card.
 export const RAN_USAGE_CARD_NAME = "RAN_USAGE";
 
-// The get-or-created principal whose id stamps `uploaded_by` / `activated_by`
-// on every version and every audit row (plan v2:269 resolved here). A real,
-// already-seeded appuser rather than NULL (D2) — self-provisioned via the
-// shared seed helper (the `ordering-demo` / sample precedent) so
-// `db:migrate && db:seed-demo` works on a GENUINELY EMPTY database (I3.1): the
-// break-glass admin from `db:seed` is not created by `migrate`, so this seed
-// names and ensures its own operator rather than looking one up that may not
-// exist.
-export const RATE_CARD_DEMO_OPERATOR = {
-  userName: "Demo — Rate Card Operator",
-  userEmail: "demo-ratecard-operator@example.invalid",
-} as const;
-
 // A demo upload row keyed by TABLE COLUMN (the values of pm58's
 // RATE_CARD_HEADER_MAP). Every field is a string exactly as a CSV cell is; an
 // empty optional cell is "" and stays "" through the row schema (→ NULL at the
@@ -668,9 +656,11 @@ async function uploadAndActivateDemoVersion(
 // upload/activate services open their OWN transactions on that pool, and the
 // `appuser` they FK-reference must be COMMITTED before they run — a different
 // connection cannot see an uncommitted outer transaction. `seed-demo.ts` calls
-// this AFTER the product/ordering transaction has committed. Idempotent: skips
-// wholesale if `RAN_USAGE` already has any version (mirrors the catalog seed's
-// existence check).
+// this AFTER the product/ordering transaction has committed. Requires the
+// system/ADMIN user (`db:seed`) to exist — it is stamped as the actor (D2, see
+// below) and refused loudly if absent. Idempotent: it only treats the exact
+// complete demo shape (1 ACTIVE + 1 SUPERSEDED) as "already seeded"; any other
+// pre-existing state is left untouched and reported (see the guard below).
 export async function seedRateCardDemo(): Promise<void> {
   const existing = await ratecardRepository.listVersions(
     appDb,
@@ -709,11 +699,33 @@ export async function seedRateCardDemo(): Promise<void> {
     return;
   }
 
-  const actorId = await getOrCreateAppUser(
-    appDb,
-    RATE_CARD_DEMO_OPERATOR.userName,
-    RATE_CARD_DEMO_OPERATOR.userEmail,
-  );
+  // Attribution (D2): stamp `uploaded_by` / `activated_by` with the EXISTING
+  // system/ADMIN break-glass user — `System Administrator`, created by `db:seed`
+  // (seed-admin.ts) at BOOTSTRAP_ADMIN_EMAIL — not an invented operator, so the
+  // version provenance and audit trail name the real principal `db/seeds/`
+  // provisions before the demo runs ("do not invent an id"). `db:seed` is
+  // therefore a prerequisite of `db:seed-demo`; provisioning that admin on an
+  // empty database is a SEPARATE concern (the standard `db:setup` chain seeds it
+  // before any demo; the integration test provisions it in its own setup), not
+  // this seed's job. If it is absent we refuse loudly rather than inventing a
+  // stand-in.
+  const { BOOTSTRAP_ADMIN_EMAIL } = loadBootstrapAdminConfig();
+  const [admin] = await appDb
+    .select({ id: appuser.id })
+    .from(appuser)
+    .where(
+      and(
+        eq(appuser.userEmail, BOOTSTRAP_ADMIN_EMAIL),
+        ne(appuser.status, "DELETED"),
+      ),
+    )
+    .limit(1);
+  if (!admin) {
+    throw new Error(
+      "db:seed-demo: the system/ADMIN user was not found — run `db:seed` (bootstrap admin) before `db:seed-demo`.",
+    );
+  }
+  const actorId = admin.id;
 
   // v1 is uploaded+activated first, then v2 (which supersedes it). Each reads
   // its own real-clock instant inside uploadAndActivateDemoVersion (D6) — see
