@@ -1,8 +1,66 @@
 # Product Management — Progress Tracker
 
-Single living build record for the Product Management module. **pm01–pm34** span three phases, all ship-gate-verified. **Part 3 (pm35–pm45)** is delivered and unit/integration/type/lint-verified. **Part 4 — Pricing Components (pm46–pm56, plus follow-ups pm56a/pm56b)** is implemented and verified on `dev1`; pm56's ship gate ran 2026-09-24 with its definition of done not fully met, and the residue it flagged was closed by pm56a/pm56b (repo-wide `tsc` and guardrail 31 green on `dev1`). Neither Part 3 nor Part 4 is in `main` (G-0/G-A still open). **Part 5 — Rate Card Lookup (pm57 onward)** is in progress: **pm67 (Demo seed) is the current unit — IMPLEMENTED and verified (DB-free + live-DB) this session (2026-09-30); pm66 (Write UI + `bodySizeLimit` raise) delivered this session; pm65 (Page + read UI) delivered earlier this session; pm64 (Rollback) also this session; pm61/pm62/pm63 in the prior session; pm57 is kept in full below; every earlier unit is compacted to a one-line ledger.** Known defects outside the unit in flight are in `prodmgmt-issues-tracker.md`; full detail for any compacted unit lives in its `specs/pmXX-spec.md` and in `git log`.
+Single living build record for the Product Management module. **pm01–pm34** span three phases, all ship-gate-verified. **Part 3 (pm35–pm45)** is delivered and unit/integration/type/lint-verified. **Part 4 — Pricing Components (pm46–pm56, plus follow-ups pm56a/pm56b)** is implemented and verified on `dev1`; pm56's ship gate ran 2026-09-24 with its definition of done not fully met, and the residue it flagged was closed by pm56a/pm56b (repo-wide `tsc` and guardrail 31 green on `dev1`). Neither Part 3 nor Part 4 is in `main` (G-0/G-A still open). **Part 5 — Rate Card Lookup (pm57 onward)** is **code-complete and gate-verified on `dev1`** (not in `main`; G-0/G-A open): **pm68 (Ship gate) run and green this session (2026-09-30) — the last unit; pm67 (Demo seed) delivered and verified (DB-free + live-DB) this session; pm66 (Write UI + `bodySizeLimit` raise) delivered this session; pm65 (Page + read UI) delivered earlier this session; pm64 (Rollback) also this session; pm61/pm62/pm63 in the prior session; pm57 is kept in full below; every earlier unit is compacted to a one-line ledger.** Known defects outside the unit in flight are in `prodmgmt-issues-tracker.md`; full detail for any compacted unit lives in its `specs/pmXX-spec.md` and in `git log`.
 
-## pm67 (current unit) — IMPLEMENTED, verified DB-free AND live-DB (2026-09-30)
+## pm68 (current unit) — Ship gate — RUN and GREEN on `dev1` (2026-09-30)
+
+**pm68 (Ship gate): COMPLETE this session.** Part 5's last unit — **no feature code**: guardrail re-scoping *verification*, the §8 sweep, the doc amendments, Appendix A rows A10–A14 reconciled by grep, and the Part 5 hand-off register. Boundary per `specs/pm68-ship-gate.md`. Guardrails 36/37/39/40 verified as **landed with their units** (D1 — none was missing, finding (a)); 1 and 13 verified as **re-scoped** (D2). The evidence table below records the command that proved each claim. **Part 5 is code-complete and gate-verified on `dev1`; it is not in `main` — G-0/G-A (Part 3 + Part 4 + Part 5 land together) remain open by design.**
+
+**Evidence table (I5) — each claim, the command that proved it, the result. Run 2026-09-30 on `dev1`.**
+
+_Build gates (I1), on a database built from empty:_
+
+| Claim                                | Command                                                              | Result                                                              |
+| ------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Type-check clean repo-wide           | `npx tsc --noEmit`                                                   | exit 0, 0 errors                                                    |
+| Lint clean repo-wide                 | `npx eslint .`                                                      | exit 0                                                              |
+| Format clean repo-wide               | `npx prettier --check .`                                            | "All matched files use Prettier code style!"                        |
+| Production build                     | `npx next build`                                                    | exit 0; `/products/rate-card` compiles as ƒ (Dynamic)               |
+| Full DB-free suite                   | `vitest run` (default project)                                      | 3462 passed / 1 flaky-timeout (`guardrail 31`, Part 4) — passes 4/4 alone at `--testTimeout=60000` (environmental, not a regression) |
+| Rate-card live-DB suite (from empty) | `vitest run --config vitest.integration.config.ts tests/db/ratecard-*.integration.test.ts tests/db/product-ratecard-schema.integration.test.ts` (throwaway PG :5434) | 7 files, 73 tests passed |
+| Unchanged flows still green (sample) | same runner: `product-schema` / `create-order` / `subscription-lifecycle` / `rm13-e2e-journey` `.integration` | 3 passed + 1 skip-by-design (39 tests) — Part 5's `0041`/`0043` don't break other modules' from-empty |
+| SAST / DAST baseline                 | CI pipeline (`infra/**`)                                            | **not run locally this session** — pm68 adds no feature code to scan; owed to CI, unchanged from Part 5's per-unit runs |
+
+_Guardrails (D1 — landed with their units, re-verified here; D2 — re-scoped):_
+
+| #      | Claim                                                             | Command                                                                                     | Result           |
+| ------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------- |
+| **36** | Activation writes no rows; stored rows == `row_count`; no `retired_at`/carry-forward | `vitest ... tests/db/ratecard-activate-version.integration.test.ts` (+ `product-module-boundaries`) | pass (landed pm63) |
+| **37** | Repository exports no lookup-row update/delete; `deleteDraftVersion` DRAFT-guarded; direct `UPDATE`/`DELETE` on an ACTIVE row rejected | `vitest tests/db/product-repository-exports.test.ts tests/db/ratecard-repository.integration.test.ts` | pass (landed pm60) |
+| **39** | A second `ACTIVE` for one card rejected **by the partial unique index** (not app code); activate-vs-rollback race serialises | `vitest ... ratecard-activate-version / ratecard-rollback-version .integration` (4×-looped race) | pass (landed pm57a index + pm63/pm64 race) |
+| **40** | No `unstable_cache`/`revalidate`/`cache()`/module store on any card read; page `force-dynamic` | `vitest tests/guardrails/ratecard-read-surface.test.ts` | pass (landed pm65) |
+| **1**  | authz matrix gains **four** `/products/rate-card` rows, both levels, both directions; READ refused all three mutations at the action guard | `vitest tests/guardrails/ratecard-authz-matrix.test.ts` | pass — **the pricing update's "adds no row" sentence is NOT inherited; this update adds four** |
+| **13** | schema-diff re-baselined for the **two new tables only** (both partial indexes + row-key constraint); `rate_per_unit` plain `numeric(18,6)` no CHECK; `service_code` plain `text`; **no `product_offering_price` change** | `vitest tests/guardrails/product-module-boundaries.test.ts` ("0041 + db/schema/product.ts freeze the current rate-card schema") + `product-ratecard-schema.integration` | pass |
+| 35, 38 | **Withdrawn, not verified** — `rate_per_unit` is a plain nullable column (no reserved-column guard); no `product_offering_price` partition (no three-site parity). Extensions of 16 (grandfathering) and 27 (`service_code` CHECK) likewise not built. | — | n/a by design |
+
+_The §8 sweep (D3) — eleven items, by command:_
+
+| # | Claim | Command | Result |
+| - | ----- | ------- | ------ |
+| 1 | `EXPECTED_PRODUCT_ACTION_FILES` moved by **exactly three** (total 17) | `product-module-boundaries.test.ts` (`expect(...).toHaveLength(17)`) | pass |
+| 2 | Three audit types in `AUDIT_EVENT_TYPES`, `AUDIT_EVENT_CATEGORY_MAP` **and** the filter test's count/optgroup (the non-`tsc` one) | `vitest tests/components/audit-log-filters.test.tsx` | pass |
+| 3 | `product_offering_price` + `0006_product.sql` **byte-identical** — no Part 5 commit touched either | `git log/diff f5d6209..HEAD -- <both paths>` (last touch was f5d6209, Part 4/pm46-49) | both **empty** ✓ — asserted vs the Part-4 tip because `main` lacks Part 3/4/5 (G-0/G-A open; D6) |
+| 4 | Upload query budget holds incl. after a failed upload; page budget holds | `ratecard-upload-version.integration` (counted client) + `tests/app/rate-card-page.test.tsx` | pass |
+| 5 | CSV parser imported in **exactly one** file | `grep -rn 'from "csv-parse'` → `services/product/ratecard/parse-csv.ts` only; `ratecard-parse-csv.test.ts` asserts it | one file ✓ |
+| 6 | `ratecard` has **no grant overlap** with `products`/`product_orders`/`product_inventory`, either direction | `ratecard-authz-matrix.test.ts` (no-overlap) + `tests/auth/resolver.test.ts` | pass |
+| 7 | `types/rbac.ts` has **15** `PERMISSION_NAMES` | `grep`/count | 15 ✓ (…, `ratecard`) |
+| 8 | **No backfill/data-fix script** anywhere | `find db/migrations -iname '*backfill*' -o -iname '*datafix*'` | empty ✓ |
+| 9 | No `app/api/product*` | `ls app/api \| grep product` | empty ✓ |
+| 10 | No `db/schema/rate-card*`, no `lib/ratecard*`, no `landing/`, no second parser import, no `workflow-management/**` ref from rate-card source | `ls`/`grep` sweep | all empty ✓ |
+| 11 | Ten header strings spelled **once** (only `ratecard.schema.ts` source + test assertions); `RateCardUploadViolation` has **three** members; `SNAPSHOT_DATE_NOT_CONSTANT` no code artifact; `snapshot_date` set only in `upload-version.ts` | `grep '"MNO Name"'` / `RATE_CARD_UPLOAD_VIOLATIONS` / `SNAPSHOT_DATE_NOT_CONSTANT` | pass — see finding (b) |
+
+_Findings (D1's "record, don't quietly land"):_
+
+- **(a)** No guardrail was missing — 36/37/39/40 were all landed with their units; nothing was landed at the gate. 1 and 13 were re-scoped with their units (pm65 / pm57a). The gate only re-verified.
+- **(b)** `SNAPSHOT_DATE_NOT_CONSTANT` appears in **no code artifact** (not a violation member, no enum, no handler) — only in **two documentary comments** (`upload-error-table.tsx`, `ratecard.schema.ts`) that note its deliberate withdrawal (D-A8, §7.11 "document the reserved absence"). Kept intentionally; the string's presence is documentation, not a live artifact.
+- **(c)** D3.3 byte-identical is asserted **vs the Part-4 tip (`f5d6209`)**, not `main` — `main` carries neither Part 3, Part 4 nor Part 5 (G-0/G-A open), so a diff vs `main` conflates pm46's legitimate price-table reshape with "Part 5 touched it." The correct claim — **no Part 5 (pm57a–pm68) commit touched `product_offering_price` or `0006_product.sql`** — is proven empty (D6: "if Part 4 has not shipped, say so").
+- **(d)** The `guardrail 31` full-run failure was a 10s test-timeout under load on a Part-4 codebase-wide grep; it passes 4/4 in isolation. Not a Part 5 regression (D6 — Part 4's rows are not this gate's).
+
+_Doc amendments (D4) + Appendix A (D5), verified where they live:_ code-standards Status block layers 2–4 corrected (**W8** cleared); Appendix A A10–A14 reconciled by grep (A10 retired · A11/A12 grep-cleared on `dev1`, fully at G-0 · A13 never opened · A14 left open — no consumer); workflow Appendix A W6 (cleared pm60), **W7** (arch §1 = "14→15", verified), **W8** (cleared here); architecture §1 permission count (C5) and §2 flat repo path (C6) already correct (verify-only); ui-context §10.1 `RateCardStatusBadge` (C1) present; C3 (`tab` param), C4 (exports), C9 (`RateCardDiffBadge`), C10 (Activate CTA) resolved in their units (C7 withdrawn); `context/architecture.md` §3 parse-and-discard follow-up left **proposed, not written** (workflow §7.9). Part 5 hand-off register (D7) written in `pm00-build-plan.md` (+ pm66 D9 / pm68 closure added this unit).
+
+**Definition of done:** Revenue Operations owns the rate card end to end (upload → validate → review → activate → roll back); nothing consumes it yet and the read surface ships ahead of its consumer (A14, deliberate); and the table above records, line by line, the command that proved each claim. **Not in `main`** — Part 3 + Part 4 + Part 5 land together at G-0/G-A.
+
+## pm67 — IMPLEMENTED, verified DB-free AND live-DB (2026-09-30)
 
 **pm67 (Demo seed): IMPLEMENTED and verified this session.** Part 5's penultimate unit — the Phase 1 seed of the one tracked card. Boundary per `specs/pm67-demo-seed.md`: `db/seeds/demo/product-demo.ts` (the card seed added alongside the existing offering catalog) plus the one-line orchestrator wiring in `db/seeds/demo/seed-demo.ts` (raised below, not silently folded). **No schema, no repository, no service, no action, no component, no page.** `db/seeds/product.ts` (the ADMIN grant seed) and `db/seeds/sample/seed-billrun-sample.ts` are **confirmed untouched** (D7) — verified by `git diff` in the change description and by a no-rate-card-artifact grep guard.
 
