@@ -66,6 +66,7 @@ export function RateCardRowPreview({
   query,
 }: RateCardRowPreviewProps): React.JSX.Element {
   const hasFilter = query !== "";
+  const totalPages = Math.ceil(total / pageSize) || 1;
 
   return (
     <div className="rounded-md bg-card shadow-sm">
@@ -108,7 +109,25 @@ export function RateCardRowPreview({
       </form>
 
       {rows.length === 0 ? (
-        hasFilter ? (
+        total > 0 ? (
+          // Rows exist for this query, but this page is past the last one (a
+          // stale `?page=` deep link). Point back to page 1, preserving the
+          // filter — the FamilyTable precedent for the same out-of-range case.
+          // Distinct from the two genuinely-empty states below (total === 0).
+          <div className="flex flex-col items-center gap-3 bg-[color:var(--surface-sunken)] py-16 text-center">
+            <Search className="size-12 text-[color:var(--text-muted)]" />
+            <p className="text-body text-muted-foreground">
+              This page is empty — there {totalPages === 1 ? "is" : "are"} only{" "}
+              {totalPages} {totalPages === 1 ? "page" : "pages"} of rows.
+            </p>
+            <Link
+              href={buildRateCardHref({ version: versionId, q: query })}
+              className="text-body-sm font-semibold text-[color:var(--text-link)] hover:underline"
+            >
+              Go to the first page
+            </Link>
+          </div>
+        ) : hasFilter ? (
           // D10, empty state #2 — "no rows match this filter". Names the query
           // and offers a quiet Clear filters. Reads differently from the
           // version table's "no versions yet" state (§6/§10.7).
@@ -125,9 +144,8 @@ export function RateCardRowPreview({
             </Link>
           </div>
         ) : (
-          // Unfiltered and empty — a version normally has row_count > 0 rows, so
-          // this is the page-past-the-last-page / genuinely-empty fallback,
-          // distinct from the filter state above.
+          // Genuinely empty version (total === 0, no filter). A version normally
+          // has row_count > 0 rows, so this is an unusual fallback.
           <div className="flex flex-col items-center gap-2 bg-[color:var(--surface-sunken)] py-16 text-center">
             <Search className="size-12 text-[color:var(--text-muted)]" />
             <p className="text-body text-muted-foreground">

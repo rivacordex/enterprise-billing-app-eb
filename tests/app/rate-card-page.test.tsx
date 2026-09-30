@@ -136,6 +136,15 @@ function makeVersion(
   };
 }
 
+// The page is invoked the same way in every test — wrap the searchParams and
+// call it. Keeps each test to its distinct params rather than repeating the
+// `RateCardPage({ searchParams: Promise.resolve(...) })` envelope.
+function runPage(
+  searchParams: Record<string, string> = {},
+): ReturnType<typeof RateCardPage> {
+  return RateCardPage({ searchParams: Promise.resolve(searchParams) });
+}
+
 beforeEach(() => {
   mockRequirePermission.mockReset();
   mockListVersions.mockReset();
@@ -156,7 +165,7 @@ beforeEach(() => {
 
 describe("RateCardPage", () => {
   it("calls requirePermission(PERMISSIONS.RATECARD, LEVELS.READ) as the first statement", async () => {
-    await RateCardPage({ searchParams: Promise.resolve({}) });
+    await runPage();
 
     expect(mockRequirePermission).toHaveBeenCalledWith(
       PERMISSIONS.RATECARD,
@@ -168,9 +177,7 @@ describe("RateCardPage", () => {
   it("propagates the /no-access redirect for a denied user and never reads versions (test 3)", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
 
-    await expect(
-      RateCardPage({ searchParams: Promise.resolve({}) }),
-    ).rejects.toThrow();
+    await expect(runPage()).rejects.toThrow();
     expect(mockListVersions).not.toHaveBeenCalled();
     expect(mockGetRows).not.toHaveBeenCalled();
   });
@@ -178,7 +185,7 @@ describe("RateCardPage", () => {
   it("query budget — first render reads versions once and reads NO rows (test 6)", async () => {
     mockListVersions.mockResolvedValue([makeVersion()]);
 
-    await RateCardPage({ searchParams: Promise.resolve({}) });
+    await runPage();
 
     expect(mockListVersions).toHaveBeenCalledTimes(1);
     expect(mockGetRows).not.toHaveBeenCalled();
@@ -189,9 +196,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001" }),
     ]);
 
-    await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001", page: "2" }),
-    });
+    await runPage({ version: "RCV00000001", page: "2" });
 
     expect(mockListVersions).toHaveBeenCalledTimes(1);
     expect(mockGetRows).toHaveBeenCalledTimes(1);
@@ -206,9 +211,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001" }),
     ]);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00009999" }),
-    });
+    const result = await runPage({ version: "RCV00009999" });
 
     expect(mockGetRows).not.toHaveBeenCalled();
     expect(findElementByType(result, RateCardRowPreview)).toBeUndefined();
@@ -220,7 +223,7 @@ describe("RateCardPage", () => {
     const versions = [makeVersion()];
     mockListVersions.mockResolvedValue(versions);
 
-    const result = await RateCardPage({ searchParams: Promise.resolve({}) });
+    const result = await runPage();
 
     const table = findElementByType(result, RateCardVersionTable);
     expect(table?.props).toMatchObject({
@@ -238,9 +241,7 @@ describe("RateCardPage", () => {
     const rowsPage = { rows: [], total: 0, page: 1, pageSize: 50 };
     mockGetRows.mockResolvedValue(rowsPage);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001", q: "MNO-1" }),
-    });
+    const result = await runPage({ version: "RCV00000001", q: "MNO-1" });
 
     const preview = findElementByType(result, RateCardRowPreview);
     expect(preview?.props).toMatchObject({
@@ -257,9 +258,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001" }),
     ]);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001", tab: "bogus" }),
-    });
+    const result = await runPage({ version: "RCV00000001", tab: "bogus" });
 
     // A bogus tab does not 404 and does not suppress the rows view.
     expect(findElementByType(result, RateCardRowPreview)).toBeDefined();
@@ -269,7 +268,7 @@ describe("RateCardPage", () => {
 
   it("an EDIT user sees the Upload control (D11)", async () => {
     mockRequirePermission.mockResolvedValue(permissionMap("EDIT"));
-    const result = await RateCardPage({ searchParams: Promise.resolve({}) });
+    const result = await runPage();
     expect(findElementByType(result, UploadVersionDialog)).toBeDefined();
   });
 
@@ -279,9 +278,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001", status: "DRAFT" }),
     ]);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001" }),
-    });
+    const result = await runPage({ version: "RCV00000001" });
 
     expect(findElementByType(result, UploadVersionDialog)).toBeUndefined();
     expect(findElementByType(result, ActivateVersionDialog)).toBeUndefined();
@@ -299,9 +296,7 @@ describe("RateCardPage", () => {
       removed: { count: 1, rows: [] },
     });
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001" }),
-    });
+    const result = await runPage({ version: "RCV00000001" });
 
     expect(mockDiff).toHaveBeenCalledTimes(1);
     const dialog = findElementByType(result, ActivateVersionDialog);
@@ -319,9 +314,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001", status: "SUPERSEDED" }),
     ]);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001" }),
-    });
+    const result = await runPage({ version: "RCV00000001" });
 
     expect(
       findElementByType(result, RollbackVersionDialog)?.props,
@@ -337,9 +330,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001", status: "ACTIVE" }),
     ]);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001" }),
-    });
+    const result = await runPage({ version: "RCV00000001" });
 
     expect(findElementByType(result, ActivateVersionDialog)).toBeUndefined();
     expect(findElementByType(result, RollbackVersionDialog)).toBeUndefined();
@@ -350,9 +341,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001", status: "ACTIVE" }),
     ]);
 
-    await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001" }),
-    });
+    await runPage({ version: "RCV00000001" });
 
     expect(mockDiff).not.toHaveBeenCalled();
     expect(mockGetRows).toHaveBeenCalledTimes(1);
@@ -363,9 +352,7 @@ describe("RateCardPage", () => {
       makeVersion({ ratecardVersionId: "RCV00000001", status: "ACTIVE" }),
     ]);
 
-    const result = await RateCardPage({
-      searchParams: Promise.resolve({ version: "RCV00000001", tab: "diff" }),
-    });
+    const result = await runPage({ version: "RCV00000001", tab: "diff" });
 
     expect(mockDiff).toHaveBeenCalledTimes(1);
     expect(mockGetRows).not.toHaveBeenCalled();

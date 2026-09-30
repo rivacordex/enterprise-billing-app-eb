@@ -6,13 +6,21 @@ const nextConfig: NextConfig = {
   // cross-origin, the client bundle never loads, and the page silently never
   // hydrates (every form submit falls back to a native browser GET).
   allowedDevOrigins: ["100.68.190.22"],
-  // pm66 (rate card, RC15 / code-standards §6.38, D9): raise the Server Action
-  // body limit from Next's 1 MB default to 4 MB. A ~5,400-row rate-card CSV is
-  // ~0.5 MB and fits the default, but the day a card does not fit, this makes
-  // the failure a VALIDATION MESSAGE (the upload action's typed FILE_TOO_LARGE
-  // refusal, checked at 4 MB) rather than a generic framework body-size error
-  // that reads as a bug. This is a PLATFORM-OWNED root key edited by the rate
-  // card module — called out in review (workflow §6.9), not folded silently.
+  // pm66 (rate card, RC15 / code-standards §6.34, D9): raise the Server Action
+  // body limit from Next's 1 MB default. A ~5,400-row rate-card CSV is ~0.5 MB
+  // and fits the default, but the day a card does not fit, this makes the
+  // failure a VALIDATION MESSAGE (the upload action's typed FILE_TOO_LARGE
+  // refusal) rather than a generic framework body-size error that reads as a
+  // bug. This is a PLATFORM-OWNED root key edited by the rate card module —
+  // called out in review (workflow §6.9), not folded silently.
+  //
+  // The limit is set ABOVE the action's own 4 MiB `MAX_UPLOAD_BYTES` on
+  // purpose: `bodySizeLimit` bounds the WHOLE multipart request (file bytes +
+  // boundaries + field headers + the cardName field), so setting it equal to
+  // 4 MiB would let the multipart envelope of a 4 MiB file the action ACCEPTS
+  // spill past the framework limit and be rejected as a generic body-size
+  // error before FILE_TOO_LARGE can ever return — defeating the point of the
+  // raise. 5 MiB leaves ~1 MiB of headroom for that overhead.
   //
   // Do NOT raise this further to "just accept bigger files": past roughly 50k
   // rows the schema is unchanged and the LOADER is what must change — a
@@ -20,7 +28,7 @@ const nextConfig: NextConfig = {
   // architecture §1). Read RC15 before touching this number.
   experimental: {
     serverActions: {
-      bodySizeLimit: "4mb",
+      bodySizeLimit: "5mb",
     },
   },
   // um30: the Dockerfile's runner stage copies `.next/standalone`, which only

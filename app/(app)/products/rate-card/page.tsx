@@ -99,22 +99,45 @@ export default async function RateCardPage({
       ) ?? null)
     : null;
 
-  // A mutable version (DRAFT/SUPERSEDED) needs the diff for its confirmation
-  // counts; the diff tab needs it to render. Compute it once, in memory, from
-  // exactly two full row reads (pm62). An ACTIVE/other version on a non-diff tab
-  // costs no diff read — the common read path keeps pm65's budget.
+  // The diff is computed (two full row reads, pm62) in TWO cases, reconciling
+  // pm66 D6 with §3.23: (1) the Diff tab renders the panel; (2) a mutable
+  // version (DRAFT/SUPERSEDED) needs the added/changed/removed counts for its
+  // Activate/Rollback confirmation, which sits in the always-visible version
+  // header (D6 — the counts are a load-bearing part of the review, so they must
+  // be available whatever tab is open). Inv. #59 forbids caching, so this
+  // recomputes per request; the cost is bounded (a single RevOps admin, a card
+  // that only occasionally has an open DRAFT). An ACTIVE/other version on a
+  // non-diff tab costs no diff read — the common read path keeps pm65's budget.
   const isMutable =
     selectedVersion?.status === "DRAFT" ||
     selectedVersion?.status === "SUPERSEDED";
   const needsDiff =
     selectedVersion !== null && (isMutable || params.tab === "diff");
-  const diff =
+  const needsRows = selectedVersionId !== null && params.tab === "rows";
+
+  // The diff and the paged rows are independent reads — run them concurrently
+  // (the diff feeds the confirmation counts / the Diff tab; the rows feed the
+  // Rows tab), so a mutable version on the Rows tab waits max(diff, rows), not
+  // their sum. Mirrors the Promise.all the versions + locale reads already use.
+  const [diff, rowsPage] = await Promise.all([
     needsDiff && selectedVersion
-      ? await getRateCardVersionDiff(
+      ? getRateCardVersionDiff(
           selectedVersion.cardName,
           selectedVersion.ratecardVersionId,
         )
-      : null;
+      : Promise.resolve(null),
+    needsRows && selectedVersionId
+      ? getRateCardVersionRows(selectedVersionId, {
+          page: params.page,
+          filter: params.q,
+        })
+      : Promise.resolve(null),
+  ]);
+
+  // The confirmation counts. The `{0,0,0}` branch is a cheap safety net only:
+  // the Activate/Rollback dialogs render exclusively for DRAFT/SUPERSEDED
+  // versions, for which `isMutable` forces `diff` non-null — so the fallback is
+  // never what a rendered dialog receives; it just keeps the type total.
   const diffCounts = diff
     ? {
         added: diff.added.count,
@@ -122,15 +145,6 @@ export default async function RateCardPage({
         removed: diff.removed.count,
       }
     : { added: 0, changed: 0, removed: 0 };
-
-  // Rows only on the rows tab (one paged read = count + select).
-  const rowsPage =
-    selectedVersionId && params.tab === "rows"
-      ? await getRateCardVersionRows(selectedVersionId, {
-          page: params.page,
-          filter: params.q,
-        })
-      : null;
 
   // A checksum match against an earlier version of the same card — the only
   // warning (never blocking, ui-context §10.4). Computed in memory.
@@ -258,8 +272,11 @@ export default async function RateCardPage({
           </div>
 
           {/* Tabs — three views of one version (ui-context §10.5). URL-driven
-              `<Link>`s; the diff's two reads only fire on `?tab=diff` (§3.23),
-              which is the whole reason `tab` is a param (C3). */}
+              `<Link>`s. `tab` gates the diff read (C3/§3.23): a plain ACTIVE
+              version pays for the diff only on `?tab=diff`. A DRAFT/SUPERSEDED
+              version additionally computes it for the confirmation counts (D6,
+              see the diff-read note above), so for those the diff is not
+              tab-gated. */}
           <div className="flex items-center gap-1 border-b border-border">
             {TABS.map((t) => {
               const active = params.tab === t.key;
@@ -269,6 +286,12 @@ export default async function RateCardPage({
                   href={buildRateCardHref({
                     version: selectedVersionId,
                     tab: t.key,
+                    // Preserve the rows filter/page across a tab round-trip
+                    // (they are inert on the diff/validation tabs and restore
+                    // the rows position on return). buildRateCardHref drops
+                    // both when they are at their defaults.
+                    q: params.q,
+                    page: params.page,
                   })}
                   aria-current={active ? "page" : undefined}
                   className={

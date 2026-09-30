@@ -118,6 +118,46 @@ describe("RateCardDiffPanel (D5, tests 6/7)", () => {
     expect(screen.getByText("RCV00000002")).toBeInTheDocument();
   });
 
+  it("renders both rows whose key tuples are hyphen-ambiguous (React keys use the NUL delimiter, not a hyphen join)", () => {
+    // ('AB-C','D','P') and ('AB','C-D','P') both hyphen-join to 'AB-C-D-P' — a
+    // collision that would make React drop/mis-reconcile one <li> if keys used a
+    // naive hyphen join. Both must render distinctly (fix: rateCardRowKey/NUL).
+    const ambiguous = {
+      added: {
+        count: 2,
+        rows: [
+          {
+            mnoPublicKey: "AB-C",
+            commercialUnitPublicKey: "D",
+            polygonId: "P",
+            incoming: makeRow({
+              mnoPublicKey: "AB-C",
+              commercialUnitPublicKey: "D",
+              polygonId: "P",
+            }),
+          },
+          {
+            mnoPublicKey: "AB",
+            commercialUnitPublicKey: "C-D",
+            polygonId: "P",
+            incoming: makeRow({
+              mnoPublicKey: "AB",
+              commercialUnitPublicKey: "C-D",
+              polygonId: "P",
+            }),
+          },
+        ],
+      },
+      changed: { count: 0, rows: [] },
+      removed: { count: 0, rows: [] },
+    };
+    render(
+      <RateCardDiffPanel diff={ambiguous} currentActiveVersionId={null} />,
+    );
+    expect(screen.getByText(/AB-C · D · P/)).toBeInTheDocument();
+    expect(screen.getByText(/AB · C-D · P/)).toBeInTheDocument();
+  });
+
   it("uses the word 'Removed' and never 'Retiring' or 'carried forward' in the rendered output", () => {
     const { container } = render(
       <RateCardDiffPanel diff={diff} currentActiveVersionId="RCV00000002" />,

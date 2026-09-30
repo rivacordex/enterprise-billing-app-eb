@@ -237,12 +237,16 @@ describe("rate-card read surface (pm65 guardrails)", () => {
     expect(pageSrc).toContain("action-primary-bg");
   });
 
-  // pm66 test 16 / D9 — the body-size ceiling is raised to 4mb under
+  // pm66 test 16 / D9 — the body-size ceiling is raised under
   // experimental.serverActions so a too-large file fails as a validation
-  // message (the action's FILE_TOO_LARGE), not a framework body-size error.
-  it("next.config.ts raises serverActions.bodySizeLimit to 4mb", () => {
+  // message (the action's FILE_TOO_LARGE), not a framework body-size error. It
+  // sits ABOVE the action's 4 MiB MAX_UPLOAD_BYTES (5mb) so multipart overhead
+  // on a 4 MiB accepted file cannot trip the framework limit first.
+  it("next.config.ts raises serverActions.bodySizeLimit above the action's 4 MiB limit", () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, "next.config.ts"), "utf8");
     expect(src).toMatch(/serverActions/);
-    expect(src).toMatch(/bodySizeLimit:\s*["']4mb["']/);
+    const match = src.match(/bodySizeLimit:\s*["'](\d+)mb["']/);
+    expect(match).not.toBeNull();
+    expect(Number(match![1])).toBeGreaterThan(4);
   });
 });

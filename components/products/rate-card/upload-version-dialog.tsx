@@ -25,11 +25,11 @@ import { RATE_CARD_FILE_HEADERS } from "@/validation/product/ratecard.schema";
 // pm66-spec D1–D4 — the application's FIRST `<input type="file">`, and the
 // binding pattern for every upload after it (§3.20).
 //
-// D1 — the picker is an UNCONTROLLED `<input type="file">` inside a `<form>`
-// whose `action` is the Server Action (via useActionState); the action receives
-// `FormData`. The `File` NEVER enters react-hook-form state and is never
-// serialised to JSON/base64 — only its NAME string is kept, for display. No
-// Route Handler; a multipart body reaches a Server Action through `FormData`
+// D1 — the picker is an UNCONTROLLED `<input type="file">` inside a `<form>`;
+// on submit the form is read into `FormData` (`new FormData(form)`) and passed
+// to the Server Action. The `File` NEVER enters react-hook-form state and is
+// never serialised to JSON/base64 — only its NAME string is kept, for display.
+// No Route Handler; a multipart body reaches a Server Action through `FormData`
 // exactly as a text field does (§5.5).
 //
 // D2 — the client header sniff is a CONVENIENCE, never a boundary: it may say
@@ -113,6 +113,13 @@ export function UploadVersionDialog({
             ? `Draft created (${res.rowCount} rows) — a matching checksum was found on an earlier version.`
             : `Draft created (${res.rowCount} rows).`,
         );
+        // Reset the display state on success BEFORE closing: the dialog content
+        // (and the uncontrolled file input) unmounts on close, but this
+        // component stays mounted, so a stale `fileName`/`result` would
+        // otherwise persist and reopen showing the prior file's name over an
+        // empty input. `handleOpenChange(false)` can't do it here — it early-
+        // returns while `pending` is still true inside this try.
+        resetForm();
         setOpen(false);
         router.refresh();
       } else if (!ISSUE_CODES.has(res.code)) {
@@ -125,12 +132,16 @@ export function UploadVersionDialog({
     }
   }
 
+  function resetForm(): void {
+    setFileName(null);
+    setSniffWarning(null);
+    setResult(null);
+  }
+
   function handleOpenChange(next: boolean): void {
     if (pending) return;
     if (!next) {
-      setFileName(null);
-      setSniffWarning(null);
-      setResult(null);
+      resetForm();
     }
     setOpen(next);
   }
@@ -143,6 +154,9 @@ export function UploadVersionDialog({
     const file = event.target.files?.[0] ?? null;
     setFileName(file?.name ?? null);
     setSniffWarning(null);
+    // Clear any prior result so the error report never outlives the file it
+    // described — validation output always matches the CURRENT selection (D4).
+    setResult(null);
     if (!file) return;
     try {
       const text = await file.slice(0, 8192).text();
@@ -198,7 +212,8 @@ export function UploadVersionDialog({
                 id="ratecard-card-name"
                 name="cardName"
                 defaultValue={cardNames[0]}
-                className="h-9 w-full rounded-sm border border-border bg-card px-3 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                disabled={pending}
+                className="h-9 w-full rounded-sm border border-border bg-card px-3 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
               >
                 {cardNames.map((name) => (
                   <option key={name} value={name}>
@@ -211,17 +226,20 @@ export function UploadVersionDialog({
                 id="ratecard-card-name"
                 name="cardName"
                 placeholder="RAN_USAGE"
-                className="h-9 w-full rounded-sm border border-border bg-card px-3 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                disabled={pending}
+                className="h-9 w-full rounded-sm border border-border bg-card px-3 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
               />
             )}
           </Field>
 
-          {/* Drop zone — a styled label over the native input (no drag-and-drop
-              library; the input handles the click-to-browse). The input stays
-              uncontrolled (D1). */}
+          {/* File picker — a styled label over the native input (there is NO
+              drag-and-drop handler, so the copy says "click", not "drop"). The
+              input is `sr-only`, so `focus-within` on the label surfaces a
+              visible keyboard-focus ring when the hidden input is focused. The
+              input stays uncontrolled (D1). */}
           <label
             htmlFor="ratecard-file"
-            className="flex cursor-pointer flex-col items-center gap-2 rounded-md border-2 border-dashed border-[color:var(--border-strong)] bg-[color:var(--surface-sunken)] p-8 text-center"
+            className="flex cursor-pointer flex-col items-center gap-2 rounded-md border-2 border-dashed border-[color:var(--border-strong)] bg-[color:var(--surface-sunken)] p-8 text-center focus-within:[box-shadow:var(--focus-ring)]"
           >
             <FileSpreadsheet
               size={32}
@@ -229,7 +247,7 @@ export function UploadVersionDialog({
               aria-hidden
             />
             <span className="text-body-sm text-muted-foreground">
-              {fileName ?? "Drop a CSV here, or click to browse"}
+              {fileName ?? "Click to choose a CSV file"}
             </span>
             <input
               id="ratecard-file"
@@ -237,6 +255,7 @@ export function UploadVersionDialog({
               type="file"
               accept=".csv,text/csv"
               onChange={(e) => void handleFileChange(e)}
+              disabled={pending}
               className="sr-only"
             />
           </label>
@@ -252,6 +271,18 @@ export function UploadVersionDialog({
             Uploads land as <strong>Draft</strong>. Nothing takes effect until
             you activate it.
           </p>
+
+          {/* Persistently-mounted live region: it exists before content
+              changes so a structural failure is ANNOUNCED (a short summary),
+              while the detailed UploadErrorTable stays OUTSIDE it so its rows
+              are not read out as status. */}
+          <div role="status" aria-live="polite" className="sr-only">
+            {structuralIssues
+              ? `Upload failed — the file has ${structuralIssues.length} issue${
+                  structuralIssues.length === 1 ? "" : "s"
+                }. No version was created.`
+              : ""}
+          </div>
 
           {structuralIssues && <UploadErrorTable issues={structuralIssues} />}
 

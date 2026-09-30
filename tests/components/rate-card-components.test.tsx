@@ -208,6 +208,28 @@ describe("RateCardRowPreview (D9)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("distinguishes an out-of-range page (rows exist) from a genuinely empty version", () => {
+    // total > 0 but no rows on this page → past-last-page, links to page 1.
+    render(
+      <RateCardRowPreview
+        versionId="RCV00000001"
+        rows={[]}
+        total={120}
+        page={99}
+        pageSize={50}
+        query=""
+      />,
+    );
+    expect(screen.getByText(/This page is empty/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Go to the first page" }),
+    ).toBeInTheDocument();
+    // NOT the genuinely-empty-version copy.
+    expect(
+      screen.queryByText("No rows to show for this version."),
+    ).not.toBeInTheDocument();
+  });
+
   it("footer states Showing 1–n of N", () => {
     render(
       <RateCardRowPreview

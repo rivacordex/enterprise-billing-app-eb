@@ -1,5 +1,6 @@
 import { RateCardDiffBadge } from "@/components/products/rate-card/rate-card-diff-badge";
 import { cn } from "@/lib/utils";
+import { rateCardRowKey } from "@/validation/product/ratecard.schema";
 import type {
   RateCardDiffChangedEntry,
   RateCardVersionDiff,
@@ -146,7 +147,11 @@ export function RateCardDiffPanel({
           <ul className="divide-y divide-[color:var(--border-subtle)]">
             {added.rows.slice(0, MAX_ROWS_PER_BUCKET).map((entry) => (
               <li
-                key={`${entry.mnoPublicKey}-${entry.commercialUnitPublicKey}-${entry.polygonId}`}
+                key={rateCardRowKey(
+                  entry.mnoPublicKey,
+                  entry.commercialUnitPublicKey,
+                  entry.polygonId,
+                )}
                 className="px-4 py-2"
               >
                 <KeyCell row={entry} />
@@ -164,7 +169,11 @@ export function RateCardDiffPanel({
           <ul className="divide-y divide-[color:var(--border-subtle)]">
             {changed.rows.slice(0, MAX_ROWS_PER_BUCKET).map((entry) => (
               <li
-                key={`${entry.mnoPublicKey}-${entry.commercialUnitPublicKey}-${entry.polygonId}`}
+                key={rateCardRowKey(
+                  entry.mnoPublicKey,
+                  entry.commercialUnitPublicKey,
+                  entry.polygonId,
+                )}
                 className="flex flex-col gap-1 px-4 py-2"
               >
                 <KeyCell row={entry} />
@@ -183,7 +192,11 @@ export function RateCardDiffPanel({
           <ul className="divide-y divide-[color:var(--border-subtle)]">
             {removed.rows.slice(0, MAX_ROWS_PER_BUCKET).map((entry) => (
               <li
-                key={`${entry.mnoPublicKey}-${entry.commercialUnitPublicKey}-${entry.polygonId}`}
+                key={rateCardRowKey(
+                  entry.mnoPublicKey,
+                  entry.commercialUnitPublicKey,
+                  entry.polygonId,
+                )}
                 className={cn("flex flex-col gap-0.5 px-4 py-2")}
               >
                 <KeyCell row={entry} />
