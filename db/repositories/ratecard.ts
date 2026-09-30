@@ -131,7 +131,9 @@ export const ratecardRepository = {
         fileChecksum: data.fileChecksum ?? null,
         rowCount: data.rowCount,
         uploadedBy: data.uploadedBy ?? null,
-        ...(data.uploadedAt !== undefined ? { uploadedAt: data.uploadedAt } : {}),
+        ...(data.uploadedAt !== undefined
+          ? { uploadedAt: data.uploadedAt }
+          : {}),
       })
       .returning({ versionId: ratecardVersion.ratecardVersionId });
     if (!row) {

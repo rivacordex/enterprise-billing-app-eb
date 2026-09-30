@@ -112,12 +112,8 @@
           "tableFrom": "audit_log",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "actor_user_id"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["actor_user_id"],
+          "columnsTo": ["user_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -125,10 +121,7 @@
       "compositePrimaryKeys": {
         "audit_log_audit_id_created_datetime_pk": {
           "name": "audit_log_audit_id_created_datetime_pk",
-          "columns": [
-            "audit_id",
-            "created_datetime"
-          ]
+          "columns": ["audit_id", "created_datetime"]
         }
       },
       "uniqueConstraints": {},
@@ -263,12 +256,8 @@
           "tableFrom": "contact_medium",
           "tableTo": "party_role",
           "schemaTo": "customer",
-          "columnsFrom": [
-            "ref_party_role"
-          ],
-          "columnsTo": [
-            "party_role_id"
-          ],
+          "columnsFrom": ["ref_party_role"],
+          "columnsTo": ["party_role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -277,12 +266,8 @@
           "tableFrom": "contact_medium",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_modified_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_modified_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -292,10 +277,7 @@
         "contact_medium_id_ref_party_role_unique": {
           "name": "contact_medium_id_ref_party_role_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "contact_medium_id",
-            "ref_party_role"
-          ]
+          "columns": ["contact_medium_id", "ref_party_role"]
         }
       },
       "policies": {},
@@ -395,12 +377,8 @@
           "tableFrom": "organization",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_modified_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_modified_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -410,9 +388,7 @@
         "organization_registration_number_unique": {
           "name": "organization_registration_number_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "registration_number"
-          ]
+          "columns": ["registration_number"]
         }
       },
       "policies": {},
@@ -537,12 +513,8 @@
           "tableFrom": "party_role",
           "tableTo": "organization",
           "schemaTo": "customer",
-          "columnsFrom": [
-            "engaged_party"
-          ],
-          "columnsTo": [
-            "organization_id"
-          ],
+          "columnsFrom": ["engaged_party"],
+          "columnsTo": ["organization_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -551,12 +523,8 @@
           "tableFrom": "party_role",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_modified_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_modified_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -701,12 +669,8 @@
           "tableFrom": "account",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["user_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -938,12 +902,8 @@
           "tableFrom": "session",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["user_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -953,9 +913,7 @@
         "session_session_token_unique": {
           "name": "session_session_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "session_token"
-          ]
+          "columns": ["session_token"]
         }
       },
       "policies": {},
@@ -1212,12 +1170,8 @@
           "tableFrom": "role_permission_assign",
           "tableTo": "roles",
           "schemaTo": "core",
-          "columnsFrom": [
-            "ref_role_id"
-          ],
-          "columnsTo": [
-            "role_id"
-          ],
+          "columnsFrom": ["ref_role_id"],
+          "columnsTo": ["role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -1226,12 +1180,8 @@
           "tableFrom": "role_permission_assign",
           "tableTo": "permissions",
           "schemaTo": "core",
-          "columnsFrom": [
-            "ref_permission_id"
-          ],
-          "columnsTo": [
-            "permission_id"
-          ],
+          "columnsFrom": ["ref_permission_id"],
+          "columnsTo": ["permission_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -1313,12 +1263,8 @@
           "tableFrom": "role_assign",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "ref_user_id"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["ref_user_id"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -1327,12 +1273,8 @@
           "tableFrom": "role_assign",
           "tableTo": "roles",
           "schemaTo": "core",
-          "columnsFrom": [
-            "ref_role_id"
-          ],
-          "columnsTo": [
-            "role_id"
-          ],
+          "columnsFrom": ["ref_role_id"],
+          "columnsTo": ["role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -1341,12 +1283,8 @@
           "tableFrom": "role_assign",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "assigned_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["assigned_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1469,12 +1407,8 @@
           "tableFrom": "system_config",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "modified_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["modified_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1615,12 +1549,8 @@
           "tableFrom": "product_offering",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1629,12 +1559,8 @@
           "tableFrom": "product_offering",
           "tableTo": "product_offering",
           "schemaTo": "product",
-          "columnsFrom": [
-            "family_offering_id"
-          ],
-          "columnsTo": [
-            "product_offering_id"
-          ],
+          "columnsFrom": ["family_offering_id"],
+          "columnsTo": ["product_offering_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -1773,12 +1699,8 @@
           "tableFrom": "product_offering_price",
           "tableTo": "product_offering",
           "schemaTo": "product",
-          "columnsFrom": [
-            "product_offering_id"
-          ],
-          "columnsTo": [
-            "product_offering_id"
-          ],
+          "columnsFrom": ["product_offering_id"],
+          "columnsTo": ["product_offering_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1908,12 +1830,8 @@
           "tableFrom": "product_specifications",
           "tableTo": "product_offering",
           "schemaTo": "product",
-          "columnsFrom": [
-            "ref_product_offering_id"
-          ],
-          "columnsTo": [
-            "product_offering_id"
-          ],
+          "columnsFrom": ["ref_product_offering_id"],
+          "columnsTo": ["product_offering_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2037,12 +1955,8 @@
           "tableFrom": "ratecard_ran_usage_lkp",
           "tableTo": "ratecard_version",
           "schemaTo": "product",
-          "columnsFrom": [
-            "ratecard_version_id"
-          ],
-          "columnsTo": [
-            "ratecard_version_id"
-          ],
+          "columnsFrom": ["ratecard_version_id"],
+          "columnsTo": ["ratecard_version_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2203,12 +2117,8 @@
           "tableFrom": "ratecard_version",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "uploaded_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["uploaded_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -2217,12 +2127,8 @@
           "tableFrom": "ratecard_version",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "activated_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["activated_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2232,10 +2138,7 @@
         "ratecard_version_card_name_version_num_unique": {
           "name": "ratecard_version_card_name_version_num_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "card_name",
-            "version_num"
-          ]
+          "columns": ["card_name", "version_num"]
         }
       },
       "policies": {},
@@ -2360,12 +2263,8 @@
           "tableFrom": "billing_account",
           "tableTo": "party_role",
           "schemaTo": "customer",
-          "columnsFrom": [
-            "ref_party_role_id"
-          ],
-          "columnsTo": [
-            "party_role_id"
-          ],
+          "columnsFrom": ["ref_party_role_id"],
+          "columnsTo": ["party_role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2374,12 +2273,8 @@
           "tableFrom": "billing_account",
           "tableTo": "financial_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_financial_account_id"
-          ],
-          "columnsTo": [
-            "financial_account_id"
-          ],
+          "columnsFrom": ["ref_financial_account_id"],
+          "columnsTo": ["financial_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2388,12 +2283,8 @@
           "tableFrom": "billing_account",
           "tableTo": "bill_cycle",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_bill_cycle_id"
-          ],
-          "columnsTo": [
-            "bill_cycle_id"
-          ],
+          "columnsFrom": ["ref_bill_cycle_id"],
+          "columnsTo": ["bill_cycle_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2402,12 +2293,8 @@
           "tableFrom": "billing_account",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -2510,12 +2397,8 @@
           "tableFrom": "financial_account",
           "tableTo": "party_role",
           "schemaTo": "customer",
-          "columnsFrom": [
-            "ref_party_role_id"
-          ],
-          "columnsTo": [
-            "party_role_id"
-          ],
+          "columnsFrom": ["ref_party_role_id"],
+          "columnsTo": ["party_role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2524,12 +2407,8 @@
           "tableFrom": "financial_account",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -2757,12 +2636,8 @@
           "tableFrom": "bill_run",
           "tableTo": "bill_cycle",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_bill_cycle_id"
-          ],
-          "columnsTo": [
-            "bill_cycle_id"
-          ],
+          "columnsFrom": ["ref_bill_cycle_id"],
+          "columnsTo": ["bill_cycle_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2771,12 +2646,8 @@
           "tableFrom": "bill_run",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "triggered_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["triggered_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2785,12 +2656,8 @@
           "tableFrom": "bill_run",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "approved_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["approved_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -2800,10 +2667,7 @@
         "bill_run_cycle_period_unique": {
           "name": "bill_run_cycle_period_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "ref_bill_cycle_id",
-            "period_start"
-          ]
+          "columns": ["ref_bill_cycle_id", "period_start"]
         }
       },
       "policies": {},
@@ -2931,12 +2795,8 @@
           "tableFrom": "bill_run_account",
           "tableTo": "bill_run",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_bill_run_id"
-          ],
-          "columnsTo": [
-            "bill_run_id"
-          ],
+          "columnsFrom": ["ref_bill_run_id"],
+          "columnsTo": ["bill_run_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -2945,12 +2805,8 @@
           "tableFrom": "bill_run_account",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["ref_billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -2958,10 +2814,7 @@
       "compositePrimaryKeys": {
         "bill_run_account_bill_run_account_id_period_partition_pk": {
           "name": "bill_run_account_bill_run_account_id_period_partition_pk",
-          "columns": [
-            "bill_run_account_id",
-            "period_partition"
-          ]
+          "columns": ["bill_run_account_id", "period_partition"]
         }
       },
       "uniqueConstraints": {
@@ -3100,12 +2953,8 @@
           "tableFrom": "bill_run_account_stage",
           "tableTo": "bill_run",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_bill_run_id"
-          ],
-          "columnsTo": [
-            "bill_run_id"
-          ],
+          "columnsFrom": ["ref_bill_run_id"],
+          "columnsTo": ["bill_run_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -3114,12 +2963,8 @@
           "tableFrom": "bill_run_account_stage",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["ref_billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -3127,10 +2972,7 @@
       "compositePrimaryKeys": {
         "bill_run_account_stage_bill_run_account_stage_id_period_partition_pk": {
           "name": "bill_run_account_stage_bill_run_account_stage_id_period_partition_pk",
-          "columns": [
-            "bill_run_account_stage_id",
-            "period_partition"
-          ]
+          "columns": ["bill_run_account_stage_id", "period_partition"]
         }
       },
       "uniqueConstraints": {
@@ -3310,12 +3152,8 @@
           "tableFrom": "customer_bill",
           "tableTo": "bill_run",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_bill_run_id"
-          ],
-          "columnsTo": [
-            "bill_run_id"
-          ],
+          "columnsFrom": ["ref_bill_run_id"],
+          "columnsTo": ["bill_run_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -3324,12 +3162,8 @@
           "tableFrom": "customer_bill",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["ref_billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -3337,10 +3171,7 @@
       "compositePrimaryKeys": {
         "customer_bill_customer_bill_id_period_partition_pk": {
           "name": "customer_bill_customer_bill_id_period_partition_pk",
-          "columns": [
-            "customer_bill_id",
-            "period_partition"
-          ]
+          "columns": ["customer_bill_id", "period_partition"]
         }
       },
       "uniqueConstraints": {
@@ -3607,14 +3438,8 @@
           "tableFrom": "customer_bill_tax_item",
           "tableTo": "customer_bill",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_customer_bill_id",
-            "period_partition"
-          ],
-          "columnsTo": [
-            "customer_bill_id",
-            "period_partition"
-          ],
+          "columnsFrom": ["ref_customer_bill_id", "period_partition"],
+          "columnsTo": ["customer_bill_id", "period_partition"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -3622,10 +3447,7 @@
       "compositePrimaryKeys": {
         "customer_bill_tax_item_customer_bill_tax_item_id_period_partition_pk": {
           "name": "customer_bill_tax_item_customer_bill_tax_item_id_period_partition_pk",
-          "columns": [
-            "customer_bill_tax_item_id",
-            "period_partition"
-          ]
+          "columns": ["customer_bill_tax_item_id", "period_partition"]
         }
       },
       "uniqueConstraints": {},
@@ -3732,12 +3554,8 @@
           "tableFrom": "bill_run_invoices",
           "tableTo": "bill_run",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_bill_run_id"
-          ],
-          "columnsTo": [
-            "bill_run_id"
-          ],
+          "columnsFrom": ["ref_bill_run_id"],
+          "columnsTo": ["bill_run_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -3746,12 +3564,8 @@
           "tableFrom": "bill_run_invoices",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["ref_billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -3760,12 +3574,8 @@
           "tableFrom": "bill_run_invoices",
           "tableTo": "document",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_inv_document_id"
-          ],
-          "columnsTo": [
-            "document_id"
-          ],
+          "columnsFrom": ["ref_inv_document_id"],
+          "columnsTo": ["document_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -3774,14 +3584,8 @@
           "tableFrom": "bill_run_invoices",
           "tableTo": "customer_bill",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_customer_bill_id",
-            "period_partition"
-          ],
-          "columnsTo": [
-            "customer_bill_id",
-            "period_partition"
-          ],
+          "columnsFrom": ["ref_customer_bill_id", "period_partition"],
+          "columnsTo": ["customer_bill_id", "period_partition"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -3789,10 +3593,7 @@
       "compositePrimaryKeys": {
         "bill_run_invoices_bill_run_invoice_id_period_partition_pk": {
           "name": "bill_run_invoices_bill_run_invoice_id_period_partition_pk",
-          "columns": [
-            "bill_run_invoice_id",
-            "period_partition"
-          ]
+          "columns": ["bill_run_invoice_id", "period_partition"]
         }
       },
       "uniqueConstraints": {
@@ -3882,12 +3683,8 @@
           "tableFrom": "bill_cycle",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -3897,9 +3694,7 @@
         "bill_cycle_name_unique": {
           "name": "bill_cycle_name_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "name"
-          ]
+          "columns": ["name"]
         }
       },
       "policies": {},
@@ -3988,12 +3783,8 @@
           "tableFrom": "gl_account",
           "tableTo": "gl_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "parent_gl_code"
-          ],
-          "columnsTo": [
-            "gl_code"
-          ],
+          "columnsFrom": ["parent_gl_code"],
+          "columnsTo": ["gl_code"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4002,12 +3793,8 @@
           "tableFrom": "gl_account",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4094,12 +3881,8 @@
           "tableFrom": "gl_mapping",
           "tableTo": "gl_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_gl_code"
-          ],
-          "columnsTo": [
-            "gl_code"
-          ],
+          "columnsFrom": ["ref_gl_code"],
+          "columnsTo": ["gl_code"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4108,12 +3891,8 @@
           "tableFrom": "gl_mapping",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4123,11 +3902,7 @@
         "gl_mapping_selector_type_selector_currency_unique": {
           "name": "gl_mapping_selector_type_selector_currency_unique",
           "nullsNotDistinct": true,
-          "columns": [
-            "selector_type",
-            "selector",
-            "currency"
-          ]
+          "columns": ["selector_type", "selector", "currency"]
         }
       },
       "policies": {},
@@ -4212,12 +3987,8 @@
           "tableFrom": "reason_code",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4409,12 +4180,8 @@
           "tableFrom": "document",
           "tableTo": "financial_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_financial_account_id"
-          ],
-          "columnsTo": [
-            "financial_account_id"
-          ],
+          "columnsFrom": ["ref_financial_account_id"],
+          "columnsTo": ["financial_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4423,12 +4190,8 @@
           "tableFrom": "document",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["ref_billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4437,12 +4200,8 @@
           "tableFrom": "document",
           "tableTo": "reason_code",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "reason_code"
-          ],
-          "columnsTo": [
-            "reason_code"
-          ],
+          "columnsFrom": ["reason_code"],
+          "columnsTo": ["reason_code"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4451,12 +4210,8 @@
           "tableFrom": "document",
           "tableTo": "document",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "reversal_of"
-          ],
-          "columnsTo": [
-            "document_id"
-          ],
+          "columnsFrom": ["reversal_of"],
+          "columnsTo": ["document_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -4465,12 +4220,8 @@
           "tableFrom": "document",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["created_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4479,12 +4230,8 @@
           "tableFrom": "document",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "approved_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["approved_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4493,12 +4240,8 @@
           "tableFrom": "document",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4507,14 +4250,8 @@
           "tableFrom": "document",
           "tableTo": "customer_bill",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_customer_bill_id",
-            "period_partition"
-          ],
-          "columnsTo": [
-            "customer_bill_id",
-            "period_partition"
-          ],
+          "columnsFrom": ["ref_customer_bill_id", "period_partition"],
+          "columnsTo": ["customer_bill_id", "period_partition"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4626,12 +4363,8 @@
           "tableFrom": "document_line",
           "tableTo": "document",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_document_id"
-          ],
-          "columnsTo": [
-            "document_id"
-          ],
+          "columnsFrom": ["ref_document_id"],
+          "columnsTo": ["document_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4640,12 +4373,8 @@
           "tableFrom": "document_line",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["ref_billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4654,12 +4383,8 @@
           "tableFrom": "document_line",
           "tableTo": "document",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "ref_settled_document_id"
-          ],
-          "columnsTo": [
-            "document_id"
-          ],
+          "columnsFrom": ["ref_settled_document_id"],
+          "columnsTo": ["document_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4668,12 +4393,8 @@
           "tableFrom": "document_line",
           "tableTo": "document_line",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "reversed_by_line_id"
-          ],
-          "columnsTo": [
-            "document_line_id"
-          ],
+          "columnsFrom": ["reversed_by_line_id"],
+          "columnsTo": ["document_line_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -4682,12 +4403,8 @@
           "tableFrom": "document_line",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4697,17 +4414,12 @@
         "document_line_pgledger_transfer_id_unique": {
           "name": "document_line_pgledger_transfer_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "pgledger_transfer_id"
-          ]
+          "columns": ["pgledger_transfer_id"]
         },
         "document_line_ref_document_id_line_no_unique": {
           "name": "document_line_ref_document_id_line_no_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "ref_document_id",
-            "line_no"
-          ]
+          "columns": ["ref_document_id", "line_no"]
         }
       },
       "policies": {},
@@ -4779,12 +4491,8 @@
           "tableFrom": "ledger_binding",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4794,18 +4502,12 @@
         "ledger_binding_pgledger_account_id_unique": {
           "name": "ledger_binding_pgledger_account_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "pgledger_account_id"
-          ]
+          "columns": ["pgledger_account_id"]
         },
         "ledger_binding_owner_type_owner_id_ledger_role_unique": {
           "name": "ledger_binding_owner_type_owner_id_ledger_role_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "owner_type",
-            "owner_id",
-            "ledger_role"
-          ]
+          "columns": ["owner_type", "owner_id", "ledger_role"]
         }
       },
       "policies": {},
@@ -4877,12 +4579,8 @@
           "tableFrom": "accounting_period",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "closed_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["closed_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -4891,12 +4589,8 @@
           "tableFrom": "accounting_period",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "last_edited_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["last_edited_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -4904,10 +4598,7 @@
       "compositePrimaryKeys": {
         "accounting_period_period_currency_pk": {
           "name": "accounting_period_period_currency_pk",
-          "columns": [
-            "period",
-            "currency"
-          ]
+          "columns": ["period", "currency"]
         }
       },
       "uniqueConstraints": {},
@@ -4990,12 +4681,8 @@
           "tableFrom": "order_item_price_override",
           "tableTo": "product_order_item",
           "schemaTo": "ordering",
-          "columnsFrom": [
-            "product_order_item_id"
-          ],
-          "columnsTo": [
-            "product_order_item_id"
-          ],
+          "columnsFrom": ["product_order_item_id"],
+          "columnsTo": ["product_order_item_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -5005,10 +4692,7 @@
         "order_item_price_override_item_type_unique": {
           "name": "order_item_price_override_item_type_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "product_order_item_id",
-            "price_type"
-          ]
+          "columns": ["product_order_item_id", "price_type"]
         }
       },
       "policies": {},
@@ -5178,12 +4862,8 @@
           "tableFrom": "product_order",
           "tableTo": "party_role",
           "schemaTo": "customer",
-          "columnsFrom": [
-            "customer_party_role_id"
-          ],
-          "columnsTo": [
-            "party_role_id"
-          ],
+          "columnsFrom": ["customer_party_role_id"],
+          "columnsTo": ["party_role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5192,12 +4872,8 @@
           "tableFrom": "product_order",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5206,12 +4882,8 @@
           "tableFrom": "product_order",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "submitted_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["submitted_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5220,12 +4892,8 @@
           "tableFrom": "product_order",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "reviewed_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["reviewed_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -5328,12 +4996,8 @@
           "tableFrom": "product_order_item",
           "tableTo": "product_order",
           "schemaTo": "ordering",
-          "columnsFrom": [
-            "product_order_id"
-          ],
-          "columnsTo": [
-            "product_order_id"
-          ],
+          "columnsFrom": ["product_order_id"],
+          "columnsTo": ["product_order_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5342,12 +5006,8 @@
           "tableFrom": "product_order_item",
           "tableTo": "product_offering",
           "schemaTo": "product",
-          "columnsFrom": [
-            "product_offering_id"
-          ],
-          "columnsTo": [
-            "product_offering_id"
-          ],
+          "columnsFrom": ["product_offering_id"],
+          "columnsTo": ["product_offering_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -5459,12 +5119,8 @@
           "tableFrom": "inventory_status_history",
           "tableTo": "product_inventory",
           "schemaTo": "inventory",
-          "columnsFrom": [
-            "product_inventory_id"
-          ],
-          "columnsTo": [
-            "product_inventory_id"
-          ],
+          "columnsFrom": ["product_inventory_id"],
+          "columnsTo": ["product_inventory_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5473,12 +5129,8 @@
           "tableFrom": "inventory_status_history",
           "tableTo": "appuser",
           "schemaTo": "core",
-          "columnsFrom": [
-            "changed_by"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
+          "columnsFrom": ["changed_by"],
+          "columnsTo": ["user_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -5638,12 +5290,8 @@
           "tableFrom": "product_inventory",
           "tableTo": "product_order_item",
           "schemaTo": "ordering",
-          "columnsFrom": [
-            "product_order_item_id"
-          ],
-          "columnsTo": [
-            "product_order_item_id"
-          ],
+          "columnsFrom": ["product_order_item_id"],
+          "columnsTo": ["product_order_item_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5652,12 +5300,8 @@
           "tableFrom": "product_inventory",
           "tableTo": "party_role",
           "schemaTo": "customer",
-          "columnsFrom": [
-            "customer_party_role_id"
-          ],
-          "columnsTo": [
-            "party_role_id"
-          ],
+          "columnsFrom": ["customer_party_role_id"],
+          "columnsTo": ["party_role_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5666,12 +5310,8 @@
           "tableFrom": "product_inventory",
           "tableTo": "billing_account",
           "schemaTo": "billing",
-          "columnsFrom": [
-            "billing_account_id"
-          ],
-          "columnsTo": [
-            "billing_account_id"
-          ],
+          "columnsFrom": ["billing_account_id"],
+          "columnsTo": ["billing_account_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -5680,12 +5320,8 @@
           "tableFrom": "product_inventory",
           "tableTo": "product_offering",
           "schemaTo": "product",
-          "columnsFrom": [
-            "product_offering_id"
-          ],
-          "columnsTo": [
-            "product_offering_id"
-          ],
+          "columnsFrom": ["product_offering_id"],
+          "columnsTo": ["product_offering_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -5695,9 +5331,7 @@
         "product_inventory_product_order_item_id_unique": {
           "name": "product_inventory_product_order_item_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "product_order_item_id"
-          ]
+          "columns": ["product_order_item_id"]
         }
       },
       "policies": {},
@@ -6051,10 +5685,7 @@
       "compositePrimaryKeys": {
         "udr_rated_pk": {
           "name": "udr_rated_pk",
-          "columns": [
-            "partition_period",
-            "udr_id"
-          ]
+          "columns": ["partition_period", "udr_id"]
         }
       },
       "uniqueConstraints": {
@@ -6296,10 +5927,7 @@
         "udr_batch_file_key_run_uq": {
           "name": "udr_batch_file_key_run_uq",
           "nullsNotDistinct": false,
-          "columns": [
-            "file_key",
-            "batch_run_num"
-          ]
+          "columns": ["file_key", "batch_run_num"]
         }
       },
       "policies": {},
@@ -6498,10 +6126,7 @@
       "compositePrimaryKeys": {
         "process_log_pk": {
           "name": "process_log_pk",
-          "columns": [
-            "partition_period",
-            "log_id"
-          ]
+          "columns": ["partition_period", "log_id"]
         }
       },
       "uniqueConstraints": {},
@@ -6600,13 +6225,7 @@
     "product.lifecycle_status": {
       "name": "lifecycle_status",
       "schema": "product",
-      "values": [
-        "DRAFT",
-        "TESTING",
-        "ACTIVE",
-        "OBSOLETE",
-        "RETIRED"
-      ]
+      "values": ["DRAFT", "TESTING", "ACTIVE", "OBSOLETE", "RETIRED"]
     },
     "ordering.order_status": {
       "name": "order_status",

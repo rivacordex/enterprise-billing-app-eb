@@ -5,7 +5,10 @@ import postgres from "postgres";
 import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
-import { ratecardRepository, type LookupRowInput } from "@/db/repositories/ratecard";
+import {
+  ratecardRepository,
+  type LookupRowInput,
+} from "@/db/repositories/ratecard";
 import { diffAgainstActive } from "@/services/product/ratecard/diff-versions";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
@@ -62,7 +65,9 @@ describe.skipIf(!databaseUrl)(
       await sql_.end();
     });
 
-    function row(overrides: Partial<LookupRowInput> & { polygonId: string }): LookupRowInput {
+    function row(
+      overrides: Partial<LookupRowInput> & { polygonId: string },
+    ): LookupRowInput {
       return {
         mnoPublicKey: "MNO-1",
         commercialUnitPublicKey: "CU-1",
@@ -123,9 +128,7 @@ describe.skipIf(!databaseUrl)(
       expect(result.changed.count).toBe(0);
       expect(result.removed.count).toBe(1);
       expect(result.removed.rows[0]!.polygonId).toBe("P-REMOVED");
-      expect(result.removed.rows[0]!.outgoing.ratecardVersionId).toBe(
-        activeId,
-      );
+      expect(result.removed.rows[0]!.outgoing.ratecardVersionId).toBe(activeId);
     });
 
     // I2.2 — an lkp_subscriber_ref_id difference lands in `changed`, carrying
@@ -188,16 +191,14 @@ describe.skipIf(!databaseUrl)(
       const result = await diffAgainstActive(db, "CARD_BOTH", draftId);
 
       expect(result.changed.count).toBe(1);
-      expect(result.added.count + result.changed.count + result.removed.count).toBe(
-        1,
-      );
+      expect(
+        result.added.count + result.changed.count + result.removed.count,
+      ).toBe(1);
     });
 
     // I2.5 — an unchanged key appears in NO bucket.
     it("an unchanged key appears in no bucket", async () => {
-      await makeVersion("CARD_SAME", "ACTIVE", 1, [
-        row({ polygonId: "P-1" }),
-      ]);
+      await makeVersion("CARD_SAME", "ACTIVE", 1, [row({ polygonId: "P-1" })]);
       const draftId = await makeVersion("CARD_SAME", "DRAFT", 2, [
         row({ polygonId: "P-1" }),
       ]);
@@ -221,9 +222,7 @@ describe.skipIf(!databaseUrl)(
 
       expect(result.removed.count).toBe(1);
       expect(result.removed.rows[0]!.polygonId).toBe("P-GONE");
-      expect(result.removed.rows[0]!.outgoing.ratecardVersionId).toBe(
-        activeId,
-      );
+      expect(result.removed.rows[0]!.outgoing.ratecardVersionId).toBe(activeId);
       expect(result.added.count).toBe(0);
       expect(result.changed.count).toBe(0);
     });
@@ -287,10 +286,18 @@ describe.skipIf(!databaseUrl)(
     // "no bucket"; with the shared NUL-delimited key they must not.
     it("adversarial key values that would collide under naive concatenation stay distinct (D4)", async () => {
       await makeVersion("CARD_COLLIDE", "ACTIVE", 1, [
-        row({ mnoPublicKey: "AB", commercialUnitPublicKey: "C", polygonId: "P-X" }),
+        row({
+          mnoPublicKey: "AB",
+          commercialUnitPublicKey: "C",
+          polygonId: "P-X",
+        }),
       ]);
       const draftId = await makeVersion("CARD_COLLIDE", "DRAFT", 2, [
-        row({ mnoPublicKey: "A", commercialUnitPublicKey: "BC", polygonId: "P-X" }),
+        row({
+          mnoPublicKey: "A",
+          commercialUnitPublicKey: "BC",
+          polygonId: "P-X",
+        }),
       ]);
 
       const result = await diffAgainstActive(db, "CARD_COLLIDE", draftId);

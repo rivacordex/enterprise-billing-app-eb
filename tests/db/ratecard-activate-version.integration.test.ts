@@ -264,9 +264,7 @@ describe.skipIf(!databaseUrl)(
     it("two concurrent activations for one card serialize on the lock and leave exactly one ACTIVE (looped 4x)", async () => {
       for (let i = 0; i < 4; i++) {
         const cardName = `CARD_RACE_${i}`;
-        const activeId = await makeVersion(cardName, "ACTIVE", 1, [
-          row("P-1"),
-        ]);
+        const activeId = await makeVersion(cardName, "ACTIVE", 1, [row("P-1")]);
         const draftId = await makeVersion(cardName, "DRAFT", 2, [row("P-1")]);
 
         const [r1, r2] = await Promise.all([
@@ -276,9 +274,7 @@ describe.skipIf(!databaseUrl)(
 
         const outcomes = [r1, r2];
         const succeeded = outcomes.filter((r) => r.ok);
-        const refused = outcomes.filter(
-          (r) => !r.ok && r.code === "NOT_DRAFT",
-        );
+        const refused = outcomes.filter((r) => !r.ok && r.code === "NOT_DRAFT");
         expect(succeeded.length).toBe(1);
         expect(refused.length).toBe(1);
 
