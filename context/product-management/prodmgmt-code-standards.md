@@ -192,7 +192,7 @@ Token values are owned by `prodmgmt-ui-context.md` and are not duplicated in cod
 26. **(rate card) The upload error report is a table, not a toast and not a list of strings.** `UploadErrorTable` renders one row per issue with columns **Line · Column · Value · Reason** — `tabular-nums` on Line, `--font-mono` on Value, and reason copy keyed to §2.22's violation codes. It renders inside the upload dialog, the dialog stays open, and the file input keeps its selection so the user sees what failed against what they picked.
 27. **(rate card) Numeric conventions.** `--font-mono` for `ratecard_version_id` (`RCV…`), `lkp_subscriber_ref_id` (`PRDINV…`), `card_name`, `service_code`, `mno_public_key`, `commercial_unit_public_key`, `polygon_id` and `file_checksum`; `tabular-nums` for `version_num`, `row_count` and every diff count.
 28. **(rate card) Calendar dates go through `formatCalendarDate`; instants go through `formatDatetime`** (general §2.13, §2.21). `snapshot_date`, `polygon_start_date` and `polygon_end_date` are calendar dates and must not shift by a zone; `uploaded_at` and `activated_at` are instants and take the threaded `timezone` prop. Getting this backwards moves a `polygon_start_date` by a day at the zone boundary.
-29. **(rate card) `--action-cta-bg` is used exactly once on this page** (§4.9) — the "Upload new version" button in the page header. Activate and Rollback are secondary/ghost in the version header and primary inside their confirmation dialogs. **The danger role is unused on this page**, because nothing here deletes anything: versions are immutable and a rollback is a status change.
+29. **(rate card) `--action-cta-bg` is used exactly once on this page** (§4.9) — the **"Activate version"** confirm, corrected from an earlier "Upload new version" reading (**C10**, pm66 D6). "Upload new version" **creates a record** and therefore takes `--action-primary-bg` (the shared §3.3 rule that record-creation triggers never take the CTA); activation is the single featured confirm and the only act on the page with billing consequence, so the CTA is spent there. Activate and Rollback carry the accent confirm inside their dialogs and **never co-render** (a version is never both `DRAFT` and `SUPERSEDED`), so the one-accent-per-view rule holds. **The danger role is unused on this page**, because nothing here deletes anything: versions are immutable and a rollback is a status change. **Landed pm66.**
 
 ---
 
@@ -251,7 +251,7 @@ Token values are owned by `prodmgmt-ui-context.md` and are not duplicated in cod
 31. **(rate card) No resolution path reads a `SUPERSEDED` version** (Inv. #48). Every read of card rows for resolution filters `status = 'ACTIVE'` on the version. The version list, the row preview and the diff read a version **by id** and are the only exceptions — they are display paths, never resolution paths, which is why the rule is phrased about resolution rather than about the table.
 32. **(rate card) The uploaded file is never stored** (Inv. #58). `source_file` (the original filename, forensics only) and `file_checksum` are the only survivors: no blob, no `landing/` drop, no temp file left on disk, no retained buffer. **This is a deliberate departure from `context/architecture.md` §3's "binary goes to Azure Blob, the DB stores a reference"** — that rule anticipates uploads the app must hand back, and a card's rows are the record of its upload. The platform doc needs a one-line follow-up saying an ingest path now exists and its answer is parse-and-discard.
 33. **(rate card) `file_checksum` detects a duplicate upload; it does not prevent one.** Re-uploading the same file is legitimate — after a rollback, for instance — so a checksum match surfaces a warning on the draft review (§1.41) and never refuses. There is no unique constraint on the column.
-34. **(rate card) `serverActions.bodySizeLimit` is raised to `4mb` under `experimental` in `next.config.ts`.** The file has no `experimental` key today, so this adds one. The Next default is 1 MB and a ~0.5 MB card fits — the raise exists so that the day a card does not fit, the user sees a validation message instead of a generic body-size error that reads as a bug. Raising it further triggers the RC15 revisit (`prodmgmt-architecture.md` §1): past roughly 50k rows the schema is unchanged and the **loader** is what must change — streaming parse, staging table, or a Kestra flow.
+34. **(rate card) `serverActions.bodySizeLimit` is raised to `4mb` under `experimental` in `next.config.ts`.** The file has no `experimental` key today, so this adds one. The Next default is 1 MB and a ~0.5 MB card fits — the raise exists so that the day a card does not fit, the user sees a validation message instead of a generic body-size error that reads as a bug. Raising it further triggers the RC15 revisit (`prodmgmt-architecture.md` §1): past roughly 50k rows the schema is unchanged and the **loader** is what must change — streaming parse, staging table, or a Kestra flow. **Landed pm66** (`experimental.serverActions.bodySizeLimit: '4mb'`, with the RC15-revisit comment; called out in review as a platform-owned root file, §1.46).
 
 ---
 
@@ -343,14 +343,14 @@ actions/product/
 components/products/rate-card/
   rate-card-version-table.tsx         # (rate card)  RateCardVersionTable — server — LANDED pm65
   rate-card-status-badge.tsx          # (rate card)  RateCardStatusBadge — total Record — LANDED pm65
-  upload-version-dialog.tsx           # (rate card, new)  UploadVersionDialog — client leaf
-  upload-error-table.tsx              # (rate card, new)  UploadErrorTable
+  upload-version-dialog.tsx           # (rate card)  UploadVersionDialog — client leaf, uncontrolled file input — LANDED pm66
+  upload-error-table.tsx              # (rate card)  UploadErrorTable — Line·Column·Value·Reason — LANDED pm66
   rate-card-row-preview.tsx           # (rate card)  RateCardRowPreview — paged, server — LANDED pm65
   rate-card-href.ts                   # (rate card)  buildRateCardHref — shared URL builder — LANDED pm65
-  rate-card-diff-panel.tsx            # (rate card, new)  RateCardDiffPanel — three buckets
-  rate-card-diff-badge.tsx            # (rate card, new)  RateCardDiffBadge — total Record (diff category)
-  activate-version-dialog.tsx         # (rate card, new)  ActivateVersionDialog
-  rollback-version-dialog.tsx         # (rate card, new)  RollbackVersionDialog
+  rate-card-diff-panel.tsx            # (rate card)  RateCardDiffPanel — three buckets, server — LANDED pm66
+  rate-card-diff-badge.tsx            # (rate card)  RateCardDiffBadge — total Record (diff category), tenth name (C9) — LANDED pm66
+  activate-version-dialog.tsx         # (rate card)  ActivateVersionDialog — page CTA (C10) — LANDED pm66
+  rollback-version-dialog.tsx         # (rate card)  RollbackVersionDialog — plain confirm — LANDED pm66
 services/product/ratecard/
   parse-csv.ts                        # (rate card) the ONLY importer of the CSV parser (csv-parse 7.0.3, §7.10) — LANDED pm59
   upload-version.ts                   # (rate card)  parse -> validate -> DRAFT, one tx — LANDED pm61
@@ -358,6 +358,7 @@ services/product/ratecard/
   activate-version.ts                 # (rate card)  promote + demote, one tx, no row writes — LANDED pm63
   rollback-version.ts                 # (rate card)  re-activate a SUPERSEDED version — LANDED pm64 (status flips only, no row writes)
   list-versions.ts, get-version-rows.ts # (rate card) read models, uncached — LANDED pm65
+  get-version-diff.ts                   # (rate card) diff read wrapper (injects db into pm62's diffAgainstActive so the page needn't import db) — LANDED pm66
 db/repositories/
   ratecard.ts                         # (rate card) FLAT path — §7.8; no row-level write — LANDED pm60 (pm62 added getAllRowsForVersion/getCurrentActiveRows; pm63 added findVersionForUpdate)
 db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card) the two tables' DDL — LANDED pm57a
@@ -365,7 +366,7 @@ db/migrations/0043_ratecard_permission.sql    # (rate card) the ratecard PERMISS
 validation/product/
   ratecard.schema.ts                  # (rate card) header map + row + file + rejectSummary schemas — LANDED pm58
 db/seeds/demo/product-demo.ts         # (rate card) one demo card version, same Zod + CHECKs
-next.config.ts                        # (rate card) experimental.serverActions.bodySizeLimit — §1.46
+next.config.ts                        # (rate card) experimental.serverActions.bodySizeLimit: '4mb' — §1.46/§6.34 — LANDED pm66
 types/rbac.ts                         # (rate card) one more PERMISSION_NAMES member — §1.46, §8
 lib/nav-registry.ts, components/nav-icons.ts # (rate card) fifth Products entry + its TableProperties icon — LANDED pm65
 app/(app)/products/rate-card/{page,loading,error}.tsx # (rate card) thin RSC orchestrator, force-dynamic — LANDED pm65

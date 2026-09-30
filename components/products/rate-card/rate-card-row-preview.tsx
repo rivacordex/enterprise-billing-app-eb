@@ -7,7 +7,7 @@ import {
   buildRateCardHref,
 } from "@/components/products/rate-card/rate-card-href";
 import { formatCalendarDate } from "@/lib/formatters";
-import type { RatecardRanUsageLkp } from "@/db/schema/product";
+import type { RatecardRanUsageLkp } from "@/types/product";
 
 // pm65-spec D9 / I2 / ui-context §10.3/§10.7 — the row preview. SERVER
 // component (§3.6), paged and filterable, reusing the Administration table

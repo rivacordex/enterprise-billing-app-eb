@@ -6,6 +6,23 @@ const nextConfig: NextConfig = {
   // cross-origin, the client bundle never loads, and the page silently never
   // hydrates (every form submit falls back to a native browser GET).
   allowedDevOrigins: ["100.68.190.22"],
+  // pm66 (rate card, RC15 / code-standards §6.38, D9): raise the Server Action
+  // body limit from Next's 1 MB default to 4 MB. A ~5,400-row rate-card CSV is
+  // ~0.5 MB and fits the default, but the day a card does not fit, this makes
+  // the failure a VALIDATION MESSAGE (the upload action's typed FILE_TOO_LARGE
+  // refusal, checked at 4 MB) rather than a generic framework body-size error
+  // that reads as a bug. This is a PLATFORM-OWNED root key edited by the rate
+  // card module — called out in review (workflow §6.9), not folded silently.
+  //
+  // Do NOT raise this further to "just accept bigger files": past roughly 50k
+  // rows the schema is unchanged and the LOADER is what must change — a
+  // streaming parse, a staging table, or a Kestra flow (RC15 revisit,
+  // architecture §1). Read RC15 before touching this number.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "4mb",
+    },
+  },
   // um30: the Dockerfile's runner stage copies `.next/standalone`, which only
   // `next build` produces when this is set.
   output: "standalone",

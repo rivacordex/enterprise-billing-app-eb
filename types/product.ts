@@ -174,7 +174,49 @@ export type {
   ProductSpecificationInsert,
   ProductOfferingPrice,
   ProductOfferingPriceInsert,
+  // (rate card) The two card row types, re-exported here so the rate-card
+  // COMPONENTS and the PAGE consume them from `types/` rather than reaching
+  // into `db/schema` directly — the `boundaries` rule forbids `app`/`components`
+  // → `db`, and `types` → `db` is the sanctioned type-only re-export edge
+  // (eslint.config.mjs, um02-spec §3.7). Services still import them straight
+  // from `db/schema` (that edge is allowed).
+  RatecardVersion,
+  RatecardRanUsageLkp,
 } from "@/db/schema";
+
+// (rate card) The diff VIEW types — the single home (pm66). They were authored
+// in `services/product/ratecard/diff-versions.ts` (pm62); re-homed here so the
+// diff PANEL (a component) can type its props without a `components → services`
+// import (forbidden by the boundaries rule). `diff-versions.ts` now imports and
+// re-exports them from here, so there is exactly one definition. Referencing
+// `RatecardRanUsageLkp` needs a value-position import (the re-export above is
+// export-only), hence this separate import-type line.
+import type { RatecardRanUsageLkp as RatecardRanUsageLkpRow } from "@/db/schema";
+
+export interface RateCardDiffKey {
+  readonly mnoPublicKey: string;
+  readonly commercialUnitPublicKey: string;
+  readonly polygonId: string;
+}
+export interface RateCardDiffAddedEntry extends RateCardDiffKey {
+  readonly incoming: RatecardRanUsageLkpRow;
+}
+export interface RateCardDiffChangedEntry extends RateCardDiffKey {
+  readonly outgoing: RatecardRanUsageLkpRow;
+  readonly incoming: RatecardRanUsageLkpRow;
+}
+export interface RateCardDiffRemovedEntry extends RateCardDiffKey {
+  readonly outgoing: RatecardRanUsageLkpRow;
+}
+export interface RateCardDiffBucket<T> {
+  readonly count: number;
+  readonly rows: readonly T[];
+}
+export interface RateCardVersionDiff {
+  readonly added: RateCardDiffBucket<RateCardDiffAddedEntry>;
+  readonly changed: RateCardDiffBucket<RateCardDiffChangedEntry>;
+  readonly removed: RateCardDiffBucket<RateCardDiffRemovedEntry>;
+}
 
 export const EFFECTIVITY_STATUSES = [
   "current",

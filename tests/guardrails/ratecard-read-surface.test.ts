@@ -67,6 +67,9 @@ const RATE_CARD_MANAGE_DIR = path.join(
 const READ_SERVICE_FILES = [
   path.join(RATE_CARD_SERVICE_DIR, "list-versions.ts"),
   path.join(RATE_CARD_SERVICE_DIR, "get-version-rows.ts"),
+  // pm66 — the diff read wrapper (injects db into pm62's diffAgainstActive so
+  // the page needn't import db). Uncached like the other read models.
+  path.join(RATE_CARD_SERVICE_DIR, "get-version-diff.ts"),
 ];
 
 const RATE_CARD_COMPONENT_FILES = collectFiles(RATE_CARD_COMPONENT_DIR);
@@ -168,19 +171,43 @@ describe("rate-card read surface (pm65 guardrails)", () => {
     expect(offenders.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
   });
 
-  // Test 2 / D11 — every mutating control is ABSENT, not disabled. pm65 wires no
-  // action: no rate-card page or component imports any Server Action, and none
-  // renders a form that posts to one. (pm66 builds every mutating control.)
-  it("no rate-card page or component wires a mutating Server Action", () => {
+  // pm66 D8 / C2 / test 13 — the rate-card write UI wires EXACTLY the three
+  // existing ratecard mutations (upload/activate/rollback) and NO FOURTH. There
+  // is no "discard" action anywhere (ratecard is READ/EDIT only, no DELETE; the
+  // audit types and action files are capped at three), and no product action
+  // OTHER than the three rate-card ones leaks into the read/write surface.
+  // (Absent-not-disabled for a READ user is the page's canEdit gate, proven in
+  // tests/app/rate-card-page.test.tsx.)
+  it("the rate-card surface wires only the three ratecard actions — no fourth, no discard", () => {
     const filesToScan = [
       ...collectFiles(RATE_CARD_PAGE_DIR),
       ...RATE_CARD_COMPONENT_FILES,
     ];
-    const offenders = filesToScan.filter((file) => {
-      const specs = extractImportSpecifiers(fs.readFileSync(file, "utf8"));
-      return specs.some((s) => /(^|\/)actions\/product\//.test(s));
-    });
-    expect(offenders.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
+    const ALLOWED = new Set([
+      "@/actions/product/upload-ratecard-version.action",
+      "@/actions/product/activate-ratecard-version.action",
+      "@/actions/product/rollback-ratecard-version.action",
+    ]);
+    const wired = new Set<string>();
+    for (const file of filesToScan) {
+      for (const spec of extractImportSpecifiers(
+        fs.readFileSync(file, "utf8"),
+      )) {
+        if (/(^|\/)actions\/product\//.test(spec)) wired.add(spec);
+      }
+    }
+    // Every wired action is one of the three; none is a discard/delete action.
+    for (const spec of wired) {
+      expect(ALLOWED.has(spec), `unexpected action wired: ${spec}`).toBe(true);
+      expect(/discard|delete/i.test(spec)).toBe(false);
+    }
+    // No standalone "discard" control anywhere in the rate-card files.
+    const discardOffenders = filesToScan.filter((file) =>
+      /discard[\s-]*(draft|version)/i.test(fs.readFileSync(file, "utf8")),
+    );
+    expect(discardOffenders.map((f) => path.relative(REPO_ROOT, f))).toEqual(
+      [],
+    );
   });
 
   // Test 9 / D-A7 — the version list shows row_count as its only count, with no
@@ -196,5 +223,26 @@ describe("rate-card read surface (pm65 guardrails)", () => {
     expect(src).toContain("rowCount");
     expect(src).not.toContain("carriedRowCount");
     expect(src).not.toContain("retiredAt");
+  });
+
+  // pm66 test 9 / D6 / C10 — `--action-cta-bg` appears EXACTLY ONCE on the page
+  // (the Activate trigger); "Upload new version" takes `--action-primary-bg`,
+  // never the CTA (record-creation triggers don't, §3.3).
+  it("the page uses --action-cta-bg exactly once, and upload takes --action-primary-bg", () => {
+    const pageSrc = stripComments(
+      fs.readFileSync(path.join(RATE_CARD_PAGE_DIR, "page.tsx"), "utf8"),
+    );
+    const ctaCount = (pageSrc.match(/action-cta-bg/g) ?? []).length;
+    expect(ctaCount).toBe(1);
+    expect(pageSrc).toContain("action-primary-bg");
+  });
+
+  // pm66 test 16 / D9 — the body-size ceiling is raised to 4mb under
+  // experimental.serverActions so a too-large file fails as a validation
+  // message (the action's FILE_TOO_LARGE), not a framework body-size error.
+  it("next.config.ts raises serverActions.bodySizeLimit to 4mb", () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, "next.config.ts"), "utf8");
+    expect(src).toMatch(/serverActions/);
+    expect(src).toMatch(/bodySizeLimit:\s*["']4mb["']/);
   });
 });

@@ -68,11 +68,22 @@ describe("rate-card authz matrix (pm65 I4, guardrail 1)", () => {
     },
   );
 
-  it("the page is READ-only — it never re-checks EDIT (the mutations own that gate)", () => {
+  it("the page's ENFORCEMENT guard is READ; EDIT is only a meetsLevel show/hide gate, never a second requirePermission", () => {
     const src = read("app/(app)/products/rate-card/page.tsx");
-    expect(src).toContain("LEVELS.READ");
-    expect(src).not.toContain("LEVELS.EDIT");
+    // The one requirePermission guard is READ — the enforcement boundary.
+    const guard = src.match(
+      /requirePermission\(\s*PERMISSIONS\.RATECARD,\s*LEVELS\.(\w+)/,
+    );
+    expect(guard?.[1]).toBe("READ");
+    // No requirePermission ever rises to EDIT/DELETE on this page — the three
+    // mutations own that gate at their own action guards (D11).
+    expect(src).not.toMatch(/requirePermission\([^)]*LEVELS\.EDIT/);
     expect(src).not.toContain("LEVELS.DELETE");
+    // Where EDIT does appear (the canEdit control-visibility gate), it is a
+    // meetsLevel show/hide check — never enforcement.
+    if (src.includes("LEVELS.EDIT")) {
+      expect(src).toMatch(/meetsLevel\([^)]*LEVELS\.EDIT/);
+    }
   });
 
   it("`ratecard` is a distinct, closed PERMISSION_NAMES member (no overlap by construction)", () => {

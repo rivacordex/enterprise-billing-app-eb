@@ -23,19 +23,64 @@ vi.mock("@/components/products/rate-card/rate-card-version-table", () => ({
 vi.mock("@/components/products/rate-card/rate-card-row-preview", () => ({
   RateCardRowPreview: vi.fn(() => null),
 }));
+// pm66 additions — the diff read + write-UI leaves are mocked so the page test
+// stays a guard/props test (no DB, no client dialogs rendered).
+vi.mock("@/services/product/ratecard/get-version-diff", () => ({
+  getRateCardVersionDiff: vi.fn(),
+}));
+vi.mock("@/components/products/rate-card/rate-card-diff-panel", () => ({
+  RateCardDiffPanel: vi.fn(() => null),
+}));
+vi.mock("@/components/products/rate-card/upload-version-dialog", () => ({
+  UploadVersionDialog: vi.fn(() => null),
+}));
+vi.mock("@/components/products/rate-card/activate-version-dialog", () => ({
+  ActivateVersionDialog: vi.fn(() => null),
+}));
+vi.mock("@/components/products/rate-card/rollback-version-dialog", () => ({
+  RollbackVersionDialog: vi.fn(() => null),
+}));
 
 import RateCardPage from "@/app/(app)/products/rate-card/page";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { ActivateVersionDialog } from "@/components/products/rate-card/activate-version-dialog";
+import { RateCardDiffPanel } from "@/components/products/rate-card/rate-card-diff-panel";
 import { RateCardRowPreview } from "@/components/products/rate-card/rate-card-row-preview";
 import { RateCardVersionTable } from "@/components/products/rate-card/rate-card-version-table";
+import { RollbackVersionDialog } from "@/components/products/rate-card/rollback-version-dialog";
+import { UploadVersionDialog } from "@/components/products/rate-card/upload-version-dialog";
 import type { RatecardVersion } from "@/db/schema/product";
+import { getRateCardVersionDiff } from "@/services/product/ratecard/get-version-diff";
 import { getRateCardVersionRows } from "@/services/product/ratecard/get-version-rows";
 import { listRateCardVersions } from "@/services/product/ratecard/list-versions";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockListVersions = vi.mocked(listRateCardVersions);
 const mockGetRows = vi.mocked(getRateCardVersionRows);
+const mockDiff = vi.mocked(getRateCardVersionDiff);
+
+const EMPTY_DIFF = {
+  added: { count: 0, rows: [] },
+  changed: { count: 0, rows: [] },
+  removed: { count: 0, rows: [] },
+};
+
+function permissionMap(level: "READ" | "EDIT") {
+  return {
+    userId: "admin-1",
+    userEmail: "admin@example.com",
+    permissionMap: {
+      users: null,
+      roles: null,
+      system_config: null,
+      audit_log: null,
+      products: null,
+      customers: null,
+      ratecard: level,
+    },
+  };
+}
 
 interface ReactElementLike {
   type: unknown;
@@ -95,24 +140,18 @@ beforeEach(() => {
   mockRequirePermission.mockReset();
   mockListVersions.mockReset();
   mockGetRows.mockReset();
+  mockDiff.mockReset();
   vi.mocked(RateCardVersionTable).mockClear();
   vi.mocked(RateCardRowPreview).mockClear();
+  vi.mocked(RateCardDiffPanel).mockClear();
+  vi.mocked(UploadVersionDialog).mockClear();
+  vi.mocked(ActivateVersionDialog).mockClear();
+  vi.mocked(RollbackVersionDialog).mockClear();
 
   mockListVersions.mockResolvedValue([]);
   mockGetRows.mockResolvedValue({ rows: [], total: 0, page: 1, pageSize: 50 });
-  mockRequirePermission.mockResolvedValue({
-    userId: "admin-1",
-    userEmail: "admin@example.com",
-    permissionMap: {
-      users: null,
-      roles: null,
-      system_config: null,
-      audit_log: null,
-      products: null,
-      customers: null,
-      ratecard: "READ",
-    },
-  });
+  mockDiff.mockResolvedValue(EMPTY_DIFF);
+  mockRequirePermission.mockResolvedValue(permissionMap("EDIT"));
 });
 
 describe("RateCardPage", () => {
@@ -224,5 +263,113 @@ describe("RateCardPage", () => {
 
     // A bogus tab does not 404 and does not suppress the rows view.
     expect(findElementByType(result, RateCardRowPreview)).toBeDefined();
+  });
+
+  // --- pm66 write-UI wiring --------------------------------------------------
+
+  it("an EDIT user sees the Upload control (D11)", async () => {
+    mockRequirePermission.mockResolvedValue(permissionMap("EDIT"));
+    const result = await RateCardPage({ searchParams: Promise.resolve({}) });
+    expect(findElementByType(result, UploadVersionDialog)).toBeDefined();
+  });
+
+  it("a READ-only user sees NO upload/activate/rollback control (test 11, absent not disabled)", async () => {
+    mockRequirePermission.mockResolvedValue(permissionMap("READ"));
+    mockListVersions.mockResolvedValue([
+      makeVersion({ ratecardVersionId: "RCV00000001", status: "DRAFT" }),
+    ]);
+
+    const result = await RateCardPage({
+      searchParams: Promise.resolve({ version: "RCV00000001" }),
+    });
+
+    expect(findElementByType(result, UploadVersionDialog)).toBeUndefined();
+    expect(findElementByType(result, ActivateVersionDialog)).toBeUndefined();
+    expect(findElementByType(result, RollbackVersionDialog)).toBeUndefined();
+  });
+
+  it("selecting a DRAFT computes the diff and renders ActivateVersionDialog with the superseded id + counts (D6)", async () => {
+    mockListVersions.mockResolvedValue([
+      makeVersion({ ratecardVersionId: "RCV00000002", status: "ACTIVE" }),
+      makeVersion({ ratecardVersionId: "RCV00000001", status: "DRAFT" }),
+    ]);
+    mockDiff.mockResolvedValue({
+      added: { count: 3, rows: [] },
+      changed: { count: 2, rows: [] },
+      removed: { count: 1, rows: [] },
+    });
+
+    const result = await RateCardPage({
+      searchParams: Promise.resolve({ version: "RCV00000001" }),
+    });
+
+    expect(mockDiff).toHaveBeenCalledTimes(1);
+    const dialog = findElementByType(result, ActivateVersionDialog);
+    expect(dialog?.props).toMatchObject({
+      versionId: "RCV00000001",
+      supersededVersionId: "RCV00000002",
+      counts: { added: 3, changed: 2, removed: 1 },
+    });
+    expect(findElementByType(result, RollbackVersionDialog)).toBeUndefined();
+  });
+
+  it("a SUPERSEDED version renders RollbackVersionDialog, not Activate (D7)", async () => {
+    mockListVersions.mockResolvedValue([
+      makeVersion({ ratecardVersionId: "RCV00000002", status: "ACTIVE" }),
+      makeVersion({ ratecardVersionId: "RCV00000001", status: "SUPERSEDED" }),
+    ]);
+
+    const result = await RateCardPage({
+      searchParams: Promise.resolve({ version: "RCV00000001" }),
+    });
+
+    expect(
+      findElementByType(result, RollbackVersionDialog)?.props,
+    ).toMatchObject({
+      versionId: "RCV00000001",
+      demotedVersionId: "RCV00000002",
+    });
+    expect(findElementByType(result, ActivateVersionDialog)).toBeUndefined();
+  });
+
+  it("an ACTIVE version shows NO mutating control (test 12)", async () => {
+    mockListVersions.mockResolvedValue([
+      makeVersion({ ratecardVersionId: "RCV00000001", status: "ACTIVE" }),
+    ]);
+
+    const result = await RateCardPage({
+      searchParams: Promise.resolve({ version: "RCV00000001" }),
+    });
+
+    expect(findElementByType(result, ActivateVersionDialog)).toBeUndefined();
+    expect(findElementByType(result, RollbackVersionDialog)).toBeUndefined();
+  });
+
+  it("query budget — an ACTIVE version on the rows tab costs NO diff read", async () => {
+    mockListVersions.mockResolvedValue([
+      makeVersion({ ratecardVersionId: "RCV00000001", status: "ACTIVE" }),
+    ]);
+
+    await RateCardPage({
+      searchParams: Promise.resolve({ version: "RCV00000001" }),
+    });
+
+    expect(mockDiff).not.toHaveBeenCalled();
+    expect(mockGetRows).toHaveBeenCalledTimes(1);
+  });
+
+  it("tab=diff renders the diff panel and reads the diff exactly once (test 6, diff clause)", async () => {
+    mockListVersions.mockResolvedValue([
+      makeVersion({ ratecardVersionId: "RCV00000001", status: "ACTIVE" }),
+    ]);
+
+    const result = await RateCardPage({
+      searchParams: Promise.resolve({ version: "RCV00000001", tab: "diff" }),
+    });
+
+    expect(mockDiff).toHaveBeenCalledTimes(1);
+    expect(mockGetRows).not.toHaveBeenCalled();
+    expect(findElementByType(result, RateCardDiffPanel)).toBeDefined();
+    expect(findElementByType(result, RateCardRowPreview)).toBeUndefined();
   });
 });

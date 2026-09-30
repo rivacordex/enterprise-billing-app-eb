@@ -1,10 +1,19 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { CheckCircle, History, Upload } from "lucide-react";
 
 import { firstValue } from "@/lib/search-params";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { ActivateVersionDialog } from "@/components/products/rate-card/activate-version-dialog";
+import { buildRateCardHref } from "@/components/products/rate-card/rate-card-href";
+import { RateCardDiffPanel } from "@/components/products/rate-card/rate-card-diff-panel";
 import { RateCardRowPreview } from "@/components/products/rate-card/rate-card-row-preview";
+import { RateCardStatusBadge } from "@/components/products/rate-card/rate-card-status-badge";
+import { RollbackVersionDialog } from "@/components/products/rate-card/rollback-version-dialog";
+import { UploadVersionDialog } from "@/components/products/rate-card/upload-version-dialog";
 import { RateCardVersionTable } from "@/components/products/rate-card/rate-card-version-table";
+import { getRateCardVersionDiff } from "@/services/product/ratecard/get-version-diff";
 import { getRateCardVersionRows } from "@/services/product/ratecard/get-version-rows";
 import { listRateCardVersions } from "@/services/product/ratecard/list-versions";
 import {
@@ -12,38 +21,54 @@ import {
   getAppName,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
+import { formatCalendarDate } from "@/lib/formatters";
+import { meetsLevel } from "@/types/permissions";
+import type { RatecardVersion } from "@/types/product";
 import { rateCardListSearchParamsSchema } from "@/validation/product/ratecard-list.schema";
 
-// pm65-spec D1/D12 — no cache anywhere on this page (Inv. #59, §1.44, guardrail
-// 40): `force-dynamic`, and no `unstable_cache`, no `revalidate`, no React
-// `cache()`, no module-level store around any card read. The ACTIVE version can
-// change at any activation or rollback, so a cached version list or cached rows
-// would contradict the database this page reports.
+// pm65 D12 / pm66 — no cache anywhere on this page (Inv. #59, guardrail 40):
+// `force-dynamic`, and no `unstable_cache`/`revalidate`/`cache()`/module store
+// around any card read.
 export const dynamic = "force-dynamic";
 
-// Dynamic so the tab title tracks the configured `app_name` (`getAppName()` is
-// `React.cache`d — a per-request memo of a config read, NOT a cache of any card
-// data, so it does not touch guardrail 40).
 export async function generateMetadata(): Promise<Metadata> {
   return { title: `Rate Card — ${await getAppName()}` };
 }
+
+const TABS = [
+  { key: "rows", label: "Rows" },
+  { key: "diff", label: "Diff vs Active" },
+  { key: "validation", label: "Validation" },
+] as const;
+
+// Middle-truncate a checksum for the metadata strip (ui-context §10.5:
+// `a91f…3c02`). Short values render whole.
+function truncateChecksum(checksum: string | null): string {
+  if (checksum === null || checksum === "") return "—";
+  if (checksum.length <= 10) return checksum;
+  return `${checksum.slice(0, 4)}…${checksum.slice(-4)}`;
+}
+
+const UPLOAD_BUTTON_CLASS =
+  "inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-primary-bg)] px-3 py-2 text-body-sm font-semibold text-white hover:bg-[color:var(--action-primary-bg-hover)]";
+const VERSION_ACTION_CLASS =
+  "inline-flex items-center gap-1.5 rounded-md border border-[color:var(--action-secondary-border)] bg-[color:var(--action-secondary-bg)] px-3 py-2 text-body-sm font-semibold text-[color:var(--action-secondary-text)] hover:bg-[color:var(--action-ghost-hover)]";
 
 export default async function RateCardPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<React.JSX.Element> {
-  // ratecard:READ gates the whole read surface (architecture §4). The three
-  // mutations (upload/activate/rollback) re-check ratecard:EDIT at their own
-  // action guards (pm61/pm63/pm64); this page never itself mutates, and every
-  // mutating control is absent, not disabled (D11).
-  await requirePermission(PERMISSIONS.RATECARD, LEVELS.READ);
+  // ratecard:READ gates the whole read surface; the map decides whether the
+  // EDIT-only controls (upload/activate/rollback) render at all (D11 — absent,
+  // not disabled). The action guards remain the boundary regardless.
+  const { permissionMap } = await requirePermission(
+    PERMISSIONS.RATECARD,
+    LEVELS.READ,
+  );
+  const canEdit = meetsLevel(permissionMap.ratecard, LEVELS.EDIT);
 
   const raw = await searchParams;
-  // Lenient parse (§3.17): a tampered or stale URL renders defaults, never a
-  // 500. `tab` is admitted (C3) and parsed here so pm66 inherits a working
-  // deep-link contract; pm65 renders only the `rows` view — the diff/validation
-  // views and the diff read are pm66's (see the tracker's pm65 note).
   const params = rateCardListSearchParamsSchema.parse({
     version: firstValue(raw.version) ?? null,
     page: firstValue(raw.page) ?? 1,
@@ -51,46 +76,105 @@ export default async function RateCardPage({
     tab: firstValue(raw.tab),
   });
 
-  const timezone = getAppTimezone(); // sync accessor — outside Promise.all
+  const timezone = getAppTimezone();
 
-  // First render: one versions read (listRateCardVersions) + the locale config
-  // read, and NOTHING per row (§1.16/§3.23). No eager rows or diff read.
   const [versions, locale] = await Promise.all([
     listRateCardVersions(),
     getAppLocale(),
   ]);
 
-  // `version` is parsed against the RCV format schema before this point; here
-  // it is resolved against the loaded list. A well-formed id that matches no
-  // row selects nothing and renders the empty-selection state — not a 404 and
-  // not an error boundary (§3.17, D1, test 4). Membership in the already-loaded
-  // list is authoritative (listRateCardVersions returns every version), so an
-  // unknown version costs no extra query.
-  const selectedVersionId =
-    params.version !== null &&
-    versions.some((v) => v.ratecardVersionId === params.version)
-      ? params.version
+  const selectedVersion: RatecardVersion | null =
+    params.version !== null
+      ? (versions.find((v) => v.ratecardVersionId === params.version) ?? null)
       : null;
+  const selectedVersionId = selectedVersion?.ratecardVersionId ?? null;
+  const versionNotFound = params.version !== null && selectedVersion === null;
 
-  // One paged rows read (count + select) only when a version is actually
-  // selected (§3.23). No selection → no rows query at all.
-  const rowsPage = selectedVersionId
-    ? await getRateCardVersionRows(selectedVersionId, {
-        page: params.page,
-        filter: params.q,
-      })
+  // The card's current ACTIVE version (the one a "removed" key stays held by,
+  // and the one an activation/rollback supersedes). In-memory over the loaded
+  // list — no extra query.
+  const currentActive = selectedVersion
+    ? (versions.find(
+        (v) => v.cardName === selectedVersion.cardName && v.status === "ACTIVE",
+      ) ?? null)
     : null;
 
-  const versionNotFound = params.version !== null && selectedVersionId === null;
+  // A mutable version (DRAFT/SUPERSEDED) needs the diff for its confirmation
+  // counts; the diff tab needs it to render. Compute it once, in memory, from
+  // exactly two full row reads (pm62). An ACTIVE/other version on a non-diff tab
+  // costs no diff read — the common read path keeps pm65's budget.
+  const isMutable =
+    selectedVersion?.status === "DRAFT" ||
+    selectedVersion?.status === "SUPERSEDED";
+  const needsDiff =
+    selectedVersion !== null && (isMutable || params.tab === "diff");
+  const diff =
+    needsDiff && selectedVersion
+      ? await getRateCardVersionDiff(
+          selectedVersion.cardName,
+          selectedVersion.ratecardVersionId,
+        )
+      : null;
+  const diffCounts = diff
+    ? {
+        added: diff.added.count,
+        changed: diff.changed.count,
+        removed: diff.removed.count,
+      }
+    : { added: 0, changed: 0, removed: 0 };
+
+  // Rows only on the rows tab (one paged read = count + select).
+  const rowsPage =
+    selectedVersionId && params.tab === "rows"
+      ? await getRateCardVersionRows(selectedVersionId, {
+          page: params.page,
+          filter: params.q,
+        })
+      : null;
+
+  // A checksum match against an earlier version of the same card — the only
+  // warning (never blocking, ui-context §10.4). Computed in memory.
+  const checksumDuplicate =
+    selectedVersion !== null &&
+    selectedVersion.fileChecksum !== null &&
+    versions.some(
+      (v) =>
+        v.ratecardVersionId !== selectedVersion.ratecardVersionId &&
+        v.cardName === selectedVersion.cardName &&
+        v.fileChecksum === selectedVersion.fileChecksum,
+    );
+
+  const distinctCardNames = Array.from(
+    new Set(versions.map((v) => v.cardName)),
+  );
 
   return (
     <main className="space-y-5 p-5">
-      <header>
-        <h1 className="text-h1 font-semibold text-foreground">Rate Card</h1>
-        <p className="mt-1 text-body text-muted-foreground">
-          Every rate-card version the system has. Select a version to preview
-          its rows.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-h1 font-semibold text-foreground">Rate Card</h1>
+          <p className="mt-1 text-body text-muted-foreground">
+            Every rate-card version the system has. Select a version to preview
+            its rows, review the diff, and activate it.
+          </p>
+        </div>
+        {/* "Upload new version" — record-creation, so `--action-primary-bg`,
+            NOT the page CTA (the CTA is Activate, D6/C10). EDIT only (D11). */}
+        {canEdit && (
+          <UploadVersionDialog
+            cardNames={distinctCardNames}
+            trigger={
+              <button
+                type="button"
+                aria-label="Upload new version"
+                className={UPLOAD_BUTTON_CLASS}
+              >
+                <Upload size={16} aria-hidden />
+                Upload new version
+              </button>
+            }
+          />
+        )}
       </header>
 
       <RateCardVersionTable
@@ -100,18 +184,136 @@ export default async function RateCardPage({
         timezone={timezone}
       />
 
-      {/* `key` resets any preview subtree state per selected version, matching
-          the View Product / Manage Products region precedent. */}
-      {rowsPage && selectedVersionId ? (
-        <RateCardRowPreview
-          key={selectedVersionId}
-          versionId={selectedVersionId}
-          rows={rowsPage.rows}
-          total={rowsPage.total}
-          page={rowsPage.page}
-          pageSize={rowsPage.pageSize}
-          query={params.q}
-        />
+      {selectedVersion ? (
+        <section className="space-y-4">
+          {/* Selected-version header — metadata strip + the DRAFT/SUPERSEDED
+              action (in the selected version's header, never on every row —
+              §4.10). ACTIVE shows no mutating action at all (D11). */}
+          <div className="flex flex-wrap items-end justify-between gap-4 rounded-md bg-[color:var(--surface-sunken)] p-4">
+            <dl className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+              <MetaItem label="Version">
+                <span className="font-mono text-mono">
+                  {selectedVersion.ratecardVersionId}
+                </span>
+              </MetaItem>
+              <MetaItem label="Card">
+                <span className="font-mono text-mono">
+                  {selectedVersion.cardName}
+                </span>
+              </MetaItem>
+              <MetaItem label="Status">
+                <RateCardStatusBadge status={selectedVersion.status} />
+              </MetaItem>
+              <MetaItem label="Snapshot date">
+                <span className="tabular-nums">
+                  {formatCalendarDate(selectedVersion.snapshotDate, "iso")}
+                </span>
+              </MetaItem>
+              <MetaItem label="Rows">
+                <span className="tabular-nums">{selectedVersion.rowCount}</span>
+              </MetaItem>
+              <MetaItem label="Checksum">
+                <span className="font-mono text-mono">
+                  {truncateChecksum(selectedVersion.fileChecksum)}
+                </span>
+              </MetaItem>
+            </dl>
+
+            {canEdit && selectedVersion.status === "DRAFT" && (
+              <ActivateVersionDialog
+                versionId={selectedVersion.ratecardVersionId}
+                versionNum={selectedVersion.versionNum}
+                supersededVersionId={currentActive?.ratecardVersionId ?? null}
+                counts={diffCounts}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label="Activate version"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--action-cta-bg)] px-3 py-2 text-body-sm font-semibold text-white"
+                  >
+                    <CheckCircle size={16} aria-hidden />
+                    Activate version
+                  </button>
+                }
+              />
+            )}
+            {canEdit && selectedVersion.status === "SUPERSEDED" && (
+              <RollbackVersionDialog
+                versionId={selectedVersion.ratecardVersionId}
+                versionNum={selectedVersion.versionNum}
+                demotedVersionId={currentActive?.ratecardVersionId ?? null}
+                counts={diffCounts}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label="Roll back to this version"
+                    className={VERSION_ACTION_CLASS}
+                  >
+                    <History size={16} aria-hidden />
+                    Roll back to this version
+                  </button>
+                }
+              />
+            )}
+          </div>
+
+          {/* Tabs — three views of one version (ui-context §10.5). URL-driven
+              `<Link>`s; the diff's two reads only fire on `?tab=diff` (§3.23),
+              which is the whole reason `tab` is a param (C3). */}
+          <div className="flex items-center gap-1 border-b border-border">
+            {TABS.map((t) => {
+              const active = params.tab === t.key;
+              return (
+                <Link
+                  key={t.key}
+                  href={buildRateCardHref({
+                    version: selectedVersionId,
+                    tab: t.key,
+                  })}
+                  aria-current={active ? "page" : undefined}
+                  className={
+                    active
+                      ? "border-b-2 border-[color:var(--color-primary-500)] px-3 py-2 text-body-sm font-semibold text-[color:var(--text-link)]"
+                      : "border-b-2 border-transparent px-3 py-2 text-body-sm font-medium text-muted-foreground hover:text-foreground"
+                  }
+                >
+                  {t.label}
+                </Link>
+              );
+            })}
+          </div>
+
+          {params.tab === "diff" && diff ? (
+            <RateCardDiffPanel
+              diff={diff}
+              currentActiveVersionId={currentActive?.ratecardVersionId ?? null}
+            />
+          ) : params.tab === "validation" ? (
+            <div className="space-y-3">
+              {checksumDuplicate && (
+                <p className="rounded-md bg-[color:var(--bg-info)] p-3 text-body-sm text-[color:var(--text-info)]">
+                  This file&apos;s checksum matches an earlier version of the
+                  card — a possible duplicate upload. This is a warning only and
+                  never blocks activation.
+                </p>
+              )}
+              <p className="rounded-md bg-[color:var(--surface-sunken)] p-6 text-center text-body text-muted-foreground">
+                This version passed structural validation — a version only
+                exists because its upload was accepted.
+              </p>
+            </div>
+          ) : rowsPage ? (
+            <RateCardRowPreview
+              key={selectedVersionId}
+              versionId={selectedVersion.ratecardVersionId}
+              rows={rowsPage.rows}
+              total={rowsPage.total}
+              page={rowsPage.page}
+              pageSize={rowsPage.pageSize}
+              query={params.q}
+            />
+          ) : null}
+        </section>
       ) : (
         <div className="rounded-md bg-[color:var(--surface-sunken)] p-8 text-center text-body text-muted-foreground">
           {versionNotFound
@@ -120,5 +322,22 @@ export default async function RateCardPage({
         </div>
       )}
     </main>
+  );
+}
+
+function MetaItem({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1">
+      <dt className="text-overline tracking-wider text-muted-foreground uppercase">
+        {label}
+      </dt>
+      <dd className="text-body font-medium text-foreground">{children}</dd>
+    </div>
   );
 }

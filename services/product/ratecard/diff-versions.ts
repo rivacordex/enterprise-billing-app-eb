@@ -70,36 +70,27 @@ import { rateCardRowKey } from "@/validation/product/ratecard.schema";
 // window, no `polygon_start_date <= event_time` logic, no effectivity
 // (§1.35). Framework-agnostic: no `next/*` import (§7.2).
 
-export interface RateCardDiffKey {
-  readonly mnoPublicKey: string;
-  readonly commercialUnitPublicKey: string;
-  readonly polygonId: string;
-}
+// The diff VIEW types are defined once in `@/types/product` (re-homed there at
+// pm66 so the diff PANEL — a component — can type its props without a
+// `components → services` import, forbidden by the boundaries rule). Imported
+// and re-exported here so every existing importer of these names from this
+// module keeps working and there is exactly one definition.
+import type {
+  RateCardDiffAddedEntry,
+  RateCardDiffChangedEntry,
+  RateCardDiffKey,
+  RateCardDiffRemovedEntry,
+  RateCardVersionDiff,
+} from "@/types/product";
 
-export interface RateCardDiffAddedEntry extends RateCardDiffKey {
-  readonly incoming: RatecardRanUsageLkp;
-}
-
-export interface RateCardDiffChangedEntry extends RateCardDiffKey {
-  readonly outgoing: RatecardRanUsageLkp;
-  readonly incoming: RatecardRanUsageLkp;
-}
-
-export interface RateCardDiffRemovedEntry extends RateCardDiffKey {
-  readonly outgoing: RatecardRanUsageLkp;
-}
-
-export interface RateCardDiffBucket<T> {
-  readonly count: number;
-  readonly rows: readonly T[];
-}
-
-// D1 — the three named buckets, in the contract's rendering order.
-export interface RateCardVersionDiff {
-  readonly added: RateCardDiffBucket<RateCardDiffAddedEntry>;
-  readonly changed: RateCardDiffBucket<RateCardDiffChangedEntry>;
-  readonly removed: RateCardDiffBucket<RateCardDiffRemovedEntry>;
-}
+export type {
+  RateCardDiffAddedEntry,
+  RateCardDiffBucket,
+  RateCardDiffChangedEntry,
+  RateCardDiffKey,
+  RateCardDiffRemovedEntry,
+  RateCardVersionDiff,
+} from "@/types/product";
 
 // The non-key payload comparison (§6.29's broader reading — see the file
 // banner above). `polygon_start_date` is out of the ROW KEY (D-A9) but is

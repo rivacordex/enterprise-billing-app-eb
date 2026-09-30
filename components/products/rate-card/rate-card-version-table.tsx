@@ -6,7 +6,7 @@ import { RATE_CARD_STATUS_BADGE_VARIANTS } from "@/components/products/rate-card
 import { buildRateCardHref } from "@/components/products/rate-card/rate-card-href";
 import { formatCalendarDate, formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
-import type { RatecardVersion } from "@/db/schema/product";
+import type { RatecardVersion } from "@/types/product";
 
 // pm65-spec D9 / I2 / ui-context §10.5 — the version list. SERVER component
 // (§3.6): rows are `<Link>`s that rewrite `?version=` (§3.4 — no client
