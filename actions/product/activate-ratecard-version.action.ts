@@ -29,6 +29,7 @@ export type ActivateRatecardVersionActionResult =
   | { ok: false; code: "VALIDATION_ERROR" }
   | { ok: false; code: "VERSION_NOT_FOUND" }
   | { ok: false; code: "NOT_DRAFT"; status: RateCardVersionStatus }
+  | { ok: false; code: "CONCURRENT_ACTIVATION_CONFLICT" }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 

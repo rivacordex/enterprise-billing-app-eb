@@ -294,8 +294,9 @@ describe.skipIf(!databaseUrl)(
     // contend on `findActiveForUpdate`'s lock of the card's current ACTIVE.
     // Whoever wins commits; the loser either demotes the by-then-new ACTIVE
     // correctly or is refused by the partial unique index — either way exactly
-    // one ACTIVE remains. `allSettled` because the index rejection surfaces as
-    // a thrown transaction, which is the backstop working (D5), not a bug.
+    // one ACTIVE remains. The loser's index refusal is now a TYPED
+    // CONCURRENT_ACTIVATION_CONFLICT, not a raw throw: neither call rejects and
+    // the loser (if any) carries exactly that code.
     it("a concurrent activate/rollback pair serializes and never leaves two ACTIVE versions (looped 4x)", async () => {
       for (let i = 0; i < 4; i++) {
         const cardName = `CARD_RACE_${i}`;
@@ -305,10 +306,27 @@ describe.skipIf(!databaseUrl)(
         const activeId = await makeVersion(cardName, "ACTIVE", 2, [row("P-2")]);
         const draftId = await makeVersion(cardName, "DRAFT", 3, [row("P-3")]);
 
-        await Promise.allSettled([
+        // `allSettled` so the invariant checks below ALWAYS run — even if a
+        // regression made a service throw a raw error, we still assert the
+        // "never two ACTIVE" invariant rather than aborting at the await.
+        const settled = await Promise.allSettled([
           activateRatecardVersion(draftId, actorId),
           rollbackRatecardVersion(supersededId, actorId),
         ]);
+        // The index conflict is mapped to a TYPED refusal, so neither call
+        // rejects — a raw throw here is itself a regression.
+        expect(settled.filter((s) => s.status === "rejected")).toEqual([]);
+        for (const s of settled) {
+          if (s.status === "fulfilled" && !s.value.ok) {
+            // In THIS exact pairing only the index conflict is reachable:
+            // nothing but the activate op ever writes draftId and nothing but
+            // the rollback op ever writes supersededId, so neither NOT_DRAFT
+            // nor NOT_SUPERSEDED can occur — the loser is always the typed
+            // CONCURRENT_ACTIVATION_CONFLICT. A spurious NOT_DRAFT/NOT_SUPERSEDED
+            // would be a real regression this exact-match assertion catches.
+            expect(s.value.code).toBe("CONCURRENT_ACTIVATION_CONFLICT");
+          }
+        }
 
         const versions = await db
           .select()

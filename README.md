@@ -856,7 +856,7 @@ fi
   Accepted, not fixed. The advisory (esbuild's dev server accepts cross-origin
   requests and returns responses) requires visiting a malicious site while a
   drizzle-kit dev server is running; this repo only ever runs `drizzle-kit`
-  one-shot (`db:generate`/`db:migrate`), never as a long-lived dev server, so the
+  one-shot (`db:generate`/`db:introspect`), never as a long-lived dev server, so the
   exploit path doesn't apply. `npm audit fix --force` is **banned** in this repo
   for this advisory — it would downgrade `drizzle-kit` to `0.18.1` (breaking),
   and even the latest `drizzle-kit@0.31.11` still depends on the same legacy

@@ -87,8 +87,22 @@ const TRANSITION_SERVICE_FILES = [
   DELETE_OP.service,
 ].sort();
 
+// Only the TOP-LEVEL offering-lifecycle service files. `services/product/`
+// now also holds the `ratecard/` subdirectory (pm59+); returning bare
+// `readdirSync` entries would hand a directory name to `readCode`, which
+// `fs.readFileSync`-es it and throws EISDIR. The rate-card version lifecycle is
+// a SEPARATE state machine (it writes `ratecard_version.status`, never
+// `lifecycle_status`), so it is deliberately out of this guardrail's scope —
+// filtering to top-level `.ts` files excludes it without recursing (recursing
+// would surface the rate-card services' `setVersionStatus` calls, which match
+// the §1.15 setter scan below and are legitimate for that distinct lifecycle).
 function readServiceDir(): string[] {
-  return fs.readdirSync(path.join(REPO_ROOT, "services", "product"));
+  return fs
+    .readdirSync(path.join(REPO_ROOT, "services", "product"), {
+      withFileTypes: true,
+    })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+    .map((entry) => entry.name);
 }
 
 function readActionDir(): string[] {
@@ -208,8 +222,17 @@ describe("guardrail 23 — lifecycle transition set (pm45 I1)", () => {
       path.join(REPO_ROOT, "services", "product"),
       path.join(REPO_ROOT, "actions", "product"),
     ];
+    // Files only — exclude the `ratecard/` subdirectory (otherwise `readCode`
+    // reads a directory and throws EISDIR). NOT recursed into on purpose: the
+    // rate-card services legitimately call the repository's `setVersionStatus`
+    // (a narrow writer for the SEPARATE ratecard_version lifecycle), which
+    // matches the SETTER regex — this guardrail governs only the offering
+    // `lifecycle_status` write stack.
     const files = scanDirs.flatMap((dir) =>
-      fs.readdirSync(dir).map((name) => path.join(dir, name)),
+      fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.join(dir, entry.name)),
     );
     files.push(
       path.join(REPO_ROOT, "db", "repositories", "product-offering.ts"),

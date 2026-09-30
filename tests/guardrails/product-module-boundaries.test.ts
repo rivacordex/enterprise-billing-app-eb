@@ -864,41 +864,38 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       "INSERT INTO CORE.PERMISSIONS",
     );
 
-    // The rewrite is in place: 0041 carries the two TABLES. This assertion
-    // originally read "0041 is the ONLY rate-card migration" — true only
-    // through pm60; it went stale the moment pm61 legitimately resolved
-    // G-RC3 with its own follow-up migration (the PERMISSIONS seed row must
-    // ship in its own file per the pm57a I6 split recorded just above, since
-    // G-RC3 was still open when 0041 was authored). Names each KNOWN later
-    // migration mentioning "ratecard" rather than asserting none exists:
-    //   - 0043_ratecard_permission.sql — EXPECTED (pm61, G-RC3's `ratecard`
-    //     PERMISSIONS row, landed in its own migration as I6 always intended).
-    // 0042_cold_paibok.sql — the PRE-EXISTING defect flagged since the pm61
-    // session — was REMOVED in pm64 (2026-09-30): it was a spurious, never-
-    // applied `drizzle-kit generate` output (commit 7e6bc26) that re-issued the
-    // ratecard sequence/tables/indexes 0041 already owns (in the stale v1
-    // shape) plus the whole 0027-0041 schema, and it broke migrate-from-empty.
-    // Nothing in it was net-new, so deleting the file + its journal entry +
-    // snapshot lost nothing and unblocked every rate-card integration suite.
-    // Named here as removed so a genuinely new/unauthorized rate-card migration
-    // still fails this test rather than silently passing.
-    const EXPECTED_LATER_RATECARD_MIGRATIONS = new Set([
-      "0043_ratecard_permission.sql",
-    ]);
-    const laterRateCardMigrations = fs
+    // 0041 owns the entire rate-card SCHEMA (both tables, sequence, indexes,
+    // constraints). NO later migration may re-define any of it. The predicate
+    // is narrowed to SCHEMA-DEFINING statements (a CREATE that names a ratecard
+    // object), so the legitimate permission-only follow-up
+    // (0043_ratecard_permission.sql — it only INSERTs a PERMISSIONS row, G-RC3,
+    // pm61) is correctly ignored and the expectation is EMPTY: any later
+    // migration that CREATEs a ratecard table/sequence/index is a duplicate and
+    // fails here. (0042_cold_paibok.sql — the spurious, never-applied
+    // `drizzle-kit generate` output from commit 7e6bc26 that re-issued the
+    // ratecard schema 0041 already owns and broke migrate-from-empty — was
+    // deleted in pm64 (2026-09-30); this narrow check is what would catch its
+    // re-introduction.)
+    const laterRateCardSchemaMigrations = fs
       .readdirSync(path.join(REPO_ROOT, "db", "migrations"))
       .filter((name) => /\.sql$/.test(name))
       .filter((name) => {
         const num = Number.parseInt(name.slice(0, 4), 10);
         if (Number.isNaN(num) || num <= 41) return false;
-        const body = fs
-          .readFileSync(path.join(REPO_ROOT, "db", "migrations", name), "utf8")
-          .toLowerCase();
-        return body.includes("ratecard");
+        const body = fs.readFileSync(
+          path.join(REPO_ROOT, "db", "migrations", name),
+          "utf8",
+        );
+        // A CREATE statement (table/sequence/index) that names a ratecard
+        // object — schema re-definition, not a permission-row INSERT. Split on
+        // STATEMENT boundaries (not lines) so a CREATE whose object name wraps
+        // onto a later line of the same statement is still caught — a per-line
+        // AND would miss `CREATE TABLE\n  "product"."ratecard_version" (`.
+        return body
+          .split(/-->\s*statement-breakpoint|;/)
+          .some((stmt) => /\bcreate\b/i.test(stmt) && /ratecard/i.test(stmt));
       });
-    expect(laterRateCardMigrations.sort()).toEqual(
-      [...EXPECTED_LATER_RATECARD_MIGRATIONS].sort(),
-    );
+    expect(laterRateCardSchemaMigrations).toEqual([]);
 
     // The journal carries a 0041 entry sorting after 0040's.
     const journal = JSON.parse(

@@ -119,6 +119,21 @@ describe("activateRatecardVersionAction", () => {
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
+  it("passes the service's CONCURRENT_ACTIVATION_CONFLICT refusal through unchanged and never revalidates", async () => {
+    mockActivateRatecardVersion.mockResolvedValue({
+      ok: false,
+      code: "CONCURRENT_ACTIVATION_CONFLICT",
+    });
+
+    const result = await activateRatecardVersionAction("RCV00000002");
+
+    expect(result).toEqual({
+      ok: false,
+      code: "CONCURRENT_ACTIVATION_CONFLICT",
+    });
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+
   it("returns SERVER_ERROR when the service call throws", async () => {
     mockActivateRatecardVersion.mockRejectedValue(
       new Error("connection reset"),
