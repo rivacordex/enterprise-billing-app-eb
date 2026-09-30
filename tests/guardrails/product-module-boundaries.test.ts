@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { AUDIT_EVENT_TYPES } from "@/types/audit";
+
 // pm09-spec §3.3 — the module's ship-gate guardrail sweep. Turns the v1
 // negative-space invariants (no mutation surface, no new audited path,
 // no forbidden route/action shape) into permanent, executable CI facts
@@ -58,6 +60,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "upload-ratecard-version.action.ts": "uploadRatecardVersionAction",
     // pm63 — second of three; pm64's rollback is the third.
     "activate-ratecard-version.action.ts": "activateRatecardVersionAction",
+    // pm64 — third and last of three (code-standards §3.21); the list is now
+    // closed at three rate-card action files.
+    "rollback-ratecard-version.action.ts": "rollbackRatecardVersionAction",
   };
 
   it("actions/product/ exists and exports exactly this phase's action set", () => {
@@ -77,6 +82,40 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       ].map((match) => match[1]);
       expect(exportedFunctionNames).toEqual([exportName]);
     }
+  });
+
+  // pm64-spec I4.12 — the closing totals, asserted as TOTALS (not three
+  // separate +1s), so an accidental FOURTH rate-card action file or audit type
+  // is caught against a stated whole rather than slipping past three
+  // independent increments. The three rate-card mutations — upload (pm61),
+  // activate (pm63), rollback (pm64) — are now all built, counted and closed:
+  // PRODUCT_ACTION_FILES moved by EXACTLY THREE since the Manage rebuild
+  // (14 → 17), and AUDIT_EVENT_TYPES gained EXACTLY THREE `RATECARD_*` types.
+  it("the three rate-card mutations closed the action-file list and audit-type set at exactly three (pm64 I4.12)", () => {
+    const rateCardActionFiles = Object.keys(PRODUCT_ACTION_FILES).filter(
+      (name) => /-ratecard-version\.action\.ts$/.test(name),
+    );
+    expect(rateCardActionFiles.sort()).toEqual(
+      [
+        "upload-ratecard-version.action.ts",
+        "activate-ratecard-version.action.ts",
+        "rollback-ratecard-version.action.ts",
+      ].sort(),
+    );
+    // The Manage rebuild left this list at 14 (code-standards §3.21); the rate
+    // card added exactly three, and no more.
+    expect(Object.keys(PRODUCT_ACTION_FILES)).toHaveLength(17);
+
+    const rateCardAuditTypes = AUDIT_EVENT_TYPES.filter((t) =>
+      t.startsWith("RATECARD_"),
+    );
+    expect([...rateCardAuditTypes].sort()).toEqual(
+      [
+        "RATECARD_VERSION_UPLOADED",
+        "RATECARD_VERSION_ACTIVATED",
+        "RATECARD_VERSION_ROLLED_BACK",
+      ].sort(),
+    );
   });
 
   // pm41 I5/I6. The two modal editors are retired — their content moved into
@@ -180,6 +219,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     // like the catalog ones above.
     "upload-version.ts",
     "activate-version.ts",
+    // rollback-version.ts (pm64) — the same shape: one audit event in the same
+    // transaction as the two status flips, reads nothing.
+    "rollback-version.ts",
   ]);
 
   it("no product read path imports the audit-log write path", () => {
@@ -822,27 +864,38 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       "INSERT INTO CORE.PERMISSIONS",
     );
 
-    // The rewrite is in place: 0041 is the ONLY migration that touches the
-    // rate-card SCHEMA — there is no 0042 (nor any later migration that
-    // creates, alters or drops either rate-card table). This is narrower than
-    // "mentions ratecard": 0043 (pm61, G-RC3) seeds the `ratecard` PERMISSIONS
-    // row that pm57a explicitly deferred (see the "follow-up migration" note
-    // above) and legitimately contains the word in an unrelated table's data.
-    const laterRateCardMigrations = fs
+    // 0041 owns the entire rate-card SCHEMA (both tables, sequence, indexes,
+    // constraints). NO later migration may re-define any of it. The predicate
+    // is narrowed to SCHEMA-DEFINING statements (a CREATE that names a ratecard
+    // object), so the legitimate permission-only follow-up
+    // (0043_ratecard_permission.sql — it only INSERTs a PERMISSIONS row, G-RC3,
+    // pm61) is correctly ignored and the expectation is EMPTY: any later
+    // migration that CREATEs a ratecard table/sequence/index is a duplicate and
+    // fails here. (0042_cold_paibok.sql — the spurious, never-applied
+    // `drizzle-kit generate` output from commit 7e6bc26 that re-issued the
+    // ratecard schema 0041 already owns and broke migrate-from-empty — was
+    // deleted in pm64 (2026-09-30); this narrow check is what would catch its
+    // re-introduction.)
+    const laterRateCardSchemaMigrations = fs
       .readdirSync(path.join(REPO_ROOT, "db", "migrations"))
       .filter((name) => /\.sql$/.test(name))
       .filter((name) => {
         const num = Number.parseInt(name.slice(0, 4), 10);
         if (Number.isNaN(num) || num <= 41) return false;
-        const body = fs
-          .readFileSync(path.join(REPO_ROOT, "db", "migrations", name), "utf8")
-          .toLowerCase();
-        return (
-          body.includes("product.ratecard_version") ||
-          body.includes("product.ratecard_ran_usage_lkp")
+        const body = fs.readFileSync(
+          path.join(REPO_ROOT, "db", "migrations", name),
+          "utf8",
         );
+        // A CREATE statement (table/sequence/index) that names a ratecard
+        // object — schema re-definition, not a permission-row INSERT. Split on
+        // STATEMENT boundaries (not lines) so a CREATE whose object name wraps
+        // onto a later line of the same statement is still caught — a per-line
+        // AND would miss `CREATE TABLE\n  "product"."ratecard_version" (`.
+        return body
+          .split(/-->\s*statement-breakpoint|;/)
+          .some((stmt) => /\bcreate\b/i.test(stmt) && /ratecard/i.test(stmt));
       });
-    expect(laterRateCardMigrations).toEqual([]);
+    expect(laterRateCardSchemaMigrations).toEqual([]);
 
     // The journal carries a 0041 entry sorting after 0040's.
     const journal = JSON.parse(

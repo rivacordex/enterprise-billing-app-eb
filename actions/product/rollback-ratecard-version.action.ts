@@ -6,36 +6,37 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
 import {
-  activateRatecardVersion,
-  type RatecardActivationDiffCounts,
-} from "@/services/product/ratecard/activate-version";
+  rollbackRatecardVersion,
+  type RatecardRollbackDiffCounts,
+} from "@/services/product/ratecard/rollback-version";
 import type { RateCardVersionStatus } from "@/types/product";
 import { ratecardVersionIdSchema } from "@/validation/product/ratecard.schema";
 
-// pm63-spec I2 — `ratecard : EDIT` (the same level as upload, RC7, §8) →
-// isRedirectError catch → safeParse the version id against its RCV format
+// pm64-spec I2 — `ratecard : EDIT` (the same level as upload and activate, RC7,
+// §8) → isRedirectError catch → safeParse the version id against its RCV format
 // schema → one service call → revalidatePath('/products/rate-card') → typed
-// result (§3.7, §3.22). Deliberately the module's ORDINARY action shape
-// (unlike upload's file-handling exception, §3.19) — the input here is a
-// single string, not a file.
+// result (§3.7, §3.22). The module's ORDINARY action shape, identical to
+// activate's (unlike upload's file-handling exception, §3.19) — the input here
+// is a single string, not a file. Third and last of the three rate-card action
+// files (§3.21).
 
-export type ActivateRatecardVersionActionResult =
+export type RollbackRatecardVersionActionResult =
   | {
       ok: true;
       versionId: string;
       supersededVersionId: string | null;
-      diff: RatecardActivationDiffCounts;
+      diff: RatecardRollbackDiffCounts;
     }
   | { ok: false; code: "VALIDATION_ERROR" }
   | { ok: false; code: "VERSION_NOT_FOUND" }
-  | { ok: false; code: "NOT_DRAFT"; status: RateCardVersionStatus }
+  | { ok: false; code: "NOT_SUPERSEDED"; status: RateCardVersionStatus }
   | { ok: false; code: "CONCURRENT_ACTIVATION_CONFLICT" }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };
 
-export async function activateRatecardVersionAction(
+export async function rollbackRatecardVersionAction(
   rawVersionId: unknown,
-): Promise<ActivateRatecardVersionActionResult> {
+): Promise<RollbackRatecardVersionActionResult> {
   let actorId: string;
   try {
     ({ userId: actorId } = await requirePermission(
@@ -56,7 +57,7 @@ export async function activateRatecardVersionAction(
 
   let result;
   try {
-    result = await activateRatecardVersion(parsed.data, actorId);
+    result = await rollbackRatecardVersion(parsed.data, actorId);
   } catch {
     return { ok: false, code: "SERVER_ERROR" };
   }
@@ -65,9 +66,8 @@ export async function activateRatecardVersionAction(
     return result;
   }
 
-  // D9 (pm61 precedent) — the route doesn't exist yet (pm65), but
-  // revalidating it now is harmless and means pm65 adds a page rather than a
-  // missing call. §3.22 — this and nothing else.
+  // §3.22 — the card page and nothing else (pm65 builds the route; revalidating
+  // it now is harmless, matching pm61/pm63's precedent).
   revalidatePath("/products/rate-card");
 
   return result;

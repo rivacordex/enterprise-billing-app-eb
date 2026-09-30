@@ -127,6 +127,12 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // this delivery deliberately writes only one event for both movements,
   // pm63-spec D5).
   RATECARD_VERSION_ACTIVATED: "Change",
+  // pm64 — a status transition (promote a SUPERSEDED version back to ACTIVE,
+  // demote the current one) bundled into ONE event, exactly like
+  // RATECARD_VERSION_ACTIVATED above and for the same reason (pm64-spec D7):
+  // one event for both movements, so it reads as a bundled status transition,
+  // not as a new entity or a removal.
+  RATECARD_VERSION_ROLLED_BACK: "Change",
 };
 
 // Event types removed from AUDIT_EVENT_TYPES (no longer written, no longer a

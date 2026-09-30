@@ -87,15 +87,21 @@ const TRANSITION_SERVICE_FILES = [
   DELETE_OP.service,
 ].sort();
 
+// Only the TOP-LEVEL offering-lifecycle service files. `services/product/`
+// now also holds the `ratecard/` subdirectory (pm59+); returning bare
+// `readdirSync` entries would hand a directory name to `readCode`, which
+// `fs.readFileSync`-es it and throws EISDIR. The rate-card version lifecycle is
+// a SEPARATE state machine (it writes `ratecard_version.status`, never
+// `lifecycle_status`), so it is deliberately out of this guardrail's scope —
+// filtering to top-level `.ts` files excludes it without recursing (recursing
+// would surface the rate-card services' `setVersionStatus` calls, which match
+// the §1.15 setter scan below and are legitimate for that distinct lifecycle).
 function readServiceDir(): string[] {
-  // Files only — `services/product/ratecard/` (pm59 onward) is a
-  // subdirectory, not a lifecycle-transition service, and readFileSync on a
-  // directory throws EISDIR.
   return fs
     .readdirSync(path.join(REPO_ROOT, "services", "product"), {
       withFileTypes: true,
     })
-    .filter((entry) => entry.isFile())
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
     .map((entry) => entry.name);
 }
 
@@ -108,19 +114,6 @@ function readActionDir(): string[] {
 
 function readCode(absPath: string): string {
   return stripComments(fs.readFileSync(absPath, "utf8"));
-}
-
-function collectFilesRecursive(dir: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectFilesRecursive(entryPath));
-    } else if (entry.isFile()) {
-      files.push(entryPath);
-    }
-  }
-  return files;
 }
 
 describe("guardrail 23 — lifecycle transition set (pm45 I1)", () => {
@@ -229,9 +222,18 @@ describe("guardrail 23 — lifecycle transition set (pm45 I1)", () => {
       path.join(REPO_ROOT, "services", "product"),
       path.join(REPO_ROOT, "actions", "product"),
     ];
-    // Recursive: `services/product/ratecard/` (pm59 onward) is a
-    // subdirectory, and the write-stack scan must cover it too, not skip it.
-    const files = scanDirs.flatMap(collectFilesRecursive);
+    // Files only — exclude the `ratecard/` subdirectory (otherwise `readCode`
+    // reads a directory and throws EISDIR). NOT recursed into on purpose: the
+    // rate-card services legitimately call the repository's `setVersionStatus`
+    // (a narrow writer for the SEPARATE ratecard_version lifecycle), which
+    // matches the SETTER regex — this guardrail governs only the offering
+    // `lifecycle_status` write stack.
+    const files = scanDirs.flatMap((dir) =>
+      fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.join(dir, entry.name)),
+    );
     files.push(
       path.join(REPO_ROOT, "db", "repositories", "product-offering.ts"),
     );

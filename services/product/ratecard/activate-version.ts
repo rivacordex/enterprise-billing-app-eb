@@ -1,6 +1,7 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { ratecardRepository } from "@/db/repositories/ratecard";
+import { isUniqueViolation } from "@/lib/db-errors";
 import { diffAgainstActive } from "@/services/product/ratecard/diff-versions";
 import type { RateCardVersionStatus } from "@/types/product";
 
@@ -55,83 +56,116 @@ export type ActivateRatecardVersionResult =
       diff: RatecardActivationDiffCounts;
     }
   | { ok: false; code: "VERSION_NOT_FOUND" }
-  | { ok: false; code: "NOT_DRAFT"; status: RateCardVersionStatus };
+  | { ok: false; code: "NOT_DRAFT"; status: RateCardVersionStatus }
+  // D3 — a concurrent activation/rollback that commits a different ACTIVE
+  // first makes this promote hit the partial unique index (Inv. #45); surface
+  // that as a typed refusal rather than a raw throw, matching pm61's upload
+  // and the rollback service.
+  | { ok: false; code: "CONCURRENT_ACTIVATION_CONFLICT" };
 
 export async function activateRatecardVersion(
   versionId: string,
   actorId: string,
 ): Promise<ActivateRatecardVersionResult> {
-  return db.transaction(async (tx) => {
-    // D1 step 1a — lock the target DRAFT and re-read its status on `tx`,
-    // immediately before the decision (§1.13). Locked before the outgoing
-    // ACTIVE lookup below, both because its `card_name` is needed to make
-    // that lookup, and so a concurrent replace-draft delete (pm61 D12)
-    // cannot interleave with this activation.
-    const draft = await ratecardRepository.findVersionForUpdate(tx, versionId);
-    if (!draft) {
-      return { ok: false, code: "VERSION_NOT_FOUND" };
-    }
-    if (draft.status !== "DRAFT") {
-      return { ok: false, code: "NOT_DRAFT", status: draft.status };
-    }
-
-    // D1 step 1b — lock the card's current ACTIVE version, if any, via pm60's
-    // own locked finder. `null` here is the ordinary "first-ever activation
-    // for this card" case (pm62 D6), not an error.
-    const outgoing = await ratecardRepository.findActiveForUpdate(
-      tx,
-      draft.cardName,
-    );
-
-    // D5 — the diff's counts, computed INSIDE this transaction against the
-    // LOCKED outgoing version (reusing pm62's two-query diff on this same
-    // `tx`), never from a count a client supplied.
-    const diff = await diffAgainstActive(tx, draft.cardName, versionId);
-    const diffCounts: RatecardActivationDiffCounts = {
-      added: diff.added.count,
-      changed: diff.changed.count,
-      removed: diff.removed.count,
-    };
-
-    // D2 step 2 — promote / demote. Status + provenance columns only; no
-    // lookup row is inserted, updated or deleted anywhere in this function
-    // (D6/D-A7).
-    const activatedAt = new Date();
-    await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
-      activatedBy: actorId,
-      activatedAt,
-    });
-    if (outgoing) {
-      await ratecardRepository.setVersionStatus(
+  try {
+    return await db.transaction(async (tx) => {
+      // D1 step 1a — lock the target DRAFT and re-read its status on `tx`,
+      // immediately before the decision (§1.13). Locked before the outgoing
+      // ACTIVE lookup below, both because its `card_name` is needed to make
+      // that lookup, and so a concurrent replace-draft delete (pm61 D12)
+      // cannot interleave with this activation.
+      const draft = await ratecardRepository.findVersionForUpdate(
         tx,
-        outgoing.ratecardVersionId,
-        "SUPERSEDED",
-        { supersededByVersionId: versionId },
+        versionId,
       );
-    }
+      if (!draft) {
+        return { ok: false, code: "VERSION_NOT_FOUND" };
+      }
+      if (draft.status !== "DRAFT") {
+        return { ok: false, code: "NOT_DRAFT", status: draft.status };
+      }
 
-    // D2 step 3 / D5 — exactly one audit event, in the same transaction,
-    // carrying the superseded version id and the three diff counts. This
-    // payload is the durable record of what the activation moved.
-    await insertAuditEvent(tx, {
-      eventType: "RATECARD_VERSION_ACTIVATED",
-      actorUserId: actorId,
-      targetEntity: "RATECARD_VERSION",
-      targetId: versionId,
-      beforeData: outgoing
-        ? { supersededVersionId: outgoing.ratecardVersionId }
-        : null,
-      afterData: {
-        cardName: draft.cardName,
-        ...diffCounts,
-      },
+      // D1 step 1b — lock the card's current ACTIVE version, if any, via pm60's
+      // own locked finder. `null` here is the ordinary "first-ever activation
+      // for this card" case (pm62 D6), not an error.
+      const outgoing = await ratecardRepository.findActiveForUpdate(
+        tx,
+        draft.cardName,
+      );
+
+      // D5 — the diff's counts, computed INSIDE this transaction against the
+      // LOCKED outgoing version (reusing pm62's two-query diff on this same
+      // `tx`), never from a count a client supplied.
+      const diff = await diffAgainstActive(tx, draft.cardName, versionId);
+      const diffCounts: RatecardActivationDiffCounts = {
+        added: diff.added.count,
+        changed: diff.changed.count,
+        removed: diff.removed.count,
+      };
+
+      // D2 step 2 — demote the outgoing ACTIVE FIRST, then promote the target.
+      // Order matters: `ratecard_version_one_active_per_card` is a NON-deferrable
+      // partial unique index (Inv. #45), checked per-statement, so promoting the
+      // DRAFT while the outgoing is still ACTIVE would transiently leave two
+      // ACTIVE rows for one card and be rejected immediately (23505). Demoting
+      // first means there is never a moment with two ACTIVE — the same
+      // supersede-then-activate order pm16's `activateOffering` uses. Status +
+      // provenance columns only; no lookup row is inserted, updated or deleted
+      // anywhere in this function (D6/D-A7).
+      const activatedAt = new Date();
+      if (outgoing) {
+        await ratecardRepository.setVersionStatus(
+          tx,
+          outgoing.ratecardVersionId,
+          "SUPERSEDED",
+          { supersededByVersionId: versionId },
+        );
+      }
+      await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
+        activatedBy: actorId,
+        activatedAt,
+      });
+
+      // D2 step 3 / D5 — exactly one audit event, in the same transaction,
+      // carrying the superseded version id and the three diff counts. This
+      // payload is the durable record of what the activation moved.
+      await insertAuditEvent(tx, {
+        eventType: "RATECARD_VERSION_ACTIVATED",
+        actorUserId: actorId,
+        targetEntity: "RATECARD_VERSION",
+        targetId: versionId,
+        // Code-review fix — always shape beforeData as { supersededVersionId },
+        // with the value itself null on a first-ever activation, rather than
+        // making the whole object null. This matches the documented payload
+        // contract (progress tracker / pm63-spec D5: "beforeData: {
+        // supersededVersionId }") and keeps the key present for every
+        // RATECARD_VERSION_ACTIVATED event, so a future audit-detail reader
+        // never has to branch on beforeData itself being null vs. having no
+        // supersededVersionId.
+        beforeData: {
+          supersededVersionId: outgoing?.ratecardVersionId ?? null,
+        },
+        afterData: {
+          cardName: draft.cardName,
+          ...diffCounts,
+        },
+      });
+
+      return {
+        ok: true,
+        versionId,
+        supersededVersionId: outgoing?.ratecardVersionId ?? null,
+        diff: diffCounts,
+      };
     });
-
-    return {
-      ok: true,
-      versionId,
-      supersededVersionId: outgoing?.ratecardVersionId ?? null,
-      diff: diffCounts,
-    };
-  });
+  } catch (err) {
+    // D3 — map ONLY the one-ACTIVE-per-card unique violation (a concurrent
+    // activation/rollback committing a different ACTIVE first) to the typed
+    // refusal; any other error is genuine and rethrows. Caught AFTER the
+    // transaction, so it rolls back cleanly first.
+    if (isUniqueViolation(err, "ratecard_version_one_active_per_card")) {
+      return { ok: false, code: "CONCURRENT_ACTIVATION_CONFLICT" };
+    }
+    throw err;
+  }
 }

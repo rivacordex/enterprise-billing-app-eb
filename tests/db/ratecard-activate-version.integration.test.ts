@@ -243,17 +243,19 @@ describe.skipIf(!databaseUrl)(
         status: "ACTIVE",
       });
 
+      // A DIRECT SQL insert that bypasses the service entirely (raw client, not
+      // the repository) is refused by the partial unique index. postgres-js
+      // surfaces the constraint name in the error message; a drizzle insert
+      // instead wraps it in a generic "Failed query" message whose constraint
+      // sits on `.cause`, so the raw client is both the faithful "direct SQL"
+      // path (guardrail 39) and the one whose message this regex can match —
+      // matching pm57a's own index-arm assertion style.
       await expect(
-        db.transaction(async (tx) => {
-          await ratecardRepository.insertVersion(tx, {
-            cardName: "CARD_SECONDACTIVE",
-            versionNum: 2,
-            status: "ACTIVE",
-            snapshotDate: "2026-01-01",
-            sourceFile: "direct-sql.csv",
-            rowCount: 0,
-          });
-        }),
+        sql_`
+          INSERT INTO product.ratecard_version
+            (card_name, version_num, status, snapshot_date, source_file, row_count)
+          VALUES ('CARD_SECONDACTIVE', 2, 'ACTIVE', '2026-01-01', 'direct-sql.csv', 0)
+        `,
       ).rejects.toThrow(/ratecard_version_one_active_per_card/);
     });
 
@@ -264,9 +266,7 @@ describe.skipIf(!databaseUrl)(
     it("two concurrent activations for one card serialize on the lock and leave exactly one ACTIVE (looped 4x)", async () => {
       for (let i = 0; i < 4; i++) {
         const cardName = `CARD_RACE_${i}`;
-        const activeId = await makeVersion(cardName, "ACTIVE", 1, [
-          row("P-1"),
-        ]);
+        const activeId = await makeVersion(cardName, "ACTIVE", 1, [row("P-1")]);
         const draftId = await makeVersion(cardName, "DRAFT", 2, [row("P-1")]);
 
         const [r1, r2] = await Promise.all([
@@ -276,9 +276,7 @@ describe.skipIf(!databaseUrl)(
 
         const outcomes = [r1, r2];
         const succeeded = outcomes.filter((r) => r.ok);
-        const refused = outcomes.filter(
-          (r) => !r.ok && r.code === "NOT_DRAFT",
-        );
+        const refused = outcomes.filter((r) => !r.ok && r.code === "NOT_DRAFT");
         expect(succeeded.length).toBe(1);
         expect(refused.length).toBe(1);
 

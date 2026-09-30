@@ -349,15 +349,18 @@ describe.skipIf(!databaseUrl)(
       expect(offending).toEqual([]);
     });
 
-    // I5.7 — G-RC3 is open (this unit's I6 split): no `ratecard` permission
-    // row exists yet. This documents the deferral rather than asserting the
-    // spec's literal "adding ratecard changes no effective permission" —
-    // that assertion is owed by the follow-up migration that adds the row.
-    it("no 'ratecard' PERMISSIONS row exists yet (G-RC3 open; I6 split)", async () => {
+    // I5.7 — G-RC3 was resolved at pm61: the `ratecard` PERMISSIONS row now
+    // ships in its own follow-up migration (0043_ratecard_permission.sql), the
+    // I6 split this unit's authoring anticipated. This assertion was originally
+    // "no row exists yet" (G-RC3 open); it went stale the moment 0043 landed
+    // and is flipped here — found once migrate-from-empty could actually run
+    // 0043 (unblocked by pm64's removal of the broken 0042). READ/EDIT only —
+    // the module defines no `ratecard : DELETE`.
+    it("the 'ratecard' PERMISSIONS row exists, added by 0043 (G-RC3 resolved, pm61 I6 split)", async () => {
       const rows = await sql<{ permission_name: string }[]>`
         SELECT permission_name FROM core.permissions WHERE permission_name = 'ratecard'
       `;
-      expect(rows).toHaveLength(0);
+      expect(rows).toHaveLength(1);
     });
 
     // I5.8 / D9 — verify the grants empirically rather than assume them.

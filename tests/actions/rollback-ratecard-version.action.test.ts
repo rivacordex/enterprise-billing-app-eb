@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
-vi.mock("@/services/product/ratecard/activate-version", () => ({
-  activateRatecardVersion: vi.fn(),
+vi.mock("@/services/product/ratecard/rollback-version", () => ({
+  rollbackRatecardVersion: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -10,12 +10,12 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { revalidatePath } from "next/cache";
 
-import { activateRatecardVersionAction } from "@/actions/product/activate-ratecard-version.action";
-import * as activateVersionService from "@/services/product/ratecard/activate-version";
+import { rollbackRatecardVersionAction } from "@/actions/product/rollback-ratecard-version.action";
+import * as rollbackVersionService from "@/services/product/ratecard/rollback-version";
 
 const mockRequirePermission = vi.mocked(requirePermission);
-const mockActivateRatecardVersion = vi.mocked(
-  activateVersionService.activateRatecardVersion,
+const mockRollbackRatecardVersion = vi.mocked(
+  rollbackVersionService.rollbackRatecardVersion,
 );
 const mockRevalidatePath = vi.mocked(revalidatePath);
 
@@ -27,7 +27,7 @@ function redirectError(target: string): Error & { digest: string } {
 
 beforeEach(() => {
   mockRequirePermission.mockReset();
-  mockActivateRatecardVersion.mockReset();
+  mockRollbackRatecardVersion.mockReset();
   mockRevalidatePath.mockReset();
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
@@ -36,16 +36,16 @@ beforeEach(() => {
   });
 });
 
-describe("activateRatecardVersionAction", () => {
+describe("rollbackRatecardVersionAction", () => {
   it("requires ratecard:EDIT before anything else", async () => {
-    mockActivateRatecardVersion.mockResolvedValue({
+    mockRollbackRatecardVersion.mockResolvedValue({
       ok: true,
-      versionId: "RCV00000002",
-      supersededVersionId: "RCV00000001",
-      diff: { added: 1, changed: 0, removed: 0 },
+      versionId: "RCV00000001",
+      supersededVersionId: "RCV00000002",
+      diff: { added: 0, changed: 0, removed: 1 },
     });
 
-    await activateRatecardVersionAction("RCV00000002");
+    await rollbackRatecardVersionAction("RCV00000001");
 
     expect(mockRequirePermission).toHaveBeenCalledWith(
       PERMISSIONS.RATECARD,
@@ -53,79 +53,82 @@ describe("activateRatecardVersionAction", () => {
     );
   });
 
+  // pm64-spec I4.11 — a ratecard:READ principal is refused at the action guard
+  // (the guard redirects) with NO partial effect: the service is never called
+  // and nothing is revalidated.
   it("returns FORBIDDEN and takes no further action when the guard redirects", async () => {
     mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
 
-    const result = await activateRatecardVersionAction("RCV00000002");
+    const result = await rollbackRatecardVersionAction("RCV00000001");
 
     expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(mockActivateRatecardVersion).not.toHaveBeenCalled();
+    expect(mockRollbackRatecardVersion).not.toHaveBeenCalled();
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
   it("returns SERVER_ERROR when the guard throws something other than a redirect", async () => {
     mockRequirePermission.mockRejectedValue(new Error("db down"));
 
-    const result = await activateRatecardVersionAction("RCV00000002");
+    const result = await rollbackRatecardVersionAction("RCV00000001");
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
-    expect(mockActivateRatecardVersion).not.toHaveBeenCalled();
+    expect(mockRollbackRatecardVersion).not.toHaveBeenCalled();
   });
 
   it("returns VALIDATION_ERROR for a malformed version id, before calling the service", async () => {
-    const result = await activateRatecardVersionAction("not-an-rcv-id");
+    const result = await rollbackRatecardVersionAction("not-an-rcv-id");
 
     expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
-    expect(mockActivateRatecardVersion).not.toHaveBeenCalled();
+    expect(mockRollbackRatecardVersion).not.toHaveBeenCalled();
   });
 
   it("calls the service with the parsed version id and the actor, then revalidates and returns ok:true", async () => {
-    mockActivateRatecardVersion.mockResolvedValue({
+    mockRollbackRatecardVersion.mockResolvedValue({
       ok: true,
-      versionId: "RCV00000002",
-      supersededVersionId: "RCV00000001",
-      diff: { added: 3, changed: 1, removed: 2 },
+      versionId: "RCV00000001",
+      supersededVersionId: "RCV00000003",
+      diff: { added: 2, changed: 1, removed: 3 },
     });
 
-    const result = await activateRatecardVersionAction("RCV00000002");
+    const result = await rollbackRatecardVersionAction("RCV00000001");
 
-    expect(mockActivateRatecardVersion).toHaveBeenCalledWith(
-      "RCV00000002",
+    expect(mockRollbackRatecardVersion).toHaveBeenCalledWith(
+      "RCV00000001",
       "user-1",
     );
     expect(mockRevalidatePath).toHaveBeenCalledWith("/products/rate-card");
     expect(result).toEqual({
       ok: true,
-      versionId: "RCV00000002",
-      supersededVersionId: "RCV00000001",
-      diff: { added: 3, changed: 1, removed: 2 },
+      versionId: "RCV00000001",
+      supersededVersionId: "RCV00000003",
+      diff: { added: 2, changed: 1, removed: 3 },
     });
   });
 
   it("returns the service's typed refusal unchanged and never revalidates", async () => {
-    mockActivateRatecardVersion.mockResolvedValue({
+    mockRollbackRatecardVersion.mockResolvedValue({
       ok: false,
-      code: "NOT_DRAFT",
-      status: "ACTIVE",
+      code: "NOT_SUPERSEDED",
+      status: "DRAFT",
     });
 
-    const result = await activateRatecardVersionAction("RCV00000002");
+    const result = await rollbackRatecardVersionAction("RCV00000001");
 
     expect(result).toEqual({
       ok: false,
-      code: "NOT_DRAFT",
-      status: "ACTIVE",
+      code: "NOT_SUPERSEDED",
+      status: "DRAFT",
     });
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
   it("passes the service's CONCURRENT_ACTIVATION_CONFLICT refusal through unchanged and never revalidates", async () => {
-    mockActivateRatecardVersion.mockResolvedValue({
+    mockRollbackRatecardVersion.mockResolvedValue({
       ok: false,
       code: "CONCURRENT_ACTIVATION_CONFLICT",
     });
 
-    const result = await activateRatecardVersionAction("RCV00000002");
+    const result = await rollbackRatecardVersionAction("RCV00000001");
 
     expect(result).toEqual({
       ok: false,
@@ -135,11 +138,11 @@ describe("activateRatecardVersionAction", () => {
   });
 
   it("returns SERVER_ERROR when the service call throws", async () => {
-    mockActivateRatecardVersion.mockRejectedValue(
+    mockRollbackRatecardVersion.mockRejectedValue(
       new Error("connection reset"),
     );
 
-    const result = await activateRatecardVersionAction("RCV00000002");
+    const result = await rollbackRatecardVersionAction("RCV00000001");
 
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
     expect(mockRevalidatePath).not.toHaveBeenCalled();

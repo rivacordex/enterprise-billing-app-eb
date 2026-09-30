@@ -850,6 +850,20 @@ fi
 | `docker compose ps` | what's running, and on which ports |
 | `curl http://localhost:3000/api/health` | app liveness (no DB query) |
 
+## Known npm audit exceptions
+
+- **`esbuild <=0.24.2` (moderate, dev-only) via `drizzle-kit` → `@esbuild-kit/esm-loader`.**
+  Accepted, not fixed. The advisory (esbuild's dev server accepts cross-origin
+  requests and returns responses) requires visiting a malicious site while a
+  drizzle-kit dev server is running; this repo only ever runs `drizzle-kit`
+  one-shot (`db:generate`/`db:introspect`), never as a long-lived dev server, so the
+  exploit path doesn't apply. `npm audit fix --force` is **banned** in this repo
+  for this advisory — it would downgrade `drizzle-kit` to `0.18.1` (breaking),
+  and even the latest `drizzle-kit@0.31.11` still depends on the same legacy
+  esbuild-based loader internally, so forcing the fix would not clear it anyway.
+  Re-check on `drizzle-kit` major upgrades in case a future release drops the
+  legacy loader.
+
 ## Learn more
 
 - Next.js docs: https://nextjs.org/docs

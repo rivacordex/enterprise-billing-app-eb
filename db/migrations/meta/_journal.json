@@ -297,7 +297,7 @@
       "breakpoints": true
     },
     {
-      "idx": 42,
+      "idx": 43,
       "version": "7",
       "when": 1790589600000,
       "tag": "0043_ratecard_permission",
