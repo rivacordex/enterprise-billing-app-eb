@@ -33,7 +33,8 @@ function permissionMap(
   };
 }
 
-// Everything granted → all 5 sections, all 17 links visible.
+// Everything granted → all 5 sections, all 18 links visible (pm65 added the
+// fifth Products entry, Rate Card).
 const adminMap = permissionMap({
   users: "READ",
   roles: "READ",
@@ -47,6 +48,7 @@ const adminMap = permissionMap({
   product_orders: "READ",
   product_inventory: "READ",
   billrun_view: "READ",
+  ratecard: "READ",
 });
 
 // Read-only on products + customers → Manage Products / Manage Customer hidden.

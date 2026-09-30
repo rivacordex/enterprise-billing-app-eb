@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldHalf,
   SlidersHorizontal,
+  TableProperties,
   UserCog,
   Users,
   type LucideIcon,
@@ -43,11 +44,15 @@ import type { NavHref } from "@/lib/nav-registry";
 // (View Product), signaling the create/mutate capability the same way
 // `Building2`/`UserCog` stay in one semantic domain while remaining visually
 // distinct; no glyph collision with any existing nav or badge icon.
+// `TableProperties` for Rate Card (pm65, ui-context §10 — the mockup's tabler
+// `table-options`): a table-with-settings glyph, no collision with
+// `Package`/`PackagePlus`/`ClipboardList`/`Layers`.
 export const NAV_ICONS: Record<NavHref, LucideIcon> = {
   "/products/product-offering": Package,
   "/products/manage-products": PackagePlus,
   "/products/orders": ClipboardList,
   "/products/subscriptions": Layers,
+  "/products/rate-card": TableProperties,
   "/customers/view": Building2,
   "/customers/manage": UserCog,
   "/accounts/overview": Landmark,

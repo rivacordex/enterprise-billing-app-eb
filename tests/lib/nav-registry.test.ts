@@ -58,6 +58,9 @@ describe("visibleSections — role shapes", () => {
       product_orders: "DELETE",
       product_inventory: "DELETE",
       billrun_view: "DELETE",
+      // ratecard's max level is EDIT (no DELETE — the module defines none,
+      // workflow §3.11); EDIT ⊃ READ admits the READ-gated Rate Card entry.
+      ratecard: "EDIT",
     });
     expect(hrefsOf(visibleSections(adminMap))).toEqual(ALL_HREFS);
     // DELETE ⊃ EDIT ⊃ READ admits the EDIT-level Manage Products entry.
