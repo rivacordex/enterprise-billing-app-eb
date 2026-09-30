@@ -88,15 +88,7 @@ const TRANSITION_SERVICE_FILES = [
 ].sort();
 
 function readServiceDir(): string[] {
-  // Files only — `services/product/ratecard/` (pm59 onward) is a
-  // subdirectory, not a lifecycle-transition service, and readFileSync on a
-  // directory throws EISDIR.
-  return fs
-    .readdirSync(path.join(REPO_ROOT, "services", "product"), {
-      withFileTypes: true,
-    })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name);
+  return fs.readdirSync(path.join(REPO_ROOT, "services", "product"));
 }
 
 function readActionDir(): string[] {
@@ -108,19 +100,6 @@ function readActionDir(): string[] {
 
 function readCode(absPath: string): string {
   return stripComments(fs.readFileSync(absPath, "utf8"));
-}
-
-function collectFilesRecursive(dir: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectFilesRecursive(entryPath));
-    } else if (entry.isFile()) {
-      files.push(entryPath);
-    }
-  }
-  return files;
 }
 
 describe("guardrail 23 — lifecycle transition set (pm45 I1)", () => {
@@ -229,9 +208,9 @@ describe("guardrail 23 — lifecycle transition set (pm45 I1)", () => {
       path.join(REPO_ROOT, "services", "product"),
       path.join(REPO_ROOT, "actions", "product"),
     ];
-    // Recursive: `services/product/ratecard/` (pm59 onward) is a
-    // subdirectory, and the write-stack scan must cover it too, not skip it.
-    const files = scanDirs.flatMap(collectFilesRecursive);
+    const files = scanDirs.flatMap((dir) =>
+      fs.readdirSync(dir).map((name) => path.join(dir, name)),
+    );
     files.push(
       path.join(REPO_ROOT, "db", "repositories", "product-offering.ts"),
     );

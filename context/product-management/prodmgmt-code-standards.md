@@ -337,9 +337,9 @@ app/(app)/products/rate-card/
   page.tsx                            # (rate card, new)  RateCardPage — guard ratecard : READ
   loading.tsx, error.tsx              # (rate card, new)
 actions/product/
-  upload-ratecard-version.action.ts   # (rate card)  PRODUCT_ACTION_FILES +1 — LANDED pm61
-  activate-ratecard-version.action.ts # (rate card)  PRODUCT_ACTION_FILES +1 — LANDED pm63
-  rollback-ratecard-version.action.ts # (rate card, new)  PRODUCT_ACTION_FILES +1
+  upload-ratecard-version.action.ts   # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm61
+  activate-ratecard-version.action.ts # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm63
+  rollback-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
 components/products/rate-card/
   rate-card-version-table.tsx         # (rate card, new)  RateCardVersionTable — server
   rate-card-status-badge.tsx          # (rate card, new)  RateCardStatusBadge — total Record

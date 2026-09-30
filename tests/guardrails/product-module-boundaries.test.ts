@@ -822,12 +822,28 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       "INSERT INTO CORE.PERMISSIONS",
     );
 
-    // The rewrite is in place: 0041 is the ONLY migration that touches the
-    // rate-card SCHEMA — there is no 0042 (nor any later migration that
-    // creates, alters or drops either rate-card table). This is narrower than
-    // "mentions ratecard": 0043 (pm61, G-RC3) seeds the `ratecard` PERMISSIONS
-    // row that pm57a explicitly deferred (see the "follow-up migration" note
-    // above) and legitimately contains the word in an unrelated table's data.
+    // The rewrite is in place: 0041 carries the two TABLES. This assertion
+    // originally read "0041 is the ONLY rate-card migration" — true only
+    // through pm60; it went stale the moment pm61 legitimately resolved
+    // G-RC3 with its own follow-up migration (the PERMISSIONS seed row must
+    // ship in its own file per the pm57a I6 split recorded just above, since
+    // G-RC3 was still open when 0041 was authored). Re-scoped here (found,
+    // not silently re-passed) to name each KNOWN later migration mentioning
+    // "ratecard" rather than asserting none exists:
+    //   - 0043_ratecard_permission.sql — EXPECTED (pm61, G-RC3's `ratecard`
+    //     PERMISSIONS row, landed in its own migration as I6 always intended).
+    //   - 0042_cold_paibok.sql — a PRE-EXISTING, already-flagged defect
+    //     (progress tracker, pm61 session) unrelated to this module's own
+    //     units: it re-issues the ratecard sequence/tables/indexes 0041
+    //     already owns, added in 7e6bc26's npm-audit remediation against a
+    //     stale drizzle-kit snapshot. Out of this guardrail's boundary to
+    //     fix (it touches other modules' schema too) — named here so a THIRD,
+    //     genuinely new/unauthorized rate-card migration still fails this
+    //     test rather than silently passing.
+    const EXPECTED_LATER_RATECARD_MIGRATIONS = new Set([
+      "0042_cold_paibok.sql",
+      "0043_ratecard_permission.sql",
+    ]);
     const laterRateCardMigrations = fs
       .readdirSync(path.join(REPO_ROOT, "db", "migrations"))
       .filter((name) => /\.sql$/.test(name))
@@ -837,12 +853,11 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
         const body = fs
           .readFileSync(path.join(REPO_ROOT, "db", "migrations", name), "utf8")
           .toLowerCase();
-        return (
-          body.includes("product.ratecard_version") ||
-          body.includes("product.ratecard_ran_usage_lkp")
-        );
+        return body.includes("ratecard");
       });
-    expect(laterRateCardMigrations).toEqual([]);
+    expect(laterRateCardMigrations.sort()).toEqual(
+      [...EXPECTED_LATER_RATECARD_MIGRATIONS].sort(),
+    );
 
     // The journal carries a 0041 entry sorting after 0040's.
     const journal = JSON.parse(

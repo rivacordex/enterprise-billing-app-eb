@@ -1,0 +1,1792 @@
+diff --git a/actions/product/upload-ratecard-version.action.ts b/actions/product/upload-ratecard-version.action.ts
+new file mode 100644
+index 0000000..3ff40bf
+--- /dev/null
++++ b/actions/product/upload-ratecard-version.action.ts
+@@ -0,0 +1,159 @@
++"use server";
++
++import { revalidatePath } from "next/cache";
++
++import { requirePermission } from "@/auth/guard";
++import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
++import { isRedirectError } from "@/lib/errors";
++import {
++  uploadRatecardVersion,
++  type RateCardUploadWarning,
++} from "@/services/product/ratecard/upload-version";
++import type {
++  RateCardIssue,
++  RateCardUploadViolation,
++} from "@/validation/product/ratecard.schema";
++
++// pm61-spec D1/D2 — the upload action's shape deliberately differs from the
++// module's ordinary action shape, and that difference IS the security
++// argument: requirePermission first, then the file leaves FormData and is
++// checked (extension, MIME, byte size) BEFORE its bytes are read, then parse
++// + structural validation happen inside the one service call. `safeParse`
++// cannot run on a file handle — it runs on the parsed rows, inside the
++// service, still before the transaction opens. The client (pm66) may read the
++// first line to reject an obviously-wrong file early; that is a convenience
++// and never a boundary — every check here runs unconditionally on the full
++// file (§3.19).
++
++const ALLOWED_EXTENSION = ".csv";
++// A `.csv` file's MIME type is inconsistent across browsers/OSes — Chrome and
++// Firefox commonly send "text/csv", some Windows setups send
++// "application/vnd.ms-excel", and a blank string is common too. This is a
++// cheap sanity check on an obviously wrong upload, not a security boundary —
++// the server re-parses and re-validates the entire file regardless.
++const ALLOWED_MIME_TYPES = new Set([
++  "text/csv",
++  "application/vnd.ms-excel",
++  "application/csv",
++  "",
++]);
++// A clear, typed refusal beneath the eventual 4 MB `serverActions.bodySizeLimit`
++// pm66 raises `next.config.ts` to (D11 — that raise is pm66's, never routed
++// around here). Under today's unmodified 1 MB Next default, an oversized file
++// is refused by the framework itself before this action ever runs; this check
++// exists so the day the ceiling is 4 MB, an oversized file still gets a
++// validation message instead of a generic body-size error (code-standards
++// §6.34's own reasoning).
++const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
++
++export type UploadRatecardVersionActionResult =
++  | {
++      ok: true;
++      versionId: string;
++      rowCount: number;
++      warnings: RateCardUploadWarning[];
++    }
++  | {
++      ok: false;
++      code: RateCardUploadViolation;
++      issues: readonly RateCardIssue[];
++    }
++  | { ok: false; code: "CONCURRENT_UPLOAD_CONFLICT" }
++  | { ok: false; code: "CARD_NAME_REQUIRED" }
++  | { ok: false; code: "NO_FILE" }
++  | { ok: false; code: "INVALID_FILE_TYPE" }
++  | { ok: false; code: "FILE_TOO_LARGE" }
++  | { ok: false; code: "UNPARSEABLE_FILE" }
++  | { ok: false; code: "FORBIDDEN" }
++  | { ok: false; code: "SERVER_ERROR" };
++
++// A `csv-parse` `CsvError` carries a `code` like
++// `CSV_RECORD_INCONSISTENT_FIELDS_LENGTH` (pm59-spec, parse-csv.ts). Duck-typed
++// rather than `instanceof` so this file never imports `csv-parse` itself —
++// parse-csv.ts is guardrailed as the only file in the repo that does.
++function isCsvParseError(error: unknown): boolean {
++  return (
++    error instanceof Error &&
++    "code" in error &&
++    typeof (error as { code?: unknown }).code === "string" &&
++    (error as { code: string }).code.startsWith("CSV_")
++  );
++}
++
++export async function uploadRatecardVersionAction(
++  formData: FormData,
++): Promise<UploadRatecardVersionActionResult> {
++  let actorId: string;
++  try {
++    ({ userId: actorId } = await requirePermission(
++      PERMISSIONS.RATECARD,
++      LEVELS.EDIT,
++    ));
++  } catch (error) {
++    if (isRedirectError(error)) {
++      return { ok: false, code: "FORBIDDEN" };
++    }
++    return { ok: false, code: "SERVER_ERROR" };
++  }
++
++  const cardNameRaw = formData.get("cardName");
++  const cardName = typeof cardNameRaw === "string" ? cardNameRaw.trim() : "";
++  if (cardName.length === 0) {
++    return { ok: false, code: "CARD_NAME_REQUIRED" };
++  }
++
++  const file = formData.get("file");
++  if (!(file instanceof File) || file.size === 0) {
++    return { ok: false, code: "NO_FILE" };
++  }
++
++  // Extension, MIME type and byte size — checked before any byte is read
++  // (D1). File metadata only; `file.arrayBuffer()` is not called yet.
++  if (!file.name.toLowerCase().endsWith(ALLOWED_EXTENSION)) {
++    return { ok: false, code: "INVALID_FILE_TYPE" };
++  }
++  if (!ALLOWED_MIME_TYPES.has(file.type)) {
++    return { ok: false, code: "INVALID_FILE_TYPE" };
++  }
++  if (file.size > MAX_UPLOAD_BYTES) {
++    return { ok: false, code: "FILE_TOO_LARGE" };
++  }
++
++  let bytes: Buffer;
++  try {
++    bytes = Buffer.from(await file.arrayBuffer());
++  } catch {
++    return { ok: false, code: "SERVER_ERROR" };
++  }
++
++  let result;
++  try {
++    result = await uploadRatecardVersion({
++      cardName,
++      bytes,
++      sourceFile: file.name,
++      uploadedBy: actorId,
++      uploadedAt: new Date(),
++    });
++  } catch (error) {
++    if (isCsvParseError(error)) {
++      return { ok: false, code: "UNPARSEABLE_FILE" };
++    }
++    return { ok: false, code: "SERVER_ERROR" };
++  }
++
++  if (!result.ok) {
++    return result;
++  }
++
++  // D9 — this path only; the route doesn't exist yet (pm65), but revalidating
++  // it now is harmless and means pm65 adds a page rather than a missing call.
++  revalidatePath("/products/rate-card");
++
++  return {
++    ok: true,
++    versionId: result.versionId,
++    rowCount: result.rowCount,
++    warnings: result.warnings,
++  };
++}
+diff --git a/auth/permission-constants.ts b/auth/permission-constants.ts
+index 856f0b2..c181f7a 100644
+--- a/auth/permission-constants.ts
++++ b/auth/permission-constants.ts
+@@ -18,6 +18,7 @@ export const PERMISSIONS = {
+   BILLRUN_VIEW: "billrun_view",
+   BILLRUN_OPERATE: "billrun_operate",
+   BILLRUN_APPROVE: "billrun_approve",
++  RATECARD: "ratecard",
+ } as const satisfies Record<string, PermissionName>;
+ 
+ export const LEVELS = {
+diff --git a/context/product-management/prodmgmt-architecture.md b/context/product-management/prodmgmt-architecture.md
+index 556cc5a..d883554 100644
+--- a/context/product-management/prodmgmt-architecture.md
++++ b/context/product-management/prodmgmt-architecture.md
+@@ -195,7 +195,7 @@ Auth mechanics are inherited unchanged from platform §5 — Better-Auth DB-back
+ - **No sweeper retires rows, and nothing else does either.** Polygon retirement is decided upstream at mediation; a retired polygon is simply absent from the next upload (D-A7). There is deliberately no clock-driven job anywhere near this data — see §3.6.
+ - **No later-phase compute is owned here.** Any future consumer of the lookup would run in a non-application runtime that never executes in-process (platform §6); it is out of scope.
+ 
+-**Audit.** **Three new event types**, one per mutation, written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED`, `RATECARD_VERSION_ACTIVATED`, `RATECARD_VERSION_ROLLED_BACK`. The activation event's payload carries the superseded version id and the change counts (added / changed / removed), the durable record of what a given activation altered. Page reads are never audited.
++**Audit.** **Three new event types**, one per mutation, written in the same transaction as the data change: `RATECARD_VERSION_UPLOADED` (**landed pm61**), `RATECARD_VERSION_ACTIVATED`, `RATECARD_VERSION_ROLLED_BACK`. The activation event's payload carries the superseded version id and the change counts (added / changed / removed), the durable record of what a given activation altered. Page reads are never audited.
+ 
+ ---
+ 
+diff --git a/context/product-management/prodmgmt-code-standards.md b/context/product-management/prodmgmt-code-standards.md
+index b88e2cc..2a50dfa 100644
+--- a/context/product-management/prodmgmt-code-standards.md
++++ b/context/product-management/prodmgmt-code-standards.md
+@@ -130,7 +130,7 @@ Items 1–20 are the catalog and Manage-rebuild standard. Items 21–34 are the
+ 18. **(rate card) The upload action's shape differs from §3.7's, deliberately, and that difference is the whole security argument.** In order: `requirePermission('ratecard', 'EDIT')` → `isRedirectError` catch → take the file off `FormData` and check **extension, MIME type and byte size** before reading it → parse to rows with the pinned parser (§7.10) → `fileSchema.safeParse` → the row schema per row → one write service (no referential query — D-A1) → `revalidatePath('/products/rate-card')` → typed result. `safeParse` still runs before any service call; it simply cannot run on a file handle. **Never parse a `FormData` envelope and treat the pass as validation of the file's contents.**
+ 19. **(rate card) The client-side header sniff is a convenience and never a boundary.** Reading the first line in the browser to reject an obviously wrong file early is allowed; the server re-parses and re-validates the entire file unconditionally. "The client already checked it" is never a reason to skip a server check (general §1.2, §1.5).
+ 20. **(rate card) The file never enters react-hook-form state, and the upload form never serialises it to JSON or base64.** The picker is an uncontrolled file input inside a `form` whose `action` is the Server Action; the action receives `FormData`. This is the module's — and the application's — first file input, and the pattern is binding for whatever upload comes next.
+-21. **(rate card) Three action files are added and `EXPECTED_PRODUCT_ACTION_FILES` grows by exactly three:** `upload-ratecard-version.action.ts`, `activate-ratecard-version.action.ts`, `rollback-ratecard-version.action.ts`. This is the first movement in that list since the Manage rebuild — the pricing update left it unchanged (§3.7). The guardrail asserting the list is updated in the same change set, never afterwards.
++21. **(rate card) Three action files are added and `PRODUCT_ACTION_FILES` grows by exactly three:** `upload-ratecard-version.action.ts` (**landed pm61**, the first movement in that list since the Manage rebuild — the pricing update left it unchanged, §3.7), `activate-ratecard-version.action.ts`, `rollback-ratecard-version.action.ts`. The guardrail asserting the list is updated in the same change set, never afterwards.
+ 22. **(rate card) Revalidate narrowly.** A card mutation revalidates `/products/rate-card` and nothing else: no catalog page reads the card, and no catalog mutation revalidates the card page.
+ 23. **(rate card) The query budget is part of the page contract.** First render: one versions query plus its count. Selecting a version: one paged rows query plus its count. Requesting a diff: two full row reads — the selected version and the current `ACTIVE` — and nothing more. The diff is computed in memory from those two reads (§6.29); it never issues a query per row and never one query per bucket.
+ 
+@@ -337,7 +337,7 @@ app/(app)/products/rate-card/
+   page.tsx                            # (rate card, new)  RateCardPage — guard ratecard : READ
+   loading.tsx, error.tsx              # (rate card, new)
+ actions/product/
+-  upload-ratecard-version.action.ts   # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
++  upload-ratecard-version.action.ts   # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm61
+   activate-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
+   rollback-ratecard-version.action.ts # (rate card, new)  EXPECTED_PRODUCT_ACTION_FILES +1
+ components/products/rate-card/
+@@ -352,14 +352,15 @@ components/products/rate-card/
+   rollback-version-dialog.tsx         # (rate card, new)  RollbackVersionDialog
+ services/product/ratecard/
+   parse-csv.ts                        # (rate card) the ONLY importer of the CSV parser (csv-parse 7.0.3, §7.10) — LANDED pm59
+-  upload-version.ts                   # (rate card, new)  parse -> validate -> DRAFT, one tx
++  upload-version.ts                   # (rate card)  parse -> validate -> DRAFT, one tx — LANDED pm61
+   activate-version.ts                 # (rate card, new)  promote + demote, one tx, no row writes
+   rollback-version.ts                 # (rate card, new)  re-activate a SUPERSEDED version
+   diff-versions.ts                    # (rate card, new)  in-memory, three buckets
+   list-versions.ts, get-version-rows.ts # (rate card, new) read models
+ db/repositories/
+   ratecard.ts                         # (rate card) FLAT path — §7.8; no row-level write — LANDED pm60
+-db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card, new) DDL + the ratecard PERMISSIONS seed row
++db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card) the two tables' DDL — LANDED pm57a
++db/migrations/0043_ratecard_permission.sql    # (rate card) the ratecard PERMISSIONS seed row (G-RC3) — LANDED pm61
+ validation/product/
+   ratecard.schema.ts                  # (rate card) header map + row + file + rejectSummary schemas — LANDED pm58
+ db/seeds/demo/product-demo.ts         # (rate card) one demo card version, same Zod + CHECKs
+diff --git a/context/product-management/prodmgmt-progress-tracker.md b/context/product-management/prodmgmt-progress-tracker.md
+index 5e5f526..f544653 100644
+--- a/context/product-management/prodmgmt-progress-tracker.md
++++ b/context/product-management/prodmgmt-progress-tracker.md
+@@ -1,6 +1,6 @@
+ # Product Management — Progress Tracker
+ 
+-Single living build record for the Product Management module. **pm01–pm34** span three phases, all ship-gate-verified. **Part 3 (pm35–pm45)** is delivered and unit/integration/type/lint-verified. **Part 4 — Pricing Components (pm46–pm56, plus follow-ups pm56a/pm56b)** is implemented and verified on `dev1`; pm56's ship gate ran 2026-09-24 with its definition of done not fully met, and the residue it flagged was closed by pm56a/pm56b (repo-wide `tsc` and guardrail 31 green on `dev1`). Neither Part 3 nor Part 4 is in `main` (G-0/G-A still open). **Part 5 — Rate Card Lookup (pm57 onward)** is in progress: **pm57 is kept in full below; every earlier unit is compacted to a one-line ledger.** Known defects outside the unit in flight are in `prodmgmt-issues-tracker.md`; full detail for any compacted unit lives in its `specs/pmXX-spec.md` and in `git log`.
++Single living build record for the Product Management module. **pm01–pm34** span three phases, all ship-gate-verified. **Part 3 (pm35–pm45)** is delivered and unit/integration/type/lint-verified. **Part 4 — Pricing Components (pm46–pm56, plus follow-ups pm56a/pm56b)** is implemented and verified on `dev1`; pm56's ship gate ran 2026-09-24 with its definition of done not fully met, and the residue it flagged was closed by pm56a/pm56b (repo-wide `tsc` and guardrail 31 green on `dev1`). Neither Part 3 nor Part 4 is in `main` (G-0/G-A still open). **Part 5 — Rate Card Lookup (pm57 onward)** is in progress: **pm61 is the current unit; pm57 is kept in full below; every earlier unit is compacted to a one-line ledger.** Known defects outside the unit in flight are in `prodmgmt-issues-tracker.md`; full detail for any compacted unit lives in its `specs/pmXX-spec.md` and in `git log`.
+ 
+ ## Recently delivered — Part 3 & Part 4 (compacted)
+ 
+@@ -33,7 +33,25 @@ Compacted deliverables; full detail in each `specs/pmXX-spec.md`.
+ | pm56a | Pricing-components fixture sweep + guardrail-31 scope correction; resolved PM-ISS-001.                                                                                                  |
+ | pm56b | Ordering-wizard `PriceCard` re-key — closed the last residue; repo-wide `tsc` + guardrail 31 green on `dev1`.                                                                           |
+ 
+-## pm60 (current unit) — full detail
++## pm61 (current unit) — full detail
++
++**pm61 (Upload: service + action): IMPLEMENTED, unit-tested, NOT yet run against a live DB this session (started and code-complete 2026-09-28).** Part 5. Boundary per `specs/pm61-upload-service-and-action.md`: `services/product/ratecard/upload-version.ts` (new), `actions/product/upload-ratecard-version.action.ts` (new — `PRODUCT_ACTION_FILES` +1, guardrail updated same commit), the `RATECARD_VERSION_UPLOADED` audit type + its full three-part ripple, and this unit's tests (one DB-free action suite, green; one live-DB suite, written but not executed — see the DB-access note below). No UI (pm66), no diff (pm62), no activation (pm63).
++
++**G-RC3 resolved in this change set (its real deadline, per `pm00-build-plan.md`'s own gate table).** Took the recommended option: a new `ratecard` permission (READ/EDIT only, no DELETE), added to `types/rbac.ts` `PERMISSION_NAMES` and `auth/permission-constants.ts` `PERMISSIONS.RATECARD`, seeded via a new migration `0043_ratecard_permission.sql` (the pm23/bm01 "custom SQL, `INSERT … ON CONFLICT DO NOTHING`" pattern — no `drizzle-kit generate`, no snapshot file, matching pm57a's finding that this migrator reads no snapshot at runtime). `types/permissions.ts`'s `EffectivePermissionMap` gained `ratecard` to its `OptionalPermissionName` union (the exact mechanism that keeps a new module permission from forcing an update to every hardcoded test fixture — this is what kept the ripple small) and `types/roles.ts` `PERMISSION_DISPLAY_NAMES` gained `ratecard: "Rate Card"` (required — the permission-matrix UI enumerates every name unconditionally). Ripple actually needed, found via `tsc` plus a manual sweep for the array-length assertions `tsc` never catches (per `[[permission-name-addition-ripple]]`): `tests/components/permission-matrix-editor.test.tsx` and `tests/components/role-detail.test.tsx` (14→15 rows, "Rate Card" appended), `tests/services/roles-read.service.test.ts` and its `.integration.test.ts` twin (three `mappings` array literals + one length assertion), `tests/auth/resolver.test.ts` (four full-map `toEqual` literals). Full suite re-run green after (315 tests / 27 files touched by the ripple, all passing). **Role grants are not yet seeded** (no `db:seed-ratecard` script exists) — deferred; pm65/pm66 (nav + authz matrix, per G-RC3's own "also the nav entry and authz matrix" note) or a follow-up is the natural place, matching pm25/bm01's own split of "permission row in the migration, grants in a seed."
++
++**`cardName` is a real per-upload input, not a hardcoded constant.** `pm00-build-plan.md`'s pm66 row describes `UploadVersionDialog` with a "card-name select" — confirming multiple `card_name` values are a first-class (if currently single-seeded, D-A5) input, not something this service should assume. The action reads it from `FormData` (`formData.get("cardName")`, trimmed, required) alongside the file.
++
++**Two spec/reality tensions found and resolved by adding, not by inventing a fourth violation (raised, not silently patched):**
++1. **The checksum-duplicate warning cannot literally be `RateCardIssue[]`.** `RateCardIssue.violation` is `RateCardUploadViolation`, closed to exactly three structural members (pm58 D4) — a checksum match is not one of them and workflow §5.4 forbids a fourth. Added a sibling type, `RateCardUploadWarning` (same `line`/`column`/`value`/`reason` shape, no `violation` field), exported from `upload-version.ts`; the success result's `warnings` field is typed with it instead. pm66 renders it in the same table shape.
++2. **A concurrent-upload race needs a result code that isn't a structural violation either.** I5.8's "two uploads racing when no draft exists... the loser surfaces a typed refusal, not a raw `23505`" requires catching a unique-violation on `ratecard_version_one_draft_per_card` (via the existing `lib/db-errors.ts` `isUniqueViolation` helper — the same pattern `insert-price.ts`/`update-price.ts` already use for their own constraint). Added `{ ok: false; code: "CONCURRENT_UPLOAD_CONFLICT" }` as a result-union member distinct from `RateCardUploadViolation` (the closed set stays exactly three; this is a concurrency outcome, not a content defect) — threaded through both the service's and the action's result types.
++
++**Design notes worth recording:** the D3 adapter from pm59's header-keyed `cells` to pm58's positional `{header, rows: string[][]}` is built from `parsed.header` (order-preserving, duplicates intact) rather than `RATE_CARD_HEADER_MAP`'s canonical order, so a duplicate/unknown header is caught from the raw header array before any row's `cells` lookup could be affected by a duplicate-key collision. D12's `deleteDraftVersion` → re-read `max(version_num)` on `tx` ordering is implemented literally (the second `listVersions` call only fires when a draft was actually deleted, so the no-existing-draft path costs nothing extra). The one-transaction budget is: 1–2 `listVersions` + optional `deleteDraftVersion` + `insertVersion` + N/1000 `insertLookupRows` batches + `insertAuditEvent` — bounded by batch count, not row count.
++
++**DB access this session — flagged, not run.** Docker's `db` container was up (2 days) but the local dev stack itself was not in the state `[[local-docker-dev-stack]]` documents: migrations were only applied through `0039` (nothing from `0040` onward, including pm57a's own `0041`), `app_runtime`'s password didn't match `.env` (fixed in-place via `ALTER ROLE`, a reversible dev-only change), and `app_runtime` is not the owner of at least the `billing` schema (a `DROP SCHEMA` as `app_runtime` — what every `*.integration.test.ts` file does in `beforeAll` — fails with "must be owner"). Per `[[local-docker-dev-stack]]`'s own explicit warning, running any integration suite against this shared stack drops schemas and (in the full `npm run test`) rewrites cluster role passwords and drops the `kestra` database — destructive to a stack this session did not stand up and was not asked to reset. Rather than do that unilaterally, the live-DB suite (`tests/db/ratecard-upload-version.integration.test.ts`) was written to the same standard as pm60's (query-budget counter, checksum-warning isolation, D12 replace-draft proof, the concurrent-race proof, the D4 timezone proof) but **not executed this session**. `tsc --noEmit`, ESLint and Prettier are clean repo-wide; the DB-free action suite (`tests/actions/upload-ratecard-version.action.test.ts`, 13 cases) is green.
++
++**FINDING — `db/migrations/0042_cold_paibok.sql` will break a migrate-from-empty, independent of this unit.** It was added in `7e6bc26` ("chore(deps): remediate npm audit"), and `db/migrations/meta/0042_snapshot.json` exists alongside it — meaning `drizzle-kit generate` was run against the stale `meta/0026`-era snapshot floor (pm57a's own finding: "snapshots stop at 0026... `drizzle-kit generate` is retired project-wide"). The generated file re-issues `CREATE SEQUENCE product.ratecard_version_seq`, `CREATE TABLE product.ratecard_version`, `CREATE TABLE product.ratecard_ran_usage_lkp` and both ratecard partial unique indexes — all already owned by `0041` (pm57a's rewritten shape) — alongside a large, apparently legitimate batch of unrelated schema (the pm46 price-component reshape, the `TESTING`/`OBSOLETE` enum values, several billing/rating tables). Journal order (`0041.when < 0042.when`) means a fresh `npm run db:migrate` applies `0041` successfully and then fails on `0042`'s duplicate `CREATE TABLE`. This is not a ratecard-only file and touches schema owned by other modules, so it is **out of pm61's boundary** (pm61 explicitly makes no schema change) — raised here rather than silently patched or silently worked around. Whoever next needs a clean migrate-from-empty (this unit's own live-DB suite included) will need this resolved first — the likely fix is removing only the six ratecard-related statements from `0042`, keeping the rest.
++
++## pm60 — full detail
+ 
+ **pm60 (Card repository): IN PROGRESS (started 2026-09-27).** Part 5. Boundary per `specs/pm60-card-repository.md`: `db/repositories/ratecard.ts` (new, **flat path** — C6 verify-only), the `RATECARD_INSERT_BATCH_SIZE` constant, guardrail 37 (exported-surface arm in `tests/db/product-repository-exports.test.ts` + the DB arm in the new live-DB suite), and the live-DB tests. **No service, action, component, page, validation or parser.** The headline result is a **proof of absence**: the surface has four writes (`insertVersion`, `insertLookupRows`, `setVersionStatus`, `deleteDraftVersion`) and four reads (+ a locked `findActiveForUpdate` for pm63/pm64), and **no row-level update or delete of a lookup row of any name** (Inv. #46). 1,000-row batches inside the caller's single transaction; no cache anywhere (Inv. #59); dates are `YYYY-MM-DD` strings end to end (D7).
+ 
+diff --git a/context/product-management/specs/pm61-upload-service-and-action.md b/context/product-management/specs/pm61-upload-service-and-action.md
+new file mode 100644
+index 0000000..4377a25
+--- /dev/null
++++ b/context/product-management/specs/pm61-upload-service-and-action.md
+@@ -0,0 +1,220 @@
++# pm61 — Upload: service + action
++
++**Unit:** pm61 (Part 5). **Boundary:** `services/product/ratecard/upload-version.ts` (new), `actions/product/upload-ratecard-version.action.ts` (new — `EXPECTED_PRODUCT_ACTION_FILES` **+1**), the `RATECARD_VERSION_UPLOADED` audit type and its ripple, and this unit's live-DB tests. **No UI** — pm66 builds the dialog. **No diff** — pm62. **No activation** — pm63.
++**Specs from:** `prodmgmt-update-overview.md` (Core User Flow steps 2–5; goal 2) · `_updatemodule-ratecard-lookup-plan-v2.md` **RC7, RC15**, **D-A1**, **D-A8**, **OR7′ (confirmed 2026-09-25)** · `prodmgmt-architecture.md` §3.6, §4, §5 (Audit), Inv. **#46, #51, #57, #58** · `prodmgmt-code-standards.md` §1.40, §1.41, §1.42, §1.43, §2.24, §2.25, §3.18, §3.19, §3.20, §3.21, §3.22, §3.23, §6.18, §6.36, §6.37, §7.9 · `prodmgmt-ai-workflow-rules.md` §3.7, §3.12, §4.3, §7.4, §8.3, §8.4, §8.9, §8.12.
++**Depends on:** **pm59** (the parser), **pm60** (the repository), **pm58** (the contract); **G-RC3** (the permission the guard names).
++
++---
++
++## Goal
++
++Turn an uploaded CSV into exactly one `DRAFT` version in one transaction — parse, validate structurally, insert in batches — and on any refusal return a row-level error report having written **nothing at all**, including no version row.
++
++---
++
++## Design
++
++### D1. The pipeline, in order, and why the order is the security argument
++
++The upload action's shape deliberately differs from §3.7's ordinary action shape, and **that difference is the whole security argument** (§3.18):
++
++```
++requirePermission('ratecard', 'EDIT')
++  → isRedirectError catch
++  → take the file off FormData
++  → check extension, MIME type and byte size BEFORE reading it
++  → parse to rows with the pinned parser (pm59)
++  → fileSchema.safeParse        (header, duplicate keys)
++  → row schema per row
++  → one write service, one transaction  (snapshot_date = upload date, app timezone — D4)
++  → revalidatePath('/products/rate-card')
++  → typed result
++```
++
++`safeParse` still runs **before any service call**; it simply cannot run on a file handle. **Never parse a `FormData` envelope and treat the pass as validation of the file's contents** (§3.18) — the envelope tells you a file arrived, not what is in it.
++
++The three pre-read checks (extension, MIME, byte size) are cheap refusals on an obviously wrong input, taken **before** the bytes are read into memory. They are not validation and they are not a substitute for it.
++
++### D2. `requirePermission` comes first, and the client's header sniff grants nothing
++
++`ratecard : EDIT` (§8). Upload and activate deliberately share **EDIT** so one RevOps user is never blocked mid-task (RC7); activation is gated by the **diff review**, not by a higher level.
++
++pm66 may read the first line in the browser to reject an obviously wrong file early. That is a **convenience and never a boundary** (§3.19): the server re-parses and re-validates the **entire** file unconditionally, and _"the client already checked it"_ is never a reason to skip a server check. A `ratecard : READ` principal is refused **at the action guard** and receives **no partial effect**.
++
++### D3. Validation is structural only, and `lkp_subscriber_ref_id` is stored as uploaded
++
++Validation is **structural** — the file schema and the per-row schema of pm58, and nothing more. There is **no referential check** of any cell against another table: `lkp_subscriber_ref_id` (a `product_inventory.product_inventory_id` value carried as plain `text`, no FK) is **stored exactly as uploaded**, and `service_code` is a plain `text` column with no meaning to check. This unit **does not read `inventory`, `ordering/**` or any other module** — the only reads are through pm60's repository.
++
++The one non-structural signal is a duplicate-file warning: a `file_checksum` matching an earlier version **surfaces on the draft review and never refuses** (§6.37). Re-uploading the same file after a rollback is legitimate, and the column carries no unique constraint. It is returned as a `warning`, not persisted (D6).
++
++### D4. `snapshot_date` is the upload date, set here — not read from the file
++
++The RevOps file has **no date column** (plan D-A8; pm58 D0). This service sets `snapshot_date` to the **calendar date of the upload in the app timezone**, as a `YYYY-MM-DD` string (§2.21). Nothing is hoisted from the file, and a file that carries a `Date` column has already been refused as `HEADER_MISMATCH` before this point.
++
++- **One instant, both columns.** The service takes the upload instant as a parameter (`uploadedAt: Date`); the action passes `new Date()` once. `uploaded_at` is stamped with it and `snapshot_date` is derived from it, so the two can never disagree across midnight.
++- **The zone is the app's, never UTC.** Resolve it with `getAppTimezone()` and take the local `year` / `month` / `day` with stdlib `Intl.DateTimeFormat(…, { timeZone }).formatToParts` — um29's zero-dependency approach. **Never `uploadedAt.toISOString().slice(0, 10)`**: that is the UTC date, a day behind for eight hours of every day in `Asia/Kuala_Lumpur`. If `lib/timezone.ts` already has a calendar-date-in-zone helper, reuse it; if not, adding one there is a shared-file edit — call it out in review, and do not fork a second date helper in `services/product` (workflow §3.13).
++- **Only the action supplies the real clock.** Tests pass a fixed instant (I5.11). The demo seed (pm67) passes the real clock too — it never backdates a version.
++
++A late upload records a later `snapshot_date`. That is accepted (plan D-A8): nothing in this delivery reads `snapshot_date` for matching.
++
++### D5. A failure writes nothing — including no version row
++
++On any refusal the service returns the row-level error report and **inserts nothing** (§1.42, RC7). Consequently `status = 'REJECTED'` and `reject_summary` have **no writer in this phase**. They exist for a future asynchronous ingest and are **dead in Phase A by design** (workflow §3.5).
++
++**Do not invent a writer to make the columns look used.** A `REJECTED` version row would be a lie about what happened — nothing was created — and it would put a failed upload into the version list where a user would reasonably try to activate it.
++
++The whole pipeline therefore validates **before** opening the transaction; the transaction contains only the inserts and the audit write. That ordering is what makes "writes nothing" true by construction rather than by rollback.
++
++### D6. The typed result — a union, never a throw
++
++```
++{ ok: true;  versionId: string; rowCount: number; warnings: RateCardIssue[] }
++{ ok: false; code: RateCardUploadViolation; issues: RateCardIssue[] }
++```
++
++(§2.24, general §2.9). `RateCardUploadViolation`'s **three** members (`HEADER_MISMATCH` · `DUPLICATE_ROW_KEY` · `ROW_SCHEMA_INVALID`) are pm58's and are closed — **never invent a fourth** (workflow §5.4). `RateCardIssue` carries line · column · value · reason with the header counted as line 1 (§2.25); this unit **must not renumber**, because pm66's error table renders exactly what this returns.
++
++`warnings` on the success path is how D3's duplicate-file warning reaches the draft review. It is returned, not persisted — there is no warning column, and `reject_summary` is not it (D5).
++
++### D7. One transaction, one audit event
++
++`RATECARD_VERSION_UPLOADED`, written **in the same transaction as the data change** (§1.43, architecture §5). Page reads, row previews and diff reads are **never** audited.
++
++**The audit ripple is not `tsc`-caught in full** (§6.18, workflow §7.4). Three things are needed and the third bites every write unit in this module's history:
++
++1. the `AUDIT_EVENT_TYPES` entry,
++2. the `AUDIT_EVENT_CATEGORY_MAP` entry (**`tsc`-caught**),
++3. the bumped event-type count and optgroup assertion in `tests/components/audit-log-filters.test.tsx` (**not `tsc`-caught**).
++
++This unit lands one of the update's three types. pm63 and pm64 land the other two; each does the full ripple for its own, rather than one unit doing all three up front.
++
++### D8. `EXPECTED_PRODUCT_ACTION_FILES` +1, and the guardrail moves with it
++
++`actions/product/upload-ratecard-version.action.ts` is the **first movement in that list since the Manage rebuild** — the pricing update left it unchanged (§3.7, §3.21). The guardrail asserting the list is updated **in the same change set, never afterwards**.
++
++Across pm61 + pm63 + pm64 the list moves by **exactly three** (§3.21). Stating the total here, in the first of the three, is what makes an accidental fourth visible.
++
++### D9. Revalidate narrowly
++
++`revalidatePath('/products/rate-card')` **and nothing else** (§3.22). No catalog page reads the card, so revalidating `/products/manage-products` or `/products/product-offering` here would be a lie about what changed. `router.refresh()` is not the success path.
++
++At this unit the route does not exist yet (pm65 builds it). `revalidatePath` on a path Next does not yet serve is harmless — call it anyway, so the action is complete and pm65 adds a page rather than a missing call.
++
++### D10. The file is never stored, and never enters form state
++
++**Filename and checksum only** (Inv. #58, §6.36) — `source_file` is forensics, `file_checksum` is duplicate detection. No blob, no `landing/` drop, no temp file, no retained buffer. This is a **deliberate departure** from `context/architecture.md` §3's _"binary goes to Azure Blob, the DB stores a reference"_: that rule anticipates uploads the app must hand back, and a card's rows **are** the record of its upload. The platform doc owes a one-line follow-up saying an ingest path now exists and its answer is parse-and-discard — **propose it; it is platform-owned** (workflow §7.9).
++
++**The file never enters react-hook-form state and is never serialised to JSON or base64** (§3.20). The picker is an uncontrolled file input inside a `form` whose `action` is the Server Action; the action receives `FormData`. That is pm66's construction, and it is **binding for whatever upload comes next** — which is why it is written down in the unit that defines the server half.
++
++### D11. No Route Handler
++
++Upload is an ordinary Server Action. `app/api/product*` still never exists and §5.3's absence guardrail is unchanged (§5.5). _"An upload needs an endpoint"_ is the reflex to resist here, not a requirement. The body-size ceiling is raised in `next.config.ts` at **pm66**, never routed around.
++
++### D12. An open `DRAFT` is replaced, not refused (D-A11)
++
++If an open `DRAFT` already exists for the card, this upload **replaces** it: inside the one upload transaction, before inserting, call pm60's `deleteDraftVersion` on the existing draft (a `DRAFT`-guarded version delete; its rows go by cascade), then insert the new `DRAFT`. This is the recovery path for a wrong upload — without it, the one-`DRAFT`-per-card partial index (pm57a) would let a single fat-fingered upload block every future upload for the card until it was activated (the abandoned-draft trap C2 originally left standing).
++
++It stays inside the scope rules: **no new permission** (still `ratecard : EDIT`), **no `ratecard : DELETE`**, **no fourth audit type** (the replace emits the same one `RATECARD_VERSION_UPLOADED` for the new draft), and **no fourth action file** — the discard is a repository write, not its own action. Lookup rows are still only inserted or cascade-removed, never edited (Inv. #46). This **reopens and resolves C2**: a discard exists, but only implicitly via re-upload, never as a standalone control.
++
++**`version_num` is read on `tx`.** The service reads `max(version_num)` for the card **inside the transaction** and assigns `max + 1`. Because the replaced draft is deleted first, the new draft takes the same number the old one held; `UNIQUE (card_name, version_num)` is the backstop. Reading the max outside the transaction is the same TOCTOU class §1.13 forbids elsewhere — do it on `tx`, after the `deleteDraftVersion`.
++
++---
++
++## Implementation
++
++### I1. `services/product/ratecard/upload-version.ts`
++
++The pipeline of D1 from the parse onward: file schema, row schema (structural only, D3), then **one transaction** that — if an open `DRAFT` exists for the card — calls `deleteDraftVersion` (pm60, D12), reads `max(version_num)` on `tx`, then calls `insertVersion` + `insertLookupRows` (pm60) and writes the audit event. Framework-agnostic — **no `next/*` import** (§7.2). `snapshot_date` is computed here from the upload instant in the app timezone (D4) — nothing is hoisted from the file; `row_count` is the uploaded row count, and equals the rows stored (RV3, D-A7).
++
++### I2. `actions/product/upload-ratecard-version.action.ts`
++
++D1's order exactly, including the three pre-read checks. One service call. `revalidatePath` per D9. Typed result per D6.
++
++### I3. Audit
++
++`RATECARD_VERSION_UPLOADED` with the full three-part ripple of D7, including the assertion `tsc` does not catch.
++
++### I4. Guardrails and lists
++
++`EXPECTED_PRODUCT_ACTION_FILES` +1 with its guardrail updated in the same commit (D8). The repository mutation allow-list gains this unit's entry.
++
++### I5. Tests — live-DB
++
++1. A valid ~5,400-row CSV creates **exactly one** `DRAFT`, with `row_count` matching the rows stored.
++2. The current `ACTIVE` is **untouched and still active** afterwards.
++3. **Every refusal case creates no version** — assert `count(*) = 0` on `ratecard_version` after each structural failure: duplicate row key; missing column; unknown column (a `Date` column is one — D-A8).
++4. A `file_checksum` match warns and does **not** refuse; the draft is created.
++5. **The upload query budget holds — including after a failed upload** (§3.23): no per-row query, no `Promise.all` over rows. Assert the query **count**, not just the absence of a loop.
++6. `ratecard : READ` is refused **at the action guard**, with no partial effect and no version row.
++7. Exactly **one** audit event per successful upload, in the same transaction; a failed upload writes **none**.
++8. A second upload while a `DRAFT` is open **replaces** it (D12, D-A11): the prior draft and its rows are gone, exactly **one** `DRAFT` remains for the card, and it carries the new file's rows. Assert the old draft's `ratecard_version` row and its lookup rows are absent, that the one-`DRAFT` partial index still holds (one draft, not two), and that no second audit type was emitted. A concurrent variant (two uploads racing when no draft exists) still serializes on the `DRAFT` index — assert the loser surfaces a typed refusal, not a raw `23505`.
++9. The file is not written to disk and no buffer survives the call (D10) — assert no `fs` write in the path.
++10. `EXPECTED_PRODUCT_ACTION_FILES` moved by exactly one here; the running total toward three is recorded.
++11. **`snapshot_date` is the upload date in the app timezone** (D4): with `APP_TIMEZONE=Asia/Kuala_Lumpur` and a fixed `uploadedAt` of `2026-09-25T17:00:00Z`, the version's `snapshot_date` is `2026-09-26`, not `2026-09-25`; with `UTC` it is `2026-09-25`. `uploaded_at` equals the instant passed in.
++
++### I6. Documentation
++
++1. **Code-standards §7 tree** — `upload-version.ts` and the action marked landed under **pm61**.
++2. **Code-standards §3.21** — the first of three movements recorded.
++3. **Architecture §5 (Audit)** — the first of three types marked landed.
++4. **`context/architecture.md` §3** — the parse-and-discard follow-up **proposed** (D10), not written (workflow §7.9).
++5. **`pm00-build-plan.md`** — nothing owed for OR7′: it is **resolved** (2026-09-25) and recorded in the hand-off register. `lkp_subscriber_ref_id` is still stored **as uploaded, validated structurally only** (D-A1).
++
++---
++
++## Dependencies
++
++**Packages to install: none.** pm59 added the one dependency this update needs.
++
++**Commands used:** `npm run db:migrate`, `npm run db:seed-demo`, `npm run test` (live-DB integration against a disposable container), `npx tsc --noEmit`, `npm run lint`.
++
++**Prerequisites:** pm58, pm59, pm60 merged. **G-RC3** for the permission the guard names.
++
++---
++
++## Verification checklist
++
++Order and authorization
++
++- [ ] The action runs `requirePermission('ratecard', 'EDIT')` **first**, then the `isRedirectError` catch, then the file checks, then parse, then `safeParse`, then one service.
++- [ ] Extension, MIME type and byte size are checked **before** the bytes are read.
++- [ ] `ratecard : READ` is refused at the action guard with **no partial effect**.
++- [ ] No client check is relied on for anything.
++
++Writes nothing on failure
++
++- [ ] Each structural refusal case leaves `ratecard_version` and `RATECARD_RAN_USAGE_LKP` **empty of that upload** — asserted by count, per case.
++- [ ] `status = 'REJECTED'` and `reject_summary` have **no writer**; neither is populated anywhere in the diff.
++- [ ] Validation completes **before** the transaction opens.
++
++Success path
++
++- [ ] A valid CSV creates exactly one `DRAFT`; `row_count` matches the rows stored.
++- [ ] The current `ACTIVE` is untouched and still active.
++- [ ] `snapshot_date` is set by the service from the upload instant in the app timezone — never read from the file, never the UTC date (D4).
++- [ ] A second upload against an open `DRAFT` **replaces** it (D12): one `DRAFT` remains, the prior draft's rows are gone, and only one upload audit event is written. The concurrent race still serializes on the index and the loser gets a typed refusal, not a raw `23505`.
++
++Validation
++
++- [ ] Validation is **structural only** — the file schema and per-row schema of pm58; no referential check of any cell against another table.
++- [ ] `lkp_subscriber_ref_id` is stored **exactly as uploaded** as plain `text`; `service_code` is plain `text` with no meaning checked.
++- [ ] No per-row query, no `Promise.all` over rows, no concurrency-limited mapper — asserted by **query count**.
++- [ ] A `file_checksum` match warns and does not refuse.
++
++Result contract
++
++- [ ] The result is a typed union, never a throw; `RateCardUploadViolation` still has exactly three members.
++- [ ] Line numbers are pm58's, unrenumbered; the first data row is line 2.
++- [ ] Warnings are returned, not persisted.
++
++Audit, lists and boundaries
++
++- [ ] Exactly one `RATECARD_VERSION_UPLOADED` per success, in the same transaction; none on failure; no read is audited.
++- [ ] All three parts of the audit ripple landed, including the assertion `tsc` does not catch.
++- [ ] `EXPECTED_PRODUCT_ACTION_FILES` +1 with its guardrail updated in the same commit; the running total to three is recorded.
++- [ ] `revalidatePath` names `/products/rate-card` **only**.
++- [ ] No `app/api/**` path; no blob, no temp file, no retained buffer; the file never enters form state.
++- [ ] `ordering/**` and `inventory` untouched; the only reads are through pm60's repository.
++- [ ] `tsc --noEmit`, ESLint, Prettier and the unit's suite green.
++
++**Definition of done:** RevOps can upload five and a half thousand rows and get back either one draft version or a list of the rows that were wrong — and in the second case the database looks exactly as it did before they pressed the button, which a test proves by counting.
+diff --git a/db/migrations/0043_ratecard_permission.sql b/db/migrations/0043_ratecard_permission.sql
+new file mode 100644
+index 0000000..0030f55
+--- /dev/null
++++ b/db/migrations/0043_ratecard_permission.sql
+@@ -0,0 +1,16 @@
++-- Custom SQL migration file, put your code below! --
++
++-- G-RC3 (pm00-build-plan.md Part 5) — the Rate Card Lookup update's own
++-- permission, resolved here because its real deadline is pm61: the upload
++-- (and pm63/pm64's activation) actions call requirePermission('ratecard',
++-- 'EDIT') and do not compile without the types/rbac.ts member landing
++-- alongside this row. READ and EDIT only — this update defines no
++-- `ratecard : DELETE` (there is no standalone discard; a wrong DRAFT is
++-- replaced by re-upload, pm61 D12). Role grants (ADMIN/MANAGER : EDIT,
++-- USER : READ) are applied by the seed, not this migration (pm25/bm01
++-- precedent). ON CONFLICT DO NOTHING keeps a manual re-run safe against the
++-- permission_name unique constraint.
++INSERT INTO "core"."permissions" ("permission_name", "permission_info")
++VALUES
++  ('ratecard', 'Controls access to the Rate Card page: upload rate card versions and review the activation diff (read and edit only — no delete).')
++ON CONFLICT ("permission_name") DO NOTHING;
+diff --git a/db/migrations/meta/_journal.json b/db/migrations/meta/_journal.json
+index d422e32..303c180 100644
+--- a/db/migrations/meta/_journal.json
++++ b/db/migrations/meta/_journal.json
+@@ -302,6 +302,13 @@
+       "when": 1790540107110,
+       "tag": "0042_cold_paibok",
+       "breakpoints": true
++    },
++    {
++      "idx": 43,
++      "version": "7",
++      "when": 1790589600000,
++      "tag": "0043_ratecard_permission",
++      "breakpoints": true
+     }
+   ]
+ }
+\ No newline at end of file
+diff --git a/services/product/ratecard/upload-version.ts b/services/product/ratecard/upload-version.ts
+new file mode 100644
+index 0000000..ed30b98
+--- /dev/null
++++ b/services/product/ratecard/upload-version.ts
+@@ -0,0 +1,225 @@
++import { db } from "@/db/client";
++import { insertAuditEvent } from "@/db/repositories/audit.repository";
++import {
++  ratecardRepository,
++  type LookupRowInput,
++} from "@/db/repositories/ratecard";
++import { isUniqueViolation } from "@/lib/db-errors";
++import { todayInZone } from "@/lib/timezone";
++import { parseRateCardCsv } from "@/services/product/ratecard/parse-csv";
++import { getAppTimezone } from "@/services/system-config/app-config-read.service";
++import {
++  validateRateCardFile,
++  type RateCardIssue,
++  type RateCardUploadViolation,
++} from "@/validation/product/ratecard.schema";
++
++// pm61-spec I1 — the whole pipeline from the parse onward (D1), one
++// transaction. Framework-agnostic (no `next/*` import, §7.2): the action
++// (`actions/product/upload-ratecard-version.action.ts`) owns `requirePermission`,
++// the FormData/pre-read checks and `revalidatePath`; this file owns parse,
++// structural validation (D3 — no referential check, no read of `inventory` or
++// `ordering/**`), the replace-open-draft step (D12) and the one write
++// transaction (D5/D7). `parseRateCardCsv` is left uncaught here on purpose — a
++// malformed CSV's throw propagates to the action, which is the layer that
++// "wraps this call" (pm59-spec's own words) and turns it into a file-level
++// refusal distinct from the three closed structural violations.
++
++export interface UploadRatecardVersionInput {
++  cardName: string;
++  bytes: Buffer;
++  sourceFile: string;
++  uploadedBy: string;
++  // The upload instant (D4) — the action passes `new Date()` once; tests pass
++  // a fixed instant (I5.11). Both `uploaded_at` and `snapshot_date` are
++  // derived from this ONE value so the two can never disagree across
++  // midnight.
++  uploadedAt: Date;
++}
++
++// D3's one non-structural signal. Deliberately NOT `RateCardIssue` (whose
++// `violation` is the closed, 3-member `RateCardUploadViolation` — a checksum
++// match is not one of those three and must never be shoehorned into one,
++// workflow §5.4). Same line/column/value/reason shape so pm66 can render it
++// in the same table; carries no `violation` because it isn't one.
++export interface RateCardUploadWarning {
++  readonly line: number;
++  readonly column: string | null;
++  readonly value: string | null;
++  readonly reason: string;
++}
++
++export type UploadRatecardVersionResult =
++  | {
++      ok: true;
++      versionId: string;
++      rowCount: number;
++      warnings: RateCardUploadWarning[];
++    }
++  | {
++      ok: false;
++      code: RateCardUploadViolation;
++      issues: readonly RateCardIssue[];
++    }
++  // Not one of the three closed structural violations (workflow §5.4) — a
++  // concurrency conflict, not a content defect. Two uploads racing for the
++  // same card_name with no open draft yet both see "no draft" and both try to
++  // insert one; the loser hits `ratecard_version_one_draft_per_card` and gets
++  // this typed refusal instead of a raw 23505 (I5.8).
++  | { ok: false; code: "CONCURRENT_UPLOAD_CONFLICT" };
++
++export async function uploadRatecardVersion(
++  input: UploadRatecardVersionInput,
++): Promise<UploadRatecardVersionResult> {
++  // Parse first (D1) — uncaught; see the file banner above.
++  const parsed = parseRateCardCsv(input.bytes);
++
++  // D3's adapter: pm59's header-keyed `cells` back to pm58's positional
++  // `rows: string[][]`, aligned to `parsed.header` (not to
++  // RATE_CARD_FILE_HEADERS' order — validateRateCardFile matches by name, not
++  // position). This is safe from the duplicate-header collapse a `Record`
++  // lookup would otherwise risk: a duplicate/unknown/missing header always
++  // trips HEADER_MISMATCH from `parsed.header` alone (the raw array, which the
++  // parser hands over faithfully, duplicates included) and returns before any
++  // row is read, so `cells` is only ever consulted once every header is
++  // already known to be unique. Every row is carried straight through in
++  // file order — no filter, no reorder — so the validator's own `index + 2`
++  // line numbers agree with the parser's `line` for the same row by the
++  // shared D5 contract, not by accident.
++  const positionalRows = parsed.rows.map((row) =>
++    parsed.header.map((header) => row.cells[header] ?? ""),
++  );
++  const fileResult = validateRateCardFile({
++    header: parsed.header,
++    rows: positionalRows,
++  });
++
++  if (!fileResult.ok) {
++    // The validator can accumulate a mix of ROW_SCHEMA_INVALID and
++    // DUPLICATE_ROW_KEY issues in one pass; `code` is a headline, not a
++    // summary — the first issue found, in file order. `issues` (rendered in
++    // full by pm66) carries the complete picture regardless of `code`.
++    return {
++      ok: false,
++      code: fileResult.issues[0]!.violation,
++      issues: fileResult.issues,
++    };
++  }
++
++  const snapshotDate = todayInZone(input.uploadedAt, getAppTimezone());
++
++  try {
++    return await db.transaction(async (tx) => {
++      const existingVersions = await ratecardRepository.listVersions(
++        tx,
++        input.cardName,
++      );
++      const existingDraft = existingVersions.find((v) => v.status === "DRAFT");
++      const duplicateOf = existingVersions.find(
++        (v) => v.fileChecksum !== null && v.fileChecksum === parsed.checksum,
++      );
++
++      if (existingDraft) {
++        // D12/D-A11 — a wrong upload's recovery path: replace the open draft
++        // rather than refuse. `deleteDraftVersion` re-locks and re-checks
++        // status on `tx` itself (TOCTOU-safe); a non-`ok` result here means
++        // the draft we just listed no longer matches what we listed (a
++        // concurrent writer), which is not one of the three closed
++        // violations — surface it as an unexpected server error rather than
++        // inventing a fourth code.
++        const deleted = await ratecardRepository.deleteDraftVersion(
++          tx,
++          existingDraft.ratecardVersionId,
++        );
++        if (!deleted.ok) {
++          throw new Error(
++            `uploadRatecardVersion: could not replace open draft ${existingDraft.ratecardVersionId} (${deleted.code})`,
++          );
++        }
++      }
++
++      // D12 — `version_num` is read on `tx`, AFTER the delete: the replaced
++      // draft's number is what the new version reuses, and reading it before
++      // the delete (or outside the transaction) is the TOCTOU class §1.13
++      // forbids. Re-querying is skipped when nothing was deleted — the first
++      // read already reflects the true current max.
++      const versions = existingDraft
++        ? await ratecardRepository.listVersions(tx, input.cardName)
++        : existingVersions;
++      const versionNum =
++        versions.reduce((max, v) => Math.max(max, v.versionNum), 0) + 1;
++
++      const { versionId } = await ratecardRepository.insertVersion(tx, {
++        cardName: input.cardName,
++        versionNum,
++        status: "DRAFT",
++        snapshotDate,
++        sourceFile: input.sourceFile,
++        fileChecksum: parsed.checksum,
++        rowCount: fileResult.rows.length,
++        uploadedBy: input.uploadedBy,
++      });
++
++      // D0/hand-off (1) — an empty optional date/numeric cell is "" up
++      // through the row schema (Inv. #51); the `date`/`numeric` columns
++      // reject "", so the "" → NULL conversion happens here, immediately
++      // before the insert.
++      const lookupRows: LookupRowInput[] = fileResult.rows.map((row) => ({
++        mnoPublicKey: row.mno_public_key,
++        commercialUnitPublicKey: row.commercial_unit_public_key,
++        polygonId: row.polygon_id,
++        polygonStartDate: row.polygon_start_date,
++        polygonEndDate:
++          row.polygon_end_date === "" ? null : row.polygon_end_date,
++        state: row.state === "" ? null : row.state,
++        district: row.district === "" ? null : row.district,
++        lkpSubscriberRefId: row.lkp_subscriber_ref_id,
++        serviceCode: row.service_code === "" ? null : row.service_code,
++        ratePerUnit: row.rate_per_unit === "" ? null : row.rate_per_unit,
++      }));
++      await ratecardRepository.insertLookupRows(tx, versionId, lookupRows);
++
++      // D7 — one audit event, same transaction as the data change; a failed
++      // upload (returned above, before the transaction opened) writes none.
++      await insertAuditEvent(tx, {
++        eventType: "RATECARD_VERSION_UPLOADED",
++        actorUserId: input.uploadedBy,
++        targetEntity: "RATECARD_VERSION",
++        targetId: versionId,
++        beforeData: existingDraft
++          ? { replacedDraftVersionId: existingDraft.ratecardVersionId }
++          : null,
++        afterData: {
++          cardName: input.cardName,
++          versionNum,
++          rowCount: fileResult.rows.length,
++          sourceFile: input.sourceFile,
++          fileChecksum: parsed.checksum,
++        },
++      });
++
++      const warnings: RateCardUploadWarning[] = duplicateOf
++        ? [
++            {
++              line: 1,
++              column: null,
++              value: parsed.checksum,
++              reason: `This file's checksum matches an earlier version (${duplicateOf.ratecardVersionId}) on this card — check you are not re-uploading a version already on file.`,
++            },
++          ]
++        : [];
++
++      return {
++        ok: true,
++        versionId,
++        rowCount: fileResult.rows.length,
++        warnings,
++      };
++    });
++  } catch (err) {
++    if (isUniqueViolation(err, "ratecard_version_one_draft_per_card")) {
++      return { ok: false, code: "CONCURRENT_UPLOAD_CONFLICT" };
++    }
++    throw err; // anything else is a genuine, unexpected failure — fail loud
++  }
++}
+diff --git a/tests/actions/upload-ratecard-version.action.test.ts b/tests/actions/upload-ratecard-version.action.test.ts
+new file mode 100644
+index 0000000..bffaad3
+--- /dev/null
++++ b/tests/actions/upload-ratecard-version.action.test.ts
+@@ -0,0 +1,252 @@
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
++vi.mock("@/services/product/ratecard/upload-version", () => ({
++  uploadRatecardVersion: vi.fn(),
++}));
++vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
++
++import { requirePermission } from "@/auth/guard";
++import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
++import { revalidatePath } from "next/cache";
++
++import { uploadRatecardVersionAction } from "@/actions/product/upload-ratecard-version.action";
++import * as uploadVersionService from "@/services/product/ratecard/upload-version";
++
++const mockRequirePermission = vi.mocked(requirePermission);
++const mockUploadRatecardVersion = vi.mocked(
++  uploadVersionService.uploadRatecardVersion,
++);
++const mockRevalidatePath = vi.mocked(revalidatePath);
++
++function redirectError(target: string): Error & { digest: string } {
++  const error = new Error("NEXT_REDIRECT") as Error & { digest: string };
++  error.digest = `NEXT_REDIRECT;replace;${target};307;`;
++  return error;
++}
++
++function csvParseError(code: string): Error & { code: string } {
++  const error = new Error("bad csv") as Error & { code: string };
++  error.code = code;
++  return error;
++}
++
++function csvFile(
++  name = "card.csv",
++  content = "a,b\n1,2\n",
++  type = "text/csv",
++): File {
++  return new File([content], name, { type });
++}
++
++function formDataWith(overrides: {
++  cardName?: string | null;
++  file?: File | null;
++}): FormData {
++  const formData = new FormData();
++  if (overrides.cardName !== null) {
++    formData.set("cardName", overrides.cardName ?? "SEEDED_CARD");
++  }
++  if (overrides.file !== null) {
++    formData.set("file", overrides.file ?? csvFile());
++  }
++  return formData;
++}
++
++beforeEach(() => {
++  mockRequirePermission.mockReset();
++  mockUploadRatecardVersion.mockReset();
++  mockRevalidatePath.mockReset();
++  mockRequirePermission.mockResolvedValue({
++    userId: "user-1",
++    userEmail: "revops@example.com",
++    permissionMap: { ratecard: "EDIT" } as never,
++  });
++});
++
++describe("uploadRatecardVersionAction", () => {
++  it("requires ratecard:EDIT before anything else", async () => {
++    mockUploadRatecardVersion.mockResolvedValue({
++      ok: true,
++      versionId: "RCV00000001",
++      rowCount: 2,
++      warnings: [],
++    });
++
++    await uploadRatecardVersionAction(formDataWith({}));
++
++    expect(mockRequirePermission).toHaveBeenCalledWith(
++      PERMISSIONS.RATECARD,
++      LEVELS.EDIT,
++    );
++  });
++
++  it("returns FORBIDDEN and takes no further action when the guard redirects", async () => {
++    mockRequirePermission.mockRejectedValue(redirectError("/no-access"));
++
++    const result = await uploadRatecardVersionAction(formDataWith({}));
++
++    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++    expect(mockRevalidatePath).not.toHaveBeenCalled();
++  });
++
++  it("returns SERVER_ERROR when the guard throws something other than a redirect", async () => {
++    mockRequirePermission.mockRejectedValue(new Error("db down"));
++
++    const result = await uploadRatecardVersionAction(formDataWith({}));
++
++    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("returns CARD_NAME_REQUIRED for a missing or blank cardName, before touching the file", async () => {
++    const missing = await uploadRatecardVersionAction(
++      formDataWith({ cardName: null }),
++    );
++    expect(missing).toEqual({ ok: false, code: "CARD_NAME_REQUIRED" });
++
++    const blank = await uploadRatecardVersionAction(
++      formDataWith({ cardName: "   " }),
++    );
++    expect(blank).toEqual({ ok: false, code: "CARD_NAME_REQUIRED" });
++
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("returns NO_FILE when no file is attached", async () => {
++    const result = await uploadRatecardVersionAction(
++      formDataWith({ file: null }),
++    );
++
++    expect(result).toEqual({ ok: false, code: "NO_FILE" });
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("returns NO_FILE for a zero-byte file", async () => {
++    const result = await uploadRatecardVersionAction(
++      formDataWith({ file: csvFile("empty.csv", "") }),
++    );
++
++    expect(result).toEqual({ ok: false, code: "NO_FILE" });
++  });
++
++  it("returns INVALID_FILE_TYPE for a non-.csv extension, before parsing", async () => {
++    const result = await uploadRatecardVersionAction(
++      formDataWith({ file: csvFile("card.txt") }),
++    );
++
++    expect(result).toEqual({ ok: false, code: "INVALID_FILE_TYPE" });
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("returns INVALID_FILE_TYPE for a disallowed MIME type, before parsing", async () => {
++    const result = await uploadRatecardVersionAction(
++      formDataWith({
++        file: csvFile("card.csv", "a,b\n1,2\n", "application/json"),
++      }),
++    );
++
++    expect(result).toEqual({ ok: false, code: "INVALID_FILE_TYPE" });
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("returns FILE_TOO_LARGE for a file over the byte-size ceiling, before parsing", async () => {
++    const oversized = new File(
++      [new Uint8Array(4 * 1024 * 1024 + 1)],
++      "huge.csv",
++      { type: "text/csv" },
++    );
++
++    const result = await uploadRatecardVersionAction(
++      formDataWith({ file: oversized }),
++    );
++
++    expect(result).toEqual({ ok: false, code: "FILE_TOO_LARGE" });
++    expect(mockUploadRatecardVersion).not.toHaveBeenCalled();
++  });
++
++  it("calls the service with cardName trimmed, the file's bytes/name, the actor and a fresh Date, then revalidates and returns ok:true", async () => {
++    mockUploadRatecardVersion.mockResolvedValue({
++      ok: true,
++      versionId: "RCV00000001",
++      rowCount: 2,
++      warnings: [],
++    });
++    const before = Date.now();
++
++    const result = await uploadRatecardVersionAction(
++      formDataWith({ cardName: "  SEEDED_CARD  ", file: csvFile() }),
++    );
++
++    expect(mockUploadRatecardVersion).toHaveBeenCalledTimes(1);
++    const call = mockUploadRatecardVersion.mock.calls[0]![0];
++    expect(call.cardName).toBe("SEEDED_CARD");
++    expect(call.sourceFile).toBe("card.csv");
++    expect(call.uploadedBy).toBe("user-1");
++    expect(Buffer.isBuffer(call.bytes)).toBe(true);
++    expect(call.bytes.toString("utf8")).toBe("a,b\n1,2\n");
++    expect(call.uploadedAt).toBeInstanceOf(Date);
++    expect(call.uploadedAt.getTime()).toBeGreaterThanOrEqual(before);
++
++    expect(mockRevalidatePath).toHaveBeenCalledWith("/products/rate-card");
++    expect(result).toEqual({
++      ok: true,
++      versionId: "RCV00000001",
++      rowCount: 2,
++      warnings: [],
++    });
++  });
++
++  it("returns the service's structural violation result unchanged and never revalidates", async () => {
++    mockUploadRatecardVersion.mockResolvedValue({
++      ok: false,
++      code: "DUPLICATE_ROW_KEY",
++      issues: [
++        {
++          violation: "DUPLICATE_ROW_KEY",
++          line: 3,
++          column: null,
++          value: null,
++          reason: "duplicate",
++        },
++      ],
++    });
++
++    const result = await uploadRatecardVersionAction(formDataWith({}));
++
++    expect(result).toEqual({
++      ok: false,
++      code: "DUPLICATE_ROW_KEY",
++      issues: [
++        {
++          violation: "DUPLICATE_ROW_KEY",
++          line: 3,
++          column: null,
++          value: null,
++          reason: "duplicate",
++        },
++      ],
++    });
++    expect(mockRevalidatePath).not.toHaveBeenCalled();
++  });
++
++  it("returns UNPARSEABLE_FILE when the service call throws a csv-parse-shaped error", async () => {
++    mockUploadRatecardVersion.mockRejectedValue(
++      csvParseError("CSV_RECORD_INCONSISTENT_FIELDS_LENGTH"),
++    );
++
++    const result = await uploadRatecardVersionAction(formDataWith({}));
++
++    expect(result).toEqual({ ok: false, code: "UNPARSEABLE_FILE" });
++    expect(mockRevalidatePath).not.toHaveBeenCalled();
++  });
++
++  it("returns SERVER_ERROR when the service call throws an unrelated error", async () => {
++    mockUploadRatecardVersion.mockRejectedValue(new Error("connection reset"));
++
++    const result = await uploadRatecardVersionAction(formDataWith({}));
++
++    expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
++  });
++});
+diff --git a/tests/auth/resolver.test.ts b/tests/auth/resolver.test.ts
+index f6524fc..5c1f0f4 100644
+--- a/tests/auth/resolver.test.ts
++++ b/tests/auth/resolver.test.ts
+@@ -49,6 +49,7 @@ describe("resolveEffectivePermissions", () => {
+       billrun_view: null,
+       billrun_operate: null,
+       billrun_approve: null,
++      ratecard: null,
+     });
+     expect(findGrantsByRoleIds).not.toHaveBeenCalled();
+   });
+@@ -76,6 +77,7 @@ describe("resolveEffectivePermissions", () => {
+       billrun_view: null,
+       billrun_operate: null,
+       billrun_approve: null,
++      ratecard: null,
+     });
+   });
+ 
+@@ -105,6 +107,7 @@ describe("resolveEffectivePermissions", () => {
+       billrun_view: null,
+       billrun_operate: null,
+       billrun_approve: null,
++      ratecard: null,
+     });
+   });
+ 
+@@ -153,6 +156,7 @@ describe("resolveEffectivePermissions", () => {
+       billrun_view: null,
+       billrun_operate: null,
+       billrun_approve: null,
++      ratecard: null,
+     });
+   });
+ 
+diff --git a/tests/components/audit-log-filters.test.tsx b/tests/components/audit-log-filters.test.tsx
+index 47fa857..2131ec5 100644
+--- a/tests/components/audit-log-filters.test.tsx
++++ b/tests/components/audit-log-filters.test.tsx
+@@ -178,8 +178,12 @@ describe("AuditLogFilters", () => {
+     expect(
+       within(removal).getByText("PRODUCT_INVENTORY_TERMINATED"),
+     ).toBeInTheDocument();
++    // pm61 addition
++    expect(
++      within(additive).getByText("RATECARD_VERSION_UPLOADED"),
++    ).toBeInTheDocument();
+ 
+-    expect(within(select).getAllByRole("option")).toHaveLength(78); // "All events" + 77 (pm44 swapped PRODUCT_OFFERING_DISCARDED → PRODUCT_OFFERING_DELETED, net 0)
++    expect(within(select).getAllByRole("option")).toHaveLength(79); // "All events" + 78 (pm61 added RATECARD_VERSION_UPLOADED)
+   });
+ 
+   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {
+diff --git a/tests/components/permission-matrix-editor.test.tsx b/tests/components/permission-matrix-editor.test.tsx
+index a32371c..3431edd 100644
+--- a/tests/components/permission-matrix-editor.test.tsx
++++ b/tests/components/permission-matrix-editor.test.tsx
+@@ -61,7 +61,7 @@ beforeEach(() => {
+ });
+ 
+ describe("PermissionMatrixEditor", () => {
+-  it("renders 14 rows in PERMISSION_NAMES order", () => {
++  it("renders 15 rows in PERMISSION_NAMES order", () => {
+     render(<PermissionMatrixEditor role={ADMIN_ROLE} />);
+     const rowLabels = screen
+       .getAllByRole("row")
+@@ -82,6 +82,7 @@ describe("PermissionMatrixEditor", () => {
+       "Bill Runs – View",
+       "Bill Runs – Operate",
+       "Bill Runs – Approve",
++      "Rate Card",
+     ]);
+   });
+ 
+@@ -283,6 +284,7 @@ describe("PermissionMatrixEditor", () => {
+       "Permission level for Bill Runs – View",
+       "Permission level for Bill Runs – Operate",
+       "Permission level for Bill Runs – Approve",
++      "Permission level for Rate Card",
+     ]);
+   });
+ });
+diff --git a/tests/components/role-detail.test.tsx b/tests/components/role-detail.test.tsx
+index ce64362..b955de0 100644
+--- a/tests/components/role-detail.test.tsx
++++ b/tests/components/role-detail.test.tsx
+@@ -174,7 +174,7 @@ describe("RoleDetail", () => {
+     ).toBeInTheDocument();
+   });
+ 
+-  it("renders all 14 permission rows in PERMISSION_NAMES order", () => {
++  it("renders all 15 permission rows in PERMISSION_NAMES order", () => {
+     render(
+       <RoleDetail
+         locale="en-GB"
+@@ -203,6 +203,7 @@ describe("RoleDetail", () => {
+       "Bill Runs – View",
+       "Bill Runs – Operate",
+       "Bill Runs – Approve",
++      "Rate Card",
+     ]);
+   });
+ 
+@@ -220,7 +221,7 @@ describe("RoleDetail", () => {
+     expect(screen.getByText("READ")).toBeInTheDocument();
+   });
+ 
+-  it("MANAGER: all 14 matrix rows show '—'", () => {
++  it("MANAGER: all 15 matrix rows show '—'", () => {
+     render(
+       <RoleDetail
+         locale="en-GB"
+@@ -230,7 +231,7 @@ describe("RoleDetail", () => {
+         permissionMap={emptyMap()}
+       />,
+     );
+-    expect(screen.getAllByText("—")).toHaveLength(14);
++    expect(screen.getAllByText("—")).toHaveLength(15);
+   });
+ 
+   it("renders '—' for description when roleDescr is null", () => {
+diff --git a/tests/db/ratecard-upload-version.integration.test.ts b/tests/db/ratecard-upload-version.integration.test.ts
+new file mode 100644
+index 0000000..f4ac373
+--- /dev/null
++++ b/tests/db/ratecard-upload-version.integration.test.ts
+@@ -0,0 +1,498 @@
++import fs from "node:fs";
++import path from "node:path";
++
++import {
++  afterAll,
++  beforeAll,
++  beforeEach,
++  describe,
++  expect,
++  it,
++  vi,
++} from "vitest";
++import { drizzle } from "drizzle-orm/postgres-js";
++import { migrate } from "drizzle-orm/postgres-js/migrator";
++import { and, count, eq } from "drizzle-orm";
++import postgres from "postgres";
++import type postgresjs from "postgres";
++
++import * as schema from "@/db/schema";
++import { appuser } from "@/db/schema/identity";
++import { auditLog } from "@/db/schema/audit";
++import { ratecardRanUsageLkp, ratecardVersion } from "@/db/schema/product";
++import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
++import { RATE_CARD_FILE_HEADERS } from "@/validation/product/ratecard.schema";
++
++// pm61-spec I5 — live-DB proof of the whole upload pipeline: parse → structural
++// validation → one write transaction, against a database built from EMPTY.
++// `@/db/client`'s singleton `db` is replaced with one built on a counted
++// `postgres()` client (manage-products-query-budget precedent) so the query
++// count assertions (I5.5) can inspect the same connection the service uses.
++const databaseUrl = process.env.DATABASE_URL;
++
++const hoisted = vi.hoisted(() => ({
++  queries: [] as string[],
++  holder: { db: undefined as unknown },
++}));
++
++vi.mock("@/db/client", () => ({
++  get db() {
++    return hoisted.holder.db;
++  },
++}));
++
++vi.mock("@/services/system-config/app-config-read.service", () => ({
++  getAppTimezone: vi.fn().mockReturnValue("UTC"),
++}));
++
++import { getAppTimezone } from "@/services/system-config/app-config-read.service";
++import { uploadRatecardVersion } from "@/services/product/ratecard/upload-version";
++
++const mockGetAppTimezone = vi.mocked(getAppTimezone);
++
++describe.skipIf(!databaseUrl)(
++  "uploadRatecardVersion (requires DATABASE_URL)",
++  () => {
++    let sql_: postgresjs.Sql;
++    type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
++    let db: DrizzleDb;
++    let actorId: string;
++
++    beforeAll(async () => {
++      assertTestDatabaseUrl(databaseUrl as string);
++      sql_ = postgres(databaseUrl as string, {
++        max: 1,
++        onnotice: () => {},
++        debug: (_connection, query) => {
++          hoisted.queries.push(query);
++        },
++      });
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
++      db = drizzle(sql_, { schema });
++      await migrate(db, {
++        migrationsFolder: "./db/migrations",
++        migrationsSchema: "drizzle",
++      });
++      hoisted.holder.db = db;
++
++      const [actor] = await db
++        .insert(appuser)
++        .values({
++          id: crypto.randomUUID(),
++          userName: "pm61-fixture-operator",
++          userEmail: `${crypto.randomUUID()}@example.invalid`,
++          emailVerified: false,
++          authMethod: "LOCAL",
++          status: "ACTIVE",
++        })
++        .returning({ id: appuser.id });
++      actorId = actor!.id;
++    }, 60_000);
++
++    afterAll(async () => {
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
++      await sql_.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
++      await sql_.end();
++    });
++
++    beforeEach(() => {
++      hoisted.queries.length = 0;
++      mockGetAppTimezone.mockReturnValue("UTC");
++    });
++
++    function validRow(i: number): string[] {
++      return [
++        `MNO-${i}`,
++        `CU-${i}`,
++        `POLY-${i}`,
++        "2026-01-01",
++        "",
++        "",
++        "",
++        `PRDINV${String(i).padStart(8, "0")}`,
++        "",
++        "0.05",
++      ];
++    }
++
++    function csv(rowCount: number, header = RATE_CARD_FILE_HEADERS): Buffer {
++      const lines = [header.join(",")];
++      for (let i = 0; i < rowCount; i++) {
++        lines.push(validRow(i).join(","));
++      }
++      return Buffer.from(lines.join("\n") + "\n", "utf8");
++    }
++
++    async function versionCount(cardName: string): Promise<number> {
++      const [row] = await db
++        .select({ n: count() })
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.cardName, cardName));
++      return row!.n;
++    }
++
++    async function uploadAuditCount(versionId: string): Promise<number> {
++      const [row] = await db
++        .select({ n: count() })
++        .from(auditLog)
++        .where(
++          and(
++            eq(auditLog.eventType, "RATECARD_VERSION_UPLOADED"),
++            eq(auditLog.targetId, versionId),
++          ),
++        );
++      return row!.n;
++    }
++
++    it("a valid CSV creates exactly one DRAFT, with row_count matching the rows stored", async () => {
++      const result = await uploadRatecardVersion({
++        cardName: "CARD_HAPPY",
++        bytes: csv(25),
++        sourceFile: "happy.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-15T00:00:00Z"),
++      });
++
++      expect(result.ok).toBe(true);
++      if (!result.ok) throw new Error("expected ok:true");
++      expect(result.rowCount).toBe(25);
++      expect(result.warnings).toEqual([]);
++
++      expect(await versionCount("CARD_HAPPY")).toBe(1);
++      const [version] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, result.versionId));
++      expect(version?.status).toBe("DRAFT");
++      expect(version?.rowCount).toBe(25);
++
++      const [rows] = await db
++        .select({ n: count() })
++        .from(ratecardRanUsageLkp)
++        .where(eq(ratecardRanUsageLkp.ratecardVersionId, result.versionId));
++      expect(rows!.n).toBe(25);
++
++      expect(await uploadAuditCount(result.versionId)).toBe(1);
++    });
++
++    it("the current ACTIVE version is untouched and still active after a new upload", async () => {
++      const first = await uploadRatecardVersion({
++        cardName: "CARD_ACTIVE_UNTOUCHED",
++        bytes: csv(3),
++        sourceFile: "v1.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-15T00:00:00Z"),
++      });
++      if (!first.ok) throw new Error("expected ok:true");
++      await db
++        .update(ratecardVersion)
++        .set({ status: "ACTIVE" })
++        .where(eq(ratecardVersion.ratecardVersionId, first.versionId));
++
++      const second = await uploadRatecardVersion({
++        cardName: "CARD_ACTIVE_UNTOUCHED",
++        bytes: csv(4),
++        sourceFile: "v2.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-16T00:00:00Z"),
++      });
++      expect(second.ok).toBe(true);
++
++      const [activeStillActive] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, first.versionId));
++      expect(activeStillActive?.status).toBe("ACTIVE");
++      expect(await versionCount("CARD_ACTIVE_UNTOUCHED")).toBe(2);
++    });
++
++    it.each([
++      [
++        "duplicate row key",
++        csv(2).toString("utf8") + validRow(0).join(",") + "\n",
++      ],
++      [
++        "missing column",
++        [
++          RATE_CARD_FILE_HEADERS.filter((h) => h !== "District").join(","),
++          "MNO-0,CU-0,POLY-0,2026-01-01,,,PRDINV00000000,,0.05",
++        ].join("\n"),
++      ],
++      [
++        "unknown column (a Date column)",
++        [
++          [...RATE_CARD_FILE_HEADERS, "Date"].join(","),
++          "MNO-0,CU-0,POLY-0,2026-01-01,,,,PRDINV00000000,,0.05,2026-01-01",
++        ].join("\n"),
++      ],
++    ])(
++      "every structural refusal case (%s) creates no version",
++      async (_label, content) => {
++        const cardName = `CARD_REFUSAL_${Math.random().toString(36).slice(2)}`;
++        const result = await uploadRatecardVersion({
++          cardName,
++          bytes: Buffer.from(content, "utf8"),
++          sourceFile: "bad.csv",
++          uploadedBy: actorId,
++          uploadedAt: new Date(),
++        });
++
++        expect(result.ok).toBe(false);
++        expect(await versionCount(cardName)).toBe(0);
++      },
++    );
++
++    it("a query-budget-free refusal makes zero database queries", async () => {
++      const result = await uploadRatecardVersion({
++        cardName: "CARD_NO_QUERY_ON_REFUSAL",
++        bytes: Buffer.from("Wrong,Header\n1,2\n", "utf8"),
++        sourceFile: "bad.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date(),
++      });
++
++      expect(result.ok).toBe(false);
++      expect(hoisted.queries.length).toBe(0);
++    });
++
++    it("a file_checksum match warns and does not refuse; the draft is created", async () => {
++      const bytes = csv(3);
++
++      const first = await uploadRatecardVersion({
++        cardName: "CARD_CHECKSUM",
++        bytes,
++        sourceFile: "v1.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-15T00:00:00Z"),
++      });
++      if (!first.ok) throw new Error("expected ok:true");
++      // Move the first version out of DRAFT so the second upload is a fresh
++      // version, not a replace — isolating the checksum-warning behavior.
++      await db
++        .update(ratecardVersion)
++        .set({ status: "ACTIVE" })
++        .where(eq(ratecardVersion.ratecardVersionId, first.versionId));
++
++      const second = await uploadRatecardVersion({
++        cardName: "CARD_CHECKSUM",
++        bytes,
++        sourceFile: "v1-reupload.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-16T00:00:00Z"),
++      });
++
++      expect(second.ok).toBe(true);
++      if (!second.ok) throw new Error("expected ok:true");
++      expect(second.warnings).toHaveLength(1);
++      expect(second.warnings[0]?.reason).toContain(first.versionId);
++      expect(await versionCount("CARD_CHECKSUM")).toBe(2);
++    });
++
++    it("the query budget is bounded by batch count, not row count", async () => {
++      await uploadRatecardVersion({
++        cardName: "CARD_BUDGET_SMALL",
++        bytes: csv(10),
++        sourceFile: "small.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date(),
++      });
++      const smallCount = hoisted.queries.length;
++
++      hoisted.queries.length = 0;
++      await uploadRatecardVersion({
++        cardName: "CARD_BUDGET_LARGE",
++        bytes: csv(1500), // two insertLookupRows batches (1000 + 500)
++        sourceFile: "large.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date(),
++      });
++      const largeCount = hoisted.queries.length;
++
++      // Exactly one extra statement for the extra batch — never proportional
++      // to the 150x row-count difference.
++      expect(largeCount - smallCount).toBe(1);
++    });
++
++    it("exactly one RATECARD_VERSION_UPLOADED audit event per success; a failed upload writes none", async () => {
++      const cardName = "CARD_AUDIT";
++      const before = await db
++        .select({ n: count() })
++        .from(auditLog)
++        .where(eq(auditLog.eventType, "RATECARD_VERSION_UPLOADED"));
++
++      const failed = await uploadRatecardVersion({
++        cardName,
++        bytes: Buffer.from("Wrong,Header\n1,2\n", "utf8"),
++        sourceFile: "bad.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date(),
++      });
++      expect(failed.ok).toBe(false);
++
++      const afterFailure = await db
++        .select({ n: count() })
++        .from(auditLog)
++        .where(eq(auditLog.eventType, "RATECARD_VERSION_UPLOADED"));
++      expect(afterFailure[0]!.n).toBe(before[0]!.n);
++
++      const succeeded = await uploadRatecardVersion({
++        cardName,
++        bytes: csv(3),
++        sourceFile: "good.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date(),
++      });
++      if (!succeeded.ok) throw new Error("expected ok:true");
++
++      const afterSuccess = await db
++        .select({ n: count() })
++        .from(auditLog)
++        .where(eq(auditLog.eventType, "RATECARD_VERSION_UPLOADED"));
++      expect(afterSuccess[0]!.n).toBe(before[0]!.n + 1);
++      expect(await uploadAuditCount(succeeded.versionId)).toBe(1);
++    });
++
++    it("a second upload while a DRAFT is open replaces it (D12)", async () => {
++      const cardName = "CARD_REPLACE_DRAFT";
++      const first = await uploadRatecardVersion({
++        cardName,
++        bytes: csv(3),
++        sourceFile: "draft1.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-15T00:00:00Z"),
++      });
++      if (!first.ok) throw new Error("expected ok:true");
++
++      const second = await uploadRatecardVersion({
++        cardName,
++        bytes: csv(5),
++        sourceFile: "draft2.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-01-16T00:00:00Z"),
++      });
++      if (!second.ok) throw new Error("expected ok:true");
++
++      expect(second.versionId).not.toBe(first.versionId);
++      expect(await versionCount(cardName)).toBe(1);
++
++      const [remaining] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.cardName, cardName));
++      expect(remaining?.ratecardVersionId).toBe(second.versionId);
++      expect(remaining?.status).toBe("DRAFT");
++      expect(remaining?.rowCount).toBe(5);
++      // D12 — the new draft reuses the replaced draft's version number.
++      expect(remaining?.versionNum).toBe(1);
++
++      const [oldVersionGone] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, first.versionId));
++      expect(oldVersionGone).toBeUndefined();
++
++      const [oldRowsGone] = await db
++        .select({ n: count() })
++        .from(ratecardRanUsageLkp)
++        .where(eq(ratecardRanUsageLkp.ratecardVersionId, first.versionId));
++      expect(oldRowsGone!.n).toBe(0);
++
++      const [uploadedEvents] = await db
++        .select({ n: count() })
++        .from(auditLog)
++        .where(eq(auditLog.eventType, "RATECARD_VERSION_UPLOADED"));
++      expect(uploadedEvents!.n).toBeGreaterThanOrEqual(2);
++    });
++
++    it("two concurrent uploads racing with no open draft: the loser gets a typed refusal, not a raw 23505", async () => {
++      const cardName = "CARD_CONCURRENT_RACE";
++
++      const [resultA, resultB] = await Promise.all([
++        uploadRatecardVersion({
++          cardName,
++          bytes: csv(3),
++          sourceFile: "race-a.csv",
++          uploadedBy: actorId,
++          uploadedAt: new Date(),
++        }),
++        uploadRatecardVersion({
++          cardName,
++          bytes: csv(3),
++          sourceFile: "race-b.csv",
++          uploadedBy: actorId,
++          uploadedAt: new Date(),
++        }),
++      ]);
++
++      const results = [resultA, resultB];
++      const winners = results.filter((r) => r.ok);
++      const losers = results.filter((r) => !r.ok);
++      expect(winners).toHaveLength(1);
++      expect(losers).toHaveLength(1);
++      expect(losers[0]).toEqual({
++        ok: false,
++        code: "CONCURRENT_UPLOAD_CONFLICT",
++      });
++      expect(await versionCount(cardName)).toBe(1);
++    });
++
++    it("no fs write occurs anywhere in the upload path", () => {
++      const source = fs.readFileSync(
++        path.resolve(
++          __dirname,
++          "../../services/product/ratecard/upload-version.ts",
++        ),
++        "utf8",
++      );
++      expect(source).not.toMatch(/from ["']node:fs["']|require\(\s*["']fs["']/);
++    });
++
++    it("snapshot_date is the upload date in the app timezone, not the file (D4)", async () => {
++      mockGetAppTimezone.mockReturnValue("Asia/Kuala_Lumpur");
++      const kl = await uploadRatecardVersion({
++        cardName: "CARD_TZ_KL",
++        bytes: csv(1),
++        sourceFile: "tz.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-09-25T17:00:00Z"),
++      });
++      if (!kl.ok) throw new Error("expected ok:true");
++      const [klVersion] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, kl.versionId));
++      expect(klVersion?.snapshotDate).toBe("2026-09-26");
++      expect(klVersion?.uploadedAt.toISOString()).toBe(
++        "2026-09-25T17:00:00.000Z",
++      );
++
++      mockGetAppTimezone.mockReturnValue("UTC");
++      const utc = await uploadRatecardVersion({
++        cardName: "CARD_TZ_UTC",
++        bytes: csv(1),
++        sourceFile: "tz.csv",
++        uploadedBy: actorId,
++        uploadedAt: new Date("2026-09-25T17:00:00Z"),
++      });
++      if (!utc.ok) throw new Error("expected ok:true");
++      const [utcVersion] = await db
++        .select()
++        .from(ratecardVersion)
++        .where(eq(ratecardVersion.ratecardVersionId, utc.versionId));
++      expect(utcVersion?.snapshotDate).toBe("2026-09-25");
++    });
++  },
++);
+diff --git a/tests/guardrails/product-module-boundaries.test.ts b/tests/guardrails/product-module-boundaries.test.ts
+index f6aec80..3a4cfec 100644
+--- a/tests/guardrails/product-module-boundaries.test.ts
++++ b/tests/guardrails/product-module-boundaries.test.ts
+@@ -53,6 +53,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
+     "obsolete-offering.action.ts": "obsoleteOfferingAction",
+     "retire-offering.action.ts": "retireOfferingAction",
+     "delete-offering.action.ts": "deleteOfferingAction",
++    // pm61 — the update's first movement of this list since the Manage
++    // rebuild (code-standards §3.21); pm63/pm64 add the other two of three.
++    "upload-ratecard-version.action.ts": "uploadRatecardVersionAction",
+   };
+ 
+   it("actions/product/ exists and exports exactly this phase's action set", () => {
+diff --git a/tests/services/roles-read.service.integration.test.ts b/tests/services/roles-read.service.integration.test.ts
+index 5abe921..e9306e2 100644
+--- a/tests/services/roles-read.service.integration.test.ts
++++ b/tests/services/roles-read.service.integration.test.ts
+@@ -138,6 +138,7 @@ describe.skipIf(!databaseUrl)(
+           { permissionName: "billrun_view", assignedLevel: null },
+           { permissionName: "billrun_operate", assignedLevel: null },
+           { permissionName: "billrun_approve", assignedLevel: null },
++          { permissionName: "ratecard", assignedLevel: null },
+         ]);
+       });
+ 
+@@ -169,6 +170,7 @@ describe.skipIf(!databaseUrl)(
+             "billrun_view",
+             "billrun_operate",
+             "billrun_approve",
++            "ratecard",
+           ]);
+         }
+       });
+@@ -193,6 +195,7 @@ describe.skipIf(!databaseUrl)(
+           { permissionName: "billrun_view", assignedLevel: null },
+           { permissionName: "billrun_operate", assignedLevel: null },
+           { permissionName: "billrun_approve", assignedLevel: null },
++          { permissionName: "ratecard", assignedLevel: null },
+         ]);
+       });
+ 
+diff --git a/tests/services/roles-read.service.test.ts b/tests/services/roles-read.service.test.ts
+index f52c98f..47bbf9f 100644
+--- a/tests/services/roles-read.service.test.ts
++++ b/tests/services/roles-read.service.test.ts
+@@ -94,6 +94,7 @@ describe("getAllRolesWithMappings", () => {
+       { permissionName: "billrun_view", assignedLevel: null },
+       { permissionName: "billrun_operate", assignedLevel: null },
+       { permissionName: "billrun_approve", assignedLevel: null },
++      { permissionName: "ratecard", assignedLevel: null },
+     ]);
+     const manager = result.find((r) => r.roleId === "role-manager")!;
+     expect(manager.mappings.every((m) => m.assignedLevel === null)).toBe(true);
+@@ -106,7 +107,7 @@ describe("getAllRolesWithMappings", () => {
+     );
+ 
+     const [role] = await getAllRolesWithMappings();
+-    expect(role!.mappings).toHaveLength(14);
++    expect(role!.mappings).toHaveLength(15);
+   });
+ 
+   it("mappings are always ordered users, roles, system_config, audit_log, products, customers, accounts_*", async () => {
+@@ -134,6 +135,7 @@ describe("getAllRolesWithMappings", () => {
+       "billrun_view",
+       "billrun_operate",
+       "billrun_approve",
++      "ratecard",
+     ]);
+   });
+ });
+@@ -180,6 +182,7 @@ describe("getRoleWithMappings", () => {
+       { permissionName: "billrun_view", assignedLevel: null },
+       { permissionName: "billrun_operate", assignedLevel: null },
+       { permissionName: "billrun_approve", assignedLevel: null },
++      { permissionName: "ratecard", assignedLevel: null },
+     ]);
+   });
+ });
+diff --git a/types/audit-log.ts b/types/audit-log.ts
+index f2c3247..9c77547 100644
+--- a/types/audit-log.ts
++++ b/types/audit-log.ts
+@@ -115,6 +115,9 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
+   // bm20 T11 — DISTRIBUTION_FAILED → COMPLETED, force-completing a
+   // permanently-failing distribution: a state transition, mandatory reason.
+   BILL_RUN_DISTRIBUTION_ABANDONED: "Change",
++  // pm61 — an upload creates exactly one new DRAFT ratecard_version row (or
++  // replaces an open one, D12): a new entity, like PRODUCT_OFFERING_CREATED.
++  RATECARD_VERSION_UPLOADED: "Additive",
+ };
+ 
+ // Event types removed from AUDIT_EVENT_TYPES (no longer written, no longer a
+diff --git a/types/audit.ts b/types/audit.ts
+index 0f85c8f..57002a7 100644
+--- a/types/audit.ts
++++ b/types/audit.ts
+@@ -76,6 +76,7 @@ export const AUDIT_EVENT_TYPES = [
+   "BILL_RUN_DISTRIBUTION_STARTED",
+   "BILL_RUN_DISTRIBUTION_RERUN",
+   "BILL_RUN_DISTRIBUTION_ABANDONED",
++  "RATECARD_VERSION_UPLOADED",
+ ] as const;
+ 
+ export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
+diff --git a/types/permissions.ts b/types/permissions.ts
+index 69c46be..425a75b 100644
+--- a/types/permissions.ts
++++ b/types/permissions.ts
+@@ -15,7 +15,8 @@ type OptionalPermissionName =
+   | "product_inventory"
+   | "billrun_view"
+   | "billrun_operate"
+-  | "billrun_approve";
++  | "billrun_approve"
++  | "ratecard";
+ type CorePermissionName = Exclude<PermissionName, OptionalPermissionName>;
+ 
+ // Core module permissions (users, roles, etc.) are always present; optional
+diff --git a/types/rbac.ts b/types/rbac.ts
+index a508529..5c4b373 100644
+--- a/types/rbac.ts
++++ b/types/rbac.ts
+@@ -13,6 +13,7 @@ export const PERMISSION_NAMES = [
+   "billrun_view",
+   "billrun_operate",
+   "billrun_approve",
++  "ratecard",
+ ] as const;
+ export type PermissionName = (typeof PERMISSION_NAMES)[number];
+ 
+diff --git a/types/roles.ts b/types/roles.ts
+index 0002e7f..81a8823 100644
+--- a/types/roles.ts
++++ b/types/roles.ts
+@@ -33,4 +33,5 @@ export const PERMISSION_DISPLAY_NAMES: Record<PermissionName, string> = {
+   billrun_view: "Bill Runs – View",
+   billrun_operate: "Bill Runs – Operate",
+   billrun_approve: "Bill Runs – Approve",
++  ratecard: "Rate Card",
+ } as const;
