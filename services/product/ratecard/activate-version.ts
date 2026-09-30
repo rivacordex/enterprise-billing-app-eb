@@ -118,9 +118,15 @@ export async function activateRatecardVersion(
       actorUserId: actorId,
       targetEntity: "RATECARD_VERSION",
       targetId: versionId,
-      beforeData: outgoing
-        ? { supersededVersionId: outgoing.ratecardVersionId }
-        : null,
+      // Code-review fix — always shape beforeData as { supersededVersionId },
+      // with the value itself null on a first-ever activation, rather than
+      // making the whole object null. This matches the documented payload
+      // contract (progress tracker / pm63-spec D5: "beforeData: {
+      // supersededVersionId }") and keeps the key present for every
+      // RATECARD_VERSION_ACTIVATED event, so a future audit-detail reader
+      // never has to branch on beforeData itself being null vs. having no
+      // supersededVersionId.
+      beforeData: { supersededVersionId: outgoing?.ratecardVersionId ?? null },
       afterData: {
         cardName: draft.cardName,
         ...diffCounts,
