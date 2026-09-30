@@ -137,6 +137,14 @@ describe.skipIf(!databaseUrl)(
       expect(v1!.status).toBe("SUPERSEDED");
       expect(v2!.status).toBe("ACTIVE");
 
+      // D6 — the two versions are told apart by version_num, status AND
+      // uploaded_at. Each upload reads its own real-clock instant, and v2 is
+      // uploaded after v1's full upload+activate round-trip, so v2's upload
+      // instant is strictly later (not the same captured Date).
+      expect(v2!.uploadedAt.getTime()).toBeGreaterThan(
+        v1!.uploadedAt.getTime(),
+      );
+
       // Lineage: the superseded v1 points at the ACTIVE v2; v2 points at
       // nothing. Both name the real operator (D2), never NULL.
       expect(v1!.supersededByVersionId).toBe(v2!.ratecardVersionId);
@@ -317,9 +325,12 @@ describe.skipIf(!databaseUrl)(
     // I3.11 — the CSV header is exactly the ten pm58 headers (no Date column);
     // both versions' snapshot_date equal the seed-run date in the app timezone.
     it("uses the ten pm58 headers with no Date column; both snapshot_date == the seed-run date (I3.11, D6)", async () => {
+      // buildRateCardDemoCsv emits RFC-4180 CRLF line endings (shared
+      // lib/csv.ts) — split on either so the header line carries no trailing
+      // \r regardless of the line-ending convention.
       const headerLine = buildRateCardDemoCsv(RAN_USAGE_V1_ROWS)
         .toString("utf8")
-        .split("\n")[0];
+        .split(/\r?\n/)[0];
       expect(headerLine).toBe(RATE_CARD_FILE_HEADERS.join(","));
       expect(RATE_CARD_FILE_HEADERS).toHaveLength(10);
       // No standalone `Date` column (D-A8) — the file has no snapshot-date
@@ -330,7 +341,12 @@ describe.skipIf(!databaseUrl)(
       const [v1, v2] = await versions();
       expect(v1!.snapshotDate).toBe(v2!.snapshotDate);
       expect(v1!.snapshotDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(v1!.snapshotDate).toBe(todayInZone(new Date(), "UTC"));
+      // Derive the expected date from the RECORDED upload instant, not the
+      // assertion-time clock — `snapshot_date` is computed from `uploaded_at`
+      // in the app timezone (mocked to UTC here), so tying the check to
+      // `uploadedAt` removes any midnight-boundary flake between seeding and
+      // this assertion.
+      expect(v1!.snapshotDate).toBe(todayInZone(v1!.uploadedAt, "UTC"));
     });
 
     // Idempotent — a second run skips wholesale, leaving exactly two versions.

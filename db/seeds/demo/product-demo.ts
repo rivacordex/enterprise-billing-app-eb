@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { logger } from "@/lib/logger";
+import { buildCsv } from "@/lib/csv";
 import {
   productOffering,
   productSpecifications,
@@ -26,6 +27,7 @@ import { activateRatecardVersion } from "@/services/product/ratecard/activate-ve
 import {
   RATE_CARD_FILE_HEADERS,
   RATE_CARD_HEADER_MAP,
+  RATE_CARD_TABLE_COLUMNS,
   type RateCardTableColumn,
 } from "@/validation/product/ratecard.schema";
 
@@ -517,29 +519,47 @@ export const RATE_CARD_DEMO_OPERATOR = {
 // service, never `0` — Inv. #51).
 export type DemoRateCardRow = Record<RateCardTableColumn, string>;
 
-function demoRow(
-  mnoPublicKey: string,
-  commercialUnitPublicKey: string,
-  polygonId: string,
-  polygonStartDate: string,
-  polygonEndDate: string,
-  state: string,
-  district: string,
-  lkpSubscriberRefId: string,
-  serviceCode: string,
-  ratePerUnit: string,
-): DemoRateCardRow {
+// A demo row is authored as ONE `|`-delimited cell string in D0 column order
+// (`RATE_CARD_TABLE_COLUMNS` — the same order the upload CSV uses); an empty
+// cell is an empty field ("" → NULL at the service, never `0`). Kept dense on
+// purpose — one line per row, so the fixture reads like the CSV it becomes and
+// carries no repeated per-field boilerplate (this is also why SonarQube no
+// longer sees seven identical multi-line call blocks). `demoRow` splits and
+// maps to the typed record; a miscounted row fails LOUDLY at module load via
+// the length check, and the integration test pins each column's value. No demo
+// value contains a "|".
+const DEMO_CELL_DELIMITER = "|";
+
+function demoRow(cells: string): DemoRateCardRow {
+  const parts = cells.split(DEMO_CELL_DELIMITER);
+  if (parts.length !== RATE_CARD_TABLE_COLUMNS.length) {
+    throw new Error(
+      `demoRow: "${cells}" has ${parts.length} cells, expected ${RATE_CARD_TABLE_COLUMNS.length} (D0 order).`,
+    );
+  }
+  const [
+    mno = "",
+    cu = "",
+    poly = "",
+    start = "",
+    end = "",
+    state = "",
+    district = "",
+    sub = "",
+    svc = "",
+    rate = "",
+  ] = parts;
   return {
-    mno_public_key: mnoPublicKey,
-    commercial_unit_public_key: commercialUnitPublicKey,
-    polygon_id: polygonId,
-    polygon_start_date: polygonStartDate,
-    polygon_end_date: polygonEndDate,
+    mno_public_key: mno,
+    commercial_unit_public_key: cu,
+    polygon_id: poly,
+    polygon_start_date: start,
+    polygon_end_date: end,
     state,
     district,
-    lkp_subscriber_ref_id: lkpSubscriberRefId,
-    service_code: serviceCode,
-    rate_per_unit: ratePerUnit,
+    lkp_subscriber_ref_id: sub,
+    service_code: svc,
+    rate_per_unit: rate,
   };
 }
 
@@ -547,108 +567,19 @@ function demoRow(
 // shapes, NOT 5,400 (volume is proved by pm60/pm61's live-DB tests, not here).
 // Row key is (mno_public_key, commercial_unit_public_key, polygon_id) (RV2);
 // `lkp_subscriber_ref_id` values are `PRDINV`+8-digit shaped but carry no
-// referential meaning (D-A1).
+// referential meaning (D-A1). Column order per row string:
+//   MNO Name | Commercial Unit ID | Polygon ID | Polygon Start Date |
+//   Polygon End Date | State | District | Subscriber Reference ID |
+//   Service Code | Rate per Unit
 export const RAN_USAGE_V1_ROWS: DemoRateCardRow[] = [
-  // A plain mapping — the ordinary case: no validity/geo, no service code, no
-  // rate. Empty optional cells stay empty (→ NULL, never 0).
-  demoRow(
-    "MNO-1",
-    "CU-1001",
-    "POLY-0001",
-    "2026-01-01",
-    "",
-    "",
-    "",
-    "PRDINV00000001",
-    "",
-    "",
-  ),
-  // The descriptive columns populated (polygon_end_date / state / district)
-  // AND a service code AND a rate — the fully-described shape (D-A9/D-A10).
-  demoRow(
-    "MNO-1",
-    "CU-1001",
-    "POLY-0002",
-    "2026-01-01",
-    "2026-12-31",
-    "State-1",
-    "District-A",
-    "PRDINV00000002",
-    "SVC-DATA",
-    "0.050000",
-  ),
-  // The empty-descriptive counterpart: same validity start, geo/end left empty
-  // — empty-cell hygiene alongside the populated row above.
-  demoRow(
-    "MNO-1",
-    "CU-1002",
-    "POLY-0003",
-    "2026-02-01",
-    "",
-    "",
-    "",
-    "PRDINV00000003",
-    "",
-    "",
-  ),
-  // service_code pair (A): a row carrying a service code ...
-  demoRow(
-    "MNO-2",
-    "CU-2001",
-    "POLY-0101",
-    "2026-03-01",
-    "",
-    "",
-    "",
-    "PRDINV00000010",
-    "SVC-VOICE",
-    "",
-  ),
-  // ... and (B) one identical in EVERY non-key column but with `service_code`
-  // empty — proof that service_code is a plain, optional column and not part of
-  // the row key (D-A6). Only the mandatory key component (polygon_id) differs.
-  demoRow(
-    "MNO-2",
-    "CU-2001",
-    "POLY-0102",
-    "2026-03-01",
-    "",
-    "",
-    "",
-    "PRDINV00000010",
-    "",
-    "",
-  ),
-  // rate_per_unit populated on an otherwise empty-descriptive row (a plain
-  // nullable column, D-A2) — empty vs populated proves empty-cell-≠-zero.
-  demoRow(
-    "MNO-3",
-    "CU-3001",
-    "POLY-0201",
-    "2026-04-01",
-    "",
-    "",
-    "",
-    "PRDINV00000020",
-    "",
-    "1.250000",
-  ),
-  // A fully-populated row REMOVED in v2 (the one removed key of D6): present in
-  // the SUPERSEDED version, absent from the ACTIVE one, never carried forward
-  // (D-A7).
-  demoRow(
-    "MNO-3",
-    "CU-3001",
-    "POLY-0202",
-    "2026-05-01",
-    "2027-06-30",
-    "State-2",
-    "District-B",
-    "PRDINV00000021",
-    "SVC-DATA",
-    "2.000000",
-  ),
-];
+  "MNO-1|CU-1001|POLY-0001|2026-01-01||||PRDINV00000001||", // plain mapping — all optionals empty (empty ≠ 0)
+  "MNO-1|CU-1001|POLY-0002|2026-01-01|2026-12-31|State-1|District-A|PRDINV00000002|SVC-DATA|0.050000", // fully described (D-A9/D-A10)
+  "MNO-1|CU-1002|POLY-0003|2026-02-01||||PRDINV00000003||", // empty-descriptive counterpart (empty-cell hygiene)
+  "MNO-2|CU-2001|POLY-0101|2026-03-01||||PRDINV00000010|SVC-VOICE|", // service_code pair A — code set
+  "MNO-2|CU-2001|POLY-0102|2026-03-01||||PRDINV00000010||", // service_code pair B — else identical, code empty (D-A6)
+  "MNO-3|CU-3001|POLY-0201|2026-04-01||||PRDINV00000020||1.250000", // rate_per_unit populated, else empty (D-A2)
+  "MNO-3|CU-3001|POLY-0202|2026-05-01|2027-06-30|State-2|District-B|PRDINV00000021|SVC-DATA|2.000000", // REMOVED in v2 (D6)
+].map(demoRow);
 
 // The one key removed between v1 and v2 (D6). Named explicitly so the diff's
 // `removed = 1` is checkable by eye and the removal is unambiguous.
@@ -672,27 +603,20 @@ export const RAN_USAGE_V2_ROWS: DemoRateCardRow[] = RAN_USAGE_V1_ROWS.filter(
     ),
 );
 
-// RFC-4180 minimal quoting. None of the demo cells need it today (no comma,
-// quote or newline in any value), but quote defensively so a future edit that
-// introduces one cannot silently misalign a row — which the parser would then
-// reject outright (`relax_column_count` is off by design, pm59).
-function csvCell(value: string): string {
-  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-}
-
-// Builds the upload CSV bytes for a set of demo rows. The header line is built
-// from pm58's `RATE_CARD_FILE_HEADERS` / `RATE_CARD_HEADER_MAP`, IMPORTED — the
-// ten header strings are never re-typed here (I2, §2.24). Each column's cell is
-// read by mapping the file header back to its table column, so header order and
-// header↔column mapping have exactly one source of truth.
+// Builds the upload CSV bytes for a set of demo rows. Field escaping and
+// assembly go through the shared `lib/csv.ts` (`buildCsv` → `csvField`, RFC-4180
+// + formula-injection hardening) so the seed's wire format is identical to every
+// other CSV the app emits and the escaping rule lives in exactly one place —
+// rather than a second private quoter. The header is built from pm58's
+// `RATE_CARD_FILE_HEADERS` / `RATE_CARD_HEADER_MAP`, IMPORTED (I2, §2.24): each
+// column's cell is read by mapping the file header back to its table column, so
+// header order and header↔column mapping have one source of truth. `buildCsv`
+// emits RFC-4180 CRLF line endings, which the pinned parser (pm59) accepts.
 export function buildRateCardDemoCsv(rows: DemoRateCardRow[]): Buffer {
-  const headerLine = RATE_CARD_FILE_HEADERS.map(csvCell).join(",");
-  const dataLines = rows.map((row) =>
-    RATE_CARD_FILE_HEADERS.map((header) =>
-      csvCell(row[RATE_CARD_HEADER_MAP[header]]),
-    ).join(","),
+  const dataRows = rows.map((row) =>
+    RATE_CARD_FILE_HEADERS.map((header) => row[RATE_CARD_HEADER_MAP[header]]),
   );
-  return Buffer.from([headerLine, ...dataLines].join("\n") + "\n", "utf8");
+  return Buffer.from(buildCsv(RATE_CARD_FILE_HEADERS, dataRows), "utf8");
 }
 
 // Upload a version through pm61's service, then activate it through pm63's —
@@ -703,14 +627,22 @@ async function uploadAndActivateDemoVersion(
   rows: DemoRateCardRow[],
   sourceFile: string,
   actorId: string,
-  uploadedAt: Date,
 ): Promise<string> {
   const uploaded = await uploadRatecardVersion({
     cardName: RAN_USAGE_CARD_NAME,
     bytes: buildRateCardDemoCsv(rows),
     sourceFile,
     uploadedBy: actorId,
-    uploadedAt,
+    // The REAL clock at the moment of THIS upload (D6): each version reads its
+    // own instant, so `uploaded_at` differs between v1 and v2 and genuinely
+    // "tells them apart" (D6) — v2 is uploaded after v1's full upload+activate
+    // round-trip, so v2.uploaded_at is strictly later, and the version list's
+    // "newest first" order holds by real time, not just the id tiebreak. NOT
+    // pm61's fixed-instant test parameter (pm61 D4): backdating would show a
+    // history that never happened and put a clock override into non-test code.
+    // pm61 derives `snapshot_date` from this same instant, so both versions
+    // still show the one seed-run calendar date (D-A8) in a single run.
+    uploadedAt: new Date(),
   });
   if (!uploaded.ok) {
     throw new Error(
@@ -745,9 +677,35 @@ export async function seedRateCardDemo(): Promise<void> {
     RAN_USAGE_CARD_NAME,
   );
   if (existing.length > 0) {
-    logger.info(
-      "db:seed-demo: rate-card demo (RAN_USAGE) already seeded, skipping.",
-    );
+    // Distinguish the COMPLETED demo dataset — exactly one ACTIVE + one
+    // SUPERSEDED version, the shape this seed produces — from any other
+    // pre-existing state: a partial/failed prior run, or versions a real user
+    // created through the UI. Only the complete-and-matching case is a genuine
+    // "already seeded" skip. Anything else is left UNTOUCHED (this seed never
+    // deletes a version, so unrelated user data is preserved) and reported
+    // WITHOUT claiming success, so a half-seeded card is never silently
+    // mistaken for a finished one. We do not auto-resume a partial state: a
+    // stray DRAFT would need the replace-on-reupload path and a human's
+    // judgement, so the safe minimum is to surface it loudly.
+    const activeCount = existing.filter((v) => v.status === "ACTIVE").length;
+    const supersededCount = existing.filter(
+      (v) => v.status === "SUPERSEDED",
+    ).length;
+    const isCompleteDemo =
+      existing.length === 2 && activeCount === 1 && supersededCount === 1;
+    if (isCompleteDemo) {
+      logger.info(
+        "db:seed-demo: rate-card demo (RAN_USAGE) already seeded, skipping.",
+      );
+    } else {
+      logger.warn(
+        `db:seed-demo: RAN_USAGE already has ${existing.length} version(s) ` +
+          `(${activeCount} ACTIVE, ${supersededCount} SUPERSEDED) — not the ` +
+          `expected demo shape (1 ACTIVE + 1 SUPERSEDED). Leaving them ` +
+          `untouched and NOT seeding the demo card; resolve manually if this ` +
+          `is a partial seed run.`,
+      );
+    }
     return;
   }
 
@@ -757,23 +715,19 @@ export async function seedRateCardDemo(): Promise<void> {
     RATE_CARD_DEMO_OPERATOR.userEmail,
   );
 
-  // The REAL clock (D6), captured ONCE so both versions record the same
-  // seed-run `snapshot_date` in the app timezone (D-A8). Deliberately NOT
-  // pm61's fixed-instant test parameter (pm61 D4): backdating v1 would show a
-  // history that never happened and put a clock override into non-test code.
-  const uploadedAt = new Date();
-
+  // v1 is uploaded+activated first, then v2 (which supersedes it). Each reads
+  // its own real-clock instant inside uploadAndActivateDemoVersion (D6) — see
+  // the note there — so uploaded_at differs between the two and orders them by
+  // real time, while both keep the one seed-run snapshot_date.
   const supersededVersionId = await uploadAndActivateDemoVersion(
     RAN_USAGE_V1_ROWS,
     "demo-ran-usage-v1.csv",
     actorId,
-    uploadedAt,
   );
   const activeVersionId = await uploadAndActivateDemoVersion(
     RAN_USAGE_V2_ROWS,
     "demo-ran-usage-v2.csv",
     actorId,
-    uploadedAt,
   );
 
   logger.info(

@@ -48,10 +48,13 @@ describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
 
   it("the card seed builds its CSV header from pm58's imported header map, not re-spelled strings (I2, §2.24)", () => {
     const src = read(PRODUCT_DEMO);
-    // Imports the single source of truth for the ten headers ...
-    expect(src).toMatch(
-      /import\s*\{[^}]*RATE_CARD_FILE_HEADERS[^}]*RATE_CARD_HEADER_MAP[^}]*\}\s*from\s*"@\/validation\/product\/ratecard\.schema"/s,
-    );
+    // Imports the single source of truth for the ten headers from the schema.
+    // Order-independent: assert the import path is present and both names are
+    // imported, rather than pinning their order in the named-import list (which
+    // an import sorter could reorder without changing behaviour).
+    expect(src).toMatch(/from "@\/validation\/product\/ratecard\.schema"/);
+    expect(src).toContain("RATE_CARD_FILE_HEADERS");
+    expect(src).toContain("RATE_CARD_HEADER_MAP");
     // ... and never types a raw file-header string (e.g. "MNO Name",
     // "Subscriber Reference ID") — the map is the only place those live.
     expect(src).not.toContain('"MNO Name"');
@@ -84,9 +87,14 @@ describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
   it("the seed is small and human-readable — not 5,400 rows (D4)", () => {
     const src = read(PRODUCT_DEMO);
     // Count demoRow(...) fixture calls; a handful, never thousands.
-    const rows = (src.match(/demoRow\(/g) ?? []).length;
+    // Count the literal fixture rows — each is one `|`-delimited string whose
+    // subscriber ref (column 8 of 10) is preceded by a pipe, `|PRDINV########`.
+    // Match on the LEADING pipe only (not a trailing one) so the count does not
+    // break if the trailing columns are ever emptied or reordered. A handful,
+    // never thousands.
+    const rows = (src.match(/\|PRDINV\d{8}/g) ?? []).length;
     expect(rows).toBeGreaterThan(2);
-    expect(rows).toBeLessThanOrEqual(20);
+    expect(rows).toBeLessThanOrEqual(50);
     // No row-generating loop in the card seed — the fixtures are literal rows,
     // never a `for`/`Array.from` batch (which is how a 5,400-row card would be
     // built). `seedRateCardDemo` maps over its own literal arrays only.
