@@ -114,17 +114,17 @@ export async function rollbackRatecardVersion(
       removed: diff.removed.count,
     };
 
-    // D1/D3 step 2 — promote the target and demote the outgoing ACTIVE. Status
-    // + provenance columns only; no lookup row is inserted, updated or deleted
+    // D1/D3 step 2 — demote the outgoing ACTIVE FIRST, then promote the target.
+    // Order matters: `ratecard_version_one_active_per_card` is a NON-deferrable
+    // partial unique index (Inv. #45), checked per-statement, so promoting the
+    // target while the outgoing is still ACTIVE would transiently leave two
+    // ACTIVE rows for one card and be rejected immediately (23505). Demoting
+    // first means there is never a moment with two ACTIVE — the same
+    // supersede-then-activate order pm16's `activateOffering` uses. Status +
+    // provenance columns only; no lookup row is inserted, updated or deleted
     // anywhere in this function (D1/D-A7). The target's own
     // `superseded_by_version_id` is CLEARED (it is live again); its
     // `activated_by`/`activated_at` are re-stamped to this rollback.
-    const activatedAt = new Date();
-    await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
-      activatedBy: actorId,
-      activatedAt,
-      supersededByVersionId: null,
-    });
     if (outgoing) {
       await ratecardRepository.setVersionStatus(
         tx,
@@ -133,6 +133,12 @@ export async function rollbackRatecardVersion(
         { supersededByVersionId: versionId },
       );
     }
+    const activatedAt = new Date();
+    await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
+      activatedBy: actorId,
+      activatedAt,
+      supersededByVersionId: null,
+    });
 
     // D3 / D7 — exactly one RATECARD_VERSION_ROLLED_BACK audit event, in the
     // same transaction (§1.43), carrying the demoted version id and the three

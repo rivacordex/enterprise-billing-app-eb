@@ -93,14 +93,16 @@ export async function activateRatecardVersion(
       removed: diff.removed.count,
     };
 
-    // D2 step 2 — promote / demote. Status + provenance columns only; no
-    // lookup row is inserted, updated or deleted anywhere in this function
-    // (D6/D-A7).
+    // D2 step 2 — demote the outgoing ACTIVE FIRST, then promote the target.
+    // Order matters: `ratecard_version_one_active_per_card` is a NON-deferrable
+    // partial unique index (Inv. #45), checked per-statement, so promoting the
+    // DRAFT while the outgoing is still ACTIVE would transiently leave two
+    // ACTIVE rows for one card and be rejected immediately (23505). Demoting
+    // first means there is never a moment with two ACTIVE — the same
+    // supersede-then-activate order pm16's `activateOffering` uses. Status +
+    // provenance columns only; no lookup row is inserted, updated or deleted
+    // anywhere in this function (D6/D-A7).
     const activatedAt = new Date();
-    await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
-      activatedBy: actorId,
-      activatedAt,
-    });
     if (outgoing) {
       await ratecardRepository.setVersionStatus(
         tx,
@@ -109,6 +111,10 @@ export async function activateRatecardVersion(
         { supersededByVersionId: versionId },
       );
     }
+    await ratecardRepository.setVersionStatus(tx, versionId, "ACTIVE", {
+      activatedBy: actorId,
+      activatedAt,
+    });
 
     // D2 step 3 / D5 — exactly one audit event, in the same transaction,
     // carrying the superseded version id and the three diff counts. This

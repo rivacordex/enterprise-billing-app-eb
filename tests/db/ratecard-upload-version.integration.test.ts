@@ -422,10 +422,23 @@ describe.skipIf(!databaseUrl)(
       expect(uploadedEvents!.n).toBeGreaterThanOrEqual(2);
     });
 
-    it("two concurrent uploads racing with no open draft: the loser gets a typed refusal, not a raw 23505", async () => {
+    it("two concurrent uploads racing with no open draft: no raw 23505 escapes, one draft remains, any loser is a typed refusal", async () => {
       const cardName = "CARD_CONCURRENT_RACE";
 
-      const [resultA, resultB] = await Promise.all([
+      // Two genuine outcomes are both correct here, and which one happens is a
+      // timing detail (`Promise.all` over a shared pool), not a contract:
+      //   - TRUE OVERLAP: both transactions see "no draft" and both INSERT one;
+      //     the loser hits `ratecard_version_one_draft_per_card` (or the
+      //     `card_name`+`version_num` unique index) and the service catches the
+      //     23505, returning CONCURRENT_UPLOAD_CONFLICT — 1 winner, 1 loser.
+      //   - SERIALIZED: the first commits before the second lists versions, so
+      //     the second sees the committed draft and REPLACES it (D12,
+      //     deleteDraftVersion + reused version_num) — 2 winners, 0 losers.
+      // The invariant the service guarantees in BOTH is what this test pins:
+      // NO raw 23505 ever escapes (Promise.all resolves rather than rejects),
+      // exactly one DRAFT remains, and every loser (if any) is the typed
+      // refusal — never some other code and never a thrown error (I5.8).
+      const results = await Promise.all([
         uploadRatecardVersion({
           cardName,
           bytes: csv(3),
@@ -442,15 +455,15 @@ describe.skipIf(!databaseUrl)(
         }),
       ]);
 
-      const results = [resultA, resultB];
       const winners = results.filter((r) => r.ok);
       const losers = results.filter((r) => !r.ok);
-      expect(winners).toHaveLength(1);
-      expect(losers).toHaveLength(1);
-      expect(losers[0]).toEqual({
-        ok: false,
-        code: "CONCURRENT_UPLOAD_CONFLICT",
-      });
+      expect(winners.length).toBeGreaterThanOrEqual(1);
+      for (const loser of losers) {
+        expect(loser).toEqual({
+          ok: false,
+          code: "CONCURRENT_UPLOAD_CONFLICT",
+        });
+      }
       expect(await versionCount(cardName)).toBe(1);
     });
 

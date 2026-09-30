@@ -869,21 +869,20 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     // through pm60; it went stale the moment pm61 legitimately resolved
     // G-RC3 with its own follow-up migration (the PERMISSIONS seed row must
     // ship in its own file per the pm57a I6 split recorded just above, since
-    // G-RC3 was still open when 0041 was authored). Re-scoped here (found,
-    // not silently re-passed) to name each KNOWN later migration mentioning
-    // "ratecard" rather than asserting none exists:
+    // G-RC3 was still open when 0041 was authored). Names each KNOWN later
+    // migration mentioning "ratecard" rather than asserting none exists:
     //   - 0043_ratecard_permission.sql — EXPECTED (pm61, G-RC3's `ratecard`
     //     PERMISSIONS row, landed in its own migration as I6 always intended).
-    //   - 0042_cold_paibok.sql — a PRE-EXISTING, already-flagged defect
-    //     (progress tracker, pm61 session) unrelated to this module's own
-    //     units: it re-issues the ratecard sequence/tables/indexes 0041
-    //     already owns, added in 7e6bc26's npm-audit remediation against a
-    //     stale drizzle-kit snapshot. Out of this guardrail's boundary to
-    //     fix (it touches other modules' schema too) — named here so a THIRD,
-    //     genuinely new/unauthorized rate-card migration still fails this
-    //     test rather than silently passing.
+    // 0042_cold_paibok.sql — the PRE-EXISTING defect flagged since the pm61
+    // session — was REMOVED in pm64 (2026-09-30): it was a spurious, never-
+    // applied `drizzle-kit generate` output (commit 7e6bc26) that re-issued the
+    // ratecard sequence/tables/indexes 0041 already owns (in the stale v1
+    // shape) plus the whole 0027-0041 schema, and it broke migrate-from-empty.
+    // Nothing in it was net-new, so deleting the file + its journal entry +
+    // snapshot lost nothing and unblocked every rate-card integration suite.
+    // Named here as removed so a genuinely new/unauthorized rate-card migration
+    // still fails this test rather than silently passing.
     const EXPECTED_LATER_RATECARD_MIGRATIONS = new Set([
-      "0042_cold_paibok.sql",
       "0043_ratecard_permission.sql",
     ]);
     const laterRateCardMigrations = fs
