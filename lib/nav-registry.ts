@@ -127,6 +127,15 @@ export const NAV_REGISTRY = [
         permission: "product_inventory",
         level: "READ",
       },
+      {
+        // pm65 (rate card) — the fifth Products entry. `ratecard : READ` gates
+        // the read surface; the entry is hidden when denied, never shown locked
+        // (ui-context §10, §8 — the existing NAV_REGISTRY convention).
+        label: "Rate Card",
+        href: "/products/rate-card",
+        permission: "ratecard",
+        level: "READ",
+      },
     ],
   },
   {

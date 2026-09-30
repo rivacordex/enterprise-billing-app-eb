@@ -125,8 +125,8 @@ Items 1–20 are the catalog and Manage-rebuild standard. Items 21–34 are the 
 13. **(pricing update) A cross-component refusal is a server result, never a client pre-check.** The picker may disable a branch the offering cannot yet accept as a convenience, but the authoritative refusal is §2.14's code returned from the action, and the banner renders from that result (§4.19). Never mirror VI3–VI5 in client state as the decision.
 14. **(pricing update) The query budget is part of the page contract.** Manage Products' first render issues one families query plus its count and **no** per-row detail query; selecting a family issues the version, detail, specification and price queries once each — and the budget holds unchanged after a component write. A component's `rateCardLookUp` never triggers a query (§1.27).
 15. **(rate card) This update adds exactly one route, one page, one nav entry and one permission** — `/products/rate-card`. §3.12 ("the update adds no route") is the **pricing** update's rule and is not amended by this one; the two statements are about different updates and must never be merged into a general claim about the module.
-16. **(rate card) `app/(app)/products/rate-card/page.tsx` is a thin RSC orchestrator:** guard `requirePermission('ratecard', 'READ')` → await `searchParams` → parse `version` and `page` → `listVersions` / `getVersionRows` / `diffAgainstActive` → compose. It ships `loading.tsx` and `error.tsx`, carries `export const dynamic = 'force-dynamic'`, and sets `metadata`; its title and `H1` are both "Rate Card".
-17. **(rate card) Selection state lives in searchParams and is parsed, never trusted.** `version` (an `RCV` id, parsed against its format schema) and `page`. A `version` matching no row renders the empty-selection state — not a 404 and not an error boundary. No client store, no `useState` mirror of the URL.
+16. **(rate card) `app/(app)/products/rate-card/page.tsx` is a thin RSC orchestrator:** guard `requirePermission('ratecard', 'READ')` → await `searchParams` → parse `version`, `page`, `q` and `tab` → `listVersions` / `getVersionRows` / `diffAgainstActive` → compose. It ships `loading.tsx` and `error.tsx`, carries `export const dynamic = 'force-dynamic'`, and sets `metadata`; its title and `H1` are both "Rate Card". **`RateCardVersionTable` / `RateCardStatusBadge` / `RateCardRowPreview` and the two read services landed pm65; the diff read (`diffAgainstActive`), the tab bar and `RateCardDiffPanel` land pm66.**
+17. **(rate card) Selection state lives in searchParams and is parsed, never trusted.** `version` (an `RCV` id, parsed against its format schema), `page`, the row-preview filter `q`, and `tab` — **`tab` admitted as an enumerated third selection param (C3, pm65 D4)**, a closed union `rows | diff | validation` falling back to `rows` (an unknown value is ignored, never a 404). **The argument is the query budget, not the deep-link convention:** §3.23 fixes the budget at one versions query + count on first render, one paged rows query + count on selection, and **two full row reads for a diff** — so a diff must be _requested_ via the URL rather than computed on every load, else the page pays the diff's two reads whenever anyone opens it (or fetches on the client, which this module never does). `version` matching no row renders the empty-selection state — not a 404 and not an error boundary. No client store, no `useState` mirror of the URL.
 18. **(rate card) The upload action's shape differs from §3.7's, deliberately, and that difference is the whole security argument.** In order: `requirePermission('ratecard', 'EDIT')` → `isRedirectError` catch → take the file off `FormData` and check **extension, MIME type and byte size** before reading it → parse to rows with the pinned parser (§7.10) → `fileSchema.safeParse` → the row schema per row → one write service (no referential query — D-A1) → `revalidatePath('/products/rate-card')` → typed result. `safeParse` still runs before any service call; it simply cannot run on a file handle. **Never parse a `FormData` envelope and treat the pass as validation of the file's contents.**
 19. **(rate card) The client-side header sniff is a convenience and never a boundary.** Reading the first line in the browser to reject an obviously wrong file early is allowed; the server re-parses and re-validates the entire file unconditionally. "The client already checked it" is never a reason to skip a server check (general §1.2, §1.5).
 20. **(rate card) The file never enters react-hook-form state, and the upload form never serialises it to JSON or base64.** The picker is an uncontrolled file input inside a `form` whose `action` is the Server Action; the action receives `FormData`. This is the module's — and the application's — first file input, and the pattern is binding for whatever upload comes next.
@@ -341,11 +341,12 @@ actions/product/
   activate-ratecard-version.action.ts # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm63
   rollback-ratecard-version.action.ts # (rate card)  EXPECTED_PRODUCT_ACTION_FILES +1 — LANDED pm64 (list closed at three, §3.21)
 components/products/rate-card/
-  rate-card-version-table.tsx         # (rate card, new)  RateCardVersionTable — server
-  rate-card-status-badge.tsx          # (rate card, new)  RateCardStatusBadge — total Record
+  rate-card-version-table.tsx         # (rate card)  RateCardVersionTable — server — LANDED pm65
+  rate-card-status-badge.tsx          # (rate card)  RateCardStatusBadge — total Record — LANDED pm65
   upload-version-dialog.tsx           # (rate card, new)  UploadVersionDialog — client leaf
   upload-error-table.tsx              # (rate card, new)  UploadErrorTable
-  rate-card-row-preview.tsx           # (rate card, new)  RateCardRowPreview — paged, server
+  rate-card-row-preview.tsx           # (rate card)  RateCardRowPreview — paged, server — LANDED pm65
+  rate-card-href.ts                   # (rate card)  buildRateCardHref — shared URL builder — LANDED pm65
   rate-card-diff-panel.tsx            # (rate card, new)  RateCardDiffPanel — three buckets
   rate-card-diff-badge.tsx            # (rate card, new)  RateCardDiffBadge — total Record (diff category)
   activate-version-dialog.tsx         # (rate card, new)  ActivateVersionDialog
@@ -356,7 +357,7 @@ services/product/ratecard/
   diff-versions.ts                    # (rate card)  in-memory, three buckets — LANDED pm62
   activate-version.ts                 # (rate card)  promote + demote, one tx, no row writes — LANDED pm63
   rollback-version.ts                 # (rate card)  re-activate a SUPERSEDED version — LANDED pm64 (status flips only, no row writes)
-  list-versions.ts, get-version-rows.ts # (rate card, new) read models
+  list-versions.ts, get-version-rows.ts # (rate card) read models, uncached — LANDED pm65
 db/repositories/
   ratecard.ts                         # (rate card) FLAT path — §7.8; no row-level write — LANDED pm60 (pm62 added getAllRowsForVersion/getCurrentActiveRows; pm63 added findVersionForUpdate)
 db/migrations/0041_ratecard_ran_usage_lkp.sql # (rate card) the two tables' DDL — LANDED pm57a
@@ -366,7 +367,9 @@ validation/product/
 db/seeds/demo/product-demo.ts         # (rate card) one demo card version, same Zod + CHECKs
 next.config.ts                        # (rate card) experimental.serverActions.bodySizeLimit — §1.46
 types/rbac.ts                         # (rate card) one more PERMISSION_NAMES member — §1.46, §8
-lib/nav-registry.ts, components/nav-icons.ts # (rate card) fifth Products entry + its icon
+lib/nav-registry.ts, components/nav-icons.ts # (rate card) fifth Products entry + its TableProperties icon — LANDED pm65
+app/(app)/products/rate-card/{page,loading,error}.tsx # (rate card) thin RSC orchestrator, force-dynamic — LANDED pm65
+validation/product/ratecard-list.schema.ts # (rate card) version/page/q/tab searchParam contract — LANDED pm65
 tests/
   product/pricing-composition-contract.test.ts         # (pm47, new)  pure function (§2.17)
   validation/pricing-characteristics.schema.test.ts    # (pm47, del)  deleted with its subject
@@ -511,5 +514,6 @@ The authz matrix (guardrail 1) extends to every row of §8. The pricing update a
 | A10 | §1.27 and Inv. #42 — "`rateCardLookUp` is a name, not a reference; build no lookup and no fallback logic."                                                | **Not superseded** — Inv. #42 is unamended: `rateCardLookUp` stays a validated name only, with no referent, no lookup and no fallback built here. A future consumer may give the name meaning; this delivery does not.                   | retired                 |
 | A11 | §6.1 — "three tables, and still three after the pricing update. No fourth table, … no rate-card table."                                                   | Five tables (§6.23): `ratecard_version` and `RATECARD_RAN_USAGE_LKP` join the three.                                                                                                                                                     | `0041` live in `main`   |
 | A12 | §7.7 — "no `db/schema/rate-card*`."                                                                                                                       | Re-scoped (§7.12): the two card tables are declared in the existing `db/schema/product.ts`; no new schema file is created, and the hyphenated name is still not used.                                                                    | `0041` live in `main`   |
+| A14 | The `/products/rate-card` read surface is stood up on the assumption it **will** be consumed — nothing reads the `ACTIVE` version in this delivery (the rating usage is a following-sprint deliverable, architecture §7).                | **Left open (pm65 D6).** No page banner implying the page is inert is built — the page is a plain read surface. This row records that the read UI ships ahead of its consumer, deliberately; it is not a defect and needs no signage.     | a consumer shipping      |
 
 **Unresolved, tracked here because it has no other home:** the delivery record for pm35–pm45 and the state of `enterprise-billing-app/` disagree. Until that is reconciled, treat every "delivered" claim about the Manage rebuild in this file, in `prodmgmt-architecture.md` and in `pm00-build-plan.md` as **unverified**. The workflow-rule counterparts are in `prodmgmt-ai-workflow-rules.md` Appendix A.
