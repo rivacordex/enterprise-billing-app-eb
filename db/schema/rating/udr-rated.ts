@@ -26,9 +26,8 @@ import type { UdrRateDetail } from "@/validation/rating/udr-rate-detail.schema";
 // cross-reference — this declaration exists for query typing only. Do not
 // `drizzle-kit push` it.
 //
-// `partition_period` is a physical storage bucket keyed to UTC month
-// boundaries, not the billing month (rm01-spec D3) — never derive it from a
-// business-local calendar.
+// `partition_period` IS the billing month (rm15-spec X1) — `period_of()` is
+// retargeted to the config TZ (Asia/Kuala_Lumpur), a deploy-time constant.
 export const udrRated = rating.table(
   "udr_rated",
   {
@@ -57,7 +56,7 @@ export const udrRated = rating.table(
       sql`CASE WHEN status IN ('RATED','BILL_DRAFT','BILL_APPROVED') THEN true END`,
     ),
     // No FK to inventory.product_inventory (Inv #17) — plain text.
-    udrSubscriberRefId: text("udr_subscriber_ref_id").notNull(),
+    udrSubscriptionRefId: text("udr_subscription_ref_id").notNull(),
     udrKey: text("udr_key").notNull(),
     // Reserved, stays NULL in v1 (rm01-spec D10). Do not populate.
     udrResource: text("udr_resource"),
@@ -153,15 +152,11 @@ export const udrRated = rating.table(
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
     primaryKey({ name: "udr_rated_pk", columns: [t.partitionPeriod, t.udrId] }),
-    // The live-row uniqueness constraint (Inv #3) — the only thing that makes
+    // The live-row uniqueness constraint (Inv #3) — one live row per
+    // (partition_period, udr_key) (rm15-spec X2) — the only thing that makes
     // double-billing structurally impossible. Do not drop, weaken, or make
     // deferrable.
-    unique("udr_rated_live_uq").on(
-      t.partitionPeriod,
-      t.startDatetime,
-      t.udrKey,
-      t.isLive,
-    ),
+    unique("udr_rated_live_uq").on(t.partitionPeriod, t.udrKey, t.isLive),
     check("udr_rated_udr_key_length_check", sql`char_length(udr_key) <= 512`),
     check(
       "udr_rated_period_matches_check",
@@ -187,8 +182,8 @@ export const udrRated = rating.table(
       "udr_rated_end_after_start_check",
       sql`end_datetime >= start_datetime`,
     ),
-    index("udr_rated_subscriber_start_idx").on(
-      t.udrSubscriberRefId,
+    index("udr_rated_subscription_start_idx").on(
+      t.udrSubscriptionRefId,
       t.startDatetime,
     ),
     index("udr_rated_billrun_idx")

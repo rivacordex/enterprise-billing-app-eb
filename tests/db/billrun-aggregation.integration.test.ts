@@ -180,7 +180,7 @@ describe.skipIf(!databaseUrl)(
       const [row] = await sql<{ udr_id: string }[]>`
         INSERT INTO rating.udr_rated
           (partition_period, udr_type, start_datetime, end_datetime, status,
-           udr_subscriber_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
+           udr_subscription_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
            udr_rate_type, udr_rated_price, udr_rated_price_raw,
            udr_rounding_mode, udr_currency, udr_ref_batch_id, udr_source_file,
            rating_engine_version, rating_flow_revision,

@@ -390,3 +390,31 @@ them.
 
 Not yet verified against a live cluster in this session — see
 `billmgmt-progress-tracker.md`.
+
+## rm15 — `udr_rated` shape migration fresh-install gate (2026-10-01)
+
+Per `rm15-udr-rated-shape-migration.md` Implementation §1 (blocking gate before
+editing `0034_rating.sql` in place): confirmed no persistent/shared database
+has applied migration `0034_rating` against live data.
+
+Evidence checked:
+
+- No Docker daemon/containers reachable in this session (`docker ps` fails) —
+  there is no currently-running local dev stack to inspect
+  `__drizzle_migrations` directly. Per repo memory, the local Docker stack is
+  routinely rebuilt clean from zero and holds no durable state between
+  sessions.
+- Every rm01 DB-gated validation to date ran against a **disposable** Postgres
+  instance explicitly torn down afterward (`ebill-test-db` :5434, 2026-09-06
+  — see `ratemgmt-progress-tracker.md` Completed/rm01); none of those
+  instances persist across sessions.
+- The Azure hub-spoke + private Postgres infra (commit `7154484`) is WIP on
+  `dev1`, explicitly marked "not for main" in the commit message, and not yet
+  applied — `deployRatingEngine` still defaults `false` in `main.bicep`, and
+  no CI pipeline run has executed `db:migrate` against that or any other
+  persistent/shared Postgres instance.
+- `infra/azure-pipelines.yml`'s migrate-job wiring exists but is unexercised
+  pending the gated deploy (no `deployRatingEngine=true` run has shipped).
+
+Result: **clean** — no environment holds rated rows against the current
+`0034_rating.sql`. Proceeding with the in-place edit per rm15-spec.

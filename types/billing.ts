@@ -356,7 +356,7 @@ export interface UnchargedRow {
 // two "things not on the bill" that are records, not accounts (Info family,
 // never blocking): a `BILL_NOTUSED` rated usage row, or an `ORPHAN` (an
 // unclaimed live `RATED` `RAN_USAGE` row Collection left behind, Inv #25/D32).
-// A resolvable orphan shows its `accountName` (via `udr_subscriber_ref_id →
+// A resolvable orphan shows its `accountName` (via `udr_subscription_ref_id →
 // inventory.product_inventory → billing_account`); an **unresolvable** one (no
 // `product_inventory`) shows a `null` account and is identified by
 // `subscriberRef` — it is never dropped (revenue leakage). Money/usage fields

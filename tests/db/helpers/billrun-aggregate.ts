@@ -197,7 +197,7 @@ export async function runAggregation(
                NULL::date                          AS snapshot_effective_date
         FROM   rating.udr_rated ur
         JOIN   inventory.product_inventory pi
-               ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+               ON pi.product_inventory_id = ur.udr_subscription_ref_id
         JOIN   product.product_offering po
                ON po.product_offering_id = pi.product_offering_id
         WHERE  ur.billrun_ref_id  = ${runId}

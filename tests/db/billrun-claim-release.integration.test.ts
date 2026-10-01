@@ -191,7 +191,7 @@ describe.skipIf(!databaseUrl)(
         const [row] = await sql!<{ udr_id: string }[]>`
           INSERT INTO rating.udr_rated
             (partition_period, udr_type, start_datetime, end_datetime, status,
-             udr_subscriber_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
+             udr_subscription_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
              udr_rate_type, udr_rated_price, udr_rated_price_raw,
              udr_rounding_mode, udr_currency, udr_ref_batch_id, udr_source_file,
              rating_engine_version, rating_flow_revision)
@@ -229,7 +229,7 @@ describe.skipIf(!databaseUrl)(
             billrun_attempt = ${attempt},
             billrun_checksum = 'bm24-claim-checksum',
             upsert_datetime = now()
-        WHERE udr_subscriber_ref_id = ${subRef}
+        WHERE udr_subscription_ref_id = ${subRef}
           AND status = 'RATED'
           ${udrIds ? sql!`AND udr_id = ANY(${udrIds})` : sql!``}
         RETURNING udr_id
@@ -248,7 +248,7 @@ describe.skipIf(!databaseUrl)(
           billrunChecksum: udrRated.billrunChecksum,
         })
         .from(udrRated)
-        .where(eq(udrRated.udrSubscriberRefId, subRef));
+        .where(eq(udrRated.udrSubscriptionRefId, subRef));
     }
 
     // Drive one M2M stage-completion signal through the real signed Route

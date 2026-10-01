@@ -148,7 +148,7 @@ function ratedRow(overrides: Record<string, unknown> = {}) {
     udr_type: "USAGE",
     start_datetime: "2026-08-14T10:00:00Z",
     end_datetime: "2026-08-14T11:00:00Z",
-    udr_subscriber_ref_id: "SUB-1",
+    udr_subscription_ref_id: "SUB-1",
     udr_key: `KEY-${crypto.randomUUID()}`,
     udr_usage_quantity: "1.000000",
     udr_usage_unit: "CALL",

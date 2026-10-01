@@ -34,7 +34,7 @@ function baseUdrRatedRow(overrides: Row = {}): Row {
     udr_type: "RAN_USAGE",
     start_datetime: startDatetime,
     end_datetime: "2026-08-14T10:05:00Z",
-    udr_subscriber_ref_id: "SUB-0001",
+    udr_subscription_ref_id: "SUB-0001",
     udr_key: "KEY-DEFAULT",
     udr_usage_quantity: "100.000000",
     udr_usage_unit: "MB",
@@ -160,6 +160,40 @@ describe.skipIf(!databaseUrl)(
         await expect(insertUdrRated({ udr_key: key })).rejects.toThrow();
       });
 
+      it("1a. a second live row with a different start_datetime but the same (partition_period, udr_key) also raises a unique violation (rm15-spec X2)", async () => {
+        const key = "NK-001A";
+        await insertUdrRated({
+          udr_key: key,
+          start_datetime: "2026-08-14T10:00:00Z",
+        });
+        await expect(
+          insertUdrRated({
+            udr_key: key,
+            start_datetime: "2026-08-20T10:00:00Z",
+          }),
+        ).rejects.toThrow();
+      });
+
+      it("1b. the same udr_key in two different billing months (different partition_period) both stay live (rm15-spec X2)", async () => {
+        const key = "NK-001B";
+        await insertUdrRated({
+          udr_key: key,
+          partition_period: "2026-08-01",
+          start_datetime: "2026-08-14T10:00:00Z",
+          end_datetime: "2026-08-14T10:05:00Z",
+        });
+        await insertUdrRated({
+          udr_key: key,
+          partition_period: "2026-09-01",
+          start_datetime: "2026-09-14T10:00:00Z",
+          end_datetime: "2026-09-14T10:05:00Z",
+        });
+        const rows = await sql<
+          { status: string }[]
+        >`SELECT status FROM rating.udr_rated WHERE udr_key = ${key}`;
+        expect(rows).toHaveLength(2);
+      });
+
       it("2. four consecutive supersede-then-insert cycles leave exactly one live row and four SUPERSEDED rows", async () => {
         const key = "NK-002";
         await insertUdrRated({ udr_key: key });
@@ -249,11 +283,22 @@ describe.skipIf(!databaseUrl)(
         await sql.unsafe("SET TIME ZONE 'UTC'");
       });
 
-      it("11. rating.period_of('2026-09-01 02:00+08') returns the UTC month, 2026-08-01", async () => {
+      it("11. rating.period_of('2026-03-01 02:00+08') returns the billing month, 2026-03-01, not February (rm15-spec X1)", async () => {
         const [row] = await sql<
           { period: string }[]
-        >`SELECT rating.period_of('2026-09-01 02:00+08'::timestamptz) AS period`;
-        expect(row?.period).toBe("2026-08-01");
+        >`SELECT rating.period_of('2026-03-01 02:00+08'::timestamptz) AS period`;
+        expect(row?.period).toBe("2026-03-01");
+      });
+
+      it("11a. rating.period_of() is session-timezone-independent for the same boundary instant across ≥3 sessions", async () => {
+        for (const tz of ["UTC", "Asia/Singapore", "America/New_York"]) {
+          await sql.unsafe(`SET TIME ZONE '${tz}'`);
+          const [row] = await sql<
+            { period: string }[]
+          >`SELECT rating.period_of('2026-03-01 02:00+08'::timestamptz) AS period`;
+          expect(row?.period).toBe("2026-03-01");
+        }
+        await sql.unsafe("SET TIME ZONE 'UTC'");
       });
 
       it("12. the same three assertions hold for process_log.partition_period against log_datetime", async () => {
@@ -271,8 +316,8 @@ describe.skipIf(!databaseUrl)(
 
         const [row] = await sql<
           { period: string }[]
-        >`SELECT rating.period_of('2026-09-01 02:00+08'::timestamptz) AS period`;
-        expect(row?.period).toBe("2026-08-01");
+        >`SELECT rating.period_of('2026-03-01 02:00+08'::timestamptz) AS period`;
+        expect(row?.period).toBe("2026-03-01");
       });
     });
 
@@ -390,6 +435,23 @@ describe.skipIf(!databaseUrl)(
         expect(byName.rated_datetime).toBe(3);
         expect(byName.insert_datetime).toBe(3);
         expect(byName.upsert_datetime).toBe(3);
+      });
+
+      it("17a. udr_rated_subscription_start_idx exists on (udr_subscription_ref_id, start_datetime); the old subscriber-named index is gone (rm15-spec)", async () => {
+        const rows = await sql<{ indexname: string; indexdef: string }[]>`
+          SELECT indexname, indexdef FROM pg_indexes
+          WHERE schemaname = 'rating' AND tablename = 'udr_rated'
+            AND indexname IN ('udr_rated_subscription_start_idx', 'udr_rated_subscriber_start_idx')
+        `;
+        const names = rows.map((r) => r.indexname);
+        expect(names).toContain("udr_rated_subscription_start_idx");
+        expect(names).not.toContain("udr_rated_subscriber_start_idx");
+        const newIdx = rows.find(
+          (r) => r.indexname === "udr_rated_subscription_start_idx",
+        );
+        expect(newIdx?.indexdef).toMatch(
+          /\(udr_subscription_ref_id, start_datetime\)/,
+        );
       });
     });
 

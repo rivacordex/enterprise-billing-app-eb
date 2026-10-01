@@ -104,7 +104,7 @@ export const ratedLinesRepository = {
   // customer_bill_line's grain: (product_offering_id, udr_type). The line grain
   // is (product_offering_id, udr_type) rolled across subscriptions, but a
   // udr_rated row carries no offering column — offering is only reachable via
-  // udr_subscriber_ref_id -> inventory.product_inventory.product_offering_id.
+  // udr_subscription_ref_id -> inventory.product_inventory.product_offering_id.
   // So this joins that hop and filters on the resolved offering (plus udr_type),
   // returning exactly the records that rolled into THAT line — never the whole
   // account's rows (which, since all bm28 usage is RAN_USAGE, would merge every
@@ -147,7 +147,7 @@ export const ratedLinesRepository = {
       .from(udrRated)
       .innerJoin(
         productInventory,
-        eq(productInventory.productInventoryId, udrRated.udrSubscriberRefId),
+        eq(productInventory.productInventoryId, udrRated.udrSubscriptionRefId),
       )
       .where(
         and(
@@ -175,7 +175,7 @@ export const ratedLinesRepository = {
   //     behind (`orphanConditions()`; both resolvable and unresolvable orphans
   //     are returned — the surface never filters silently, Inv #25).
   // `kind` is derived in SQL so a single scan of the windowed partitions serves
-  // both. The `LEFT JOIN` `udr_subscriber_ref_id → inventory.product_inventory →
+  // both. The `LEFT JOIN` `udr_subscription_ref_id → inventory.product_inventory →
   // billing.billing_account` resolves the account name — NULL when the subscriber
   // resolves to no inventory row (an unresolvable orphan, shown by
   // `subscriberRef`). Ordered by `(subscriberRef, startDatetime, udrId)` — the
@@ -201,7 +201,7 @@ export const ratedLinesRepository = {
     return db
       .select({
         kind: sql<ExceptionKind>`CASE WHEN ${udrRated.status} = 'BILL_NOTUSED' THEN 'BILL_NOTUSED' ELSE 'ORPHAN' END`,
-        subscriberRef: udrRated.udrSubscriberRefId,
+        subscriberRef: udrRated.udrSubscriptionRefId,
         accountName: billingAccount.name,
         udrType: udrRated.udrType,
         quantity: udrRated.udrUsageQuantity,
@@ -212,7 +212,7 @@ export const ratedLinesRepository = {
       .from(udrRated)
       .leftJoin(
         productInventory,
-        eq(productInventory.productInventoryId, udrRated.udrSubscriberRefId),
+        eq(productInventory.productInventoryId, udrRated.udrSubscriptionRefId),
       )
       .leftJoin(
         billingAccount,
@@ -225,7 +225,7 @@ export const ratedLinesRepository = {
         ),
       )
       .orderBy(
-        udrRated.udrSubscriberRefId,
+        udrRated.udrSubscriptionRefId,
         udrRated.startDatetime,
         udrRated.udrId,
       );

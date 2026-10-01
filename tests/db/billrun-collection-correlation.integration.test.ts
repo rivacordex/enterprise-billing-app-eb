@@ -142,7 +142,7 @@ describe.skipIf(!databaseUrl)(
       const [row] = await sql<{ udr_id: string }[]>`
         INSERT INTO rating.udr_rated
           (partition_period, udr_type, start_datetime, end_datetime, status,
-           udr_subscriber_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
+           udr_subscription_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
            udr_rate_type, udr_rated_price, udr_rated_price_raw,
            udr_rounding_mode, udr_currency, udr_ref_batch_id, udr_source_file,
            rating_engine_version, rating_flow_revision)
@@ -175,7 +175,7 @@ describe.skipIf(!databaseUrl)(
           SELECT ur.udr_id, ur.partition_period, pi.billing_account_id
           FROM   rating.udr_rated ur
           JOIN   inventory.product_inventory pi
-                 ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                 ON pi.product_inventory_id = ur.udr_subscription_ref_id
           WHERE  ur.is_live AND ur.status = 'RATED'
             AND  ur.udr_type = 'RAN_USAGE'
             AND  pi.billing_account_id = ANY(${banIds})
@@ -213,7 +213,7 @@ describe.skipIf(!databaseUrl)(
                  pi.billing_account_id, ba.currency AS account_currency
           FROM   rating.udr_rated ur
           JOIN   inventory.product_inventory pi
-                 ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                 ON pi.product_inventory_id = ur.udr_subscription_ref_id
           JOIN   billing.billing_account ba
                  ON ba.billing_account_id = pi.billing_account_id
           WHERE  ur.is_live AND ur.status = 'RATED'

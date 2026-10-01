@@ -218,7 +218,7 @@ async function assertSampleOnlyScope(
 
   // The candidate charges this run would (or did) bill: udr_rated rows whose
   // subscriber ref correlates to a scoped account via the SAME
-  // `udr_subscriber_ref_id → product_inventory → billing_account_id` path bm27's
+  // `udr_subscription_ref_id → product_inventory → billing_account_id` path bm27's
   // Collection uses (mirrored from `rated-lines.repository.ts`; the correlation
   // itself lives in the flow SQL — bm16 record-only — so there is no app service
   // to call). Correlated INDEPENDENT of claim status: a seed row is `RATED` with a
@@ -235,7 +235,7 @@ async function assertSampleOnlyScope(
     .from(udrRated)
     .innerJoin(
       productInventory,
-      eq(productInventory.productInventoryId, udrRated.udrSubscriberRefId),
+      eq(productInventory.productInventoryId, udrRated.udrSubscriptionRefId),
     )
     .where(inArray(productInventory.billingAccountId, banIds));
   // Make the charge boundary a POSITIVE assertion, not a vacuous pass: a scoped
@@ -248,7 +248,7 @@ async function assertSampleOnlyScope(
   if (candidateCharges.length === 0) {
     throw new Error(
       "billrun-live-kestra-smoke: no candidate udr_rated charge correlates to " +
-        "any scoped account (udr_subscriber_ref_id → product_inventory → " +
+        "any scoped account (udr_subscription_ref_id → product_inventory → " +
         "billing_account_id) — the _SAMPLE_ ci seed always carries usage, so an " +
         "empty result means the seed is incomplete or DATABASE_URL is not the " +
         "seeded sample database. Refusing to operate.",
