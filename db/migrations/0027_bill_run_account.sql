@@ -15,7 +15,7 @@ CREATE TABLE "billing"."bill_run_account" (
 ) PARTITION BY RANGE ("period_partition");
 --> statement-breakpoint
 ALTER TABLE "billing"."bill_run_account" ADD CONSTRAINT "bill_run_account_ref_bill_run_id_bill_run_bill_run_id_fk" FOREIGN KEY ("ref_bill_run_id") REFERENCES "billing"."bill_run"("bill_run_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "billing"."bill_run_account" ADD CONSTRAINT "bill_run_account_ref_billing_account_id_billing_account_billing_account_id_fk" FOREIGN KEY ("ref_billing_account_id") REFERENCES "billing"."billing_account"("billing_account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "billing"."bill_run_account" ADD CONSTRAINT "bill_run_account_ref_billing_account_id_fk" FOREIGN KEY ("ref_billing_account_id") REFERENCES "billing"."billing_account"("billing_account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "bill_run_account_ref_bill_run_id_idx" ON "billing"."bill_run_account" USING btree ("ref_bill_run_id");--> statement-breakpoint
 CREATE INDEX "bill_run_account_period_partition_idx" ON "billing"."bill_run_account" USING btree ("period_partition");--> statement-breakpoint
 

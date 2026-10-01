@@ -1,6 +1,7 @@
 import {
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -44,28 +45,13 @@ export const productInventory = inventory.table(
       ),
     // 1:1 with the order item (UNIQUE FK) — a single order item instantiates at
     // most one subscription (architecture §3).
-    productOrderItemId: text("product_order_item_id")
-      .notNull()
-      .unique()
-      .references(() => productOrderItem.productOrderItemId, {
-        onDelete: "restrict",
-      }),
+    productOrderItemId: text("product_order_item_id").notNull().unique(),
     // Denormalized for the bill-run read path (architecture §3): the party,
     // BAN, and pinned offering version are carried here so a bill run resolves
     // them without re-walking the order graph.
-    customerPartyRoleId: text("customer_party_role_id")
-      .notNull()
-      .references(() => partyRole.partyRoleId, { onDelete: "restrict" }),
-    billingAccountId: text("billing_account_id")
-      .notNull()
-      .references(() => billingAccount.billingAccountId, {
-        onDelete: "restrict",
-      }),
-    productOfferingId: text("product_offering_id")
-      .notNull()
-      .references(() => productOffering.productOfferingId, {
-        onDelete: "restrict",
-      }),
+    customerPartyRoleId: text("customer_party_role_id").notNull(),
+    billingAccountId: text("billing_account_id").notNull(),
+    productOfferingId: text("product_offering_id").notNull(),
     quantity: integer("quantity").notNull(),
     // The only editable billing-adjacent field (Inv. #15); audited, never a
     // rating input.
@@ -89,6 +75,28 @@ export const productInventory = inventory.table(
       .default(sql`now()`),
   },
   (t) => [
+    // Explicit FK names — Drizzle's derived names exceed Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.productOrderItemId],
+      foreignColumns: [productOrderItem.productOrderItemId],
+      name: "product_inventory_product_order_item_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.customerPartyRoleId],
+      foreignColumns: [partyRole.partyRoleId],
+      name: "product_inventory_customer_party_role_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.billingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "product_inventory_billing_account_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.productOfferingId],
+      foreignColumns: [productOffering.productOfferingId],
+      name: "product_inventory_product_offering_id_fk",
+    }).onDelete("restrict"),
     index("product_inventory_customer_idx").on(t.customerPartyRoleId),
     index("product_inventory_billing_account_idx").on(t.billingAccountId),
     index("product_inventory_offering_idx").on(t.productOfferingId),
@@ -111,11 +119,7 @@ export const inventoryStatusHistory = inventory.table(
       .default(
         sql`'PRDIVE' || lpad(nextval('inventory.inventory_status_history_seq')::text, 8, '0')`,
       ),
-    productInventoryId: text("product_inventory_id")
-      .notNull()
-      .references(() => productInventory.productInventoryId, {
-        onDelete: "restrict",
-      }),
+    productInventoryId: text("product_inventory_id").notNull(),
     // NULL only on the creation row (the instance's first status).
     fromStatus: productStatus("from_status"),
     toStatus: productStatus("to_status").notNull(),
@@ -132,6 +136,13 @@ export const inventoryStatusHistory = inventory.table(
       .default(sql`now()`),
   },
   (t) => [
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.productInventoryId],
+      foreignColumns: [productInventory.productInventoryId],
+      name: "inventory_status_history_product_inventory_id_fk",
+    }).onDelete("restrict"),
     index("inventory_status_history_inventory_idx").on(t.productInventoryId),
     // At most one creation row (from_status IS NULL) per instance — the
     // append-only, gap-free log (Inv. #18) has exactly one genesis transition.

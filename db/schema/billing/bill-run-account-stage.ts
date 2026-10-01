@@ -1,6 +1,7 @@
 import {
   check,
   date,
+  foreignKey,
   index,
   integer,
   primaryKey,
@@ -45,11 +46,7 @@ export const billRunAccountStage = billing.table(
     refBillRunId: text("ref_bill_run_id")
       .notNull()
       .references(() => billRun.billRunId, { onDelete: "restrict" }),
-    refBillingAccountId: text("ref_billing_account_id")
-      .notNull()
-      .references(() => billingAccount.billingAccountId, {
-        onDelete: "restrict",
-      }),
+    refBillingAccountId: text("ref_billing_account_id").notNull(),
     periodPartition: date("period_partition", { mode: "string" }).notNull(),
     stage: text("stage").notNull(),
     attempt: integer("attempt").notNull(),
@@ -72,7 +69,20 @@ export const billRunAccountStage = billing.table(
     // Composite PK is required because period_partition is the partition key
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
-    primaryKey({ columns: [t.billRunAccountStageId, t.periodPartition] }),
+    // Explicit PK name — Drizzle's derived
+    // `bill_run_account_stage_bill_run_account_stage_id_period_partition_pk`
+    // exceeds Postgres's 63-byte cap (code-standards §"Constraint & index
+    // naming").
+    primaryKey({
+      columns: [t.billRunAccountStageId, t.periodPartition],
+      name: "bill_run_account_stage_id_period_partition_pk",
+    }),
+    // Explicit FK name — same 63-byte reason.
+    foreignKey({
+      columns: [t.refBillingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "bill_run_account_stage_ref_billing_account_id_fk",
+    }).onDelete("restrict"),
     // The idempotency latch (Inv. #5, code-standards §6.5) — do not drop or
     // weaken it.
     unique("bill_run_account_stage_run_ban_stage_attempt_period_unique").on(

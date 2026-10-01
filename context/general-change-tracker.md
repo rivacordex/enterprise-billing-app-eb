@@ -4,6 +4,41 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE (code-complete, verified) — Postgres 63-byte identifier fix for Drizzle-derived FK/PK names**
+  (no spec; triggered by a wall of `42622` truncation NOTICEs during DB provisioning).
+  Root cause: Drizzle's *implicit* naming — an inline `.references()` derives
+  `{table}_{col}_{reftable}_{refcol}_fk` and a composite `primaryKey({ columns })`
+  derives `{table}_{col1}_{col2}_pk`, both of which exceed Postgres's 63-byte
+  identifier cap on this schema's long prefixed names and get silently truncated.
+  Full root-cause fix (user chose the coherent, all-layers option over sql-only):
+  - [x] **24 FKs + 3 composite PKs** renamed to explicit ≤63-byte names — convention
+        `{table}_{column}_fk` / `{col1}_{col2}_pk` — across all three layers so they
+        stay coherent: the **12 migration `.sql` files** (the DDL that runs during
+        provisioning), the **12 schema `.ts` files** (inline `.references()`/bare
+        composite PKs converted to named `foreignKey({ name })` / `primaryKey({ name })`
+        builders; self-refs use `foreignColumns: [t.<col>]`; dropped a now-unused
+        `AnyPgColumn` import in `product.ts`), and the **22 `meta/*.json` snapshots**
+        (literal-replaced to match).
+  - [x] Codified as **`code-standards.md §6.19` ("Constraint & index naming")** so it
+        can't recur — every `§"Constraint & index naming"` code comment points here.
+  - [x] Guardrail `tests/guardrails/product-module-boundaries.test.ts` updated from the
+        inline `onDelete: "cascade"` string form to the `.onDelete("cascade")` method form
+        (same behavior).
+  - Verified: **fresh migrate on the throwaway PG (docker-compose.test.yml, project
+    `ebill-test`, :5434) emits 0 truncation NOTICEs** (was ~27) — direct proof;
+    `migration.integration` 15/15 (incl. idempotent re-run); product guardrails 17/17;
+    rbac/product schema tests green; Drizzle introspection (`getTableConfig`) confirms
+    0 of 85 FK/PK names exceed 63 bytes; `tsc`/`eslint`/`prettier` clean. DB torn down
+    (`down -v`); dev stack untouched.
+  - Flagged (cannot be named away, accepted): on partitioned tables Postgres auto-names
+    the inherited unique index copied onto each `*_default` child and the per-partition
+    FK it propagates for a partitioned→partitioned reference; these exceed 63 and are
+    truncated **silently — no 42622 NOTICE** (inherent to `CREATE TABLE … PARTITION OF …`),
+    so they never cluttered provisioning. Two other names sit at exactly 63 bytes and fit.
+  - Note: `drizzle-kit generate` is NOT in this repo's workflow (snapshots stop at `0026`;
+    later migrations are hand-authored), so it was deliberately not used to "verify" — the
+    live fresh-migrate + introspection checks stand in its place.
+
 - **DONE (code-complete) — wfm02 Rating Flow-ID Harmonization (rename)**
   (`context/workflow-management/specs/wfm02-rating-flow-rename.md`). Renamed the four
   `rating`-namespace flow `id:`s + matching `.yaml` filenames per the D-A table

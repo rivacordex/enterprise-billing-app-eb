@@ -48,11 +48,7 @@ export const billRunInvoices = billing.table(
     refBillRunId: text("ref_bill_run_id")
       .notNull()
       .references(() => billRun.billRunId, { onDelete: "restrict" }),
-    refBillingAccountId: text("ref_billing_account_id")
-      .notNull()
-      .references(() => billingAccount.billingAccountId, {
-        onDelete: "restrict",
-      }),
+    refBillingAccountId: text("ref_billing_account_id").notNull(),
     refCustomerBillId: text("ref_customer_bill_id").notNull(),
     refInvDocumentId: text("ref_inv_document_id")
       .notNull()
@@ -73,6 +69,13 @@ export const billRunInvoices = billing.table(
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
     primaryKey({ columns: [t.billRunInvoiceId, t.periodPartition] }),
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refBillingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "bill_run_invoices_ref_billing_account_id_fk",
+    }).onDelete("restrict"),
     // One final invoice per account per run (Implementation §1).
     unique("bill_run_invoices_run_ban_period_unique").on(
       t.refBillRunId,

@@ -12,7 +12,7 @@ CREATE TABLE "billing"."bill_run_account_stage" (
 	"error_class" text,
 	"error_code" text,
 	"error_detail" text,
-	CONSTRAINT "bill_run_account_stage_bill_run_account_stage_id_period_partition_pk" PRIMARY KEY("bill_run_account_stage_id","period_partition"),
+	CONSTRAINT "bill_run_account_stage_id_period_partition_pk" PRIMARY KEY("bill_run_account_stage_id","period_partition"),
 	CONSTRAINT "bill_run_account_stage_run_ban_stage_attempt_period_unique" UNIQUE("ref_bill_run_id","ref_billing_account_id","stage","attempt","period_partition"),
 	CONSTRAINT "bill_run_account_stage_stage_check" CHECK (stage IN ('scoping','validation','collection','aggregation','taxation','verification','posting','rendering','distribution')),
 	CONSTRAINT "bill_run_account_stage_status_check" CHECK (status IN ('PENDING','RUNNING','DONE','FAILED','SKIPPED')),
@@ -20,7 +20,7 @@ CREATE TABLE "billing"."bill_run_account_stage" (
 ) PARTITION BY RANGE ("period_partition");
 --> statement-breakpoint
 ALTER TABLE "billing"."bill_run_account_stage" ADD CONSTRAINT "bill_run_account_stage_ref_bill_run_id_bill_run_bill_run_id_fk" FOREIGN KEY ("ref_bill_run_id") REFERENCES "billing"."bill_run"("bill_run_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "billing"."bill_run_account_stage" ADD CONSTRAINT "bill_run_account_stage_ref_billing_account_id_billing_account_billing_account_id_fk" FOREIGN KEY ("ref_billing_account_id") REFERENCES "billing"."billing_account"("billing_account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "billing"."bill_run_account_stage" ADD CONSTRAINT "bill_run_account_stage_ref_billing_account_id_fk" FOREIGN KEY ("ref_billing_account_id") REFERENCES "billing"."billing_account"("billing_account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "bill_run_account_stage_ref_bill_run_id_idx" ON "billing"."bill_run_account_stage" USING btree ("ref_bill_run_id");--> statement-breakpoint
 CREATE INDEX "bill_run_account_stage_period_partition_idx" ON "billing"."bill_run_account_stage" USING btree ("period_partition");--> statement-breakpoint
 

@@ -1,6 +1,7 @@
 import {
   char,
   check,
+  foreignKey,
   integer,
   jsonb,
   numeric,
@@ -88,11 +89,7 @@ export const billingAccount = billing.table(
       .notNull()
       .references(() => partyRole.partyRoleId, { onDelete: "restrict" }),
     contact: jsonb("contact").$type<AccountContactList>(),
-    refFinancialAccountId: text("ref_financial_account_id")
-      .notNull()
-      .references(() => financialAccount.financialAccountId, {
-        onDelete: "restrict",
-      }),
+    refFinancialAccountId: text("ref_financial_account_id").notNull(),
     currency: char("currency", { length: 3 }).notNull(),
     // Q23 — `prepaid` stays in the union for schema stability; the
     // onboarding wizard only ever offers `postpaid` this phase.
@@ -122,7 +119,14 @@ export const billingAccount = billing.table(
       .notNull()
       .references(() => appuser.id, { onDelete: "restrict" }),
   },
-  () => [
+  (t) => [
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refFinancialAccountId],
+      foreignColumns: [financialAccount.financialAccountId],
+      name: "billing_account_ref_financial_account_id_fk",
+    }).onDelete("restrict"),
     check(
       "billing_account_state_check",
       sql`state IN ('active','suspended','closed')`,

@@ -31,7 +31,7 @@ CREATE TABLE "core"."role_assign" (
 );
 --> statement-breakpoint
 ALTER TABLE "core"."role_permission_assign" ADD CONSTRAINT "role_permission_assign_ref_role_id_roles_role_id_fk" FOREIGN KEY ("ref_role_id") REFERENCES "core"."roles"("role_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "core"."role_permission_assign" ADD CONSTRAINT "role_permission_assign_ref_permission_id_permissions_permission_id_fk" FOREIGN KEY ("ref_permission_id") REFERENCES "core"."permissions"("permission_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."role_permission_assign" ADD CONSTRAINT "role_permission_assign_ref_permission_id_fk" FOREIGN KEY ("ref_permission_id") REFERENCES "core"."permissions"("permission_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "core"."role_assign" ADD CONSTRAINT "role_assign_ref_user_id_appuser_user_id_fk" FOREIGN KEY ("ref_user_id") REFERENCES "core"."appuser"("user_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "core"."role_assign" ADD CONSTRAINT "role_assign_ref_role_id_roles_role_id_fk" FOREIGN KEY ("ref_role_id") REFERENCES "core"."roles"("role_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "core"."role_assign" ADD CONSTRAINT "role_assign_assigned_by_appuser_user_id_fk" FOREIGN KEY ("assigned_by") REFERENCES "core"."appuser"("user_id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint

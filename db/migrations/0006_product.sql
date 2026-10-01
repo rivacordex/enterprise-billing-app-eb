@@ -144,8 +144,8 @@ CREATE TABLE "product"."product_specifications" (
 );
 --> statement-breakpoint
 ALTER TABLE "product"."product_offering" ADD CONSTRAINT "product_offering_last_edited_by_appuser_user_id_fk" FOREIGN KEY ("last_edited_by") REFERENCES "core"."appuser"("user_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "product"."product_offering_price" ADD CONSTRAINT "product_offering_price_product_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "product"."product_specifications" ADD CONSTRAINT "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk" FOREIGN KEY ("ref_product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "product"."product_offering_price" ADD CONSTRAINT "product_offering_price_product_offering_id_fk" FOREIGN KEY ("product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "product"."product_specifications" ADD CONSTRAINT "product_specifications_ref_product_offering_id_fk" FOREIGN KEY ("ref_product_offering_id") REFERENCES "product"."product_offering"("product_offering_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "product"."product_offering_price" ADD CONSTRAINT "product_offering_price_component_start_unique" UNIQUE NULLS NOT DISTINCT ("product_offering_id", "component_type", "unit_of_measure", "start_date_time");--> statement-breakpoint
 CREATE INDEX "product_offering_price_offering_idx" ON "product"."product_offering_price" USING btree ("product_offering_id");--> statement-breakpoint
 CREATE INDEX "product_offering_price_component_type_idx" ON "product"."product_offering_price" USING btree ("component_type");--> statement-breakpoint

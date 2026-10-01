@@ -63,17 +63,10 @@ export const document = billing.table(
     documentId: text("document_id").primaryKey(),
     docType: text("doc_type").notNull(),
     state: text("state").notNull().default("draft"),
-    refFinancialAccountId: text("ref_financial_account_id")
-      .notNull()
-      .references(() => financialAccount.financialAccountId, {
-        onDelete: "restrict",
-      }),
+    refFinancialAccountId: text("ref_financial_account_id").notNull(),
     // Required for CRN/DBN/ADJ, app-checked (Q1) — not a DB constraint since
     // it depends on the sibling `doc_type` value.
-    refBillingAccountId: text("ref_billing_account_id").references(
-      () => billingAccount.billingAccountId,
-      { onDelete: "restrict" },
-    ),
+    refBillingAccountId: text("ref_billing_account_id"),
     reasonCode: text("reason_code")
       .notNull()
       .references(() => reasonCode.reasonCode, { onDelete: "restrict" }),
@@ -145,6 +138,18 @@ export const document = billing.table(
     periodPartition: date("period_partition", { mode: "string" }),
   },
   (t) => [
+    // Explicit FK names — Drizzle's derived names exceed Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refFinancialAccountId],
+      foreignColumns: [financialAccount.financialAccountId],
+      name: "document_ref_financial_account_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.refBillingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "document_ref_billing_account_id_fk",
+    }).onDelete("restrict"),
     check(
       "document_doc_type_check",
       // 'INV' added by bm09 — physical DDL of record is
@@ -218,10 +223,7 @@ export const documentLine = billing.table(
     lineKind: text("line_kind").notNull(),
     // The allocation target BAN (Q1) — nullable, not every line kind
     // targets a billing account.
-    refBillingAccountId: text("ref_billing_account_id").references(
-      () => billingAccount.billingAccountId,
-      { onDelete: "restrict" },
-    ),
+    refBillingAccountId: text("ref_billing_account_id"),
     // The document/charge an `allocation` line settles (Q24, the refund
     // workbench's payment↔document application).
     refSettledDocumentId: text("ref_settled_document_id").references(
@@ -235,9 +237,7 @@ export const documentLine = billing.table(
     }).notNull(),
     // Set at post — 1:1 line↔transfer (Module Inv. #7, code-standards §6.7).
     pgledgerTransferId: text("pgledger_transfer_id").unique(),
-    reversedByLineId: text("reversed_by_line_id").references(
-      (): AnyPgColumn => documentLine.documentLineId,
-    ),
+    reversedByLineId: text("reversed_by_line_id"),
     lastModified: timestamp("last_modified", {
       withTimezone: true,
       precision: 3,
@@ -250,6 +250,20 @@ export const documentLine = billing.table(
       .references(() => appuser.id, { onDelete: "restrict" }),
   },
   (t) => [
+    // Explicit FK names — Drizzle's derived names exceed Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming"). The
+    // reversed-by link is a self-reference (a reversal line points at the line
+    // it reverses).
+    foreignKey({
+      columns: [t.refBillingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "document_line_ref_billing_account_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.reversedByLineId],
+      foreignColumns: [t.documentLineId],
+      name: "document_line_reversed_by_line_id_fk",
+    }),
     unique("document_line_ref_document_id_line_no_unique").on(
       t.refDocumentId,
       t.lineNo,

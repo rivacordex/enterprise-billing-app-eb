@@ -73,7 +73,14 @@ export const billRunDistribution = billing.table(
     // Composite PK is required because period_partition is the partition key
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
-    primaryKey({ columns: [t.billRunDistributionId, t.periodPartition] }),
+    // Explicit PK name — Drizzle's derived
+    // `bill_run_distribution_bill_run_distribution_id_period_partition_pk`
+    // exceeds Postgres's 63-byte cap (code-standards §"Constraint & index
+    // naming").
+    primaryKey({
+      columns: [t.billRunDistributionId, t.periodPartition],
+      name: "bill_run_distribution_id_period_partition_pk",
+    }),
     // The idempotency latch (Inv. #5's shape, extended by T1): a replay of
     // the SAME round is a no-op; a NEW `distribution_attempt` (a rerun) is a
     // fresh row.

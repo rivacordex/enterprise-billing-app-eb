@@ -80,5 +80,5 @@ CREATE TABLE "product"."ratecard_ran_usage_lkp" (
 	-- is out of the key. This version-scoped uniqueness index is the only lookup
 	-- index; there is no separate as-of index.
 	CONSTRAINT "ratecard_ran_usage_lkp_row_key_unique" UNIQUE("ratecard_version_id","mno_public_key","commercial_unit_public_key","polygon_id"),
-	CONSTRAINT "ratecard_ran_usage_lkp_ratecard_version_id_ratecard_version_ratecard_version_id_fk" FOREIGN KEY ("ratecard_version_id") REFERENCES "product"."ratecard_version"("ratecard_version_id") ON DELETE cascade ON UPDATE no action
+	CONSTRAINT "ratecard_ran_usage_lkp_ratecard_version_id_fk" FOREIGN KEY ("ratecard_version_id") REFERENCES "product"."ratecard_version"("ratecard_version_id") ON DELETE cascade ON UPDATE no action
 );

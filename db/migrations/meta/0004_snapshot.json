@@ -764,8 +764,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "role_permission_assign_ref_permission_id_permissions_permission_id_fk": {
-          "name": "role_permission_assign_ref_permission_id_permissions_permission_id_fk",
+        "role_permission_assign_ref_permission_id_fk": {
+          "name": "role_permission_assign_ref_permission_id_fk",
           "tableFrom": "role_permission_assign",
           "tableTo": "permissions",
           "schemaTo": "core",

@@ -1,8 +1,8 @@
 import {
-  type AnyPgColumn,
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -84,12 +84,17 @@ export const productOffering = product.table(
     lastEditedBy: text("last_edited_by").references(() => appuser.id, {
       onDelete: "set null",
     }),
-    familyOfferingId: text("family_offering_id").references(
-      (): AnyPgColumn => productOffering.productOfferingId,
-      { onDelete: "restrict" },
-    ),
+    familyOfferingId: text("family_offering_id"),
   },
   (t) => [
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming"). Self-ref:
+    // a branch offering points at its family root.
+    foreignKey({
+      columns: [t.familyOfferingId],
+      foreignColumns: [t.productOfferingId],
+      name: "product_offering_family_offering_id_fk",
+    }).onDelete("restrict"),
     index("product_offering_family_idx").on(t.familyOfferingId),
     check(
       "product_offering_family_not_self_check",
@@ -118,11 +123,7 @@ export const productSpecifications = product.table(
       .default(
         sql`'PRDSMD' || lpad(nextval('product.product_specifications_seq')::text, 8, '0')`,
       ),
-    refProductOfferingId: text("ref_product_offering_id")
-      .notNull()
-      .references(() => productOffering.productOfferingId, {
-        onDelete: "cascade",
-      }),
+    refProductOfferingId: text("ref_product_offering_id").notNull(),
     name: text("name").notNull(),
     isMandatory: boolean("is_mandatory").notNull(),
     isDefault: boolean("is_default").notNull(),
@@ -132,6 +133,13 @@ export const productSpecifications = product.table(
       .$type<ProductSpecCharacteristics>(),
   },
   (t) => [
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refProductOfferingId],
+      foreignColumns: [productOffering.productOfferingId],
+      name: "product_specifications_ref_product_offering_id_fk",
+    }).onDelete("cascade"),
     index("product_specifications_offering_idx").on(t.refProductOfferingId),
   ],
 );
@@ -144,11 +152,7 @@ export const productOfferingPrice = product.table(
       .default(
         sql`'PRDOFP' || lpad(nextval('product.product_offering_price_seq')::text, 8, '0')`,
       ),
-    productOfferingId: text("product_offering_id")
-      .notNull()
-      .references(() => productOffering.productOfferingId, {
-        onDelete: "cascade",
-      }),
+    productOfferingId: text("product_offering_id").notNull(),
     name: text("name").notNull(),
     componentType: text("component_type").notNull(),
     priceComponent: jsonb("price_component")
@@ -183,6 +187,13 @@ export const productOfferingPrice = product.table(
     // runtime readers (pm51/pm52) MUST partition on this same
     // (product_offering_id, component_type, unit_of_measure) key, or a
     // `capacity_motivation` row could supersede the `usage_rate` beside it.
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.productOfferingId],
+      foreignColumns: [productOffering.productOfferingId],
+      name: "product_offering_price_product_offering_id_fk",
+    }).onDelete("cascade"),
     unique("product_offering_price_component_start_unique")
       .on(
         t.productOfferingId,
@@ -327,11 +338,7 @@ export const ratecardRanUsageLkp = product.table(
     ratecardRanUsageLkpId: uuid("ratecard_ran_usage_lkp_id")
       .primaryKey()
       .default(sql`core.generate_ulid()`),
-    ratecardVersionId: text("ratecard_version_id")
-      .notNull()
-      .references(() => ratecardVersion.ratecardVersionId, {
-        onDelete: "cascade",
-      }),
+    ratecardVersionId: text("ratecard_version_id").notNull(),
     mnoPublicKey: text("mno_public_key").notNull(),
     commercialUnitPublicKey: text("commercial_unit_public_key").notNull(),
     polygonId: text("polygon_id").notNull(),
@@ -348,6 +355,13 @@ export const ratecardRanUsageLkp = product.table(
     }),
   },
   (t) => [
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.ratecardVersionId],
+      foreignColumns: [ratecardVersion.ratecardVersionId],
+      name: "ratecard_ran_usage_lkp_ratecard_version_id_fk",
+    }).onDelete("cascade"),
     // RV2 (D-A9): row identity within a version is
     // (mno_public_key, commercial_unit_public_key, polygon_id) —
     // polygon_start_date is out of the key. This version-scoped uniqueness

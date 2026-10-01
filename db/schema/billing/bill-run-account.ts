@@ -1,6 +1,7 @@
 import {
   check,
   date,
+  foreignKey,
   index,
   integer,
   primaryKey,
@@ -41,11 +42,7 @@ export const billRunAccount = billing.table(
     refBillRunId: text("ref_bill_run_id")
       .notNull()
       .references(() => billRun.billRunId, { onDelete: "restrict" }),
-    refBillingAccountId: text("ref_billing_account_id")
-      .notNull()
-      .references(() => billingAccount.billingAccountId, {
-        onDelete: "restrict",
-      }),
+    refBillingAccountId: text("ref_billing_account_id").notNull(),
     periodPartition: date("period_partition", { mode: "string" }).notNull(),
     status: text("status").notNull().default("PENDING"),
     attemptCount: integer("attempt_count").notNull().default(1),
@@ -62,6 +59,13 @@ export const billRunAccount = billing.table(
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
     primaryKey({ columns: [t.billRunAccountId, t.periodPartition] }),
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refBillingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "bill_run_account_ref_billing_account_id_fk",
+    }).onDelete("restrict"),
     // The scoping snapshot's idempotency shape (bm03-spec §1): one row per
     // account per run per period.
     unique("bill_run_account_run_ban_period_unique").on(

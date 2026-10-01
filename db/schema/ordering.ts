@@ -1,6 +1,7 @@
 import {
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -45,14 +46,8 @@ export const productOrder = ordering.table(
       .default(
         sql`'PRDORD' || lpad(nextval('ordering.product_order_seq')::text, 8, '0')`,
       ),
-    customerPartyRoleId: text("customer_party_role_id")
-      .notNull()
-      .references(() => partyRole.partyRoleId, { onDelete: "restrict" }),
-    billingAccountId: text("billing_account_id")
-      .notNull()
-      .references(() => billingAccount.billingAccountId, {
-        onDelete: "restrict",
-      }),
+    customerPartyRoleId: text("customer_party_role_id").notNull(),
+    billingAccountId: text("billing_account_id").notNull(),
     status: orderStatus("status").notNull(),
     failureReason: text("failure_reason"),
     submittedBy: text("submitted_by")
@@ -91,6 +86,18 @@ export const productOrder = ordering.table(
       .default(sql`now()`),
   },
   (t) => [
+    // Explicit FK names — Drizzle's derived names exceed Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.customerPartyRoleId],
+      foreignColumns: [partyRole.partyRoleId],
+      name: "product_order_customer_party_role_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.billingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "product_order_billing_account_id_fk",
+    }).onDelete("restrict"),
     index("product_order_customer_idx").on(t.customerPartyRoleId),
     index("product_order_billing_account_idx").on(t.billingAccountId),
     index("product_order_status_idx").on(t.status),
@@ -112,16 +119,10 @@ export const productOrderItem = ordering.table(
       .default(
         sql`'PRDORI' || lpad(nextval('ordering.product_order_item_seq')::text, 8, '0')`,
       ),
-    productOrderId: text("product_order_id")
-      .notNull()
-      .references(() => productOrder.productOrderId, { onDelete: "restrict" }),
+    productOrderId: text("product_order_id").notNull(),
     // Pinned to the exact `product_offering` version ordered (Q5
     // grandfathering) — the immutable version FK *is* the price/spec snapshot.
-    productOfferingId: text("product_offering_id")
-      .notNull()
-      .references(() => productOffering.productOfferingId, {
-        onDelete: "restrict",
-      }),
+    productOfferingId: text("product_offering_id").notNull(),
     quantity: integer("quantity").notNull(),
     startDate: date("start_date").notNull(),
     orderedCharacteristics: jsonb("ordered_characteristics").$type<
@@ -136,6 +137,18 @@ export const productOrderItem = ordering.table(
       .default(sql`now()`),
   },
   (t) => [
+    // Explicit FK names — Drizzle's derived names exceed Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.productOrderId],
+      foreignColumns: [productOrder.productOrderId],
+      name: "product_order_item_product_order_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.productOfferingId],
+      foreignColumns: [productOffering.productOfferingId],
+      name: "product_order_item_product_offering_id_fk",
+    }).onDelete("restrict"),
     index("product_order_item_order_idx").on(t.productOrderId),
     index("product_order_item_offering_idx").on(t.productOfferingId),
     check("product_order_item_quantity_check", sql`quantity >= 1`),
@@ -150,11 +163,7 @@ export const orderItemPriceOverride = ordering.table(
       .default(
         sql`'PRDOPO' || lpad(nextval('ordering.order_item_price_override_seq')::text, 8, '0')`,
       ),
-    productOrderItemId: text("product_order_item_id")
-      .notNull()
-      .references(() => productOrderItem.productOrderItemId, {
-        onDelete: "restrict",
-      }),
+    productOrderItemId: text("product_order_item_id").notNull(),
     priceType: text("price_type").notNull(),
     amount: numeric("amount", {
       mode: "string",
@@ -170,6 +179,13 @@ export const orderItemPriceOverride = ordering.table(
       .default(sql`now()`),
   },
   (t) => [
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.productOrderItemId],
+      foreignColumns: [productOrderItem.productOrderItemId],
+      name: "order_item_price_override_product_order_item_id_fk",
+    }).onDelete("restrict"),
     // Insert-only, at most one override per (item, price_type) (architecture
     // §3, Inv. #16). This repository never gains update/delete (Inv. #16).
     unique("order_item_price_override_item_type_unique").on(
