@@ -14,7 +14,7 @@ CREATE TABLE "billing"."bill_run_invoices" (
 ) PARTITION BY RANGE ("period_partition");
 --> statement-breakpoint
 ALTER TABLE "billing"."bill_run_invoices" ADD CONSTRAINT "bill_run_invoices_ref_bill_run_id_bill_run_bill_run_id_fk" FOREIGN KEY ("ref_bill_run_id") REFERENCES "billing"."bill_run"("bill_run_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "billing"."bill_run_invoices" ADD CONSTRAINT "bill_run_invoices_ref_billing_account_id_billing_account_billing_account_id_fk" FOREIGN KEY ("ref_billing_account_id") REFERENCES "billing"."billing_account"("billing_account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "billing"."bill_run_invoices" ADD CONSTRAINT "bill_run_invoices_ref_billing_account_id_fk" FOREIGN KEY ("ref_billing_account_id") REFERENCES "billing"."billing_account"("billing_account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "billing"."bill_run_invoices" ADD CONSTRAINT "bill_run_invoices_ref_inv_document_id_document_document_id_fk" FOREIGN KEY ("ref_inv_document_id") REFERENCES "billing"."document"("document_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "billing"."bill_run_invoices" ADD CONSTRAINT "bill_run_invoices_customer_bill_fk" FOREIGN KEY ("ref_customer_bill_id","period_partition") REFERENCES "billing"."customer_bill"("customer_bill_id","period_partition") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "bill_run_invoices_ref_bill_run_id_idx" ON "billing"."bill_run_invoices" USING btree ("ref_bill_run_id");--> statement-breakpoint

@@ -22,7 +22,7 @@ CREATE TABLE "billing"."bill_run_distribution" (
 	"at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"distribution_attempt" integer NOT NULL,
 	"period_partition" date NOT NULL,
-	CONSTRAINT "bill_run_distribution_bill_run_distribution_id_period_partition_pk" PRIMARY KEY("bill_run_distribution_id","period_partition"),
+	CONSTRAINT "bill_run_distribution_id_period_partition_pk" PRIMARY KEY("bill_run_distribution_id","period_partition"),
 	CONSTRAINT "bill_run_distribution_run_target_artifact_attempt_period_unique" UNIQUE("ref_bill_run_id","target","artifact_ref","distribution_attempt","period_partition"),
 	CONSTRAINT "bill_run_distribution_artifact_type_check" CHECK (artifact_type IN ('invoice_pdf','report_csv')),
 	CONSTRAINT "bill_run_distribution_outcome_check" CHECK (outcome IN ('DELIVERED','FAILED'))

@@ -6,7 +6,7 @@ CREATE TABLE "billing"."customer_bill_tax_item" (
 	"tax_category" text NOT NULL,
 	"tax_rate" numeric(5, 2) NOT NULL,
 	"tax_amount" numeric(18, 2) NOT NULL,
-	CONSTRAINT "customer_bill_tax_item_customer_bill_tax_item_id_period_partition_pk" PRIMARY KEY("customer_bill_tax_item_id","period_partition")
+	CONSTRAINT "customer_bill_tax_item_id_period_partition_pk" PRIMARY KEY("customer_bill_tax_item_id","period_partition")
 ) PARTITION BY RANGE ("period_partition");
 --> statement-breakpoint
 ALTER TABLE "billing"."customer_bill_tax_item" ADD CONSTRAINT "customer_bill_tax_item_customer_bill_fk" FOREIGN KEY ("ref_customer_bill_id","period_partition") REFERENCES "billing"."customer_bill"("customer_bill_id","period_partition") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

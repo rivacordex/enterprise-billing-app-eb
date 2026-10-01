@@ -764,8 +764,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "role_permission_assign_ref_permission_id_permissions_permission_id_fk": {
-          "name": "role_permission_assign_ref_permission_id_permissions_permission_id_fk",
+        "role_permission_assign_ref_permission_id_fk": {
+          "name": "role_permission_assign_ref_permission_id_fk",
           "tableFrom": "role_permission_assign",
           "tableTo": "permissions",
           "schemaTo": "core",
@@ -1238,8 +1238,8 @@
         }
       },
       "foreignKeys": {
-        "product_offering_price_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_offering_price_product_offering_id_product_offering_product_offering_id_fk",
+        "product_offering_price_product_offering_id_fk": {
+          "name": "product_offering_price_product_offering_id_fk",
           "tableFrom": "product_offering_price",
           "tableTo": "product_offering",
           "schemaTo": "product",
@@ -1338,8 +1338,8 @@
         }
       },
       "foreignKeys": {
-        "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk",
+        "product_specifications_ref_product_offering_id_fk": {
+          "name": "product_specifications_ref_product_offering_id_fk",
           "tableFrom": "product_specifications",
           "tableTo": "product_offering",
           "schemaTo": "product",

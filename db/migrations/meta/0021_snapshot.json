@@ -1175,8 +1175,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "role_permission_assign_ref_permission_id_permissions_permission_id_fk": {
-          "name": "role_permission_assign_ref_permission_id_permissions_permission_id_fk",
+        "role_permission_assign_ref_permission_id_fk": {
+          "name": "role_permission_assign_ref_permission_id_fk",
           "tableFrom": "role_permission_assign",
           "tableTo": "permissions",
           "schemaTo": "core",
@@ -1522,8 +1522,8 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "product_offering_family_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_offering_family_offering_id_product_offering_product_offering_id_fk",
+        "product_offering_family_offering_id_fk": {
+          "name": "product_offering_family_offering_id_fk",
           "tableFrom": "product_offering",
           "tableTo": "product_offering",
           "schemaTo": "product",
@@ -1686,8 +1686,8 @@
         }
       },
       "foreignKeys": {
-        "product_offering_price_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_offering_price_product_offering_id_product_offering_product_offering_id_fk",
+        "product_offering_price_product_offering_id_fk": {
+          "name": "product_offering_price_product_offering_id_fk",
           "tableFrom": "product_offering_price",
           "tableTo": "product_offering",
           "schemaTo": "product",
@@ -1790,8 +1790,8 @@
         }
       },
       "foreignKeys": {
-        "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk",
+        "product_specifications_ref_product_offering_id_fk": {
+          "name": "product_specifications_ref_product_offering_id_fk",
           "tableFrom": "product_specifications",
           "tableTo": "product_offering",
           "schemaTo": "product",
@@ -1925,8 +1925,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "billing_account_ref_financial_account_id_financial_account_financial_account_id_fk": {
-          "name": "billing_account_ref_financial_account_id_financial_account_financial_account_id_fk",
+        "billing_account_ref_financial_account_id_fk": {
+          "name": "billing_account_ref_financial_account_id_fk",
           "tableFrom": "billing_account",
           "tableTo": "financial_account",
           "schemaTo": "billing",
@@ -2620,8 +2620,8 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "document_ref_financial_account_id_financial_account_financial_account_id_fk": {
-          "name": "document_ref_financial_account_id_financial_account_financial_account_id_fk",
+        "document_ref_financial_account_id_fk": {
+          "name": "document_ref_financial_account_id_fk",
           "tableFrom": "document",
           "tableTo": "financial_account",
           "schemaTo": "billing",
@@ -2630,8 +2630,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "document_ref_billing_account_id_billing_account_billing_account_id_fk": {
-          "name": "document_ref_billing_account_id_billing_account_billing_account_id_fk",
+        "document_ref_billing_account_id_fk": {
+          "name": "document_ref_billing_account_id_fk",
           "tableFrom": "document",
           "tableTo": "billing_account",
           "schemaTo": "billing",
@@ -2795,8 +2795,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "document_line_ref_billing_account_id_billing_account_billing_account_id_fk": {
-          "name": "document_line_ref_billing_account_id_billing_account_billing_account_id_fk",
+        "document_line_ref_billing_account_id_fk": {
+          "name": "document_line_ref_billing_account_id_fk",
           "tableFrom": "document_line",
           "tableTo": "billing_account",
           "schemaTo": "billing",
@@ -2815,8 +2815,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "document_line_reversed_by_line_id_document_line_document_line_id_fk": {
-          "name": "document_line_reversed_by_line_id_document_line_document_line_id_fk",
+        "document_line_reversed_by_line_id_fk": {
+          "name": "document_line_reversed_by_line_id_fk",
           "tableFrom": "document_line",
           "tableTo": "document_line",
           "schemaTo": "billing",

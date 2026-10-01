@@ -58,7 +58,14 @@ export const customerBillTaxItem = billing.table(
     // Composite PK is required because period_partition is the partition key
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
-    primaryKey({ columns: [t.customerBillTaxItemId, t.periodPartition] }),
+    // Explicit PK name — Drizzle's derived
+    // `customer_bill_tax_item_customer_bill_tax_item_id_period_partition_pk`
+    // exceeds Postgres's 63-byte cap (code-standards §"Constraint & index
+    // naming").
+    primaryKey({
+      columns: [t.customerBillTaxItemId, t.periodPartition],
+      name: "customer_bill_tax_item_id_period_partition_pk",
+    }),
     // Composite FK to the (also-partitioned) `customer_bill`, keyed on its full
     // PK `(customer_bill_id, period_partition)` — a tax item can never outlive
     // or precede its bill. ON DELETE CASCADE: bm05's rerun-safe trial

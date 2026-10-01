@@ -1,4 +1,11 @@
-import { check, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  check,
+  foreignKey,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 import { core } from "@/db/schema/identity";
@@ -16,9 +23,7 @@ export const rolePermissionAssign = core.table(
     refRoleId: uuid("ref_role_id")
       .notNull()
       .references(() => roles.roleId, { onDelete: "restrict" }),
-    refPermissionId: uuid("ref_permission_id")
-      .notNull()
-      .references(() => permissions.permissionId, { onDelete: "restrict" }),
+    refPermissionId: uuid("ref_permission_id").notNull(),
     permissionType: text("permission_type").notNull(),
     createdDatetime: timestamp("created_datetime", {
       withTimezone: true,
@@ -34,6 +39,15 @@ export const rolePermissionAssign = core.table(
       .default(sql`now()`),
   },
   (t) => [
+    // Explicit FK name — Drizzle's derived
+    // `..._ref_permission_id_permissions_permission_id_fk` exceeds Postgres's
+    // 63-byte identifier cap and would be silently truncated (code-standards
+    // §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refPermissionId],
+      foreignColumns: [permissions.permissionId],
+      name: "role_permission_assign_ref_permission_id_fk",
+    }).onDelete("restrict"),
     uniqueIndex("role_permission_assign_role_permission_unique").on(
       t.refRoleId,
       t.refPermissionId,

@@ -1,6 +1,7 @@
 import {
   check,
   date,
+  foreignKey,
   index,
   integer,
   numeric,
@@ -45,11 +46,7 @@ export const customerBill = billing.table(
     refBillRunId: text("ref_bill_run_id")
       .notNull()
       .references(() => billRun.billRunId, { onDelete: "restrict" }),
-    refBillingAccountId: text("ref_billing_account_id")
-      .notNull()
-      .references(() => billingAccount.billingAccountId, {
-        onDelete: "restrict",
-      }),
+    refBillingAccountId: text("ref_billing_account_id").notNull(),
     periodPartition: date("period_partition", { mode: "string" }).notNull(),
     category: text("category").notNull(),
     state: text("state").notNull().default("new"),
@@ -86,6 +83,13 @@ export const customerBill = billing.table(
     // (Postgres requires the partition key in every unique/PK on a
     // partitioned table).
     primaryKey({ columns: [t.customerBillId, t.periodPartition] }),
+    // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
+    // identifier cap (code-standards §"Constraint & index naming").
+    foreignKey({
+      columns: [t.refBillingAccountId],
+      foreignColumns: [billingAccount.billingAccountId],
+      name: "customer_bill_ref_billing_account_id_fk",
+    }).onDelete("restrict"),
     unique("customer_bill_run_ban_period_unique").on(
       t.refBillRunId,
       t.refBillingAccountId,

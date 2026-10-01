@@ -1175,8 +1175,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "role_permission_assign_ref_permission_id_permissions_permission_id_fk": {
-          "name": "role_permission_assign_ref_permission_id_permissions_permission_id_fk",
+        "role_permission_assign_ref_permission_id_fk": {
+          "name": "role_permission_assign_ref_permission_id_fk",
           "tableFrom": "role_permission_assign",
           "columnsFrom": ["ref_permission_id"],
           "tableTo": "permissions",
@@ -1522,8 +1522,8 @@
           "onUpdate": "no action",
           "onDelete": "set null"
         },
-        "product_offering_family_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_offering_family_offering_id_product_offering_product_offering_id_fk",
+        "product_offering_family_offering_id_fk": {
+          "name": "product_offering_family_offering_id_fk",
           "tableFrom": "product_offering",
           "columnsFrom": ["family_offering_id"],
           "tableTo": "product_offering",
@@ -1686,8 +1686,8 @@
         }
       },
       "foreignKeys": {
-        "product_offering_price_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_offering_price_product_offering_id_product_offering_product_offering_id_fk",
+        "product_offering_price_product_offering_id_fk": {
+          "name": "product_offering_price_product_offering_id_fk",
           "tableFrom": "product_offering_price",
           "columnsFrom": ["product_offering_id"],
           "tableTo": "product_offering",
@@ -1790,8 +1790,8 @@
         }
       },
       "foreignKeys": {
-        "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_specifications_ref_product_offering_id_product_offering_product_offering_id_fk",
+        "product_specifications_ref_product_offering_id_fk": {
+          "name": "product_specifications_ref_product_offering_id_fk",
           "tableFrom": "product_specifications",
           "columnsFrom": ["ref_product_offering_id"],
           "tableTo": "product_offering",
@@ -1925,8 +1925,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "billing_account_ref_financial_account_id_financial_account_financial_account_id_fk": {
-          "name": "billing_account_ref_financial_account_id_financial_account_financial_account_id_fk",
+        "billing_account_ref_financial_account_id_fk": {
+          "name": "billing_account_ref_financial_account_id_fk",
           "tableFrom": "billing_account",
           "columnsFrom": ["ref_financial_account_id"],
           "tableTo": "financial_account",
@@ -2620,8 +2620,8 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "document_ref_financial_account_id_financial_account_financial_account_id_fk": {
-          "name": "document_ref_financial_account_id_financial_account_financial_account_id_fk",
+        "document_ref_financial_account_id_fk": {
+          "name": "document_ref_financial_account_id_fk",
           "tableFrom": "document",
           "columnsFrom": ["ref_financial_account_id"],
           "tableTo": "financial_account",
@@ -2630,8 +2630,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "document_ref_billing_account_id_billing_account_billing_account_id_fk": {
-          "name": "document_ref_billing_account_id_billing_account_billing_account_id_fk",
+        "document_ref_billing_account_id_fk": {
+          "name": "document_ref_billing_account_id_fk",
           "tableFrom": "document",
           "columnsFrom": ["ref_billing_account_id"],
           "tableTo": "billing_account",
@@ -2795,8 +2795,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "document_line_ref_billing_account_id_billing_account_billing_account_id_fk": {
-          "name": "document_line_ref_billing_account_id_billing_account_billing_account_id_fk",
+        "document_line_ref_billing_account_id_fk": {
+          "name": "document_line_ref_billing_account_id_fk",
           "tableFrom": "document_line",
           "columnsFrom": ["ref_billing_account_id"],
           "tableTo": "billing_account",
@@ -2815,8 +2815,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "document_line_reversed_by_line_id_document_line_document_line_id_fk": {
-          "name": "document_line_reversed_by_line_id_document_line_document_line_id_fk",
+        "document_line_reversed_by_line_id_fk": {
+          "name": "document_line_reversed_by_line_id_fk",
           "tableFrom": "document_line",
           "columnsFrom": ["reversed_by_line_id"],
           "tableTo": "document_line",
@@ -3103,8 +3103,8 @@
         }
       },
       "foreignKeys": {
-        "order_item_price_override_product_order_item_id_product_order_item_product_order_item_id_fk": {
-          "name": "order_item_price_override_product_order_item_id_product_order_item_product_order_item_id_fk",
+        "order_item_price_override_product_order_item_id_fk": {
+          "name": "order_item_price_override_product_order_item_id_fk",
           "tableFrom": "order_item_price_override",
           "columnsFrom": ["product_order_item_id"],
           "tableTo": "product_order_item",
@@ -3284,8 +3284,8 @@
         }
       },
       "foreignKeys": {
-        "product_order_customer_party_role_id_party_role_party_role_id_fk": {
-          "name": "product_order_customer_party_role_id_party_role_party_role_id_fk",
+        "product_order_customer_party_role_id_fk": {
+          "name": "product_order_customer_party_role_id_fk",
           "tableFrom": "product_order",
           "columnsFrom": ["customer_party_role_id"],
           "tableTo": "party_role",
@@ -3294,8 +3294,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "product_order_billing_account_id_billing_account_billing_account_id_fk": {
-          "name": "product_order_billing_account_id_billing_account_billing_account_id_fk",
+        "product_order_billing_account_id_fk": {
+          "name": "product_order_billing_account_id_fk",
           "tableFrom": "product_order",
           "columnsFrom": ["billing_account_id"],
           "tableTo": "billing_account",
@@ -3418,8 +3418,8 @@
         }
       },
       "foreignKeys": {
-        "product_order_item_product_order_id_product_order_product_order_id_fk": {
-          "name": "product_order_item_product_order_id_product_order_product_order_id_fk",
+        "product_order_item_product_order_id_fk": {
+          "name": "product_order_item_product_order_id_fk",
           "tableFrom": "product_order_item",
           "columnsFrom": ["product_order_id"],
           "tableTo": "product_order",
@@ -3428,8 +3428,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "product_order_item_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_order_item_product_offering_id_product_offering_product_offering_id_fk",
+        "product_order_item_product_offering_id_fk": {
+          "name": "product_order_item_product_offering_id_fk",
           "tableFrom": "product_order_item",
           "columnsFrom": ["product_offering_id"],
           "tableTo": "product_offering",
@@ -3541,8 +3541,8 @@
         }
       },
       "foreignKeys": {
-        "inventory_status_history_product_inventory_id_product_inventory_product_inventory_id_fk": {
-          "name": "inventory_status_history_product_inventory_id_product_inventory_product_inventory_id_fk",
+        "inventory_status_history_product_inventory_id_fk": {
+          "name": "inventory_status_history_product_inventory_id_fk",
           "tableFrom": "inventory_status_history",
           "columnsFrom": ["product_inventory_id"],
           "tableTo": "product_inventory",
@@ -3712,8 +3712,8 @@
         }
       },
       "foreignKeys": {
-        "product_inventory_product_order_item_id_product_order_item_product_order_item_id_fk": {
-          "name": "product_inventory_product_order_item_id_product_order_item_product_order_item_id_fk",
+        "product_inventory_product_order_item_id_fk": {
+          "name": "product_inventory_product_order_item_id_fk",
           "tableFrom": "product_inventory",
           "columnsFrom": ["product_order_item_id"],
           "tableTo": "product_order_item",
@@ -3722,8 +3722,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "product_inventory_customer_party_role_id_party_role_party_role_id_fk": {
-          "name": "product_inventory_customer_party_role_id_party_role_party_role_id_fk",
+        "product_inventory_customer_party_role_id_fk": {
+          "name": "product_inventory_customer_party_role_id_fk",
           "tableFrom": "product_inventory",
           "columnsFrom": ["customer_party_role_id"],
           "tableTo": "party_role",
@@ -3732,8 +3732,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "product_inventory_billing_account_id_billing_account_billing_account_id_fk": {
-          "name": "product_inventory_billing_account_id_billing_account_billing_account_id_fk",
+        "product_inventory_billing_account_id_fk": {
+          "name": "product_inventory_billing_account_id_fk",
           "tableFrom": "product_inventory",
           "columnsFrom": ["billing_account_id"],
           "tableTo": "billing_account",
@@ -3742,8 +3742,8 @@
           "onUpdate": "no action",
           "onDelete": "restrict"
         },
-        "product_inventory_product_offering_id_product_offering_product_offering_id_fk": {
-          "name": "product_inventory_product_offering_id_product_offering_product_offering_id_fk",
+        "product_inventory_product_offering_id_fk": {
+          "name": "product_inventory_product_offering_id_fk",
           "tableFrom": "product_inventory",
           "columnsFrom": ["product_offering_id"],
           "tableTo": "product_offering",

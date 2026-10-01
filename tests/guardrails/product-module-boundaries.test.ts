@@ -535,12 +535,16 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(enumMembers).toEqual(EXPECTED_ENUM);
 
     // 2. Both child FKs cascade; the self-referencing family FK still restricts.
+    // The child FKs use the named `foreignKey({...}).onDelete("cascade")`
+    // builder (their derived names exceed Postgres's 63-byte cap — see
+    // code-standards §"Constraint & index naming"); the method form carries the
+    // delete rule.
     const specBlock = extractTableBlock(schemaSource, "productSpecifications");
     const priceBlock = extractTableBlock(schemaSource, "productOfferingPrice");
-    expect(specBlock).toContain('onDelete: "cascade"');
-    expect(priceBlock).toContain('onDelete: "cascade"');
+    expect(specBlock).toContain('.onDelete("cascade")');
+    expect(priceBlock).toContain('.onDelete("cascade")');
     const offeringBlock = extractTableBlock(schemaSource, "productOffering");
-    expect(offeringBlock).toContain('onDelete: "restrict"'); // familyOfferingId
+    expect(offeringBlock).toContain('.onDelete("restrict")'); // familyOfferingId
 
     // 3. The SQL of record agrees with the Drizzle mirror.
     expect(migrationSource).toContain(
