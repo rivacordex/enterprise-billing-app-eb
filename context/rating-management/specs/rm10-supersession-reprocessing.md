@@ -1,5 +1,7 @@
 # rm10 — Supersession and reprocessing — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** Supersession by `file_key` is unchanged, but the live-row key it backstops becomes `(partition_period, udr_key, is_live)` and `partition_period` becomes the billing month (X1/X2) — see **Phase G (rm15)** of `rm00-build-plan.md`. This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm10 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase E)
 - **Repo:** rating repo · **Boundary:** `flows/**` — the `rl` section, extended (fills rm09's supersede hook)
 - **Builds:** batch-level supersession by `file_key` across all partitions, cross-period detection, shrinking-reissue detection, and the batch-level lineage stamps.

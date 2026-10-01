@@ -1,5 +1,7 @@
 # rm08 — RP: price resolution and snapshot — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** RP's `FLAT` calculation and `subscriber_ref_column: PUBLIC_KEY` placeholder are replaced for `RAN_USAGE` by **Phase G (rm19, rm20)** of `rm00-build-plan.md` (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`) — `PER_UNIT` (`ratePerUnit × usage_volume`) and the real `party_role_spec → subscription` resolver. This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm08 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase D)
 - **Repo:** rating repo · **Boundary:** `flows/**` — the `rp` section (replaces the rm06 stub)
 - **Builds:** event-time (as-of) price resolution through the pinned `product_offering` version with any override applied, snapshot-on-first-rate, the `FLAT` calculation (full enum defined, non-`FLAT` unimplemented), the raw + rounded price, `udr_currency`, and the version stamps.

@@ -1,5 +1,7 @@
 # rm07 — PRP: claim, validate, reject — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** PRP's validations, dedup key, feed profile and `file_key_rule` are extended for `RAN_USAGE` by **Phase G (rm21)** of `rm00-build-plan.md` (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`) — the three-factor identity lock, `service_code` verify, ratecard↔input completeness, the 7-column `.udr` feed, dedup on `(partition_period, mno|cu|polygon)`. This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm07 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase D)
 - **Repo:** rating repo · **Boundary:** `flows/**` — the `prp` section (replaces the rm06 stub)
 - **Builds:** file pickup from `landing/`, database-backed claiming from the **filename**, checksum/`DUPLICATE_BATCH`, CSV parse + map to `udr_rated` key fields, the canonical `udr_key`, record-level validation with a reject file, the per-`udr_type` threshold, and the batch counts.

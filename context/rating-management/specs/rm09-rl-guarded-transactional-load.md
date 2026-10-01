@@ -1,5 +1,7 @@
 # rm09 — RL: guarded transactional load — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** RL is verified (not redesigned) for `PER_UNIT` by **Phase G (rm22)** of `rm00-build-plan.md` — the `udr_subscriber_ref_id` → `udr_subscription_ref_id` rename in the `COPY` list, the `raw ≠ rated` divergence, and reconciliation with input→ratecard now a PRP hard-stop. This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm09 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase D)
 - **Repo:** rating repo · **Boundary:** `flows/**` — the `rl` section (replaces the rm06 stub)
 - **Builds:** the pre-load `BILL_APPROVED` guard, the `CURRENCY_MISMATCH` assertion, the one-transaction load at `RATED` (guard + supersede-hook + insert), reconciliation, and archive-after-commit.

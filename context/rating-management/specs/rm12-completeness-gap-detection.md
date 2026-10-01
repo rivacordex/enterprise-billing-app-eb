@@ -1,5 +1,7 @@
 # rm12 — Completeness and gap detection — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** New event codes emitted by the PER_UNIT validations (`UNKNOWN_SUBSCRIBER`, `CARD_DRIVEN_RATING_UNSUPPORTED`, the identity-lock / completeness / mapping codes) are catalogued in **Phase G (rm18)** of `rm00-build-plan.md`; the clearing rules here apply to them. This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm12 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase F)
 - **Repo:** rating repo · **Boundary:** `flows/**` — `completeness-check`
 - **Builds:** expected-cadence config per `udr_type`; a scheduled check raising clearable `FILE_NOT_RECEIVED` / `FILE_LATE`; alarm clearing; and superseded-never-replaced detection.
