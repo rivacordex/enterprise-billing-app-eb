@@ -456,7 +456,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const commonRow = {
         partitionPeriod: "2026-06-01",
         udrType: "RAN_USAGE",
-        udrSubscriberRefId: "sub-rm12",
+        udrSubscriptionRefId: "sub-rm12",
         udrUsageQuantity: "10",
         udrUsageUnit: "MBPS",
         udrRateType: "FLAT" as const,

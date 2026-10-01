@@ -1,5 +1,7 @@
 # rm01 — `rating` schema foundation — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** This unit's FLAT-only / placeholder-resolver / UTC-`period_of` / `(partition_period, start_datetime, udr_key)` scope is superseded for `RAN_USAGE` by **Phase G (rm14–rm22)** of `rm00-build-plan.md` (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`). This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm01 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase A)
 - **Repo:** `enterprise-billing-app` · **Boundary:** `db/schema/rating/**`, `db/migrations/`, `db/bootstrap/`
 - **Builds:** the `rating` schema, its four tables, every constraint that carries an Invariant, and the `pg_partman` registration.

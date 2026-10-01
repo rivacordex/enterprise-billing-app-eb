@@ -1,5 +1,7 @@
 # rm06 — Flow template, logging contract and log sweep — Spec
 
+> **⚠ Forward reference — PER_UNIT RAN-usage update.** This unit's FLAT-only / placeholder-resolver scope is superseded for `RAN_USAGE` by **Phase G (rm14–rm22)** of `rm00-build-plan.md` (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`). This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
+
 - **Unit:** rm06 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase C — the pipeline spine)
 - **Repo:** rating repo · **Boundary:** `flows/**` (+ a flow-deploy stage in the rating-repo `azure-pipelines.yml`)
 - **Builds:** the rating flow **template** (three named, ordered, **stubbed** `prp`/`rp`/`rl` sections), the JSON Lines logging contract, the independent idempotent **log-sweep** flow, and the git-based flow-deployment mechanism — no business logic.

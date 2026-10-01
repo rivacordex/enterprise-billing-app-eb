@@ -301,14 +301,14 @@ describe.skipIf(!databaseUrl)(
 
     // One UNCLAIMED RAN_USAGE row — the shape the sample seed / a real load
     // leaves before Collection: status RATED, all four billrun_* columns NULL,
-    // `udr_subscriber_ref_id` a real product_inventory_id (so Collection can
+    // `udr_subscription_ref_id` a real product_inventory_id (so Collection can
     // correlate it). Pass an unresolvable ref to build the orphan.
     async function insertUnclaimedUsage(subRef: string): Promise<void> {
       seq += 1;
       await sql`
         INSERT INTO rating.udr_rated
           (partition_period, udr_type, start_datetime, end_datetime, status,
-           udr_subscriber_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
+           udr_subscription_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
            udr_rate_type, udr_rated_price, udr_rated_price_raw,
            udr_rounding_mode, udr_currency, udr_ref_batch_id, udr_source_file,
            rating_engine_version, rating_flow_revision,
@@ -342,7 +342,7 @@ describe.skipIf(!databaseUrl)(
                billrun_checksum = 'bm35-claim',
                upsert_datetime = now()
         FROM   inventory.product_inventory pi
-        WHERE  pi.product_inventory_id = ur.udr_subscriber_ref_id
+        WHERE  pi.product_inventory_id = ur.udr_subscription_ref_id
           AND  pi.billing_account_id = ${ban}
           AND  ur.status = 'RATED'
           AND  ur.billrun_ban_id IS NULL

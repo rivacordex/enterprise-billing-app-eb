@@ -64,7 +64,7 @@ export async function runVerification(
              count(*)::int                                  AS replay_count
       FROM   rating.udr_rated ur
       JOIN   inventory.product_inventory pi
-             ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+             ON pi.product_inventory_id = ur.udr_subscription_ref_id
       WHERE  ur.billrun_ref_id  = ${runId}
         AND  ur.billrun_ban_id  = ${ban}
         AND  ur.billrun_attempt = ${attempt}

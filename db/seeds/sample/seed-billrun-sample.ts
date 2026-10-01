@@ -350,7 +350,7 @@ async function purgeSampleGraph(): Promise<void> {
           // bm26: the seed's udr_rated rows now carry a NULL billrun_ban_id
           // (they match rl.py's unclaimed shape), so they can no longer be
           // purged by account. They ARE keyed to the prior run's subscriptions
-          // via udr_subscriber_ref_id (= product_inventory_id), which is what
+          // via udr_subscription_ref_id (= product_inventory_id), which is what
           // bm27 correlates on — so purge by that instead. This also catches a
           // prior bm15-shape run (its rows set both billrun_ban_id AND the same
           // subscriber ref), so the transition is clean. Delete BEFORE the
@@ -358,7 +358,7 @@ async function purgeSampleGraph(): Promise<void> {
           if (inventoryIds.length > 0) {
             await tx
               .delete(udrRated)
-              .where(inArray(udrRated.udrSubscriberRefId, inventoryIds));
+              .where(inArray(udrRated.udrSubscriptionRefId, inventoryIds));
             await tx
               .delete(inventoryStatusHistory)
               .where(
@@ -855,7 +855,7 @@ async function createSampleCustomerAndAccounts(
 // zero for the no-charges scenario, one for most, several of the same offering
 // for the multiple-subscriptions scenario (Aggregation must roll them into one
 // line, bm28). Each product_inventory_id is what a RAN_USAGE row's
-// udr_subscriber_ref_id points at so bm27's correlation resolves.
+// udr_subscription_ref_id points at so bm27's correlation resolves.
 interface AccountSubscriptions {
   account: SampleAccount;
   productInventoryIds: string[];
@@ -918,7 +918,7 @@ async function createSampleSubscriptions(
 // `RAN_USAGE` (Inv #1) — recurring is NOT rated here (it is bm29 compute
 // derived from product_inventory). Every usage row is the exact shape rl.py
 // leaves: `udr_type = 'RAN_USAGE'`, `status = 'RATED'`, all four billrun_*
-// columns NULL, `_SAMPLE_`-marked, and `udr_subscriber_ref_id` = a real seeded
+// columns NULL, `_SAMPLE_`-marked, and `udr_subscription_ref_id` = a real seeded
 // product_inventory_id (so bm27's correlation resolves it to the right
 // billing_account_id). The BILL_NOTUSED scenario seeds a `status='BILL_NOTUSED'`
 // row (the per-record exception surface, bm32), anchored to a real subscription

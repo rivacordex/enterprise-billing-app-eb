@@ -61,7 +61,7 @@ export function buildSampleUdrRatedRow(
     startDatetime: spec.startDatetime,
     endDatetime: spec.endDatetime,
     status: spec.status ?? "RATED",
-    udrSubscriberRefId: spec.subscriberRefId,
+    udrSubscriptionRefId: spec.subscriberRefId,
     udrKey: buildUdrKey(spec),
     udrUsageQuantity: "1.000000",
     udrUsageUnit: "EA",
@@ -78,7 +78,7 @@ export function buildSampleUdrRatedRow(
     // the account id under bm15; NULLing it is the single change that unblocks
     // bm27 Collection — a row Collection can resolve is one that does not
     // already carry its account. Collection re-derives the account by joining
-    // udr_subscriber_ref_id → inventory.product_inventory → billing_account_id.
+    // udr_subscription_ref_id → inventory.product_inventory → billing_account_id.
     billrunBanId: null,
     billrunRefId: null,
     billrunAttempt: null,

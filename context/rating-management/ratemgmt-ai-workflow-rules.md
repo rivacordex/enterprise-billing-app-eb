@@ -8,6 +8,48 @@ These rules **supplement `context/ai-workflow-rules.md`** (the binding workflow 
 
 ---
 
+## 0. PER_UNIT RAN-Usage Update — workflow rule deltas
+
+Supplements `context/ai-workflow-rules.md` and the module rules below; applies to the PER_UNIT RAN-usage update (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`, `ratemgmt-architecture.md`). Scope: Workstreams A+B+D. Obey these as rules, not guidelines.
+
+**Overall approach — spec-driven, incremental.**
+1. **Take the unit list from the build order in `_change-rating-configuration-plan.md` (steps 0–8). Do not restate it here** (§2.3 forbids copies).
+2. **Do step 0 first.** Update the scope docs (this file, `ratemgmt-project-overview.md`, `ratemgmt-code-standards.md`, FLAT→PER_UNIT) and add forward banners to the rm specs **before** you write any PER_UNIT code. Skip this and the FLAT-only tests and docs read the new code as a regression.
+3. **Build one step per pass.** Do not start the next until the current passes §8 + the update checks below and is committed.
+
+**Scoping — no speculative changes.**
+4. **`PER_UNIT` is in scope; nothing beyond it is.** `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay out (§3.1, updated). Do not build **card-driven** `usage_rate` rating — raise `CARD_DRIVEN_RATING_UNSUPPORTED`.
+5. **Do not build Workstream C** (Product-management UI, `product_catalog` permission, the `singleSubInstPerCust`/MNO-key ordering guards). It is deferred to `_futurebuild-product-mgmt-ui-plan.md`. Raise the gap; do not fill it.
+6. **Do not store `party_role_id` on `udr_rated`.** The rated row's subscription anchor is `udr_subscription_ref_id` (a `product_inventory_id`); `party_role_id` is resolved transiently for the factor-2 cross-check only.
+
+**When to split.**
+7. **Each build-order step is its own unit; never one PR.** The `udr_subscriber_ref_id` → `udr_subscription_ref_id` rename is **atomic within each repository, coordinated across rm15 and rm19** — never a half-rename inside either boundary. The app-repo call sites (migration + index, Drizzle, seeds, `rm01/08/09/13`, `db/repositories/billing/rated-lines.repository.ts`) land together in rm15; the wfm call sites — the runtime writers in `rp.py`/`rl.py`, including the `COPY` column list — land together in rm19. Do not land one repository's half without scheduling the other's in the same cycle (§2.2). The **X1/X2 DDL** (period_of TZ + live-row tighten) is its own unit, gated on rule 12.
+
+**Missing or ambiguous — these are RESOLVED. Do not re-ask or re-invent (cite the plan / `ratemgmt-architecture.md`):**
+8. `udr_key = mno|cu|polygon` (no datetime); identity = `(partition_period, udr_key)`; `udr_rate_type = PER_UNIT`; `period_of()` TZ = config (`Asia/Kuala_Lumpur`); live-row key = `(partition_period, udr_key, is_live)`; `singleSubInstPerCust` = one **RAN_USAGE** subscription per customer; `reject_threshold = "0"`; `ratecard_coverage_enforcement` default `HARD_STOP`.
+9. **Still open — stop and ask, do not invent:** whether a **non-monthly `udr_type`** will ever be added (it changes the X2 grain — a `udr_type`-scoped partial index); the real scope of the `TESTING` lifecycle stage (deferred).
+
+**Files you must not modify without explicit instruction (adds to §6).**
+10. **Do not rewrite the delivered rm unit specs** (`rm01/06/07/08/09/10/12`) — add a forward-reference **banner** only. They are the record of what shipped.
+11. **Do not reopen `validation/product/pricing-component.schema.ts`.** The ratecard reference is a product spec (`productCardLookUp`), not a component field; the `usage_rate` invariant stays untouched.
+12. **Do not edit `0034_rating.sql` in place until you have verified the fresh-install regime** (no environment holds live `rating.udr_rated` data — the same gate pm57a's G-RC6 uses). Record the check. If any environment has rated data, ship X1/X2/rename as a forward migration instead — edit-in-place is off the table.
+13. **The two authorized §6 exceptions** are X2 (live-row key, §6.1) and X1 (`period_of` TZ, §6.4). They are authorized by this update; do not treat §6 as blocking them, and do not change either further without a new authorization.
+
+**Docs in sync.**
+14. **Ship the whole doc set together.** A PER_UNIT unit updates `ratemgmt-architecture.md` (Inv 20–25, X1/X2), `ratemgmt-code-standards.md` (§0), `ratemgmt-update-overview.md`, and pm57a's banner in the same change set.
+15. **New event codes ship with their `event_catalog` seed row (rm02) + constant + emitting flow** (§7.3): `UNKNOWN_SUBSCRIBER`, `CARD_DRIVEN_RATING_UNSUPPORTED`, the three identity-lock failures, `SERVICE_CODE_MISMATCH`, the completeness/mapping hard-stops.
+16. **Reconcile bill-run.** X1 reverses the old *"bill-run selects by `start_datetime`, never `partition_period`"* rule — fix `billmgmt-architecture.md` / `_newmodule-billrun-rating-workflow-plan.md` (§7.6).
+
+**Verification — before the next unit (adds to §8).**
+17. **PER_UNIT correctness:** `udr_rate_type = PER_UNIT`; `udr_rated_price_raw = ratePerUnit × usage_volume`; `udr_rated_price = round(raw, HALF_UP)`; `udr_rate_detail` validates against `perUnitRateDetailSchema`; `udr_usage_unit` comes from the product `unit_of_measure`, not the feed.
+18. **Identity locks:** each of the three hard-stops on a forced mismatch; an empty `{}` `party_role_specification` → `UNKNOWN_SUBSCRIBER`.
+19. **Dedup:** rejects a same-cell / same-billing-month duplicate; keeps a same-cell / different-month pair.
+20. **Regressions pass:** R1 (FLAT→PER_UNIT refresh), R2 (dedup widening), R3 (input→ratecard hard-stop).
+21. **Post-rename:** grep proves **zero** remaining `udr_subscriber_ref_id` references (especially the bill-run repo).
+22. **X1/X2 DDL:** fresh-install verified (rule 12); the live-row constraint rejects a second live row per `(partition_period, udr_key)`; `period_of()` behaves identically across ≥3 session timezones with the config-TZ literal.
+
+---
+
 ## 1. Operating Approach — Module Specifics
 
 1. **Name the authorizing section before you write anything.** Cite `ratemgmt-project-overview.md`, `ratemgmt-architecture.md` (by Invariant number), or `ratemgmt-code-standards.md` (by rule number). No section, no mandate — stop and ask (§5).
@@ -32,7 +74,7 @@ These rules **supplement `context/ai-workflow-rules.md`** (the binding workflow 
 
 ## 3. Scoping — No Speculative Changes
 
-1. **Do not implement rate types beyond `FLAT`.** The enum is defined to the full set (`PER_UNIT`, `TIERED_GRADUATED`, `TIERED_VOLUME`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED`) so the schema is not locked in. Implementing their calculation is out of scope for v1 and is a spec change, not a unit.
+1. **Implement `PER_UNIT`; implement no other rate type.** *(PER_UNIT update — supersedes the earlier FLAT-only scope; authorized by `_change-rating-configuration-plan.md`.)* `PER_UNIT` (`ratePerUnit × usage_volume`) and `FLAT` are valid. `TIERED_GRADUATED`, `TIERED_VOLUME`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay **out of scope** — implementing their calculation is a spec change, not a unit. **Card-driven `usage_rate` rating is also out of scope:** if RP resolves a `usage_rate` with `plaSpecId = 'PLA_USAGE_RATE'`, raise `CARD_DRIVEN_RATING_UNSUPPORTED` — do not build the calculation.
 2. **Do not add minimum-commitment, cap, or allowance handling.** These cannot be computed per record and are bill-run-time concerns. Adding a column or a rate-type value for them is a category error — raise it, do not build it.
 3. **Do not add `rating.udr_exception`.** It was deliberately removed. `status = 'BILL_NOTUSED'` covers the case.
 4. **Do not add a `udr_key_hash` column** or any hash-based index. `udr_key` is indexed directly, and the decision is recorded with measurements in `_newmodule-rating-engine-plan.md` §12.5.
@@ -83,10 +125,10 @@ Sequence within a unit: **DDL → grants → seed → flow section → logging �
 
 General §5 applies in full. In addition, do not edit, weaken, regenerate or "improve" any of these unless the request says to, by name:
 
-1. **The live-row uniqueness constraint** `UNIQUE (partition_period, start_datetime, udr_key, is_live)`. Do not drop it, make it deferrable, add `udr_batch_run_num` to it, or replace it with an application check — including temporarily, including to make a test pass.
+1. **The live-row uniqueness constraint** `UNIQUE (partition_period, udr_key, is_live)`. *(PER_UNIT update, X2 — `start_datetime` dropped; authorized. Do not restore `start_datetime`, and do not tighten or loosen it further without a new authorization.)* Do not drop it, make it deferrable, add `udr_batch_run_num` to it, or replace it with an application check — including temporarily, including to make a test pass.
 2. **The `is_live` generated column expression.** It is generated from `status` precisely so it cannot drift. Do not convert it to a maintained column.
 3. **`db/bootstrap/rating-db-roles.sql`.** Grants are the rating/billing boundary. Widening one is a spec change.
-4. **The `partition_period` CHECK and its single `rating.period_of()` helper, including the explicit `AT TIME ZONE 'UTC'` literal.** Removing or changing the literal makes the constraint session-dependent and silently wrong, and re-buckets stored periods.
+4. **The `partition_period` CHECK and its single `rating.period_of()` helper, including its explicit `AT TIME ZONE` literal.** *(PER_UNIT update, X1 — the literal is now the config TZ `Asia/Kuala_Lumpur`, authorized by Khek 2026-09-30; `partition_period` is the billing month. Do not change the literal again without a new authorization.)* Removing the explicit zone makes the constraint session-dependent and silently wrong; changing the literal re-buckets stored periods (a re-partition, not an edit).
 5. **`CHECK (char_length(udr_key) <= 512)`.**
 6. **Applied migrations** (general §5.3) — and note that in this module a migration may carry a `pg_partman` registration; re-running it is not idempotent by default.
 7. **The existing `pg_cron` maintenance schedule.** Register on it; never add a second `cron.schedule_in_database`.

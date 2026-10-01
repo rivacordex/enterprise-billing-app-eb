@@ -242,3 +242,93 @@ This table and the one in `_newmodule-rating-engine-plan.md` §14 are **the same
 | 8 | **Testing approach for rating logic held in flow definitions** — the only rule today is "flow definitions parse and deploy". rm06 introduces the logging contract, whose test must assert the log-line format, and no test in `ratemgmt-code-standards.md` §10 covers it. | rm06 | Decide with item 5 |
 | 9 | **`ban_id` at rating time** — currently accepted as resolved at bill run rather than stamped at rating. | rm08 sign-off | Accepted; revisit if the bill run needs it earlier |
 | 10 | **Platform design review for the second database and the `core.AUDIT_LOG` exemption** — `platform-architecture.md` §5 states one logical database per server, and changes to Platform Invariants require a documented review. rm03a implements the deviation; the review has not happened. | rm03a | Platform |
+
+---
+
+# Phase G — PER_UNIT RAN-Usage Update (rm14–rm22)
+
+**This phase supersedes the "`udr_rate_type` is `FLAT` only throughout" note above.** It implements the `PER_UNIT` calculation, the real subscriber resolver (replacing rm08's placeholder), and the PRP integrity checks defined in `_change-rating-configuration-plan.md` and `ratemgmt-update-overview.md`. Design and Invariants: `ratemgmt-architecture.md` (Inv 20–25; X1/X2). Same decomposition rules as above; same repo-split rule (`ratemgmt-ai-workflow-rules.md §2.2` — app repo *or* `workflow-management/`, never both). Workstream C (Product-management UI) is **not** in this phase — `_futurebuild-product-mgmt-ui-plan.md`.
+
+**Repo naming:** the second repo is now the `workflow-management/` spin-off subdirectory (`wfm-architecture.md §4`), not a flat "rating repo". Units below say **app** or **wfm**.
+
+## Phase G.1 — Scope & app-repo foundation
+
+### Unit rm14 — Scope reconciliation + rm-spec banners
+- **Repo:** app (docs) · **Boundary:** `context/rating-management/**` + `context/product-management/specs/`
+- **Builds:** update `ratemgmt-project-overview.md` FLAT-only → `PER_UNIT` + the real resolver (the arch, code-standards and ai-workflow-rules docs are already updated); add a **forward-reference banner** (not a rewrite) to `rm01/rm06/rm07/rm08/rm09/rm10/rm12` and to `pm57a` (`lkp_subscriber_ref_id` = `party_role_id`).
+- **Visible result:** the doc set consistently authorizes `PER_UNIT` + the real resolver; the FLAT-only scope no longer reads the new code as a regression; the delivered rm/pm specs point forward without losing the record of what shipped.
+- **Depends on:** none. **Do this first** (`ratemgmt-ai-workflow-rules.md §0` rule 2).
+
+### Unit rm15 — `udr_rated` shape migration (rename + X1 + X2)
+- **Repo:** app · **Boundary:** `db/migrations/0034_rating.sql` + `db/schema/rating/udr-rated.ts` + `db/repositories/billing/rated-lines.repository.ts`
+- **Builds:** **gated on a fresh-install check** (verify no environment holds live `rating.udr_rated` data — the G-RC6 discipline; record the check). Then, **edit-in-place**: rename `udr_subscriber_ref_id` → **`udr_subscription_ref_id`** (+ rename the index `udr_rated_subscriber_start_idx`); change `rating.period_of()`'s literal to the **config TZ `Asia/Kuala_Lumpur`** so `partition_period` **is the billing month** (X1); tighten the live-row constraint to **`UNIQUE (partition_period, udr_key, is_live)`** (X2, `start_datetime` dropped); update the sample seed + the bill-run read path for the renamed column. **No Drizzle meta regeneration step** — per the rm15 validation record, `drizzle-orm`'s `migrate()` reads neither `meta/_journal.json`'s hash nor `meta/00XX_snapshot.json` for hand-authored migrations (unused since `0026`), so step 7's safety net is the fresh-install gate alone; validate instead by confirming `migrate()` applies cleanly against an empty database.
+- **Visible result:** the constraint suite passes at the new shape — a second live row per `(partition_period, udr_key)` is rejected; `period_of()` truncates in `+8` and behaves identically across ≥3 session timezones; a grep proves zero `udr_subscriber_ref_id` remaining in the app repo.
+- **Depends on:** rm01, rm14; the fresh-install verification gate. **If any environment holds rated data, this ships as a forward migration instead of edit-in-place.**
+
+### Unit rm16 — `rating_runtime` grant extension
+- **Repo:** app · **Boundary:** `db/bootstrap/rating-db-roles.sql`
+- **Builds:** add `rating_runtime` `SELECT` on the resolver/validation read set — `customer.party_role`, `product.product_specifications`, `product.ratecard_ran_usage_lkp`, `product.ratecard_version` — enumerated per table (never `ON ALL TABLES`); extend the per-table grant-assertion test.
+- **Visible result:** `rating_runtime` can `SELECT` exactly those four new tables and nothing more; the assertion proves the read set equals the enumerated list; no write anywhere new.
+- **Depends on:** rm03 (the role + enumerated-grant pattern), rm14.
+
+### Unit rm17 — `perUnitRateDetailSchema`
+- **Repo:** app · **Boundary:** `validation/rating/udr-rate-detail.schema.ts`
+- **Builds:** add the `PER_UNIT` variant to the discriminated union — `{ rateType: "PER_UNIT", ratePerUnit, quantity, amountRaw }` (money/decimal as `string`); it types `udr_rated.udr_rate_detail` and is the source of truth the `rp.py` Python mirror must match; tests (a valid `PER_UNIT` detail passes; `FLAT` still passes; an extra key or wrong discriminant is rejected).
+- **Visible result:** the Zod suite proves `PER_UNIT` validates, `FLAT` still validates, and a malformed detail is rejected before any write.
+- **Depends on:** rm14 (the column already exists from rm08).
+
+### Unit rm18 — Sample product / customer / ratecard seed + MNO-key shape + new event codes
+- **Repo:** app · **Boundary:** `db/seeds/**` + `validation/customer/**` + `db/seeds/rating-event-catalog.ts`
+- **Builds:** the resolvable **Sample 5G** dataset — a product offering with specs `udrType="RAN_USAGE"`, `singleSubInstPerCust="true"`, `productCardLookUp="RATECARD_RAN_USAGE_LKP"` and a **scalar** `usage_rate` price (`ratePerUnit`, `unit_of_measure="Mbps"`); a customer `party_role` with `party_role_specification = {"mnoPublicKey1":"MNO-001"}` plus the MNO-key validation shape; an ACTIVE `ratecard_version` + `ratecard_ran_usage_lkp` rows whose `lkp_subscriber_ref_id = party_role_id`; and the **new `event_catalog` rows** — `UNKNOWN_SUBSCRIBER`, `CARD_DRIVEN_RATING_UNSUPPORTED`, `SUBSCRIBER_REF_MISMATCH` (factor-2), `PRODUCT_PIN_MISMATCH` (factor-3), `SERVICE_CODE_MISMATCH`, `RATECARD_COVERAGE_GAP` (ratecard→input), `INPUT_UNMAPPED` (input→ratecard), `UDRTYPE_MISMATCH`, `MNO_KEY_NOT_UNIQUE`.
+- **Visible result:** one customer, one RAN_USAGE subscription, an active ratecard and a scalar price — a dataset the flow can resolve and rate end-to-end; every new event code resolves in the catalog (`INDETERMINATE` count stays zero).
+- **Depends on:** rm02 (catalog), rm15 (schema shape), rm16 (grants). **MNO-key shape and event-catalog rows are merged here** — none is a standalone unit and all are seeded in the same session to make the sample rateable.
+
+## Phase G.2 — Runtime & flow (workflow-management)
+
+### Unit rm19 — Runtime rename + RP `PER_UNIT` computation
+- **Repo:** wfm · **Boundary:** `workflow-management/worker/workflow-engine/runtime/rp.py` (+ the rename in `rl.py`)
+- **Builds:** the **wfm half of the rename** — `udr_subscriber_ref_id` → `udr_subscription_ref_id` across `rp.py` and `rl.py` (the `COPY` column list + writes), atomic across both modules; then in `rp.py`: derive `udr_rate_type` from the resolved `component_type` (`usage_rate → PER_UNIT`); compute `PER_UNIT = ratePerUnit × usage_volume` in `Decimal`, rounded once per `udr_rounding_mode` (`HALF_UP`); emit the `perUnitRateDetailSchema` JSON (Python mirror of rm17); source `udr_usage_unit` from the resolved component `unit_of_measure`; raise `CARD_DRIVEN_RATING_UNSUPPORTED` for a `usage_rate` with `plaSpecId = 'PLA_USAGE_RATE'`. Built on the **existing placeholder resolver** (the real one is rm20).
+- **Visible result:** RP produces `PER_UNIT` rated chunks — `udr_rate_type="PER_UNIT"`, `udr_rated_price_raw = ratePerUnit × usage_volume`, `udr_rated_price = round(raw, HALF_UP)`, a valid `udr_rate_detail` — and both runtime modules write the renamed column (rm08's FLAT assertions refreshed to PER_UNIT: **regression R1**).
+- **Depends on:** rm15 (renamed column + shape), rm17 (schema mirror), rm18 (a scalar price to resolve). **The wfm rename is merged into this unit** (no standalone result; keeps the rp+rl rename atomic).
+
+### Unit rm20 — RP: consume resolved subscription + drop the feed-unit price join
+- **Repo:** wfm · **Boundary:** `runtime/rp.py`
+- **Builds:** RP consumes the `product_inventory_id` **PRP resolves and carries** (rm21); the OV-5 price-path rewrite — remove the `pw.unit_of_measure = r.usage_unit` predicate, `_FEED_UNIT_TO_CATALOG` / `_map_feed_unit`, and the `usage_unit` chunk column; select the offering's single `usage_rate` lane directly (the unit now comes from the product, rm19). *(Decision A, eng review: resolution moved to PRP/rm21 — the identity locks that need the resolved `party_role_id` are PRP hard-stops that run before RP rates.)*
+- **Visible result:** RP prices a record on the carried `product_inventory_id` with no feed-unit dependency; a single-lane `usage_rate` resolves without a feed unit; `LOOKUP_MISS` fires only for a genuinely missing `usage_rate` lane.
+- **Depends on:** rm18 (seed), rm19 (PER_UNIT compute). *(The real resolved value arrives with rm21; rm20's change is valid on the placeholder-carried id.)*
+
+### Unit rm21 — PRP: validations, cross-checks, identity locks + flow config
+- **Repo:** wfm · **Boundary:** `runtime/prp.py` + `flows/rating-engine/rating-engine-ran-usage.yaml`
+- **Builds:** in `prp.py` — **resolve factor 1** (`mno → party_role_specification->>'mnoPublicKey1' → party_role_id → the RAN_USAGE-offering-filtered ACTIVE subscription, date window in the config TZ → product_inventory_id`; empty `{}` → `UNKNOWN_SUBSCRIBER`) and **write `product_inventory_id` into the chunk** for RP; load the ACTIVE ratecard + subscription/customer extracts; **widen dedup** to the identity key `(partition_period-as-billing-month | mno | cu | polygon)`; the **three-factor identity lock** (resolved `party_role_id` = ratecard `lkp_subscriber_ref_id` = the resolved offering **family id** pinned by the flow variable) — all hard-stop; `service_code` verify vs the matched ratecard row; **ratecard→input completeness** governed by `ratecard_coverage_enforcement` (`HARD_STOP`/`WARN`) + **input→ratecard** hard-stop; `udrType` confirmation; emit the new event codes. In the flow YAML — `feed_profile` → the **7-column, no-unit** shape; `file_key_rule` → `^(?P<file_key>rating-input-file-\d{12})(?:_v\d+)?\.udr$`; `ratecard_coverage_enforcement: HARD_STOP`; `reject_threshold: "0"`; the `subscription_product_name` pin; remove the `subscriber_ref_column` placeholder.
+- **Visible result:** a clean 7-column `.udr` file passes; each forced integrity failure (missing MNO key, wrong `lkp_subscriber_ref_id`, wrong family pin, `service_code` mismatch, missing ratecard polygon under `HARD_STOP`, unmapped input row) hard-stops the **whole batch** with the correct event code; the same missing-polygon file under `WARN` rates and logs the gap; a same-cell/same-billing-month duplicate is rejected while a same-cell/different-month pair is kept (**regression R2**); an unmapped input row hard-stops rather than a per-record `LOOKUP_MISS` (**regression R3**).
+- **Depends on:** rm16 (grants — PRP's new customer/product reads), rm18 (seed). **Resolution + flow config are merged here** — `feed_profile`/`file_key_rule`/the coverage+threshold vars are exactly what PRP consumes, and they ship together.
+
+### Unit rm22 — E2E journey + regressions + RL verification (ship gate)
+- **Repo:** both · **Boundary:** tests / CI + `runtime/rl.py` (verification)
+- **Builds:** refresh the rm13 end-to-end journey to **PER_UNIT** (file lands → PRP → RP → RL → `udr_rated` at PER_UNIT → reissue → supersession); the RL **"verified no-change" checklist** (COPY column list uses the renamed column; the new `raw ≠ rated` divergence loads; `udr_rate_detail` PER_UNIT variant carried as opaque text; reconciliation `parsed = rated + rejected + discarded` still balances with input→ratecard now a PRP hard-stop); the three CRITICAL regressions **R1** (FLAT→PER_UNIT assertions refreshed, never deleted), **R2** (dedup widening), **R3** (input→ratecard hard-stop); and a grep gate asserting **zero** `udr_subscriber_ref_id` across both repos.
+- **Visible result:** the full PER_UNIT operator journey is green end to end; every changed Invariant (20–25, X1, X2) has a test that fails when it is deliberately violated; RL loads PER_UNIT rows and supersedes a reissue correctly; the ship gate passes.
+- **Depends on:** rm14–rm21. **RL verification is merged here** — RL needs no logic change beyond the rename (done in rm19), so it has no standalone result and rides the ship gate.
+
+---
+
+## Phase G — Build-order summary
+
+| Unit | Name | Repo | Boundary | Key just-in-time dependency introduced |
+|---|---|---|---|---|
+| rm14 | Scope reconciliation + banners | app | `context/**` | PER_UNIT authorized in the docs; rm/pm banners |
+| rm15 | `udr_rated` shape (rename + X1 + X2) | app | `db/migrations` + schema | Billing-month `period_of`; `(partition_period, udr_key)` live key; `udr_subscription_ref_id` |
+| rm16 | `rating_runtime` grant extension | app | `db/bootstrap/` | `SELECT` on `customer.party_role` + product ratecard/specs |
+| rm17 | `perUnitRateDetailSchema` | app | `validation/rating/` | The PER_UNIT rate-detail type + mirror contract |
+| rm18 | Sample seed + MNO shape + event codes | app | `db/seeds/` + `validation/customer/` | A rateable Sample-5G dataset; the new event codes |
+| rm19 | Runtime rename + RP PER_UNIT compute | wfm | `runtime/rp.py`, `rl.py` | PER_UNIT math in-engine; wfm rename (R1) |
+| rm20 | RP real subscriber resolver | wfm | `runtime/rp.py` | `party_role_spec` → RAN_USAGE subscription; feed-unit join removed |
+| rm21 | PRP checks + identity locks + flow config | wfm | `runtime/prp.py` + flow YAML | Three-factor lock; completeness; 7-col feed; `file_key_rule`; `reject_threshold:"0"` (R2, R3) |
+| rm22 | E2E + regressions + RL verification | both | tests / CI | The PER_UNIT ship gate; R1–R3; zero stale rename refs |
+
+## Phase G — Notes
+
+- **`PER_UNIT` is in scope; no other rate type is.** The `FLAT`-only note above is superseded for `PER_UNIT` only — `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` remain a spec change, not a unit. Card-driven `usage_rate` rating is out of scope (raise `CARD_DRIVEN_RATING_UNSUPPORTED`).
+- **Open item #1 (the `udr_key` field list) is now closed for `RAN_USAGE`:** `mno_public_id | commercial_unit | polygon_id` (no datetime); identity for uniqueness/dedup is `(partition_period, udr_key)`.
+- **The X2 grain is table-wide.** `UNIQUE (partition_period, udr_key, is_live)` binds every `udr_type` on the shared `udr_rated`. Correct for the monthly RAN feed; a future sub-monthly `udr_type` needs a `udr_type`-scoped partial index (not a change to this one). This is the one deferred design item this phase leaves open.
+- **rm14–rm18 are app repo; rm19–rm21 are wfm; rm22 spans both (tests only).** No non-test unit spans repos (`§2.2`). App-repo units land before the wfm units that depend on them.
+- **The rename is one logical change split across two repos by the repo rule:** the app-repo call sites in rm15, the wfm call sites (`rp.py`+`rl.py`) atomically in rm19. Do not land one without scheduling the other in the same cycle.

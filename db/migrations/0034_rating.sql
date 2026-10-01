@@ -12,12 +12,14 @@ CREATE SCHEMA "rating";
 
 -- The single home of the business-timezone literal (rm01-spec D3). IMMUTABLE
 -- so it can be used in a CHECK constraint; verified session-independent
--- across UTC/America/New_York/Asia/Singapore sessions. The literal is UTC —
--- partition_period is a physical storage bucket, not the billing month
--- (rm01-spec D3) — and is not runtime-configurable.
+-- across UTC/America/New_York/Asia/Singapore sessions. The literal is the
+-- config TZ (Asia/Kuala_Lumpur, matching APP_TIMEZONE / getAppTimezone()) —
+-- partition_period IS the billing month (rm15-spec X1). It is a deploy-time
+-- constant, not a runtime lookup; a business-TZ change ships as a new
+-- migration regenerating this function.
 CREATE FUNCTION "rating"."period_of"(ts timestamptz) RETURNS date
   LANGUAGE sql IMMUTABLE AS
-$$ SELECT date_trunc('month', ts AT TIME ZONE 'UTC')::date $$;
+$$ SELECT date_trunc('month', ts AT TIME ZONE 'Asia/Kuala_Lumpur')::date $$;
 --> statement-breakpoint
 
 CREATE SEQUENCE "rating"."udr_batch_seq" INCREMENT BY 1 MINVALUE 1 START WITH 1 CACHE 1;
@@ -28,8 +30,9 @@ CREATE SEQUENCE "rating"."udr_batch_seq" INCREMENT BY 1 MINVALUE 1 START WITH 1 
 -- (Postgres requires the partition key in every unique/PK on a partitioned
 -- table). `is_live` carries the live-row uniqueness constraint (rm01-spec D4):
 -- GENERATED ALWAYS ... STORED from status, so it cannot drift from the value
--- it derives from. No foreign keys anywhere (Inv #17) — udr_ref_batch_id,
--- udr_subscriber_ref_id, udr_price_ref and udr_price_override_ref are plain
+-- it derives from — one live row per (partition_period, udr_key) (rm15-spec
+-- X2). No foreign keys anywhere (Inv #17) — udr_ref_batch_id,
+-- udr_subscription_ref_id, udr_price_ref and udr_price_override_ref are plain
 -- text.
 CREATE TABLE "rating"."udr_rated" (
 	"udr_id" uuid DEFAULT core.generate_ulid() NOT NULL,
@@ -39,7 +42,7 @@ CREATE TABLE "rating"."udr_rated" (
 	"end_datetime" timestamptz NOT NULL,
 	"status" text DEFAULT 'RATED' NOT NULL,
 	"is_live" boolean GENERATED ALWAYS AS (CASE WHEN status IN ('RATED','BILL_DRAFT','BILL_APPROVED') THEN true END) STORED,
-	"udr_subscriber_ref_id" text NOT NULL,
+	"udr_subscription_ref_id" text NOT NULL,
 	"udr_key" text NOT NULL,
 	"udr_resource" text,
 	"udr_usage_quantity" numeric(20, 6) NOT NULL,
@@ -73,7 +76,7 @@ CREATE TABLE "rating"."udr_rated" (
 	"insert_datetime" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"upsert_datetime" timestamp (3) with time zone,
 	CONSTRAINT "udr_rated_pk" PRIMARY KEY ("partition_period","udr_id"),
-	CONSTRAINT "udr_rated_live_uq" UNIQUE ("partition_period","start_datetime","udr_key","is_live"),
+	CONSTRAINT "udr_rated_live_uq" UNIQUE ("partition_period","udr_key","is_live"),
 	CONSTRAINT "udr_rated_udr_key_length_check" CHECK (char_length(udr_key) <= 512),
 	CONSTRAINT "udr_rated_period_matches_check" CHECK (partition_period = rating.period_of(start_datetime)),
 	CONSTRAINT "udr_rated_status_check" CHECK (status IN ('RATED','BILL_DRAFT','BILL_APPROVED','REJECTED','SUPERSEDED','BILL_NOTUSED')),
@@ -84,7 +87,7 @@ CREATE TABLE "rating"."udr_rated" (
 ) PARTITION BY RANGE ("partition_period");
 --> statement-breakpoint
 
-CREATE INDEX "udr_rated_subscriber_start_idx" ON "rating"."udr_rated" USING btree (udr_subscriber_ref_id, start_datetime);
+CREATE INDEX "udr_rated_subscription_start_idx" ON "rating"."udr_rated" USING btree (udr_subscription_ref_id, start_datetime);
 --> statement-breakpoint
 CREATE INDEX "udr_rated_billrun_idx" ON "rating"."udr_rated" USING btree (billrun_ref_id, billrun_ban_id, billrun_attempt)
   WHERE billrun_ref_id IS NOT NULL;

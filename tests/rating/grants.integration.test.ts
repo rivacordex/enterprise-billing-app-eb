@@ -102,13 +102,14 @@ describe.skipIf(!databaseUrl)(
     };
 
     // A valid udr_rated row (rm01 DDL): partition_period must equal
-    // period_of(start_datetime) = date_trunc('month', start AT TIME ZONE UTC).
+    // period_of(start_datetime) = date_trunc('month', start AT TIME ZONE
+    // 'Asia/Kuala_Lumpur') (rm15-spec X1).
     const ratedRow = () => ({
       partition_period: "2026-08-01",
       udr_type: "USAGE",
       start_datetime: "2026-08-14T10:00:00Z",
       end_datetime: "2026-08-14T11:00:00Z",
-      udr_subscriber_ref_id: "SUB-1",
+      udr_subscription_ref_id: "SUB-1",
       udr_key: nextKey("KEY"),
       udr_usage_quantity: "1.000000",
       udr_usage_unit: "CALL",

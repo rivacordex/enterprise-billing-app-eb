@@ -9,7 +9,7 @@ The Rating Management Module is the subsystem of the Enterprise Billing App (Tel
 ## Goals
 
 1. Make **why a charge came out at that amount** a queryable fact years later, by storing the rate applied, the price row and its effective date, the override that applied, the rounding mode used, and both the engine version and flow revision that produced the number — so a dispute is answered with a `SELECT`, not an archaeology exercise.
-2. Make double-billing **structurally impossible** rather than procedurally avoided: a `UNIQUE (partition_period, start_datetime, udr_key, is_live)` constraint means two live rows for one usage record abort the transaction, even when the application logic that should have prevented it is wrong, raced, or skipped.
+2. Make double-billing **structurally impossible** rather than procedurally avoided: a `UNIQUE (partition_period, udr_key, is_live)` constraint means two live rows for one cell per billing month abort the transaction, even when the application logic that should have prevented it is wrong, raced, or skipped.
 3. Make reprocessing a corrected file a **routine, safe operation** — supersede-then-insert in one transaction, old rows retained as `SUPERSEDED` with a pointer to what replaced them, so audit history survives every correction.
 4. Make it **impossible to silently rewrite a billed charge**: RL refuses an entire batch if any incoming record collides with a live `BILL_APPROVED` row, so a correction to already-invoiced usage surfaces as a `MAJOR` alarm instead of corrupting a posted invoice or tripping `customer_bill.charge_checksum` during a dispute.
 5. Turn **absence into a signal**. A file that never arrives produces no error, no reject and no log entry — only silence, which looks exactly like success. A scheduled check compares `rating.udr_batch` against the expected cadence per `udr_type` and raises a clearable `FILE_NOT_RECEIVED`.
@@ -59,14 +59,14 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 
 - Event-time price resolution: the price effective at `start_datetime`, resolved through the pinned `product_offering` version, not the price current at rating time.
 - Snapshot-on-first-rate of every resolved input — rate, price row, price effective date, override reference — making a reprocess months later reproduce the original arithmetic.
-- Rate types `FLAT` (v1) with the enum defined to `PER_UNIT`, `TIERED_GRADUATED`, `TIERED_VOLUME`, `BLOCK`, `PERCENTAGE` and `ZERO_RATED`; graduated and volume tiering are separate values because they produce different numbers for identical input.
+- Rate types `FLAT` and **`PER_UNIT`** — the latter added for `RAN_USAGE` by the PER_UNIT update (Phase G; `_change-rating-configuration-plan.md`), computing `ratePerUnit × usage_volume` — with the enum also defining `TIERED_GRADUATED`, `TIERED_VOLUME`, `BLOCK`, `PERCENTAGE` and `ZERO_RATED` (unimplemented); graduated and volume tiering are separate values because they produce different numbers for identical input.
 - Type-specific rating data in `udr_rate_detail` JSONB, Zod-validated and discriminated by `udr_rate_type`, so adding `BLOCK` later is a schema change in validation rather than a database migration.
 - Money at `numeric(18,2)` for amounts and `numeric(18,6)` for rates, with both raw and rounded values stored and the applied rounding mode recorded per record.
 - Currency taken from the resolved price row, with RL asserting it matches `billing_account.currency` and raising `CURRENCY_MISMATCH` on disagreement — nothing in the existing schema constrains the two to agree.
 
 ### Deduplication, supersession and guards
 
-- Natural key `(start_datetime, udr_key)`, with `udr_batch_run_num` deliberately excluded — including it would mean run 2 never collides with run 1, and the constraint would fire on nothing.
+- Natural key `(partition_period, udr_key)` for `RAN_USAGE` — one live row per cell per **billing month** (the PER_UNIT update, X2, drops `start_datetime` from the live-row key; `partition_period` becomes the billing month, X1). `udr_batch_run_num` is deliberately excluded — including it would mean run 2 never collides with run 1, and the constraint would fire on nothing.
 - `is_live` generated from `status`, carrying the uniqueness constraint; superseded rows hold `NULL` and coexist without limit under SQL's default `NULLS DISTINCT`.
 - Batch-level supersession by `file_key` across all partitions. Retired rows change **only `status`**; the lineage — `superseded_by_batch_id` and `supersede_reason` — is recorded once on `udr_batch`, because predecessors are marked before successors exist.
 - RL refusal of any batch colliding with a live `BILL_APPROVED` row — batch-level, a deliberate exception to the record-level default, because a collision with an approved invoice means the file's assumptions about the period are wrong.
@@ -119,7 +119,7 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 
 ## Out of scope
 
-- **The rating computation itself.** PRP mapping rules, RP pricing logic and the lookup table definitions ship as comments in the RP component, to be built in a later stage. `udr_rate_type` is `FLAT` only in this release.
+- **The rating computation itself** — *superseded by the PER_UNIT update (Phase G).* PRP mapping/validation, RP `PER_UNIT` pricing (`ratePerUnit × usage_volume`) and the real subscriber resolver are now **in scope for `RAN_USAGE`** (`ratemgmt-update-overview.md`). Rate types beyond `FLAT`/`PER_UNIT` (`TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED`) remain out of scope.
 - **Any front end.** No pages, no Server Actions, no RBAC permissions, no components. Billing Ops works in the workflow engine UI.
 - **The bill run's claim path.** The bill run stamping `billrun_ref_id` and moving records to `BILL_DRAFT` is the contract this module delivers against, not something it builds.
 - **Adjustments and credit notes** for corrections to already-billed usage. This release ships the guard that refuses the load; the remedy is a later phase.
