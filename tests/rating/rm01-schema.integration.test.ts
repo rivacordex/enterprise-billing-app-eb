@@ -170,8 +170,9 @@ describe.skipIf(!databaseUrl)(
           insertUdrRated({
             udr_key: key,
             start_datetime: "2026-08-20T10:00:00Z",
+            end_datetime: "2026-08-20T10:05:00Z",
           }),
-        ).rejects.toThrow();
+        ).rejects.toMatchObject({ code: "23505" });
       });
 
       it("1b. the same udr_key in two different billing months (different partition_period) both stay live (rm15-spec X2)", async () => {
