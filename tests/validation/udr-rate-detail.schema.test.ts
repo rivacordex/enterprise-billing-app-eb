@@ -6,6 +6,8 @@ import {
   udrRateDetailSchema,
 } from "@/validation/rating/udr-rate-detail.schema";
 
+import golden from "../fixtures/udr-rate-detail-golden.json";
+
 // rm17-spec — PER_UNIT branch added to the udr_rate_detail discriminated
 // union. Pure-function tests, no database.
 
@@ -60,6 +62,12 @@ describe("perUnitRateDetailSchema", () => {
 });
 
 describe("udrRateDetailSchema", () => {
+  it("rejects a PER_UNIT payload mislabelled FLAT (no silent strip)", () => {
+    expect(
+      udrRateDetailSchema.safeParse(perUnit({ rateType: "FLAT" })).success,
+    ).toBe(false);
+  });
+
   it("parses FLAT", () => {
     expect(udrRateDetailSchema.safeParse({ rateType: "FLAT" }).success).toBe(
       true,
@@ -75,4 +83,17 @@ describe("udrRateDetailSchema", () => {
       udrRateDetailSchema.safeParse({ rateType: "TIERED_GRADUATED" }).success,
     ).toBe(false);
   });
+});
+
+describe("golden parity fixtures (shared with the rp.py mirror, rm19)", () => {
+  for (const value of golden.valid) {
+    it(`accepts ${JSON.stringify(value)}`, () => {
+      expect(udrRateDetailSchema.safeParse(value).success).toBe(true);
+    });
+  }
+  for (const { why, value } of golden.invalid) {
+    it(`rejects: ${why}`, () => {
+      expect(udrRateDetailSchema.safeParse(value).success).toBe(false);
+    });
+  }
 });
