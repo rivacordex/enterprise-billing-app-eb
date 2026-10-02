@@ -1,0 +1,160 @@
+{
+  "_comment": "Golden parity fixtures for udr_rate_detail. Consumed by tests/validation/udr-rate-detail.schema.test.ts; rm19 must load the same file in the rp.py test suite so the Python mirror cannot drift from the Zod contract.",
+  "valid": [
+    { "rateType": "FLAT" },
+    {
+      "rateType": "PER_UNIT",
+      "ratePerUnit": "100.000000",
+      "quantity": "20",
+      "amountRaw": "2000.000000"
+    },
+    {
+      "rateType": "PER_UNIT",
+      "ratePerUnit": "0.5",
+      "quantity": "3",
+      "amountRaw": "1.5"
+    },
+    {
+      "rateType": "PER_UNIT",
+      "ratePerUnit": "0",
+      "quantity": "0",
+      "amountRaw": "0"
+    },
+    {
+      "rateType": "PER_UNIT",
+      "ratePerUnit": "0.000001",
+      "quantity": "1000000",
+      "amountRaw": "1"
+    }
+  ],
+  "invalid": [
+    {
+      "why": "FLAT with extra keys (no silent strip)",
+      "value": {
+        "rateType": "FLAT",
+        "ratePerUnit": "100",
+        "quantity": "20",
+        "amountRaw": "2000"
+      }
+    },
+    { "why": "unknown discriminant", "value": { "rateType": "BLOCK" } },
+    {
+      "why": "extra key",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1",
+        "quantity": "1",
+        "amountRaw": "1",
+        "x": "1"
+      }
+    },
+    {
+      "why": "negative",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "-1",
+        "quantity": "1",
+        "amountRaw": "-1"
+      }
+    },
+    {
+      "why": "empty string",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "",
+        "quantity": "1",
+        "amountRaw": "1"
+      }
+    },
+    {
+      "why": "exponent",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1E-7",
+        "quantity": "1",
+        "amountRaw": "0"
+      }
+    },
+    {
+      "why": "leading dot",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": ".5",
+        "quantity": "2",
+        "amountRaw": "1"
+      }
+    },
+    {
+      "why": "trailing newline",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1\n",
+        "quantity": "1",
+        "amountRaw": "1"
+      }
+    },
+    {
+      "why": "7 fractional digits",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1",
+        "quantity": "1",
+        "amountRaw": "1.0000001"
+      }
+    },
+    {
+      "why": "rate integer part over 12 digits",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1000000000000",
+        "quantity": "0",
+        "amountRaw": "0"
+      }
+    },
+    {
+      "why": "quantity integer part over 14 digits",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "0",
+        "quantity": "100000000000000",
+        "amountRaw": "0"
+      }
+    },
+    {
+      "why": "number-typed quantity",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1",
+        "quantity": 1,
+        "amountRaw": "1"
+      }
+    },
+    {
+      "why": "number-typed amountRaw",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "1",
+        "quantity": "1",
+        "amountRaw": 1
+      }
+    },
+    {
+      "why": "amountRaw != rate x quantity",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "100",
+        "quantity": "20",
+        "amountRaw": "5"
+      }
+    },
+    {
+      "why": "product not storable at scale 6",
+      "value": {
+        "rateType": "PER_UNIT",
+        "ratePerUnit": "0.000001",
+        "quantity": "0.5",
+        "amountRaw": "0"
+      }
+    }
+  ]
+}
