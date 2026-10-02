@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 import { reportError } from "@/lib/logger";
 
-export default function Error({
+export default function SubscriptionsError({
   error,
   unstable_retry,
 }: {
