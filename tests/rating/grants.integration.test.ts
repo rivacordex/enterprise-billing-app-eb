@@ -550,6 +550,63 @@ describe.skipIf(!databaseUrl)(
         ).rejects.toThrow(/permission denied/);
       });
 
+      it("25a. rm16: rating_runtime SELECTs each of the four new cross-schema reads successfully", async () => {
+        await expect(
+          ratingRuntime`SELECT 1 FROM customer.party_role WHERE false`,
+        ).resolves.toBeDefined();
+        await expect(
+          ratingRuntime`SELECT 1 FROM product.product_specifications WHERE false`,
+        ).resolves.toBeDefined();
+        await expect(
+          ratingRuntime`SELECT 1 FROM product.ratecard_ran_usage_lkp WHERE false`,
+        ).resolves.toBeDefined();
+        await expect(
+          ratingRuntime`SELECT 1 FROM product.ratecard_version WHERE false`,
+        ).resolves.toBeDefined();
+      });
+
+      it("25b. rm16: rating_runtime is refused INSERT/UPDATE/DELETE on each of the four new reads", async () => {
+        const probes: { table: string; update: string }[] = [
+          {
+            table: "customer.party_role",
+            update: "UPDATE customer.party_role SET party_role_id = party_role_id WHERE false",
+          },
+          {
+            table: "product.product_specifications",
+            update:
+              "UPDATE product.product_specifications SET product_spec_id = product_spec_id WHERE false",
+          },
+          {
+            table: "product.ratecard_ran_usage_lkp",
+            update:
+              "UPDATE product.ratecard_ran_usage_lkp SET lkp_subscriber_ref_id = lkp_subscriber_ref_id WHERE false",
+          },
+          {
+            table: "product.ratecard_version",
+            update:
+              "UPDATE product.ratecard_version SET ratecard_version_id = ratecard_version_id WHERE false",
+          },
+        ];
+        for (const { table, update } of probes) {
+          await expect(ratingRuntime.unsafe(update)).rejects.toThrow(
+            /permission denied/,
+          );
+          await expect(
+            ratingRuntime.unsafe(`INSERT INTO ${table} DEFAULT VALUES`),
+          ).rejects.toThrow(/permission denied/);
+          await expect(
+            ratingRuntime.unsafe(`DELETE FROM ${table} WHERE false`),
+          ).rejects.toThrow(/permission denied/);
+        }
+      });
+
+      it("25c. rm16: the customer schema is USAGE-reachable by rating_runtime", async () => {
+        const [row] = await sql<{ usage: boolean }[]>`
+          SELECT has_schema_privilege('rating_runtime', 'customer', 'USAGE') AS usage
+        `;
+        expect(row?.usage).toBe(true);
+      });
+
       it("26. rating_runtime calling billing.pgledger_create_transfer(...) is refused with permission denied for function (D7)", async () => {
         await expect(
           ratingRuntime`SELECT billing.pgledger_create_transfer('a', 'b', 1::numeric, now(), '{}'::jsonb)`,
