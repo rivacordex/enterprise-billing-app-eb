@@ -77,6 +77,8 @@ GRANT USAGE ON SCHEMA "billing"   TO rating_runtime;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA "core"      TO rating_runtime;   -- D8
 --> statement-breakpoint
+GRANT USAGE ON SCHEMA "customer"  TO rating_runtime;   -- Phase G: resolver reads party_role_specification
+--> statement-breakpoint
 GRANT USAGE ON SCHEMA "rating"    TO app_runtime;
 --> statement-breakpoint
 
@@ -189,6 +191,16 @@ GRANT SELECT ON TABLE
   "inventory"."product_inventory",
   "billing"."billing_account",
   "billing"."bill_cycle"
+TO rating_runtime;
+--> statement-breakpoint
+
+-- Step 7a — rm16: the PER_UNIT resolver (rm20) and PRP validations (rm21) read
+-- set, enumerated per table exactly as Step 7 (rm16-spec §Implementation §2).
+GRANT SELECT ON TABLE
+  "customer"."party_role",
+  "product"."product_specifications",
+  "product"."ratecard_ran_usage_lkp",
+  "product"."ratecard_version"
 TO rating_runtime;
 --> statement-breakpoint
 
