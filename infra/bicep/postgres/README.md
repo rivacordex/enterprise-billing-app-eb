@@ -54,8 +54,10 @@ az deployment group create --resource-group $RG --name ebill-postgres-dev `
 
 > Keep the password for the one-time bootstrap steps below, or read it back from
 > Key Vault later (`az keyvault secret show`, which needs the **Key Vault Secrets
-> User** role on an RBAC vault). Clear it from your shell when done:
-> `Remove-Item Env:\PGADMINPASSWORD`.
+> User** role on an RBAC vault). The vault has no public data-plane endpoint
+> (`publicNetworkAccess: 'Disabled'`), so that read must happen from inside the
+> VNet or over the VPN — same reachability constraint as the server itself.
+> Clear it from your shell when done: `Remove-Item Env:\PGADMINPASSWORD`.
 
 ### Verify
 

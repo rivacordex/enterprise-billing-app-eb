@@ -88,6 +88,13 @@ stages:
         steps:
           - task: AzureCLI@2
             name: resolveTag
+            env:
+              # Passed via env, not interpolated into the script text — the
+              # param is user-controlled, and splicing it directly into
+              # inlineScript would let a crafted tag value (e.g. containing a
+              # stray quote) break out and inject arbitrary shell commands at
+              # pipeline-compile time.
+              APP_IMAGE_TAG_PARAM: ${{ parameters.appImageTag }}
             inputs:
               azureSubscription: azure-service-connection
               scriptType: bash
@@ -96,7 +103,7 @@ stages:
                 set -euo pipefail
                 # The param defaults to a single space (ADO trims empty string
                 # defaults inconsistently); treat blank/space as "auto-resolve".
-                OVERRIDE="$(echo '${{ parameters.appImageTag }}' | xargs || true)"
+                OVERRIDE="$(echo "$APP_IMAGE_TAG_PARAM" | xargs || true)"
                 if [ -n "$OVERRIDE" ]; then
                   TAG="$OVERRIDE"
                   # Fail loudly if a pinned tag does not exist, rather than
@@ -266,13 +273,17 @@ stages:
         steps:
           - task: AzureCLI@2
             name: resolveTag
+            env:
+              # Passed via env, not interpolated into the script text — see
+              # the same note on the resolve_app job's resolveTag task.
+              WORKFLOW_ENGINE_IMAGE_TAG_PARAM: ${{ parameters.workflowEngineImageTag }}
             inputs:
               azureSubscription: azure-service-connection
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
                 set -euo pipefail
-                OVERRIDE="$(echo '${{ parameters.workflowEngineImageTag }}' | xargs || true)"
+                OVERRIDE="$(echo "$WORKFLOW_ENGINE_IMAGE_TAG_PARAM" | xargs || true)"
                 if [ -n "$OVERRIDE" ]; then
                   TAG="$OVERRIDE"
                   if ! az acr repository show-tags --name "$(ACR_NAME)" --repository "$(workflowEngineRepository)" --output tsv | grep -qx "$TAG"; then

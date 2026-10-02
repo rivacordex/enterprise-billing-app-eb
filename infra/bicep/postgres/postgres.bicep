@@ -223,7 +223,18 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enableRbacAuthorization: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
-    publicNetworkAccess: 'Enabled'
+    // No public data-plane endpoint — this vault holds the Postgres admin
+    // password + a plaintext superuser connection string. The rest of this
+    // template goes to real lengths (VNet injection, private DNS, hub/spoke)
+    // to keep the Postgres admin path private; leaving the vault that holds
+    // those same credentials open to the internet (RBAC as the only gate,
+    // no network layer) would undercut that. Secret reads now require VPN /
+    // VNet access, same as the server itself.
+    publicNetworkAccess: 'Disabled'
+    networkAcls: {
+      defaultAction: 'Deny'
+      bypass: 'AzureServices'
+    }
   }
 }
 
