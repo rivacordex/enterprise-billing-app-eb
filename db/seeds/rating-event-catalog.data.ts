@@ -29,6 +29,19 @@ export const RATING_EVENT_CODES = [
   "FILE_LATE",
   "DUPLICATE_BATCH",
   "CROSS_PERIOD_SUPERSEDE",
+  // rm18-spec §Implementation §1. PER_UNIT RAN-usage identity-lock,
+  // resolution and completeness failures — all integrity problems, never
+  // auto-clearing (a later clean batch does not make the earlier one true).
+  "UNKNOWN_SUBSCRIBER",
+  "SUBSCRIBER_REF_MISMATCH",
+  "PRODUCT_PIN_MISMATCH",
+  "SERVICE_CODE_MISMATCH",
+  "RATECARD_COVERAGE_GAP",
+  "RATECARD_COVERAGE_GAP_WARN",
+  "INPUT_UNMAPPED",
+  "UDRTYPE_MISMATCH",
+  "CARD_DRIVEN_RATING_UNSUPPORTED",
+  "MNO_KEY_NOT_UNIQUE",
   "BATCH_COMPLETE",
   "CLEARED",
 ] as const;
@@ -72,6 +85,21 @@ export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
     isActive: true,
     description:
       "A batch failed the arithmetic check `parsed = rated + rejected + discarded`, so records are unaccounted for.",
+  },
+  // rm18-spec §Implementation §1 — RP resolved a card-driven `usage_rate`
+  // (plaSpecId = 'PLA_USAGE_RATE'); PER_UNIT-from-card is unbuilt
+  // (architecture Inv. #24), so the record cannot be rated at all.
+  {
+    eventCode: "CARD_DRIVEN_RATING_UNSUPPORTED",
+    component: "RP",
+    defaultSeverity: "CRITICAL",
+    eventType: "processingErrorAlarm",
+    probableCause: "unsupportedPricingModel",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "The resolved usage_rate price is card-driven (plaSpecId = PLA_USAGE_RATE); PER_UNIT rating from a rate card is not supported.",
   },
   // MAJOR — an isolated unit failed completely.
   {
@@ -170,6 +198,107 @@ export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
     description:
       "A udr_batch row stuck at PROCESSING beyond the configured threshold — a worker was killed mid-load — was resolved (FAILED) by the stranded-batch reconcile, releasing the file's claim for reprocessing.",
   },
+  // rm18-spec §Implementation §1 — the PER_UNIT RAN-usage three-factor
+  // identity lock (architecture Inv. #20) and resolution failures RP raises.
+  // Never auto-clearing: a later clean batch does not make the earlier
+  // mismatch untrue (rm12/rm02 D5 rule).
+  {
+    eventCode: "UNKNOWN_SUBSCRIBER",
+    component: "RP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "subscriberUnresolved",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "The MNO key resolved to no active RAN_USAGE subscription (including an empty party_role_specification).",
+  },
+  {
+    eventCode: "SUBSCRIBER_REF_MISMATCH",
+    component: "RP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "identityLockMismatch",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "The ratecard's lkp_subscriber_ref_id does not equal the party_role_id resolved from the MNO key (identity-lock factor 2).",
+  },
+  {
+    eventCode: "PRODUCT_PIN_MISMATCH",
+    component: "RP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "identityLockMismatch",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "The resolved offering family id does not equal the pinned subscription_product_name flow variable (identity-lock factor 3).",
+  },
+  {
+    eventCode: "MNO_KEY_NOT_UNIQUE",
+    component: "RP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "duplicateSubscriberKey",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "One MNO key resolved to more than one customer, violating the subscriber-resolution uniqueness guard.",
+  },
+  // rm18-spec §Implementation §1 — the ratecard↔input completeness and
+  // mapping hard-stops PRP's validations (rm21) raise. Never auto-clearing.
+  {
+    eventCode: "SERVICE_CODE_MISMATCH",
+    component: "PRP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "serviceCodeMismatch",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "The input row's service_code does not match the matched ratecard row's service_code.",
+  },
+  {
+    eventCode: "RATECARD_COVERAGE_GAP",
+    component: "PRP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "ratecardCoverageGap",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "An active ratecard polygon has no corresponding input row, under HARD_STOP coverage enforcement.",
+  },
+  {
+    eventCode: "INPUT_UNMAPPED",
+    component: "PRP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "inputUnmapped",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description: "An input row maps to no ratecard entry.",
+  },
+  {
+    eventCode: "UDRTYPE_MISMATCH",
+    component: "PRP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "udrTypeMismatch",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "The dataset's udr_type does not match the resolved offering's udrType product specification.",
+  },
   // MINOR — degraded, but the unit completed.
   {
     // bm25-spec §Implementation §4. Mirrors LOAD_BLOCKED_BILLED but MINOR, not
@@ -248,6 +377,21 @@ export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
     isActive: true,
     description:
       "Supersession retired a predecessor row in a different monthly partition, meaning a corrected timestamp moved the record across a period boundary.",
+  },
+  // rm18-spec §Implementation §1 — the WARN-mode twin of
+  // RATECARD_COVERAGE_GAP: informational, never auto-clearing (not
+  // self-clearing — a zero-traffic cell is tolerated, not resolved).
+  {
+    eventCode: "RATECARD_COVERAGE_GAP_WARN",
+    component: "PRP",
+    defaultSeverity: "WARNING",
+    eventType: "qualityOfServiceAlarm",
+    probableCause: "ratecardCoverageGapTolerated",
+    isAutoClearing: false,
+    clearEventCode: null,
+    isActive: true,
+    description:
+      "An active ratecard polygon has no corresponding input row, tolerated under WARN coverage enforcement.",
   },
   // No severity — logged, never alarmed (rm02-spec §A). BATCH_COMPLETE is the
   // clear_event_code for seven other codes (D6) yet carries NULL severity of

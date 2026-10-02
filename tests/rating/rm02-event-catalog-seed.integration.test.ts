@@ -33,7 +33,8 @@ const ALLOWED_SEVERITIES = [
 ];
 
 // The listed codes that require a human and must never auto-clear (rm02-spec
-// §Verification 10).
+// §Verification 10). rm18 added ten more non-auto-clearing PER_UNIT
+// RAN-usage identity/completeness codes (rm18-spec §Implementation §1).
 const NON_AUTO_CLEARING = [
   "RECON_IMBALANCE",
   "SHRINKING_REISSUE",
@@ -43,6 +44,16 @@ const NON_AUTO_CLEARING = [
   "CURRENCY_MISMATCH",
   "DUPLICATE_BATCH",
   "CROSS_PERIOD_SUPERSEDE",
+  "UNKNOWN_SUBSCRIBER",
+  "SUBSCRIBER_REF_MISMATCH",
+  "PRODUCT_PIN_MISMATCH",
+  "SERVICE_CODE_MISMATCH",
+  "RATECARD_COVERAGE_GAP",
+  "RATECARD_COVERAGE_GAP_WARN",
+  "INPUT_UNMAPPED",
+  "UDRTYPE_MISMATCH",
+  "CARD_DRIVEN_RATING_UNSUPPORTED",
+  "MNO_KEY_NOT_UNIQUE",
 ];
 
 type CatalogRow = {
@@ -212,9 +223,9 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("catalog completeness", () => {
-      it("3. all eighteen codes are present after the seed runs", async () => {
+      it("3. all twenty-eight codes are present after the seed runs", async () => {
         const rows = await allRows();
-        expect(rows).toHaveLength(18);
+        expect(rows).toHaveLength(28);
       });
 
       it("4. RATING_EVENT_CODES and the seeded rows are the same set in both directions", async () => {
@@ -379,10 +390,10 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("idempotency", () => {
-      it("17. running the seed twice leaves eighteen rows, not thirty-six", async () => {
+      it("17. running the seed twice leaves twenty-eight rows, not fifty-six", async () => {
         await seedEventCatalog(db);
         const rows = await allRows();
-        expect(rows).toHaveLength(18);
+        expect(rows).toHaveLength(28);
       });
 
       it("18. changing a severity and re-running the upsert updates the existing row (DO UPDATE, not DO NOTHING)", async () => {
