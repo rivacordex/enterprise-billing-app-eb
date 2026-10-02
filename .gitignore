@@ -57,6 +57,11 @@ docker-compose.test.yml
 # um30: ZAP context rendered with real FQDN + test credentials at CI time
 /infra/zap/zap-context.rendered.xml
 
+# Compiled Bicep output (`az bicep build` / `build-params`). build-params bakes
+# readEnvironmentVariable() values — real subscription, SP and resource IDs —
+# into the JSON, so it must never be committed. Deploy from the .bicep sources.
+/infra/bicep/**/*.json
+
 
 # Python bytecode caches (workflow-engine worker runtime)
 workflow-management/worker/workflow-engine/**/__pycache__/

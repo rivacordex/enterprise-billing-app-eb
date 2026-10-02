@@ -53,3 +53,26 @@ files (tracking applied ones by hash) only.
 `drizzle-kit introspect` (`npm run db:introspect`) is still safe — it reads the
 live database, not the snapshots. pgledger's raw-SQL tables are deliberately
 excluded from drizzle-kit entirely (`tablesFilter: ["!pgledger_*"]`).
+
+## Known issues
+
+### FK / constraint names exceed 63-char Postgres limit (tech debt)
+
+Many auto-generated foreign key constraint names in the migration SQL exceed
+PostgreSQL's 63-character identifier limit. Postgres silently truncates them
+(`NOTICE 42622`) rather than erroring, so migrations succeed and the constraints
+work — but the stored names are truncated and differ from what Drizzle schema
+files declare, making `db:introspect` output noisy and diffs confusing.
+
+**Observed at:** first `db:migrate` run against any fresh database (Azure dev
+confirmed 2026-09-23).
+
+**Fix (forward migration):** add a migration that uses `ALTER TABLE ... RENAME
+CONSTRAINT` to replace every truncated name with an explicit short alias (≤ 63
+chars). Then update the corresponding `db/schema/**/*.ts` Drizzle files to use
+`.name("short_alias")` on each affected `references()`/`foreignKey()` call so
+future migrations Drizzle would generate (if generate were re-enabled) would not
+reintroduce the long names. Because already-applied migration SQL cannot be
+edited (see rule above), the rename forward migration is the only safe path.
+Do NOT edit existing migration files — the rename migration is how this reaches
+already-migrated environments.

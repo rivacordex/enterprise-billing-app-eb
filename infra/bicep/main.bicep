@@ -29,6 +29,12 @@ param pipelineServicePrincipalId string
 param minReplicas int = 2
 param maxReplicas int = 5
 
+@description('Per-replica sizing (Consumption plan: 1:2 vCPU:GiB, max 4 vCPU / 8Gi). Defaults match ACA\'s implicit 0.5 / 1Gi; set per environment in *.bicepparam.')
+param appCpu string = '0.5'
+param appMemory string = '1Gi'
+param workflowEngineCpu string = '0.5'
+param workflowEngineMemory string = '1Gi'
+
 // Non-secret Microsoft SSO identifiers (tenant + client ID), passed straight
 // through to the container-app module. Supplied at deploy time from the
 // `um30-infra` variable group (e.g. `az deployment group create --parameters
@@ -72,6 +78,24 @@ param deployWorkloads bool = true
 @description('Gates the workflow-engine Container App + storage (rm04). Leave false until the D0 process-runner spike has passed on a real environment.')
 param deployWorkflowEngine bool = false
 
+// ── VNet integration for the ACA environment ─────────────────────────────────
+// When acaSubnetId is provided the Container Apps Environment injects into the
+// billing spoke's snet-billing-aca subnet with `internal: true` (no public
+// endpoint — all apps are reachable only via the private VNet / VPN tunnel).
+// Azure requires a private DNS zone whose name matches the environment's
+// defaultDomain; this template creates it with a wildcard A record pointing at
+// the environment's staticIp and links it to both the spoke (outbound app
+// traffic) and the hub (VPN clients). Omit all three params for environments
+// that don't use private networking.
+@description('Full resource ID of the ACA infrastructure subnet (snet-billing-aca). Leave empty for a public ACA environment.')
+param acaSubnetId string = ''
+@description('Full resource ID of the billing spoke VNet — needed to link the ACA private DNS zone to the spoke. Required when acaSubnetId is non-empty.')
+param acaSpokeVnetId string = ''
+@description('Full resource ID of the hub VNet — links the ACA private DNS zone so VPN clients can resolve app FQDNs. Required when acaSubnetId is non-empty.')
+param acaHubVnetId string = ''
+@description('ACA environment defaultDomain — required for the private DNS zone. Leave empty on first deploy; the acaEnvironmentDefaultDomain output captures it, then supply it on the second deploy to create the DNS zone + records + links. (Two-pass workaround: Bicep BCP120 forbids using a post-deploy property as a resource name.)')
+param acaDefaultDomain string = ''
+
 // bm34 — a SINGLE knob drives BOTH sides of distribution so they can never
 // split-brain: it flips the billrun engine's SFTP wiring (the flow uploads over
 // SFTP, reading the sftp-private-key/sftp-known-hosts Key Vault secrets) AND the
@@ -103,6 +127,15 @@ param sftpRemoteBase string = '/upload'
 // instance never distributes.
 @description('bm34 — provision the loopback distribution sink (Azure Files share at /distribution) on the billrun engine. Default true — the default `loopback` target needs it to deliver.')
 param enableLocalDistributionSink bool = true
+
+// bm19/bm34 — wire the invoice/report artifact store (container `invoices`) on
+// BOTH the app (writes, BILLRUN_BLOB_CONNECTION_STRING) and the billrun engine
+// (reads via the distributor's Blob Download). Derived from ONE knob so the two
+// can never split-brain (app writes to a store the engine can't read). Requires
+// the billrun-blob-connection-string / -b64 Key Vault secrets. Default false;
+// dev sets it true. Artifacts share the engine's storage account.
+@description('bm19/bm34 — enable the invoice artifact store on the app + billrun engine (BILLRUN_BLOB_CONNECTION_STRING / SECRET_AZURE_STORAGE_CONNECTION_STRING). Requires the billrun-blob-connection-string + -b64 Key Vault secrets. Default false.')
+param enableBlobArtifacts bool = false
 
 // wfm01 §4b / wfm-architecture §5 — logical→physical engine topology, a single
 // deploy parameter. `collapsed` (default): ONE `workflow-engine` instance hosting
@@ -198,6 +231,67 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2023-05-01'
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
+    // When acaSubnetId is supplied: inject into the billing spoke subnet with
+    // `internal: true` so the environment has no public endpoint. All apps
+    // within it are reachable via `ingress.external: true` (standard ACA
+    // ingress) but only from within the VNet or over the VPN tunnel.
+    vnetConfiguration: empty(acaSubnetId) ? null : {
+      infrastructureSubnetId: acaSubnetId
+      internal: true
+    }
+  }
+}
+
+// Private DNS zone for internal ACA environment (required when internal: true —
+// Azure does NOT auto-create it). Zone name == the environment's defaultDomain;
+// wildcard + apex A records point at the environment's static IP. Links to both
+// the spoke (apps in the same VNet) and the hub (VPN clients via gateway transit).
+//
+// TWO-PASS DEPLOY: acaDefaultDomain must be empty on pass 1 so the ACA env is
+// created and its defaultDomain is captured from the acaEnvironmentDefaultDomain
+// output. On pass 2 supply that value — only then are these resources deployed.
+// (Bicep BCP120: resource `name` cannot reference a post-deploy property, so we
+// use a parameter that is calculable at deployment start.)
+resource acaPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (!empty(acaSubnetId) && !empty(acaDefaultDomain)) {
+  name: !empty(acaDefaultDomain) ? acaDefaultDomain : 'placeholder.azurecontainerapps.io'
+  location: 'global'
+}
+
+resource acaDnsWildcardRecord 'Microsoft.Network/privateDnsZones/A@2020-06-01' = if (!empty(acaSubnetId) && !empty(acaDefaultDomain)) {
+  parent: acaPrivateDnsZone
+  name: '*'
+  properties: {
+    ttl: 300
+    aRecords: [{ ipv4Address: containerAppsEnvironment.properties.staticIp }]
+  }
+}
+
+resource acaDnsApexRecord 'Microsoft.Network/privateDnsZones/A@2020-06-01' = if (!empty(acaSubnetId) && !empty(acaDefaultDomain)) {
+  parent: acaPrivateDnsZone
+  name: '@'
+  properties: {
+    ttl: 300
+    aRecords: [{ ipv4Address: containerAppsEnvironment.properties.staticIp }]
+  }
+}
+
+resource acaDnsLinkSpoke 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (!empty(acaSubnetId) && !empty(acaDefaultDomain) && !empty(acaSpokeVnetId)) {
+  parent: acaPrivateDnsZone
+  name: 'link-to-spoke'
+  location: 'global'
+  properties: {
+    virtualNetwork: { id: acaSpokeVnetId }
+    registrationEnabled: false
+  }
+}
+
+resource acaDnsLinkHub 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (!empty(acaSubnetId) && !empty(acaDefaultDomain) && !empty(acaHubVnetId)) {
+  parent: acaPrivateDnsZone
+  name: 'link-to-hub'
+  location: 'global'
+  properties: {
+    virtualNetwork: { id: acaHubVnetId }
+    registrationEnabled: false
   }
 }
 
@@ -245,6 +339,22 @@ module postgres 'modules/postgres.bicep' = {
   }
 }
 
+// The app's outbound bill-run engine URL, derived from the collapsed engine's
+// ingress FQDN (empty string when the engine or its ingress is absent, so the app
+// stays on the stub client rather than pointing at a dead host — lib/config.ts
+// selects the stub when BILLRUN_ENGINE_URL/AUTH are absent). The `/api/v1/main`
+// suffix is Kestra's REST base (tenant `main`); engine-client.ts appends
+// `/executions/{namespace}/{flowId}`. AUTH + APP_TOKEN are Key Vault secrets wired
+// inside container-app.bicep, not passed here.
+var billRunEngineFqdn = !deployWorkflowEngine
+  ? ''
+  : (splitByModule
+      ? workflowEngineBillrunContainerApp!.outputs.workflowEngineFqdn
+      : workflowEngineContainerApp!.outputs.workflowEngineFqdn)
+var billRunEngineUrl = empty(billRunEngineFqdn)
+  ? ''
+  : 'https://${billRunEngineFqdn}/api/v1/main'
+
 module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
   name: 'containerApp'
   params: {
@@ -260,12 +370,20 @@ module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
     appBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
     minReplicas: minReplicas
     maxReplicas: maxReplicas
+    cpu: appCpu
+    memory: appMemory
     entraTenantId: entraTenantId
     microsoftClientId: microsoftClientId
     appTimezone: appTimezone
     // bm34 — derived from the SAME knob passed to the billrun engine module(s)
     // below, so the app's target set and the engine's SFTP wiring flip together.
     distributionTargets: enableSftpDistribution ? 'sftp' : 'loopback'
+    // APP-05 — connect the app to the deployed engine. URL is the derived engine
+    // FQDN (above); AUTH (Basic) + APP_TOKEN (M2M bearer) are Key Vault secrets
+    // resolved inside the module. Empty URL leaves the app on the stub client.
+    billRunEngineUrl: billRunEngineUrl
+    // bm19/bm34 — invoice artifact store (same knob as the engine below).
+    enableBlobArtifacts: enableBlobArtifacts
   }
 }
 
@@ -300,6 +418,8 @@ module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' 
   params: {
     location: location
     containerAppName: '${namePrefix}-workflow-engine'
+    cpu: workflowEngineCpu
+    memory: workflowEngineMemory
     containerAppsEnvironmentId: containerAppsEnvironment.id
     acrLoginServer: acr.outputs.acrLoginServer
     keyVaultUri: keyVault.outputs.keyVaultUri
@@ -315,12 +435,24 @@ module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' 
     kestraInternalContainerName: workflowEngineStorage!.outputs.kestraInternalContainerName
     enableEasyAuthIngress: deployEasyAuth
     corporateIpAllowList: corporateIpAllowList
+    // On an INTERNAL Container Apps Environment (acaSubnetId supplied), expose the
+    // engine via plain external ingress — private (VPN-only), no Easy Auth — so the
+    // app can reach it over HTTPS at the wildcard-DNS + managed-TLS FQDN, exactly
+    // like the `app` container. Skipped for a public env (empty acaSubnetId) and
+    // superseded by Easy Auth when deployEasyAuth is true. See the engine module's
+    // exposeInternalEnvIngress param note.
+    exposeInternalEnvIngress: !empty(acaSubnetId)
     // bm38 §1 — the collapsed engine hosts BOTH namespaces, so it carries the
     // `billrun_runtime` DB credential wiring (billrun-runtime-db-password secret
     // + SECRET_BILLRUN_RUNTIME_PASSWORD / BILLRUN_DB_* env). Set explicitly true:
     // defaultNamespace stays `rating` here even though the engine hosts
     // `billrun`, so it cannot be derived from the namespace default.
     hostsBillrunNamespace: true
+    // bm36 — the app's HTTPS URL for the bill-run flows' signal-back callbacks
+    // (ENV_BILLRUN_APP_BASE_URL). Same derivation as the app's own appBaseUrl.
+    billrunAppBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
+    // bm34 — distributor Blob artifact download (same knob as the app above).
+    enableBlobArtifactAccess: enableBlobArtifacts
     // bm34 — this collapsed instance hosts the `billrun` namespace, so it carries
     // the distribution SFTP wiring, flipped by the SAME knob that sets the app's
     // BILLRUN_DISTRIBUTION_TARGETS above (split-brain-proof).
@@ -364,6 +496,8 @@ module workflowEngineRatingContainerApp 'modules/workflow-engine-container-app.b
   params: {
     location: location
     containerAppName: '${namePrefix}-workflow-engine-rating'
+    cpu: workflowEngineCpu
+    memory: workflowEngineMemory
     containerAppsEnvironmentId: containerAppsEnvironment.id
     acrLoginServer: acr.outputs.acrLoginServer
     keyVaultUri: keyVault.outputs.keyVaultUri
@@ -389,6 +523,8 @@ module workflowEngineBillrunContainerApp 'modules/workflow-engine-container-app.
   params: {
     location: location
     containerAppName: '${namePrefix}-workflow-engine-billrun'
+    cpu: workflowEngineCpu
+    memory: workflowEngineMemory
     containerAppsEnvironmentId: containerAppsEnvironment.id
     acrLoginServer: acr.outputs.acrLoginServer
     keyVaultUri: keyVault.outputs.keyVaultUri
@@ -412,6 +548,10 @@ module workflowEngineBillrunContainerApp 'modules/workflow-engine-container-app.
     // (billrun-runtime-db-password secret + SECRET_BILLRUN_RUNTIME_PASSWORD /
     // BILLRUN_DB_* env).
     hostsBillrunNamespace: true
+    // bm36 — signal-back callback host for the split billrun instance (same app).
+    billrunAppBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
+    // bm34 — distributor Blob artifact download for the split billrun instance.
+    enableBlobArtifactAccess: enableBlobArtifacts
     // bm34 — the split-topology billrun instance carries the distribution SFTP
     // wiring, flipped by the SAME knob that sets the app's
     // BILLRUN_DISTRIBUTION_TARGETS above (split-brain-proof). The rating instance
@@ -463,3 +603,7 @@ output keyVaultName string = keyVault.outputs.keyVaultName
 output appManagedIdentityPrincipalId string = appManagedIdentity.properties.principalId
 output migrateManagedIdentityPrincipalId string = migrateManagedIdentity.properties.principalId
 output workflowEngineManagedIdentityPrincipalId string = workflowEngineManagedIdentity.properties.principalId
+// Two-pass ACA DNS zone deployment: capture this on pass 1, supply as
+// ACA_DEFAULT_DOMAIN env var on pass 2 to create the private DNS zone + records.
+output acaEnvironmentDefaultDomain string = containerAppsEnvironment.properties.defaultDomain
+output acaEnvironmentStaticIp string = containerAppsEnvironment.properties.staticIp

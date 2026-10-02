@@ -26,7 +26,9 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     }
     tenantId: subscription().tenantId
     enableSoftDelete: true
-    softDeleteRetentionInDays: 90
+    // 7 days: matches postgres.bicep's vault (which created this resource first).
+    // Azure does not allow changing softDeleteRetentionInDays post-creation.
+    softDeleteRetentionInDays: 7
     enablePurgeProtection: true
     enableRbacAuthorization: true
     enabledForTemplateDeployment: false
@@ -65,15 +67,16 @@ resource migrateMiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-0
   }
 }
 
-// Pipeline service principal — Secrets Officer, write access for initial
-// setup only (rotating secret values). Not used at app runtime.
+// Pipeline identity — Secrets Officer, write access for initial setup only
+// (rotating secret values). Not used at app runtime. principalType is omitted
+// so Azure resolves it automatically — this works for both a User (local deploy)
+// and a Service Principal (CI pipeline).
 resource pipelineRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, pipelineServicePrincipalId, keyVaultSecretsOfficerRoleId)
   scope: keyVault
   properties: {
     roleDefinitionId: keyVaultSecretsOfficerRoleId
     principalId: pipelineServicePrincipalId
-    principalType: 'ServicePrincipal'
   }
 }
 
