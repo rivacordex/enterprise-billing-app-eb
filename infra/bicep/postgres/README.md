@@ -17,7 +17,7 @@ its private DNS zone to both VNets.
 
 | Resource | Detail |
 |---|---|
-| **Flexible Server** `ebill-dev-pg-<hash>` | PostgreSQL **17**, **Burstable B1ms** (1 vCore/2 GB), 32 GB, **HA off**, 7-day backups |
+| **Flexible Server** `ebill-dev-pg-<hash>` | PostgreSQL **17**, **General Purpose D2ds_v5** (2 vCores/8 GB), 32 GB, **ZoneRedundant HA**, 7-day backups |
 | **Private access** | Injected into `snet-billing-postgres` — **no public endpoint** |
 | **Private DNS zone** `ebill-dev.private.postgres.database.azure.com` | Linked to the **spoke** (app/ACA) and **hub** (VPN clients) |
 | **Server configs** | `azure.extensions` = PG_PARTMAN,PG_CRON,PGCRYPTO · `shared_preload_libraries` = pg_cron (triggers a one-time restart) · `timezone` = UTC |

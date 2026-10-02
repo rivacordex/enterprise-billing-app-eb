@@ -252,7 +252,7 @@ resource adminConnStringSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = 
   parent: keyVault
   name: 'pg-admin-connection-string'
   properties: {
-    value: 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/postgres?sslmode=require'
+    value: 'postgresql://${uriComponent(administratorLogin)}:${uriComponent(administratorLoginPassword)}@${postgresServer.properties.fullyQualifiedDomainName}:5432/postgres?sslmode=require'
   }
 }
 

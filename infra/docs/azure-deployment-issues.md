@@ -231,8 +231,9 @@ _Opened 2026-09-25, from the first Azure dev stand-up._
   - **VPN operator UI access:** browse the engine UI at
     `https://ebill-dev-workflow-engine.<defaultDomain>/ui/` over the VPN. If the
     private-DNS zone isn't pushed to the VPN client, add a hosts-file entry
-    `10.20.0.14 ebill-dev-workflow-engine.<defaultDomain>` (same pattern as the
-    app, runbook §6e).
+    `<staticIp> ebill-dev-workflow-engine.<defaultDomain>` (same pattern as the
+    app, runbook §6e — `<staticIp>` is the environment's `staticIp` output, e.g.
+    `az containerapp env show -g $RG -n ebill-dev-env --query properties.staticIp -o tsv`).
 
 ### APP-06
 

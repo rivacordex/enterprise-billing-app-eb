@@ -346,9 +346,11 @@ module postgres 'modules/postgres.bicep' = {
 // suffix is Kestra's REST base (tenant `main`); engine-client.ts appends
 // `/executions/{namespace}/{flowId}`. AUTH + APP_TOKEN are Key Vault secrets wired
 // inside container-app.bicep, not passed here.
-var billRunEngineFqdn = (deployWorkflowEngine && !splitByModule)
-  ? workflowEngineContainerApp!.outputs.workflowEngineFqdn
-  : ''
+var billRunEngineFqdn = !deployWorkflowEngine
+  ? ''
+  : (splitByModule
+      ? workflowEngineBillrunContainerApp!.outputs.workflowEngineFqdn
+      : workflowEngineContainerApp!.outputs.workflowEngineFqdn)
 var billRunEngineUrl = empty(billRunEngineFqdn)
   ? ''
   : 'https://${billRunEngineFqdn}/api/v1/main'

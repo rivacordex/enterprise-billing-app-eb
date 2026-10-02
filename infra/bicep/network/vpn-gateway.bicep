@@ -33,7 +33,7 @@ param vpnClientAddressPool string = '172.16.0.0/24'
 @description('Gateway SKU. VpnGw1AZ (~$154/mo) is the baseline zone-redundant SKU that supports OpenVPN/IKEv2 P2S with the Azure VPN Client. Non-AZ SKUs (VpnGw1 etc.) are no longer accepted by Azure as of 2025.')
 param gatewaySku string = 'VpnGw1AZ'
 
-@description('Base64 PUBLIC cert data of your P2S ROOT certificate. This is a public key, NOT a secret — but it is left EMPTY by default so no cert material is committed. Recommended: leave empty and add the root cert AFTER deploy via `az network vnet-gateway root-cert create` (README). If set, it is baked into the gateway on deploy.')
+@description('Base64 PUBLIC cert data of your P2S ROOT certificate. This is a public key, NOT a secret — but it is left EMPTY by default so no cert material is committed. Required at deployment time: supply it via the documented parameter override (`--parameters rootCertData=$rootPublic`, README), never committed to the param file.')
 param rootCertData string = ''
 
 @description('Name for the uploaded root certificate.')

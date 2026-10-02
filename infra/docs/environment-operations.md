@@ -161,8 +161,12 @@ Requires network (step 1) to be deployed. Creates the server, private DNS zone
 > output for the full duration.
 
 ```powershell
-# Generate a strong admin password (never stored in repo)
-$env:PGADMINPASSWORD = -join ((48..57)+(65..90)+(97..122)+(33,35,37,42) | Get-Random -Count 24 | ForEach-Object {[char]$_})
+# Generate a strong admin password (never stored in repo). Uses a cryptographically
+# secure RNG — Get-Random is a non-cryptographic PRNG and unsuitable for secrets.
+$charset = [char[]]((48..57)+(65..90)+(97..122)+(33,35,37,42))
+$bytes = [byte[]]::new(24)
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$env:PGADMINPASSWORD = -join ($bytes | ForEach-Object { $charset[$_ % $charset.Length] })
 
 # Validate
 az bicep build --file infra/bicep/postgres/postgres.bicep
@@ -386,19 +390,23 @@ Create `enterprise_billing` before running migrations. `psql` is not required �
 the `postgres` npm package is available in the project:
 
 ```powershell
-# Connect to the postgres system DB (not enterprise_billing, which doesn't exist yet)
-node --env-file=.env.azure.dev --import tsx -e "
-  import postgres from 'postgres';
-  const url = process.env.BOOTSTRAP_DATABASE_URL.replace('/enterprise_billing?', '/postgres?');
-  const sql = postgres(url);
-  try {
-    await sql\`CREATE DATABASE enterprise_billing\`;
-    console.log('Created enterprise_billing.');
-  } catch (e) {
-    if (e.code === '42P04') console.log('Already exists.');
-    else throw e;
-  } finally { await sql.end(); }
-"
+# Connect to the postgres system DB (not enterprise_billing, which doesn't exist yet).
+# A single-quoted here-string passes the JS to node byte-for-byte — a double-quoted
+# string would expand the backtick-escaped template literal and any $-prefixed
+# JS content as PowerShell interpolation before node ever sees it.
+$createDbScript = @'
+import postgres from 'postgres';
+const url = process.env.BOOTSTRAP_DATABASE_URL.replace('/enterprise_billing?', '/postgres?');
+const sql = postgres(url);
+try {
+  await sql`CREATE DATABASE enterprise_billing`;
+  console.log('Created enterprise_billing.');
+} catch (e) {
+  if (e.code === '42P04') console.log('Already exists.');
+  else throw e;
+} finally { await sql.end(); }
+'@
+node --env-file=.env.azure.dev --import tsx -e $createDbScript
 ```
 
 #### 5d. Run DB migrations
@@ -502,8 +510,11 @@ $roleSecrets = @{
   'kestra_engine'   = 'kestra-engine-db-password'
 }
 
+$pwdCharset = [char[]]((48..57)+(65..90)+(97..122))
 foreach ($role in $roleSecrets.Keys) {
-  $pwd = -join (1..32 | ForEach-Object { [char](((48..57)+(65..90)+(97..122)) | Get-Random) })
+  $pwdBytes = [byte[]]::new(32)
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($pwdBytes)
+  $pwd = -join ($pwdBytes | ForEach-Object { $pwdCharset[$_ % $pwdCharset.Length] })
   az keyvault secret set --vault-name $KV_NAME --name $roleSecrets[$role] --value $pwd --output none
   Write-Host "Stored in KV: $($roleSecrets[$role])"
 }
@@ -595,7 +606,14 @@ $RG     = "<resource-group>"
 
 # Required — read by dev.bicepparam
 $env:POSTGRES_SERVER_NAME = $PG_NAME   # from the step 0 shell variables
-$env:PIPELINE_SP_ID       = az ad signed-in-user show --query id -o tsv
+
+# Object ID of the Azure DevOps deployment service principal (the
+# azure-service-connection's app registration) — NOT the signed-in user. This
+# value is granted Key Vault Secrets Officer, so it must identify the identity
+# the pipeline actually deploys as. Find the app ID under Project Settings →
+# Service connections → azure-service-connection → Manage Service Principal.
+$PIPELINE_SP_APP_ID = "<pipeline-service-principal-app-id>"
+$env:PIPELINE_SP_ID = az ad sp show --id $PIPELINE_SP_APP_ID --query id -o tsv
 
 # VNet IDs for the private ACA environment — contain subscription ID, NOT in repo
 $env:ACA_SUBNET_ID     = "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.Network/virtualNetworks/ebill-dev-billing-vnet/subnets/snet-billing-aca"
@@ -688,7 +706,10 @@ az keyvault secret set --vault-name $KV_NAME --name pg-connection-string-migrate
   --value "postgresql://app_migrate:${migratePwd}@${PG_FQDN}:5432/enterprise_billing?sslmode=require" --output none
 
 # Better-Auth session secret (generate randomly; long-lived, never rotated lightly)
-$authSecret = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 64 | ForEach-Object {[char]$_})
+$charset = [char[]]((48..57)+(65..90)+(97..122))
+$bytes = [byte[]]::new(64)
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$authSecret = -join ($bytes | ForEach-Object { $charset[$_ % $charset.Length] })
 az keyvault secret set --vault-name $KV_NAME --name better-auth-secret --value $authSecret --output none
 
 Write-Host "App secrets seeded."
@@ -703,11 +724,17 @@ Write-Host "App secrets seeded."
 # Kestra admin UI password (Kestra basic auth). Kestra 1.3.35 silently rejects
 # the whole Basic Auth config unless the password has upper + lower + digit
 # (8+ chars) — the "Aa1" prefix guarantees all three.
-$kestraPass = "Aa1" + -join (1..29 | ForEach-Object { [char](((48..57)+(65..90)+(97..122)) | Get-Random) })
+$charset = [char[]]((48..57)+(65..90)+(97..122))
+$bytes = [byte[]]::new(29)
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$kestraPass = "Aa1" + -join ($bytes | ForEach-Object { $charset[$_ % $charset.Length] })
 az keyvault secret set --vault-name $KV_NAME --name kestra-basic-auth-password --value $kestraPass --output none
 
 # Webhook signing key for the rating usage ingest endpoint
-$webhookKey = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 40 | ForEach-Object {[char]$_})
+$charset = [char[]]((48..57)+(65..90)+(97..122))
+$bytes = [byte[]]::new(40)
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$webhookKey = -join ($bytes | ForEach-Object { $charset[$_ % $charset.Length] })
 az keyvault secret set --vault-name $KV_NAME --name rating-usage-webhook-key --value $webhookKey --output none
 
 Write-Host "Workflow engine secrets seeded."
@@ -1001,7 +1028,19 @@ the first HTTP request (cold start), and in idle periods it bills only while a
 replica is up. The engine has no ingress, so at 0 it stays down until it's
 restored.
 
+> ⚠️ **`$APP` runs in `Multiple` revision mode (blue-green).** `min-replicas 0`
+> only applies to the revision the update creates — each OLDER active revision
+> keeps its own, independently stored scale settings and keeps billing its full
+> replica count regardless. Deactivate every older active revision first (or
+> confirm none remain active) before counting on the scale-to-zero savings.
+
 ```powershell
+# Deactivate every other active revision on $APP first — see the cost table's
+# "Old app revisions keep billing" note. $WFE runs single-revision mode, so no
+# equivalent step is needed there.
+az containerapp revision list -g $RG -n $APP --query "[?properties.active && properties.trafficWeight==\`0\`].name" -o tsv |
+  ForEach-Object { az containerapp revision deactivate -g $RG -n $APP --revision $_ }
+
 az containerapp update -n $APP -g $RG --min-replicas 0
 az containerapp update -n $WFE -g $RG --min-replicas 0
 
@@ -1032,16 +1071,18 @@ $RG      = "<resource-group>"
 $PG_NAME = "<pg-server-name>"
 $KV_NAME = "<kv-name>"
 
-# 1. Delete Container Apps (if deployed)
+# 1. Delete Container Apps (if deployed). Capture the environment's defaultDomain
+#    FIRST — step 2 needs it, and `az containerapp env show` returns nothing once
+#    the environment itself is deleted.
+$acaDefaultDomain = az containerapp env show -g $RG -n ebill-dev-env --query properties.defaultDomain -o tsv 2>$null
 az containerapp delete -n ebill-dev-app -g $RG --yes 2>$null
 az containerapp delete -n ebill-dev-workflow-engine -g $RG --yes 2>$null
 az containerapp env delete -n ebill-dev-env -g $RG --yes 2>$null
 
 # 2. Delete the ACA private DNS zone (created by main.bicep when VNet-integrated)
-#    Zone name matches the ACA environment's defaultDomain — check it first:
-#    az network private-dns zone list -g $RG -o table
-az network private-dns zone delete -g $RG --yes `
-  -n "$(az containerapp env show -g $RG -n ebill-dev-env --query properties.defaultDomain -o tsv 2>$null)" 2>$null
+#    Zone name matches the ACA environment's defaultDomain, saved above — check
+#    it first if unsure: az network private-dns zone list -g $RG -o table
+az network private-dns zone delete -g $RG --yes -n "$acaDefaultDomain" 2>$null
 
 # 3. Stop and delete Postgres
 az postgres flexible-server delete -g $RG -n $PG_NAME --yes

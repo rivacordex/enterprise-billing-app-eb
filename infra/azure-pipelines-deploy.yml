@@ -134,12 +134,22 @@ stages:
           appImageTag: $[ dependencies.resolve_app.outputs['resolveTag.appImageTag'] ]
         steps:
           - task: AzureCLI@2
+            env:
+              # Passed via env, not expanded into the script text — appImageTag
+              # is the resolve_app job's output and must not be macro-substituted
+              # into the Bash source (see the same note on resolve_app's task).
+              APP_IMAGE_TAG: $(appImageTag)
             inputs:
               azureSubscription: azure-service-connection
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
                 set -euo pipefail
+                TAG="$(echo "$APP_IMAGE_TAG" | xargs || true)"
+                if [ -z "$TAG" ] || ! [[ "$TAG" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+                  echo "Resolved app image tag '$TAG' is empty or contains disallowed characters." >&2
+                  exit 1
+                fi
                 # BETTER_AUTH_* are inert placeholders that only satisfy
                 # lib/config.ts's eager schema parse (db/migrate.ts imports it);
                 # the migrate job never serves auth. NODE_OPTIONS resolves
@@ -154,7 +164,7 @@ stages:
                 az containerapp job update \
                   --name "$(CONTAINERAPP_JOB_NAME)" \
                   --resource-group "$(RESOURCE_GROUP)" \
-                  --image "$(ACR_NAME).azurecr.io/$(appRepository):$(appImageTag)" \
+                  --image "$(ACR_NAME).azurecr.io/$(appRepository):$TAG" \
                   --set-env-vars "${JOB_ENV_VARS[@]}"
 
                 EXECUTION_NAME=$(az containerapp job start \
@@ -207,13 +217,21 @@ stages:
             deploy:
               steps:
                 - task: AzureCLI@2
+                  env:
+                    # Passed via env, not expanded into the script text — see
+                    # the same note on the migrate job's task above.
+                    APP_IMAGE_TAG: $(appImageTag)
                   inputs:
                     azureSubscription: azure-service-connection
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
                       set -euo pipefail
-                      TAG="$(appImageTag)"
+                      TAG="$(echo "$APP_IMAGE_TAG" | xargs || true)"
+                      if [ -z "$TAG" ] || ! [[ "$TAG" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+                        echo "Resolved app image tag '$TAG' is empty or contains disallowed characters." >&2
+                        exit 1
+                      fi
                       IMAGE="$(ACR_NAME).azurecr.io/$(appRepository):$TAG"
 
                       # Revision suffix: DNS-label-safe (lowercase alnum + dashes)
@@ -313,13 +331,21 @@ stages:
             deploy:
               steps:
                 - task: AzureCLI@2
+                  env:
+                    # Passed via env, not expanded into the script text — see
+                    # the same note on resolve_app's task.
+                    ENGINE_IMAGE_TAG: $(engineImageTag)
                   inputs:
                     azureSubscription: azure-service-connection
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
                       set -euo pipefail
-                      TAG="$(engineImageTag)"
+                      TAG="$(echo "$ENGINE_IMAGE_TAG" | xargs || true)"
+                      if [ -z "$TAG" ] || ! [[ "$TAG" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+                        echo "Resolved workflow-engine image tag '$TAG' is empty or contains disallowed characters." >&2
+                        exit 1
+                      fi
                       IMAGE="$(ACR_NAME).azurecr.io/$(workflowEngineRepository):$TAG"
                       SAFE=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//' | cut -c1-40)
                       SUFFIX="${SAFE}-r$(Build.BuildId)"
