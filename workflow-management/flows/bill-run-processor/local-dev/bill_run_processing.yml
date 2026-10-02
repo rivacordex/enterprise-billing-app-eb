@@ -202,7 +202,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/stage/validation/complete"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/stage/validation/complete"
             method: POST
             contentType: application/json
             headers:
@@ -269,7 +269,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/stage/collection/complete"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/stage/collection/complete"
             method: POST
             contentType: application/json
             headers:
@@ -708,7 +708,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/stage/aggregation/complete"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/stage/aggregation/complete"
             method: POST
             contentType: application/json
             headers:
@@ -728,7 +728,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/stage/taxation/complete"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/stage/taxation/complete"
             method: POST
             contentType: application/json
             headers:
@@ -876,7 +876,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/stage/verification/complete"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/stage/verification/complete"
             method: POST
             contentType: application/json
             headers:
@@ -918,7 +918,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/stage/verification/complete"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/stage/verification/complete"
             method: POST
             contentType: application/json
             headers:
@@ -975,7 +975,7 @@ errors:
       type: constant
       interval: PT5S
       maxAttempt: 2
-    uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/status"
+    uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/status"
     method: POST
     contentType: application/json
     headers:
@@ -994,7 +994,7 @@ afterExecution:
       type: constant
       interval: PT5S
       maxAttempt: 2
-    uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/status"
+    uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/status"
     method: POST
     contentType: application/json
     headers:

@@ -21,6 +21,11 @@ param appBaseUrl string
 param minReplicas int = 2
 param maxReplicas int = 5
 
+// Consumption-plan pairs keep a 1:2 vCPU:GiB ratio (0.25/0.5Gi … 4/8Gi).
+// Defaults match ACA's implicit sizing; environments override in *.bicepparam.
+param cpu string = '0.5'
+param memory string = '1Gi'
+
 // Non-secret Microsoft SSO identifiers read by lib/config.ts. The tenant
 // (directory) ID and client (application) ID are PUBLIC identifiers — not
 // credentials — so they are plain `value` env vars, not Key Vault secretRefs
@@ -52,6 +57,36 @@ param appTimezone string = 'UTC'
 // while the engine delivers over SFTP (which would 409 every real outcome).
 param distributionTargets string = 'loopback'
 
+// APP-05 — the outbound bill-run workflow engine (Kestra). HTTPS base URL incl.
+// Kestra's `/api/v1/main` REST prefix, derived in main.bicep from the engine's
+// ingress FQDN. Empty (the default) omits the engine env vars entirely, so
+// lib/config.ts sees BILLRUN_ENGINE_URL/AUTH as absent and engine-registry.ts
+// selects the STUB client (no live engine). Non-empty wires all three engine
+// vars, and lib/config's superRefine requires URL+AUTH together — so the two KV
+// secrets below MUST exist whenever this is set, or the revision fails to start.
+@description('APP-05 — HTTPS base URL of the bill-run Kestra engine (incl. /api/v1/main). Empty = stub client. When set, requires the billrun-engine-auth + billrun-app-token Key Vault secrets.')
+param billRunEngineUrl string = ''
+
+// bm19/bm34 — the invoice/report artifact store (services/billing/blob-store.ts,
+// container `invoices`). When true the app gets BILLRUN_BLOB_CONNECTION_STRING (a
+// KV secret ref), the SAME account the distributor engine downloads from, so the
+// app-writes / engine-reads loop shares one store. Dev uses the connection-string
+// path (auto-creates the container); prod would instead set BILLRUN_BLOB_ACCOUNT_URL
+// + Managed Identity — lib/config requires EXACTLY ONE of the two, so this wires
+// only the connection-string variant. Default false: no blob env, no secret ref.
+@description('bm19/bm34 — wire BILLRUN_BLOB_CONNECTION_STRING (from the billrun-blob-connection-string KV secret) for invoice artifact storage + distribution. Default false.')
+param enableBlobArtifacts bool = false
+
+// The client secret is only referenced when SSO is configured: a Key Vault
+// reference to a secret that doesn't exist fails the whole revision, and
+// lib/config treats all three SSO vars as optional.
+var ssoEnabled = !empty(microsoftClientId)
+
+// APP-05 — same fail-safe pattern as ssoEnabled: only reference the engine's Key
+// Vault secrets (and emit the env vars) when a URL is supplied, so an engine-less
+// environment never fails resolving a secret that isn't provisioned.
+var engineWired = !empty(billRunEngineUrl)
+
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
@@ -71,23 +106,62 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: appManagedIdentityId
         }
       ]
-      secrets: [
-        {
-          name: 'pg-connection-string-app'
-          keyVaultUrl: '${keyVaultUri}secrets/pg-connection-string-app'
-          identity: appManagedIdentityId
-        }
-        {
-          name: 'better-auth-secret'
-          keyVaultUrl: '${keyVaultUri}secrets/better-auth-secret'
-          identity: appManagedIdentityId
-        }
-        {
-          name: 'microsoft-client-secret'
-          keyVaultUrl: '${keyVaultUri}secrets/microsoft-client-secret'
-          identity: appManagedIdentityId
-        }
-      ]
+      secrets: concat(
+        [
+          {
+            name: 'pg-connection-string-app'
+            keyVaultUrl: '${keyVaultUri}secrets/pg-connection-string-app'
+            identity: appManagedIdentityId
+          }
+          {
+            name: 'better-auth-secret'
+            keyVaultUrl: '${keyVaultUri}secrets/better-auth-secret'
+            identity: appManagedIdentityId
+          }
+        ],
+        ssoEnabled
+          ? [
+              {
+                name: 'microsoft-client-secret'
+                keyVaultUrl: '${keyVaultUri}secrets/microsoft-client-secret'
+                identity: appManagedIdentityId
+              }
+            ]
+          : [],
+        engineWired
+          ? [
+              // APP-05 — Basic-Auth credential (`<username>:<password>`) the app
+              // presents to the engine; engine-client.ts base64-encodes the whole
+              // string. Its username half MUST equal the engine's
+              // KESTRA_SERVER_BASIC_AUTH_USERNAME (workflow-engine-container-app.bicep's
+              // coupled-identity note) and its password the kestra-basic-auth-password.
+              {
+                name: 'billrun-engine-auth'
+                keyVaultUrl: '${keyVaultUri}secrets/billrun-engine-auth'
+                identity: appManagedIdentityId
+              }
+              // bm04 — the plain M2M bearer the app VALIDATES on inbound engine
+              // callbacks (`app/api/billrun/*`). Must equal the base64-DECODED value
+              // of the engine's billrun-app-token-b64 secret.
+              {
+                name: 'billrun-app-token'
+                keyVaultUrl: '${keyVaultUri}secrets/billrun-app-token'
+                identity: appManagedIdentityId
+              }
+            ]
+          : [],
+        enableBlobArtifacts
+          ? [
+              // bm19/bm34 — plain account connection string for the invoice/report
+              // artifact store (the engine reads the base64 twin of this value).
+              {
+                name: 'billrun-blob-connection-string'
+                keyVaultUrl: '${keyVaultUri}secrets/billrun-blob-connection-string'
+                identity: appManagedIdentityId
+              }
+            ]
+          : []
+      )
       ingress: {
         external: true
         targetPort: 3000
@@ -108,7 +182,6 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             [
               { name: 'DATABASE_URL', secretRef: 'pg-connection-string-app' }
               { name: 'BETTER_AUTH_SECRET', secretRef: 'better-auth-secret' }
-              { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
               { name: 'BETTER_AUTH_URL', value: appBaseUrl }
               { name: 'APP_URL', value: appBaseUrl }
               { name: 'NEXT_PUBLIC_APP_URL', value: appBaseUrl }
@@ -116,13 +189,36 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
               { name: 'BILLRUN_DISTRIBUTION_TARGETS', value: distributionTargets }
             ],
             // Emitted only when supplied — see the param note above.
-            empty(microsoftClientId)
-              ? []
-              : [{ name: 'MICROSOFT_CLIENT_ID', value: microsoftClientId }],
+            ssoEnabled
+              ? [
+                  { name: 'MICROSOFT_CLIENT_ID', value: microsoftClientId }
+                  { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
+                ]
+              : [],
             empty(entraTenantId)
               ? []
-              : [{ name: 'ENTRA_TENANT_ID', value: entraTenantId }]
+              : [{ name: 'ENTRA_TENANT_ID', value: entraTenantId }],
+            // APP-05 — the outbound engine connection. URL is a plain value;
+            // AUTH (Basic) + APP_TOKEN (inbound bearer) are Key Vault secretRefs.
+            // BILLRUN_ENGINE_NAMESPACE is left to lib/config's `billrun` default.
+            engineWired
+              ? [
+                  { name: 'BILLRUN_ENGINE_URL', value: billRunEngineUrl }
+                  { name: 'BILLRUN_ENGINE_AUTH', secretRef: 'billrun-engine-auth' }
+                  { name: 'BILLRUN_APP_TOKEN', secretRef: 'billrun-app-token' }
+                ]
+              : [],
+            // bm19/bm34 — invoice/report artifact store connection string.
+            enableBlobArtifacts
+              ? [
+                  { name: 'BILLRUN_BLOB_CONNECTION_STRING', secretRef: 'billrun-blob-connection-string' }
+                ]
+              : []
           )
+          resources: {
+            cpu: json(cpu)
+            memory: memory
+          }
           probes: [
             {
               type: 'Liveness'

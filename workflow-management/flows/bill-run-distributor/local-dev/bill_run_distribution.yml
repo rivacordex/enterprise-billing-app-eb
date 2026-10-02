@@ -90,7 +90,7 @@ tasks:
           - id: download
             type: io.kestra.plugin.azure.storage.blob.Download
             allowFailure: true
-            endpoint: "http://azurite:10000/devstoreaccount1"
+            endpoint: "{{ envs.billrun_blob_endpoint | default('http://azurite:10000/devstoreaccount1') }}"
             connectionString: "{{ secret('AZURE_STORAGE_CONNECTION_STRING') }}"
             container: invoices
             name: "{{ fromJson(taskrun.value).blob_ref | replace({'invoices/': ''}) }}"
@@ -155,7 +155,7 @@ tasks:
               type: constant
               interval: PT5S
               maxAttempt: 2
-            uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/distribution/outcome"
+            uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/distribution/outcome"
             method: POST
             contentType: application/json
             headers:
@@ -203,7 +203,7 @@ finally:
       type: constant
       interval: PT5S
       maxAttempt: 2
-    uri: "http://app:3000/api/billrun/{{ inputs.bill_run_id }}/status"
+    uri: "{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/{{ inputs.bill_run_id }}/status"
     method: POST
     contentType: application/json
     headers:

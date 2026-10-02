@@ -1,0 +1,339 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPLOY-ONLY pipeline — roll out an already-built image from ACR to the ACA
+# container apps. NO build, NO test, NO push. The counterpart to the full CI/CD
+# in azure-pipelines.yml (build → test → containerize → migrate → deploy): this
+# one takes an image that already exists in ACR and deploys it.
+#
+# Register in Azure DevOps: Pipelines → New pipeline → Azure Repos Git → this
+# repo → Existing Azure Pipelines YAML file → /infra/azure-pipelines-deploy.yml.
+#
+# Reuses the SAME service connection + variable group as the CI/CD pipeline
+# (created once in the Azure DevOps project, not in source control):
+#   - Azure Resource Manager service connection: "azure-service-connection"
+#   - Variable group "um30-infra" (per environment): ACR_NAME, RESOURCE_GROUP,
+#     CONTAINERAPP_NAME (the app), CONTAINERAPP_JOB_NAME (app_migrate job),
+#     RATING_ENGINE_CONTAINERAPP_NAME (the workflow-engine app), KEYVAULT_NAME.
+#
+# Manual trigger only — a deploy is an explicit, gated action. Approvals are
+# configured on the Azure DevOps Environment (parameters.environmentName) in the
+# project UI, not here (same mechanism as the CI/CD pipeline's `deploy` stage).
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: deployApp
+    displayName: Deploy the enterprise-billing-app container app
+    type: boolean
+    default: true
+
+  - name: deployWorkflowEngine
+    displayName: Deploy the workflow-engine (Kestra) container app
+    type: boolean
+    default: false
+
+  - name: runMigrations
+    displayName: Run the app_migrate Container Apps Job before rolling out the app (blocks on failure)
+    type: boolean
+    default: true
+
+  # Empty = auto-resolve the MOST RECENTLY PUSHED tag for the repo from ACR
+  # ("deploy the latest container version"). Set to pin a specific immutable tag
+  # (e.g. the CI pipeline's <BuildId>-<gitSHA>, or `bootstrap`).
+  - name: appImageTag
+    displayName: App image tag to deploy (blank = newest in ACR)
+    type: string
+    default: " "
+
+  - name: workflowEngineImageTag
+    displayName: Workflow-engine image tag to deploy (blank = newest in ACR)
+    type: string
+    default: " "
+
+  # The Azure DevOps Environment the deployment jobs target — carries the
+  # approval/check gates. Also selects the um30-infra variable-group values when
+  # the group is scoped per environment.
+  - name: environmentName
+    displayName: Target Azure DevOps Environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - staging
+      - prod
+
+# Deploy is never automatic — no CI trigger, no PR trigger.
+trigger: none
+pr: none
+
+variables:
+  - group: um30-infra
+  - name: appRepository
+    value: enterprise-billing-app
+  - name: workflowEngineRepository
+    value: workflow-engine
+
+stages:
+  # ───────────────────────────────────────────────────────────────────────────
+  # APP: resolve tag → (optional) migrate → blue-green rollout.
+  - stage: deploy_app
+    displayName: Deploy app
+    condition: eq(${{ parameters.deployApp }}, true)
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      # 1. Resolve the app image tag ONCE (override param, else newest in ACR)
+      #    and share it with the migrate + deploy jobs, so both act on the exact
+      #    same image even if a push lands mid-run.
+      - job: resolve_app
+        displayName: Resolve app image tag
+        steps:
+          - task: AzureCLI@2
+            name: resolveTag
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                # The param defaults to a single space (ADO trims empty string
+                # defaults inconsistently); treat blank/space as "auto-resolve".
+                OVERRIDE="$(echo '${{ parameters.appImageTag }}' | xargs || true)"
+                if [ -n "$OVERRIDE" ]; then
+                  TAG="$OVERRIDE"
+                  # Fail loudly if a pinned tag does not exist, rather than
+                  # deploying nothing / a typo'd tag.
+                  if ! az acr repository show-tags --name "$(ACR_NAME)" --repository "$(appRepository)" --output tsv | grep -qx "$TAG"; then
+                    echo "Tag '$TAG' not found in $(ACR_NAME)/$(appRepository)." >&2
+                    exit 1
+                  fi
+                else
+                  TAG=$(az acr repository show-tags --name "$(ACR_NAME)" --repository "$(appRepository)" --orderby time_desc --top 1 --output tsv)
+                fi
+                if [ -z "$TAG" ]; then
+                  echo "No image tag resolved for $(appRepository)." >&2
+                  exit 1
+                fi
+                echo "Resolved app image tag: $TAG"
+                echo "##vso[task.setvariable variable=appImageTag;isOutput=true]$TAG"
+            displayName: Resolve newest (or pinned) app tag from ACR
+
+      # 2. Migrate — the app_migrate Container Apps Job on the resolved image.
+      #    Gated by runMigrations; blocks the rollout on failure (same posture as
+      #    the CI/CD pipeline's `migrate` stage).
+      - job: migrate
+        displayName: Run app_migrate job
+        dependsOn: resolve_app
+        condition: and(succeeded(), eq(${{ parameters.runMigrations }}, true))
+        variables:
+          appImageTag: $[ dependencies.resolve_app.outputs['resolveTag.appImageTag'] ]
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                # BETTER_AUTH_* are inert placeholders that only satisfy
+                # lib/config.ts's eager schema parse (db/migrate.ts imports it);
+                # the migrate job never serves auth. NODE_OPTIONS resolves
+                # "server-only" to its no-op under the job's plain node run.
+                # (Identical to the CI/CD pipeline's migrate stage.)
+                JOB_ENV_VARS=(
+                  "DATABASE_URL=secretref:pg-connection-string-migrate"
+                  "BETTER_AUTH_SECRET=build_time_placeholder_secret_min_32_chars"
+                  "BETTER_AUTH_URL=http://localhost:3000"
+                  "NODE_OPTIONS=--conditions=react-server"
+                )
+                az containerapp job update \
+                  --name "$(CONTAINERAPP_JOB_NAME)" \
+                  --resource-group "$(RESOURCE_GROUP)" \
+                  --image "$(ACR_NAME).azurecr.io/$(appRepository):$(appImageTag)" \
+                  --set-env-vars "${JOB_ENV_VARS[@]}"
+
+                EXECUTION_NAME=$(az containerapp job start \
+                  --name "$(CONTAINERAPP_JOB_NAME)" \
+                  --resource-group "$(RESOURCE_GROUP)" \
+                  --query name -o tsv)
+                echo "Migration job execution: $EXECUTION_NAME"
+
+                for i in $(seq 1 30); do
+                  STATUS=$(az containerapp job execution show \
+                    --name "$(CONTAINERAPP_JOB_NAME)" \
+                    --resource-group "$(RESOURCE_GROUP)" \
+                    --job-execution-name "$EXECUTION_NAME" \
+                    --query properties.status -o tsv)
+                  echo "Status: $STATUS"
+                  [ "$STATUS" = "Succeeded" ] && exit 0
+                  if [ "$STATUS" = "Failed" ]; then
+                    echo "Migration job failed — blocking rollout. App still serves the previous image." >&2
+                    exit 1
+                  fi
+                  sleep 10
+                done
+                echo "Migration job timed out after 5 minutes." >&2
+                exit 1
+            displayName: app_migrate Container Apps Job (DATABASE_URL via Key Vault)
+
+      # 3. Blue-green rollout: new revision at 0% → readiness gate → 100%.
+      #    A PURE IMAGE SWAP — `az containerapp update --image` creates the new
+      #    revision from the current template, so all existing env vars/secrets
+      #    (DB, auth, engine URL/auth, blob, etc.) carry forward unchanged. This
+      #    pipeline deliberately does NOT re-set env vars — it only changes the
+      #    image. Use the CI/CD pipeline (or Bicep) to change configuration.
+      - deployment: rollout_app
+        displayName: Roll out app (blue-green)
+        dependsOn:
+          - resolve_app
+          - migrate
+        # Proceed when resolve succeeded and migrate either succeeded OR was
+        # skipped (runMigrations=false). A FAILED migrate blocks the rollout.
+        condition: |
+          and(
+            eq(dependencies.resolve_app.result, 'Succeeded'),
+            in(dependencies.migrate.result, 'Succeeded', 'Skipped')
+          )
+        environment: ${{ parameters.environmentName }}
+        variables:
+          appImageTag: $[ dependencies.resolve_app.outputs['resolveTag.appImageTag'] ]
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: azure-service-connection
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      TAG="$(appImageTag)"
+                      IMAGE="$(ACR_NAME).azurecr.io/$(appRepository):$TAG"
+
+                      # Revision suffix: DNS-label-safe (lowercase alnum + dashes)
+                      # and unique per run — the immutable CI tag can be redeployed,
+                      # so append the run id to avoid "revision already exists".
+                      SAFE=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//' | cut -c1-40)
+                      SUFFIX="${SAFE}-r$(Build.BuildId)"
+                      echo "Deploying $IMAGE as revision suffix $SUFFIX"
+
+                      # New revision (0% traffic in multiple-revision mode); env
+                      # vars/secrets inherited from the current template.
+                      az containerapp update \
+                        --name "$(CONTAINERAPP_NAME)" \
+                        --resource-group "$(RESOURCE_GROUP)" \
+                        --image "$IMAGE" \
+                        --revision-suffix "$SUFFIX"
+
+                      NEW_REVISION="$(CONTAINERAPP_NAME)--$SUFFIX"
+
+                      # Readiness gate via the revision's healthState (its internal
+                      # /api/health probe) — an external curl can't be used (the
+                      # env is VNet-internal / may IP-allowlist the agent). ~3 min.
+                      SMOKE_OK=false
+                      for i in $(seq 1 18); do
+                        HEALTH=$(az containerapp revision show --name "$(CONTAINERAPP_NAME)" --resource-group "$(RESOURCE_GROUP)" --revision "$NEW_REVISION" --query "properties.healthState" -o tsv)
+                        RUNNING=$(az containerapp revision show --name "$(CONTAINERAPP_NAME)" --resource-group "$(RESOURCE_GROUP)" --revision "$NEW_REVISION" --query "properties.runningState" -o tsv)
+                        echo "attempt $i: health=$HEALTH running=$RUNNING"
+                        [ "$HEALTH" = "Healthy" ] && { SMOKE_OK=true; break; }
+                        [ "$RUNNING" = "Failed" ] && { echo "New revision entered Failed state."; break; }
+                        sleep 10
+                      done
+
+                      if [ "$SMOKE_OK" = true ]; then
+                        az containerapp ingress traffic set \
+                          --name "$(CONTAINERAPP_NAME)" \
+                          --resource-group "$(RESOURCE_GROUP)" \
+                          --revision-weight "$NEW_REVISION=100"
+                        echo "Traffic shifted 100% to $NEW_REVISION."
+                      else
+                        echo "Readiness gate failed — leaving previous revision at 100%." >&2
+                        exit 1
+                      fi
+                  displayName: Create revision → readiness gate → traffic shift
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # WORKFLOW ENGINE: resolve tag → single-revision image swap → readiness gate.
+  # No migrations, no traffic split (activeRevisionsMode 'Single' — the updated
+  # revision becomes the sole active one).
+  - stage: deploy_workflow_engine
+    displayName: Deploy workflow-engine
+    condition: eq(${{ parameters.deployWorkflowEngine }}, true)
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: resolve_engine
+        displayName: Resolve workflow-engine image tag
+        steps:
+          - task: AzureCLI@2
+            name: resolveTag
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                OVERRIDE="$(echo '${{ parameters.workflowEngineImageTag }}' | xargs || true)"
+                if [ -n "$OVERRIDE" ]; then
+                  TAG="$OVERRIDE"
+                  if ! az acr repository show-tags --name "$(ACR_NAME)" --repository "$(workflowEngineRepository)" --output tsv | grep -qx "$TAG"; then
+                    echo "Tag '$TAG' not found in $(ACR_NAME)/$(workflowEngineRepository)." >&2
+                    exit 1
+                  fi
+                else
+                  TAG=$(az acr repository show-tags --name "$(ACR_NAME)" --repository "$(workflowEngineRepository)" --orderby time_desc --top 1 --output tsv)
+                fi
+                if [ -z "$TAG" ]; then
+                  echo "No image tag resolved for $(workflowEngineRepository)." >&2
+                  exit 1
+                fi
+                echo "Resolved workflow-engine image tag: $TAG"
+                echo "##vso[task.setvariable variable=engineImageTag;isOutput=true]$TAG"
+            displayName: Resolve newest (or pinned) workflow-engine tag from ACR
+
+      - deployment: rollout_engine
+        displayName: Roll out workflow-engine (single revision)
+        dependsOn: resolve_engine
+        condition: eq(dependencies.resolve_engine.result, 'Succeeded')
+        environment: ${{ parameters.environmentName }}
+        variables:
+          engineImageTag: $[ dependencies.resolve_engine.outputs['resolveTag.engineImageTag'] ]
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: azure-service-connection
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      TAG="$(engineImageTag)"
+                      IMAGE="$(ACR_NAME).azurecr.io/$(workflowEngineRepository):$TAG"
+                      SAFE=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//' | cut -c1-40)
+                      SUFFIX="${SAFE}-r$(Build.BuildId)"
+                      echo "Deploying $IMAGE as revision suffix $SUFFIX"
+
+                      # Single-revision mode: the update replaces the active
+                      # revision. Env vars/secrets inherited from the template.
+                      az containerapp update \
+                        --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" \
+                        --resource-group "$(RESOURCE_GROUP)" \
+                        --image "$IMAGE" \
+                        --revision-suffix "$SUFFIX"
+
+                      NEW_REVISION="$(RATING_ENGINE_CONTAINERAPP_NAME)--$SUFFIX"
+
+                      # Readiness gate (Kestra takes ~30-60s to start; probe is on
+                      # the management port 8081 per the engine module). ~4 min.
+                      for i in $(seq 1 24); do
+                        HEALTH=$(az containerapp revision show --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" --resource-group "$(RESOURCE_GROUP)" --revision "$NEW_REVISION" --query "properties.healthState" -o tsv)
+                        RUNNING=$(az containerapp revision show --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" --resource-group "$(RESOURCE_GROUP)" --revision "$NEW_REVISION" --query "properties.runningState" -o tsv)
+                        echo "attempt $i: health=$HEALTH running=$RUNNING"
+                        [ "$HEALTH" = "Healthy" ] && { echo "workflow-engine revision $NEW_REVISION is Healthy."; exit 0; }
+                        [ "$RUNNING" = "Failed" ] && { echo "New engine revision entered Failed state." >&2; exit 1; }
+                        sleep 10
+                      done
+                      echo "workflow-engine readiness gate timed out." >&2
+                      exit 1
+                  displayName: Image swap → readiness gate

@@ -66,3 +66,8 @@ COPY runtime/ /app/runtime/
 ENV PYTHONPATH=/app
 
 USER kestra
+
+# Kestra requires a subcommand — without one it prints help and exits.
+# `server standalone` collapses executor + worker + scheduler into one JVM
+# process (the ACA process-runner topology, D1 / wfm01 §2).
+CMD ["server", "standalone"]

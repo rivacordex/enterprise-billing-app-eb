@@ -63,6 +63,33 @@ param defaultNamespace string = 'rating'
 @description('bm38 §1 — true when this engine hosts the `billrun` namespace (collapsed engine, or the split billrun instance). Wires the billrun-runtime-db-password Key Vault secret + SECRET_BILLRUN_RUNTIME_PASSWORD / BILLRUN_DB_* env vars. Default false (rating-only engine gets neither).')
 param hostsBillrunNamespace bool = false
 
+// bm36 — the app's base URL the bill-run flows POST their signal-back callbacks
+// to. The flows render `{{ envs.billrun_app_base_url | default('http://app:3000') }}`
+// (Kestra v0.23+ autoloads ENV_-prefixed vars into `envs`, lowercased), so this
+// becomes ENV_BILLRUN_APP_BASE_URL on the container. Local dev leaves it unset and
+// the flow falls back to the `http://app:3000` Compose service name; on ACA that
+// name cannot resolve (the app is behind ingress at https://<fqdn>:443), so the
+// deployed engine MUST set this to the app's real HTTPS URL or every callback
+// fails to connect. Empty (the default) omits the env var entirely — never set it
+// to '' (an empty `envs.billrun_app_base_url` is non-null, so the flow's `default`
+// filter would NOT fire and the URI would be a broken `/api/billrun/...`).
+@description('bm36 — app base URL (https://<fqdn>, no trailing slash) for the bill-run flows\' signal-back callbacks. Emitted as ENV_BILLRUN_APP_BASE_URL only when non-empty. Required on a billrun-hosting engine deployed to ACA; leave empty for local dev (flow defaults to http://app:3000).')
+param billrunAppBaseUrl string = ''
+
+// bm34/bm19 — the distributor flow's `azure.storage.blob.Download` reads the
+// posted invoice/report artifacts from the `invoices` container. On ACA it needs
+// (a) the real Blob endpoint — the flow hardcodes the Azurite endpoint and reads
+// `{{ envs.billrun_blob_endpoint | default(...) }}` → ENV_BILLRUN_BLOB_ENDPOINT
+// here — and (b) the account credential via `{{ secret('AZURE_STORAGE_CONNECTION_STRING') }}`
+// → SECRET_AZURE_STORAGE_CONNECTION_STRING (base64 KV value, Kestra's env-secret
+// backend base64-decodes it). Artifacts live in the SAME storage account this
+// engine already uses (storageAccountName), so the endpoint is derived from it
+// exactly like KESTRA_STORAGE_AZURE_ENDPOINT below. Default off: byte-identical
+// deploys until a billrun-hosting engine turns it on with the
+// billrun-blob-connection-string-b64 KV secret provisioned.
+@description('bm34 — wire the distributor\'s Azure Blob artifact download: ENV_BILLRUN_BLOB_ENDPOINT (derived from storageAccountName) + SECRET_AZURE_STORAGE_CONNECTION_STRING (from the billrun-blob-connection-string-b64 KV secret). Default false.')
+param enableBlobArtifactAccess bool = false
+
 @description('true = ingress fully internal to the Container Apps Environment (no external DNS at all); false = disabled (D8 default until rm05).')
 param internalIngress bool = false
 
@@ -74,11 +101,29 @@ param internalIngress bool = false
 @description('rm05 D2 — flips ingress from internal-only/disabled (rm04 default) to external, restricted by corporateIpAllowList. Set true only alongside deploying easy-auth.bicep\'s authConfig in the same pass.')
 param enableEasyAuthIngress bool = false
 
+// When the Container Apps Environment itself is internal (VNet-injected,
+// `internal: true` — see main.bicep's env resource), an app with
+// `ingress.external: true` is NOT public: it is reachable only from within the
+// VNet or over the VPN tunnel, and it is the pattern the `app` container uses
+// (main.bicep comment at the env resource). Prefer this over `internalIngress`
+// (external:false) on an internal environment because the external FQDN
+// `<app>.<defaultDomain>` is covered by the environment's wildcard private-DNS
+// record AND its managed TLS certificate — the internal `<app>.internal.<...>`
+// FQDN is covered by neither, which breaks the app's HTTPS-only engine client
+// (lib/config.ts) and VPN-client name resolution. Ignored when
+// enableEasyAuthIngress is true (Easy Auth owns the external front door then).
+@description('Expose the engine via plain external ingress on an INTERNAL Container Apps Environment (VPN-only, no Easy Auth). The correct choice for a private dev env: gets the wildcard-DNS + managed-TLS FQDN the app requires. Takes precedence over internalIngress; ignored when enableEasyAuthIngress is true.')
+param exposeInternalEnvIngress bool = false
+
 @description('rm05 D6 — corporate CIDR ranges allowed through ingress once external. Org-specific, supplied at deploy time, never committed as literals. Enforcement that this is non-empty when enableEasyAuthIngress is true lives in easy-auth.bicep (its own corporateIpAllowList param is required + @minLength(1)) — deployed in the same pass, so an empty list fails the overall deployment rather than silently exposing the UI (rm05 verification item 14).')
 param corporateIpAllowList array = []
 
 param minReplicas int = 1
 param maxReplicas int = 1
+
+// Consumption-plan pairs keep a 1:2 vCPU:GiB ratio (0.25/0.5Gi … 4/8Gi).
+param cpu string = '0.5'
+param memory string = '1Gi'
 
 // bm22 §7 / bm34 — SFTP distribution wiring for the deployed engine. DEFAULT
 // OFF: when false, no SFTP env vars or secrets are added and deploys are
@@ -259,6 +304,21 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
                 keyVaultUrl: '${keyVaultUri}secrets/billrun-runtime-db-password'
                 identity: workflowEngineManagedIdentityId
               }
+              // bm36 — the M2M bearer the processor/distributor flows present on
+              // their signal-back callbacks to the app (`{{ secret('BILLRUN_APP_TOKEN') }}`
+              // in bill_run_processing.yml / bill_run_distribution.yml). This IS a
+              // real Kestra `secret()` lookup, so Kestra OSS's env-secret backend
+              // base64-DECODES SECRET_BILLRUN_APP_TOKEN — the Key Vault VALUE MUST
+              // BE BASE64-ENCODED (same rule as rating-usage-webhook-key). The
+              // decoded value MUST equal the app's plain BILLRUN_APP_TOKEN
+              // (container-app.bicep) or every callback 401s. Kept as a SEPARATE
+              // KV secret from the app's plain `billrun-app-token` because the two
+              // sides need different encodings of the same token.
+              {
+                name: 'billrun-app-token-b64'
+                keyVaultUrl: '${keyVaultUri}secrets/billrun-app-token-b64'
+                identity: workflowEngineManagedIdentityId
+              }
             ]
           : [],
         enableEasyAuthIngress
@@ -293,6 +353,18 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
                 identity: workflowEngineManagedIdentityId
               }
             ]
+          : [],
+        enableBlobArtifactAccess
+          ? [
+              // bm34 — base64 account connection string for the distributor's
+              // Blob Download (`{{ secret('AZURE_STORAGE_CONNECTION_STRING') }}`).
+              // Base64 because Kestra's env-secret backend decodes SECRET_* values.
+              {
+                name: 'billrun-blob-connection-string-b64'
+                keyVaultUrl: '${keyVaultUri}secrets/billrun-blob-connection-string-b64'
+                identity: workflowEngineManagedIdentityId
+              }
+            ]
           : []
       )
       // No `traffic` block on either ingress branch — activeRevisionsMode
@@ -307,28 +379,64 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             targetPort: 8080
             ipSecurityRestrictions: corporateIpSecurityRestrictions
           }
-        : (internalIngress
+        : (exposeInternalEnvIngress
             ? {
-                external: false
+                // Plain external ingress on an INTERNAL environment — private
+                // (VPN-only), no Easy Auth, no IP restrictions. Same shape as
+                // the `app` container; the app reaches the engine here over
+                // HTTPS at `https://<name>.<defaultDomain>/api/v1/main`.
+                external: true
                 targetPort: 8080
               }
-            : null)
+            : (internalIngress
+                ? {
+                    external: false
+                    targetPort: 8080
+                  }
+                : null))
     }
     template: {
       containers: [
         {
           name: 'workflow-engine'
           image: imageName
+          // Kestra exits after printing help without a subcommand. Set as args
+          // only: overriding `command` with /app/kestra fails with "exec format
+          // error" (it is a script, run via the image's ENTRYPOINT). Mirrors the
+          // Dockerfile CMD so an image built without it still starts.
+          args: [
+            'server'
+            'standalone'
+          ]
+          resources: {
+            cpu: json(cpu)
+            memory: memory
+          }
           env: concat([
             // D6 — resolved per row by a task, never per batch (Inv #12).
             { name: 'RATING_ENGINE_VERSION', value: workflowEngineVersion }
 
+            // D7 — repository and queue backend type. Must be set BEFORE the
+            // datasource or Kestra's ServerCommandValidator rejects startup.
+            // Maps to kestra.repository.type / kestra.queue.type (root-level
+            // Kestra properties, not Micronaut datasource properties).
+            { name: 'KESTRA_REPOSITORY_TYPE', value: 'postgres' }
+            { name: 'KESTRA_QUEUE_TYPE', value: 'postgres' }
+
             // D7 — datasource is the `kestra` DB via `kestra_engine`, NOT
             // the billing DB. Kestra runs its own startup migrations here
             // (kestra_engine holds CREATE on this DB only — rm03a).
-            { name: 'KESTRA_DATASOURCES_POSTGRES_URL', value: 'jdbc:postgresql://${postgresServerFqdn}:5432/kestra' }
-            { name: 'KESTRA_DATASOURCES_POSTGRES_USERNAME', value: 'kestra_engine' }
-            { name: 'KESTRA_DATASOURCES_POSTGRES_PASSWORD', secretRef: 'kestra-engine-db-password' }
+            //
+            // NOTE: Micronaut's JDBC/HikariCP pool reads datasources.* at the
+            // ROOT config level, NOT kestra.datasources.*. The correct env var
+            // prefix is DATASOURCES_POSTGRES_* (no KESTRA_ prefix). Using
+            // KESTRA_DATASOURCES_POSTGRES_* maps to kestra.datasources.postgres.*
+            // which is a DIFFERENT, unread path and causes "datasources.default
+            // not found" at startup. Confirmed against v1.3.35 (2026-09-25).
+            { name: 'DATASOURCES_POSTGRES_URL', value: 'jdbc:postgresql://${postgresServerFqdn}:5432/kestra' }
+            { name: 'DATASOURCES_POSTGRES_USERNAME', value: 'kestra_engine' }
+            { name: 'DATASOURCES_POSTGRES_PASSWORD', secretRef: 'kestra-engine-db-password' }
+            { name: 'DATASOURCES_POSTGRES_DRIVERCLASSNAME', value: 'org.postgresql.Driver' }
 
             // D7 — storage.type: azure, internal storage → the
             // kestra-internal Blob container (NOT the container filesystem,
@@ -424,6 +532,11 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'BILLRUN_DB_PORT', value: '5432' }
             { name: 'BILLRUN_DB_NAME', value: 'enterprise_billing' }
             { name: 'BILLRUN_DB_USER', value: 'billrun_runtime' }
+            // bm36 — the signal-back bearer for the flows' `core.http.Request`
+            // callbacks to the app (`{{ secret('BILLRUN_APP_TOKEN') }}`).
+            // base64-decoded by Kestra's env-secret backend to the plain token
+            // the app validates (see the billrun-app-token-b64 secret above).
+            { name: 'SECRET_BILLRUN_APP_TOKEN', secretRef: 'billrun-app-token-b64' }
           ] : [],
           // bm22 §7 / bm34 — SFTP distribution config (default-off). Non-secret
           // target coordinates as plain env; the private key + known_hosts as
@@ -436,6 +549,21 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'SFTP_REMOTE_BASE', value: sftpRemoteBase }
             { name: 'SECRET_SFTP_PRIVATE_KEY', secretRef: 'sftp-private-key' }
             { name: 'SECRET_SFTP_KNOWN_HOSTS', secretRef: 'sftp-known-hosts' }
+          ] : [],
+          // bm36 — signal-back callback host for the bill-run flows. Autoloaded by
+          // Kestra into `{{ envs.billrun_app_base_url }}` (ENV_ prefix, v0.23+).
+          // Only emitted when supplied; local dev omits it and the flow defaults to
+          // http://app:3000. See the billrunAppBaseUrl param note.
+          empty(billrunAppBaseUrl) ? [] : [
+            { name: 'ENV_BILLRUN_APP_BASE_URL', value: billrunAppBaseUrl }
+          ],
+          // bm34 — distributor Blob artifact download. ENV_BILLRUN_BLOB_ENDPOINT
+          // (real Blob endpoint, same account as internal storage) feeds the flow's
+          // `{{ envs.billrun_blob_endpoint }}`; SECRET_AZURE_STORAGE_CONNECTION_STRING
+          // feeds its `{{ secret('AZURE_STORAGE_CONNECTION_STRING') }}`.
+          enableBlobArtifactAccess ? [
+            { name: 'ENV_BILLRUN_BLOB_ENDPOINT', value: 'https://${storageAccountName}.blob.${environment().suffixes.storage}' }
+            { name: 'SECRET_AZURE_STORAGE_CONNECTION_STRING', secretRef: 'billrun-blob-connection-string-b64' }
           ] : [])
           volumeMounts: concat(
             [
@@ -503,3 +631,11 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
 }
 
 output workflowEngineAppName string = workflowEngineApp.name
+
+// The ingress FQDN, or '' when ingress is disabled (null). Consumed by main.bicep
+// to build the app's BILLRUN_ENGINE_URL. `?? ''` guards the disabled-ingress case
+// (fqdn is unset), so a no-ingress engine yields an empty URL and the app stays on
+// the stub client rather than pointing at a dead host.
+output workflowEngineFqdn string = (enableEasyAuthIngress || exposeInternalEnvIngress || internalIngress)
+  ? workflowEngineApp.properties.configuration.ingress.fqdn
+  : ''

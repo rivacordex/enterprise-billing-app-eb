@@ -139,18 +139,23 @@ services:
       - ./workflow-management/dev/.env.example
     # LOCAL DEV ONLY — make the flows' M2M callback host reachable.
     # bill_run_processing/bill_run_distribution POST their stage and terminal
-    # signals to `http://app:3000/api/billrun/...` — the Compose service name,
-    # which is correct for the deployed stack and for the fully-containerized
-    # dev stack. But the README's PRIMARY local path runs the app ON THE HOST
-    # (`npm run dev`, for the Playwright/PRO-FORMA preview) and starts the
-    # engine with `--no-deps`, so no `app` container exists and every callback
-    # died with `java.net.UnknownHostException: app` — the run reached
+    # signals to `{{ envs.billrun_app_base_url | default('http://app:3000') }}/api/billrun/...`.
+    # Locally no ENV_BILLRUN_APP_BASE_URL is set, so the base URL DEFAULTS to
+    # `http://app:3000` — the Compose service name, which is correct for the
+    # fully-containerized dev stack. But the README's PRIMARY local path runs the
+    # app ON THE HOST (`npm run dev`, for the Playwright/PRO-FORMA preview) and
+    # starts the engine with `--no-deps`, so no `app` container exists and every
+    # callback died with `java.net.UnknownHostException: app` — the run reached
     # `PROCESSING` and stopped there forever.
     #
-    # Mapping `app` to the Docker host gateway here fixes that WITHOUT touching
-    # a single flow URI, so the deployed contract stays byte-identical (the same
-    # YAML is what ships — architecture §5). TRADE-OFF, deliberate: /etc/hosts is
-    # resolved before Compose's embedded DNS, so if you ever run the `app`
+    # Mapping `app` to the Docker host gateway here fixes that for the default
+    # base URL, so local runtime behavior is byte-identical to before. On ACA the
+    # `http://app:3000` service name cannot work at all (the app sits behind
+    # ingress at `https://<fqdn>:443`, not `:3000`), so the deployed engine sets
+    # ENV_BILLRUN_APP_BASE_URL to the app's real HTTPS URL instead
+    # (workflow-engine-container-app.bicep). The flow YAML is unchanged between
+    # environments — only the env var differs. TRADE-OFF, deliberate: /etc/hosts
+    # is resolved before Compose's embedded DNS, so if you ever run the `app`
     # SERVICE from docker-compose.dev.yml together with this file, callbacks go
     # to the host's :3000 rather than that container. That combination is not the
     # documented path (README Part 2 starts the engine `--no-deps`); if you need
