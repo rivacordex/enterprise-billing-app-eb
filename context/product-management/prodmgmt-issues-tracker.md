@@ -1,6 +1,6 @@
 # Product Management — Issues Tracker
 
-Known, unresolved defects and debts in the Product Management module that are **not** owned by the unit currently in flight — a to-do list of things to come back and fix, distinct from `prodmgmt-progress-tracker.md` (which is the narrative build log). Each entry records what is broken, why, whose scope the fix belongs to, and exactly how to verify it once fixed.
+Known, unresolved defects and debts in the Product Management module that are **not** owned by the unit currently in flight — a to-do list of things to come back and fix, distinct from `prodmgmt-completed-tracker.md` (the per-unit build record). Each entry records what is broken, why, whose scope the fix belongs to, and exactly how to verify it once fixed.
 
 **Status legend:** `OPEN` (unfixed) · `IN PROGRESS` (someone is on it) · `RESOLVED` (fixed + verified; keep the entry for history). Newest issues first.
 

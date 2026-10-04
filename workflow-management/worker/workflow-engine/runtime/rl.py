@@ -123,7 +123,7 @@ COPY_COLUMNS: tuple[str, ...] = (
     "start_datetime",
     "end_datetime",
     "status",
-    "udr_subscriber_ref_id",
+    "udr_subscription_ref_id",
     "udr_key",
     "udr_usage_quantity",
     "udr_usage_unit",
@@ -242,7 +242,7 @@ def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
             "start_datetime": start_dt,
             "end_datetime": end_dts[i],
             "status": "RATED",
-            "udr_subscriber_ref_id": str(cols["udr_subscriber_ref_id"][i]),
+            "udr_subscription_ref_id": str(cols["udr_subscription_ref_id"][i]),
             "udr_key": str(cols["udr_key"][i]),
             "udr_usage_quantity": _money(cols["udr_usage_quantity"][i], "udr_usage_quantity"),
             "udr_usage_unit": str(cols["udr_usage_unit"][i]),
@@ -749,7 +749,7 @@ def scan_and_guard(
                     }
                 )
         for sub, ccy in zip(
-            frame["udr_subscriber_ref_id"].to_list(), frame["udr_currency"].to_list()
+            frame["udr_subscription_ref_id"].to_list(), frame["udr_currency"].to_list()
         ):
             subscriber_currency.add((str(sub), str(ccy)))
 

@@ -17,19 +17,19 @@ or making any architectural decision related to the change required
 Update `context/general-change-tracker.md` after each meaningful general implementation change.
 -->
  
-## Product Module Update Context
+## Rating Module Update Context
 
 Read the following files in order before implementing
-or making any architectural decision related to Product Module:
+or making any architectural decision related to Rating Module:
 
-1. `context/product-management/prodmgmt-update-overview.md` — definition, goals, features, and scope
-2. `context/product-management/prodmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/product-management/prodmgmt-ui-context.md` — theme, colors, typography, and component conventions
-4. `context/product-management/prodmgmt-code-standards.md` — implementation rules and conventions
-5. `context/product-management/prodmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-6. `context/product-management/prodmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
+1. `context/rating-management/ratemgmt-update-overview.md` — definition, goals, features, and scope
+2. `context/rating-management/ratemgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+#3. `context/rating-management/ratemgmt-ui-context.md` — theme, colors, typography, and component conventions
+4. `context/rating-management/ratemgmt-code-standards.md` — implementation rules and conventions
+5. `context/rating-management/ratemgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+6. `context/rating-management/ratemgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
 
-Update `context/product-management/prodmgmt-progress-tracker.md` after each meaningful implementation change.
+Update `context/product-management/ratemgmt-progress-tracker.md` after each meaningful implementation change.
 
 Read also the general context document to support the changes as referenced by the context files above:
 1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  
