@@ -249,8 +249,9 @@ def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
             "udr_usage_rate": _money(cols["udr_usage_rate"][i], "udr_usage_rate"),
             "udr_rate_type": str(cols["udr_rate_type"][i]),
             # udr_rate_detail is a JSON string in the Parquet; the jsonb column
-            # parses the text on COPY input (RP already validated the FLAT variant,
-            # rm08 D6). Left as text — no re-parse.
+            # parses the text on COPY input (RP already validated the FLAT or
+            # PER_UNIT variant — rm08/rm19). Carried as opaque text — no re-parse
+            # (rm22 RL verified-no-change checklist).
             "udr_rate_detail": cols["udr_rate_detail"][i],
             "udr_rated_price": _money(cols["udr_rated_price"][i], "udr_rated_price"),
             "udr_rated_price_raw": _money(

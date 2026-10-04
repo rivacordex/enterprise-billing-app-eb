@@ -1,6 +1,13 @@
 # rm06-spec Implementation §1 (D1, D3-D7). The rating flow: three named,
 # ordered prp/rp/rl sections. rm07 replaced the `prp` STUB with the real
-# Pre-Rating Processor (claim, validate, reject); rm08 replaced the `rp` STUB
+# Pre-Rating Processor (claim, validate, reject); rm21 then widened `prp` to the
+# PER_UNIT RAN-usage shape — the 7-column `.udr` feed, factor-1 resolution
+# (mno → party_role → RAN_USAGE subscription → product_inventory_id, stamped onto
+# the chunk for rp), the three-factor identity lock + service_code + ratecard↔input
+# completeness + udrType confirmation (all whole-batch hard-stops), and the
+# billing-month dedup key — configured by `subscription_product_name`,
+# `ratecard_coverage_enforcement`, `reject_threshold: "0"` and the new feed
+# profile below. rm08 replaced the `rp` STUB
 # with the real Rating Processor (event-time price resolution + snapshot + the
 # FLAT calculation); rm09 has now replaced the `rl` STUB with the real Rating
 # Loader (BILL_APPROVED guard + CURRENCY_MISMATCH assertion + supersede-hook +
@@ -33,23 +40,37 @@ variables:
   # not a rated number — but kept here so the trigger and any reprocess share one
   # source of truth.
   landing_dir: /data/landing
-  # file_key derivation rule per udr_type (D3) — a regex with a named `file_key`
-  # group applied to the FILENAME. `RAN_USAGE_<YYYYMMDD>[_vN].csv` ->
-  # `RAN_USAGE_<YYYYMMDD>`, so `_v2` reissues resolve to one delivery and two
-  # content dates never collide. ASSUMED naming convention — confirm with
-  # upstream (D3); a name the rule cannot parse refuses with FILE_KEY_UNRESOLVED.
-  file_key_rule: '^(?P<file_key>RAN_USAGE_\d{8})(?:_v\d+)?\.csv$'
-  # reject threshold per udr_type (D6) — fraction of parsed rows; 0 = file-level
-  # all-or-nothing. Below it the batch carries survivors (BATCH_PARTIAL); above
-  # it the whole file is refused (PARSE_FAILURE).
-  reject_threshold: "0.05"
-  # feed profile per udr_type (D1) — the column mapping + the `udr_key` column
-  # list (Open item 1, resolved as {PUBLIC_KEY, COMMERCIAL_UNIT, SITE}). A new
-  # feed adds a profile, not code. Single-line JSON so it interpolates onto the
-  # command line intact regardless of the engine's Pebble filter set. The three
-  # key columns are OPAQUE dimensions — not mapped to typed business columns,
-  # and `subscriber_ref` is null (this sample has no subscriber semantic, D1).
-  feed_profile: '{"header":["DATETIME","PUBLIC_KEY","COMMERCIAL_UNIT","SITE","USAGE_MBPS"],"event_time_column":"DATETIME","event_time_assumed_tz":"UTC","usage_column":"USAGE_MBPS","usage_unit":"MBPS","udr_key_columns":["PUBLIC_KEY","COMMERCIAL_UNIT","SITE"],"subscriber_ref":null,"interval_seconds":null,"future_tolerance_seconds":300}'
+  # file_key derivation rule per udr_type (D3, rm21 §6) — a regex with a named
+  # `file_key` group applied to the FILENAME. `rating-input-file-<YYYYMMDDHHMI>[_vN].udr`
+  # -> `rating-input-file-<YYYYMMDDHHMI>`, so `_v2` reissues resolve to one
+  # delivery and two content timestamps never collide. A name the rule cannot
+  # parse refuses with FILE_KEY_UNRESOLVED.
+  file_key_rule: '^(?P<file_key>rating-input-file-\d{12})(?:_v\d+)?\.udr$'
+  # reject threshold per udr_type (D6, rm21 §6) — fraction of parsed rows; "0" =
+  # file-level all-or-nothing (any structural reject refuses the whole file,
+  # PARSE_FAILURE). rm21's PER_UNIT feed runs all-or-nothing.
+  reject_threshold: "0"
+  # feed profile per udr_type (D1, rm21 §6) — the 7-column `.udr` shape. The three
+  # role columns (mno_public_id | commercial_unit | polygon_id) ARE the udr_key
+  # (the identity cell); `mno_column`/`commercial_unit_column`/`polygon_column`
+  # name them explicitly for resolution + the ratecard match. `service_code_column`
+  # feeds the per-record SERVICE_CODE_MISMATCH check. The feed carries NO unit
+  # column — the unit is product-sourced in rp (rm19/rm20). `event_time_assumed_tz` is the config TZ
+  # (Asia/Kuala_Lumpur, rm21/X1) so a naive instant buckets to the Malaysian
+  # billing month. `subscriber_ref` is null — rm21's resolver (mno → party_role →
+  # subscription) supersedes the rm07 placeholder for this feed. Single-line JSON
+  # so it interpolates onto the command line intact.
+  feed_profile: '{"header":["mno_public_id","commercial_unit","polygon_id","datetime_YYYYMMDDHHMI","usage_volume","district_name","service_code"],"event_time_column":"datetime_YYYYMMDDHHMI","event_time_assumed_tz":"Asia/Kuala_Lumpur","usage_column":"usage_volume","udr_key_columns":["mno_public_id","commercial_unit","polygon_id"],"mno_column":"mno_public_id","commercial_unit_column":"commercial_unit","polygon_column":"polygon_id","service_code_column":"service_code","subscriber_ref":null,"interval_seconds":null,"future_tolerance_seconds":300}'
+  # rm21 §6 — the display name of the pinned subscription product. Resolved once
+  # per batch to COALESCE(family_offering_id, product_offering_id) (the factor-3
+  # pin) + its udrType / productCardLookUp specs. Output-affecting (it decides
+  # which product every record must rate against), so a flow variable from git
+  # that moves with `rating_flow_revision`.
+  subscription_product_name: "Sample 5G Services"
+  # rm21 §5 — ratecard→input completeness enforcement. HARD_STOP (default) refuses
+  # the whole batch on a ratecard cell absent from the input; WARN rates the file
+  # and logs RATECARD_COVERAGE_GAP_WARN. Output-affecting → a flow variable.
+  ratecard_coverage_enforcement: HARD_STOP
   # rm08 (RP) config — BOTH output-affecting (architecture §3), so flow
   # variables deployed from git that move with `rating_flow_revision`, not
   # namespace KV.
@@ -58,17 +79,6 @@ variables:
   # record stays self-describing. Must be one of udr_rated_rounding_mode_check's
   # values: HALF_UP | HALF_EVEN | TRUNCATE.
   rounding_mode: HALF_UP
-  # subscriber_ref_column (D3): which chunk column carries the value RP resolves
-  # the subscription from. The engine does NOT assume which key dimension is the
-  # subscriber — it is config. RP accepts a PRP key dimension name (carried in
-  # the chunk as `key__<NAME>`) or a verbatim chunk column.
-  # PLACEHOLDER / SHELL: rm08 resolves this value DIRECTLY to a
-  # product_inventory_id (a working shell, exercised by the sample test). The real
-  # design for this use case — PUBLIC_KEY -> customer party_role_specification,
-  # then a subscription lookup table keyed by the udr_key combination -> the
-  # offering to price — is deferred; see ratemgmt-progress-tracker.md Open
-  # Questions. A record that does not resolve → LOOKUP_MISS (MAJOR), not rated.
-  subscriber_ref_column: PUBLIC_KEY
 
 concurrency:
   limit: 1 # D6 — per udr_type. One of three layers (with the
@@ -135,6 +145,8 @@ tasks:
         --file-key-rule '{{ vars.file_key_rule }}'
         --reject-threshold "{{ vars.reject_threshold }}"
         --chunk-size "{{ kv('rating_ran_usage_chunk_size') ?? 10000 }}"
+        --subscription-product-name "{{ vars.subscription_product_name }}"
+        --ratecard-coverage-enforcement "{{ vars.ratecard_coverage_enforcement }}"
         --workflow-execution-id "{{ execution.id }}"
         --flow-revision "{{ flow.revision }}"
     # emits {{ outputs.prp.uri }} (D5) — the manifest URI consumed by rp below.
@@ -160,12 +172,20 @@ tasks:
       type: io.kestra.plugin.core.runner.Process # D0 — ACA has no Docker
       # daemon; every task runs in-process (rm04-spec Implementation §6).
     commands:
+      # rm21: PRP now resolves and STAMPS the real `product_inventory_id` onto
+      # each chunk row (factor-1 resolution), so rp reads that column verbatim as
+      # its subscriber ref — the `subscriber_ref_column` flow variable + its
+      # placeholder PUBLIC_KEY are retired (rm21 §6). The `--subscriber-ref-column`
+      # ARG is kept as a literal `product_inventory_id` because rp.py still
+      # requires it and rp.py is OUTSIDE rm21's boundary (prp.py + this flow only);
+      # fully dropping the arg is a follow-up rp unit. See
+      # ratemgmt-progress-tracker.md (rm21).
       - >
         python3 -m runtime.rp
         --manifest "{{ outputs.prp.uri }}"
         --udr-type "{{ vars.udr_type }}"
         --rounding-mode "{{ vars.rounding_mode }}"
-        --subscriber-ref-column "{{ vars.subscriber_ref_column }}"
+        --subscriber-ref-column product_inventory_id
         --workflow-execution-id "{{ execution.id }}"
         --flow-revision "{{ flow.revision }}"
     # emits {{ outputs.rp.uri }} (D11) — the rated manifest URI consumed by rl.

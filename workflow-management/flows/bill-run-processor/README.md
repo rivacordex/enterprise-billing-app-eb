@@ -11,7 +11,7 @@ namespace **`billrun`**; writes `customer_bill` (+lines +tax) and the six
 | `local-dev/bill_run_processing.yml` | **The deployed processing flow** (bm38) — for both local dev AND production; there is no separate, TBD-owned "real" flow in another repo. The `validation` + `collection` + `aggregation` + `verification` steps are **REAL** (bm27/bm28/bm29/bm30) — the correlation + claim + USAGE-and-RECURRING aggregation + bill↔charge reconciliation SQL run as `billrun_runtime` via `psql`; `taxation` stays a no-op `Log` (the ratified `tax_total = 0.00` interim). `deploy_workflow_flows` pushes `bill-run-processor/local-dev` to the `billrun` namespace on the shared (collapsed-topology) workflow-engine — the SAME flow the local stand-up bootstrap deploys (wfm01 §7b). |
 
 **Collection & Validation are real (bm27).** The subscriber→account correlation
-(`udr_subscriber_ref_id → inventory.product_inventory → billing_account_id`,
+(`udr_subscription_ref_id → inventory.product_inventory → billing_account_id`,
 set-based, once per run — Inv #24) and the `RATED → BILL_DRAFT` claim (six claim
 columns, incl. the resolved `billrun_ban_id`) are implemented; an unresolvable
 subscriber is left `RATED`, unclaimed (D32/Inv #25).

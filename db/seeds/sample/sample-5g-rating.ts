@@ -6,27 +6,28 @@ import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { organization, partyRole } from "@/db/schema/customer";
 import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
+import { billingAccount } from "@/db/schema/billing/accounts";
 import {
   productOffering,
-  productSpecifications,
   productOfferingPrice,
   ratecardVersion,
-  ratecardRanUsageLkp,
 } from "@/db/schema/product";
-import { productOrder, productOrderItem } from "@/db/schema/ordering";
-import {
-  productInventory,
-  inventoryStatusHistory,
-} from "@/db/schema/inventory";
-import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
-import { productSpecCharacteristicsSchema } from "@/validation/product/product-spec-characteristics.schema";
+import { productInventory } from "@/db/schema/inventory";
 import { mnoKeySpecSchema } from "@/validation/customer/party-role-specification.schema";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import {
   assertNonProductionUrl,
   type NonProdGuardContext,
 } from "@/db/seeds/lib/non-prod-guard";
+import {
+  insertRanOffering,
+  insertRanCustomer,
+  insertRanBillCycle,
+  insertRanBillingAccount,
+  insertRanSubscription,
+  insertRanRatecard,
+  SAMPLE_5G_LKP_ROWS,
+} from "@/db/seeds/sample/sample-5g-fixture";
 import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 
@@ -38,23 +39,20 @@ import type { Database } from "@/db/client";
 // RAN_USAGE subscription, and an active ratecard whose lkp_subscriber_ref_id
 // points at that customer — so rm19-rm21 can resolve and rate a real record.
 //
-// Direct Drizzle inserts in one transaction (not the real-service
-// orchestration `seed-billrun-sample.ts` uses) — rm18-spec §Design's
-// dependency-ordered insert list is table-level, not service-level, matching
-// the `demo/product-demo.ts` + `demo/ordering-demo.ts` precedent.
+// The pure-insert logic lives in `sample-5g-fixture.ts` and is SHARED with the
+// rm21 rm07 integration test (rm21 code-review fix — one source of truth for the
+// fixture's shape). This script keeps the get-or-create idempotency checks, the
+// non-prod guard, the single transaction, and the fixed Sample-5G identity
+// values; the test calls the same builders with per-case parameters.
 
-const CURRENCY = "MYR" as const;
 const SAMPLE_5G_REGISTRATION_NUMBER = "_SAMPLE_-5G-0001";
 const SAMPLE_5G_CUSTOMER_NAME = "_SAMPLE_ 5G RAN Subscriber";
 const SAMPLE_5G_BAN_NAME = "_SAMPLE_ 5G Billing Account";
 const SAMPLE_5G_BILL_CYCLE_NAME = "_SAMPLE_ 5G Monthly Cycle";
 const SAMPLE_OFFERING_NAME = "Sample 5G Services";
 const SAMPLE_PRICE_NAME = "Sample 5G Usage Rate";
-const SAMPLE_USAGE_RATE_PER_UNIT = "100.000000";
 const MNO_PUBLIC_KEY = "MNO-001";
-const COMMERCIAL_UNIT_PUBLIC_KEY = "CU-042";
 const RATECARD_CARD_NAME = "RATECARD_RAN_USAGE_LKP";
-const RATECARD_STATE = "Selangor";
 
 // Shared prod-write guard context (db/seeds/lib/non-prod-guard.ts).
 const SAMPLE_5G_GUARD: NonProdGuardContext = {
@@ -78,11 +76,8 @@ function assertNonProductionTarget(): void {
 }
 
 // Offering + three specs + scalar usage_rate price (rm18-spec §Implementation
-// §3). pm36's DRAFT-guard trigger requires the offering to still be DRAFT
-// while its children (specs/price) are written — insert DRAFT, seed
-// children, then promote to ACTIVE (pm50/pm51 precedent, repo memory
-// `pm36-draft-guard-trigger-fixture-ripple`). Idempotent: an existing
-// offering (by name) is returned as-is.
+// §3), via the shared builder. Idempotent: an existing offering (by name) is
+// returned as-is.
 async function ensureSampleOffering(
   tx: Database,
 ): Promise<{ offeringId: string; priceId: string }> {
@@ -112,105 +107,17 @@ async function ensureSampleOffering(
     };
   }
 
-  const [offering] = await tx
-    .insert(productOffering)
-    .values({
-      name: SAMPLE_OFFERING_NAME,
-      isBundle: false,
-      isSellable: true,
-      billingOnly: false,
-      lifecycleStatus: "DRAFT",
-      version: 1,
-      familyOfferingId: null,
-      lastEditedBy: null,
-    })
-    .returning({ productOfferingId: productOffering.productOfferingId });
-  if (!offering) {
-    throw new Error(
-      `db:seed-sample-5g: "${SAMPLE_OFFERING_NAME}" insert returned no row.`,
-    );
-  }
-  const offeringId = offering.productOfferingId;
-
-  const emptyCharacteristics = productSpecCharacteristicsSchema.parse({});
-  await tx.insert(productSpecifications).values([
-    {
-      refProductOfferingId: offeringId,
-      name: "udrType",
-      isMandatory: true,
-      isDefault: true,
-      defaultValue: "RAN_USAGE",
-      productSpecCharacteristics: emptyCharacteristics,
-    },
-    {
-      refProductOfferingId: offeringId,
-      name: "singleSubInstPerCust",
-      isMandatory: true,
-      isDefault: false,
-      defaultValue: "true",
-      productSpecCharacteristics: emptyCharacteristics,
-    },
-    {
-      refProductOfferingId: offeringId,
-      name: "productCardLookUp",
-      isMandatory: true,
-      isDefault: false,
-      defaultValue: RATECARD_CARD_NAME,
-      productSpecCharacteristics: emptyCharacteristics,
-    },
-  ]);
-
-  // rm18-spec §Design — a plain scalar usage_rate: rateCardLookUp/plaSpecId
-  // both null, so the existing usageRateComponentSchema invariant is
-  // untouched (the ratecard reference is the productCardLookUp spec above,
-  // never a price field).
-  const priceEnvelope = persistablePricingComponentSchema.parse({
-    "@type": "usage_rate",
-    specVersion: 1,
-    plaSpecId: null,
-    priceType: "usage",
-    appliesAt: "rating",
-    basis: "quantity",
-    boundTo: { unitOfMeasure: "Mbps" },
-    params: { ratePerUnit: SAMPLE_USAGE_RATE_PER_UNIT, rateCardLookUp: null },
+  return insertRanOffering(tx, {
+    name: SAMPLE_OFFERING_NAME,
+    priceName: SAMPLE_PRICE_NAME,
+    udrTypeValue: "RAN_USAGE",
+    cardName: RATECARD_CARD_NAME,
   });
-
-  const [price] = await tx
-    .insert(productOfferingPrice)
-    .values({
-      productOfferingId: offeringId,
-      name: SAMPLE_PRICE_NAME,
-      componentType: priceEnvelope["@type"],
-      priceComponent: priceEnvelope,
-      recurringChargePeriodLength: null,
-      recurringChargePeriodType: null,
-      unitOfMeasure: "Mbps",
-      currency: CURRENCY,
-      glCode: null,
-      policy: null,
-      startDateTime: new Date("2026-01-01T00:00:00Z"),
-    })
-    .returning({
-      productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
-    });
-  if (!price) {
-    throw new Error(
-      `db:seed-sample-5g: "${SAMPLE_PRICE_NAME}" insert returned no row.`,
-    );
-  }
-
-  await tx
-    .update(productOffering)
-    .set({ lifecycleStatus: "ACTIVE" })
-    .where(eq(productOffering.productOfferingId, offeringId));
-
-  return { offeringId, priceId: price.productOfferingPriceId };
 }
 
 // Customer whose party_role carries the MNO key (rm18-spec §Implementation
-// §4). Direct insert (org → party_role), mirroring `demo/ordering-demo.ts`'s
-// self-provisioning precedent. Idempotent by the organization's
-// registration number.
+// §4). Idempotent by the organization's registration number. The MNO-key shape
+// is validated through mnoKeySpecSchema before it reaches the database.
 async function ensureSampleCustomer(
   tx: Database,
   actorId: string,
@@ -234,37 +141,14 @@ async function ensureSampleCustomer(
     return existingRole.partyRoleId;
   }
 
-  const [org] = await tx
-    .insert(organization)
-    .values({
-      name: SAMPLE_5G_CUSTOMER_NAME,
-      organizationType: "COMPANY",
-      registrationNumber: SAMPLE_5G_REGISTRATION_NUMBER,
-      status: "ACTIVE",
-      lastModifiedBy: actorId,
-    })
-    .returning({ organizationId: organization.organizationId });
-  if (!org) {
-    throw new Error("db:seed-sample-5g: organization insert returned no row.");
-  }
-
-  // rm18-spec §Implementation §2/§4 — the MNO-key shape, validated through
-  // mnoKeySpecSchema before it ever reaches the database.
-  const spec = mnoKeySpecSchema.parse({ mnoPublicKey1: MNO_PUBLIC_KEY });
-
-  const [role] = await tx
-    .insert(partyRole)
-    .values({
-      engagedParty: org.organizationId,
-      status: "ACTIVE",
-      partyRoleSpecification: spec,
-      lastModifiedBy: actorId,
-    })
-    .returning({ partyRoleId: partyRole.partyRoleId });
-  if (!role) {
-    throw new Error("db:seed-sample-5g: party_role insert returned no row.");
-  }
-  return role.partyRoleId;
+  return insertRanCustomer(tx, {
+    organizationName: SAMPLE_5G_CUSTOMER_NAME,
+    registrationNumber: SAMPLE_5G_REGISTRATION_NUMBER,
+    partyRoleSpecification: mnoKeySpecSchema.parse({
+      mnoPublicKey1: MNO_PUBLIC_KEY,
+    }),
+    actorId,
+  });
 }
 
 // Self-provisioned bill cycle (no dependency on db:seed-accounts having run —
@@ -280,22 +164,11 @@ async function ensureSampleBillCycle(
     .limit(1);
   if (existing) return existing.billCycleId;
 
-  const [cycle] = await tx
-    .insert(billCycle)
-    .values({
-      name: SAMPLE_5G_BILL_CYCLE_NAME,
-      description: "Sample 5G rating fixture bill cycle (rm18).",
-      frequency: "monthly",
-      cycleDay: 1,
-      paymentDueDays: 30,
-      state: "active",
-      lastEditedBy: actorId,
-    })
-    .returning({ billCycleId: billCycle.billCycleId });
-  if (!cycle) {
-    throw new Error("db:seed-sample-5g: bill_cycle insert returned no row.");
-  }
-  return cycle.billCycleId;
+  return insertRanBillCycle(tx, {
+    name: SAMPLE_5G_BILL_CYCLE_NAME,
+    description: "Sample 5G rating fixture bill cycle (rm18).",
+    actorId,
+  });
 }
 
 // Financial account + billing account (rm18-spec §Implementation §4). No
@@ -314,44 +187,18 @@ async function ensureSampleBillingAccount(
     .limit(1);
   if (existingBan) return existingBan.billingAccountId;
 
-  const [fa] = await tx
-    .insert(financialAccount)
-    .values({
-      name: `${SAMPLE_5G_BAN_NAME} — Financial Account`,
-      refPartyRoleId: partyRoleId,
-      currency: CURRENCY,
-      lastEditedBy: actorId,
-    })
-    .returning({ financialAccountId: financialAccount.financialAccountId });
-  if (!fa) {
-    throw new Error(
-      "db:seed-sample-5g: financial_account insert returned no row.",
-    );
-  }
-
-  const [ban] = await tx
-    .insert(billingAccount)
-    .values({
-      name: SAMPLE_5G_BAN_NAME,
-      refPartyRoleId: partyRoleId,
-      refFinancialAccountId: fa.financialAccountId,
-      currency: CURRENCY,
-      refBillCycleId: billCycleId,
-      lastEditedBy: actorId,
-    })
-    .returning({ billingAccountId: billingAccount.billingAccountId });
-  if (!ban) {
-    throw new Error(
-      "db:seed-sample-5g: billing_account insert returned no row.",
-    );
-  }
-  return ban.billingAccountId;
+  return insertRanBillingAccount(tx, {
+    financialAccountName: `${SAMPLE_5G_BAN_NAME} — Financial Account`,
+    billingAccountName: SAMPLE_5G_BAN_NAME,
+    partyRoleId,
+    billCycleId,
+    actorId,
+  });
 }
 
 // The single RAN_USAGE subscription (rm18-spec §Implementation §4,
-// `singleSubInstPerCust`). Direct order/item/inventory insert, mirroring
-// `demo/ordering-demo.ts`'s pattern. Idempotent: an existing ACTIVE inventory
-// on this billing account + offering is returned as-is.
+// `singleSubInstPerCust`). Idempotent: an existing inventory on this billing
+// account + offering is returned as-is.
 async function ensureSampleSubscription(
   tx: Database,
   actorId: string,
@@ -371,73 +218,13 @@ async function ensureSampleSubscription(
     .limit(1);
   if (existingInventory) return existingInventory.productInventoryId;
 
-  const startDate = "2026-01-01";
-  const now = new Date("2026-01-01T00:00:00Z");
-
-  const [order] = await tx
-    .insert(productOrder)
-    .values({
-      customerPartyRoleId: partyRoleId,
-      billingAccountId,
-      status: "COMPLETED",
-      failureReason: null,
-      submittedBy: actorId,
-      submittedAt: now,
-      reviewedBy: null,
-      reviewedAt: null,
-      completedAt: now,
-    })
-    .returning({ productOrderId: productOrder.productOrderId });
-  if (!order) {
-    throw new Error("db:seed-sample-5g: product_order insert returned no row.");
-  }
-
-  const [item] = await tx
-    .insert(productOrderItem)
-    .values({
-      productOrderId: order.productOrderId,
-      productOfferingId: offeringId,
-      quantity: 1,
-      startDate,
-      orderedCharacteristics: {},
-    })
-    .returning({ productOrderItemId: productOrderItem.productOrderItemId });
-  if (!item) {
-    throw new Error(
-      "db:seed-sample-5g: product_order_item insert returned no row.",
-    );
-  }
-
-  const [inventory] = await tx
-    .insert(productInventory)
-    .values({
-      productOrderItemId: item.productOrderItemId,
-      customerPartyRoleId: partyRoleId,
-      billingAccountId,
-      productOfferingId: offeringId,
-      quantity: 1,
-      instanceCharacteristics: {},
-      status: "ACTIVE",
-      startDate,
-      endDate: null,
-    })
-    .returning({ productInventoryId: productInventory.productInventoryId });
-  if (!inventory) {
-    throw new Error(
-      "db:seed-sample-5g: product_inventory insert returned no row.",
-    );
-  }
-
-  await tx.insert(inventoryStatusHistory).values({
-    productInventoryId: inventory.productInventoryId,
-    fromStatus: null,
-    toStatus: "ACTIVE",
-    effectiveDate: startDate,
+  return insertRanSubscription(tx, {
+    partyRoleId,
+    billingAccountId,
+    offeringId,
+    actorId,
     reason: "Sample 5G RAN_USAGE subscription instantiated by the rm18 seed.",
-    changedBy: actorId,
   });
-
-  return inventory.productInventoryId;
 }
 
 // Active ratecard version + three lkp rows (rm18-spec §Implementation §5).
@@ -462,71 +249,13 @@ async function ensureSampleRatecard(
     .limit(1);
   if (existing) return;
 
-  const snapshotDate = "2026-01-01";
-  const [version] = await tx
-    .insert(ratecardVersion)
-    .values({
-      cardName: RATECARD_CARD_NAME,
-      versionNum: 1,
-      status: "ACTIVE",
-      snapshotDate,
-      sourceFile: "_SAMPLE_5G Seed",
-      fileChecksum: null,
-      rowCount: 3,
-      uploadedBy: actorId,
-      activatedBy: actorId,
-      activatedAt: new Date("2026-01-01T00:00:00Z"),
-      supersededByVersionId: null,
-      rejectSummary: null,
-    })
-    .returning({ ratecardVersionId: ratecardVersion.ratecardVersionId });
-  if (!version) {
-    throw new Error(
-      "db:seed-sample-5g: ratecard_version insert returned no row.",
-    );
-  }
-
-  await tx.insert(ratecardRanUsageLkp).values([
-    {
-      ratecardVersionId: version.ratecardVersionId,
-      mnoPublicKey: MNO_PUBLIC_KEY,
-      commercialUnitPublicKey: COMMERCIAL_UNIT_PUBLIC_KEY,
-      polygonId: "PCU-042_04",
-      polygonStartDate: snapshotDate,
-      polygonEndDate: null,
-      state: RATECARD_STATE,
-      district: "DIST-1",
-      lkpSubscriberRefId: partyRoleId,
-      serviceCode: "SVL-100",
-      ratePerUnit: null,
-    },
-    {
-      ratecardVersionId: version.ratecardVersionId,
-      mnoPublicKey: MNO_PUBLIC_KEY,
-      commercialUnitPublicKey: COMMERCIAL_UNIT_PUBLIC_KEY,
-      polygonId: "PCU-042_08",
-      polygonStartDate: snapshotDate,
-      polygonEndDate: null,
-      state: RATECARD_STATE,
-      district: "DIST-2",
-      lkpSubscriberRefId: partyRoleId,
-      serviceCode: "SVL-101",
-      ratePerUnit: null,
-    },
-    {
-      ratecardVersionId: version.ratecardVersionId,
-      mnoPublicKey: MNO_PUBLIC_KEY,
-      commercialUnitPublicKey: COMMERCIAL_UNIT_PUBLIC_KEY,
-      polygonId: "PCU-042_15",
-      polygonStartDate: snapshotDate,
-      polygonEndDate: null,
-      state: RATECARD_STATE,
-      district: "DIST-3",
-      lkpSubscriberRefId: partyRoleId,
-      serviceCode: "SVL-102",
-      ratePerUnit: null,
-    },
-  ]);
+  await insertRanRatecard(tx, {
+    cardName: RATECARD_CARD_NAME,
+    mnoPublicKey: MNO_PUBLIC_KEY,
+    lkpSubscriberRefId: partyRoleId,
+    rows: SAMPLE_5G_LKP_ROWS,
+    actorId,
+  });
 }
 
 async function main(): Promise<void> {
