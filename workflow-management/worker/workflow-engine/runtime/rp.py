@@ -332,10 +332,10 @@ price_windows AS (
            -- A `usage_rate`'s `ratePerUnit` is NOT NULL by CHECK, so — unlike
            -- the old `tiered`-row-with-NULL-amount case this window used to
            -- fall through on — a malformed rate can no longer produce a NULL
-           -- `effective_amount` here. LOOKUP_MISS below now fires only for its
-           -- two real causes: no `usage_rate` on the offering at all, or none
-           -- whose window contains the record's `start_datetime` — both are
-           -- the JOIN below simply finding no row (pm51-spec D4).
+           -- `effective_amount` here. A LOOKUP_MISS is therefore just the JOIN
+           -- below finding no row; `resolve_chunk` enumerates the no-row causes
+           -- (unresolved inventory/order-item join, no `usage_rate` lane, or a
+           -- `start_datetime` before the lane's first effective price).
            popp.start_date_time AS eff_from,
            lead(popp.start_date_time) OVER (
                -- The offering carries ONE `usage_rate` lane (the single-price-card
@@ -343,6 +343,18 @@ price_windows AS (
                -- only. The unit is product-sourced now (rm19) and no longer a join
                -- dimension, so it is deliberately NOT in the partition key — the
                -- as-of chain is the single lane's dated history.
+               --
+               -- DELIBERATE DEVIATION (owner-confirmed 2026-10-04): this omits the
+               -- `unit_of_measure` key that db/schema/product.ts:186-189 says the
+               -- runtime readers MUST keep. Multi-unit `usage_rate` pricing is OUT
+               -- OF SCOPE this phase — an offering is assumed to carry a single
+               -- usage_rate unit (single-price-card + singleSubInstPerCust;
+               -- seed-discipline, same accepted-risk class as Inv #21). The DB DOES
+               -- permit >1 unit (the unique key includes unit_of_measure), so the
+               -- real guarantee belongs at the product WRITE side (authoring /
+               -- Workstream C), not this read-path — out of rm20's boundary. A
+               -- genuinely multi-unit offering would mis-resolve here; see
+               -- ratemgmt-progress-tracker.md Open Questions (rm20).
                PARTITION BY popp.product_offering_id, popp.component_type
                ORDER BY popp.start_date_time
            ) AS eff_to
@@ -400,9 +412,12 @@ def resolve_chunk(
     from the map — the caller raises ``LOOKUP_MISS`` for it (D3). The offering
     carries a single ``usage_rate`` lane (the single-price-card rule, rm20),
     selected by ``(product_offering_id, component_type)`` as-of ``start_datetime``;
-    the unit is product-sourced (rm19) and no longer a join dimension, so there is
-    no feed unit to translate or match — a ``LOOKUP_MISS`` now means only a
-    genuinely missing ``usage_rate`` lane, never a unit skew."""
+    the unit is product-sourced (rm19) and no longer a join dimension, so a unit
+    skew is **no longer** a miss cause. A ``LOOKUP_MISS`` still arises from the
+    other no-row cases, unchanged by rm20: the ``product_inventory`` /
+    ``product_order_item`` join not resolving the subscriber ref (e.g. an unknown
+    ``product_inventory_id``), no ``usage_rate`` lane on the pinned offering, or a
+    ``start_datetime`` before that lane's first effective price."""
     rows = db.fetch(
         conn,
         _RESOLVE_SQL,
@@ -728,10 +743,11 @@ def process_chunks(
         rated: list[RatedRecord] = []
         for i, line_no in enumerate(line_nos):
             resolution = resolved.get(line_no)
-            # A record whose subscriber/offering/price does not resolve — or
-            # whose resolved catalog price carries no scalar amount (a tiered
-            # price, unratable by the v1 FLAT calc) — is a LOOKUP_MISS (D3). It
-            # is NOT rated and NOT fabricated.
+            # A record whose subscriber / offering / price does not resolve is a
+            # LOOKUP_MISS (D3) — NOT rated, NOT fabricated. (The
+            # `effective_amount is None` arm is now dead-defensive: a usage_rate's
+            # `ratePerUnit` is NOT NULL by CHECK, so a resolved row always carries
+            # a scalar amount; the arm stays as a fail-closed backstop.)
             if resolution is None or resolution.effective_amount is None:
                 outcome.lookup_miss += 1
                 outcome.miss_line_nos.append(line_no)
