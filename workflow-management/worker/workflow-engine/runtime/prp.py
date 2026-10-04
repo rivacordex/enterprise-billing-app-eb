@@ -1,7 +1,8 @@
-"""Pre-Rating Processor (PRP) — claim, validate, reject (rm07).
+"""Pre-Rating Processor (PRP) — claim, validate, resolve, reject (rm07 + rm21).
 
 Replaces the rm06 ``prp`` stub in ``flows/rating-engine-ran-usage.yaml``. For the
-``RAN_USAGE`` CSV feed this module, in order (rm07-spec D3-D6, Inv #5/#7/#10/#11):
+``RAN_USAGE`` CSV feed this module, in order (rm07-spec D3-D6, Inv #5/#7/#10/#11;
+rm21-spec — PER_UNIT resolution + identity locks + completeness):
 
 1. **Derives ``file_key`` from the filename** using a configured regex rule
    (never from content — the claim precedes parsing). No match → the file is
@@ -13,28 +14,57 @@ Replaces the rm06 ``prp`` stub in ``flows/rating-engine-ran-usage.yaml``. For th
    insert, so ``UNIQUE (file_key, batch_run_num)`` — not a filesystem rename —
    decides ownership (Inv #7). A file that dies during parse still leaves this
    row for reconciliation (rm11).
-4. **Parses + maps** the CSV to the ``udr_rated`` key fields per a config-driven
-   **feed profile** (D1) — column mapping + the ``udr_key`` column list are
-   configuration, not hardcoded columns, so a new feed adds a profile, not code.
-5. **Computes the canonical ``udr_key``** (D2): sorted key names, trimmed +
-   case-normalised values, UTC for any timestamp component, ``k=v`` pairs joined
-   by ``|``. The measured value (``USAGE_MBPS``) is **never** part of identity.
-6. **Validates each row** to the D6 reason codes and quarantines the bad rows to
-   a reject file in ``error/`` with line number + raw row + reason code(s).
-7. **Applies the per-``udr_type`` reject threshold** (``0`` = all-or-nothing):
-   above it the whole file is refused (``PARSE_FAILURE``); below it the survivors
-   are carried forward as chunked Parquet for RP and the batch reaches
-   ``BATCH_PARTIAL``.
-8. **Stamps the counts** (``parsed_count``/``rejected_count``/``discarded_count``)
-   on ``udr_batch`` and emits **one** summarised ``process_log`` line — never one
-   row per rejected record (Inv #11).
+4. **Resolves the per-batch context (rm21, set-based per batch, never per
+   record)** on the claim connection (rm16 ``rating_runtime`` read grants):
+   * the **pinned offering family id** — ``subscription_product_name`` (display)
+     → the ACTIVE offering → ``COALESCE(family_offering_id, product_offering_id)``
+     — plus its ``udrType`` / ``productCardLookUp`` specs;
+   * the ACTIVE **ratecard** rows for that card, indexed in memory by the
+     ``mno|cu|polygon`` cell → ``{lkp_subscriber_ref_id, service_code}``.
+   The ``udrType`` spec must equal the flow ``udr_type`` or the batch hard-stops
+   ``UDRTYPE_MISMATCH`` (rm21 §3).
+5. **Parses + maps** the CSV per a config-driven **feed profile** (D1) — the
+   7-column ``.udr`` shape, ``udr_key_columns = [mno|cu|polygon]``, no
+   ``usage_unit`` (product-sourced, rm19/rm20) — and computes the canonical
+   ``udr_key`` (D2): sorted key names, normalised values, ``k=v`` joined by ``|``.
+6. **Resolves factor 1 per distinct MNO (rm21 §2)** —
+   ``mno → party_role_specification->>'mnoPublicKey1' → party_role_id → the
+   RAN_USAGE subscription → product_inventory_id`` (+ its offering family id) —
+   caching one query per distinct MNO. 0 rows → ``UNKNOWN_SUBSCRIBER``; >1
+   party_role → ``MNO_KEY_NOT_UNIQUE`` — both whole-batch hard-stops.
+7. **Enforces, per structurally-valid record, the identity locks + checks (rm21
+   §4)** — all whole-batch hard-stops: factor 2 (ratecard
+   ``lkp_subscriber_ref_id`` == resolved ``party_role_id`` → ``SUBSCRIBER_REF_MISMATCH``),
+   factor 3 (resolved offering family id == pinned id → ``PRODUCT_PIN_MISMATCH``),
+   ``service_code`` agreement (``SERVICE_CODE_MISMATCH``), and input→ratecard
+   mapping (no ratecard cell → ``INPUT_UNMAPPED``). Dedup is widened to the
+   billing-month identity ``(period_of(start_datetime), mno|cu|polygon)`` —
+   a same-cell/same-month repeat is ``DUPLICATE_IN_FILE`` (structural reject).
+8. **Enforces ratecard→input completeness (rm21 §5)** — every ACTIVE ratecard
+   cell must appear in the input; a gap is ``RATECARD_COVERAGE_GAP`` (whole-batch
+   hard-stop under ``ratecard_coverage_enforcement = HARD_STOP``, default) or a
+   ``RATECARD_COVERAGE_GAP_WARN`` log line under ``WARN`` (rate + flag).
+9. **Stamps the resolved ``product_inventory_id`` / ``party_role_id`` /
+   ``family_id`` onto each survivor chunk row** (rm21 §2) and carries them as
+   chunked Parquet for RP (``product_inventory_id`` is what RP prices on, rm20).
+10. **Stamps the counts** (``parsed_count``/``rejected_count``/``discarded_count``)
+    on ``udr_batch`` and emits **one** summarised ``process_log`` line per event
+    code — never one row per rejected record (Inv #11).
+
+**Two failure classes, kept distinct (rm21 §Design).** Structural per-record
+faults (missing column/data, in-file duplicate) go through the reject path
+against ``reject_threshold`` (``0`` ⇒ any reject refuses the whole file). The
+identity / mapping / completeness faults are **whole-batch hard-stops**
+(``status = REFUSED``, zero rows) — a mismatch means the file's assumptions are
+wrong, not one bad row. The reconciliation identity ``parsed = rated + rejected
++ discarded`` holds on a refused batch: ``discarded = parsed − rejected`` (§7).
 
 Scope boundaries (ratemgmt-ai-workflow-rules.md §2.5, §3): PRP does not resolve
-price (rm08's RP), does not supersede or insert ``udr_rated`` (rm09/rm10's RL),
-and does not detect ``DUPLICATE_LIVE`` — a collision with an existing live row is
-supersession, which is rm10's, and D6's own note defers it there. ``USAGE_MBPS``
-is parsed as ``Decimal`` and carried as an exact string in the Parquet handoff;
-no ``float`` path exists (D8, §5.9).
+price (rm20's RP), does not supersede or insert ``udr_rated`` (rm09/rm10's RL).
+``usage_volume`` is parsed as ``Decimal`` and carried as an exact string in the
+Parquet handoff; no ``float`` path exists (§5.9). ``party_role_id`` is resolved
+transiently for the factor-2 cross-check; it is **not** stored on ``udr_rated``
+(ai-workflow-rules §6) — it rides the intermediate chunk only.
 
 Run as ``python3 -m runtime.prp`` (module form) — it lives inside the ``runtime``
 package and uses the same relative imports as its siblings; invoking it by file
@@ -53,7 +83,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
@@ -66,19 +96,35 @@ from psycopg import sql
 from . import db, logemit, storage
 
 # ---------------------------------------------------------------------------
+# The config timezone (rm21/X1) — period_of() truncates the billing month in
+# this fixed-`+8` zone, matching rating.period_of() in the DB (code-standards
+# §5.7). The dedup identity's partition_period is computed here with the SAME
+# zone so a same-cell/same-billing-month repeat is a duplicate (rm21 §4/R2).
+# ---------------------------------------------------------------------------
+_CONFIG_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+
+
+def period_of(start_datetime: datetime) -> date:
+    """The billing month (first-of-month ``date``) for an event instant, truncated
+    in the config TZ (rm21/X1) — the Python mirror of ``rating.period_of()``. The
+    dedup key's ``partition_period`` (rm21 §4)."""
+    local = start_datetime.astimezone(_CONFIG_TZ)
+    return date(local.year, local.month, 1)
+
+
+# ---------------------------------------------------------------------------
 # The feed profile (D1) — a per-udr_type config, not hardcoded columns.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class SubscriberRef:
-    """Optional mapping of a key column to a subscriber reference (D1).
+    """Optional mapping of a key column to a subscriber reference (D1, rm07).
 
-    Declared *only* where a feed genuinely has that semantic — not for the
-    ``RAN_USAGE`` sample, where the three key columns are opaque dimensions and
-    none is assumed to be the subscriber. When present, a value that does not
-    resolve in ``inventory.product_inventory`` is rejected ``UNKNOWN_SUBSCRIBER``.
-    """
+    Dormant for the ``RAN_USAGE`` feed (``subscriber_ref: null``) — rm21's real
+    resolver (``mno → party_role → subscription``) supersedes the rm07 placeholder
+    for this feed. Retained generic machinery for a future feed that genuinely
+    carries an already-resolved inventory reference."""
 
     column: str
     inventory_column: str
@@ -86,17 +132,27 @@ class SubscriberRef:
 
 @dataclass(frozen=True)
 class FeedProfile:
-    """A feed's structural description (D1). Parsed from the ``--profile`` JSON
-    flow variable, so a new feed adds a profile rather than editing code."""
+    """A feed's structural description (D1, rm21 §6). Parsed from the ``--profile``
+    JSON flow variable, so a new feed adds a profile rather than editing code."""
 
     header: tuple[str, ...]
     event_time_column: str
     usage_column: str
-    usage_unit: str
     udr_key_columns: tuple[str, ...]
+    # The three role columns of the RAN_USAGE identity cell (rm21) — named
+    # explicitly (never positional), so resolution keys on the MNO and the
+    # ratecard matches on mno|cu|polygon without guessing which key column is
+    # which (fail-closed, §5.4). All three are udr_key_columns members.
+    mno_column: str
+    commercial_unit_column: str
+    polygon_column: str
+    # The service_code column the per-record SERVICE_CODE_MISMATCH check compares
+    # against the matched ratecard row (rm21 §4). Not a key dimension.
+    service_code_column: str
     # A naive event-time value is localised with this zone before conversion to
     # UTC — output-affecting (it moves partition_period and identity), so it is
-    # a declared profile field, not a silent default (fail-closed, §5.4).
+    # a declared profile field, not a silent default (fail-closed, §5.4). The
+    # RAN_USAGE feed sets it to the config TZ (Asia/Kuala_Lumpur, rm21/X1).
     event_time_assumed_tz: str = "UTC"
     # A point sample has end == start (satisfies end >= start); a fixed
     # measurement interval per udr_type sets end = start + interval (D1).
@@ -126,8 +182,11 @@ class FeedProfile:
             header=tuple(obj["header"]),
             event_time_column=obj["event_time_column"],
             usage_column=obj["usage_column"],
-            usage_unit=obj["usage_unit"],
             udr_key_columns=tuple(obj["udr_key_columns"]),
+            mno_column=obj["mno_column"],
+            commercial_unit_column=obj["commercial_unit_column"],
+            polygon_column=obj["polygon_column"],
+            service_code_column=obj["service_code_column"],
             event_time_assumed_tz=obj.get("event_time_assumed_tz", "UTC"),
             interval_seconds=obj.get("interval_seconds"),
             future_tolerance_seconds=obj.get("future_tolerance_seconds", 300),
@@ -143,6 +202,10 @@ class FeedProfile:
         for role, name in (
             ("event_time_column", self.event_time_column),
             ("usage_column", self.usage_column),
+            ("mno_column", self.mno_column),
+            ("commercial_unit_column", self.commercial_unit_column),
+            ("polygon_column", self.polygon_column),
+            ("service_code_column", self.service_code_column),
         ):
             if name not in cols:
                 raise ValueError(f"profile {role} {name!r} is not in header {self.header}")
@@ -154,6 +217,12 @@ class FeedProfile:
                 "udr_key_columns must be non-empty — it defines identity and must "
                 "include whatever distinguishes a delivery's records (rm01 D12)."
             )
+        for role in (self.mno_column, self.commercial_unit_column, self.polygon_column):
+            if role not in self.udr_key_columns:
+                raise ValueError(
+                    f"role column {role!r} must be one of udr_key_columns "
+                    f"{self.udr_key_columns} — the identity cell is mno|cu|polygon (rm21)."
+                )
         if self.subscriber_ref and self.subscriber_ref.column not in cols:
             raise ValueError(
                 f"subscriber_ref column {self.subscriber_ref.column!r} not in header"
@@ -261,6 +330,186 @@ def claim_batch(
 
 
 # ---------------------------------------------------------------------------
+# Per-batch extracts (rm21 §1) — the pinned offering + its ACTIVE ratecard. Both
+# resolved ONCE per batch on the claim connection (rm16 read grants), never per
+# record.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PinContext:
+    """The pinned product resolved once at batch start (rm21 §1/§3). ``family_id``
+    is the factor-3 pin; ``udr_type_value`` is asserted against the flow var;
+    ``card_name`` names the ratecard the completeness/mapping checks use."""
+
+    offering_id: str
+    family_id: str
+    udr_type_value: str | None
+    card_name: str | None
+
+
+_PIN_SQL = """
+SELECT po.product_offering_id,
+       COALESCE(po.family_offering_id, po.product_offering_id) AS family_id,
+       udr.default_value  AS udr_type_value,
+       card.default_value AS card_name
+FROM   product.product_offering po
+LEFT JOIN product.product_specifications udr
+       ON udr.ref_product_offering_id = po.product_offering_id
+      AND udr.name = 'udrType'
+LEFT JOIN product.product_specifications card
+       ON card.ref_product_offering_id = po.product_offering_id
+      AND card.name = 'productCardLookUp'
+WHERE  po.name = %(name)s
+  AND  po.lifecycle_status = 'ACTIVE'
+"""
+
+
+def resolve_pin(conn: psycopg.Connection, subscription_product_name: str) -> PinContext:
+    """Resolve the display ``subscription_product_name`` to its ACTIVE offering's
+    family id + ``udrType`` / ``productCardLookUp`` specs (rm21 §1). Exactly one
+    ACTIVE offering must carry the name (``product_offering_one_active_per_family``
+    guarantees one ACTIVE per family) — zero or an ambiguous multi-family name is
+    a configuration error and fails closed (§5.4), not a guess."""
+    rows = db.fetch(conn, _PIN_SQL, {"name": subscription_product_name})
+    families = {r["family_id"] for r in rows}
+    if not rows:
+        raise ValueError(
+            f"subscription_product_name {subscription_product_name!r} resolves to no "
+            "ACTIVE product_offering — fix the flow pin or seed the offering."
+        )
+    if len(families) > 1:
+        raise ValueError(
+            f"subscription_product_name {subscription_product_name!r} resolves to "
+            f"{len(families)} distinct offering families {sorted(families)} — the pin "
+            "is ambiguous; it must name exactly one family."
+        )
+    row = rows[0]
+    return PinContext(
+        offering_id=row["product_offering_id"],
+        family_id=row["family_id"],
+        udr_type_value=row["udr_type_value"],
+        card_name=row["card_name"],
+    )
+
+
+@dataclass(frozen=True)
+class RatecardCell:
+    """One ACTIVE ratecard ``mno|cu|polygon`` cell (rm21 §1) — the factor-2 and
+    service_code references the per-record checks compare against."""
+
+    lkp_subscriber_ref_id: str
+    service_code: str | None
+
+
+_RATECARD_SQL = """
+SELECT l.mno_public_key, l.commercial_unit_public_key, l.polygon_id,
+       l.lkp_subscriber_ref_id, l.service_code
+FROM   product.ratecard_version v
+JOIN   product.ratecard_ran_usage_lkp l
+       ON l.ratecard_version_id = v.ratecard_version_id
+WHERE  v.card_name = %(card_name)s AND v.status = 'ACTIVE'
+"""
+
+
+def extract_ratecard(
+    conn: psycopg.Connection, profile: FeedProfile, card_name: str
+) -> dict[str, RatecardCell]:
+    """Load the ACTIVE ratecard's lkp rows for ``card_name`` and index them in
+    memory by the canonical ``mno|cu|polygon`` cell (rm21 §1) — the same canonical
+    form ``canonical_udr_key`` produces for a record, so the per-record match is a
+    dict lookup, never a per-record query (Inv #10). A card with no ACTIVE version
+    yields an empty index (every input row then fails ``INPUT_UNMAPPED``)."""
+    rows = db.fetch(conn, _RATECARD_SQL, {"card_name": card_name})
+    index: dict[str, RatecardCell] = {}
+    for r in rows:
+        cell = canonical_udr_key(
+            profile,
+            {
+                profile.mno_column: str(r["mno_public_key"]),
+                profile.commercial_unit_column: str(r["commercial_unit_public_key"]),
+                profile.polygon_column: str(r["polygon_id"]),
+            },
+        )
+        index[cell] = RatecardCell(
+            lkp_subscriber_ref_id=str(r["lkp_subscriber_ref_id"]),
+            service_code=(
+                str(r["service_code"]) if r["service_code"] is not None else None
+            ),
+        )
+    return index
+
+
+# ---------------------------------------------------------------------------
+# Factor-1 resolution (rm21 §2) — mno → party_role_id → RAN_USAGE subscription →
+# product_inventory_id. Set-based per batch: one query per DISTINCT MNO, cached.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MnoResolution:
+    """The factor-1 resolution of one MNO (rm21 §2) — stamped onto each of that
+    MNO's chunk rows. ``party_role_id`` is the factor-2 compare; ``family_id`` is
+    the factor-3 compare; ``product_inventory_id`` is what RP prices on (rm20)."""
+
+    party_role_id: str
+    product_inventory_id: str
+    family_id: str
+
+
+_RESOLVE_SQL = """
+SELECT pr.party_role_id, pi.product_inventory_id,
+       COALESCE(po.family_offering_id, po.product_offering_id) AS family_id
+FROM   customer.party_role pr
+JOIN   inventory.product_inventory pi
+       ON pi.customer_party_role_id = pr.party_role_id
+      AND pi.status = 'ACTIVE'
+      AND pi.start_date <= (%(start_dt)s AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+      AND (pi.end_date IS NULL
+           OR pi.end_date >= (%(start_dt)s AT TIME ZONE 'Asia/Kuala_Lumpur')::date)
+JOIN   product.product_offering po ON po.product_offering_id = pi.product_offering_id
+JOIN   product.product_specifications ps
+       ON ps.ref_product_offering_id = po.product_offering_id
+      AND ps.name = 'udrType' AND ps.default_value = %(udr_type)s
+WHERE  pr.party_role_specification->>'mnoPublicKey1' = %(mno)s
+"""
+
+
+# Sentinels for the per-MNO resolution cache (a resolved MnoResolution, or one of
+# the two whole-batch hard-stop verdicts). UNKNOWN_SUBSCRIBER: no customer resolves
+# the MNO (0 rows / empty `{}` spec). MNO_KEY_NOT_UNIQUE: the one-MNO→one-customer
+# invariant is broken (>1 party_role, or an ambiguous >1-subscription resolution).
+_UNKNOWN_SUBSCRIBER = "UNKNOWN_SUBSCRIBER"
+_MNO_KEY_NOT_UNIQUE = "MNO_KEY_NOT_UNIQUE"
+
+
+def resolve_mno(
+    conn: psycopg.Connection, mno: str, start_dt: datetime, udr_type: str
+) -> MnoResolution | str:
+    """Resolve one MNO to its ``(party_role_id, product_inventory_id, family_id)``
+    as-of ``start_dt`` (rm21 §2). Returns the resolution, or a hard-stop verdict
+    string (``_UNKNOWN_SUBSCRIBER`` / ``_MNO_KEY_NOT_UNIQUE``). One query per
+    distinct MNO (the caller caches), never per record (Inv #10)."""
+    rows = db.fetch(
+        conn, _RESOLVE_SQL, {"mno": mno, "start_dt": start_dt, "udr_type": udr_type}
+    )
+    if not rows:
+        return _UNKNOWN_SUBSCRIBER
+    # >1 row is ambiguous: distinct party_roles break the one-MNO→one-customer
+    # invariant; a single party_role with >1 active RAN subscription breaks
+    # singleSubInstPerCust (seed discipline, Inv #21). Either way the resolution
+    # is not unique — fail closed on MNO_KEY_NOT_UNIQUE (rm21 §2).
+    if len(rows) > 1:
+        return _MNO_KEY_NOT_UNIQUE
+    row = rows[0]
+    return MnoResolution(
+        party_role_id=str(row["party_role_id"]),
+        product_inventory_id=str(row["product_inventory_id"]),
+        family_id=str(row["family_id"]),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Canonical udr_key (D2) — the rule is fixed; only the column list is config.
 # ---------------------------------------------------------------------------
 
@@ -270,20 +519,18 @@ def _normalise_value(value: str) -> str:
 
     The rule is fixed (rm01 §4.2): two logically identical records serialised
     differently must produce the SAME ``udr_key``. Only the column *list* is
-    configured, never this rule (code-standards §6 forbidden edit). Key columns
-    are opaque strings for the RAN_USAGE sample; a feed that keys on a timestamp
-    column (D2's "UTC for any timestamp component") gains that normalisation with
-    its own profile field and tests when one actually needs it — not shipped
-    speculatively here."""
+    configured, never this rule (code-standards §6 forbidden edit). The same
+    normalisation is applied to the ratecard cell index, so an input cell matches
+    its ratecard entry regardless of case/whitespace drift."""
     return value.strip().casefold()
 
 
 def canonical_udr_key(profile: FeedProfile, row: dict[str, str]) -> str:
     """Serialise the profile's configured key columns into the canonical
-    ``udr_key`` (D2): sorted key names, normalised values, ``k=v`` joined by
-    ``|`` — e.g. ``COMMERCIAL_UNIT=<v>|PUBLIC_KEY=<v>|SITE=<v>``. The measured
-    value is excluded by construction (it is not a key column). The key-name
-    order is sorted ONCE at profile construction, not per row."""
+    ``udr_key`` / cell (D2, rm21): sorted key names, normalised values, ``k=v``
+    joined by ``|`` — e.g. ``commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>``.
+    The measured value is excluded by construction (it is not a key column). The
+    key-name order is sorted ONCE at profile construction, not per row."""
     parts = [
         f"{name}={_normalise_value(row[name])}"
         for name in profile.sorted_key_columns
@@ -299,7 +546,8 @@ def canonical_udr_key(profile: FeedProfile, row: dict[str, str]) -> str:
 def _parse_instant(raw: str, profile: FeedProfile) -> datetime | None:
     """Parse an event-time value to an aware UTC ``datetime`` (D8), or ``None``
     if unparseable. A naive value is localised with the profile's declared
-    ``event_time_assumed_tz`` (fail-closed, §5.4) then converted to UTC."""
+    ``event_time_assumed_tz`` (the config TZ for RAN_USAGE, rm21/X1) then
+    converted to UTC."""
     text = raw.strip()
     if not text:
         return None
@@ -364,7 +612,7 @@ def _parse_usage(raw: str) -> Decimal | None:
 
 @dataclass
 class ParsedRow:
-    """A single data row after parsing/validation."""
+    """A single data row after parsing/validation + rm21 resolution stamps."""
 
     line_no: int
     raw: str
@@ -374,6 +622,11 @@ class ParsedRow:
     end_datetime: datetime | None = None
     udr_key: str | None = None
     usage: Decimal | None = None
+    service_code: str | None = None
+    # rm21 §2 — the factor-1 resolution, stamped onto the chunk row for RP.
+    product_inventory_id: str | None = None
+    party_role_id: str | None = None
+    family_id: str | None = None
 
     @property
     def rejected(self) -> bool:
@@ -388,13 +641,13 @@ def validate_row(
     subscriber_ok: set[str] | None,
     now: datetime,
 ) -> ParsedRow:
-    """Apply the D6 checks to one row, accumulating every applicable reason code.
+    """Apply the D6 structural checks to one row, accumulating every applicable
+    reason code (the per-record reject class). The rm21 identity / mapping checks
+    are the caller's — they are whole-batch hard-stops, not per-record rejects.
 
-    ``subscriber_ok`` is the pre-resolved set of subscriber references present in
-    ``inventory.product_inventory`` (only when the profile declares a
-    subscriber-ref mapping; otherwise ``None`` and ``UNKNOWN_SUBSCRIBER`` never
-    fires). ``DUPLICATE_IN_FILE`` is decided by the caller, which owns the
-    seen-key set across the whole file."""
+    ``subscriber_ok`` is the rm07 placeholder subscriber set (``None`` for
+    RAN_USAGE, whose ``subscriber_ref`` is null). ``DUPLICATE_IN_FILE`` is decided
+    by the caller, which owns the seen-key set across the whole file."""
     row = ParsedRow(line_no=line_no, raw=raw)
 
     # MALFORMED_ROW — wrong column count (rm07 D6). Cannot map columns, so no
@@ -404,6 +657,7 @@ def validate_row(
         return row
     values = dict(zip(profile.header, fields))
     row.values = values
+    row.service_code = values[profile.service_code_column].strip() or None
 
     # MISSING_KEY_FIELD — an empty key dimension cannot dedup (D6).
     for name in profile.udr_key_columns:
@@ -433,15 +687,16 @@ def validate_row(
     else:
         row.usage = usage
 
-    # UNKNOWN_SUBSCRIBER — only when the profile maps a key column to a
-    # subscriber ref (D6); otherwise skipped entirely.
+    # UNKNOWN_SUBSCRIBER (rm07 placeholder) — only when the profile maps a key
+    # column to a subscriber ref (D6); dormant for RAN_USAGE. rm21's resolver is
+    # the real UNKNOWN_SUBSCRIBER source (a whole-batch hard-stop), not this.
     if profile.subscriber_ref and subscriber_ok is not None:
         ref = values[profile.subscriber_ref.column].strip()
         if ref and ref not in subscriber_ok:
             row.reasons.append("UNKNOWN_SUBSCRIBER")
 
     # Compose the canonical key only when the row has valid, present key
-    # dimensions (a NULL key dimension or bad datetime cannot form identity).
+    # dimensions (a NULL key dimension cannot form identity).
     if "MISSING_KEY_FIELD" not in row.reasons:
         row.udr_key = canonical_udr_key(profile, values)
 
@@ -451,7 +706,8 @@ def validate_row(
 def _scan_subscriber_refs(source_path: Path, profile: FeedProfile) -> set[str]:
     """One light pass collecting the distinct subscriber-ref values from the
     file, so they can be resolved in a single set query (never per record). Only
-    called when the profile declares a subscriber-ref mapping."""
+    called when the profile declares a subscriber-ref mapping (dormant for
+    RAN_USAGE)."""
     assert profile.subscriber_ref is not None
     idx = profile.header.index(profile.subscriber_ref.column)
     refs: set[str] = set()
@@ -475,10 +731,8 @@ def _scan_subscriber_refs(source_path: Path, profile: FeedProfile) -> set[str]:
 def resolve_subscribers(
     conn: psycopg.Connection, profile: FeedProfile, refs: Iterable[str]
 ) -> set[str]:
-    """Batch-resolve subscriber refs against ``inventory.product_inventory``
-    (D6/Implementation §4; rm03 grants ``rating_runtime`` SELECT). One set query,
-    never a lookup per record (Inv #10). Called only when the profile declares a
-    subscriber-ref mapping."""
+    """Batch-resolve subscriber refs against ``inventory.product_inventory`` (rm07
+    placeholder path; dormant for RAN_USAGE). One set query, never per record."""
     assert profile.subscriber_ref is not None
     wanted = sorted({r for r in refs if r})
     if not wanted:
@@ -495,15 +749,19 @@ def resolve_subscribers(
 
 
 # ---------------------------------------------------------------------------
-# Chunked Parquet handoff (D7) + reject writer (D6).
+# Chunked Parquet handoff (D7, rm21 §2 stamps) + reject writer (D6).
 # ---------------------------------------------------------------------------
 
 
 def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) -> pl.DataFrame:
-    """Build one chunk's typed Parquet frame (D7): the ``udr_rated`` key fields
-    plus the opaque key dimensions RP resolves against. ``start_datetime`` is a
-    typed UTC ``Datetime`` (full precision); the measured quantity is an exact
-    ``Decimal`` string — no ``float`` path (D8)."""
+    """Build one chunk's typed Parquet frame (D7, rm21 §2): the ``udr_rated`` key
+    fields plus the rm21 resolution stamps. ``start_datetime`` is a typed UTC
+    ``Datetime`` (full precision); the measured quantity is an exact ``Decimal``
+    string — no ``float`` path (D8). ``udr_usage_unit`` is **not** carried (rm21 §6
+    — the unit is product-sourced in RP, rm19/rm20). ``product_inventory_id`` is
+    the column RP prices on (rm20); ``party_role_id`` / ``family_id`` ride the
+    chunk for provenance only and never reach ``udr_rated`` (ai-workflow-rules §6,
+    RP's rated frame omits them)."""
     data: dict[str, pl.Series] = {
         "line_no": pl.Series([r.line_no for r in chunk], dtype=pl.Int64),
         "udr_type": pl.Series([udr_type] * len(chunk), dtype=pl.Utf8),
@@ -514,7 +772,7 @@ def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) ->
             [r.end_datetime for r in chunk], dtype=pl.Datetime("us", "UTC")
         ),
         "udr_key": pl.Series([r.udr_key for r in chunk], dtype=pl.Utf8),
-        # Exact PLAIN-decimal string — RP (rm08) casts to numeric(20,6); never
+        # Exact PLAIN-decimal string — RP (rm20) casts to numeric(20,6); never
         # float. `format(x, "f")` not `str(x)`: str() emits scientific notation
         # for an E-notation input (e.g. "1E2" -> "1E+2"), which is not the exact
         # decimal-literal handoff D8 specifies; format("f") always yields a plain
@@ -522,10 +780,17 @@ def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) ->
         "udr_usage_quantity": pl.Series(
             [format(r.usage, "f") for r in chunk], dtype=pl.Utf8
         ),
-        "udr_usage_unit": pl.Series([profile.usage_unit] * len(chunk), dtype=pl.Utf8),
+        # rm21 §2 — factor-1 resolution stamped per row. RP reads
+        # `product_inventory_id` as its subscriber ref (the chunk column it prices
+        # on); `party_role_id`/`family_id` are provenance only.
+        "product_inventory_id": pl.Series(
+            [r.product_inventory_id for r in chunk], dtype=pl.Utf8
+        ),
+        "party_role_id": pl.Series([r.party_role_id for r in chunk], dtype=pl.Utf8),
+        "family_id": pl.Series([r.family_id for r in chunk], dtype=pl.Utf8),
     }
-    # The opaque key dimensions, kept for RP's downstream resolution (D1) — the
-    # engine does not map them to typed business columns here.
+    # The opaque key dimensions, kept for forensics (D1) — the engine does not map
+    # them to typed business columns here.
     for name in profile.udr_key_columns:
         data[f"key__{name}"] = pl.Series(
             [r.values.get(name, "") for r in chunk], dtype=pl.Utf8
@@ -575,6 +840,26 @@ class Outcome:
     discarded: int = 0
     reject_file: Path | None = None
     chunk_paths: list[Path] = field(default_factory=list)
+    # The summarised line's payload (set here, emitted by main — one line per
+    # event code, Inv #11). For a hard-stop these name the offending cell/code.
+    specific_problem: str | None = None
+    additional_info: dict[str, Any] = field(default_factory=dict)
+    alarm_key: str | None = None
+    managed_object: str | None = None
+    # A WARN-mode ratecard coverage gap (rm21 §5): the batch still rates, and main
+    # emits one extra RATECARD_COVERAGE_GAP_WARN line naming the missing cells.
+    coverage_warn: dict[str, Any] | None = None
+
+
+# The rm21 whole-batch hard-stop event codes (identity / mapping / completeness).
+# Each is seeded in event_catalog (rm18) and emitted via the one-summarised-line
+# path (Inv #11), never a per-record log row (rm21 §7).
+_HARD_STOP_SUBSCRIBER_REF = "SUBSCRIBER_REF_MISMATCH"
+_HARD_STOP_PRODUCT_PIN = "PRODUCT_PIN_MISMATCH"
+_HARD_STOP_SERVICE_CODE = "SERVICE_CODE_MISMATCH"
+_HARD_STOP_INPUT_UNMAPPED = "INPUT_UNMAPPED"
+_HARD_STOP_COVERAGE_GAP = "RATECARD_COVERAGE_GAP"
+_COVERAGE_GAP_WARN = "RATECARD_COVERAGE_GAP_WARN"
 
 
 def process_file(
@@ -586,29 +871,40 @@ def process_file(
     file_key: str,
     udr_type: str,
     profile: FeedProfile,
+    pin: PinContext,
+    ratecard: dict[str, RatecardCell],
+    coverage_enforcement: str,
     reject_threshold: float,
     chunk_size: int,
     work_dir: Path,
     now: datetime,
 ) -> Outcome:
-    """Parse, validate, chunk and threshold the claimed file. The claim already
-    exists (Inv #7); this is everything after it."""
+    """Parse, validate, resolve, check and chunk the claimed file. The claim and
+    the per-batch extracts (pin + ratecard) already exist; this is everything
+    after them (rm07 parse/reject + rm21 resolution/identity-locks/completeness)."""
     reject_path = storage.location("error") / f"{file_key}-run{batch_run_num}-rejects.csv"
     rejects = RejectWriter(reject_path)
     chunk_paths: list[Path] = []
     chunk_buffer: list[ParsedRow] = []
-    # A 160-bit digest of each natural key, NOT the full (timestamp, udr_key)
+    # A 160-bit digest of each (billing-month, cell) identity, NOT the full
     # strings — the in-file dedup set must stay bounded on a multi-million-row
-    # file, or it becomes the whole-file-in-RAM structure the chunked handoff
-    # exists to avoid (Inv #10). blake2b/160-bit makes a false DUPLICATE_IN_FILE
-    # collision negligible even at the 5M-record ceiling.
+    # file (Inv #10). blake2b/160-bit makes a false DUPLICATE_IN_FILE collision
+    # negligible even at the 5M-record ceiling.
     seen_keys: set[bytes] = set()
     parsed = 0
+    # The ACTIVE ratecard cells actually seen in the input — the ratecard→input
+    # completeness check (rm21 §5) compares this against the full ratecard index.
+    seen_ratecard_cells: set[str] = set()
+    # One resolution per DISTINCT MNO (rm21 §2) — cached across the streaming
+    # pass, so this is set-based per batch, never per record (checklist item 1).
+    mno_cache: dict[str, MnoResolution | str] = {}
+    # The first whole-batch hard-stop encountered: (event_code, specific_problem,
+    # additional_info). A mismatch means the file's assumptions are wrong — the
+    # whole batch is REFUSED with zero rows (rm21 §Design), not one bad row.
+    hard_stop: tuple[str, str, dict[str, Any]] | None = None
 
-    # Subscriber pre-resolution (only when the profile declares the mapping,
-    # D6/Implementation §4): one set query over inventory.product_inventory, not
-    # a lookup per record (Inv #10). RAN_USAGE declares no mapping, so this stays
-    # None and UNKNOWN_SUBSCRIBER never fires.
+    # Subscriber pre-resolution (rm07 placeholder path; dormant for RAN_USAGE,
+    # whose subscriber_ref is null — rm21's resolver below is the real one).
     subscriber_ok: set[str] | None = None
     if profile.subscriber_ref is not None:
         subscriber_ok = resolve_subscribers(
@@ -625,10 +921,8 @@ def process_file(
         chunk_buffer.clear()
 
     # Read PHYSICAL lines and parse each one, so the reject file preserves the
-    # ORIGINAL row bytes (D6 "the original row" — the whole point when the defect
-    # IS the row's quoting) and reports the true physical line number. This makes
-    # the single-line-record contract explicit: a field with an embedded newline
-    # would break per-line parsing, but the RAN_USAGE CSV has none (confirm with
+    # ORIGINAL row bytes (D6 "the original row") and reports the true physical
+    # line number. The RAN_USAGE CSV has no embedded-newline fields (confirm with
     # upstream before onboarding a feed that does).
     with source_path.open("r", encoding="utf-8", newline="") as fh:
         header_seen = False
@@ -636,20 +930,14 @@ def process_file(
             raw = physical.rstrip("\r\n")
             if not raw.strip():
                 continue  # a blank / whitespace-only line is not a record —
-                # including a leading blank BEFORE the header (some exporters
-                # emit one), which is why the header is the first NON-blank line,
-                # not physically line 1.
+                # including a leading blank BEFORE the header.
             if not header_seen:
                 header_seen = True
                 continue  # the first non-blank line is the header contract (D1)
             parsed += 1
             # Fail LOUD on an unterminated quoted field rather than silently
-            # splitting it (§5.4 fail-closed). A well-formed CSV line always has
-            # an EVEN number of double-quotes (each quoted field opens+closes,
-            # escaped quotes come in pairs); an odd count means a garbled row, or
-            # an embedded-newline record this single-line-record parser
-            # deliberately does not support (see the comment above) — either way
-            # MALFORMED, not a value to trust for udr_key identity.
+            # splitting it (§5.4 fail-closed). An odd double-quote count means a
+            # garbled row — MALFORMED, not a value to trust for udr_key identity.
             if raw.count('"') % 2:
                 rejects.write(
                     ParsedRow(line_no=line_no, raw=raw, reasons=["MALFORMED_ROW"])
@@ -666,12 +954,17 @@ def process_file(
                 continue
             row = validate_row(line_no, raw, fields, profile, subscriber_ok, now)
 
-            # DUPLICATE_IN_FILE — two rows share (start_datetime, udr_key) within
-            # this file (D6). Only checkable once the row has both; keyed by a
-            # bounded digest (see seen_keys above), never the full strings.
-            if not row.rejected and row.start_datetime is not None and row.udr_key is not None:
+            # DUPLICATE_IN_FILE (rm21 §4 / R2) — two rows share the billing-month
+            # identity (period_of(start_datetime), mno|cu|polygon) within this
+            # file. A same-cell/different-month pair is KEPT. Only checkable once
+            # the row has a valid instant + key; keyed by a bounded digest.
+            if (
+                not row.rejected
+                and row.start_datetime is not None
+                and row.udr_key is not None
+            ):
                 digest = hashlib.blake2b(
-                    f"{row.start_datetime.isoformat()}\x00{row.udr_key}".encode(),
+                    f"{period_of(row.start_datetime).isoformat()}\x00{row.udr_key}".encode(),
                     digest_size=20,
                 ).digest()
                 if digest in seen_keys:
@@ -682,24 +975,149 @@ def process_file(
             if row.rejected:
                 rejects.write(row)
                 continue
+
+            # ---- rm21 identity / mapping checks (whole-batch hard-stops) ----
+            # Only a structurally-valid, non-duplicate row reaches here, so it has
+            # a cell (udr_key), a parsed instant, and mapped values.
+            assert row.udr_key is not None and row.start_datetime is not None
+            cell = row.udr_key
+            mno = row.values[profile.mno_column].strip()
+
+            # Factor 1 — resolve the MNO (cached; one query per distinct MNO).
+            resolution = mno_cache.get(mno)
+            if resolution is None:
+                resolution = resolve_mno(conn, mno, row.start_datetime, udr_type)
+                mno_cache[mno] = resolution
+            if resolution == _UNKNOWN_SUBSCRIBER:
+                hard_stop = (
+                    "UNKNOWN_SUBSCRIBER",
+                    f"MNO {mno!r} (line {line_no}) resolves to no RAN_USAGE "
+                    "subscriber — party_role_specification mnoPublicKey1 is unknown "
+                    "or empty",
+                    {"file_key": file_key, "mno": mno, "line_no": line_no},
+                )
+                break
+            if resolution == _MNO_KEY_NOT_UNIQUE:
+                hard_stop = (
+                    _MNO_KEY_NOT_UNIQUE,
+                    f"MNO {mno!r} (line {line_no}) resolves to more than one "
+                    "customer/subscription — the one-MNO→one-customer invariant is "
+                    "broken",
+                    {"file_key": file_key, "mno": mno, "line_no": line_no},
+                )
+                break
+            assert isinstance(resolution, MnoResolution)
+
+            # input→ratecard mapping — every input cell must map (rm21 §4, R3).
+            ratecard_cell = ratecard.get(cell)
+            if ratecard_cell is None:
+                hard_stop = (
+                    _HARD_STOP_INPUT_UNMAPPED,
+                    f"input cell {cell!r} (line {line_no}) has no ACTIVE ratecard "
+                    "entry — the input is not fully mapped",
+                    {"file_key": file_key, "cell": cell, "line_no": line_no},
+                )
+                break
+            seen_ratecard_cells.add(cell)
+
+            # Factor 2 — ratecard lkp_subscriber_ref_id == resolved party_role_id.
+            if ratecard_cell.lkp_subscriber_ref_id != resolution.party_role_id:
+                hard_stop = (
+                    _HARD_STOP_SUBSCRIBER_REF,
+                    f"cell {cell!r} (line {line_no}) ratecard lkp_subscriber_ref_id "
+                    f"{ratecard_cell.lkp_subscriber_ref_id!r} != resolved party_role_id "
+                    f"{resolution.party_role_id!r}",
+                    {"file_key": file_key, "cell": cell, "line_no": line_no},
+                )
+                break
+
+            # Factor 3 — resolved offering family id == the pinned family id.
+            if resolution.family_id != pin.family_id:
+                hard_stop = (
+                    _HARD_STOP_PRODUCT_PIN,
+                    f"cell {cell!r} (line {line_no}) resolved family id "
+                    f"{resolution.family_id!r} != pinned family id {pin.family_id!r}",
+                    {"file_key": file_key, "cell": cell, "line_no": line_no},
+                )
+                break
+
+            # service_code — input must equal the matched ratecard row's.
+            if row.service_code != ratecard_cell.service_code:
+                hard_stop = (
+                    _HARD_STOP_SERVICE_CODE,
+                    f"cell {cell!r} (line {line_no}) input service_code "
+                    f"{row.service_code!r} != ratecard service_code "
+                    f"{ratecard_cell.service_code!r}",
+                    {"file_key": file_key, "cell": cell, "line_no": line_no},
+                )
+                break
+
+            # All locks pass — stamp the resolution onto the chunk row (rm21 §2).
+            row.product_inventory_id = resolution.product_inventory_id
+            row.party_role_id = resolution.party_role_id
+            row.family_id = resolution.family_id
             chunk_buffer.append(row)
             if len(chunk_buffer) >= chunk_size:
                 flush()
-        flush()
+        if hard_stop is None:
+            flush()
 
     rejects.close()
     rejected = rejects.count
 
-    # Threshold (D6): 0 = all-or-nothing; otherwise reject rate over parsed.
+    # A whole-batch hard-stop (identity / mapping): REFUSED, zero rows. Discard the
+    # per-batch work dir (any chunks written before the stop) — stranded-batch
+    # reconciliation (rm11) reaps the row + dir if a crash precedes this.
+    if hard_stop is not None:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        code, specific, info = hard_stop
+        return Outcome(
+            status="REFUSED",
+            event_code=code,
+            log_level="ERROR",
+            parsed=parsed,
+            rejected=rejected,
+            discarded=parsed - rejected,  # parsed = rated(0) + rejected + discarded
+            reject_file=reject_path if rejected else None,
+            chunk_paths=[],
+            specific_problem=specific,
+            additional_info=info,
+            alarm_key=f"{code}:{udr_type}:{file_key}:run{batch_run_num}",
+            managed_object=file_key,
+        )
+
+    # ratecard→input completeness (rm21 §5): every ACTIVE ratecard cell must have
+    # appeared in the input. A missing cell is a coverage gap.
+    missing_cells = sorted(set(ratecard) - seen_ratecard_cells)
+    if missing_cells and coverage_enforcement == "HARD_STOP":
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return Outcome(
+            status="REFUSED",
+            event_code=_HARD_STOP_COVERAGE_GAP,
+            log_level="ERROR",
+            parsed=parsed,
+            rejected=rejected,
+            discarded=parsed - rejected,
+            reject_file=reject_path if rejected else None,
+            chunk_paths=[],
+            specific_problem=(
+                f"{len(missing_cells)} ACTIVE ratecard cell(s) absent from the input "
+                "under ratecard_coverage_enforcement=HARD_STOP"
+            ),
+            additional_info={
+                "file_key": file_key,
+                "missing_cell_count": len(missing_cells),
+                "missing_cells_sample": missing_cells[:20],
+            },
+            alarm_key=f"{_HARD_STOP_COVERAGE_GAP}:{udr_type}:{file_key}:run{batch_run_num}",
+            managed_object=file_key,
+        )
+
+    # Structural reject threshold (D6): 0 = all-or-nothing; else reject rate.
     refuse = (reject_threshold == 0 and rejected > 0) or (
         parsed > 0 and rejected / parsed > reject_threshold
     )
     if refuse:
-        # The survivors are not carried — discard the whole per-batch work dir
-        # (all its chunk files at once), rather than unlinking file-by-file with
-        # missing_ok (which silently swallowed a storage fault). A crash before
-        # this point leaves a batch-identifiable work dir that stranded-batch
-        # reconciliation (rm11) can reap alongside the RECEIVED/PROCESSING row.
         shutil.rmtree(work_dir, ignore_errors=True)
         return Outcome(
             status="REFUSED",
@@ -707,24 +1125,65 @@ def process_file(
             log_level="ERROR",
             parsed=parsed,
             rejected=rejected,
-            # The whole file is refused, so nothing is rated: the survivors that
-            # were NOT rejected are DISCARDED, not carried. Count them so the
-            # reconciliation identity parsed = rated(0) + rejected + discarded
-            # still holds for a REFUSED batch (code-standards §10.10) instead of
-            # leaving parsed - rejected records unaccounted.
             discarded=parsed - rejected,
             reject_file=reject_path if rejected else None,
             chunk_paths=[],
+            specific_problem=(
+                f"{rejected} of {parsed} records rejected; reject file names them"
+            ),
+            additional_info={
+                "file_key": file_key,
+                "batch_run_num": batch_run_num,
+                "parsed_count": parsed,
+                "rejected_count": rejected,
+                "reject_threshold": reject_threshold,
+                "reject_rate": (rejected / parsed) if parsed else 0,
+            },
+            alarm_key=f"PARSE_FAILURE:{udr_type}:{file_key}:run{batch_run_num}",
+            managed_object=file_key,
         )
 
+    # Carry survivors. A WARN-mode coverage gap rates the file + flags the gap.
+    coverage_warn = None
+    if missing_cells and coverage_enforcement == "WARN":
+        coverage_warn = {
+            "file_key": file_key,
+            "missing_cell_count": len(missing_cells),
+            "missing_cells_sample": missing_cells[:20],
+        }
+    event_code = "BATCH_PARTIAL" if rejected else None
     return Outcome(
         status="PROCESSING",
-        event_code="BATCH_PARTIAL" if rejected else None,
+        event_code=event_code,
         log_level="WARN" if rejected else None,
         parsed=parsed,
         rejected=rejected,
         reject_file=reject_path if rejected else None,
         chunk_paths=chunk_paths,
+        specific_problem=(
+            f"{rejected} of {parsed} records rejected; reject file names them"
+            if rejected
+            else None
+        ),
+        additional_info=(
+            {
+                "file_key": file_key,
+                "batch_run_num": batch_run_num,
+                "parsed_count": parsed,
+                "rejected_count": rejected,
+                "reject_threshold": reject_threshold,
+                "reject_rate": (rejected / parsed) if parsed else 0,
+            }
+            if rejected
+            else {}
+        ),
+        alarm_key=(
+            f"BATCH_PARTIAL:{udr_type}:{file_key}:run{batch_run_num}"
+            if rejected
+            else None
+        ),
+        managed_object=file_key if rejected else None,
+        coverage_warn=coverage_warn,
     )
 
 
@@ -820,8 +1279,7 @@ def write_manifest(
 ) -> Path:
     """Write the RP handoff manifest (D5/D7): the batch identity, its status and
     the ordered chunk URIs. A single file URI is printed as the task output
-    (``outputs.prp.uri``), matching rm06's file-URI handoff contract. RP/RL
-    (rm08/rm09, still stubs) no-op on a non-``PROCESSING`` status."""
+    (``outputs.prp.uri``). RP/RL no-op on a non-``PROCESSING`` status."""
     manifest = {
         "batch_id": batch_id,
         "udr_type": udr_type,
@@ -850,23 +1308,28 @@ def _work_dir(base: str | None, batch_id: str) -> Path:
     handoff). These are EPHEMERAL, intra-execution artifacts — prp/rp/rl run as
     separate processes on the same pod (ACA process runner, rm04 D0), so a local
     path they all see is enough, and a re-run regenerates them. Default to the
-    system temp dir (always writable) rather than ``/data/work`` — only the four
-    named locations (landing/archive/error/logs) are guaranteed mounts, and their
-    parent ``/data`` need not be writable. The durable Blob/internal-storage
-    handoff is rm08's concern. ``--work-dir`` overrides (the flow may point it at
-    a mounted path if durability across a pod restart is ever needed)."""
+    system temp dir; ``--work-dir`` overrides."""
     root = Path(base) if base else Path(tempfile.gettempdir()) / "rating-work"
     return root / batch_id
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="PRP — claim, validate, reject (rm07)")
+    parser = argparse.ArgumentParser(description="PRP — claim, validate, resolve, reject (rm07/rm21)")
     parser.add_argument("--source-file", required=True, help="landing file path or file:// URI")
     parser.add_argument("--udr-type", required=True)
     parser.add_argument("--profile", required=True, help="feed profile JSON (flow variable)")
     parser.add_argument("--file-key-rule", required=True, help="regex with a named file_key group")
     parser.add_argument("--reject-threshold", type=float, required=True)
     parser.add_argument("--chunk-size", type=int, required=True)
+    # rm21 — the display name of the pinned subscription product; resolved once to
+    # COALESCE(family_offering_id, product_offering_id) + its udrType / card specs.
+    parser.add_argument("--subscription-product-name", required=True)
+    # rm21 §5 — ratecard→input completeness enforcement mode.
+    parser.add_argument(
+        "--ratecard-coverage-enforcement",
+        default="HARD_STOP",
+        choices=("HARD_STOP", "WARN"),
+    )
     parser.add_argument("--workflow-execution-id", required=True)
     parser.add_argument("--flow-revision", type=int, default=None)
     # The worker image tag (Inv #12) — the flow leaves this to the container env
@@ -895,12 +1358,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # 0. Fail fast and CLEARLY on a missing/empty/unusable source file, BEFORE
     #    any file_key or logging work — one stderr diagnostic + exit 1, never an
-    #    opaque traceback. The cases (all reachable from an unresolved trigger
-    #    binding — a D0-spike item): an EMPTY value would derive an empty file_key
-    #    and then crash the FILE_KEY_UNRESOLVED handler on logemit's
-    #    empty-correlation-field guard; a REMOTE/kestra URI (kestra://, abfss://)
-    #    makes storage._local_path raise ValueError; a value with no filename
-    #    component; and a file that does not exist / is not a regular file.
+    #    opaque traceback (the cases are all reachable from an unresolved trigger
+    #    binding — a D0-spike item).
     if not args.source_file.strip():
         print(
             "PRP: --source-file is empty — nothing to process. "
@@ -952,9 +1411,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # The is_file() check in step 0 narrows but cannot close the window — the
-    # file can still vanish before it is read (a competing sweep, a retention
-    # job, an SMB hiccup). Convert that into the same clean exit, not an opaque
-    # FileNotFoundError traceback.
+    # file can still vanish before it is read. Convert that into the same clean
+    # exit, not an opaque FileNotFoundError traceback.
     try:
         checksum = file_checksum(source_path)
         size = source_path.stat().st_size
@@ -1028,7 +1486,58 @@ def main(argv: list[str] | None = None) -> int:
         batch_id, batch_run_num = claim
         work_dir = _work_dir(args.work_dir, batch_id)
 
-        # 4-7. Parse, validate, chunk, threshold.
+        # 4. Per-batch extracts (rm21 §1): the pinned offering + its ACTIVE
+        #    ratecard, resolved ONCE on the claim connection (rm16 grants).
+        pin = resolve_pin(conn, args.subscription_product_name)
+        ratecard = extract_ratecard(conn, profile, pin.card_name) if pin.card_name else {}
+
+        # udrType confirmation (rm21 §3): the flow udr_type must equal the pinned
+        # offering's udrType spec, or the whole batch hard-stops.
+        if pin.udr_type_value != args.udr_type:
+            udrtype_outcome = Outcome(
+                status="REFUSED",
+                event_code="UDRTYPE_MISMATCH",
+                log_level="ERROR",
+                parsed=0,
+                rejected=0,
+                discarded=0,
+                specific_problem=(
+                    f"flow udr_type {args.udr_type!r} != pinned offering udrType spec "
+                    f"{pin.udr_type_value!r} ({args.subscription_product_name!r})"
+                ),
+                additional_info={
+                    "file_key": file_key,
+                    "flow_udr_type": args.udr_type,
+                    "offering_udr_type": pin.udr_type_value,
+                    "subscription_product_name": args.subscription_product_name,
+                },
+                alarm_key=f"UDRTYPE_MISMATCH:{args.udr_type}:{file_key}:run{batch_run_num}",
+                managed_object=file_key,
+            )
+            stamp_counts(
+                conn,
+                batch_id=batch_id,
+                outcome=udrtype_outcome,
+                started_at=started_at,
+                workflow_execution_id=args.workflow_execution_id,
+                flow_revision=args.flow_revision,
+                engine_version=engine_version,
+            )
+            emit_summary(
+                event_code="UDRTYPE_MISMATCH",
+                log_level="ERROR",
+                source_file=source_file,
+                batch_id=batch_id,
+                workflow_execution_id=args.workflow_execution_id,
+                specific_problem=udrtype_outcome.specific_problem or "",
+                additional_info=udrtype_outcome.additional_info,
+                alarm_key=udrtype_outcome.alarm_key,
+                managed_object=udrtype_outcome.managed_object,
+            )
+            print(f"UDRTYPE_MISMATCH: batch {batch_id} REFUSED", file=sys.stderr)
+            return 1
+
+        # 5-9. Parse, validate, resolve, check, chunk, threshold.
         outcome = process_file(
             conn,
             source_path=source_path,
@@ -1037,13 +1546,16 @@ def main(argv: list[str] | None = None) -> int:
             file_key=file_key,
             udr_type=args.udr_type,
             profile=profile,
+            pin=pin,
+            ratecard=ratecard,
+            coverage_enforcement=args.ratecard_coverage_enforcement,
             reject_threshold=args.reject_threshold,
             chunk_size=args.chunk_size,
             work_dir=work_dir,
             now=now,
         )
 
-        # 8. Stamp counts + emit the ONE summarised line.
+        # 10. Stamp counts + emit the summarised line(s).
         stamp_counts(
             conn,
             batch_id=batch_id,
@@ -1054,6 +1566,24 @@ def main(argv: list[str] | None = None) -> int:
             engine_version=engine_version,
         )
 
+    # A WARN-mode ratecard coverage gap rates the file but flags the gap with its
+    # own summarised line (rm21 §5) — one line per code (Inv #11).
+    if outcome.coverage_warn is not None:
+        emit_summary(
+            event_code=_COVERAGE_GAP_WARN,
+            log_level="WARN",
+            source_file=source_file,
+            batch_id=batch_id,
+            workflow_execution_id=args.workflow_execution_id,
+            specific_problem=(
+                f"{outcome.coverage_warn['missing_cell_count']} ACTIVE ratecard "
+                "cell(s) absent from the input (ratecard_coverage_enforcement=WARN)"
+            ),
+            additional_info=outcome.coverage_warn,
+            alarm_key=f"{_COVERAGE_GAP_WARN}:{args.udr_type}:{file_key}",
+            managed_object=file_key,
+        )
+
     if outcome.event_code:
         emit_summary(
             event_code=outcome.event_code,
@@ -1061,29 +1591,19 @@ def main(argv: list[str] | None = None) -> int:
             source_file=source_file,
             batch_id=batch_id,
             workflow_execution_id=args.workflow_execution_id,
-            specific_problem=(
-                f"{outcome.rejected} of {outcome.parsed} records rejected; "
-                f"reject file names them"
-            ),
-            additional_info={
-                "file_key": file_key,
-                "batch_run_num": batch_run_num,
-                "parsed_count": outcome.parsed,
-                "rejected_count": outcome.rejected,
-                "discarded_count": outcome.discarded,
-                "reject_threshold": args.reject_threshold,
-                "reject_rate": (outcome.rejected / outcome.parsed) if outcome.parsed else 0,
-            },
-            alarm_key=f"{outcome.event_code}:{args.udr_type}:{file_key}:run{batch_run_num}",
-            managed_object=file_key,
+            specific_problem=outcome.specific_problem or "",
+            additional_info=outcome.additional_info,
+            alarm_key=outcome.alarm_key,
+            managed_object=outcome.managed_object,
         )
 
     if outcome.status == "REFUSED":
-        # The whole file is refused (threshold exceeded). Exit non-zero so the
-        # flow does not carry survivors to RP/RL; the error handler reports.
+        # The whole batch is refused (threshold exceeded or an rm21 hard-stop).
+        # Exit non-zero so the flow does not carry survivors to RP/RL; the error
+        # handler reports.
         print(
-            f"PARSE_FAILURE: {outcome.rejected}/{outcome.parsed} rejected exceeds "
-            f"threshold {args.reject_threshold} — batch {batch_id} REFUSED",
+            f"{outcome.event_code}: batch {batch_id} REFUSED "
+            f"({outcome.rejected}/{outcome.parsed} rejected)",
             file=sys.stderr,
         )
         return 1
