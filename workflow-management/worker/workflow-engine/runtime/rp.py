@@ -136,6 +136,27 @@ def _exceeds_scale(value: Decimal, scale: int) -> bool:
     return exponent + trailing_zeros < -scale
 
 
+# numeric(18,6) also bounds the INTEGER side: 18 total − 6 fractional = 12 integer
+# digits. `_exceeds_scale` guards the fractional side; this guards the integer side,
+# so a PER_UNIT product (rate × quantity — new in rm19, FLAT ignored quantity) that
+# overflows the column is refused HERE with a diagnosable error instead of surfacing
+# as an opaque RL numeric(18,6) overflow (22003) a stage later, or an uncaught
+# Decimal InvalidOperation in quantize() (keeping total digits ≤ 18 also stays
+# within the default 28-digit Decimal context, so quantize can never raise).
+_MAX_NUMERIC_INT_DIGITS = 18 - _RAW_SCALE  # 12
+
+
+def _exceeds_integer_capacity(value: Decimal) -> bool:
+    """True if ``value``'s integer part needs more than ``_MAX_NUMERIC_INT_DIGITS``
+    digits — i.e. it cannot be stored in ``numeric(18,6)``. Companion to
+    ``_exceeds_scale`` (which guards the fractional side). ``adjusted()`` is the
+    exponent of the most-significant digit, so integer-digit count is
+    ``adjusted() + 1`` for any value ≥ 1 (and a sub-1 value trivially fits)."""
+    if value == 0:
+        return False
+    return value.adjusted() + 1 > _MAX_NUMERIC_INT_DIGITS
+
+
 # ---------------------------------------------------------------------------
 # udr_rate_detail (D6) — the FLAT and PER_UNIT variants, the Python mirror of the
 # Zod discriminated union in validation/rating/udr-rate-detail.schema.ts (which is
@@ -515,6 +536,12 @@ def rate_record(
             "stored in numeric(18,6) without a silent round — fix the catalog / "
             "override amount (RP will not silently round a rate)."
         )
+    if _exceeds_integer_capacity(amount):
+        raise ValueError(
+            f"resolved amount {amount} for price {resolution.udr_price_ref} exceeds "
+            f"numeric(18,6)'s {_MAX_NUMERIC_INT_DIGITS}-integer-digit capacity and "
+            "cannot be stored in udr_usage_rate — fix the catalog / override amount."
+        )
 
     if rate_type == "PER_UNIT":
         # PER_UNIT (rm19 §4): the charge is ratePerUnit × usage_quantity. The rate
@@ -530,6 +557,14 @@ def rate_record(
                 f"{resolution.udr_price_ref} has more than {_RAW_SCALE} significant "
                 "fractional digits and cannot be stored in numeric(18,6) without a "
                 "silent round (RP will not silently round a charge)."
+            )
+        if _exceeds_integer_capacity(raw):
+            raise ValueError(
+                f"PER_UNIT charge {raw} (rate {amount} × quantity {qty}) for price "
+                f"{resolution.udr_price_ref} exceeds numeric(18,6)'s "
+                f"{_MAX_NUMERIC_INT_DIGITS}-integer-digit capacity — the product "
+                "cannot be stored in udr_rated_price_raw (RP refuses rather than "
+                "overflow RL's numeric cast or crash in quantize)."
             )
         usage_rate_str = format(amount.quantize(_RAW_UNIT), "f")
         raw_str = format(raw.quantize(_RAW_UNIT), "f")
@@ -818,6 +853,40 @@ def emit_lookup_miss(
     logemit.write_lines(path, [record])
 
 
+def emit_card_driven_unsupported(
+    *,
+    source_file: str,
+    batch_id: str,
+    workflow_execution_id: str,
+    udr_type: str,
+    file_key: str,
+    exc: CardDrivenRatingUnsupported,
+) -> None:
+    """Write ONE ``CARD_DRIVEN_RATING_UNSUPPORTED`` ``process_log`` line (the rm18
+    event code, component RP) so the sweep raises it as a (non-auto-clearing) alarm
+    — the structured, diagnosable signal the spec's "loud, diagnosable failure"
+    calls for, not merely a stderr print. Severity is the catalog's, resolved by
+    the sweep from ``event_catalog`` (§7.2a/§7.2b)."""
+    record = logemit.line(
+        component="RP",
+        log_level="ERROR",
+        event_code=exc.event_code,
+        source_file=source_file,
+        batch_id=batch_id,
+        workflow_execution_id=workflow_execution_id,
+        specific_problem=str(exc),
+        managed_object=file_key,
+        alarm_key=f"{exc.event_code}:{udr_type}:{file_key}",
+        additional_info={
+            "file_key": file_key,
+            "pla_spec_id": exc.pla_spec_id,
+            "price_ref": exc.price_ref,
+        },
+    )
+    path = storage.location("logs") / f"RP-{workflow_execution_id}.jsonl"
+    logemit.write_lines(path, [record])
+
+
 def write_manifest(
     work_dir: Path,
     *,
@@ -989,9 +1058,18 @@ def main(argv: list[str] | None = None) -> int:
             )
         except CardDrivenRatingUnsupported as exc:
             # A card-driven usage_rate (plaSpecId='PLA_USAGE_RATE') is unsupported
-            # in RP — rate-card resolution is a later phase (Inv. #42). Fail LOUD
-            # with the rm18 event code and write NO rated manifest, never a silent
+            # in RP — rate-card resolution is a later phase (Inv. #42). Fail LOUD:
+            # emit the rm18 event code as a process_log line (the sweep raises it as
+            # a non-auto-clearing alarm) AND write NO rated manifest — never a silent
             # miss or a partial charge (rm19 §3).
+            emit_card_driven_unsupported(
+                source_file=source_file,
+                batch_id=batch_id,
+                workflow_execution_id=args.workflow_execution_id,
+                udr_type=udr_type,
+                file_key=file_key,
+                exc=exc,
+            )
             print(f"{exc.event_code}: {exc}", file=sys.stderr)
             return 1
 

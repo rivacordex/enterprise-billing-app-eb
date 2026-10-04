@@ -637,7 +637,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         startDatetime: new Date(incoming.start_datetime as string),
         endDatetime: new Date(incoming.end_datetime as string),
         status: "RATED",
-        udrSubscriptionRefId: incoming.udr_subscriber_ref_id as string,
+        udrSubscriptionRefId: incoming.udr_subscription_ref_id as string,
         udrKey: incoming.udr_key as string,
         udrUsageQuantity: incoming.udr_usage_quantity as string,
         udrUsageUnit: incoming.udr_usage_unit as string,

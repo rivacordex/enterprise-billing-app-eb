@@ -1026,19 +1026,19 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.55' WHERE price_type = 'usage'`;
 
       // The already-rated row's snapshotted inputs are unchanged, and the amount
-      // reproduces from them (round(udr_usage_rate) == udr_rated_price) WITHOUT
-      // re-resolving against the now-changed catalog.
-      expect(originalRate1).toBe("0.0050"); // NOT the new 0.9999
-      expect(originalPrice1).toBe("0.01");
-      expect(originalRate4).toBe("0.07"); // NOT the new 0.55
+      // reproduces from them (PER_UNIT: round(udr_usage_rate × udr_usage_quantity)
+      // == udr_rated_price) WITHOUT re-resolving against the now-changed catalog.
+      expect(originalRate1).toBe("0.005000"); // NOT the new 0.999900
+      expect(originalPrice1).toBe("0.50"); // 0.0050 × 100, HALF_UP
+      expect(originalRate4).toBe("0.070000"); // NOT the new 0.55
 
       // Re-running rp now (a re-resolve) would pick up the changed catalog — this
       // is why the snapshot is mandatory (D4): the DURABLE snapshot on the row,
       // read back by RL, is what reproduces the charge, never a re-resolution.
       const { rows: reResolved } = rateFixture("20260824");
       const again = byKey(reResolved, invA, "2026-08-14");
-      expect(again?.udr_usage_rate).toBe("0.9999"); // proves a re-resolve DIVERGES
-      // ...so the snapshot (0.0050), not the re-resolve (0.9999), is the record
+      expect(again?.udr_usage_rate).toBe("0.999900"); // proves a re-resolve DIVERGES
+      // ...so the snapshot (0.005000), not the re-resolve (0.999900), is the record
       // of truth for the original charge.
 
       // Restore for any later assertions in this file.
@@ -1095,6 +1095,14 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }
       expect(threw).toBe(true);
       expect(stderr).toContain("CARD_DRIVEN_RATING_UNSUPPORTED");
+      // #6 (rm19) — the failure is also emitted as ONE structured process_log line
+      // (rm18 event code, component RP) so the sweep raises it as an alarm, not just
+      // a stderr print. Same shape as the LOOKUP_MISS line asserted above.
+      const lines = logLinesFor("RP", "rp-carddriven");
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(firstLine(lines)).event_code).toBe(
+        "CARD_DRIVEN_RATING_UNSUPPORTED",
+      );
     });
 
     // -----------------------------------------------------------------
