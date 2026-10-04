@@ -307,9 +307,8 @@ WITH _chunk AS (
     SELECT * FROM unnest(
         %(line_nos)s::bigint[],
         %(inventory_ids)s::text[],
-        %(start_datetimes)s::timestamptz[],
-        %(usage_units)s::text[]
-    ) AS t(line_no, product_inventory_id, start_datetime, usage_unit)
+        %(start_datetimes)s::timestamptz[]
+    ) AS t(line_no, product_inventory_id, start_datetime)
 ),
 price_windows AS (
     SELECT popp.product_offering_id,
@@ -333,20 +332,30 @@ price_windows AS (
            -- A `usage_rate`'s `ratePerUnit` is NOT NULL by CHECK, so — unlike
            -- the old `tiered`-row-with-NULL-amount case this window used to
            -- fall through on — a malformed rate can no longer produce a NULL
-           -- `effective_amount` here. LOOKUP_MISS below now fires only for its
-           -- two real causes: no `usage_rate` on the offering at all, or none
-           -- whose window contains the record's `start_datetime` — both are
-           -- the JOIN below simply finding no row (pm51-spec D4).
+           -- `effective_amount` here. A LOOKUP_MISS is therefore just the JOIN
+           -- below finding no row; `resolve_chunk` enumerates the no-row causes
+           -- (unresolved inventory/order-item join, no `usage_rate` lane, or a
+           -- `start_datetime` before the lane's first effective price).
            popp.start_date_time AS eff_from,
            lead(popp.start_date_time) OVER (
-               -- Partitioned by unit_of_measure too (not just component_type):
-               -- an offering may carry more than one `usage_rate` lane (e.g.
-               -- distinct metered units), and without this key a dated
-               -- successor in one lane could wrongly truncate another lane's
-               -- `eff_to` (pm51-spec D2/D5; mirrors pm46's own
-               -- product_offering_price_component_start_unique key).
-               PARTITION BY popp.product_offering_id, popp.component_type,
-                            popp.unit_of_measure
+               -- The offering carries ONE `usage_rate` lane (the single-price-card
+               -- rule, rm20), so the lane is (product_offering_id, component_type)
+               -- only. The unit is product-sourced now (rm19) and no longer a join
+               -- dimension, so it is deliberately NOT in the partition key — the
+               -- as-of chain is the single lane's dated history.
+               --
+               -- DELIBERATE DEVIATION (owner-confirmed 2026-10-04): this omits the
+               -- `unit_of_measure` key that db/schema/product.ts:186-189 says the
+               -- runtime readers MUST keep. Multi-unit `usage_rate` pricing is OUT
+               -- OF SCOPE this phase — an offering is assumed to carry a single
+               -- usage_rate unit (single-price-card + singleSubInstPerCust;
+               -- seed-discipline, same accepted-risk class as Inv #21). The DB DOES
+               -- permit >1 unit (the unique key includes unit_of_measure), so the
+               -- real guarantee belongs at the product WRITE side (authoring /
+               -- Workstream C), not this read-path — out of rm20's boundary. A
+               -- genuinely multi-unit offering would mis-resolve here; see
+               -- ratemgmt-progress-tracker.md Open Questions (rm20).
+               PARTITION BY popp.product_offering_id, popp.component_type
                ORDER BY popp.start_date_time
            ) AS eff_to
     FROM product.product_offering_price popp
@@ -370,7 +379,6 @@ JOIN   ordering.product_order_item poi
 -- product_offering_id FK), never the current offering (code-standards §6.1).
 JOIN   price_windows pw
        ON pw.product_offering_id = poi.product_offering_id
-       AND pw.unit_of_measure = r.usage_unit
        AND pw.eff_from <= r.start_datetime
        AND (r.start_datetime < pw.eff_to OR pw.eff_to IS NULL)   -- [start, end)
 LEFT JOIN ordering.order_item_price_override oipo
@@ -393,47 +401,23 @@ class Resolution:
     udr_price_override_ref: str | None
 
 
-# The measured-usage unit a feed profile emits (PRP's ``udr_usage_unit``, e.g.
-# RAN's ``"MBPS"``) is a DIFFERENT vocabulary from the catalog's
-# ``product_offering_price.unit_of_measure`` (``product.UNITS_OF_MEASURE``:
-# ``Mbps``/``GB``/``MB``/``EA``). The resolution join matches the two by EXACT
-# equality (``pw.unit_of_measure = r.usage_unit``), so a feed token must be
-# translated to its catalog token BEFORE it reaches the join — otherwise a
-# case-only skew (``MBPS`` vs ``Mbps``) makes every record LOOKUP_MISS. This is a
-# DOMAIN mapping, not a generic casefold: a unit's canonical catalog spelling is
-# business data owned here, kept explicitly separate from the feed vocabulary and
-# never silently equated by string case (same posture as the two price-type
-# vocabularies, code-standards §6.21). An unmapped token passes through
-# unchanged, so an unknown unit still simply LOOKUP_MISSes (its prior behaviour)
-# rather than resolving against the wrong lane.
-_FEED_UNIT_TO_CATALOG: dict[str, str] = {
-    "MBPS": "Mbps",
-}
-
-
-def _to_catalog_unit(feed_unit: str) -> str:
-    """Translate a feed's measured-usage unit to the catalog ``unit_of_measure``
-    vocabulary the price-resolution join matches against. Unknown units pass
-    through unchanged (they LOOKUP_MISS, as before) — never case-folded."""
-    return _FEED_UNIT_TO_CATALOG.get(feed_unit, feed_unit)
-
-
 def resolve_chunk(
     conn: psycopg.Connection,
     line_nos: list[int],
     inventory_ids: list[str],
     start_datetimes: list[datetime],
-    usage_units: list[str],
 ) -> dict[int, Resolution]:
     """Run the as-of query once for the whole chunk (D11), returning a
     ``line_no -> Resolution`` map. A record with no matching row is simply absent
-    from the map — the caller raises ``LOOKUP_MISS`` for it (D3). ``usage_units``
-    is matched against each price window's ``unit_of_measure`` (pm51-spec D2/D5)
-    so an offering carrying more than one ``usage_rate`` lane at different units
-    (e.g. GB and Mbps) can never join a record to more than one active rate. Each
-    feed unit is translated to the catalog vocabulary (``_to_catalog_unit``)
-    before the join, since a feed's measured-unit spelling (e.g. ``MBPS``) is a
-    separate vocabulary from the catalog's (``Mbps``)."""
+    from the map — the caller raises ``LOOKUP_MISS`` for it (D3). The offering
+    carries a single ``usage_rate`` lane (the single-price-card rule, rm20),
+    selected by ``(product_offering_id, component_type)`` as-of ``start_datetime``;
+    the unit is product-sourced (rm19) and no longer a join dimension, so a unit
+    skew is **no longer** a miss cause. A ``LOOKUP_MISS`` still arises from the
+    other no-row cases, unchanged by rm20: the ``product_inventory`` /
+    ``product_order_item`` join not resolving the subscriber ref (e.g. an unknown
+    ``product_inventory_id``), no ``usage_rate`` lane on the pinned offering, or a
+    ``start_datetime`` before that lane's first effective price."""
     rows = db.fetch(
         conn,
         _RESOLVE_SQL,
@@ -441,9 +425,6 @@ def resolve_chunk(
             "line_nos": line_nos,
             "inventory_ids": inventory_ids,
             "start_datetimes": start_datetimes,
-            # Feed vocabulary → catalog vocabulary before the exact-equality join
-            # (e.g. RAN "MBPS" → catalog "Mbps"); see _to_catalog_unit.
-            "usage_units": [_to_catalog_unit(u) for u in usage_units],
         },
     )
     resolved: dict[int, Resolution] = {}
@@ -753,22 +734,20 @@ def process_chunks(
         end_datetimes = [_as_utc(v) for v in frame["end_datetime"].to_list()]
         udr_keys = [str(v) for v in frame["udr_key"].to_list()]
         quantities = [str(v) for v in frame["udr_usage_quantity"].to_list()]
-        units = [str(v) for v in frame["udr_usage_unit"].to_list()]
         subscriber_refs = subscriber_series(frame, subscriber_ref_column)
 
         # ONE set-based as-of query for the whole chunk (Inv #10, no per-record
         # fan-out). Resolve against the PINNED version through the price chain.
-        resolved = resolve_chunk(
-            conn, line_nos, subscriber_refs, start_datetimes, units
-        )
+        resolved = resolve_chunk(conn, line_nos, subscriber_refs, start_datetimes)
 
         rated: list[RatedRecord] = []
         for i, line_no in enumerate(line_nos):
             resolution = resolved.get(line_no)
-            # A record whose subscriber/offering/price does not resolve — or
-            # whose resolved catalog price carries no scalar amount (a tiered
-            # price, unratable by the v1 FLAT calc) — is a LOOKUP_MISS (D3). It
-            # is NOT rated and NOT fabricated.
+            # A record whose subscriber / offering / price does not resolve is a
+            # LOOKUP_MISS (D3) — NOT rated, NOT fabricated. (The
+            # `effective_amount is None` arm is now dead-defensive: a usage_rate's
+            # `ratePerUnit` is NOT NULL by CHECK, so a resolved row always carries
+            # a scalar amount; the arm stays as a fail-closed backstop.)
             if resolution is None or resolution.effective_amount is None:
                 outcome.lookup_miss += 1
                 outcome.miss_line_nos.append(line_no)
