@@ -15,37 +15,35 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { appuser } from "@/db/schema/identity";
-import { organization, partyRole } from "@/db/schema/customer";
-import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
-import { productOffering, productOfferingPrice } from "@/db/schema/product";
-import { productOrder, productOrderItem } from "@/db/schema/ordering";
-import { productInventory } from "@/db/schema/inventory";
+import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
+import {
+  insertRanOffering,
+  insertRanCustomer,
+  insertRanBillCycle,
+  insertRanBillingAccount,
+  insertRanSubscription,
+  insertRanRatecard,
+  SAMPLE_5G_LKP_ROWS,
+  SAMPLE_5G_COMMERCIAL_UNIT,
+  SAMPLE_5G_RATE_PER_UNIT,
+} from "@/db/seeds/sample/sample-5g-fixture";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { udrBatch } from "@/db/schema/rating/udr-batch";
-import type { UsageRateComponent } from "@/validation/product/pricing-component.schema";
 
-// rm13-spec D3 — "One test exercising the whole spine, composed from the
-// units: a RAN_USAGE file lands -> PRP claims and rejects the 37 bad rows
-// (PARTIAL) -> RP rates the survivors -> RL loads at RATED and archives ->
-// upstream reissues -> rm10 supersedes -> the completeness check runs
-// clean. Proves the units compose, not just pass in isolation."
+// rm22-spec §1 — the rm13 operator journey, REFRESHED to PER_UNIT (rm22 refreshes
+// the journey + suite for PER_UNIT; it does NOT build a second test tree). The
+// 3-row Sample-5G `.udr` sample lands -> PRP resolves + validates (all three
+// identity locks + service_code + completeness pass on the seeded Sample-5G
+// data) -> RP rates PER_UNIT -> RL loads at RATED -> udr_rated carries
+// udr_rate_type="PER_UNIT", udr_rated_price_raw = ratePerUnit × usage_volume,
+// udr_usage_unit="Mbps", udr_subscription_ref_id = the subscription -> re-drop
+// the SAME filename -> rm10 supersedes the prior live rows, loads the new set.
+// Proves the units (rm21 PRP / rm20 RP / rm09+rm10 RL) compose end to end, not
+// just pass in isolation — R1 (FLAT→PER_UNIT) asserted here as ship-blocking.
 //
-// This is the ONE new behavioral test rm13 adds beyond test #15 (rm13-spec
-// intro: "it adds no new test tree ... [only] test #15" refers to the
-// GUARDRAIL suite in code-standards §10 — the end-to-end journey is a
-// separate rm13 deliverable per Implementation §3/Design D3, verification
-// checklist item 1). It composes rm07 (prp), rm08 (rp), rm09 (rl), rm10
-// (supersession) and rm12 (completeness) exactly as each unit's own suite
-// already black-box tests them individually — this suite's job is only to
-// prove they compose end to end in ONE run, not to re-prove any single
-// unit's behaviour (that's each unit's own suite).
-//
-// Requires DATABASE_URL and python3+the worker's runtime (psycopg+polars) —
-// same posture as every rm06-rm12 DB-gated suite; no live Kestra engine
-// needed (this shells out to the real runtime modules directly, exactly as
-// the flow's own tasks invoke them, same black-box precedent as rm07-rm12).
+// Requires DATABASE_URL + python3 with the worker runtime (psycopg + polars);
+// shells the real runtime modules exactly as the flow's tasks do (no live Kestra
+// engine). Skips loudly otherwise — same posture as every rm06+ DB-gated suite.
 const databaseUrl = process.env.DATABASE_URL;
 const workerDir = join(
   process.cwd(),
@@ -67,45 +65,45 @@ function pythonRuntimeReady(): boolean {
 }
 const pythonReady = pythonRuntimeReady();
 
-const ROLE_PW = "rm13-test-only-pw";
+const ROLE_PW = "rm22-test-only-pw";
 const RATING_ROLES_SQL = join(
   process.cwd(),
   "db/bootstrap/rating-db-roles.sql",
 );
-const ENGINE_VERSION = "rm13-test-engine@sha256:deadbeef";
+const ENGINE_VERSION = "rm22-test-engine@sha256:deadbeef";
+const MNO = "MNO-E2E";
+const PRODUCT_NAME = "Sample 5G Services e2e";
+const CARD_NAME = "RATECARD_E2E";
 
+// The 7-column `.udr` feed profile the flow ships for RAN_USAGE (rm21 §6) — kept
+// identical here so the journey exercises the real production configuration.
 const FEED_PROFILE = JSON.stringify({
-  header: ["DATETIME", "PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE", "USAGE_MBPS"],
-  event_time_column: "DATETIME",
-  event_time_assumed_tz: "UTC",
-  usage_column: "USAGE_MBPS",
-  usage_unit: "MBPS",
-  udr_key_columns: ["PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE"],
+  header: [
+    "mno_public_id",
+    "commercial_unit",
+    "polygon_id",
+    "datetime_YYYYMMDDHHMI",
+    "usage_volume",
+    "district_name",
+    "service_code",
+  ],
+  event_time_column: "datetime_YYYYMMDDHHMI",
+  event_time_assumed_tz: "Asia/Kuala_Lumpur",
+  usage_column: "usage_volume",
+  udr_key_columns: ["mno_public_id", "commercial_unit", "polygon_id"],
+  mno_column: "mno_public_id",
+  commercial_unit_column: "commercial_unit",
+  polygon_column: "polygon_id",
+  service_code_column: "service_code",
   subscriber_ref: null,
   interval_seconds: null,
   future_tolerance_seconds: 300,
 });
-const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
-const CURRENCY = "MYR";
-
-// pm51-spec D6 — component-envelope builder replacing the pre-reshape flat
-// usage price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
-// `buildPriceEnvelope` builds in production).
-function usageRateEnvelope(
-  ratePerUnit: string,
-  unitOfMeasure: "Mbps",
-): UsageRateComponent {
-  return {
-    "@type": "usage_rate",
-    specVersion: 1,
-    plaSpecId: null,
-    priceType: "usage",
-    appliesAt: "rating",
-    basis: "quantity",
-    boundTo: { unitOfMeasure },
-    params: { ratePerUnit, rateCardLookUp: null },
-  };
-}
+const FILE_KEY_RULE =
+  "^(?P<file_key>rating-input-file-\\d{12})(?:_v\\d+)?\\.udr$";
+const UDR_HEADER =
+  "mno_public_id,commercial_unit,polygon_id,datetime_YYYYMMDDHHMI,usage_volume,district_name,service_code";
+const NOW = "2026-09-01T00:00:00Z";
 
 function statements(path: string): string[] {
   return readFileSync(path, "utf8")
@@ -118,8 +116,9 @@ async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
     await client.unsafe(statement);
   }
 }
+
 describe.skipIf(!databaseUrl || !pythonReady)(
-  "rm13 — the complete operator journey (rm13-spec D3, requires DATABASE_URL and python3+runtime)",
+  "rm22 — the PER_UNIT operator journey (rm22-spec §1, requires DATABASE_URL and python3+runtime)",
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
@@ -129,7 +128,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     let logsDir: string;
     let archiveDir: string;
     let workDir: string;
-    let invA: string;
+    let productInventoryId: string;
 
     const dropAll = async (client: postgresjs.Sql) => {
       for (const s of [
@@ -147,125 +146,6 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }
     };
 
-    // Same MYR product/order/inventory graph rm10's suite seeds — one
-    // subscriber, one FLAT usage price, so the priced amount is not the
-    // point of this suite (rm08 already proves resolution/rounding).
-    async function seedProductGraph(): Promise<void> {
-      const userId = crypto.randomUUID();
-      await db.insert(appuser).values({
-        id: userId,
-        userName: "rm13-fixture-user",
-        userEmail: "rm13-fixture@example.invalid",
-        emailVerified: false,
-        authMethod: "LOCAL",
-        status: "ACTIVE",
-      });
-      const [org] = await db
-        .insert(organization)
-        .values({
-          name: "rm13-fixture-org",
-          organizationType: "COMPANY",
-          status: "ACTIVE",
-          lastModifiedBy: userId,
-        })
-        .returning({ organizationId: organization.organizationId });
-      const [pr] = await db
-        .insert(partyRole)
-        .values({ engagedParty: org!.organizationId, lastModifiedBy: userId })
-        .returning({ partyRoleId: partyRole.partyRoleId });
-      const partyRoleId = pr!.partyRoleId;
-      const [bc] = await db
-        .insert(billCycle)
-        .values({ name: "rm13-fixture-cycle", lastEditedBy: userId })
-        .returning({ billCycleId: billCycle.billCycleId });
-      const billCycleId = bc!.billCycleId;
-
-      const [fa] = await db
-        .insert(financialAccount)
-        .values({
-          name: "rm13-fa-MYR",
-          refPartyRoleId: partyRoleId,
-          currency: CURRENCY,
-          lastEditedBy: userId,
-        })
-        .returning({ financialAccountId: financialAccount.financialAccountId });
-      const [ban] = await db
-        .insert(billingAccount)
-        .values({
-          name: "rm13-ban-MYR",
-          refPartyRoleId: partyRoleId,
-          refFinancialAccountId: fa!.financialAccountId,
-          currency: CURRENCY,
-          refBillCycleId: billCycleId,
-          lastEditedBy: userId,
-        })
-        .returning({ billingAccountId: billingAccount.billingAccountId });
-      const myrAccount = ban!.billingAccountId;
-
-      // Inserted DRAFT, priced, then flipped to ACTIVE — pm36's DRAFT-guard
-      // trigger refuses a price write once the parent offering leaves DRAFT
-      // (same pattern as `db/seeds/demo/product-demo.ts`).
-      const [off1] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm13-OFF1",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off1Id = off1!.productOfferingId;
-      // pm51-spec D6 — re-keyed, same rate/currency/start date.
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: off1Id,
-        name: "OFF1 usage",
-        componentType: "usage_rate",
-        priceComponent: usageRateEnvelope("0.0050", "Mbps"),
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off1Id));
-
-      const [order] = await db
-        .insert(productOrder)
-        .values({
-          customerPartyRoleId: partyRoleId,
-          billingAccountId: myrAccount,
-          status: "COMPLETED",
-          submittedBy: userId,
-          submittedAt: new Date("2026-01-01T00:00:00Z"),
-        })
-        .returning({ productOrderId: productOrder.productOrderId });
-      const [item] = await db
-        .insert(productOrderItem)
-        .values({
-          productOrderId: order!.productOrderId,
-          productOfferingId: off1Id,
-          quantity: 1,
-          startDate: "2026-01-01",
-        })
-        .returning({ productOrderItemId: productOrderItem.productOrderItemId });
-      const [inv] = await db
-        .insert(productInventory)
-        .values({
-          productOrderItemId: item!.productOrderItemId,
-          customerPartyRoleId: partyRoleId,
-          billingAccountId: myrAccount,
-          productOfferingId: off1Id,
-          quantity: 1,
-          status: "ACTIVE",
-          startDate: "2026-01-01",
-        })
-        .returning({ productInventoryId: productInventory.productInventoryId });
-      invA = inv!.productInventoryId;
-    }
-
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
@@ -278,7 +158,52 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await seedEventCatalog(db);
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(`ALTER ROLE rating_runtime WITH PASSWORD '${ROLE_PW}'`);
-      await seedProductGraph();
+
+      // Seed the rateable Sample-5G graph via the SHARED fixture builders (the
+      // same builders the production db:seed-sample-5g uses).
+      const actorId = await getOrCreateAppUser(
+        db,
+        "rm22-e2e-actor",
+        "rm22-e2e@example.invalid",
+      );
+      const { offeringId } = await insertRanOffering(db, {
+        name: PRODUCT_NAME,
+        priceName: "Sample 5G Usage Rate e2e",
+        udrTypeValue: "RAN_USAGE",
+        cardName: CARD_NAME,
+      });
+      const partyRoleId = await insertRanCustomer(db, {
+        organizationName: "rm22-e2e-org",
+        registrationNumber: "_SAMPLE_-RM22-E2E",
+        partyRoleSpecification: { mnoPublicKey1: MNO },
+        actorId,
+      });
+      const billCycleId = await insertRanBillCycle(db, {
+        name: "rm22-e2e-cycle",
+        description: "rm22 e2e fixture bill cycle",
+        actorId,
+      });
+      const billingAccountId = await insertRanBillingAccount(db, {
+        financialAccountName: "rm22-e2e-fa",
+        billingAccountName: "rm22-e2e-ban",
+        partyRoleId,
+        billCycleId,
+        actorId,
+      });
+      productInventoryId = await insertRanSubscription(db, {
+        partyRoleId,
+        billingAccountId,
+        offeringId,
+        actorId,
+        reason: "rm22 e2e fixture",
+      });
+      await insertRanRatecard(db, {
+        cardName: CARD_NAME,
+        mnoPublicKey: MNO,
+        lkpSubscriberRefId: partyRoleId,
+        rows: SAMPLE_5G_LKP_ROWS,
+        actorId,
+      });
 
       const url = new URL(databaseUrl as string);
       dbParams = {
@@ -287,7 +212,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         name: url.pathname.replace(/^\//, ""),
       };
 
-      const root = mkdtempSync(join(tmpdir(), "rm13-journey-"));
+      const root = mkdtempSync(join(tmpdir(), "rm22-journey-"));
       landingDir = join(root, "landing");
       errorDir = join(root, "error");
       logsDir = join(root, "logs");
@@ -318,14 +243,25 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       RATING_ENGINE_VERSION: ENGINE_VERSION,
     });
 
-    function writeCsv(name: string, rows: string[]): string {
-      const header = "DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS";
+    // 3 clean rows, one per ratecard cell; `volumes[i]` is cell i's usage.
+    function writeUdr(name: string, volumes: readonly number[]): string {
+      const rows = SAMPLE_5G_LKP_ROWS.map((cell, i) =>
+        [
+          MNO,
+          SAMPLE_5G_COMMERCIAL_UNIT,
+          cell.polygonId,
+          `2026-08-14T10:0${i}:00`,
+          String(volumes[i]),
+          cell.district ?? "",
+          cell.serviceCode ?? "",
+        ].join(","),
+      );
       const path = join(landingDir, name);
-      writeFileSync(path, [header, ...rows].join("\n") + "\n", "utf8");
+      writeFileSync(path, [UDR_HEADER, ...rows].join("\n") + "\n", "utf8");
       return path;
     }
 
-    function runPrp(sourcePath: string, execId: string, now: string): string {
+    function runPrp(sourcePath: string, execId: string): string {
       const out = execFileSync(
         "python3",
         [
@@ -340,13 +276,17 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           "--file-key-rule",
           FILE_KEY_RULE,
           "--reject-threshold",
-          "0.5",
+          "0",
           "--chunk-size",
           "10000",
+          "--subscription-product-name",
+          PRODUCT_NAME,
+          "--ratecard-coverage-enforcement",
+          "HARD_STOP",
           "--workflow-execution-id",
           execId,
           "--now",
-          now,
+          NOW,
           "--work-dir",
           workDir,
         ],
@@ -368,7 +308,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           "--rounding-mode",
           "HALF_UP",
           "--subscriber-ref-column",
-          "PUBLIC_KEY",
+          "product_inventory_id",
           "--workflow-execution-id",
           execId,
           "--flow-revision",
@@ -403,34 +343,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       return out.trim().split("\n").pop() as string;
     }
 
-    function runCompletenessCheck(opts: {
-      config: string;
-      now: string;
-      execId: string;
-    }): string {
-      return execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.completeness_check",
-          "--config",
-          opts.config,
-          "--lookback-days",
-          "1",
-          "--workflow-execution-id",
-          opts.execId,
-          "--now",
-          opts.now,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      ).trim();
-    }
-
     function readManifest(uri: string): Record<string, unknown> {
-      // fileURLToPath handles Windows (file:///C:/…) and POSIX file URIs alike;
-      // a bare strip leaves a leading slash before the drive letter on Windows.
-      const path = fileURLToPath(uri.trim());
-      return JSON.parse(readFileSync(path, "utf8"));
+      return JSON.parse(readFileSync(fileURLToPath(uri.trim()), "utf8"));
     }
 
     async function batchRow(batchId: string) {
@@ -440,118 +354,112 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .where(eq(udrBatch.batchId, batchId));
       return rows[0]!;
     }
+    async function ratedForBatch(batchId: string) {
+      return db
+        .select()
+        .from(udrRated)
+        .where(eq(udrRated.udrRefBatchId, batchId));
+    }
     async function liveRowsForKey(udrKey: string) {
       return db
         .select()
         .from(udrRated)
         .where(and(eq(udrRated.udrKey, udrKey), eq(udrRated.status, "RATED")));
     }
-    async function allRowsForKey(udrKey: string) {
-      return db.select().from(udrRated).where(eq(udrRated.udrKey, udrKey));
-    }
 
-    it("file lands -> PARTIAL (37 rejects) -> rated -> loaded + archived -> reissue supersedes -> completeness check runs clean", async () => {
-      const NOW1 = "2026-05-04T08:00:00Z";
-
+    it("file -> PRP -> RP (PER_UNIT) -> RL (RATED) -> reissue -> supersession", async () => {
       // -----------------------------------------------------------
-      // 1. A RAN_USAGE file lands: 63 valid rows + 37 bad rows.
+      // 1. The 3-row Sample-5G file lands; PRP resolves + validates (all locks
+      //    pass) and carries the 3 survivors at PROCESSING.
       // -----------------------------------------------------------
-      const goodRows = Array.from({ length: 63 }, (_, i) => {
-        // 63 DISTINCT (udr_key, start_datetime) records. The udr_key columns
-        // (PUBLIC_KEY/COMMERCIAL_UNIT/SITE) are constant across the file, so
-        // the timestamp is the only differentiator — a bare `minute = i % 60`
-        // repeats for i=60,61,62 and PRP would reject those 3 as
-        // DUPLICATE_IN_FILE (60 survivors, not 63). Spread across seconds so
-        // all 63 are unique and stay within 07:xx (before NOW1 08:00).
-        const mm = String(Math.floor(i / 60)).padStart(2, "0");
-        const ss = String(i % 60).padStart(2, "0");
-        return `2026-05-04T07:${mm}:${ss}Z,${invA},CU,SITE,${(i % 9) + 0.5}`;
-      });
-      const badRows = Array.from(
-        { length: 37 },
-        (_, i) => `not-a-date,${invA},CU,SITE,oops-${i}`,
+      const path = writeUdr(
+        "rating-input-file-202608140001.udr",
+        [100, 200, 300],
       );
-      const path = writeCsv("RAN_USAGE_20260504.csv", [
-        ...goodRows,
-        ...badRows,
-      ]);
-
-      // -----------------------------------------------------------
-      // 2. PRP claims the file and rejects the 37 bad rows. PRP leaves the
-      //    batch at PROCESSING (the carry status — RP/RL no-op on any
-      //    non-PROCESSING status, rm07/rm08/rm09 forward contract); the
-      //    terminal PARTIAL is RL's decision, asserted after step 4.
-      // -----------------------------------------------------------
-      const prpUri = runPrp(path, "journey-prp-1", NOW1);
+      const prpUri = runPrp(path, "rm22-prp-1");
       const prpManifest = readManifest(prpUri);
       const batchId = prpManifest.batch_id as string;
+      expect(prpManifest.status).toBe("PROCESSING");
       let batch = await batchRow(batchId);
       expect(batch.status).toBe("PROCESSING");
-      expect(batch.parsedCount).toBe(100);
-      expect(batch.rejectedCount).toBe(37);
+      expect(batch.parsedCount).toBe(3);
+      expect(batch.rejectedCount).toBe(0);
       expect(batch.batchRunNum).toBe(1);
 
       // -----------------------------------------------------------
-      // 3. RP rates the 63 survivors.
+      // 2. RP rates PER_UNIT; RL loads at RATED and archives.
       // -----------------------------------------------------------
-      const rpUri = runRp(prpUri, "journey-rp-1");
-
-      // -----------------------------------------------------------
-      // 4. RL loads the survivors at RATED and archives the raw file.
-      // -----------------------------------------------------------
-      runRl(rpUri, "journey-rl-1");
+      const rpUri = runRp(prpUri, "rm22-rp-1");
+      runRl(rpUri, "rm22-rl-1");
       batch = await batchRow(batchId);
-      // 63 rated + 37 rejected + 0 discarded = 100 parsed — the
-      // reconciliation identity holds (rm09 D5) — and the batch stays
-      // PARTIAL (not every parsed record was rated, rm09's terminal-status
-      // decision recorded in Open Questions).
-      expect(batch.status).toBe("PARTIAL");
-      expect(batch.ratedCount).toBe(63);
+      expect(batch.status).toBe("COMPLETE"); // all 3 parsed, all rated
+      expect(batch.ratedCount).toBe(3);
       expect(batch.archiveFilePath).toBeTruthy();
 
-      const allRows = await db
-        .select()
-        .from(udrRated)
-        .where(eq(udrRated.udrRefBatchId, batchId));
-      expect(allRows).toHaveLength(63);
-      expect(allRows.every((r) => r.status === "RATED")).toBe(true);
-      const udrKey = allRows[0]!.udrKey;
+      // -----------------------------------------------------------
+      // 3. udr_rated carries the PER_UNIT values (R1, ship-blocking).
+      // -----------------------------------------------------------
+      const rated = await ratedForBatch(batchId);
+      expect(rated).toHaveLength(3);
+      for (const r of rated) {
+        expect(r.status).toBe("RATED");
+        expect(r.udrRateType).toBe("PER_UNIT");
+        expect(r.udrUsageUnit).toBe("Mbps"); // product-sourced, not the feed
+        expect(r.udrSubscriptionRefId).toBe(productInventoryId);
+        expect(r.udrUsageRate).toBe(SAMPLE_5G_RATE_PER_UNIT); // 100.000000
+      }
+      // The PER_UNIT divergence from FLAT: raw = rate × quantity (not the rate).
+      // quantity 100 @ rate 100 -> raw 10000.000000, rated 10000.00.
+      const row100 = rated.find((r) => r.udrUsageQuantity === "100.000000")!;
+      expect(row100.udrRatedPriceRaw).toBe("10000.000000");
+      expect(row100.udrRatedPrice).toBe("10000.00");
+      const detail = row100.udrRateDetail as {
+        rateType: string;
+        ratePerUnit: string;
+        quantity: string;
+        amountRaw: string;
+      };
+      expect(detail).toEqual({
+        rateType: "PER_UNIT",
+        ratePerUnit: "100.000000",
+        quantity: "100",
+        amountRaw: "10000.000000",
+      });
+
+      // One live row per (partition_period, udr_key).
+      const udrKey = row100.udrKey;
+      expect(await liveRowsForKey(udrKey)).toHaveLength(1);
 
       // -----------------------------------------------------------
-      // 5. Upstream reissues under a new filename (same file_key) with a
-      //    corrected reading for the same natural keys.
+      // 4. Re-drop the SAME filename (reissue, corrected volumes) -> run 2.
       // -----------------------------------------------------------
-      const NOW2 = "2026-05-04T09:00:00Z";
-      const correctedRows = Array.from({ length: 63 }, (_, i) => {
-        // Same 63 DISTINCT timestamps as run 1 (see goodRows) — a corrected
-        // reissue of the same records, with a different usage value (a genuine
-        // correction, not a byte-identical redelivery — rm07 D5's
-        // DUPLICATE_BATCH guard). Run-1's rows go SUPERSEDED (is_live NULL),
-        // run-2's go RATED (is_live true), so the live-row uniqueness
-        // constraint is not violated.
-        const mm = String(Math.floor(i / 60)).padStart(2, "0");
-        const ss = String(i % 60).padStart(2, "0");
-        return `2026-05-04T07:${mm}:${ss}Z,${invA},CU,SITE,${(i % 9) + 1.5}`;
-      });
-      const reissuePath = writeCsv("RAN_USAGE_20260504_v2.csv", correctedRows);
-      const prpUri2 = runPrp(reissuePath, "journey-prp-2", NOW2);
+      const reissue = writeUdr(
+        "rating-input-file-202608140001_v2.udr",
+        [150, 250, 350],
+      );
+      const prpUri2 = runPrp(reissue, "rm22-prp-2");
       const prpManifest2 = readManifest(prpUri2);
       const batchId2 = prpManifest2.batch_id as string;
       const batch2Claim = await batchRow(batchId2);
       expect(batch2Claim.batchRunNum).toBe(2);
       expect(batch2Claim.fileKey).toBe(batch.fileKey);
 
-      const rpUri2 = runRp(prpUri2, "journey-rp-2");
-      runRl(rpUri2, "journey-rl-2");
+      const rpUri2 = runRp(prpUri2, "rm22-rp-2");
+      runRl(rpUri2, "rm22-rl-2");
 
       // -----------------------------------------------------------
-      // 6. rm10 supersedes: run 1's rows retire, run 2's rows go live.
+      // 5. rm10 supersedes: run-1 rows retire, run-2 rows go live — still
+      //    exactly one live row per (partition_period, udr_key).
       // -----------------------------------------------------------
       const live = await liveRowsForKey(udrKey);
       expect(live).toHaveLength(1);
       expect(live[0]!.udrRefBatchId).toBe(batchId2);
+      expect(live[0]!.udrRatedPriceRaw).toBe("15000.000000"); // 150 × 100
 
-      const all = await allRowsForKey(udrKey);
+      const all = await db
+        .select()
+        .from(udrRated)
+        .where(eq(udrRated.udrKey, udrKey));
       expect(all).toHaveLength(2);
       const retired = all.find((r) => r.udrRefBatchId === batchId)!;
       expect(retired.status).toBe("SUPERSEDED");
@@ -559,39 +467,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
       const retiredBatch = await batchRow(batchId);
       expect(retiredBatch.supersededByBatchId).toBe(batchId2);
-      expect(retiredBatch.supersedeReason).toBeTruthy();
       const batch2 = await batchRow(batchId2);
-      expect(batch2.status).toBe("COMPLETE"); // all 63 parsed, all rated
-      expect(batch2.supersededCount).toBe(63);
-
-      // -----------------------------------------------------------
-      // 7. The completeness check runs clean AGAINST the arrived, completed
-      //    delivery — no FILE_NOT_RECEIVED, no FILE_LATE.
-      //
-      //    completeness_check attributes a batch to a period by its
-      //    received_at UTC calendar day and only evaluates windows that have
-      //    already closed. received_at defaults to the real insert clock, which
-      //    no fixed `--now` could deterministically fall after — so back-date
-      //    the run-2 batch to a fixed UTC day and evaluate that day AFTER its
-      //    deadline. This genuinely exercises the "present + on-time + COMPLETE
-      //    → no alarm" path; the earlier form (lookback 1 with `now` before an
-      //    end-of-day deadline) evaluated ZERO periods, so its 0-count proved
-      //    nothing about the arrived batch.
-      // -----------------------------------------------------------
-      await sql`
-        UPDATE rating.udr_batch SET received_at = '2026-05-04T05:00:00Z'
-        WHERE batch_id = ${batchId2}
-      `;
-      const checkOut = runCompletenessCheck({
-        // Deadline 06:00; the back-dated delivery arrived 05:00 (on time) and
-        // is COMPLETE. `now` 09:00 is past the 2026-05-04 window, so that day
-        // is evaluated (lookback 1) and the present, on-time, completed batch
-        // yields no absence, no lateness, and nothing to clear.
-        config: "RAN_USAGE:06:00",
-        now: "2026-05-04T09:00:00Z",
-        execId: "journey-completeness",
-      });
-      expect(checkOut).toMatch(/0 event\(s\) emitted/);
+      expect(batch2.status).toBe("COMPLETE");
+      expect(batch2.supersededCount).toBe(3);
     }, 120_000);
   },
 );

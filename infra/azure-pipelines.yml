@@ -257,6 +257,15 @@ stages:
           - script: npm run check:rating-migration-boundary
             displayName: Rating migration-boundary check (no rating migration writes billing.*)
 
+          # rm22-spec §4/Implementation §4 — the rename gate. The
+          # udr_subscriber_ref_id → udr_subscription_ref_id rename (rm15 DB
+          # column + rm19 wfm runtime) must be COMPLETE: zero stale references in
+          # CODE across both the app repo and workflow-management/. A stale
+          # reference is a join/field against a dropped column (an already-broken
+          # path); fails the build on any match.
+          - script: npm run check:rating-rename-gate
+            displayName: Rating rename gate (zero stale udr_subscriber_ref_id references)
+
           # SAST — fails (non-zero exit) and blocks containerize on any
           # high/critical finding. `--error` makes Semgrep exit 1 on findings.
           # rm13-spec D5/Implementation §5 — `p/python` added so the scan

@@ -49,7 +49,7 @@ tasks:
       - id: validation
         # REAL (bm27): assert against the SHARED correlated set (Inv #24) — the
         #   ONE set-based subscriber->account resolution Collection computes,
-        #   following rl.py's _CURRENCY_SQL join (udr_subscriber_ref_id ->
+        #   following rl.py's _CURRENCY_SQL join (udr_subscription_ref_id ->
         #   inventory.product_inventory.product_inventory_id ->
         #   product_inventory.billing_account_id -> billing_account.currency).
         #   Validation never re-runs that join (heaviest in the pipeline, Inv #24).
@@ -74,7 +74,7 @@ tasks:
         #   matches, T6), billrun_checksum, upsert_datetime. Whole-account, ONE
         #   statement, never per-record. The flow is the SOLE re-claimer — the app
         #   NEVER claims — it only sets BILL_APPROVED/RATED-release (bm17/bm24).
-        #   D32/Inv #25: a row whose udr_subscriber_ref_id resolves to no
+        #   D32/Inv #25: a row whose udr_subscription_ref_id resolves to no
         #   product_inventory (or to an out-of-scope account) is NOT in `correlated`,
         #   so it is left at RATED, unclaimed and UNTOUCHED — never filtered out
         #   silently, never failing the account (it becomes bm32's orphan surface).
@@ -84,7 +84,7 @@ tasks:
         #   billing.customer_bill_line at (product_offering_id, udr_type) grain,
         #   ROLLED UP ACROSS SUBSCRIPTIONS (Inv #3) — product_offering_id is the
         #   denormalized column on inventory.product_inventory
-        #   (udr_subscriber_ref_id -> product_inventory.product_offering_id), so an
+        #   (udr_subscription_ref_id -> product_inventory.product_offering_id), so an
         #   account with 3 subscriptions of one offering and 500 of another shows
         #   2 charge lines, NOT 503. Each line stores udr_count (rows rolled in) +
         #   the grouping_key, gross/net = SUM(udr_rated_price), quantity =

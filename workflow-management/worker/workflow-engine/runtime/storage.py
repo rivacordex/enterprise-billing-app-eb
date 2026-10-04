@@ -17,7 +17,8 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, urlparse
+from urllib.request import url2pathname
 
 import polars as pl
 
@@ -37,7 +38,11 @@ def _local_path(path: str | Path) -> Path:
     if not parsed.scheme or len(parsed.scheme) == 1:
         return Path(path)
     if parsed.scheme == "file":
-        return Path(unquote(parsed.path))
+        # Platform-correct URL→path: on POSIX this is just the unquoted path
+        # (/data/x), on Windows nturl2path turns /C:/x into C:\x. A bare
+        # unquote(parsed.path) left /C:/x, which Path then misresolved against
+        # the cwd drive (\C:\x) — breaking every file:// handoff on Windows.
+        return Path(url2pathname(parsed.path))
     raise ValueError(
         f"unsupported URI scheme {parsed.scheme!r} for {path!r}; storage handles "
         "local paths and file:// URIs only (remote/internal storage is rm07/rm09)."

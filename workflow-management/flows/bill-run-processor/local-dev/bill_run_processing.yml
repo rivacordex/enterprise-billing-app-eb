@@ -148,7 +148,7 @@ tasks:
                   v_out_of_window    int;
                 BEGIN
                   -- Correlate ONCE (Inv #24), the _CURRENCY_SQL join shape:
-                  -- udr_subscriber_ref_id -> product_inventory -> billing_account.
+                  -- udr_subscription_ref_id -> product_inventory -> billing_account.
                   -- `(start_datetime AT TIME ZONE 'UTC')::date` buckets the window in
                   -- UTC regardless of the runner's session TimeZone (no boundary drift).
                   WITH correlated AS (
@@ -156,7 +156,7 @@ tasks:
                            ba.currency AS account_currency
                     FROM   rating.udr_rated ur
                     JOIN   inventory.product_inventory pi
-                           ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                           ON pi.product_inventory_id = ur.udr_subscription_ref_id
                     JOIN   billing.billing_account ba
                            ON ba.billing_account_id = pi.billing_account_id
                     WHERE  ur.is_live AND ur.status = 'RATED'
@@ -245,7 +245,7 @@ tasks:
                   SELECT ur.udr_id, ur.partition_period, pi.billing_account_id
                   FROM   rating.udr_rated ur
                   JOIN   inventory.product_inventory pi
-                         ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                         ON pi.product_inventory_id = ur.udr_subscription_ref_id
                   WHERE  ur.is_live AND ur.status = 'RATED'
                     AND  ur.udr_type = 'RAN_USAGE'
                     AND  pi.billing_account_id = :'ban'   -- in-scope account
@@ -567,7 +567,7 @@ tasks:
                          NULL::date                          AS snapshot_effective_date
                   FROM   rating.udr_rated ur
                   JOIN   inventory.product_inventory pi
-                         ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                         ON pi.product_inventory_id = ur.udr_subscription_ref_id
                   JOIN   product.product_offering po
                          ON po.product_offering_id = pi.product_offering_id
                   WHERE  ur.billrun_ref_id  = :'run'
@@ -742,7 +742,7 @@ tasks:
           # inventory (bm27, the replay correlation). Two checks:
           #  * HARD bill<->charge reconciliation: replay EVERY USAGE `charge` line from
           #    its stored grouping_key + udr_count — re-select the account's claimed
-          #    BILL_DRAFT udr_rated rows (correlated udr_subscriber_ref_id ->
+          #    BILL_DRAFT udr_rated rows (correlated udr_subscription_ref_id ->
           #    inventory.product_inventory -> product_offering_id, the SAME correlation
           #    bm28 used to FORM the grouping_key), scoped to (billrun_ref_id,
           #    billrun_ban_id, billrun_attempt), and assert SUM(udr_rated_price) =
@@ -809,7 +809,7 @@ tasks:
                            count(*)::int                                  AS replay_count
                     FROM   rating.udr_rated ur
                     JOIN   inventory.product_inventory pi
-                           ON pi.product_inventory_id = ur.udr_subscriber_ref_id
+                           ON pi.product_inventory_id = ur.udr_subscription_ref_id
                     WHERE  ur.billrun_ref_id  = current_setting('billrun.run')
                       AND  ur.billrun_ban_id  = current_setting('billrun.ban')
                       AND  ur.billrun_attempt = current_setting('billrun.attempt')::int
