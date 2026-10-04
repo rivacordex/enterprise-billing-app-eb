@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -532,7 +533,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     }
 
     function readParquetColumn(parquetUri: string, column: string): string[] {
-      const path = decodeURIComponent(parquetUri.replace(/^file:\/\//, ""));
+      // fileURLToPath handles file:// correctly on both POSIX and Windows
+      // (file:///C:/x -> C:\x); a bare `replace(/^file:\/\//,"")` leaves /C:/x,
+      // which Node then misresolves against the cwd drive.
+      const path = fileURLToPath(parquetUri);
       const out = execFileSync(
         "python3",
         [
@@ -543,9 +547,11 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         ],
         { cwd: workerDir, encoding: "utf8" },
       );
+      // Split on \r?\n — Python's print emits \r\n on a Windows stdout, which a
+      // bare split("\n") would leave as a trailing \r on each value.
       return out
         .trim()
-        .split("\n")
+        .split(/\r?\n/)
         .filter((l) => l.length > 0);
     }
 
@@ -556,9 +562,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const s = await seedBaseScenario("clean", "MNO-CLEAN");
       const path = writeUdr(udrName(), cleanRows("MNO-CLEAN"));
       const { manifestUri } = runPrp(path, { productName: s.productName });
-      const manifestPath = decodeURIComponent(
-        manifestUri.replace(/^file:\/\//, ""),
-      );
+      const manifestPath = fileURLToPath(manifestUri);
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       expect(manifest.status).toBe("PROCESSING");
       expect(manifest.parsed_count).toBe(3);
@@ -879,9 +883,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         coverage: "WARN",
         execId: "exec-covwarn",
       });
-      const manifestPath = decodeURIComponent(
-        manifestUri.replace(/^file:\/\//, ""),
-      );
+      const manifestPath = fileURLToPath(manifestUri);
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       expect(manifest.status).toBe("PROCESSING");
       expect(manifest.parsed_count).toBe(2);
@@ -930,9 +932,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         productName: s.productName,
         execId: "exec-dupdiff",
       });
-      const manifestPath = decodeURIComponent(
-        manifestUri.replace(/^file:\/\//, ""),
-      );
+      const manifestPath = fileURLToPath(manifestUri);
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       expect(manifest.status).toBe("PROCESSING");
       expect(manifest.parsed_count).toBe(4);
