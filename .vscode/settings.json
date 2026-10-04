@@ -1,6 +1,6 @@
 {
-    "sonarlint.connectedMode.project": {
-        "connectionId": "rivacordex",
-        "projectKey": "rivacordex_enterprise-billing-app-eb"
-    }
+  "sonarlint.connectedMode.project": {
+    "connectionId": "rivacordex",
+    "projectKey": "rivacordex_enterprise-billing-app-eb"
+  }
 }

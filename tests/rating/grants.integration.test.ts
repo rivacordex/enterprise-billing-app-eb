@@ -569,7 +569,8 @@ describe.skipIf(!databaseUrl)(
         const probes: { table: string; update: string }[] = [
           {
             table: "customer.party_role",
-            update: "UPDATE customer.party_role SET party_role_id = party_role_id WHERE false",
+            update:
+              "UPDATE customer.party_role SET party_role_id = party_role_id WHERE false",
           },
           {
             table: "product.product_specifications",

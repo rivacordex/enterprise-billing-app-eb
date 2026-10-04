@@ -36,10 +36,10 @@ import type {
 //       underlying price row AND override changed, reproduces the ORIGINAL amount
 //       from its snapshotted inputs, never by re-resolving.
 // Plus as-of correctness (#2 pinned version, #3 [start,end) boundary), override
-// (#4), currency (#5), FLAT + quantity-ignored + raw/rounded (#6), rounding modes
-// (#7), no money.ts / Decimal (#8), snapshot columns populated (#9), version
-// stamps (#10), LOOKUP_MISS (#11), FLAT-only scope (#12), one query per chunk
-// (#13/#14).
+// (#4), currency (#5), PER_UNIT = rate × quantity + raw/rounded (#6, rm19),
+// rounding modes (#7), no money.ts / Decimal (#8), snapshot columns populated
+// (#9), version stamps (#10), LOOKUP_MISS (#11), rate-type derivation incl. the
+// card-driven refusal (#12, rm19), one query per chunk (#13/#14).
 //
 // The static describe (no DATABASE_URL) checks the flow-YAML contract rm08 adds
 // (the real rp task invoking runtime.rp, the outputs.prp.uri -> outputs.rp.uri
@@ -97,6 +97,16 @@ const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 const NOW = "2026-08-20T00:00:00Z";
 const CURRENCY = "MYR";
 
+// rm17 shared golden parity fixtures — rm19 loads the SAME file the Zod
+// udr-rate-detail schema test consumes, so RP's PER_UNIT emission cannot drift
+// from the Zod contract (rm17 handoff note; checklist #4).
+const UDR_RATE_DETAIL_GOLDEN = JSON.parse(
+  readFileSync(
+    join(process.cwd(), "tests", "fixtures", "udr-rate-detail-golden.json"),
+    "utf8",
+  ),
+) as { valid: Record<string, string>[] };
+
 // pm51-spec D6/I3 — component-envelope builder replacing the pre-reshape flat
 // usage price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
 // `buildPriceEnvelope` builds in production).
@@ -113,6 +123,26 @@ function usageRateEnvelope(
     basis: "quantity",
     boundTo: { unitOfMeasure },
     params: { ratePerUnit, rateCardLookUp: null },
+  };
+}
+
+// rm19 — a card-driven usage_rate: a non-null rateCardLookUp forces
+// plaSpecId "PLA_USAGE_RATE" (pricing-component.schema.ts D4). RP has no
+// rate-card resolution (Inv. #42), so this must raise CARD_DRIVEN_RATING_UNSUPPORTED.
+function cardDrivenUsageRateEnvelope(
+  ratePerUnit: string,
+  unitOfMeasure: "Mbps",
+  cardName: string,
+): UsageRateComponent {
+  return {
+    "@type": "usage_rate",
+    specVersion: 1,
+    plaSpecId: "PLA_USAGE_RATE",
+    priceType: "usage",
+    appliesAt: "rating",
+    basis: "quantity",
+    boundTo: { unitOfMeasure },
+    params: { ratePerUnit, rateCardLookUp: cardName },
   };
 }
 
@@ -240,6 +270,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     let invA: string; // pinned to OFF1, no usage override
     let invB: string; // pinned to OFF1, with a usage override
     let invC: string; // pinned to OFF3 (flat_fee + capacity_motivation, no usage_rate)
+    let invD: string; // pinned to OFF4 (usage_rate 100 — the PER_UNIT R1 canonical)
+    let invE: string; // pinned to OFF5 (card-driven usage_rate — CARD_DRIVEN_RATING_UNSUPPORTED)
     let off1Id: string;
     let priceP1Id: string; // OFF1 usage @ 2026-01-01, amount 0.0035
     let priceP2Id: string; // OFF1 usage @ 2026-08-01, amount 0.0050
@@ -444,8 +476,71 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .set({ lifecycleStatus: "ACTIVE" })
         .where(eq(productOffering.productOfferingId, off3Id));
 
+      // rm19 — OFF4: a plain scalar usage_rate at exactly 100 (plaSpecId null),
+      // the PER_UNIT R1 canonical (100 × 20 = 2000). OFF5: a card-driven
+      // usage_rate (rateCardLookUp set, plaSpecId PLA_USAGE_RATE) RP must refuse
+      // with CARD_DRIVEN_RATING_UNSUPPORTED (Inv. #42 — no rate-card resolution).
+      const [off4] = await db
+        .insert(productOffering)
+        .values({
+          name: "rm08-OFF4",
+          isBundle: false,
+          isSellable: true,
+          billingOnly: false,
+          lifecycleStatus: "DRAFT",
+          version: 4,
+          lastEditedBy: userId,
+        })
+        .returning({ productOfferingId: productOffering.productOfferingId });
+      const off4Id = off4!.productOfferingId;
+      await db.insert(productOfferingPrice).values({
+        productOfferingId: off4Id,
+        name: "OFF4 usage @100",
+        componentType: "usage_rate",
+        priceComponent: usageRateEnvelope("100", "Mbps"),
+        unitOfMeasure: "Mbps",
+        currency: CURRENCY,
+        startDateTime: new Date("2026-01-01T00:00:00Z"),
+      });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off4Id));
+
+      const [off5] = await db
+        .insert(productOffering)
+        .values({
+          name: "rm08-OFF5",
+          isBundle: false,
+          isSellable: true,
+          billingOnly: false,
+          lifecycleStatus: "DRAFT",
+          version: 5,
+          lastEditedBy: userId,
+        })
+        .returning({ productOfferingId: productOffering.productOfferingId });
+      const off5Id = off5!.productOfferingId;
+      await db.insert(productOfferingPrice).values({
+        productOfferingId: off5Id,
+        name: "OFF5 card-driven usage",
+        componentType: "usage_rate",
+        priceComponent: cardDrivenUsageRateEnvelope(
+          "5.00",
+          "Mbps",
+          "RAN_USAGE_CARD",
+        ),
+        unitOfMeasure: "Mbps",
+        currency: CURRENCY,
+        startDateTime: new Date("2026-01-01T00:00:00Z"),
+      });
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off5Id));
+
       // Subscriptions: A/B pinned to OFF1 (no override / usage override); C
-      // pinned to OFF3 (D4's no-usage_rate LOOKUP_MISS case).
+      // pinned to OFF3 (D4's no-usage_rate LOOKUP_MISS case); D pinned to OFF4
+      // (PER_UNIT R1); E pinned to OFF5 (card-driven refusal).
       const makeSubscription = async (
         withOverride: string | null,
         offeringId: string = off1Id,
@@ -502,6 +597,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // catalog price (0.0035 / 0.0050), proving COALESCE(override, catalog).
       invB = await makeSubscription("0.07"); // usage override 0.07
       invC = await makeSubscription(null, off3Id);
+      invD = await makeSubscription(null, off4Id); // rm19 PER_UNIT R1 canonical
+      invE = await makeSubscription(null, off5Id); // rm19 card-driven refusal
     }
 
     beforeAll(async () => {
@@ -660,12 +757,17 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       manifest: Record<string, unknown>;
       rpExecId: string;
     } {
-      // Row order: 1 A/P2, 2 A/P1, 3 A/boundary=P2, 4 B/override, 5 bogus/miss.
+      // Row order (PER_UNIT = rate × quantity, rm19):
+      //   1 A/P2   0.0050 × 100 = 0.500000
+      //   2 A/P1   0.0035 ×   7 = 0.024500
+      //   3 A/boundary=P2 0.0050 × 1 = 0.005000 (the rounding-mode discriminator)
+      //   4 B/override    0.07   ×  55 = 3.850000
+      //   5 bogus/miss
       const csvRows = [
-        `2026-08-14T10:00:00Z,${invA},CU,S,100`, // -> P2 0.0050
-        `2026-03-01T00:00:00Z,${invA},CU,S,7`, // -> P1 0.0035
-        `2026-08-01T00:00:00Z,${invA},CU,S,3`, // boundary -> NEW P2 0.0050
-        `2026-08-14T11:00:00Z,${invB},CU,S,55`, // -> override 0.07
+        `2026-08-14T10:00:00Z,${invA},CU,S,100`, // -> P2 0.0050 × 100
+        `2026-03-01T00:00:00Z,${invA},CU,S,7`, // -> P1 0.0035 × 7
+        `2026-08-01T00:00:00Z,${invA},CU,S,1`, // boundary -> NEW P2 0.0050 × 1 = 0.005
+        `2026-08-14T11:00:00Z,${invB},CU,S,55`, // -> override 0.07 × 55
         `2026-08-14T12:00:00Z,BOGUS-INVENTORY,CU,S,9`, // -> LOOKUP_MISS
       ];
       const path = writeCsv(`RAN_USAGE_${fileSuffix}.csv`, csvRows);
@@ -686,40 +788,45 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     ) =>
       rows.find(
         (r) =>
-          r.udr_subscriber_ref_id === inv &&
+          r.udr_subscription_ref_id === inv &&
           (r.start_datetime ?? "").startsWith(startsWith),
       );
 
     // -----------------------------------------------------------------
     // As-of correctness (D1, D2): pinned version, [start,end) boundary, override.
     // -----------------------------------------------------------------
-    it("2/4/6. resolves the pinned-version price as-of start_datetime, applies the override, ignores quantity (FLAT)", () => {
+    it("2/4/6. resolves the pinned-version price as-of start_datetime, applies the override, multiplies quantity (PER_UNIT)", () => {
       const { rows, manifest } = rateFixture("20260814");
       expect(manifest.status).toBe("PROCESSING");
       // 4 of 5 resolve; the bogus subscriber is a LOOKUP_MISS.
       expect(manifest.rated_count).toBe(4);
       expect(manifest.lookup_miss_count).toBe(1);
 
-      // Row 1 (A, 2026-08-14) -> P2 0.0050. FLAT ignores USAGE_MBPS=100:
-      // the charge is the flat amount, not amount*quantity (#6).
+      // Row 1 (A, 2026-08-14) -> P2 0.0050. PER_UNIT multiplies USAGE_MBPS=100:
+      // the charge is rate × quantity = 0.0050 × 100 = 0.500000 (#6, rm19).
       const r1 = byKey(rows, invA, "2026-08-14");
-      expect(r1?.udr_usage_rate).toBe("0.0050");
-      expect(r1?.udr_rated_price_raw).toBe("0.0050");
-      expect(r1?.udr_rated_price).toBe("0.01"); // HALF_UP(0.005) = 0.01, NOT 0.50
+      expect(r1?.udr_rate_type).toBe("PER_UNIT");
+      expect(r1?.udr_usage_rate).toBe("0.005000");
+      expect(r1?.udr_rated_price_raw).toBe("0.500000");
+      expect(r1?.udr_rated_price).toBe("0.50"); // HALF_UP(0.50) = 0.50, NOT 0.01
       expect(r1?.udr_price_ref).toBe(priceP2Id);
       // The decoy OFF2 price (9.9999) is never resolved — the item is pinned to
       // OFF1 (#2).
-      expect(r1?.udr_usage_rate).not.toBe("9.9999");
+      expect(r1?.udr_usage_rate).not.toBe("9.999900");
 
-      // Row 2 (A, 2026-03-01) -> the OLD price P1 0.0035 (as-of resolution).
+      // Row 2 (A, 2026-03-01) -> the OLD price P1 0.0035 (as-of resolution);
+      // 0.0035 × 7 = 0.024500.
       const r2 = byKey(rows, invA, "2026-03-01");
-      expect(r2?.udr_usage_rate).toBe("0.0035");
+      expect(r2?.udr_usage_rate).toBe("0.003500");
+      expect(r2?.udr_rated_price_raw).toBe("0.024500");
       expect(r2?.udr_price_ref).toBe(priceP1Id);
 
-      // Row 4 (B) -> the override 0.07, not the catalog amount (#4).
+      // Row 4 (B) -> the override 0.07, not the catalog amount (#4);
+      // 0.07 × 55 = 3.850000.
       const r4 = byKey(rows, invB, "2026-08-14");
-      expect(r4?.udr_usage_rate).toBe("0.07");
-      expect(r4?.udr_rated_price).toBe("0.07");
+      expect(r4?.udr_usage_rate).toBe("0.070000");
+      expect(r4?.udr_rated_price_raw).toBe("3.850000");
+      expect(r4?.udr_rated_price).toBe("3.85");
       expect(r4?.udr_price_override_ref).not.toBeNull();
     });
 
@@ -727,7 +834,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const { rows } = rateFixture("20260815");
       // Row 3 is exactly 2026-08-01T00:00:00Z, P2's start_date_time -> P2 (new).
       const r3 = byKey(rows, invA, "2026-08-01");
-      expect(r3?.udr_usage_rate).toBe("0.0050");
+      expect(r3?.udr_usage_rate).toBe("0.005000");
       expect(r3?.udr_price_ref).toBe(priceP2Id);
     });
 
@@ -763,10 +870,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const { rows } = rateFixture("20260825b");
       // Same rows, same price refs as test "2/4/6" above — byte-identical.
       const r1 = byKey(rows, invA, "2026-08-14");
-      expect(r1?.udr_usage_rate).toBe("0.0050");
+      expect(r1?.udr_usage_rate).toBe("0.005000");
       expect(r1?.udr_price_ref).toBe(priceP2Id);
       const r2 = byKey(rows, invA, "2026-03-01");
-      expect(r2?.udr_usage_rate).toBe("0.0035");
+      expect(r2?.udr_usage_rate).toBe("0.003500");
       expect(r2?.udr_price_ref).toBe(priceP1Id);
     });
 
@@ -781,10 +888,11 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // -----------------------------------------------------------------
     it("6/8. stores BOTH raw (18,6) and rounded (18,2); a sub-cent amount survives in _raw and rounds correctly", () => {
       const { rows } = rateFixture("20260817");
-      const r2 = byKey(rows, invA, "2026-03-01"); // 0.0035
-      // The sub-cent rate survives in _raw at full precision, and rounds to 0.00.
-      expect(r2?.udr_rated_price_raw).toBe("0.0035");
-      expect(r2?.udr_rated_price).toBe("0.00");
+      const r2 = byKey(rows, invA, "2026-03-01"); // 0.0035 × 7 = 0.024500
+      // The sub-cent product survives in _raw at full precision (numeric(18,6))
+      // and rounds once to numeric(18,2): HALF_UP(0.024500) = 0.02.
+      expect(r2?.udr_rated_price_raw).toBe("0.024500");
+      expect(r2?.udr_rated_price).toBe("0.02");
       // No float artifacts — exact decimal strings throughout (#8/#14).
       expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) {
@@ -794,23 +902,23 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }
     });
 
-    it("7. the per-record rounding method is applied and stamped (HALF_UP vs HALF_EVEN vs TRUNCATE)", () => {
-      // Same 0.0050 amount, three modes: HALF_UP -> 0.01, HALF_EVEN -> 0.00
-      // (round to even), TRUNCATE -> 0.00. Raw is 0.0050 in every case.
+    it("7. the per-record rounding method is applied once from the raw (HALF_UP vs HALF_EVEN vs TRUNCATE)", () => {
+      // Row 3 is P2 0.0050 × 1 = 0.005000; three modes from the SAME raw:
+      // HALF_UP -> 0.01, HALF_EVEN -> 0.00 (round to even), TRUNCATE -> 0.00.
       const up = byKey(
         rateFixture("20260818", "HALF_UP").rows,
         invA,
-        "2026-08-14",
+        "2026-08-01",
       );
       const even = byKey(
         rateFixture("20260819", "HALF_EVEN").rows,
         invA,
-        "2026-08-14",
+        "2026-08-01",
       );
       const trunc = byKey(
         rateFixture("20260820", "TRUNCATE").rows,
         invA,
-        "2026-08-14",
+        "2026-08-01",
       );
       expect(up?.udr_rated_price).toBe("0.01");
       expect(up?.udr_rounding_mode).toBe("HALF_UP");
@@ -818,16 +926,16 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(even?.udr_rounding_mode).toBe("HALF_EVEN");
       expect(trunc?.udr_rated_price).toBe("0.00");
       expect(trunc?.udr_rounding_mode).toBe("TRUNCATE");
-      // Raw is identical and unrounded across all three.
-      expect(up?.udr_rated_price_raw).toBe("0.0050");
-      expect(even?.udr_rated_price_raw).toBe("0.0050");
-      expect(trunc?.udr_rated_price_raw).toBe("0.0050");
+      // Raw is identical and unrounded across all three (numeric(18,6)).
+      expect(up?.udr_rated_price_raw).toBe("0.005000");
+      expect(even?.udr_rated_price_raw).toBe("0.005000");
+      expect(trunc?.udr_rated_price_raw).toBe("0.005000");
     });
 
     // -----------------------------------------------------------------
     // Snapshot, stamps, scope (D4, D6, D10, D5).
     // -----------------------------------------------------------------
-    it("9/10/12. every rated row carries the full snapshot, the version stamps, and FLAT rate detail", () => {
+    it("6/9/10/12. every rated row carries the full snapshot, the version stamps, the product unit, and a PER_UNIT rate detail", () => {
       const { rows } = rateFixture("20260821");
       expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) {
@@ -840,12 +948,24 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         expect(r.rating_engine_version).toBe(ENGINE_VERSION);
         expect(r.rating_flow_revision).toBe("42");
         expect(r.rated_datetime).not.toBeNull();
-        // FLAT-only scope (#12): udr_rate_type is FLAT and the rate detail is the
-        // minimal FLAT variant validated against the typed union (D6).
-        expect(r.udr_rate_type).toBe("FLAT");
-        expect(JSON.parse(r.udr_rate_detail as string)).toEqual({
-          rateType: "FLAT",
-        });
+        // rm19 §6 — udr_usage_unit is the product's catalog unit ("Mbps"), never
+        // the feed token ("MBPS").
+        expect(r.udr_usage_unit).toBe("Mbps");
+        // Rate-type derivation (#12, rm19): every fixture row is a plain-scalar
+        // usage_rate -> PER_UNIT; the detail carries exactly the four PER_UNIT
+        // keys and its ratePerUnit/quantity/amountRaw echo the sibling columns.
+        expect(r.udr_rate_type).toBe("PER_UNIT");
+        const detail = JSON.parse(r.udr_rate_detail as string);
+        expect(Object.keys(detail).sort()).toEqual([
+          "amountRaw",
+          "quantity",
+          "ratePerUnit",
+          "rateType",
+        ]);
+        expect(detail.rateType).toBe("PER_UNIT");
+        expect(detail.ratePerUnit).toBe(r.udr_usage_rate);
+        expect(detail.quantity).toBe(r.udr_usage_quantity);
+        expect(detail.amountRaw).toBe(r.udr_rated_price_raw);
       }
     });
 
@@ -856,7 +976,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const { rows, manifest, rpExecId } = rateFixture("20260822");
       // The bogus subscriber is absent from the rated output (not fabricated).
       expect(
-        rows.some((r) => r.udr_subscriber_ref_id === "BOGUS-INVENTORY"),
+        rows.some((r) => r.udr_subscription_ref_id === "BOGUS-INVENTORY"),
       ).toBe(false);
       expect(manifest.lookup_miss_count).toBe(1);
       // Exactly ONE summarised process_log line for the miss (Inv #11), not one
@@ -906,24 +1026,83 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.55' WHERE price_type = 'usage'`;
 
       // The already-rated row's snapshotted inputs are unchanged, and the amount
-      // reproduces from them (round(udr_usage_rate) == udr_rated_price) WITHOUT
-      // re-resolving against the now-changed catalog.
-      expect(originalRate1).toBe("0.0050"); // NOT the new 0.9999
-      expect(originalPrice1).toBe("0.01");
-      expect(originalRate4).toBe("0.07"); // NOT the new 0.55
+      // reproduces from them (PER_UNIT: round(udr_usage_rate × udr_usage_quantity)
+      // == udr_rated_price) WITHOUT re-resolving against the now-changed catalog.
+      expect(originalRate1).toBe("0.005000"); // NOT the new 0.999900
+      expect(originalPrice1).toBe("0.50"); // 0.0050 × 100, HALF_UP
+      expect(originalRate4).toBe("0.070000"); // NOT the new 0.55
 
       // Re-running rp now (a re-resolve) would pick up the changed catalog — this
       // is why the snapshot is mandatory (D4): the DURABLE snapshot on the row,
       // read back by RL, is what reproduces the charge, never a re-resolution.
       const { rows: reResolved } = rateFixture("20260824");
       const again = byKey(reResolved, invA, "2026-08-14");
-      expect(again?.udr_usage_rate).toBe("0.9999"); // proves a re-resolve DIVERGES
-      // ...so the snapshot (0.0050), not the re-resolve (0.9999), is the record
+      expect(again?.udr_usage_rate).toBe("0.999900"); // proves a re-resolve DIVERGES
+      // ...so the snapshot (0.005000), not the re-resolve (0.999900), is the record
       // of truth for the original charge.
 
       // Restore for any later assertions in this file.
       await sql`UPDATE product.product_offering_price SET price_component = jsonb_set(price_component, '{params,ratePerUnit}', '"0.0050"') WHERE product_offering_price_id = ${priceP2Id}`;
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.07' WHERE price_type = 'usage'`;
+    });
+
+    // -----------------------------------------------------------------
+    // rm19 — PER_UNIT R1 canonical + the card-driven refusal.
+    // -----------------------------------------------------------------
+    it("R1 (rm19 §7) — PER_UNIT: ratePerUnit 100 × volume 20 = 2000, detail mirrors the Zod golden fixture, unit from the product", () => {
+      const path = writeCsv("RAN_USAGE_20260902.csv", [
+        `2026-08-14T10:00:00Z,${invD},CU,S,20`,
+      ]);
+      const prpManifestUri = runPrp(path, "prp-perunit-r1");
+      const rpManifestUri = runRp(prpManifestUri, "rp-perunit-r1");
+      const manifest = readManifest(rpManifestUri);
+      expect(manifest.rated_count).toBe(1);
+      const rows = (manifest.rated_chunk_uris as string[]).flatMap((u) =>
+        readParquetRows(u),
+      );
+      const r = rows.at(0);
+      expect(r?.udr_rate_type).toBe("PER_UNIT");
+      expect(r?.udr_rated_price_raw).toBe("2000.000000");
+      expect(r?.udr_rated_price).toBe("2000.00");
+      expect(r?.udr_usage_unit).toBe("Mbps"); // the product's unit, not "MBPS"
+      const expectedDetail = {
+        rateType: "PER_UNIT",
+        ratePerUnit: "100.000000",
+        quantity: "20",
+        amountRaw: "2000.000000",
+      };
+      expect(JSON.parse(r?.udr_rate_detail as string)).toEqual(expectedDetail);
+      // Python-vs-Zod parity (#4): RP emits exactly a value the SHARED golden
+      // fixture (the rm17 Zod schema test's own data) declares valid.
+      expect(UDR_RATE_DETAIL_GOLDEN.valid).toContainEqual(expectedDetail);
+    });
+
+    it("rm19 — a card-driven usage_rate (plaSpecId=PLA_USAGE_RATE) fails loudly with CARD_DRIVEN_RATING_UNSUPPORTED and rates no row", () => {
+      const path = writeCsv("RAN_USAGE_20260903.csv", [
+        `2026-08-14T10:00:00Z,${invE},CU,S,10`,
+      ]);
+      const prpManifestUri = runPrp(path, "prp-carddriven");
+      // RP must refuse (no rate-card resolution, Inv. #42): a non-zero exit with
+      // the rm18 event code, no rated manifest, no rated chunk.
+      let stderr = "";
+      let threw = false;
+      try {
+        runRp(prpManifestUri, "rp-carddriven");
+      } catch (err) {
+        threw = true;
+        const e = err as { stderr?: string; message?: string };
+        stderr = String(e.stderr ?? e.message ?? "");
+      }
+      expect(threw).toBe(true);
+      expect(stderr).toContain("CARD_DRIVEN_RATING_UNSUPPORTED");
+      // #6 (rm19) — the failure is also emitted as ONE structured process_log line
+      // (rm18 event code, component RP) so the sweep raises it as an alarm, not just
+      // a stderr print. Same shape as the LOOKUP_MISS line asserted above.
+      const lines = logLinesFor("RP", "rp-carddriven");
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(firstLine(lines)).event_code).toBe(
+        "CARD_DRIVEN_RATING_UNSUPPORTED",
+      );
     });
 
     // -----------------------------------------------------------------
