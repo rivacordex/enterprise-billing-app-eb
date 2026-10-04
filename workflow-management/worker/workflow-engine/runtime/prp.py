@@ -100,15 +100,30 @@ from . import db, logemit, storage
 # this fixed-`+8` zone, matching rating.period_of() in the DB (code-standards
 # §5.7). The dedup identity's partition_period is computed here with the SAME
 # zone so a same-cell/same-billing-month repeat is a duplicate (rm21 §4/R2).
+# Single-sourced here (name + ZoneInfo) and interpolated into _RESOLVE_SQL's
+# `AT TIME ZONE` literal, so the Python period/date math and the SQL as-of window
+# cannot drift to different zones. (The DB's rating.period_of() carries the same
+# literal in migration 0034 — a separate layer, documented, not importable.)
 # ---------------------------------------------------------------------------
-_CONFIG_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+_CONFIG_TZ_NAME = "Asia/Kuala_Lumpur"
+_CONFIG_TZ = ZoneInfo(_CONFIG_TZ_NAME)
+
+
+def config_tz_date(start_datetime: datetime) -> date:
+    """The calendar date of an event instant in the config TZ — exactly the as-of
+    determinant of the resolution query's inventory window
+    (``(start_dt AT TIME ZONE 'Asia/Kuala_Lumpur')::date``). The MNO resolution
+    cache keys on this (never a coarser month), so a subscription boundary that
+    falls mid-month resolves each day independently rather than reusing whichever
+    day's as-of happened to populate the cache first."""
+    return start_datetime.astimezone(_CONFIG_TZ).date()
 
 
 def period_of(start_datetime: datetime) -> date:
     """The billing month (first-of-month ``date``) for an event instant, truncated
     in the config TZ (rm21/X1) — the Python mirror of ``rating.period_of()``. The
     dedup key's ``partition_period`` (rm21 §4)."""
-    local = start_datetime.astimezone(_CONFIG_TZ)
+    local = config_tz_date(start_datetime)
     return date(local.year, local.month, 1)
 
 
@@ -384,6 +399,16 @@ def resolve_pin(conn: psycopg.Connection, subscription_product_name: str) -> Pin
             f"{len(families)} distinct offering families {sorted(families)} — the pin "
             "is ambiguous; it must name exactly one family."
         )
+    # The two LEFT JOINs multiply the row when an offering carries duplicate
+    # 'udrType' / 'productCardLookUp' spec rows; `rows[0]` would then pick the
+    # udrType/card nondeterministically. Fail CLOSED on inconsistent specs rather
+    # than guess which duplicate wins (§5.4).
+    if len({(r["udr_type_value"], r["card_name"]) for r in rows}) > 1:
+        raise ValueError(
+            f"subscription_product_name {subscription_product_name!r} resolves to an "
+            "offering with inconsistent udrType / productCardLookUp specs across "
+            f"{len(rows)} rows — duplicate specs on the offering; fix the product data."
+        )
     row = rows[0]
     return PinContext(
         offering_id=row["product_offering_id"],
@@ -431,11 +456,27 @@ def extract_ratecard(
                 profile.polygon_column: str(r["polygon_id"]),
             },
         )
+        # The canonical cell casefolds + trims, so two ACTIVE lkp rows that differ
+        # only by case/whitespace (both accepted by the raw row-key UNIQUE index)
+        # collapse to one key. Fail CLOSED on a collision rather than silently
+        # overwrite — an overwrite would compare factor-2/service_code against an
+        # arbitrary winner AND drop the loser's cell from the completeness set
+        # (silently suppressing a RATECARD_COVERAGE_GAP). An ambiguous ratecard is
+        # a data error to fix, not to guess through (§5.4).
+        if cell in index:
+            raise ValueError(
+                f"ACTIVE ratecard {card_name!r} has two lkp rows mapping to the same "
+                f"canonical cell {cell!r} (case/whitespace-variant mno|cu|polygon) — "
+                "the ratecard is ambiguous; fix the ratecard data."
+            )
+        sc = r["service_code"]
         index[cell] = RatecardCell(
             lkp_subscriber_ref_id=str(r["lkp_subscriber_ref_id"]),
-            service_code=(
-                str(r["service_code"]) if r["service_code"] is not None else None
-            ),
+            # Normalise the same way the input side does (strip, '' -> None) so a
+            # trailing space or an empty-vs-NULL service_code does not spuriously
+            # hard-stop the whole batch SERVICE_CODE_MISMATCH (rm21 §4). Case is
+            # kept exact per the spec's '==' agreement.
+            service_code=(str(sc).strip() or None if sc is not None else None),
         )
     return index
 
@@ -457,16 +498,23 @@ class MnoResolution:
     family_id: str
 
 
-_RESOLVE_SQL = """
+# The `AT TIME ZONE` literal is interpolated from _CONFIG_TZ_NAME (a trusted
+# constant, not user input) so the as-of window and the Python period/date math
+# share one zone. The MNO match is EXACT/case-sensitive (owner decision 2026-10-05,
+# spec §2): the mno|cu|polygon cell casefolds for the ratecard match, but MNO keys
+# are controlled identifiers kept case-consistent between the feed and
+# party_role_specification (seed-discipline, same class as Inv #21); a case drift
+# resolves to 0 rows → UNKNOWN_SUBSCRIBER.
+_RESOLVE_SQL = f"""
 SELECT pr.party_role_id, pi.product_inventory_id,
        COALESCE(po.family_offering_id, po.product_offering_id) AS family_id
 FROM   customer.party_role pr
 JOIN   inventory.product_inventory pi
        ON pi.customer_party_role_id = pr.party_role_id
       AND pi.status = 'ACTIVE'
-      AND pi.start_date <= (%(start_dt)s AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+      AND pi.start_date <= (%(start_dt)s AT TIME ZONE '{_CONFIG_TZ_NAME}')::date
       AND (pi.end_date IS NULL
-           OR pi.end_date >= (%(start_dt)s AT TIME ZONE 'Asia/Kuala_Lumpur')::date)
+           OR pi.end_date >= (%(start_dt)s AT TIME ZONE '{_CONFIG_TZ_NAME}')::date)
 JOIN   product.product_offering po ON po.product_offering_id = pi.product_offering_id
 JOIN   product.product_specifications ps
        ON ps.ref_product_offering_id = po.product_offering_id
@@ -862,6 +910,15 @@ _HARD_STOP_COVERAGE_GAP = "RATECARD_COVERAGE_GAP"
 _COVERAGE_GAP_WARN = "RATECARD_COVERAGE_GAP_WARN"
 
 
+def _batch_alarm_key(
+    event_code: str, udr_type: str, file_key: str, batch_run_num: int
+) -> str:
+    """The alarm correlation key for a batch-run-scoped event — one format, so the
+    sweep can pair a later CLEARED against the same key (§7.5) and so the format
+    cannot drift between the several emit sites that build it."""
+    return f"{event_code}:{udr_type}:{file_key}:run{batch_run_num}"
+
+
 def process_file(
     conn: psycopg.Connection,
     *,
@@ -895,9 +952,13 @@ def process_file(
     # The ACTIVE ratecard cells actually seen in the input — the ratecard→input
     # completeness check (rm21 §5) compares this against the full ratecard index.
     seen_ratecard_cells: set[str] = set()
-    # One resolution per DISTINCT MNO (rm21 §2) — cached across the streaming
-    # pass, so this is set-based per batch, never per record (checklist item 1).
-    mno_cache: dict[str, MnoResolution | str] = {}
+    # One resolution per DISTINCT (MNO, config-TZ date) (rm21 §2) — cached across
+    # the streaming pass, so this is set-based per batch, never per record
+    # (checklist item 1). Keyed by the config-TZ date (the resolution query's
+    # actual as-of determinant), not MNO alone and not the coarser billing month,
+    # so a subscription boundary mid-month resolves each day independently rather
+    # than reusing whichever day's as-of first populated the cache.
+    mno_cache: dict[tuple[str, date], MnoResolution | str] = {}
     # The first whole-batch hard-stop encountered: (event_code, specific_problem,
     # additional_info). A mismatch means the file's assumptions are wrong — the
     # whole batch is REFUSED with zero rows (rm21 §Design), not one bad row.
@@ -983,11 +1044,14 @@ def process_file(
             cell = row.udr_key
             mno = row.values[profile.mno_column].strip()
 
-            # Factor 1 — resolve the MNO (cached; one query per distinct MNO).
-            resolution = mno_cache.get(mno)
+            # Factor 1 — resolve the MNO as-of the record (cached per
+            # (MNO, config-TZ date), the query's as-of determinant; one query per
+            # distinct (MNO, date), never per record).
+            cache_key = (mno, config_tz_date(row.start_datetime))
+            resolution = mno_cache.get(cache_key)
             if resolution is None:
                 resolution = resolve_mno(conn, mno, row.start_datetime, udr_type)
-                mno_cache[mno] = resolution
+                mno_cache[cache_key] = resolution
             if resolution == _UNKNOWN_SUBSCRIBER:
                 hard_stop = (
                     "UNKNOWN_SUBSCRIBER",
@@ -1061,6 +1125,16 @@ def process_file(
                 flush()
         if hard_stop is None:
             flush()
+        else:
+            # A whole-batch hard-stop refuses the ENTIRE file, so parsed_count must
+            # reflect the full file — not just the records read before the stop.
+            # Count the remaining non-blank data lines WITHOUT validating them
+            # (they are neither rated nor rejected; they fall into
+            # discarded = parsed − rejected, rm21 §7). The header was already
+            # consumed, so every remaining non-blank line is a data record.
+            for physical in fh:
+                if physical.strip():
+                    parsed += 1
 
     rejects.close()
     rejected = rejects.count
@@ -1082,38 +1156,16 @@ def process_file(
             chunk_paths=[],
             specific_problem=specific,
             additional_info=info,
-            alarm_key=f"{code}:{udr_type}:{file_key}:run{batch_run_num}",
-            managed_object=file_key,
-        )
-
-    # ratecard→input completeness (rm21 §5): every ACTIVE ratecard cell must have
-    # appeared in the input. A missing cell is a coverage gap.
-    missing_cells = sorted(set(ratecard) - seen_ratecard_cells)
-    if missing_cells and coverage_enforcement == "HARD_STOP":
-        shutil.rmtree(work_dir, ignore_errors=True)
-        return Outcome(
-            status="REFUSED",
-            event_code=_HARD_STOP_COVERAGE_GAP,
-            log_level="ERROR",
-            parsed=parsed,
-            rejected=rejected,
-            discarded=parsed - rejected,
-            reject_file=reject_path if rejected else None,
-            chunk_paths=[],
-            specific_problem=(
-                f"{len(missing_cells)} ACTIVE ratecard cell(s) absent from the input "
-                "under ratecard_coverage_enforcement=HARD_STOP"
-            ),
-            additional_info={
-                "file_key": file_key,
-                "missing_cell_count": len(missing_cells),
-                "missing_cells_sample": missing_cells[:20],
-            },
-            alarm_key=f"{_HARD_STOP_COVERAGE_GAP}:{udr_type}:{file_key}:run{batch_run_num}",
+            alarm_key=_batch_alarm_key(code, udr_type, file_key, batch_run_num),
             managed_object=file_key,
         )
 
     # Structural reject threshold (D6): 0 = all-or-nothing; else reject rate.
+    # Checked BEFORE completeness so a structural parse failure is reported as
+    # PARSE_FAILURE and never misattributed to a coverage gap — a cell present in
+    # the input only on a structurally-rejected row is not in seen_ratecard_cells,
+    # so running completeness first would raise a spurious RATECARD_COVERAGE_GAP
+    # for a cell the file actually contained.
     refuse = (reject_threshold == 0 and rejected > 0) or (
         parsed > 0 and rejected / parsed > reject_threshold
     )
@@ -1139,7 +1191,39 @@ def process_file(
                 "reject_threshold": reject_threshold,
                 "reject_rate": (rejected / parsed) if parsed else 0,
             },
-            alarm_key=f"PARSE_FAILURE:{udr_type}:{file_key}:run{batch_run_num}",
+            alarm_key=_batch_alarm_key(
+                "PARSE_FAILURE", udr_type, file_key, batch_run_num
+            ),
+            managed_object=file_key,
+        )
+
+    # ratecard→input completeness (rm21 §5): every ACTIVE ratecard cell must have
+    # appeared in the input. Reached only when the file is structurally acceptable
+    # (no PARSE_FAILURE above). A missing cell is a coverage gap.
+    missing_cells = sorted(set(ratecard) - seen_ratecard_cells)
+    if missing_cells and coverage_enforcement == "HARD_STOP":
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return Outcome(
+            status="REFUSED",
+            event_code=_HARD_STOP_COVERAGE_GAP,
+            log_level="ERROR",
+            parsed=parsed,
+            rejected=rejected,
+            discarded=parsed - rejected,
+            reject_file=reject_path if rejected else None,
+            chunk_paths=[],
+            specific_problem=(
+                f"{len(missing_cells)} ACTIVE ratecard cell(s) absent from the input "
+                "under ratecard_coverage_enforcement=HARD_STOP"
+            ),
+            additional_info={
+                "file_key": file_key,
+                "missing_cell_count": len(missing_cells),
+                "missing_cells_sample": missing_cells[:20],
+            },
+            alarm_key=_batch_alarm_key(
+                _HARD_STOP_COVERAGE_GAP, udr_type, file_key, batch_run_num
+            ),
             managed_object=file_key,
         )
 
@@ -1178,7 +1262,7 @@ def process_file(
             else {}
         ),
         alarm_key=(
-            f"BATCH_PARTIAL:{udr_type}:{file_key}:run{batch_run_num}"
+            _batch_alarm_key("BATCH_PARTIAL", udr_type, file_key, batch_run_num)
             if rejected
             else None
         ),
@@ -1453,6 +1537,26 @@ def main(argv: list[str] | None = None) -> int:
             print(manifest.resolve().as_uri())
             return 0
 
+        # 2a. Per-batch extracts (rm21 §1), resolved BEFORE the claim so a
+        #     misconfigured pin (unknown / ambiguous offering, duplicate specs, an
+        #     ambiguous ratecard) fails WITHOUT claiming a udr_batch row — no
+        #     stranded RECEIVED batch for rm11 to reap. Both are reads on the claim
+        #     connection (rm16 grants). A config error raises ValueError; convert it
+        #     to the same clean exit as the step-0 guards (one stderr diagnostic +
+        #     exit 1), never an opaque traceback out of main.
+        try:
+            pin = resolve_pin(conn, args.subscription_product_name)
+            ratecard = (
+                extract_ratecard(conn, profile, pin.card_name) if pin.card_name else {}
+            )
+        except ValueError as exc:
+            print(
+                f"PRP: cannot resolve the subscription pin "
+                f"{args.subscription_product_name!r}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
         # 3. Claim the batch (Inv #7). A concurrent loser makes no batch.
         claim = claim_batch(
             conn,
@@ -1486,11 +1590,6 @@ def main(argv: list[str] | None = None) -> int:
         batch_id, batch_run_num = claim
         work_dir = _work_dir(args.work_dir, batch_id)
 
-        # 4. Per-batch extracts (rm21 §1): the pinned offering + its ACTIVE
-        #    ratecard, resolved ONCE on the claim connection (rm16 grants).
-        pin = resolve_pin(conn, args.subscription_product_name)
-        ratecard = extract_ratecard(conn, profile, pin.card_name) if pin.card_name else {}
-
         # udrType confirmation (rm21 §3): the flow udr_type must equal the pinned
         # offering's udrType spec, or the whole batch hard-stops.
         if pin.udr_type_value != args.udr_type:
@@ -1511,7 +1610,9 @@ def main(argv: list[str] | None = None) -> int:
                     "offering_udr_type": pin.udr_type_value,
                     "subscription_product_name": args.subscription_product_name,
                 },
-                alarm_key=f"UDRTYPE_MISMATCH:{args.udr_type}:{file_key}:run{batch_run_num}",
+                alarm_key=_batch_alarm_key(
+                    "UDRTYPE_MISMATCH", args.udr_type, file_key, batch_run_num
+                ),
                 managed_object=file_key,
             )
             stamp_counts(

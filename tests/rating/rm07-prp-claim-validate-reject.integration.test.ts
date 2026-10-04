@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -14,24 +13,20 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { organization, partyRole } from "@/db/schema/customer";
-import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
-import {
-  productOffering,
-  productSpecifications,
-  productOfferingPrice,
-  ratecardVersion,
-  ratecardRanUsageLkp,
-} from "@/db/schema/product";
-import { productOrder, productOrderItem } from "@/db/schema/ordering";
-import {
-  productInventory,
-  inventoryStatusHistory,
-} from "@/db/schema/inventory";
-import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
-import { productSpecCharacteristicsSchema } from "@/validation/product/product-spec-characteristics.schema";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
+// The rateable Sample-5G fixture builders are SHARED with the production seed
+// (db/seeds/sample/sample-5g-rating.ts) — one source of truth for the fixture's
+// shape (rm21 code-review fix). This suite calls them with per-case parameters.
+import {
+  insertRanOffering,
+  insertRanCustomer,
+  insertRanBillCycle,
+  insertRanBillingAccount,
+  insertRanSubscription,
+  insertRanRatecard,
+  SAMPLE_5G_LKP_ROWS,
+  SAMPLE_5G_COMMERCIAL_UNIT,
+} from "@/db/seeds/sample/sample-5g-fixture";
 
 // rm21-spec §8 — the rm07 suite refreshed for the PER_UNIT RAN-usage shape.
 //   #9  Batch claim — a well-named `.udr` file claims run 1; a `_v2` reissue
@@ -131,6 +126,15 @@ function firstRow<T>(rows: readonly T[]): T {
   const row = rows.at(0);
   if (row === undefined) throw new Error("expected at least one row");
   return row;
+}
+
+// The file_key derived from a `.udr` path (basename minus the extension) — the
+// same derivation the FILE_KEY_RULE produces, used to look batches up by key.
+function fileKeyOf(udrPath: string): string {
+  return udrPath
+    .split(/[\\/]/)
+    .pop()!
+    .replace(/\.udr$/, "");
 }
 
 // ---------------------------------------------------------------------
@@ -244,10 +248,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     let logsDir: string;
     let workDir: string;
 
-    const CURRENCY = "MYR";
-    const POLYGONS = ["PCU-042_04", "PCU-042_08", "PCU-042_15"] as const;
-    const SERVICE_CODES = ["SVL-100", "SVL-101", "SVL-102"] as const;
-    const COMMERCIAL_UNIT = "CU-042";
+    // The ratecard cell structure is shared with the production seed's fixture.
+    const POLYGONS = SAMPLE_5G_LKP_ROWS.map((r) => r.polygonId);
+    const SERVICE_CODES = SAMPLE_5G_LKP_ROWS.map((r) => r.serviceCode);
+    const COMMERCIAL_UNIT = SAMPLE_5G_COMMERCIAL_UNIT;
 
     const dropAll = async (client: postgresjs.Sql) => {
       for (const s of [
@@ -306,88 +310,21 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await sql.end();
     });
 
-    // --- Fixture seeding (mirrors db/seeds/sample/sample-5g-rating.ts) --------
+    // --- Fixture seeding: thin wrappers over the SHARED sample-5g-fixture
+    // builders (one source of truth with the production seed), parameterised per
+    // test case (unique names per tag, override hooks for the fault scenarios).
 
-    // Creates an ACTIVE offering (DRAFT → children → ACTIVE, pm36 draft-guard)
-    // with the three RAN specs + a scalar usage_rate price. Returns its ids.
     async function seedOffering(
       tag: string,
       udrTypeValue: string,
       cardName: string,
     ): Promise<{ offeringId: string; familyId: string }> {
-      const [offering] = await db
-        .insert(productOffering)
-        .values({
-          name: `Sample 5G Services ${tag}`,
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          version: 1,
-          familyOfferingId: null,
-          lastEditedBy: null,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      if (!offering) throw new Error("offering insert returned no row");
-      const offeringId = offering.productOfferingId;
-
-      const emptyCharacteristics = productSpecCharacteristicsSchema.parse({});
-      await db.insert(productSpecifications).values([
-        {
-          refProductOfferingId: offeringId,
-          name: "udrType",
-          isMandatory: true,
-          isDefault: true,
-          defaultValue: udrTypeValue,
-          productSpecCharacteristics: emptyCharacteristics,
-        },
-        {
-          refProductOfferingId: offeringId,
-          name: "singleSubInstPerCust",
-          isMandatory: true,
-          isDefault: false,
-          defaultValue: "true",
-          productSpecCharacteristics: emptyCharacteristics,
-        },
-        {
-          refProductOfferingId: offeringId,
-          name: "productCardLookUp",
-          isMandatory: true,
-          isDefault: false,
-          defaultValue: cardName,
-          productSpecCharacteristics: emptyCharacteristics,
-        },
-      ]);
-
-      const priceEnvelope = persistablePricingComponentSchema.parse({
-        "@type": "usage_rate",
-        specVersion: 1,
-        plaSpecId: null,
-        priceType: "usage",
-        appliesAt: "rating",
-        basis: "quantity",
-        boundTo: { unitOfMeasure: "Mbps" },
-        params: { ratePerUnit: "100.000000", rateCardLookUp: null },
+      const { offeringId } = await insertRanOffering(db, {
+        name: `Sample 5G Services ${tag}`,
+        priceName: `Sample 5G Usage Rate ${tag}`,
+        udrTypeValue,
+        cardName,
       });
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: offeringId,
-        name: `Sample 5G Usage Rate ${tag}`,
-        componentType: priceEnvelope["@type"],
-        priceComponent: priceEnvelope,
-        recurringChargePeriodLength: null,
-        recurringChargePeriodType: null,
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        glCode: null,
-        policy: null,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, offeringId));
-
       // family_id = COALESCE(family_offering_id, product_offering_id) = the id,
       // since this offering is its own family root (familyOfferingId null).
       return { offeringId, familyId: offeringId };
@@ -397,70 +334,30 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       tag: string,
       spec: Record<string, unknown>,
     ): Promise<string> {
-      const [org] = await db
-        .insert(organization)
-        .values({
-          name: `_SAMPLE_ rm21 ${tag}`,
-          organizationType: "COMPANY",
-          registrationNumber: `_SAMPLE_-RM21-${tag}`,
-          status: "ACTIVE",
-          lastModifiedBy: actorId,
-        })
-        .returning({ organizationId: organization.organizationId });
-      if (!org) throw new Error("organization insert returned no row");
-      const [role] = await db
-        .insert(partyRole)
-        .values({
-          engagedParty: org.organizationId,
-          status: "ACTIVE",
-          partyRoleSpecification: spec,
-          lastModifiedBy: actorId,
-        })
-        .returning({ partyRoleId: partyRole.partyRoleId });
-      if (!role) throw new Error("party_role insert returned no row");
-      return role.partyRoleId;
+      return insertRanCustomer(db, {
+        organizationName: `_SAMPLE_ rm21 ${tag}`,
+        registrationNumber: `_SAMPLE_-RM21-${tag}`,
+        partyRoleSpecification: spec,
+        actorId,
+      });
     }
 
     async function seedBillingAccount(
       tag: string,
       partyRoleId: string,
     ): Promise<string> {
-      const [cycle] = await db
-        .insert(billCycle)
-        .values({
-          name: `_SAMPLE_ rm21 Cycle ${tag}`,
-          description: "rm21 fixture bill cycle",
-          frequency: "monthly",
-          cycleDay: 1,
-          paymentDueDays: 30,
-          state: "active",
-          lastEditedBy: actorId,
-        })
-        .returning({ billCycleId: billCycle.billCycleId });
-      if (!cycle) throw new Error("bill_cycle insert returned no row");
-      const [fa] = await db
-        .insert(financialAccount)
-        .values({
-          name: `_SAMPLE_ rm21 FA ${tag}`,
-          refPartyRoleId: partyRoleId,
-          currency: CURRENCY,
-          lastEditedBy: actorId,
-        })
-        .returning({ financialAccountId: financialAccount.financialAccountId });
-      if (!fa) throw new Error("financial_account insert returned no row");
-      const [ban] = await db
-        .insert(billingAccount)
-        .values({
-          name: `_SAMPLE_ rm21 BAN ${tag}`,
-          refPartyRoleId: partyRoleId,
-          refFinancialAccountId: fa.financialAccountId,
-          currency: CURRENCY,
-          refBillCycleId: cycle.billCycleId,
-          lastEditedBy: actorId,
-        })
-        .returning({ billingAccountId: billingAccount.billingAccountId });
-      if (!ban) throw new Error("billing_account insert returned no row");
-      return ban.billingAccountId;
+      const billCycleId = await insertRanBillCycle(db, {
+        name: `_SAMPLE_ rm21 Cycle ${tag}`,
+        description: "rm21 fixture bill cycle",
+        actorId,
+      });
+      return insertRanBillingAccount(db, {
+        financialAccountName: `_SAMPLE_ rm21 FA ${tag}`,
+        billingAccountName: `_SAMPLE_ rm21 BAN ${tag}`,
+        partyRoleId,
+        billCycleId,
+        actorId,
+      });
     }
 
     async function seedSubscription(
@@ -468,100 +365,27 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       billingAccountId: string,
       offeringId: string,
     ): Promise<string> {
-      const startDate = "2026-01-01";
-      const now = new Date("2026-01-01T00:00:00Z");
-      const [order] = await db
-        .insert(productOrder)
-        .values({
-          customerPartyRoleId: partyRoleId,
-          billingAccountId,
-          status: "COMPLETED",
-          failureReason: null,
-          submittedBy: actorId,
-          submittedAt: now,
-          reviewedBy: null,
-          reviewedAt: null,
-          completedAt: now,
-        })
-        .returning({ productOrderId: productOrder.productOrderId });
-      if (!order) throw new Error("product_order insert returned no row");
-      const [item] = await db
-        .insert(productOrderItem)
-        .values({
-          productOrderId: order.productOrderId,
-          productOfferingId: offeringId,
-          quantity: 1,
-          startDate,
-          orderedCharacteristics: {},
-        })
-        .returning({ productOrderItemId: productOrderItem.productOrderItemId });
-      if (!item) throw new Error("product_order_item insert returned no row");
-      const [inv] = await db
-        .insert(productInventory)
-        .values({
-          productOrderItemId: item.productOrderItemId,
-          customerPartyRoleId: partyRoleId,
-          billingAccountId,
-          productOfferingId: offeringId,
-          quantity: 1,
-          instanceCharacteristics: {},
-          status: "ACTIVE",
-          startDate,
-          endDate: null,
-        })
-        .returning({ productInventoryId: productInventory.productInventoryId });
-      if (!inv) throw new Error("product_inventory insert returned no row");
-      await db.insert(inventoryStatusHistory).values({
-        productInventoryId: inv.productInventoryId,
-        fromStatus: null,
-        toStatus: "ACTIVE",
-        effectiveDate: startDate,
+      return insertRanSubscription(db, {
+        partyRoleId,
+        billingAccountId,
+        offeringId,
+        actorId,
         reason: "rm21 fixture",
-        changedBy: actorId,
       });
-      return inv.productInventoryId;
     }
 
     async function seedRatecard(
       cardName: string,
       mno: string,
       lkpSubscriberRefId: string,
-      serviceCodes: readonly string[] = SERVICE_CODES,
     ): Promise<void> {
-      const snapshotDate = "2026-01-01";
-      const [version] = await db
-        .insert(ratecardVersion)
-        .values({
-          cardName,
-          versionNum: 1,
-          status: "ACTIVE",
-          snapshotDate,
-          sourceFile: "rm21 test",
-          fileChecksum: null,
-          rowCount: POLYGONS.length,
-          uploadedBy: actorId,
-          activatedBy: actorId,
-          activatedAt: new Date("2026-01-01T00:00:00Z"),
-          supersededByVersionId: null,
-          rejectSummary: null,
-        })
-        .returning({ ratecardVersionId: ratecardVersion.ratecardVersionId });
-      if (!version) throw new Error("ratecard_version insert returned no row");
-      await db.insert(ratecardRanUsageLkp).values(
-        POLYGONS.map((polygon, i) => ({
-          ratecardVersionId: version.ratecardVersionId,
-          mnoPublicKey: mno,
-          commercialUnitPublicKey: COMMERCIAL_UNIT,
-          polygonId: polygon,
-          polygonStartDate: snapshotDate,
-          polygonEndDate: null,
-          state: "Selangor",
-          district: `DIST-${i + 1}`,
-          lkpSubscriberRefId,
-          serviceCode: serviceCodes[i] ?? null,
-          ratePerUnit: null,
-        })),
-      );
+      await insertRanRatecard(db, {
+        cardName,
+        mnoPublicKey: mno,
+        lkpSubscriberRefId,
+        rows: SAMPLE_5G_LKP_ROWS,
+        actorId,
+      });
     }
 
     // The common happy-path fixture: one customer (MNO key), its RAN subscription
@@ -790,6 +614,30 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       );
     });
 
+    it("9. two different content timestamps NEVER derive the same file_key (code-standards §10 #9)", async () => {
+      const s = await seedBaseScenario("period", "MNO-PERIOD");
+      // Two files, same content, different 12-digit stamps → two distinct keys
+      // (the key is derived from the filename, never the content).
+      const a = writeUdr(
+        "rating-input-file-203001010001.udr",
+        cleanRows("MNO-PERIOD"),
+      );
+      const b = writeUdr(
+        "rating-input-file-203001020001.udr",
+        cleanRows("MNO-PERIOD"),
+      );
+      runPrp(a, { productName: s.productName, execId: "exec-per-a" });
+      runPrp(b, { productName: s.productName, execId: "exec-per-b" });
+      const keys = await sql`
+        SELECT DISTINCT file_key FROM rating.udr_batch
+         WHERE file_key IN ('rating-input-file-203001010001','rating-input-file-203001020001')
+         ORDER BY file_key`;
+      expect(keys.map((k) => k.file_key)).toEqual([
+        "rating-input-file-203001010001",
+        "rating-input-file-203001020001",
+      ]);
+    });
+
     it("a byte-identical redelivery is discarded as DUPLICATE_BATCH before parsing (D5)", async () => {
       const s = await seedBaseScenario("dup", "MNO-DUPB");
       const identical = cleanRows("MNO-DUPB");
@@ -831,10 +679,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const batch = await sql`
         SELECT status, parsed_count, rejected_count, reject_file_path
           FROM rating.udr_batch
-         WHERE file_key = ${path
-           .split(/[\\/]/)
-           .pop()!
-           .replace(/\.udr$/, "")}`;
+         WHERE file_key = ${fileKeyOf(path)}`;
       expect(firstRow(batch).status).toBe("REFUSED");
       expect(firstRow(batch).parsed_count).toBe(12);
       expect(firstRow(batch).rejected_count).toBe(12);
@@ -865,10 +710,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       ).toThrow();
       expect(eventCodes("exec-udrtype")).toContain("UDRTYPE_MISMATCH");
       const rows = await sql`
-        SELECT status FROM rating.udr_batch WHERE file_key = ${path
-          .split(/[\\/]/)
-          .pop()!
-          .replace(/\.udr$/, "")}`;
+        SELECT status FROM rating.udr_batch WHERE file_key = ${fileKeyOf(path)}`;
       expect(firstRow(rows).status).toBe("REFUSED");
     });
 
@@ -1065,10 +907,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(eventCodes("exec-dupsame")).toContain("PARSE_FAILURE");
       const batch = await sql`
         SELECT status, rejected_count, reject_file_path FROM rating.udr_batch
-         WHERE file_key = ${path
-           .split(/[\\/]/)
-           .pop()!
-           .replace(/\.udr$/, "")}`;
+         WHERE file_key = ${fileKeyOf(path)}`;
       expect(firstRow(batch).status).toBe("REFUSED");
       const rejectText = readFileSync(firstRow(batch).reject_file_path, "utf8");
       expect(rejectText).toContain("DUPLICATE_IN_FILE");
@@ -1077,9 +916,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     it("a same-cell/different-month pair is KEPT (not a duplicate), R2", async () => {
       const s = await seedBaseScenario("dupdiff", "MNO-DUPD");
       // cell 0 in two different billing months, plus cells 1 and 2 for coverage.
+      // Both months are before NOW (2026-09-01) and within the subscription
+      // period, so neither row is OUT_OF_RANGE — only the billing-month dedup
+      // behaviour is under test here.
       const rows = [
+        cleanRow("MNO-DUPD", 0, "2026-07-14T10:00:00"),
         cleanRow("MNO-DUPD", 0, "2026-08-14T10:00:00"),
-        cleanRow("MNO-DUPD", 0, "2026-09-14T10:00:00"),
         cleanRow("MNO-DUPD", 1, "2026-08-14T10:05:00"),
         cleanRow("MNO-DUPD", 2, "2026-08-14T10:10:00"),
       ];

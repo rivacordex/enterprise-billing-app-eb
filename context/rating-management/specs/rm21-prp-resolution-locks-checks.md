@@ -40,7 +40,7 @@ JOIN   product.product_specifications ps
       AND ps.name = 'udrType' AND ps.default_value = 'RAN_USAGE'
 WHERE  pr.party_role_specification->>'mnoPublicKey1' = %(mno)s
 ```
-- **0 rows / empty `{}` spec** → `UNKNOWN_SUBSCRIBER` (per-record; not rated).
+- **0 rows / empty `{}` spec** → `UNKNOWN_SUBSCRIBER` (batch hard-stop — detected per record, refuses the whole batch with zero rows, consistent with §Design and the other identity faults).
 - **>1 party_role for one MNO** → `MNO_KEY_NOT_UNIQUE` (batch hard-stop) — the one-MNO→one-customer invariant.
 - Stamp `product_inventory_id`, `party_role_id`, `family_id` onto the chunk row.
 
