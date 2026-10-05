@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 
 import { udrRateDetailSchema } from "@/validation/rating/udr-rate-detail.schema";
+import { toScaled } from "@/validation/rating/decimal-string";
 import type { UdrRatedInsert } from "@/db/schema/rating/udr-rated";
 
 // bm15-spec §Implementation §2 — the D28 stand-in for rating's own
@@ -27,6 +28,15 @@ export interface SampleChargeSpec {
   // 'RAN_USAGE' and SUBSCRIPTION_RECURRING is retired from the factory.
   udrType?: string;
   sequence: number; // disambiguates udr_key across rows for the same account/period
+  // bm42-spec §Implementation §7 — the capacity profile's PER_UNIT shape (the
+  // factory extension): a capacity volume row must be rated PER_UNIT, not
+  // FLAT, so G2 (CAPACITY_RATE_MISMATCH) passes. Every field below defaults to
+  // today's FLAT shape untouched — only a caller passing `rateType: "PER_UNIT"`
+  // takes this branch.
+  usageQuantity?: number; // EA (or usageUnit) metered on this row; default 1
+  usageRate?: string; // per-unit rate (money string), required with PER_UNIT
+  rateType?: "FLAT" | "PER_UNIT";
+  usageUnit?: string; // default "EA"
 }
 
 // A row shaped exactly like `UdrRatedInsert` except `partitionPeriod`, which
@@ -50,10 +60,39 @@ function buildUdrKey(spec: SampleChargeSpec): string {
   });
 }
 
+// Exact bigint-scaled amountRaw = ratePerUnit × quantity (never float —
+// mirrors validation/rating/decimal-string.ts's own superRefine check so a
+// PER_UNIT row is guaranteed to pass udrRateDetailSchema).
+function computePerUnitAmountRaw(ratePerUnit: string, quantity: string): string {
+  const scaledAmount = (toScaled(ratePerUnit) * toScaled(quantity)) / 1_000_000n;
+  const sign = scaledAmount < 0n ? "-" : "";
+  const abs = scaledAmount < 0n ? -scaledAmount : scaledAmount;
+  const digits = abs.toString().padStart(7, "0");
+  return `${sign}${digits.slice(0, -6)}.${digits.slice(-6)}`;
+}
+
 export function buildSampleUdrRatedRow(
   spec: SampleChargeSpec,
 ): SampleUdrRatedRow {
-  const rateDetail = udrRateDetailSchema.parse({ rateType: "FLAT" });
+  const rateType = spec.rateType ?? "FLAT";
+  const usageUnit = spec.usageUnit ?? "EA";
+  const usageQuantity = spec.usageQuantity ?? 1;
+  const usageQuantityStr = usageQuantity.toFixed(6);
+
+  if (rateType === "PER_UNIT" && spec.usageRate === undefined) {
+    throw new Error(
+      "buildSampleUdrRatedRow: rateType 'PER_UNIT' requires usageRate.",
+    );
+  }
+  const rateDetail =
+    rateType === "PER_UNIT" && spec.usageRate !== undefined
+      ? udrRateDetailSchema.parse({
+          rateType: "PER_UNIT",
+          ratePerUnit: spec.usageRate,
+          quantity: usageQuantityStr,
+          amountRaw: computePerUnitAmountRaw(spec.usageRate, usageQuantityStr),
+        })
+      : udrRateDetailSchema.parse({ rateType: "FLAT" });
 
   return {
     partitionPeriod: sql`rating.period_of(${spec.startDatetime.toISOString()}::timestamptz)`,
@@ -63,15 +102,16 @@ export function buildSampleUdrRatedRow(
     status: spec.status ?? "RATED",
     udrSubscriptionRefId: spec.subscriberRefId,
     udrKey: buildUdrKey(spec),
-    udrUsageQuantity: "1.000000",
-    udrUsageUnit: "EA",
-    udrRateType: "FLAT",
+    udrUsageQuantity: usageQuantityStr,
+    udrUsageUnit: usageUnit,
+    udrRateType: rateType,
     udrRateDetail: rateDetail,
     udrRatedPrice: spec.ratedPrice,
     udrRatedPriceRaw: spec.ratedPrice,
     udrRoundingMode: "HALF_UP",
     udrCurrency: spec.currency,
     udrPriceRef: spec.priceRef,
+    udrUsageRate: rateType === "PER_UNIT" ? spec.usageRate ?? null : null,
     // Fully unclaimed & unattributed (bm26-spec §Implementation §1) — all FOUR
     // billrun_* columns NULL, byte-for-byte the shape rl.py's build_chunk_rows
     // leaves (it writes none of them; they default NULL). billrun_ban_id was

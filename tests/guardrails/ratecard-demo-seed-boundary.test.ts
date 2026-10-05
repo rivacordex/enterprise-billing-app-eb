@@ -33,9 +33,15 @@ const SAMPLE_SEED = "db/seeds/sample/seed-billrun-sample.ts";
 // NOT the bare token `RAN_USAGE` — that is also the UDR type name the sample
 // seed legitimately uses (`_SAMPLE_`-marked udr_rated rows), so matching it
 // would be a false positive; the rate-card artifacts are the `ratecard*`
-// spellings and the service file names.
+// spellings and the service file names. Also deliberately NOT
+// `rateCardLookUp` (the negative lookahead) — that is the unrelated, pre-
+// existing `usage_rate` pricing-component param from
+// `validation/product/pricing-component.schema.ts` (pm47), legitimately used
+// by `sample-5g-fixture.ts`/`product-demo.ts` and, from bm42, the capacity
+// profile's `usage_rate` component here; it names no table, no service, and
+// resolves no card (that is bm45's invoice appendix, a separate unit).
 const RATE_CARD_ARTIFACT =
-  /ratecard|RATECARD_RAN_USAGE_LKP|ran_usage_lkp|seedRateCardDemo|upload-version|activate-version|rollback-version/i;
+  /ratecard(?!LookUp)|RATECARD_RAN_USAGE_LKP|ran_usage_lkp|seedRateCardDemo|upload-version|activate-version|rollback-version/i;
 
 describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
   it("db/seeds/product.ts (the ADMIN grant seed) carries no rate-card artifact (D7 — confirmed untouched)", () => {

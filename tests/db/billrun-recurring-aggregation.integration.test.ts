@@ -43,9 +43,16 @@ import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
 //     price, and a missing price fails HARD (RECURRING_PRICE_NOT_FOUND) — no
 //     bill produced, never zero-substituted (D33/Inv #28);
 //   * a usage_rate + capacity_commitment + capacity_motivation on a billed
-//     offering change no line, amount or count — the capacity components stay
-//     stored and unbilled (pm52-spec D5, Inv #43).
+//     offering are still INVISIBLE to THIS resolver's component_type =
+//     'flat_fee' filter — the RECURRING line is unaffected (pm52-spec D5).
+//     [REVERSED by bm42] They are no longer "unbilled": bm42's separate
+//     capacity resolution (_bm42_capacity, in the SAME aggregation step) now
+//     prices them into their own CAPACITY line, generated from the ACTIVE
+//     subscription even at zero usage (Inv #33) — so this fixture's account
+//     now bills TWO lines, not one; pm52's original "Inv #43" citation
+//     predates this module's Inv #29-#38 numbering and no longer resolves.
 //
+
 // It runs on the superuser DATABASE_URL connection (like the bm28 double), so it
 // exercises the aggregation LOGIC, not the billrun_runtime grants — those are
 // proven by billrun-db-roles.integration.test.ts.
@@ -853,8 +860,9 @@ describe.skipIf(!databaseUrl)(
 
     it(
       "[CRITICAL] a usage_rate + capacity_commitment + capacity_motivation on a " +
-        "billed offering change no bill line, amount or count (pm52-spec D5 — " +
-        "the capacity components stay stored and unbilled)",
+        "billed offering leave the RECURRING resolver's line/amount unchanged, " +
+        "but now ALSO bill their own CAPACITY line (bm42 — pm52-spec D5's " +
+        "'invisible to this resolver' holds; the former 'unbilled' outcome does not)",
       async () => {
         const ban = await newAccount("CapacityVisible");
         const off = await newOffering("Capacity-Visible Offering");
@@ -878,13 +886,22 @@ describe.skipIf(!databaseUrl)(
         expect(bill).toBeDefined();
         const lines = await readLines(bill!.customerBillId);
 
-        // Exactly the same single RECURRING line as a flat_fee-only offering
-        // would produce — the capacity components are invisible to this
-        // resolver's component_type = 'flat_fee' filter.
-        expect(lines).toHaveLength(1);
-        expect(lines[0]!.source).toBe("RECURRING");
-        expect(lines[0]!.netAmount).toBe("20.00");
-        expect(bill!.subtotal).toBe("20.00");
+        // The RECURRING line is byte-identical to a flat_fee-only offering's
+        // (THIS resolver's component_type = 'flat_fee' filter still never sees
+        // the capacity components) — but a SEPARATE capacity resolution
+        // (_bm42_capacity) now also prices them: zero usage still bills the
+        // full commitment floor (Inv #33) — topUp = 1000 EA (no usage to
+        // offset) × 5.00 = 5000.00, no motivation discount (Q=0 never crosses
+        // a step threshold).
+        expect(lines).toHaveLength(2);
+        const bySource = Object.fromEntries(lines.map((l) => [l.source, l]));
+        expect(bySource.RECURRING!.netAmount).toBe("20.00");
+        expect(bySource.USAGE!.offeringId).toBe(off);
+        expect(bySource.USAGE!.quantity).toBe("0.000000");
+        expect(bySource.USAGE!.grossAmount).toBe("5000.00");
+        expect(bySource.USAGE!.discountAmount).toBe("0.00");
+        expect(bySource.USAGE!.netAmount).toBe("5000.00");
+        expect(bill!.subtotal).toBe("5020.00");
       },
       120_000,
     );

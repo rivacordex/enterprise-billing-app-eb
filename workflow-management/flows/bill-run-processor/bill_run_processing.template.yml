@@ -15,8 +15,11 @@
 # the per-stage
 # `DONE` POSTs, the per-account HARD `FAILED` POST, and the run-level terminal
 # `PROCESSING_FAILED` (`errors`/`finally`) are real `core.http.Request` callbacks
-# (at parity with the distributor, bm34); the only remaining `# STUB:` is the
-# taxation compute. See ./README.md.
+# (at parity with the distributor, bm34). `aggregation` also carries
+# `# REAL (bm42):` — Target Capacity Pricing's commitment floor + N-band
+# motivation discount as inline SQL CTEs, inside the SAME transaction, plus the
+# six account-level HARD `CAPACITY_*` guards — the only remaining `# STUB:` is
+# the taxation compute. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -26,6 +29,10 @@ inputs:
   - { id: ban_ids, type: JSON } # accounts scoped app-side at trigger (bm03)
   - { id: attempt, type: INT } # app-assigned; the idempotency key component
   - { id: gl_event_at, type: STRING }
+  # bm42: the single-band production guard (default 1). The capacity SQL is
+  # N-band; raising this enables multi-step motivation later as a config
+  # change, never a pricing-SQL edit (TC52).
+  - { id: capacity_max_bands, type: INT }
 tasks:
   - id: per_account
     type: io.kestra.plugin.core.flow.ForEach # fan-out per account (Inv: per account, per stage)
@@ -163,9 +170,70 @@ tasks:
         #     account stays billable; fixing the catalog + a rerun re-derives it.
         #   - The capacity components (usage_rate, capacity_commitment,
         #     capacity_motivation) are excluded by the component_type='flat_fee'
-        #     filter and cannot be seen by this lane's lead() partition — nothing
-        #     here computes a capacity resolution (Inv #43); they stay stored and
-        #     unbilled.
+        #     filter and cannot be seen by THIS lane's lead() partition — the
+        #     RECURRING resolver never resolves them. They are priced by the
+        #     SEPARATE capacity resolution below (REAL bm42), in its own
+        #     (offering, unit)-partitioned as-of window over the SAME three
+        #     component types this comment excludes from the recurring lane.
+        # REAL (bm42): Target Capacity Pricing — commitment floor + N-band
+        #   motivation discount, computed in the SAME per-account
+        #   whole-account-replace transaction, inline SQL only (no DB function,
+        #   no Python task — Inv #29). A capacity offering is detected by its
+        #   COMPONENTS, never a column (Inv #32): the union of this account's
+        #   ACTIVE offerings carrying a capacity_commitment and/or
+        #   capacity_motivation component, resolved off the subscription's
+        #   PINNED offering version (Inv #31) via the same as-of lead() window
+        #   pattern as the recurring resolver above, partitioned by (offering,
+        #   component_type, unit_of_measure) and pruned to the account's ACTIVE
+        #   offerings. base_rate is the same-offering, same-unit usage_rate
+        #   component (joined on unit_of_measure — no price-id pointer, TC32).
+        #   - Six HARD guards, account-level (Inv #32), each rolling the whole
+        #     transaction back (no bill for this account; siblings keep
+        #     billing): CAPACITY_MULTIPLE_SUBSCRIPTIONS (>1 ACTIVE subscription
+        #     of the offering), CAPACITY_BASE_RATE_NOT_FOUND (no same-unit
+        #     usage_rate), CAPACITY_UDR_TYPE_MISMATCH (a claimed row's udr_type
+        #     != the offering's spec udrType), CAPACITY_RATE_MISMATCH (G2 — a
+        #     claimed row's udr_usage_rate/udr_price_ref IS DISTINCT FROM the
+        #     resolved base_rate/base_price_ref — IS DISTINCT FROM, not <>, so a
+        #     NULL rate/non-PER_UNIT row counts, TC35),
+        #     CAPACITY_MULTI_STEP_UNSUPPORTED (a motivation schedule's band count
+        #     exceeds the capacity_max_bands input), CAPACITY_CURRENCY_MISMATCH
+        #     (G3 — the resolved component currency != the account currency).
+        #   - The capacity line is ONE per (offering, unit_of_measure)
+        #     (grouping_key `<offering>:CAPACITY:<unit>`), generated from the
+        #     ACTIVE subscription even at ZERO usage (Inv #33 — the commitment
+        #     floor exists for exactly that case), and excluded from the
+        #     ordinary USAGE rollup above (an anti-join on matching
+        #     offering+unit+udrType) so the same volume is never double-counted;
+        #     the offering's usage in a DIFFERENT unit stays an ordinary USAGE
+        #     line. `quantity` on the line is the ACTUAL metered usage Q
+        #     (O-TC2) — the floored/billed figure is a derived construct kept in
+        #     `additional_info.calc`, never the stored quantity.
+        #   - Model 1 is billed (Inv #29): `rated_amount = Σ udr_rated_price`
+        #     (the account's claimed rows in the capacity volume); `topUp =
+        #     round(max(target - Q, 0) * base_rate, 2)` (0 when no commitment
+        #     component, TC36); the motivation discount is the N-band generic
+        #     sum of `round(bandQty * (base_rate - stepRate), 2)` over `steps`
+        #     (0 when no motivation component, TC36 — commitment-only and
+        #     motivation-only offerings are both first-class); `gross =
+        #     rated_amount + topUp`; `net = gross - discount`. Each monetary
+        #     component is rounded ONCE (2dp HALF_UP); gross/net are DERIVED
+        #     from the rounded parts and never re-rounded (Inv #34), so the
+        #     identities hold with no ±0.01 tolerance on integer anchors (a
+        #     fractional-usage fixture accepts a ≤1¢ drift, TC40).
+        #     `discount_amount_raw` keeps the unrounded discount (scale 6). The
+        #     independent Model-2 cross-derivation (`max(Q,target) * baseRate`)
+        #     is `verification`'s job (bm43), never billed here.
+        #   - `rated_amount` + `additional_info` (bm41's columns) are written on
+        #     every capacity line: `additional_info` is the versioned calc trace
+        #     `{ v, productInventoryId, pricing, calc[], summary[] }` built as
+        #     `jsonb_build_object` in the SAME SQL expression as the money
+        #     columns — never hashed into `charge_checksum` (Inv #35) and never
+        #     rendered in the app UI (database-only this phase). `snapshot_*`
+        #     stay NULL on a capacity line (O-TC1) — it is re-aggregated from
+        #     the live BILL_DRAFT rows every run, never read from a prior line
+        #     like a RECURRING snapshot.
+        #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
         #   KNOWN LIMITATION (deferred): a zero-charge account (no USAGE and no
         #   RECURRING lines) still gets a subtotal-0.00 customer_bill. Per Inv #22
         #   a no-line account is Uncharged (no bill), and a 0.00 bill trips the

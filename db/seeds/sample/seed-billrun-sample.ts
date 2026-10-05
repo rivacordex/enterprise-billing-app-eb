@@ -9,8 +9,13 @@ import { organization, partyRole } from "@/db/schema/customer";
 import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { ledgerBinding } from "@/db/schema/billing/ledger-binding";
-import { productOffering, productOfferingPrice } from "@/db/schema/product";
+import {
+  productOffering,
+  productOfferingPrice,
+  productSpecifications,
+} from "@/db/schema/product";
 import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
+import { productSpecCharacteristicsSchema } from "@/validation/product/product-spec-characteristics.schema";
 import {
   productOrder,
   productOrderItem,
@@ -60,6 +65,29 @@ const SAMPLE_RECURRING_AMOUNT = "199.00";
 // usage flows through udr_rated now (bm26-spec §Implementation §1, Inv #1).
 const SAMPLE_USAGE_AMOUNT = "12.50";
 
+// bm42-spec §Implementation §7 — the capacity profile's own `_SAMPLE_`
+// offering, distinct from SAMPLE_OFFERING_NAME above (a capacity offering
+// carries usage_rate + capacity_commitment + capacity_motivation components,
+// never a flat_fee recurring charge). All amounts here are the spec's anchor
+// fixture: base rate 100/EA, committed 1000 EA, motivation step above 1000 EA
+// @ 50/EA — the four CAPACITY_SCENARIOS accounts (800/1000/2000/0 EA) bill to
+// 100,000/100,000/150,000(net)/100,000 against this exact fixture.
+const SAMPLE_CAPACITY_OFFERING_NAME = "_SAMPLE_ Capacity Demo Plan";
+const SAMPLE_CAPACITY_USAGE_RATE_PRICE_NAME = "_SAMPLE_ Capacity Usage Rate";
+const SAMPLE_CAPACITY_COMMITMENT_PRICE_NAME = "_SAMPLE_ Capacity Commitment";
+const SAMPLE_CAPACITY_MOTIVATION_PRICE_NAME = "_SAMPLE_ Capacity Motivation";
+const SAMPLE_CAPACITY_UNIT = "EA";
+const SAMPLE_CAPACITY_BASE_RATE = "100";
+const SAMPLE_CAPACITY_COMMITTED_QUANTITY = 1000;
+const SAMPLE_CAPACITY_MOTIVATION_ABOVE = 1000;
+const SAMPLE_CAPACITY_MOTIVATION_RATE = "50";
+// `productCardLookUp` is a plain string label this phase — no lookup card
+// table is read or resolved here (that is bm45's invoice appendix, a
+// separate unit); the name is deliberately generic so this file keeps
+// passing the pm67 rate-card seed's leak-boundary guardrail.
+const SAMPLE_CAPACITY_CARD_NAME = "_SAMPLE_ Capacity Service Card";
+const SAMPLE_CAPACITY_UDR_TYPE = "RAN_USAGE";
+
 // bm26-spec §Implementation §2 — the `ci` profile: six scenarios covering the
 // shapes Collection (bm27) / Aggregation (bm28) / recurring-derivation (bm29) /
 // exception surfacing (bm32) must handle. "Recurring" is represented by real
@@ -77,9 +105,15 @@ const SAMPLE_USAGE_AMOUNT = "12.50";
 // udr_rated record count (bm35-spec §Implementation §4, code-standards §9.31).
 // Selected by the profile switch alongside `ci`; every seeded row is still
 // `_SAMPLE_`-marked, unclaimed, `RAN_USAGE`, `billrun_ban_id` NULL.
-type SeedProfile = "ci" | "volume";
+// bm42-spec §Implementation §7 — the `capacity` profile: four accounts, one
+// capacity subscription each, usage 800/1000/2000/0 EA of RAN_USAGE against
+// the dedicated capacity offering (SAMPLE_CAPACITY_OFFERING_NAME, never
+// SAMPLE_OFFERING_NAME). Selected by SAMPLE_SEED_PROFILE=capacity, mutually
+// exclusive with `ci`/`volume` (a profile selects exactly one offering/
+// scenario set — this seed does not mix them in one run).
+type SeedProfile = "ci" | "volume" | "capacity";
 const DEFAULT_PROFILE: SeedProfile = "ci";
-const SEED_PROFILES: readonly SeedProfile[] = ["ci", "volume"];
+const SEED_PROFILES: readonly SeedProfile[] = ["ci", "volume", "capacity"];
 
 // The `volume` profile's shape (bm35-spec §Implementation §1). Kept modest
 // enough to seed quickly yet large enough to make "line count tracks footprint,
@@ -96,7 +130,11 @@ type ScenarioKey =
   | "recurring-only"
   | "no-charges"
   | "partial-period"
-  | "bill-notused";
+  | "bill-notused"
+  | "capacity-below-target"
+  | "capacity-at-target"
+  | "capacity-above-target"
+  | "capacity-zero-usage";
 
 interface ScenarioSpec {
   key: ScenarioKey;
@@ -111,6 +149,14 @@ interface ScenarioSpec {
   // BILL_NOTUSED udr_rated rows on the account (the per-record exception
   // surface, bm32) — wired to the account's first subscription.
   billNotUsedRows: number;
+  // bm42-spec §Implementation §7 — the `capacity` profile's per-account EA
+  // volume to seed as the capacity subscription's rated usage, PER_UNIT,
+  // one row per EA at the fixture's base rate (the factory extension,
+  // db/seeds/sample/udr-rated-sample.ts). undefined on every non-capacity
+  // scenario; `0` is a real value (the zero-usage anchor, TC15) — the two are
+  // distinguished by `scenario.capacityUsageEa !== undefined` at the call
+  // site, never truthiness.
+  capacityUsageEa?: number;
 }
 
 const CI_SCENARIOS: readonly ScenarioSpec[] = [
@@ -181,12 +227,59 @@ const VOLUME_SCENARIOS: readonly ScenarioSpec[] = Array.from(
   }),
 );
 
+// bm42-spec §Implementation §7 — the anchor fixture: 800 EA bills net 100,000
+// (rated 80,000 + top-up 20,000, discount 0); 1000 EA bills 100,000 (floor met
+// exactly, discount 0); 2000 EA bills gross 200,000 − discount 50,000 = net
+// 150,000; 0 EA bills 100,000 (full floor, rated 0). Each account has exactly
+// one capacity subscription (singleSubInstPerCust) and no other charge — the
+// capacity line is the account's only line.
+const CAPACITY_SCENARIOS: readonly ScenarioSpec[] = [
+  {
+    key: "capacity-below-target",
+    banName: "_SAMPLE_ Capacity Billing Account 1 (800 EA, below target)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+    capacityUsageEa: 800,
+  },
+  {
+    key: "capacity-at-target",
+    banName: "_SAMPLE_ Capacity Billing Account 2 (1000 EA, at target)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+    capacityUsageEa: 1000,
+  },
+  {
+    key: "capacity-above-target",
+    banName: "_SAMPLE_ Capacity Billing Account 3 (2000 EA, above target)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+    capacityUsageEa: 2000,
+  },
+  {
+    key: "capacity-zero-usage",
+    banName: "_SAMPLE_ Capacity Billing Account 4 (0 EA, full floor)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+    capacityUsageEa: 0,
+  },
+];
+
 function resolveProfile(profile: SeedProfile): readonly ScenarioSpec[] {
   switch (profile) {
     case "ci":
       return CI_SCENARIOS;
     case "volume":
       return VOLUME_SCENARIOS;
+    case "capacity":
+      return CAPACITY_SCENARIOS;
     default: {
       const exhaustive: never = profile;
       throw new Error(
@@ -457,6 +550,24 @@ async function purgeSampleGraph(): Promise<void> {
         );
     }
 
+    // bm42-spec §Implementation §7 — the capacity profile's offering, purged
+    // the same way (cascade removes its price + specification children).
+    const [capacityOffering] = await tx
+      .select({ productOfferingId: productOffering.productOfferingId })
+      .from(productOffering)
+      .where(eq(productOffering.name, SAMPLE_CAPACITY_OFFERING_NAME))
+      .limit(1);
+    if (capacityOffering) {
+      await tx
+        .delete(productOffering)
+        .where(
+          eq(
+            productOffering.productOfferingId,
+            capacityOffering.productOfferingId,
+          ),
+        );
+    }
+
     return { orphanLedgerAccountIds, admin };
   });
 
@@ -674,6 +785,214 @@ async function ensureSampleOffering(): Promise<{
     return {
       offeringId: offering.productOfferingId,
       priceId: price.productOfferingPriceId,
+    };
+  });
+}
+
+// bm42-spec §Implementation §7 — the capacity profile's own `_SAMPLE_`
+// offering: one version carrying a usage_rate, a capacity_commitment and a
+// capacity_motivation component (all unit_of_measure 'EA', currency 'MYR'),
+// plus the three product_specifications rows a capacity offering requires
+// (udrType, singleSubInstPerCust, productCardLookUp — the sample-5g-rating.ts
+// shape). Mirrors ensureSampleOffering's idempotent DRAFT→children→ACTIVE
+// path (pm36 draft-guard order) — a re-seed without teardown returns the
+// existing row rather than rebuilding it.
+async function ensureSampleCapacityOffering(): Promise<{
+  offeringId: string;
+  usageRatePriceId: string;
+}> {
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        productOfferingId: productOffering.productOfferingId,
+        lifecycleStatus: productOffering.lifecycleStatus,
+      })
+      .from(productOffering)
+      .where(eq(productOffering.name, SAMPLE_CAPACITY_OFFERING_NAME))
+      .limit(1);
+    if (existing) {
+      const [existingUsageRate] = await tx
+        .select({
+          productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
+        })
+        .from(productOfferingPrice)
+        .where(
+          and(
+            eq(
+              productOfferingPrice.productOfferingId,
+              existing.productOfferingId,
+            ),
+            eq(productOfferingPrice.componentType, "usage_rate"),
+          ),
+        )
+        .limit(1);
+      if (!existingUsageRate) {
+        throw new Error(
+          "_SAMPLE_ capacity offering already exists but carries no usage_rate price row.",
+        );
+      }
+      if (existing.lifecycleStatus !== "ACTIVE") {
+        await tx
+          .update(productOffering)
+          .set({ lifecycleStatus: "ACTIVE" })
+          .where(
+            eq(productOffering.productOfferingId, existing.productOfferingId),
+          );
+      }
+      return {
+        offeringId: existing.productOfferingId,
+        usageRatePriceId: existingUsageRate.productOfferingPriceId,
+      };
+    }
+
+    // Insert DRAFT, add specs + prices, THEN promote to ACTIVE — the same
+    // pm36 draft-guard order as ensureSampleOffering (the child-write trigger
+    // requires the parent still DRAFT while its children are written).
+    const [offering] = await tx
+      .insert(productOffering)
+      .values({
+        name: SAMPLE_CAPACITY_OFFERING_NAME,
+        isBundle: false,
+        isSellable: true,
+        billingOnly: true,
+        lifecycleStatus: "DRAFT",
+        version: 1,
+        lastEditedBy: null,
+      })
+      .returning({ productOfferingId: productOffering.productOfferingId });
+    if (!offering) {
+      throw new Error("_SAMPLE_ capacity offering insert returned no row");
+    }
+    const offeringId = offering.productOfferingId;
+
+    const emptyCharacteristics = productSpecCharacteristicsSchema.parse({});
+    await tx.insert(productSpecifications).values([
+      {
+        refProductOfferingId: offeringId,
+        name: "udrType",
+        isMandatory: true,
+        isDefault: true,
+        defaultValue: SAMPLE_CAPACITY_UDR_TYPE,
+        productSpecCharacteristics: emptyCharacteristics,
+      },
+      {
+        refProductOfferingId: offeringId,
+        name: "singleSubInstPerCust",
+        isMandatory: true,
+        isDefault: false,
+        defaultValue: "true",
+        productSpecCharacteristics: emptyCharacteristics,
+      },
+      {
+        refProductOfferingId: offeringId,
+        name: "productCardLookUp",
+        isMandatory: true,
+        isDefault: false,
+        defaultValue: SAMPLE_CAPACITY_CARD_NAME,
+        productSpecCharacteristics: emptyCharacteristics,
+      },
+    ]);
+
+    const startDateTime = new Date("2026-01-01T00:00:00Z");
+
+    const usageRateEnvelope = persistablePricingComponentSchema.parse({
+      "@type": "usage_rate",
+      specVersion: 1,
+      plaSpecId: null,
+      priceType: "usage",
+      appliesAt: "rating",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: SAMPLE_CAPACITY_UNIT },
+      params: { ratePerUnit: SAMPLE_CAPACITY_BASE_RATE, rateCardLookUp: null },
+    });
+    const [usageRatePrice] = await tx
+      .insert(productOfferingPrice)
+      .values({
+        productOfferingId: offeringId,
+        name: SAMPLE_CAPACITY_USAGE_RATE_PRICE_NAME,
+        componentType: usageRateEnvelope["@type"],
+        priceComponent: usageRateEnvelope,
+        recurringChargePeriodLength: null,
+        recurringChargePeriodType: null,
+        unitOfMeasure: SAMPLE_CAPACITY_UNIT,
+        currency: CURRENCY,
+        glCode: null,
+        policy: null,
+        startDateTime,
+      })
+      .returning({
+        productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
+      });
+    if (!usageRatePrice) {
+      throw new Error(
+        "_SAMPLE_ capacity offering usage_rate price insert returned no row",
+      );
+    }
+
+    const commitmentEnvelope = persistablePricingComponentSchema.parse({
+      "@type": "capacity_commitment",
+      specVersion: 1,
+      plaSpecId: "PLA_CAPACITY_COMMITMENT",
+      priceType: "commitment",
+      appliesAt: "post_aggregation",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: SAMPLE_CAPACITY_UNIT },
+      params: { committedQuantity: SAMPLE_CAPACITY_COMMITTED_QUANTITY },
+    });
+    await tx.insert(productOfferingPrice).values({
+      productOfferingId: offeringId,
+      name: SAMPLE_CAPACITY_COMMITMENT_PRICE_NAME,
+      componentType: commitmentEnvelope["@type"],
+      priceComponent: commitmentEnvelope,
+      recurringChargePeriodLength: null,
+      recurringChargePeriodType: null,
+      unitOfMeasure: SAMPLE_CAPACITY_UNIT,
+      currency: CURRENCY,
+      glCode: null,
+      policy: null,
+      startDateTime,
+    });
+
+    const motivationEnvelope = persistablePricingComponentSchema.parse({
+      "@type": "capacity_motivation",
+      specVersion: 1,
+      plaSpecId: "PLA_CAPACITY_MOTIVATION",
+      priceType: "discount",
+      appliesAt: "post_aggregation",
+      basis: "quantity",
+      boundTo: { unitOfMeasure: SAMPLE_CAPACITY_UNIT },
+      params: {
+        steps: [
+          {
+            aboveQuantity: SAMPLE_CAPACITY_MOTIVATION_ABOVE,
+            ratePerUnit: SAMPLE_CAPACITY_MOTIVATION_RATE,
+          },
+        ],
+      },
+    });
+    await tx.insert(productOfferingPrice).values({
+      productOfferingId: offeringId,
+      name: SAMPLE_CAPACITY_MOTIVATION_PRICE_NAME,
+      componentType: motivationEnvelope["@type"],
+      priceComponent: motivationEnvelope,
+      recurringChargePeriodLength: null,
+      recurringChargePeriodType: null,
+      unitOfMeasure: SAMPLE_CAPACITY_UNIT,
+      currency: CURRENCY,
+      glCode: null,
+      policy: null,
+      startDateTime,
+    });
+
+    // Promote to ACTIVE now that the priced children exist (pm35-spec I3.1).
+    await tx
+      .update(productOffering)
+      .set({ lifecycleStatus: "ACTIVE" })
+      .where(eq(productOffering.productOfferingId, offeringId));
+
+    return {
+      offeringId,
+      usageRatePriceId: usageRatePrice.productOfferingPriceId,
     };
   });
 }
@@ -1015,6 +1334,81 @@ async function seedSampleCharges(
   return rows.length;
 }
 
+// bm42-spec §Implementation §7 — the capacity profile's charges: PER_UNIT
+// rows only (the factory extension, udr-rated-sample.ts §Implementation §7),
+// never the FLAT shape `seedSampleCharges` emits. `capacityUsageEa` seeds that
+// many 1-EA rows at the fixture's base rate against the account's one capacity
+// subscription, so Σ udr_usage_quantity = EA and Σ udr_rated_price = EA ×
+// base rate — bm42's capacity aggregation reproduces the anchor fixture
+// exactly. Zero EA (the TC15 anchor) seeds no rows: the capacity line is
+// generated from the subscription, never from the presence of rated rows.
+async function seedSampleCapacityCharges(
+  accountSubscriptions: AccountSubscriptions[],
+  usageRatePriceRef: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<number> {
+  const [startY, startM, startD] = periodStart.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  const [endY, endM, endD] = periodEnd.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  const startDatetime = new Date(Date.UTC(startY, startM - 1, startD));
+  const endDatetime = new Date(Date.UTC(endY, endM - 1, endD, 23, 59, 59));
+
+  const rows: SampleUdrRatedRow[] = [];
+  let sequence = 0;
+
+  for (const { account, productInventoryIds } of accountSubscriptions) {
+    const { scenario } = account;
+    const capacityUsageEa = scenario.capacityUsageEa;
+    if (capacityUsageEa === undefined) {
+      throw new Error(
+        `db:seed-sample: capacity profile scenario "${scenario.key}" has no capacityUsageEa.`,
+      );
+    }
+    const anchorInventoryId = productInventoryIds[0];
+    if (!anchorInventoryId) {
+      throw new Error(
+        `db:seed-sample: capacity profile scenario "${scenario.key}" has no subscription to anchor its usage.`,
+      );
+    }
+
+    for (let u = 0; u < capacityUsageEa; u++) {
+      sequence += 1;
+      rows.push(
+        buildSampleUdrRatedRow({
+          ban: account.billingAccountId,
+          subscriberRefId: anchorInventoryId,
+          priceRef: usageRatePriceRef,
+          startDatetime,
+          endDatetime,
+          ratedPrice: `${SAMPLE_CAPACITY_BASE_RATE}.00`,
+          currency: CURRENCY,
+          status: "RATED",
+          sequence,
+          udrType: SAMPLE_CAPACITY_UDR_TYPE,
+          usageQuantity: 1,
+          usageRate: SAMPLE_CAPACITY_BASE_RATE,
+          rateType: "PER_UNIT",
+          usageUnit: SAMPLE_CAPACITY_UNIT,
+        }),
+      );
+    }
+  }
+
+  const INSERT_CHUNK = 1000;
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    await db.insert(udrRated).values(rows.slice(i, i + INSERT_CHUNK));
+  }
+  return rows.length;
+}
+
 async function main(): Promise<void> {
   assertNonProductionTarget();
 
@@ -1026,10 +1420,23 @@ async function main(): Promise<void> {
     "sample-billrun-seed@example.invalid",
   );
 
-  const { offeringId, priceId } = await ensureSampleOffering();
-
   const selectedProfile = resolveSelectedProfile();
   const scenarios = resolveProfile(selectedProfile);
+  const isCapacityProfile = selectedProfile === "capacity";
+
+  // bm42-spec §Implementation §7 — the capacity profile subscribes every
+  // account to the DEDICATED capacity offering, never SAMPLE_OFFERING_NAME;
+  // `chargeRef` is the price the charges below are written against (the
+  // recurring-profile's usage price, or the capacity offering's usage_rate).
+  const { offeringId, chargeRef } = isCapacityProfile
+    ? await ensureSampleCapacityOffering().then((o) => ({
+        offeringId: o.offeringId,
+        chargeRef: o.usageRatePriceId,
+      }))
+    : await ensureSampleOffering().then((o) => ({
+        offeringId: o.offeringId,
+        chargeRef: o.priceId,
+      }));
 
   const { partyRoleId, accounts } = await createSampleCustomerAndAccounts(
     actorId,
@@ -1058,12 +1465,19 @@ async function main(): Promise<void> {
     actorId,
   );
 
-  const chargeCount = await seedSampleCharges(
-    accountSubscriptions,
-    priceId,
-    periodStart,
-    periodEnd,
-  );
+  const chargeCount = isCapacityProfile
+    ? await seedSampleCapacityCharges(
+        accountSubscriptions,
+        chargeRef,
+        periodStart,
+        periodEnd,
+      )
+    : await seedSampleCharges(
+        accountSubscriptions,
+        chargeRef,
+        periodStart,
+        periodEnd,
+      );
 
   logger.info("db:seed-sample: _SAMPLE_ billrun scenario seeded.", {
     profile: selectedProfile,
