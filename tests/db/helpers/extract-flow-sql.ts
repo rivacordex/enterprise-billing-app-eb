@@ -271,11 +271,25 @@ export interface AggregateParams {
   periodStart: string;
   periodEnd: string;
   glEventAt: string;
+  // bm42-spec §Implementation §1 — the flow's `capacity_max_bands` input
+  // (default 1, mirroring the flow's own `defaults: 1`). Optional so every
+  // pre-bm42 caller (bm28/bm29's aggregation suites) is unaffected; a
+  // capacity test overrides it to exercise CAPACITY_MULTI_STEP_UNSUPPORTED
+  // (TC52).
+  capacityMaxBands?: number;
 }
 
 export async function runAggregation(
   sql: postgresjs.Sql,
-  { runId, ban, attempt, periodStart, periodEnd, glEventAt }: AggregateParams,
+  {
+    runId,
+    ban,
+    attempt,
+    periodStart,
+    periodEnd,
+    glEventAt,
+    capacityMaxBands,
+  }: AggregateParams,
 ): Promise<void> {
   const heredoc = stripExplicitTransactionBounds(
     extractStageHeredoc("aggregation"),
@@ -287,6 +301,7 @@ export async function runAggregation(
     period_start: periodStart,
     period_end: periodEnd,
     gl_event_at: glEventAt,
+    capacity_max_bands: String(capacityMaxBands ?? 1),
   };
   await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
 }

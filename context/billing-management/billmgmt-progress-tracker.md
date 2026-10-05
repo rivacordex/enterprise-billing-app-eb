@@ -248,6 +248,145 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
   - bm42 (capacity aggregation) and bm45 (invoice appendix) are blocked on
     this unit's DB-gated verification, not just this doc entry.
 
+### Target Capacity Pricing update — Unit 2 (bm42)
+
+- **bm42 (2026-10-05) — implemented as specified.** Capacity aggregation:
+  commitment floor + N-band motivation discount, the six HARD `CAPACITY_*`
+  guards, the `rated_amount`/`discount_amount_raw`/`additional_info` calc
+  trace on every capacity line, and the `_SAMPLE_` `capacity` seed profile.
+  Spec: `context/billing-management/specs/bm42-capacity-aggregation.md`. No
+  DB function, no Python task, no app/UI change, no migration (bm41 already
+  shipped the two columns + the three `billrun_runtime` grants this unit
+  reads).
+  - **Flow SQL** (`bill_run_processing.yml`'s `aggregation` step, mirrored in
+    the `.template.yml` contract doc) — between the `_bm29_resolved` D33
+    guard and the whole-account replace: `_bm42_capacity` (the as-of,
+    pinned-version resolution of usage_rate/capacity_commitment/
+    capacity_motivation components, keyed by (offering, unit), detected by
+    components not a column — D2/Inv #31/#32) and `_bm42_volume` (every
+    claimed row in that volume regardless of type/rate match, so the guards
+    can detect a mismatch) feed a `DO $$ … $$` block raising all six codes
+    (`CAPACITY_MULTIPLE_SUBSCRIPTIONS`, `_BASE_RATE_NOT_FOUND`,
+    `_UDR_TYPE_MISMATCH`, `_RATE_MISMATCH` — `IS DISTINCT FROM`, TC35 —,
+    `_MULTI_STEP_UNSUPPORTED`, `_CURRENCY_MISMATCH`). A new `capacity_lines`
+    CTE (N-band generic over `steps` via `jsonb_array_elements WITH
+    ORDINALITY`) joins the UNION as a fourth `all_lines` source; `usage_lines`
+    gained a `NOT EXISTS` anti-join against `_bm42_capacity` (matching
+    offering+unit+udrType) so the capacity volume is never double-counted as
+    an ordinary USAGE line. `capacity_max_bands` (default 1) is a new flow
+    input, threaded into the aggregation psql call's `-v` list.
+  - **Extracted-SQL harness** (`tests/db/helpers/extract-flow-sql.ts`) —
+    `AggregateParams`/`runAggregation` gained an optional `capacityMaxBands`
+    (default 1 when omitted) so every pre-bm42 caller (bm28/bm29's
+    aggregation suites) is unaffected by the new `-v capacity_max_bands`
+    binding; omitting this would have broken every existing DB-gated
+    aggregation test with "no test value was supplied" the moment it ran
+    against a real Postgres.
+  - **Found-and-fixed regression**: `tests/db/billrun-recurring-aggregation.
+    integration.test.ts`'s pm52-era "[CRITICAL] a usage_rate +
+    capacity_commitment + capacity_motivation … change no bill line, amount
+    or count" test is now stale — that offering's ACTIVE subscription means
+    bm42 now ALSO prices a capacity line for it (zero usage still bills the
+    full floor, Inv #33). Updated to assert the RECURRING line is unchanged
+    (still invisible to THIS resolver) AND a new CAPACITY line now appears
+    (gross/net 5000.00, the full 1000 EA × 5.00 floor). The pre-existing
+    `tests/guardrails/ratecard-demo-seed-boundary.test.ts` regex also had a
+    genuine false positive fixed in the same change (see below).
+  - **`_SAMPLE_` capacity seed** (`db/seeds/sample/seed-billrun-sample.ts` +
+    `udr-rated-sample.ts`) — a third `SeedProfile` (`"capacity"`), four
+    `CAPACITY_SCENARIOS` accounts (800/1000/2000/0 EA), a dedicated
+    `_SAMPLE_ Capacity Demo Plan` offering (`ensureSampleCapacityOffering`,
+    mirroring `ensureSampleOffering`'s idempotent DRAFT→children→ACTIVE path)
+    carrying usage_rate (100/EA) + capacity_commitment (1000 EA) +
+    capacity_motivation (>1000 EA @ 50) + the three `udrType`/
+    `singleSubInstPerCust`/`productCardLookUp` specs, and
+    `buildSampleUdrRatedRow`'s factory extended with optional
+    `usageQuantity`/`usageRate`/`rateType`/`usageUnit` (PER_UNIT rows, exact
+    bigint-scaled `amountRaw`, never float) — the default FLAT shape is
+    untouched for every existing caller. `productCardLookUp`'s value is
+    deliberately NOT spelled with the word this file's pm67 leak-boundary
+    guardrail forbids (`ratecard-demo-seed-boundary.test.ts`); that
+    guardrail's own regex also had a genuine false positive against the
+    pre-existing, unrelated `usage_rate` component's `rateCardLookUp`
+    schema field — fixed with a narrow negative lookahead, same change set.
+  - **New DB-gated test** — `tests/db/billrun-capacity-aggregation.
+    integration.test.ts` (the bm28/bm29-pattern flow-double): the four
+    anchors (800/1000/2000/0 EA → 100,000/100,000/net 150,000/100,000),
+    commitment-only + motivation-only (TC36), all six guards (incl. the
+    NULL-rate TC35 case and the `capacity_max_bands` override TC52), and the
+    different-unit non-double-counting case.
+  - **Verified in this environment:** `npx tsc --noEmit` clean repo-wide;
+    `eslint` clean on every touched/added file; the extracted-SQL harness
+    self-test suite (13 tests, DB-free) passes against the real modified
+    flow file (pebble-stripping, statement-splitting and `:'var'` binding all
+    still correct); the full DB-free unit/guardrail suite (1016 tests) is
+    green, including the two guardrails this unit touched.
+  - **NOT verified here (no reachable Postgres/Kestra in this environment,
+    same gap as bm40/bm41)** — the DB-gated preflight (`tests/
+    integration-global-setup.ts`) fail-closed-refuses with no `DATABASE_URL`,
+    confirmed directly. Pending before this unit ships: the new
+    `billrun-capacity-aggregation.integration.test.ts` suite against a
+    disposable Postgres; the full existing DB-gated suite re-run (incl. the
+    updated recurring-aggregation test); a live-Kestra run on the `capacity`
+    seed profile reaching `PROCESSED` with the four anchor bills.
+  - **Doc sync:** `billmgmt-architecture.md` (the capacity-pricing stack row)
+    and `billmgmt-code-standards.md` (the capacity general-rules delta) now
+    name bm42 explicitly. `bm00-build-plan.md` doesn't exist in this
+    checkout (same gap bm40/bm41 noted) — that sync step could not be done.
+  - bm43 (verification + Model-2 + the `CAPACITY_RATE_MATCHING` gate), bm44
+    (checksum append + read-model surfacing) and bm45 (invoice appendix) are
+    next, per the spec's own Dependencies section.
+  - **SonarQube "Duplicated Lines on New Code" fix, round 1 (2026-10-05).** The
+    new `billrun-capacity-aggregation.integration.test.ts` repeated the same
+    account+offering+run+inventory setup across the anchor loop and every
+    single-account guard test. Extracted `setupSingleAccountCapacity(label,
+    offeringName, offeringOpts)` and `expectGuardRejection(runId, ban,
+    pattern)` helpers; the commitment-only/motivation-only test (TC36) was
+    also converted from two near-identical hand-written blocks into a
+    `cases` loop, matching the anchors test's existing pattern. Assertions
+    and the fixture data are unchanged — `npx tsc --noEmit` clean.
+  - **SonarQube fix, round 2 (2026-10-05) — two further findings.**
+    (a) `db/seeds/sample/seed-billrun-sample.ts` (21 lines): the recurring vs
+    capacity charge-seeders each hand-rolled the same "YYYY-MM-DD" → UTC
+    `Date` range parse and the same chunked `udrRated` insert loop; the two
+    `ensureSample*Offering` functions each hand-rolled the same existing-row
+    lookup + conditional/unconditional promote-to-ACTIVE. Extracted
+    `periodToUtcRange`, `insertUdrRatedChunked`, `findOfferingByName`, and
+    `setOfferingActive` (all local to the file); no behavioural change.
+    (b) `billrun-capacity-aggregation.integration.test.ts` (153 lines, a
+    SEPARATE finding from round 1): the actual source was the file's ~150-line
+    "flow-double" fixture scaffolding (`dropAll`/`newAccount`/`newRun`/
+    `newOffering`/`newProductSpec`/`newInventory`/`readBill`/`readLines`)
+    matching the same hand-copied boilerplate already in
+    `billrun-aggregation.integration.test.ts` (bm28),
+    `billrun-recurring-aggregation.integration.test.ts` (bm29), and
+    `billrun-volume-aggregation.integration.test.ts` (bm35) — an intentional
+    "each flow-double test is self-contained" pattern this file's own header
+    comment calls out. Per owner decision (scoped fix, not a 4-file
+    consolidation — the other three are already-shipped and not re-verifiable
+    against a live DB in this environment): factored the scaffolding into a
+    NEW shared `tests/db/helpers/billrun-flow-double-fixtures.ts`
+    (`createFlowDoubleFixtures({ sql, db, getActorId, getCycleId, periodStart,
+    periodEnd, labelPrefix })`) and switched only this file to consume it via
+    thin wrapper functions (`newInventory`/`readBill`/`readLines` as const
+    arrows; `newAccount`/`newRun`/`newOffering`/`newProductSpec`/`dropAll`
+    also thin wrappers, since `actorId`/`cycleId` aren't assigned until
+    `beforeAll` runs, so the factory is called lazily through a `fixtures()`
+    getter rather than once at module scope). bm28/bm29/bm35 are untouched. A
+    future flow-double unit (bm43/bm44/bm45) can import this helper instead of
+    re-pasting the block — if duplication keeps compounding there, retrofitting
+    bm28/bm29/bm35 onto the same helper is the next escalation, not done here.
+    Verified: `npx tsc --noEmit` and `eslint` clean on all touched/added files
+    (no reachable Postgres in this environment to re-run the DB-gated suite
+    itself, same gap as bm40/bm41/bm42).
+  - **Unrelated discovery while verifying the above (2026-10-05, flagged to
+    the user, not acted on):** `origin/dev1`'s HEAD commit `120ebbc`
+    ("Implement SonarQube Review Fixes for bm42") added an 18MB `archive.tar`
+    binary to git history — it was untracked local clutter before that commit,
+    is NOT present in the working tree now (shows as an uncommitted "deleted"
+    path), and has already been pushed. Needs an owner decision (plain removal
+    commit vs. history rewrite) — not touched by this entry's changes.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
