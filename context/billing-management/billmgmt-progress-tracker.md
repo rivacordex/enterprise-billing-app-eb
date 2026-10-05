@@ -336,8 +336,8 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
   - bm43 (verification + Model-2 + the `CAPACITY_RATE_MATCHING` gate), bm44
     (checksum append + read-model surfacing) and bm45 (invoice appendix) are
     next, per the spec's own Dependencies section.
-  - **SonarQube "Duplicated Lines on New Code" fix (2026-10-05).** The new
-    `billrun-capacity-aggregation.integration.test.ts` repeated the same
+  - **SonarQube "Duplicated Lines on New Code" fix, round 1 (2026-10-05).** The
+    new `billrun-capacity-aggregation.integration.test.ts` repeated the same
     account+offering+run+inventory setup across the anchor loop and every
     single-account guard test. Extracted `setupSingleAccountCapacity(label,
     offeringName, offeringOpts)` and `expectGuardRejection(runId, ban,
@@ -345,6 +345,47 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     also converted from two near-identical hand-written blocks into a
     `cases` loop, matching the anchors test's existing pattern. Assertions
     and the fixture data are unchanged — `npx tsc --noEmit` clean.
+  - **SonarQube fix, round 2 (2026-10-05) — two further findings.**
+    (a) `db/seeds/sample/seed-billrun-sample.ts` (21 lines): the recurring vs
+    capacity charge-seeders each hand-rolled the same "YYYY-MM-DD" → UTC
+    `Date` range parse and the same chunked `udrRated` insert loop; the two
+    `ensureSample*Offering` functions each hand-rolled the same existing-row
+    lookup + conditional/unconditional promote-to-ACTIVE. Extracted
+    `periodToUtcRange`, `insertUdrRatedChunked`, `findOfferingByName`, and
+    `setOfferingActive` (all local to the file); no behavioural change.
+    (b) `billrun-capacity-aggregation.integration.test.ts` (153 lines, a
+    SEPARATE finding from round 1): the actual source was the file's ~150-line
+    "flow-double" fixture scaffolding (`dropAll`/`newAccount`/`newRun`/
+    `newOffering`/`newProductSpec`/`newInventory`/`readBill`/`readLines`)
+    matching the same hand-copied boilerplate already in
+    `billrun-aggregation.integration.test.ts` (bm28),
+    `billrun-recurring-aggregation.integration.test.ts` (bm29), and
+    `billrun-volume-aggregation.integration.test.ts` (bm35) — an intentional
+    "each flow-double test is self-contained" pattern this file's own header
+    comment calls out. Per owner decision (scoped fix, not a 4-file
+    consolidation — the other three are already-shipped and not re-verifiable
+    against a live DB in this environment): factored the scaffolding into a
+    NEW shared `tests/db/helpers/billrun-flow-double-fixtures.ts`
+    (`createFlowDoubleFixtures({ sql, db, getActorId, getCycleId, periodStart,
+    periodEnd, labelPrefix })`) and switched only this file to consume it via
+    thin wrapper functions (`newInventory`/`readBill`/`readLines` as const
+    arrows; `newAccount`/`newRun`/`newOffering`/`newProductSpec`/`dropAll`
+    also thin wrappers, since `actorId`/`cycleId` aren't assigned until
+    `beforeAll` runs, so the factory is called lazily through a `fixtures()`
+    getter rather than once at module scope). bm28/bm29/bm35 are untouched. A
+    future flow-double unit (bm43/bm44/bm45) can import this helper instead of
+    re-pasting the block — if duplication keeps compounding there, retrofitting
+    bm28/bm29/bm35 onto the same helper is the next escalation, not done here.
+    Verified: `npx tsc --noEmit` and `eslint` clean on all touched/added files
+    (no reachable Postgres in this environment to re-run the DB-gated suite
+    itself, same gap as bm40/bm41/bm42).
+  - **Unrelated discovery while verifying the above (2026-10-05, flagged to
+    the user, not acted on):** `origin/dev1`'s HEAD commit `120ebbc`
+    ("Implement SonarQube Review Fixes for bm42") added an 18MB `archive.tar`
+    binary to git history — it was untracked local clutter before that commit,
+    is NOT present in the working tree now (shows as an uncommitted "deleted"
+    path), and has already been pushed. Needs an owner decision (plain removal
+    commit vs. history rewrite) — not touched by this entry's changes.
 
 ## Outstanding / Next (post-Phase 4)
 

@@ -1,7 +1,7 @@
 import { eq, inArray, and } from "drizzle-orm";
 import postgres from "postgres";
 
-import { db } from "@/db/client";
+import { db, type Database } from "@/db/client";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { todayInZone } from "@/lib/timezone";
@@ -648,6 +648,37 @@ async function deleteOrphanedLedgerAccounts(
   );
 }
 
+// Shared by ensureSampleOffering/ensureSampleCapacityOffering's idempotent
+// lookup: the one row (if any) already carrying this offering name.
+async function findOfferingByName(
+  tx: Database,
+  name: string,
+): Promise<{ productOfferingId: string; lifecycleStatus: string } | undefined> {
+  const [existing] = await tx
+    .select({
+      productOfferingId: productOffering.productOfferingId,
+      lifecycleStatus: productOffering.lifecycleStatus,
+    })
+    .from(productOffering)
+    .where(eq(productOffering.name, name))
+    .limit(1);
+  return existing;
+}
+
+// Flips an offering to ACTIVE. The trigger governs the child tables only
+// (product_specifications / product_offering_price), so this is unaffected
+// by it (pm35-spec I3.1) and safe to call unconditionally once priced
+// children exist, or conditionally to harden an idempotent re-seed path.
+async function setOfferingActive(
+  tx: Database,
+  offeringId: string,
+): Promise<void> {
+  await tx
+    .update(productOffering)
+    .set({ lifecycleStatus: "ACTIVE" })
+    .where(eq(productOffering.productOfferingId, offeringId));
+}
+
 // A dedicated `_SAMPLE_` offering — the seeded catalog offerings
 // (`db:seed-product`) are all `billingOnly: false`, which fails
 // `createOrder`'s ORDERABLE precondition, so this seed is self-contained
@@ -666,14 +697,7 @@ async function ensureSampleOffering(): Promise<{
     // family already holds an ACTIVE row, so if the _SAMPLE_ offering already
     // exists, return it (with its price) rather than rebuilding it. (The old
     // insert-ACTIVE-directly seed was not order-dependent this way.)
-    const [existing] = await tx
-      .select({
-        productOfferingId: productOffering.productOfferingId,
-        lifecycleStatus: productOffering.lifecycleStatus,
-      })
-      .from(productOffering)
-      .where(eq(productOffering.name, SAMPLE_OFFERING_NAME))
-      .limit(1);
+    const existing = await findOfferingByName(tx, SAMPLE_OFFERING_NAME);
     if (existing) {
       const [existingPrice] = await tx
         .select({
@@ -701,12 +725,7 @@ async function ensureSampleOffering(): Promise<{
       // product_offering_one_active_per_family (pm36); it is a no-op when the
       // row is already ACTIVE.
       if (existing.lifecycleStatus !== "ACTIVE") {
-        await tx
-          .update(productOffering)
-          .set({ lifecycleStatus: "ACTIVE" })
-          .where(
-            eq(productOffering.productOfferingId, existing.productOfferingId),
-          );
+        await setOfferingActive(tx, existing.productOfferingId);
       }
       return {
         offeringId: existing.productOfferingId,
@@ -774,13 +793,8 @@ async function ensureSampleOffering(): Promise<{
       throw new Error("_SAMPLE_ offering price insert returned no row");
     }
 
-    // Promote to ACTIVE now that the priced child exists. The trigger governs
-    // the child tables only (product_specifications / product_offering_price),
-    // so flipping the parent's own status is unaffected by it (pm35-spec I3.1).
-    await tx
-      .update(productOffering)
-      .set({ lifecycleStatus: "ACTIVE" })
-      .where(eq(productOffering.productOfferingId, offering.productOfferingId));
+    // Promote to ACTIVE now that the priced child exists.
+    await setOfferingActive(tx, offering.productOfferingId);
 
     return {
       offeringId: offering.productOfferingId,
@@ -802,14 +816,10 @@ async function ensureSampleCapacityOffering(): Promise<{
   usageRatePriceId: string;
 }> {
   return db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({
-        productOfferingId: productOffering.productOfferingId,
-        lifecycleStatus: productOffering.lifecycleStatus,
-      })
-      .from(productOffering)
-      .where(eq(productOffering.name, SAMPLE_CAPACITY_OFFERING_NAME))
-      .limit(1);
+    const existing = await findOfferingByName(
+      tx,
+      SAMPLE_CAPACITY_OFFERING_NAME,
+    );
     if (existing) {
       const [existingUsageRate] = await tx
         .select({
@@ -832,12 +842,7 @@ async function ensureSampleCapacityOffering(): Promise<{
         );
       }
       if (existing.lifecycleStatus !== "ACTIVE") {
-        await tx
-          .update(productOffering)
-          .set({ lifecycleStatus: "ACTIVE" })
-          .where(
-            eq(productOffering.productOfferingId, existing.productOfferingId),
-          );
+        await setOfferingActive(tx, existing.productOfferingId);
       }
       return {
         offeringId: existing.productOfferingId,
@@ -985,10 +990,7 @@ async function ensureSampleCapacityOffering(): Promise<{
     });
 
     // Promote to ACTIVE now that the priced children exist (pm35-spec I3.1).
-    await tx
-      .update(productOffering)
-      .set({ lifecycleStatus: "ACTIVE" })
-      .where(eq(productOffering.productOfferingId, offeringId));
+    await setOfferingActive(tx, offeringId);
 
     return {
       offeringId,
@@ -1233,6 +1235,41 @@ async function createSampleSubscriptions(
   return perAccount;
 }
 
+// Shared by seedSampleCharges/seedSampleCapacityCharges: a demo period's
+// bare "YYYY-MM-DD" bounds as UTC midnight / end-of-day Dates.
+function periodToUtcRange(
+  periodStart: string,
+  periodEnd: string,
+): { startDatetime: Date; endDatetime: Date } {
+  const [startY, startM, startD] = periodStart.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  const [endY, endM, endD] = periodEnd.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  return {
+    startDatetime: new Date(Date.UTC(startY, startM - 1, startD)),
+    endDatetime: new Date(Date.UTC(endY, endM - 1, endD, 23, 59, 59)),
+  };
+}
+
+// Insert in chunks so a high-cardinality profile (`volume`, bm35) cannot hit
+// postgres.js's ~65k bind-parameter ceiling as the profile is tuned up — each
+// row carries ~two dozen bound values, so a single `.values(rows)` for the
+// whole set would wall out somewhere past ~2,700 rows. `ci` fits in one chunk.
+async function insertUdrRatedChunked(
+  rows: SampleUdrRatedRow[],
+): Promise<void> {
+  const INSERT_CHUNK = 1000;
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    await db.insert(udrRated).values(rows.slice(i, i + INSERT_CHUNK));
+  }
+}
+
 // Charges (bm26-spec §Implementation §1/§2). udr_rated now carries ONLY
 // `RAN_USAGE` (Inv #1) — recurring is NOT rated here (it is bm29 compute
 // derived from product_inventory). Every usage row is the exact shape rl.py
@@ -1249,18 +1286,10 @@ async function seedSampleCharges(
   periodStart: string,
   periodEnd: string,
 ): Promise<number> {
-  const [startY, startM, startD] = periodStart.split("-").map(Number) as [
-    number,
-    number,
-    number,
-  ];
-  const [endY, endM, endD] = periodEnd.split("-").map(Number) as [
-    number,
-    number,
-    number,
-  ];
-  const startDatetime = new Date(Date.UTC(startY, startM - 1, startD));
-  const endDatetime = new Date(Date.UTC(endY, endM - 1, endD, 23, 59, 59));
+  const { startDatetime, endDatetime } = periodToUtcRange(
+    periodStart,
+    periodEnd,
+  );
 
   const rows: SampleUdrRatedRow[] = [];
   // A monotonic sequence keeps every seeded row's udr_key distinct across the
@@ -1323,14 +1352,7 @@ async function seedSampleCharges(
     }
   }
 
-  // Insert in chunks so a high-cardinality profile (`volume`, bm35) cannot hit
-  // postgres.js's ~65k bind-parameter ceiling as the profile is tuned up — each
-  // row carries ~two dozen bound values, so a single `.values(rows)` for the
-  // whole set would wall out somewhere past ~2,700 rows. `ci` fits in one chunk.
-  const INSERT_CHUNK = 1000;
-  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-    await db.insert(udrRated).values(rows.slice(i, i + INSERT_CHUNK));
-  }
+  await insertUdrRatedChunked(rows);
   return rows.length;
 }
 
@@ -1348,18 +1370,10 @@ async function seedSampleCapacityCharges(
   periodStart: string,
   periodEnd: string,
 ): Promise<number> {
-  const [startY, startM, startD] = periodStart.split("-").map(Number) as [
-    number,
-    number,
-    number,
-  ];
-  const [endY, endM, endD] = periodEnd.split("-").map(Number) as [
-    number,
-    number,
-    number,
-  ];
-  const startDatetime = new Date(Date.UTC(startY, startM - 1, startD));
-  const endDatetime = new Date(Date.UTC(endY, endM - 1, endD, 23, 59, 59));
+  const { startDatetime, endDatetime } = periodToUtcRange(
+    periodStart,
+    periodEnd,
+  );
 
   const rows: SampleUdrRatedRow[] = [];
   let sequence = 0;
@@ -1402,10 +1416,7 @@ async function seedSampleCapacityCharges(
     }
   }
 
-  const INSERT_CHUNK = 1000;
-  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-    await db.insert(udrRated).values(rows.slice(i, i + INSERT_CHUNK));
-  }
+  await insertUdrRatedChunked(rows);
   return rows.length;
 }
 

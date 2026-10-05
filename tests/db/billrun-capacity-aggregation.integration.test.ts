@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -7,16 +6,11 @@ import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
 import { appuser } from "@/db/schema/identity";
-import { organization, partyRole } from "@/db/schema/customer";
 import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
-import { billRun } from "@/db/schema/billing/bill-run";
-import { customerBill } from "@/db/schema/billing/customer-bill";
-import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
-import { productOffering } from "@/db/schema/product";
 import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
+import { createFlowDoubleFixtures } from "@/tests/db/helpers/billrun-flow-double-fixtures";
 
 // bm42-spec §Implementation / Verification checklist — the DB-gated capacity
 // aggregation regression (code-standards §9 items 36-37). The app-repo
@@ -57,99 +51,55 @@ describe.skipIf(!databaseUrl)(
     let cycleId: string;
     let seq = 0;
 
-    const dropAll = async (client: postgresjs.Sql) => {
-      await client.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-      await client.unsafe('DROP SCHEMA IF EXISTS "partman" CASCADE');
-    };
-
-    async function newAccount(label: string, currency = "MYR"): Promise<string> {
-      const [org] = await db
-        .insert(organization)
-        .values({
-          name: `BM42-${label}-Customer`,
-          organizationType: "COMPANY",
-          status: "ACTIVE",
-          lastModifiedBy: actorId,
-        })
-        .returning({ organizationId: organization.organizationId });
-      const [role] = await db
-        .insert(partyRole)
-        .values({
-          engagedParty: org!.organizationId,
-          status: "ACTIVE",
-          lastModifiedBy: actorId,
-        })
-        .returning({ partyRoleId: partyRole.partyRoleId });
-      const [fa] = await db
-        .insert(financialAccount)
-        .values({
-          name: `BM42-${label}-FA`,
-          refPartyRoleId: role!.partyRoleId,
-          currency,
-          lastEditedBy: actorId,
-        })
-        .returning({ financialAccountId: financialAccount.financialAccountId });
-      const [ban] = await db
-        .insert(billingAccount)
-        .values({
-          name: `BM42-${label}-BAN`,
-          state: "active",
-          refPartyRoleId: role!.partyRoleId,
-          refFinancialAccountId: fa!.financialAccountId,
-          currency,
-          refBillCycleId: cycleId,
-          lastEditedBy: actorId,
-        })
-        .returning({ billingAccountId: billingAccount.billingAccountId });
-      return ban!.billingAccountId;
-    }
-
-    async function newRun(runId: string): Promise<void> {
-      const [runCycle] = await db
-        .insert(billCycle)
-        .values({ name: `BM42 Run Cycle ${runId}`, lastEditedBy: null })
-        .returning({ billCycleId: billCycle.billCycleId });
-      await db.insert(billRun).values({
-        billRunId: runId,
-        refBillCycleId: runCycle!.billCycleId,
+    // The shared flow-double scaffolding (dropAll/newAccount/newRun/
+    // newOffering/newProductSpec/newInventory/readBill/readLines) — see
+    // billrun-flow-double-fixtures.ts for why this is factored out instead of
+    // the bm28/bm29/bm35 hand-copy. `sql`/`db` are closed over directly
+    // (fixtures() is only ever called after beforeAll assigns them);
+    // actorId/cycleId are read through getters since they're assigned later.
+    function fixtures() {
+      return createFlowDoubleFixtures({
+        sql,
+        db,
+        getActorId: () => actorId,
+        getCycleId: () => cycleId,
         periodStart: PERIOD_START,
         periodEnd: PERIOD_END,
-        scheduledRunDate: "2026-07-01",
-        status: "PROCESSING",
-        runType: "onCycle",
+        labelPrefix: "BM42",
       });
     }
-
-    async function newOffering(name: string): Promise<string> {
-      const [off] = await db
-        .insert(productOffering)
-        .values({
-          name,
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      return off!.productOfferingId;
-    }
-
-    async function newProductSpec(
+    const dropAll = (client: postgresjs.Sql) => fixtures().dropAll(client);
+    const newAccount = (label: string, currency?: string) =>
+      fixtures().newAccount(label, currency);
+    const newRun = (runId: string) => fixtures().newRun(runId);
+    const newOffering = (name: string) => fixtures().newOffering(name);
+    const newProductSpec = (
       offeringId: string,
       name: string,
       defaultValue: string,
-    ): Promise<void> {
-      await sql`
-        INSERT INTO product.product_specifications
-          (ref_product_offering_id, name, is_mandatory, is_default, default_value, product_spec_characteristics)
-        VALUES (${offeringId}, ${name}, true, true, ${defaultValue}, '{}'::jsonb)
+    ) => fixtures().newProductSpec(offeringId, name, defaultValue);
+
+    // Shared by newUsageRate/newCapacityCommitment/newCapacityMotivation: the
+    // one `product_offering_price` insert shape all three pricing components
+    // share, differing only by name/component-type/envelope.
+    async function insertOfferingPrice(
+      offeringId: string,
+      name: string,
+      componentType: string,
+      envelope: Record<string, unknown>,
+      unitOfMeasure: string,
+      currency: string,
+      startIso: string,
+    ): Promise<string> {
+      const [row] = await sql<{ product_offering_price_id: string }[]>`
+        INSERT INTO product.product_offering_price
+          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
+        VALUES
+          (${offeringId}, ${name}, ${componentType}, ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
+           ${unitOfMeasure}, ${currency}, ${startIso}::timestamptz)
+        RETURNING product_offering_price_id
       `;
+      return row!.product_offering_price_id;
     }
 
     // A usage_rate component — the capacity base rate (PC4 Option A: resolved
@@ -171,15 +121,15 @@ describe.skipIf(!databaseUrl)(
         boundTo: { unitOfMeasure },
         params: { ratePerUnit, rateCardLookUp: null },
       };
-      const [row] = await sql<{ product_offering_price_id: string }[]>`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
-        VALUES
-          (${offeringId}, 'BM42 Usage Rate', 'usage_rate', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
-           ${unitOfMeasure}, ${currency}, ${startIso}::timestamptz)
-        RETURNING product_offering_price_id
-      `;
-      return row!.product_offering_price_id;
+      return insertOfferingPrice(
+        offeringId,
+        "BM42 Usage Rate",
+        "usage_rate",
+        envelope,
+        unitOfMeasure,
+        currency,
+        startIso,
+      );
     }
 
     async function newCapacityCommitment(
@@ -199,15 +149,15 @@ describe.skipIf(!databaseUrl)(
         boundTo: { unitOfMeasure },
         params: { committedQuantity },
       };
-      const [row] = await sql<{ product_offering_price_id: string }[]>`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
-        VALUES
-          (${offeringId}, 'BM42 Capacity Commitment', 'capacity_commitment', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
-           ${unitOfMeasure}, ${currency}, ${startIso}::timestamptz)
-        RETURNING product_offering_price_id
-      `;
-      return row!.product_offering_price_id;
+      return insertOfferingPrice(
+        offeringId,
+        "BM42 Capacity Commitment",
+        "capacity_commitment",
+        envelope,
+        unitOfMeasure,
+        currency,
+        startIso,
+      );
     }
 
     async function newCapacityMotivation(
@@ -227,15 +177,15 @@ describe.skipIf(!databaseUrl)(
         boundTo: { unitOfMeasure },
         params: { steps },
       };
-      const [row] = await sql<{ product_offering_price_id: string }[]>`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
-        VALUES
-          (${offeringId}, 'BM42 Capacity Motivation', 'capacity_motivation', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
-           ${unitOfMeasure}, ${currency}, ${startIso}::timestamptz)
-        RETURNING product_offering_price_id
-      `;
-      return row!.product_offering_price_id;
+      return insertOfferingPrice(
+        offeringId,
+        "BM42 Capacity Motivation",
+        "capacity_motivation",
+        envelope,
+        unitOfMeasure,
+        currency,
+        startIso,
+      );
     }
 
     // A full capacity offering: usage_rate (unless omitted, for G-BASE_RATE_NOT_FOUND)
@@ -289,27 +239,14 @@ describe.skipIf(!databaseUrl)(
       return { offeringId, usageRatePriceId };
     }
 
-    async function newInventory(args: {
+    const newInventory = (args: {
       piId: string;
       ban: string;
       offeringId: string;
       quantity: number;
       orderItemId: string;
       status?: string;
-    }): Promise<void> {
-      await sql.begin(async (tx) => {
-        await tx`SET LOCAL session_replication_role = replica`;
-        await tx`
-          INSERT INTO inventory.product_inventory
-            (product_inventory_id, product_order_item_id, customer_party_role_id,
-             billing_account_id, product_offering_id, quantity, status, start_date)
-          VALUES
-            (${args.piId}, ${args.orderItemId}, ${`_bm42-party-${args.piId}`},
-             ${args.ban}, ${args.offeringId}, ${args.quantity},
-             ${args.status ?? "ACTIVE"}, '2026-01-01')
-        `;
-      });
-    }
+    }) => fixtures().newInventory(args);
 
     // One claimed capacity-volume row (the PER_UNIT shape G2 requires). A
     // single row of `quantityEa` (rather than N 1-EA rows, the seed's shape)
@@ -372,21 +309,7 @@ describe.skipIf(!databaseUrl)(
       });
     }
 
-    async function readBill(runId: string, ban: string) {
-      const [bill] = await db
-        .select({
-          customerBillId: customerBill.customerBillId,
-          subtotal: customerBill.subtotal,
-        })
-        .from(customerBill)
-        .where(
-          and(
-            eq(customerBill.refBillRunId, runId),
-            eq(customerBill.refBillingAccountId, ban),
-          ),
-        );
-      return bill;
-    }
+    const readBill = (runId: string, ban: string) => fixtures().readBill(runId, ban);
 
     // Shared single-account capacity fixture: account + offering + run +
     // inventory, keyed off `label` (reduces the setup duplication that
@@ -430,27 +353,7 @@ describe.skipIf(!databaseUrl)(
       expect(await readBill(runId, ban)).toBeUndefined();
     }
 
-    async function readLines(customerBillId: string) {
-      return db
-        .select({
-          lineNo: customerBillLine.lineNo,
-          source: customerBillLine.source,
-          offeringId: customerBillLine.refProductOfferingId,
-          udrType: customerBillLine.udrType,
-          quantity: customerBillLine.quantity,
-          unit: customerBillLine.unit,
-          grossAmount: customerBillLine.grossAmount,
-          discountAmount: customerBillLine.discountAmount,
-          netAmount: customerBillLine.netAmount,
-          udrCount: customerBillLine.udrCount,
-          ratedAmount: customerBillLine.ratedAmount,
-          discountAmountRaw: customerBillLine.discountAmountRaw,
-          additionalInfo: customerBillLine.additionalInfo,
-        })
-        .from(customerBillLine)
-        .where(eq(customerBillLine.refCustomerBillId, customerBillId))
-        .orderBy(asc(customerBillLine.lineNo));
-    }
+    const readLines = (customerBillId: string) => fixtures().readLines(customerBillId);
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
