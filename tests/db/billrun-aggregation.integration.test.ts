@@ -16,7 +16,7 @@ import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
+import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
 
 // bm28-spec §Implementation §6 / Verification checklist — the DB-gated
 // aggregation regression. This is the app-repo "flow-double" (bm21 pattern): it
@@ -198,9 +198,9 @@ describe.skipIf(!databaseUrl)(
       return row!.udr_id;
     }
 
-    // The flow-double: drive the SHARED aggregation helper (tests/db/helpers/
-    // billrun-aggregate.ts) — the SAME billrun_runtime SQL the flow runs (USAGE
-    // rollup + the bm29 RECURRING resolver). These fixtures use usage-only
+    // bm40 (TC43): drive the aggregation SQL EXTRACTED from the deployed flow
+    // (tests/db/helpers/extract-flow-sql.ts) — not a hand-copied double. These
+    // fixtures use usage-only
     // offerings (no recurring price), so the recurring path resolves to nothing
     // (a usage-only offering is not a D33 failure) and the result is the pure
     // USAGE rollup this suite asserts.

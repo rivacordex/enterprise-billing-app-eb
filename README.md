@@ -615,10 +615,15 @@ The second half is the **DB-gated** suite: `*.integration.test.ts` files (plus
 inventory, ordering, rating, drizzle) against whatever `DATABASE_URL` points at.
 **Exporting your `.env` and running `npm run test` destroys everything Parts 1–3
 built** — roles survive (they are cluster-level) but every table, grant and seed
-row does not, and login breaks. One suite also drops the **`kestra`** database
-outright, taking the running engine and every deployed flow with it. This is the
-module convention
+row does not, and login breaks. This is the module convention
 (`context/billing-management/specs/bm22-environmental-gate.md` §21).
+
+**bm40 (TC58) added a fail-closed preflight** (`tests/integration-global-setup.ts`,
+wired as the DB-gated project's `globalSetup`) that now refuses to run the whole
+suite at all unless BOTH hold: `DESTRUCTIVE_DB_OK=1` is set, **and** the target
+database itself carries a disposable sentinel — never inferred from its name or
+host, which is spoofable. See "Running the suites safely" below for how to mark
+one.
 
 ### Running the suites safely
 
@@ -642,14 +647,14 @@ set -a && . ./.env && set +a && npx vitest run
 ```
 
 **Integration suite** — point `DATABASE_URL` at a throwaway database, **and stop
-the workflow engine first**. Pointing `DATABASE_URL` somewhere disposable is
-necessary but not sufficient: `tests/db/billrun-db-roles.integration.test.ts`'s
-`afterAll` runs `DROP DATABASE IF EXISTS "kestra" WITH (FORCE);` — reaching
-outside `DATABASE_URL` entirely — which terminates every live connection and
-leaves Kestra's queues/flows/history dropped, so the engine exits 0 and **all
-deployed flows are gone**. The same suite also rewrites the shared
-`app_runtime` / `rating_runtime` / `billrun_runtime` passwords to a test value
-(roles are cluster-level), so your dev app's next connection fails `28P01`.
+the workflow engine first**. `tests/db/billrun-db-roles.integration.test.ts`'s
+`afterAll` resets the **`public`** schema inside the separate `kestra` database
+(never the whole database, and never `WITH (FORCE)` — bm40/TC58 removed both:
+`FORCE` used to terminate every live connection first, so pointed at a shared
+dev stack it killed a running engine's connections out from under it). It still
+rewrites the shared `app_runtime` / `rating_runtime` / `billrun_runtime`
+passwords to a test value (roles are cluster-level), so your dev app's next
+connection fails `28P01`.
 
 So: either run the DB-gated suite against a **separate Postgres instance** (a
 different container/port), or stop the engine, run the suite, then rebuild and
@@ -658,9 +663,6 @@ redeploy + restore passwords:
 ```powershell
 docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml stop workflow-engine
 # … run the suite …
-npm run db:bootstrap-kestra-roles          # recreates the dropped `kestra` DB + role
-docker exec -e PGPASSWORD=postgres enterprise-billing-app-db-1 `
-  psql -U postgres -d enterprise_billing -c "ALTER ROLE kestra_engine WITH PASSWORD 'kestra_dev_password';"
 docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml up -d --no-deps workflow-engine
 docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml run --rm --no-deps flow-deploy
 ```
@@ -668,34 +670,44 @@ docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compo
 Restore the shared role passwords with the `ALTER ROLE` block in
 **Troubleshooting**, and restart `npm run dev` so the pool reconnects. Your
 `enterprise_billing` dev database's **data** is untouched by any of this — only
-the `kestra` database, the cluster's role passwords, and whatever `DATABASE_URL`
-names are at risk.
+the `kestra` database's `public` schema, the cluster's role passwords, and
+whatever `DATABASE_URL` names are at risk.
 
-Create the throwaway database (once), then run the DB-gated half against **only**
-it. The integration config supplies its own `BETTER_AUTH_*`/`BOOTSTRAP_ADMIN_*`
-fixtures, so `DATABASE_URL` is the only variable to set — do **not** export your
+Create the throwaway database (once), mark it disposable (bm40/TC58's
+preflight refuses otherwise — see above), then run the DB-gated half against
+**only** it. The integration config supplies its own
+`BETTER_AUTH_*`/`BOOTSTRAP_ADMIN_*` fixtures, so `DATABASE_URL` (plus
+`DESTRUCTIVE_DB_OK`) are the only variables to set — do **not** export your
 `.env` for this half:
 
 ```powershell
 docker exec -e PGPASSWORD=postgres enterprise-billing-app-db-1 `
   psql -U postgres -d postgres -c "CREATE DATABASE enterprise_billing_test;"
 $env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/enterprise_billing_test'
+node --import tsx tests/helpers/disposable-database.ts   # mark it disposable, once
+$env:DESTRUCTIVE_DB_OK='1'
 npx vitest run --config vitest.integration.config.ts
-Remove-Item Env:DATABASE_URL
+Remove-Item Env:DATABASE_URL,Env:DESTRUCTIVE_DB_OK
 ```
 
 ```bash
 DATABASE_URL='postgresql://postgres:postgres@localhost:5432/enterprise_billing_test' \
+  node --import tsx tests/helpers/disposable-database.ts   # mark it disposable, once
+DATABASE_URL='postgresql://postgres:postgres@localhost:5432/enterprise_billing_test' \
+  DESTRUCTIVE_DB_OK=1 \
   npx vitest run --config vitest.integration.config.ts
 ```
 
 The suites run serially (`fileParallelism: false`) and each re-migrates the
 schema, so the full DB-gated run takes ~5 min.
 
-> The config promises it will "skip loudly when `DATABASE_URL` is unset", but
-> `db/client.ts` imports `lib/config.ts` at module load and throws first, so each
-> DB-gated file *errors* rather than skipping. Set `DATABASE_URL` (to a
-> disposable database) rather than relying on the skip.
+> `db/client.ts` imports `lib/config.ts` at module load and throws on an unset
+> `DATABASE_URL` before any file-level `describe.skipIf` can run — which is why
+> the preflight above lives in `globalSetup` instead (it runs before any test
+> file, and so before that import, is ever reached). An unset `DATABASE_URL` or
+> a missing `DESTRUCTIVE_DB_OK=1`/disposable sentinel now refuses loudly with a
+> clear message, rather than crashing inside `@/lib/config` or silently
+> destroying a real database.
 
 ---
 

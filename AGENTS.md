@@ -37,4 +37,26 @@ Read also the general context document to support the changes as referenced by t
 3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 4. `context/ui-context.md` — theme, colors, typography, and component conventions
 
+## Billing Module Update Context
+
+Read the following files in order before implementing
+or making any architectural decision related to the Billing (Bill Run) Module:
+
+1. `context/billing-management/billmgmt-update-overview.md` — current update's definition, goals, features, and scope
+2. `context/billing-management/billmgmt-project-overview.md` — product spec: overview, core user flow, in/out of scope, success criteria
+3. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and Module Invariants
+4. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
+5. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
+6. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+7. `context/billing-management/billmgmt-known-issues.md` — known/deferred defects and interim mitigations
+8. `context/billing-management/billmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
+
+Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
+
+Read also the general context document to support the changes as referenced by the context files above:
+1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  
+2. `context/code-standards.md`— implementation rules and conventions
+3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+4. `context/ui-context.md` — theme, colors, typography, and component conventions
+
  

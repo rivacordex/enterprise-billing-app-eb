@@ -140,6 +140,46 @@ async function runKestraBootstrap(bootstrapUrl: string): Promise<void> {
   }
 }
 
+const PG_INVALID_CATALOG_NAME = "3D000";
+const PG_UNDEFINED_OBJECT = "42704";
+
+function isTolerableTeardownError(err: unknown): boolean {
+  const code =
+    typeof err === "object" && err !== null && "code" in err
+      ? (err as { code?: string }).code
+      : undefined;
+  // 3D000 — the `kestra` database itself was never created (bootstrap never
+  // ran, or a prior reset already converged); 42704 — `kestra_engine` does
+  // not exist yet (beforeAll failed before creating it). Either way there is
+  // nothing to reset.
+  return code === PG_INVALID_CATALOG_NAME || code === PG_UNDEFINED_OBJECT;
+}
+
+// bm40-spec (TC58) — teardown used to run
+// `DROP DATABASE IF EXISTS "kestra" WITH (FORCE)` against the whole CLUSTER
+// (outside DATABASE_URL entirely): `WITH (FORCE)` terminates every other live
+// connection to `kestra` first, so pointed at a shared dev stack it killed a
+// running engine's connections out from under it (known-issues §13 item 1).
+// Reset is now scoped to a SCHEMA inside the `kestra` database — never the
+// whole database object, and never FORCE — so a stray live connection causes
+// this to error (or wait on a lock), never to be forcibly disconnected. A
+// missing `kestra` database (bootstrap never ran, or a prior reset already
+// dropped it) is tolerated as already-converged.
+async function resetKestraSchema(bootstrapUrl: string): Promise<void> {
+  const kestraSql = postgres(withDatabase(bootstrapUrl, "kestra"), {
+    max: 1,
+  });
+  try {
+    await kestraSql.unsafe("DROP SCHEMA IF EXISTS public CASCADE");
+    await kestraSql.unsafe("CREATE SCHEMA public");
+    await kestraSql.unsafe("GRANT CREATE ON SCHEMA public TO kestra_engine");
+  } catch (err) {
+    if (!isTolerableTeardownError(err)) throw err;
+  } finally {
+    await kestraSql.end();
+  }
+}
+
 // A valid udr_rated row (rating rm01 DDL): partition_period must equal
 // period_of(start_datetime) = date_trunc('month', start AT TIME ZONE UTC).
 function ratedRow(overrides: Record<string, unknown> = {}) {
@@ -348,12 +388,14 @@ describe.skipIf(!databaseUrl)(
       await appRuntime?.end();
       if (sql) {
         await dropAll(sql);
-        await sql.unsafe('DROP DATABASE IF EXISTS "kestra" WITH (FORCE)');
+        await resetKestraSchema(databaseUrl as string);
         await sql.end();
       }
-      // Teardown drops nine CASCADE schemas + the kestra database; under load
-      // (the whole billing suite running sequentially) this can exceed the
-      // default 10s hook timeout, so give it the same headroom as beforeAll.
+      // Teardown drops nine CASCADE schemas in DATABASE_URL's own database
+      // plus the `public` schema inside the separate `kestra` database; under
+      // load (the whole billing suite running sequentially) this can exceed
+      // the default 10s hook timeout, so give it the same headroom as
+      // beforeAll.
     }, 120_000);
 
     // ---- customer_bill: column boundary (Step 5) ---------------------------

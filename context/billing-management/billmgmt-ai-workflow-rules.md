@@ -1,12 +1,12 @@
 # Billing Management (Bill Run) — AI Workflow Rules (Module Supplement)
 
-Read `context/ai-workflow-rules.md` first and obey it in full — it is binding for every module; this document changes nothing there and adds only the Bill Run deltas. **Delta for this module, phase 3:** you are no longer building greenfield against a stub. The control plane is built and shipped; you are replacing a **no-op compute plane** with real logic that computes money — so (a) most of that logic belongs in the **workflow flow**, not in `services/`, and putting it in the app is a review-blocking defect; (b) the module's **28 Module Invariants** (`billmgmt-architecture.md` §6, of which **#15 is a retired tombstone**) are permanent cross-unit rules; (c) three rules that earlier versions of these docs stated as absolutes have **reversed** — treat any code or comment quoting them as wrong; (d) this phase amends another module's `[CRITICAL]` invariant, so rating's own workflow rules bind you too; and (e) nothing phase-3 ships until **Unit 22 (`bm22`)** proves the foundation against real infrastructure. Where this doc appears to weaken the general rules or the Invariants, stop and treat it as a bug.
+Read `context/ai-workflow-rules.md` first and obey it in full — it is binding for every module; this document changes nothing there and adds only the Bill Run deltas. **Delta for this module, phase 3:** you are no longer building greenfield against a stub. The control plane is built and shipped; you are replacing a **no-op compute plane** with real logic that computes money — so (a) most of that logic belongs in the **workflow flow**, not in `services/`, and putting it in the app is a review-blocking defect; (b) the module's **38 Module Invariants** (`billmgmt-architecture.md` §6, of which **#15 is a retired tombstone**) are permanent cross-unit rules; (c) three rules that earlier versions of these docs stated as absolutes have **reversed** — treat any code or comment quoting them as wrong; (d) this phase amends another module's `[CRITICAL]` invariant, so rating's own workflow rules bind you too; and (e) nothing phase-3 ships until **Unit 22 (`bm22`)** proves the foundation against real infrastructure. Where this doc appears to weaken the general rules or the Invariants, stop and treat it as a bug.
 
 **Companion docs (authoritative — do not restate or contradict):**
 
-- `billmgmt-update-overview.md` — phase-3 product spec: goals, core user flow (14 steps), features, in/out of scope, success criteria. `billmgmt-project-overview.md` remains the phase-1 product spec.
-- `billmgmt-architecture.md` — technical design: stack additions, folder ownership, storage model, auth/ownership, background model, **28 Module Invariants (§6)**, permission model (§4).
-- `billmgmt-code-standards.md` — module conventions: domain unions (§2), M2M route rules (§5), data/storage rules (§6), file tree (§7), **permission map (§8)**, guardrail tests (§9, items 1–33).
+- `billmgmt-project-overview.md` — the product spec: overview, lifecycle, core user flow, architecture & boundaries, in/out of scope, success criteria, and the folded **Phase 4** section (the former `billmgmt-update-overview.md`, folded in 2026-10-04).
+- `billmgmt-architecture.md` — technical design: stack additions, folder ownership, storage model, auth/ownership, background model, **38 Module Invariants (§6)** (#29–#38 added by the Target Capacity Pricing update), permission model (§4).
+- `billmgmt-code-standards.md` — module conventions: domain unions (§2), M2M route rules (§5), data/storage rules (§6), file tree (§7), **permission map (§8)**, guardrail tests (§9, items 1–42; 36–42 added by the Target Capacity Pricing update).
 - `_updatemodule-billing-billrun-phase3-plan.md` — the phase-3 design and decisions **D1–D33**. Cite this for design questions.
 - `_assessment-gstack-review-report-billrun-phase3.md` — the eng review, its 11 findings, and the one accepted residual risk.
 - `context/rating-management/ratemgmt-ai-workflow-rules.md` — **binding on you** for the rating-side changes in this phase (§3.6).
@@ -19,11 +19,11 @@ Read `context/ai-workflow-rules.md` first and obey it in full — it is binding 
 
 Earlier revisions of these docs forbade exactly what phase 3 builds. **Do not obey the old text, and correct it where you find it quoted:**
 
-| Old rule | Status | Build to this instead |
-| --- | --- | --- |
-| "There is **no billing-side charge table**, ever" (old Inv #3) | **REVERSED** | `billing.customer_bill_line` **is** the bill's charge record; `charge_checksum` is anchored on it (Inv #3, D5/D7) |
-| "No service, repository, or SQL computes a charge amount" | **SPLIT** | No **usage-rating** in `billing`; recurring charge derivation **is** sanctioned billing compute and belongs to the **flow** (Inv #1/#17, D6) |
-| "`BILLRUN_PLACEHOLDER_MODE` badges every run" (old Inv #15) | **RETIRED** | Delete the flag and its components; Inv #15 is a tombstone and is never reused (D31) |
+| Old rule                                                       | Status       | Build to this instead                                                                                                                        |
+| -------------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| "There is **no billing-side charge table**, ever" (old Inv #3) | **REVERSED** | `billing.customer_bill_line` **is** the bill's charge record; `charge_checksum` is anchored on it (Inv #3, D5/D7)                            |
+| "No service, repository, or SQL computes a charge amount"      | **SPLIT**    | No **usage-rating** in `billing`; recurring charge derivation **is** sanctioned billing compute and belongs to the **flow** (Inv #1/#17, D6) |
+| "`BILLRUN_PLACEHOLDER_MODE` badges every run" (old Inv #15)    | **RETIRED**  | Delete the flag and its components; Inv #15 is a tombstone and is never reused (D31)                                                         |
 
 If you find a code comment, spec, or test quoting a reversed rule, fix it in the same unit. Do not leave it standing "because it's only a comment."
 
@@ -55,24 +55,24 @@ If you find a code comment, spec, or test quoting a reversed rule, fix it in the
 
 Deliver one vertical unit per pass, verified and committed before the next (general §2). **`context/billing-management/specs/bm00-build-plan.md` is the authority on unit numbering, unit boundaries and build order — read it before starting any unit and follow it exactly.** Phase 3 is **Units 22–35 (`bm22`–`bm35`)**, continuing the delivered `bm01`–`bm21` sequence; do not renumber, do not restart at 1, and do not invent a unit that is not in that file. Split further whenever §4 triggers; never merge two of its units into one pass.
 
-| # | Spec | Unit | Boundary |
-|---|---|---|---|
-| 22 | `bm22` | Environmental gate | infrastructure — **no application code** |
-| 23 | `bm23` | `customer_bill_line` schema, partitions & grants | migration + grants only |
-| 24 | `bm24` | Claim release on reject, cancel **and rerun** | app (`services/` + repository) |
-| 25 | `bm25` | Rating in-flight guard + `LOAD_BLOCKED_INFLIGHT` | **cross-module — rating** (§3.6) |
-| 26 | `bm26` | Sample seed → `RAN_USAGE`, unclaimed | seed |
-| 27 | `bm27` | Real Collection: correlation & claim | flow |
-| 28 | `bm28` | Real Aggregation (`USAGE`) + `BillLineTable` | flow + one read surface |
-| 29 | `bm29` | Real Aggregation (`RECURRING`) + price resolver | flow |
-| 30 | `bm30` | Verification + bill↔charge reconciliation | flow |
-| 31 | `bm31` | `charge_checksum` re-anchored on `customer_bill_line` | app (repository) |
-| 32 | `bm32` | Uncharged redefinition + per-record exception surface | app + read surface |
-| 33 | `bm33` | Retire `BILLRUN_PLACEHOLDER_MODE` | app |
-| 34 | `bm34` | Real distribution: SFTP transport + multi-target | flow + app |
-| 35 | `bm35` | Phase-3 ship gate | verification only |
+| #   | Spec   | Unit                                                  | Boundary                                 |
+| --- | ------ | ----------------------------------------------------- | ---------------------------------------- |
+| 22  | `bm22` | Environmental gate                                    | infrastructure — **no application code** |
+| 23  | `bm23` | `customer_bill_line` schema, partitions & grants      | migration + grants only                  |
+| 24  | `bm24` | Claim release on reject, cancel **and rerun**         | app (`services/` + repository)           |
+| 25  | `bm25` | Rating in-flight guard + `LOAD_BLOCKED_INFLIGHT`      | **cross-module — rating** (§3.6)         |
+| 26  | `bm26` | Sample seed → `RAN_USAGE`, unclaimed                  | seed                                     |
+| 27  | `bm27` | Real Collection: correlation & claim                  | flow                                     |
+| 28  | `bm28` | Real Aggregation (`USAGE`) + `BillLineTable`          | flow + one read surface                  |
+| 29  | `bm29` | Real Aggregation (`RECURRING`) + price resolver       | flow                                     |
+| 30  | `bm30` | Verification + bill↔charge reconciliation             | flow                                     |
+| 31  | `bm31` | `charge_checksum` re-anchored on `customer_bill_line` | app (repository)                         |
+| 32  | `bm32` | Uncharged redefinition + per-record exception surface | app + read surface                       |
+| 33  | `bm33` | Retire `BILLRUN_PLACEHOLDER_MODE`                     | app                                      |
+| 34  | `bm34` | Real distribution: SFTP transport + multi-target      | flow + app                               |
+| 35  | `bm35` | Phase-3 ship gate                                     | verification only                        |
 
-Four orderings in that table are load-bearing and **must not** be reordered for convenience: **26 before 27** (Collection has nothing correlatable until unclaimed NULL-`billrun_ban_id` rows exist); **24 before 27** (claim before release semantics strands `BILL_DRAFT` rows and under-bills); **29 before 31** (the `md5('')` regression test needs a recurring-only bill to exist); **30 before 33** (the placeholder banner copy is only false once the flow is real). `bm00-build-plan.md` §*Merges and splits* records why each merge was made — do not re-litigate it mid-build; if you believe a unit should be split, apply §4 and say so before you start.
+Four orderings in that table are load-bearing and **must not** be reordered for convenience: **26 before 27** (Collection has nothing correlatable until unclaimed NULL-`billrun_ban_id` rows exist); **24 before 27** (claim before release semantics strands `BILL_DRAFT` rows and under-bills); **29 before 31** (the `md5('')` regression test needs a recurring-only bill to exist); **30 before 33** (the placeholder banner copy is only false once the flow is real). `bm00-build-plan.md` §_Merges and splits_ records why each merge was made — do not re-litigate it mid-build; if you believe a unit should be split, apply §4 and say so before you start.
 
 ---
 
@@ -81,7 +81,7 @@ Four orderings in that table are load-bearing and **must not** be reordered for 
 1. **Do not** build OCC. `source='OCC'` is a reserved enum value with no producer; the occurrence ledger is origination-domain and unbuilt (`_futurebuild_occ-charge-sourcing.md` §6). **Never** store an OCC occurrence in `customer_bill_line` — it is per-run and rerun-destructible, so billed-exactly-once evidence cannot live there (Inv #16, D30).
 2. **Do not** compute, apply or configure a discount. The columns and `line_type` exist so a later capability needs no migration against a posted table; emit `charge` lines with `discount_amount = 0.00` only.
 3. **Do not** build the configurable line-grain surface. Ship the fixed `(product_offering_id, udr_type)` default, computed in exactly one place. The configuration store, its owner and its UI are deferred (D5b).
-4. **Do not** build a tax-rate catalog, a real invoice template, proration, off-cycle runs, multi-frequency cycles, additional distribution targets, a target catalog table, a `bill_run_output` table, or the credit-note remedy for `LOAD_BLOCKED_BILLED`. All are out of scope (overview *Out of scope*, plan §13).
+4. **Do not** build a tax-rate catalog, a real invoice template, proration, off-cycle runs, multi-frequency cycles, additional distribution targets, a target catalog table, a `bill_run_output` table, or the credit-note remedy for `LOAD_BLOCKED_BILLED`. All are out of scope (overview _Out of scope_, plan §13).
 5. **Do not** give the rating engine a second, non-file ingestion mode to produce recurring charges. Phase 3 derives recurring in the bill run; changing rating's ingestion model is a rating-module design exercise, not a build-time call.
 6. **Rating-side changes are cross-module and are already authorized — build them to rating's rules, not yours.** The Inv #6 amendment is authorized (Khek, module owner, 2026-09-13) and the `LOAD_BLOCKED_INFLIGHT` severity is set to `MINOR`. You must still obey `ratemgmt-ai-workflow-rules.md`: **§1.4** — express the guarantee as a trigger, not application code (the widened `_GUARD_SQL` alone is a breach); **§3.3** — a new event code ships as three parts in one change set (catalog seed row, `RATING_EVENT_CODES` constant, emitting flow); **§3.5** — a constraint change updates the architecture Invariants in the same change set; **§5.5** — record the resolution in the owning document. Do not add any other rating change to this set.
 7. **Do not** modify `postDocument`, pgledger, or the document engine. Bill Run **calls** the engine inside its own transaction (code-standards §6.12).
@@ -186,3 +186,69 @@ Run the full general doc §8 checklist. Additionally, confirm — **run the chec
 18. **No forbidden edits** — nothing from §6 touched without confirmation; no `TODO`, commented-out code, or `console.*`; diff minimal and reviewable.
 
 If any item fails, the unit is not done. Fix it before moving on; never defer a failure to a later unit.
+
+---
+
+## Target Capacity Pricing update — module rules (2026-10-04)
+
+Read `context/ai-workflow-rules.md` first and §0–§8 above; this section adds **only** the Target Capacity Pricing deltas on top of them (sources: `_updatemodule-billing-billrun-target-capacity-plan.md`, `billmgmt-update-overview.md`, `billmgmt-architecture.md` Inv #29–#38). Phases 1–4 (bm01–bm39) are delivered; this is the next phase. Where this section is silent on a facet, the §0–§8 rule binds unchanged. **Precondition:** the finalized `_change-rating-configuration-plan.md` (PER_UNIT rating, the `udr_subscriber_ref_id → udr_subscription_ref_id` rename, the real resolver) is treated as shipped by this phase's `bm*`-spec delivery.
+
+### Approach (adds to §1)
+
+1. **Put all capacity compute in the flow.** Capacity pricing is inline SQL CTEs in `bill_run_processing.yml` (`aggregation` + `verification`), as `billrun_runtime`. **Never** add a capacity pricing function under `services/billing/**`, a `billing.capacity_charge()` DB function, or a Python pricing task — each is a review-blocking defect (Inv #29; §1.2 holds).
+2. **Bill Model 1; use Model 2 only to check.** The billed figure is `gross = Σ udr_rated_price + topUp`. The `max(Q, target) × baseRate` recompute exists only in verification as a cross-derivation. No code path bills from Model 2 (Inv #29).
+3. **Land Unit 0 first, as its own PR, before any capacity logic.** Repair the recurring resolver onto the PC14 component schema, build the shared as-of reader, and replace the hand-copied flow-double with the extracted-SQL harness. It is a live P0 — the deployed flow fails every account post-PC14 — so do not start capacity on an unrepaired base (TC44; analogous to the §1.4 "land bm22 first" rule).
+4. **Land the two-column migration + grants before any consumer.** `rated_amount` + `additional_info` on `customer_bill_line`, and the three new `billrun_runtime` SELECT grants (`product_specifications`, `ratecard_ran_usage_lkp`, `ratecard_version`), ship and verify alone (§1.5).
+5. **Treat Inv #29–#38 as permanent cross-unit rules.** Round each component once, derive `gross`/`net` (Inv #34); append `rated_amount` to the checksum, never hash `additional_info` (Inv #35); detect capacity by component, never a column (Inv #32); resolve off the pinned offering version (Inv #31); `CAPACITY_RATE_MATCHING` loud-by-default, OFF never silent (Inv #30); one capacity subscription per `(customer, product)` (Inv #37).
+
+### Scoping — do not build (adds to §3)
+
+1. **Do not build proration or partial-period billing.** It is blocked on a **business** pro-ration policy (O-TC7) — stop and ask the business; never default a method. Partial-period accounts stay `EXCLUDED`.
+2. **Do not support multiple billing accounts per customer for one capacity product.** One capacity subscription per `(customer, product)` is DECIDED (O-TC5, Inv #37); the per-account `CAPACITY_MULTIPLE_SUBSCRIPTIONS` guard is a backstop, not an invitation.
+3. **Do not build** negotiated overrides on capacity offerings (G2 fails them out), rate-card item pricing (P1), multi-step motivation in production (ship the N-band SQL but keep `capacity_max_bands = 1`), district summarisation or an appendix beyond 10,000 rows/account, any app-UI display of the capacity calc trace, real taxation (`0.00` interim stands), or the prerequisite product/inventory/ordering changes (a separate phase).
+4. **Do not disable `CAPACITY_RATE_MATCHING` in code.** It is an ops flag, default ON; code never ships it OFF and never skips the mismatch check.
+5. **Do not invent capacity unit numbers.** A `bm*`-style build plan follows sign-off of the capacity plan; until it exists in `specs/`, do not start a capacity build unit (capacity plan §12).
+
+### When to split (adds to §4)
+
+1. **Split Unit 0 from all capacity logic** — ship and deploy it first.
+2. **Split the migration + grants from the first consumer.**
+3. **Split the invoice usage appendix into its own sub-unit, sequenced after the pricing core is green** — a wobble in the render/appendix must not hold up money-correctness (O-TC6).
+4. **Keep the §4.4 per-stage split** — capacity aggregation and the verification cross-check are separate stage work with separate failure taxonomies.
+5. **Do not split "enable multi-step motivation" into this phase** — it ships guarded (`capacity_max_bands = 1`); enabling it is a later config change.
+
+### Missing or ambiguous (adds to §5 — stop and ask, never default)
+
+1. **Partial-period billing (O-TC7) is a business decision** — never build a pro-ration method without it.
+2. **The rate-match model is DECIDED — build it, do not re-litigate:** Model 1 billed, Model 2 checks, gate default ON, OFF logs + records + bills Model 1 (Inv #29/#30).
+3. **The single-subscription grain is DECIDED (O-TC5):** per `(customer, product)`.
+4. **Build-plan opens — resolve them in the `bm` build plan, cite it, do not guess:** rerun snapshot vs re-resolve (O-TC1), the capacity line's `quantity` (O-TC2), the appendix sourcing + ratecard version (O-TC6).
+5. **The rating-config plan is a hard precondition.** Build and sign off capacity against **real PER_UNIT rating** and the renamed `udr_subscription_ref_id` — never a FLAT stand-in. If PER_UNIT has not shipped, stop (TC45/TC53).
+
+### Protected files (adds to §6)
+
+1. **No DB function and no Python for pricing** — inline SQL only; a `billing.capacity_charge()` function or a Python task is a new pattern and review-blocking.
+2. **Do not reorder the checksum tuple** — append `rated_amount` last, never mid-tuple; never hash `additional_info` (Inv #35).
+3. **`product.ratecard_ran_usage_lkp` / `product.ratecard_version` are product-module-owned — read only.** Never write them from `billing`.
+4. **Do not remove or weaken the destructive-DB preflight** once added, and do not reintroduce a cross-cluster `DROP DATABASE … WITH (FORCE)`.
+5. **The capacity flow SQL lives in `bill_run_processing.yml`** — never edit it in the Kestra UI (§6.12 holds); every change is a repo commit.
+
+### Keeping docs in sync (adds to §7)
+
+1. **The new grants update the architecture Invariants in the same change set** (§3.5-style; Inv #23).
+2. **Cite Inv #29–#38 and guardrails 36–42 by number; never reuse a number.**
+3. **The capacity plan's TC decisions (TC1–TC58) are the design authority and the O-TC list is the open set** — update them in the same change when a decision moves; owning-doc-per-fact still applies (§7.7).
+
+### Verification checklist (adds to §8 — run the checks, do not assume)
+
+1. **Anchors** on the `ci` seed: 800 → 100,000; 1000 → 100,000; 2000 → 150,000; 0 → 100,000; `subtotal = SUM(net_amount)`.
+2. **Guards** — each of the six `CAPACITY_*` codes fails only its account; a NULL/`ZERO_RATED` rate trips `CAPACITY_RATE_MISMATCH`.
+3. **Rate-match gate** — Model 2 reconciles on a consistent run; `CAPACITY_RATE_MATCHING=OFF` logs a WARN, bills Model 1, and records the flag state (never silent).
+4. **Verification** — a tampered `rated_amount`/`gross`/`discount`/`calc.total` is caught by **both** detectors; every capacity line holds `discount_amount ≥ 0` and `net_amount ≥ 0`.
+5. **Checksum** — altering `rated_amount` on a posted line changes the recomputed `charge_checksum`.
+6. **Appendix** — renders per-polygon by state/district from the `productCardLookUp` ratecard, to 10,000 rows/account; a card-missing polygon surfaces (not dropped).
+7. **Testing** — DB suites run the **extracted** flow SQL (no hand-copied double); a **live-Kestra** capacity run drives `SCHEDULED → COMPLETED`; the destructive-DB preflight refuses a non-disposable target.
+8. **Boundaries** — no new `services/billing/**` compute file, no DB function, no Python; capacity SQL is in `bill_run_processing.yml` only.
+9. **Precondition** — PER_UNIT rating + the `udr_subscription_ref_id` rename are shipped before capacity E2E sign-off.
+
+If any item fails, the unit is not done.

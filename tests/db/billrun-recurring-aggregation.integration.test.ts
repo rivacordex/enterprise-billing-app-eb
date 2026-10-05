@@ -16,7 +16,7 @@ import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
 import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
+import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
 
 // bm29-spec §Implementation §6 / Verification checklist — the DB-gated RECURRING
 // aggregation regression. Re-keyed by pm52 onto the pricing-components envelope
@@ -370,10 +370,10 @@ describe.skipIf(!databaseUrl)(
       `;
     }
 
-    // The flow-double: drive the SHARED aggregation helper (tests/db/helpers/
-    // billrun-aggregate.ts) — the SAME billrun_runtime SQL the flow runs, so this
-    // double and the bm28 USAGE double never drift from each other or the flow. A
-    // D33 RAISE rejects the promise, rolling the whole account back (no bill).
+    // bm40 (TC43): drive the aggregation SQL EXTRACTED from the deployed flow
+    // (tests/db/helpers/extract-flow-sql.ts), shared with the bm28 USAGE suite,
+    // so drift from the flow is structurally impossible. A D33 RAISE rejects
+    // the promise, rolling the whole account back (no bill).
     async function aggregate(
       runId: string,
       ban: string,

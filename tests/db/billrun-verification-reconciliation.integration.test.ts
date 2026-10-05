@@ -16,16 +16,18 @@ import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
 import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
-import { runVerification } from "@/tests/db/helpers/billrun-verify";
+import {
+  runAggregation,
+  runVerification,
+} from "@/tests/db/helpers/extract-flow-sql";
 
 // bm30-spec §Implementation §4 / Verification checklist — the DB-gated bill↔charge
-// reconciliation regression. The app-repo "flow-double" (bm21/bm28/bm29 pattern):
-// it drives the SAME billrun_runtime aggregation SQL (tests/db/helpers/
-// billrun-aggregate.ts) to produce lines, then the SAME billrun_runtime
-// verification SQL (tests/db/helpers/billrun-verify.ts) the real flow's
-// `verification` stage now runs — so the detective control is provable without a
-// live Kestra. It asserts:
+// reconciliation regression. bm40 (TC43) moved this off a hand-copied double
+// onto the extracted-SQL harness (tests/db/helpers/extract-flow-sql.ts): it
+// runs the aggregation SQL EXTRACTED from the deployed flow to produce lines,
+// then the verification SQL EXTRACTED from the SAME flow — so the detective
+// control is provable without a live Kestra, and without the risk of the
+// double itself drifting from what the flow actually deploys. It asserts:
 //   * a correctly aggregated USAGE bill reconciles → verification DONE, no HARD;
 //   * a deliberately mis-aggregated USAGE line (gross_amount OR udr_count out of
 //     step with its claimed udr_rated rows) is caught HARD with

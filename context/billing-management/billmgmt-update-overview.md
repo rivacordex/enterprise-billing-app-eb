@@ -1,74 +1,112 @@
-# Billing Management — Bill Run — Phase 4 Update Overview
+# Billing Management — Bill Run — Target Capacity Pricing Update Overview
 
-*Date: 2026-09-16 · Users: Revenue Operations (RevOps, in-app) and BSS Ops (Kestra engine + deploy layer) · Derived from the 2026-09-16 planning discussion and `billmgmt-gap-assessment.md`. Phase 1–3 current-state lives in `billmgmt-project-overview.md`.*
+_Date: 2026-10-04 · Users: Revenue Operations (RevOps, in-app) and BSS Ops (Kestra engine + deploy layer). Derived from `_updatemodule-billing-billrun-target-capacity-plan.md`. The delivered Phases 1–4 (bm01–bm39) current-state lives in `billmgmt-project-overview.md`._
 
 ## Overview
 
-The Billing Management module is where the Revenue Operations team runs monthly bill runs: it materialises a `bill_run` per billing cycle, turns each account's rated usage and derived recurring charges into a draft bill (`customer_bill` + `customer_bill_line`), approves it under a four-eyes gate, posts one `INV` document per account into pgledger through the Accounts engine, renders and stores the final invoice PDF, and distributes invoices and the run report over SFTP. Phases 1–3 built all of that machinery, but a triggered run cannot finish on its own because the processing flow's **signal-back is stubbed**: `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml` contains zero `io.kestra.plugin.core.http.Request` tasks — its per-stage stage-complete POSTs and its `on_error`/`on_finally` terminal `/status` POST are `io.kestra.plugin.core.log.Log` placeholders — so accounts never auto-reach `PROCESSED` and the run wedges in `PROCESSING`. Phase 4 wires that signal-back (success **and** terminal failure), proves the full `SCHEDULED → COMPLETED` lifecycle locally on the `ci` seed, and makes the production deploy path deployable-and-wired with the actual cloud cutover left as a gated ops step; it introduces **no new database schema**.
+The Billing Management module runs monthly bill runs for the Revenue Operations team: it materialises a `bill_run` per cycle, claims each account's already-rated usage from `rating.udr_rated`, derives recurring charges from `inventory.product_inventory`, assembles a draft bill (`customer_bill` + `customer_bill_line`), approves it under a four-eyes gate, posts one `INV` document per account into pgledger through the Accounts engine, renders and stores the invoice PDF, and distributes invoices plus the run report over SFTP. This update adds **target-capacity pricing** for RAN_USAGE offerings — a **commitment floor** (an account that uses less than its committed quantity is billed as if it used the target) and a **motivation discount** (usage above the target is billed at a lower per-unit rate, the difference recorded as a discount) — applied after aggregation at billing-account level as inline SQL in the existing `bill_run_processing` flow, and adds a **per-polygon invoice usage appendix** grouped by state and district. Because a recent product change (PC14) reshaped `product_offering_price` into one row per component, the bill run's recurring resolver no longer matches the schema and fails every account; this update first repairs that (Unit 0, a live P0) before any capacity logic lands. It depends on the finalized `_change-rating-configuration-plan.md` (PER_UNIT rating, the `udr_subscription_ref_id` rename, the real subscriber resolver), treated as shipped by the time this phase's build specs are written.
 
 ## Goals
 
-1. Add real per-stage signal-back to `bill_run_processing.yml`: after each stage's SQL, a `core.http.Request` POST to `/api/billrun/{runId}/stage/{stage}/complete` with `Authorization: Bearer {{ secret('BILLRUN_APP_TOKEN') }}` and body `{ban_id, attempt, status: DONE|FAILED, error_class?, error_code?, error_detail?}`.
-2. Replace the `Log` stubs with real terminal `/api/billrun/{runId}/status` POSTs — `errors: on_error` on a `FAILED` execution and `afterExecution: on_killed` on a KILL — so a **whole-execution** failure settles the run to `PROCESSING_FAILED` instead of relying on the stall timeout. A **contained per-account** HARD failure is different: it is a `WARNING` execution, so the *account* settles to `PROCESSING_FAILED` via its own per-account `FAILED` stage POST while the *run* derives `PROCESSED` (a mixed terminal set), with the failed account marked `SKIPPED` at approval and the run rerunnable — no run-level terminal-failure push for a partial run.
-3. Make a triggered run reach `PROCESSED` on its own — accounts auto-advance, the Workflow stage timeline fills, and Approve appears on a healthy run with no stall banner and no out-of-band signal replay.
-4. Assert the full lifecycle locally on the `ci` seed: `SCHEDULED → PROCESSING → PROCESSED → APPROVED → POSTING → INVOICED → DISTRIBUTING → COMPLETED`, including reject → re-rate → reprocess, a forced processing failure that settles, and distribution with a forced mandatory failure → `DISTRIBUTION_FAILED` → rerun.
-5. Confirm the stall/reconcile gate no longer fires on a healthy run and still catches a genuinely wedged one; close the bm16/bm20 live-Kestra gate locally.
-6. Make production deployable-and-wired: provision the `billrun_runtime` DB credential (bm38: the `billrun-runtime-db-password` bare-password secret + `BILLRUN_DB_*` coords, the split shape the flow actually reads — not the superseded `BILLRUN_RUNTIME_DATABASE_URL` URL), `billrun-engine-auth`/`-url`, and SFTP Key Vault secrets and their consumer mapping into the shared `workflow-engine` Container App bicep, ready the (still-gated) deploy flags, and correct the `template.yml` "separate repo, TBD owner" fiction.
-7. Mirror bm34's distributor callback pattern verbatim — reachability (`host.docker.internal` / internal ingress), `Bearer` token auth, retry/`allowFailure`, and the `attempt` guard that swallows a superseded round's straggler POST.
+1. **Repair the bill run onto the component price model (Unit 0, live P0).** Rewrite the bm29 RECURRING resolver off the removed `pop.amount`/`pricing_model`/`price_type` columns onto `component_type` + `price_component jsonb`; build one shared as-of component reader partitioned by `(product_offering_id, component_type, unit_of_measure)`; remove the dead tiered branch; replace the hand-copied test double with a harness that extracts and runs the flow's real SQL. Ship it as its own PR, deployed first.
+2. **Apply the commitment floor.** For a capacity offering, bill `max(Q, target) × baseRate` when usage `Q` is at or below target — a top-up of `(target − Q) × baseRate` fills the gap to the committed quantity, even at zero usage.
+3. **Apply the motivation discount.** Bill usage above the target at the lower step rate; record the saving as `discount_amount = overage × (baseRate − stepRate)`, with `gross` at the base rate and `net = gross − discount`.
+4. **Compute it in one transaction, verified independently.** All capacity logic is inline SQL CTEs in the existing psql `aggregation` step, in the same whole-account-replace transaction that writes the bill (Model 1, anchored on `Σ udr_rated_price`). Verification carries an independent volume-based cross-derivation (Model 2, `max(Q,target) × baseRate`) gated by the `CAPACITY_RATE_MATCHING` flow variable.
+5. **Guard every mis-configuration as a loud, account-level HARD failure.** Six codes fail only their own account (`PROCESSING_FAILED`, skippable/rerunnable) while every sibling account keeps billing.
+6. **Extend verification and the posting checksum, and store a calculation trace.** Reconcile each USAGE line against `rated_amount`; append `rated_amount` to the `charge_checksum` tuple; write an `additional_info` calc trace (pricing inputs, per-operation math, a pre-rendered summary) on every capacity line.
+7. **Render a per-polygon invoice usage appendix.** The posted invoice lists every polygon's usage for the month, grouped by state then district, with state/district joined from the ratecard named by the product's `productCardLookUp` spec.
+8. **Keep multi-step motivation roadmap-ready.** The SQL and tests are N-band; a `capacity_max_bands` flow input (default 1) blocks more than one band in production, so enabling multi-step later is a config change, not a pricing-SQL edit.
 
 ## Core user flow
 
-1. **Materialise.** RevOps opens Billing → Bill Runs; the page lazily inserts the current period's `bill_run` (`SCHEDULED`) for each active cycle. No scheduler.
-2. **Trigger.** A `billrun_operate` user selects the operable run and clicks Run. The app snapshots eligible accounts into `bill_run_account`, sets the run `PROCESSING`, and triggers Kestra execution #1 (processing) with `{bill_run_id, period_start, period_end, ban_ids, attempt, gl_event_at}`.
-3. **Process.** Per account, the flow runs Validation → Collection (correlate `udr_subscriber_ref_id → product_inventory → billing_account_id`, claim `RATED → BILL_DRAFT`) → Aggregation (write `customer_bill` + `customer_bill_line`, USAGE + RECURRING) → Taxation (`0.00`) → Verification. **After each stage it POSTs a `DONE` stage-complete signal** (new in Phase 4).
-4. **Auto-advance to `PROCESSED`.** The app records each stage signal, advances the account, and recomputes the run; the terminal `verification` signal flips the account to `PROCESSED`. When all accounts are terminal the run reaches `PROCESSED` — with no out-of-band call.
-5. **Review.** RevOps opens the drill-down: Workflow timeline, Customers & Bills (`customer_bill_line` face + `udr_rated` drill-down + PRO-FORMA preview), Uncharged, Errors, Distribution, Audit.
-6. **Reject / rerun (optional).** Reject (`billrun_approve`) or rerun (`billrun_operate`, mandatory reason) releases the claimed rows back to `RATED` and re-derives the trial bill; BSS Ops can then reload corrected usage and the run is reprocessed.
-7. **Approve → Post.** A different `billrun_approve` user (≠ the final trigger actor) approves; claimed rows flip `BILL_DRAFT → BILL_APPROVED`; the run moves `APPROVED → POSTING`. Per account: compute `charge_checksum`, post one `INV`, consume the invoice number, render and store the final PDF in `bill_run_invoices`. The run reaches `INVOICED`; the next cycle unblocks.
-8. **Distribute → Complete.** The app triggers Kestra execution #2 with one `invoice_pdf` per stored invoice plus a `report_csv`; the flow downloads each from blob storage and SFTPs it, POSTing a `DELIVERED`/`FAILED` outcome per artifact. Every mandatory artifact delivered to every mandatory target → `COMPLETED`.
-9. **Failure path.** A HARD-failing account's stage POSTs `FAILED`, settling that **account** to `PROCESSING_FAILED` (not the stall timeout); the **run** derives `PROCESSED` (a mixed terminal set), with the failed account marked `SKIPPED` at approval and the run rerunnable. A run-level `PROCESSING_FAILED` is reserved for a whole-execution failure (a `FAILED` execution via `on_error`, or a KILL via `on_killed`). A forced mandatory distribution failure yields `DISTRIBUTION_FAILED`, rerunnable for only the failed artifacts.
+1. **Materialise.** RevOps opens Billing → Bill Runs; the page lazily inserts the current period's `bill_run` (`SCHEDULED`). No scheduler. (Unchanged.)
+2. **Trigger.** A `billrun_operate` user clicks Run. The app snapshots eligible accounts into `bill_run_account`, sets the run `PROCESSING`, and triggers Kestra execution #1. (Unchanged.)
+3. **Collection.** Per account, the flow claims the account's `RAN_USAGE` rows `RATED → BILL_DRAFT`, correlating each via `udr_subscription_ref_id = product_inventory_id → billing_account_id`. (Rename from `udr_subscriber_ref_id` ships with the rating-config dependency.)
+4. **Aggregation — capacity pricing (new).** For an account holding a capacity offering (detected by a `capacity_commitment` or `capacity_motivation` component, not by a column):
+   - resolve the base `usage_rate`, `capacity_commitment` and `capacity_motivation` components off the subscription's **pinned** offering version (via `product_inventory → order_item` — the same version rating priced from);
+   - compute `rated_amount = Σ udr_rated_price`, `topUp = round(max(target − Q, 0) × baseRate)`, `gross = rated_amount + topUp`, `discount = Σ round(bandQty × (baseRate − stepRate))`, `net = gross − discount`;
+   - write one `customer_bill_line` per `(offering, unit_of_measure)` — `source 'USAGE'`, `udr_type` the offering's spec `udrType`, `grouping_key <offering>:CAPACITY:<unit>` — generated from the active subscription even at zero usage, carrying the money columns, `rated_amount`, `discount_rate`/`discount_amount_raw`, and an `additional_info` calc trace;
+   - a mis-configured account HARD-fails one of the six guards, settles to `PROCESSING_FAILED`, and every other account keeps processing.
+5. **Verification.** Each USAGE line replays `SUM(udr_rated_price) = rated_amount`; each capacity line is checked for `gross = rated_amount + topUp` and `net = gross − discount`, and reconciled against the independent Model-2 recompute. `CAPACITY_RATE_MATCHING` (default ON) HARD-fails a rating-vs-bill-run rate mismatch with a diagnostic naming both rates and both version sources; set OFF, it downgrades to a logged WARN, bills Model 1's number, and records the flag state on the run.
+6. **Review.** RevOps opens Customers & Bills: the capacity line appears as the invoice's face, its `udr_rated` rows as per-subscription drill-down, and the motivation discount in the line's discount column. (The capacity calc trace stays database-only.)
+7. **Approve → Post → render.** A second `billrun_approve` user approves; the run posts one `INV` per account and renders the invoice PDF. **The PDF now carries a usage appendix**: every polygon that contributed usage in the month, grouped by state then district (state/district joined per cell from the `productCardLookUp` ratecard), with per-district, per-state and line totals.
+8. **Distribute → Complete.** The app triggers Kestra execution #2; each artifact is downloaded and SFTP'd; the run reaches `COMPLETED`. (Unchanged.)
+9. **Partial periods.** An account with a mid-period start, cease or suspension is `EXCLUDED` at scoping and produces no capacity bill that month (its usage stays `RATED`, unclaimed); it resumes at the next full cycle. No proration is built.
 
 ## Features
 
-### Processor signal-back (the core build)
-- Per-stage `DONE` `http.Request` POSTs to `/api/billrun/{runId}/stage/{stage}/complete`, carrying `{ban_id, attempt, status, error_*}` — no charge payload (the app receiver stays record-only).
-- Real `on_error` (terminal per-account/run `FAILED`) and `on_finally` (always a terminal `/status`, Inv #1 obligation) POSTs replacing the `Log` stubs.
-- `attempt`-guarded idempotency, retry/`allowFailure`, and `Bearer BILLRUN_APP_TOKEN` auth mirroring bm34; the app-side receiver (`handle-stage-signal.ts`, `TERMINAL_STAGE='verification'`) is untouched.
+### Unit 0 — schema repair & test harness
 
-### End-to-end assertion + reconcile alignment
-- Extend `scripts/billrun-live-kestra-smoke.ts` to assert `SCHEDULED → COMPLETED` on the `ci` seed, including reject→reprocess, forced processing-failure→settle, and distribution + forced dist-failure→rerun.
-- Verify the stall/reconcile gate does not fire on a healthy run and still catches a wedged one; close the bm16/bm20 live-Kestra gate locally.
+- Recurring resolver rewritten onto `component_type = 'flat_fee' AND price_component->>'priceType' = 'recurring'` and `(price_component #>> '{params,amount}')::numeric`; the shared as-of component reader; the dead tiered-pricing branch removed.
+- The hand-copied `tests/db/helpers/billrun-aggregate.ts` double replaced by a harness that parses `bill_run_processing.yml`, strips the Kestra `{{ }}` templating, rebinds the GUCs, and runs the real step heredocs in one transaction — so tests can no longer drift from the deployed flow.
+- A fail-closed destructive-DB preflight (explicit opt-in + a disposable sentinel, run before any DB client import) and removal of the cross-cluster `DROP DATABASE … WITH (FORCE)`.
 
-### Production wiring (deployable, gated)
-- Key Vault secrets + consumer mapping into `infra/bicep/modules/workflow-engine-container-app.bicep`: `billrun-runtime-db-password` (+ `BILLRUN_DB_*` coords), `billrun-engine-auth`/`-url`, SFTP key/known-hosts; the `billrun_runtime` password provisioning step.
-- No new container — the shared `workflow-engine` (collapsed topology) already hosts the `billrun` namespace; the `local-dev` flow is promoted as the production flow.
-- Deploy flags (`deployWorkflowEngine`, `deployRatingFlows`, the billrun flow deploy, `runBillrunLiveKestraSmoke`) readied but left gated for the ops cutover; the `template.yml` "separate repo, TBD owner" text corrected; the taxation-`0.00` interim and the cutover runbook recorded.
+### Capacity aggregation
 
-### Data, storage & access (unchanged)
-- **No new schema, no migrations.** Signal-back reuses `bill_run_account_stage`; `0.00` tax means no `customer_bill_tax_item` rows; reject, post, invoice-store and distribution all already exist.
-- No new auth surface: `BILLRUN_APP_TOKEN` (flow→app), the `billrun_runtime` DB role, and RevOps RBAC + four-eyes are already built. The only new access work is provisioning the production Key Vault secrets and worker→app reachability inside Container Apps.
+- Commitment floor and motivation discount computed as inline SQL CTEs in the `aggregation` step, as `billrun_runtime`, in the per-account whole-account-replace transaction.
+- Capacity line identity `(offering, unit_of_measure)`; generated from the subscription even at zero usage; N-band SQL with a single-band `capacity_max_bands` guard.
+- Each monetary component rounded once (2 dp, HALF_UP); `gross` and `net` derived from the rounded parts, never re-rounded, so the identities hold with no ±0.01 tolerance.
+
+### Account-level guards (HARD, per account)
+
+- `CAPACITY_MULTIPLE_SUBSCRIPTIONS` — more than one subscription of the same capacity offering family on the account.
+- `CAPACITY_BASE_RATE_NOT_FOUND` — a modifier present with no same-unit `usage_rate` to price from.
+- `CAPACITY_UDR_TYPE_MISMATCH` — a claimed row whose `udr_type` ≠ the spec `udrType`.
+- `CAPACITY_RATE_MISMATCH` — a claimed row priced at a rate other than the resolved `ratePerUnit` (`IS DISTINCT FROM`, so a NULL rate counts); gated by `CAPACITY_RATE_MATCHING`.
+- `CAPACITY_MULTI_STEP_UNSUPPORTED` — a motivation schedule with more than one band (production is single-band this phase).
+- `CAPACITY_CURRENCY_MISMATCH` — the resolved component currency ≠ the account currency.
+
+### Verification, checksum & calc trace
+
+- USAGE-line replay reconciles against `rated_amount` (not `gross_amount`); capacity lines reconcile `gross = rated_amount + topUp`, `net = gross − discount`, and an independent Model-2 recompute; a tamper is caught by both the internal identity and the Model-2 cross-derivation.
+- The posting `charge_checksum` **appends** `rated_amount` as the last tuple element, preserving the delivered field order; `additional_info` is not hashed.
+- `additional_info` carries `pricing` (the resolved price rows), `calc` (the ordered operations) and a pre-rendered `summary[]`; it is database-only (the invoice renders the usage appendix, not this trace).
+
+### Invoice usage appendix
+
+- The posted invoice lists per-polygon `udr_rated` records for the billing month, grouped by state then district, with state/district joined from the `productCardLookUp` ratecard (they are not on `udr_rated`).
+- Per-polygon only (no district summarisation), bounded to ≤ 10,000 rows per account this phase and load-tested to that bound; a polygon with usage but no matching ratecard row is surfaced, not dropped.
+
+### Configuration
+
+- `CAPACITY_RATE_MATCHING` (flow variable, default ON) — the rate-match gate: ON hard-fails a mismatch, OFF logs a WARN and bills Model 1 while recording the flag state.
+- `capacity_max_bands` (flow input, default 1) — the single-band production guard; raising it enables the already-built N-band path.
+
+### Data model, access & seeds
+
+- `billing.customer_bill_line` gains `rated_amount numeric(18,2)` (NULL for RECURRING; `= gross_amount` on non-capacity USAGE) and `additional_info jsonb` (capacity lines only). One migration; no other schema change.
+- `billrun_runtime` gains `SELECT` on `product.product_specifications` (read the `udrType` characteristic) and, for the appendix, `product.ratecard_ran_usage_lkp` + `ratecard_version`.
+- The `_SAMPLE_` seed carries a fixture per test scenario, including a multi-polygon, multi-state/district capacity account.
 
 ## In scope
 
-- Real processor signal-back in `bill-run-processor/local-dev/bill_run_processing.yml`: per-stage `DONE` POSTs **and** terminal `FAILED`/`/status` POSTs (`on_error`/`on_finally`).
-- Local end-to-end `SCHEDULED → COMPLETED` assertion on the `ci` seed, including reject → re-rate → reprocess, forced processing-failure → settle, and distribution + forced dist-failure → rerun; reconcile/stall-gate alignment.
-- Promotion of the deployable `local-dev` flow as the production flow (signal-back written once).
-- Production bicep + Key Vault secret wiring + consumer mapping; gated deploy flags; `template.yml` fiction correction; taxation-`0.00` ratification; the production cutover runbook.
+- Unit 0: the component-model repair, the shared as-of reader, the dead-branch removal, and the extracted-SQL test harness (+ the destructive-DB preflight).
+- Capacity aggregation: commitment floor + motivation discount as inline SQL; the capacity line at `(offering, unit)`, generated even at zero usage; N-band SQL with the single-band `capacity_max_bands` guard.
+- The six HARD account-level guards.
+- Verification (`rated_amount` replay + the Model-2 cross-derivation) and the `charge_checksum` re-anchor appending `rated_amount`.
+- The `additional_info` calc trace (database) and the per-polygon invoice usage appendix by state/district (PDF).
+- The two new `customer_bill_line` columns + Drizzle mirror; the `billrun_runtime` grants; the seed fixtures.
+- The `CAPACITY_RATE_MATCHING` and `capacity_max_bands` flow configuration.
 
 ## Out of scope
 
-- **Real taxation** — `0.00` stands as the ratified interim (`total = subtotal`); no jurisdiction/category tax rules.
-- **Supersede-with-new-`udr_rated`** and any change to reject/approve/post logic — the release → re-rate → reprocess path is already built (bm24); Phase 4 only makes it reachable.
-- **New database schema or migrations.**
-- **A real production cloud run** — the deploy path is delivered deployable-and-wired; the cutover (flip flags, run the live smoke against a real engine + SFTP) is a gated ops step after the phase.
-- **A separate workflow-management flow repo** — superseded by promoting the `local-dev` flow.
-- **Kestra Enterprise / scoped per-flow tokens** — unchanged deferral.
+- **Proration / partial-period billing** — partial-period accounts stay `EXCLUDED`; whether those months should bill, and how to prorate the floor, is an unresolved **business** decision, not an engineering deferral.
+- **Multiple billing accounts per customer for the same capacity product** — one account per product per customer this phase; the rating resolver is customer-grain.
+- **Negotiated overrides on capacity offerings** — enforced out by the rate-mismatch guard, not built.
+- **Rate-card item pricing** — a card with per-item rates is incompatible with a single base rate this phase; the card is validation/mapping/fields only (`rate_per_unit` stays NULL).
+- **Multi-step motivation in production** — the N-band code and tests exist, but `capacity_max_bands` blocks more than one band.
+- **Any display of the capacity calculation trace** (`calc`/`summary`) — database-only; only the per-polygon usage appendix renders. No bill-line-table or draft-preview change.
+- **A per-polygon appendix beyond 10,000 rows per account, or summarised by district** — bounded and per-polygon only this phase.
+- **Real taxation** — the ratified `0.00` interim stands (`total = subtotal`).
+- **The product / inventory / ordering changes** (`max_instances_per_billing_acc`, the `udrType`/`productCardLookUp`/`singleSubInstPerCust` specs, the order-time guard) — a separate prerequisite phase.
 
 ## Success criteria
 
-1. A freshly triggered run drives itself `SCHEDULED → COMPLETED` on the `ci` seed with no out-of-band calls: accounts auto-reach `PROCESSED` via real stage-complete signals, the Workflow timeline fills, Approve appears with no stall banner, and post → store → SFTP distribute → `COMPLETED` all follow.
-2. A HARD-failing account reaches `PROCESSING_FAILED` via its per-account `FAILED` stage-complete POST (not the stall timeout); the run derives `PROCESSED` (mixed terminal set) with the failed account `SKIPPED` at approval and remains rerunnable. A whole-execution `FAILED`/KILL settles the run itself to `PROCESSING_FAILED` (via `on_error`/`on_killed`).
-3. A forced mandatory distribution failure yields `DISTRIBUTION_FAILED` and reruns only the failed artifacts to `COMPLETED`; a duplicate or stale-attempt outcome is a 200 no-op.
-4. The stall/reconcile gate does not fire on a healthy run and still catches a genuinely wedged one; the bm16/bm20 live-Kestra gate closes locally.
-5. Production is deployable-and-wired: the `billrun_runtime` DB credential (`billrun-runtime-db-password` + `BILLRUN_DB_*`), engine, and SFTP secrets plus their consumer mapping are present in the `workflow-engine` bicep, the deploy flags are readied (still gated), the `template.yml` fiction is corrected, and the cutover runbook is recorded — with no new migration introduced.
-6. `npm run typecheck`, `npm run lint`, and the full vitest suite pass; `billmgmt-progress-tracker.md` records Phase 4 delivery.
+1. On the `_SAMPLE_` `ci` seed (base rate 100, committed 1000, motivation >1000 @ 50, unit EA): usage 800 bills `net 100,000` (rated 80,000 + top-up 20,000); 1000 bills `100,000`; 2000 bills `net 150,000` (gross 200,000 − discount 50,000); 0 bills `100,000` (full floor). `subtotal = SUM(net_amount)`.
+2. Each of the six guards fails only its own account (`PROCESSING_FAILED`, rerunnable) while sibling accounts bill; a NULL/`ZERO_RATED` rate trips `CAPACITY_RATE_MISMATCH` (proving `IS DISTINCT FROM`).
+3. On a rating-consistent run the Model-2 cross-derivation reconciles with the stored `gross`/`discount`; a mismatch HARD-fails under `CAPACITY_RATE_MATCHING=ON` with a diagnostic naming both rates, and under `=OFF` downgrades to a logged WARN, bills Model 1, and records the flag state.
+4. Verification catches a tampered `rated_amount`/`gross`/`discount`/`calc.total` via both detectors; every capacity line holds `discount_amount ≥ 0` and `net_amount ≥ 0`.
+5. The posted invoice renders the per-polygon usage appendix grouped by state and district, with state/district joined from the `productCardLookUp` ratecard, load-tested to 10,000 polygon rows per account; a polygon absent from the card is surfaced, not dropped.
+6. A rerun reproduces identical lines and `line_no` (whole-account replace).
+7. The deployed, pebble-rendered flow drives a capacity account `SCHEDULED → COMPLETED` on the `ci` seed through a real Kestra execution (not only the extracted-SQL harness); Unit 0's existing aggregation/recurring/volume/verification/checksum suites pass against the PC14 schema.
+8. No new migration beyond the one adding `rated_amount` + `additional_info`; `npm run typecheck`, `npm run lint`, and the vitest suite pass; the owning docs (`billmgmt-architecture.md`, `billmgmt-code-standards.md`, `billmgmt-progress-tracker.md`) are synced.

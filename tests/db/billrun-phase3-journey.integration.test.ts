@@ -23,8 +23,10 @@ import { seedCoa } from "@/db/seeds/accounts/seed-coa";
 import { seedGlMappings } from "@/db/seeds/accounts/seed-gl-mappings";
 import { seedReasonCodes } from "@/db/seeds/accounts/seed-reason-codes";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
-import { runVerification } from "@/tests/db/helpers/billrun-verify";
+import {
+  runAggregation,
+  runVerification,
+} from "@/tests/db/helpers/extract-flow-sql";
 import type { materializeDueRuns as MaterializeDueRuns } from "@/services/billing/materialize-runs";
 import type { triggerRun as TriggerRun } from "@/services/billing/trigger-run";
 import type { rerunRun as RerunRun } from "@/services/billing/rerun-run";
@@ -54,9 +56,9 @@ import type { POST as StageCompletePost } from "@/app/api/billrun/[runId]/stage/
 // pattern).** The real `bill_run_processing`/`bill_run_distribution` flows are
 // external; there is no live Kestra, blob store, or SFTP endpoint in this
 // environment. So — exactly as `billing-e2e-happy-path` (bm13/bm21) and every
-// bm27–bm34 DB-gated suite do — this journey drives the SHARED flow-doubles
-// (`tests/db/helpers/billrun-aggregate.ts` `runAggregation`, `.../billrun-verify.ts`
-// `runVerification`: the SAME `billrun_runtime` SQL the deployed flow runs),
+// bm27–bm34 DB-gated suite do — this journey drives the extracted-SQL harness
+// (`tests/db/helpers/extract-flow-sql.ts`'s `runAggregation`/`runVerification`,
+// bm40/TC43: SQL EXTRACTED from the deployed flow, not a hand-copied double),
 // issued write-then-signal before each M2M stage signal, plus the real app
 // services for the operator legs (reject/rerun/approve/post/distribute). What
 // this adds over the stub-aggregation `billing-e2e-happy-path` is the REAL

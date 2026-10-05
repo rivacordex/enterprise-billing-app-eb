@@ -11,7 +11,7 @@ the signal-back is now real. Phase 4 is delivered: bm37 added the local
 deploy path deployable + wired (still gated), and **bm39 audited the assembled
 phase against its guardrails and signed it off** (§9 resolved, §10 ratified, no new
 schema). The cloud cutover itself remains a gated ops step (see
-`billmgmt-update-overview.md` and `billmgmt-progress-tracker.md`).
+`billmgmt-project-overview.md` and `billmgmt-progress-tracker.md`).
 
 **§11–§14 and §4c were added on 2026-09-17**, from the first
 end-to-end local execution of the full `SCHEDULED → COMPLETED` lifecycle
@@ -41,7 +41,7 @@ array describing each account's per-post outcome (`invoiced` / `skipped` /
 (`tests/services/billing/post-run.service.test.ts`) asserts on `results` to
 verify per-account behaviour (invoiced vs. parked vs. skipped) without a DB.
 Removing `results` would reduce that test observability for zero functional
-gain. The redundant *second* full status scan that used to accompany it **has**
+gain. The redundant _second_ full status scan that used to accompany it **has**
 been removed (completion is now decided inside the locked transaction).
 
 **ELI5.** The posting function hands back a little report card of what happened
@@ -61,6 +61,7 @@ consume `results` directly instead of re-fetching. Low priority.
 
 **Technical.** "At most one posted INV per (run, account)" is enforced entirely
 in the application layer:
+
 1. `lockBillForPosting` takes `FOR UPDATE OF customer_bill` so two concurrent
    posts of the same account serialize on the bill row; the loser reads the
    now-set `ref_inv_document_id` and returns `skipped`.
@@ -69,15 +70,15 @@ in the application layer:
    didn't.
 
 There is **no schema-level constraint** guaranteeing this. The only DB
-constraint on `customer_bill` is `UNIQUE (run, ban, period)` — one *bill* row —
+constraint on `customer_bill` is `UNIQUE (run, ban, period)` — one _bill_ row —
 which says nothing about `ref_inv_document_id` being set at most once, and the
 actual INV lives in the separate `billing.document` table with no FK back to the
-bill. So if a *future* code path ever posts outside this exact lock discipline
+bill. So if a _future_ code path ever posts outside this exact lock discipline
 (a new caller, a lock downgrade, a replica read), two INV documents against one
 bill become possible with no backstop — a double-billed customer + duplicate GL
 posting.
 
-**Why deferred.** A *meaningful* DB backstop needs a `document → customer_bill`
+**Why deferred.** A _meaningful_ DB backstop needs a `document → customer_bill`
 linkage (or a dedicated posted-latch table) — a schema redesign beyond the
 review's scope. A partial unique index on `customer_bill (run, ban) WHERE
 ref_inv_document_id IS NOT NULL` does **not** actually prevent the failure (the
@@ -86,7 +87,7 @@ current app-layer guards are correct and were hardened in this review; the risk
 is strictly "if someone later bypasses them".
 
 **ELI5.** We stop the same invoice from being created twice by having the code
-"lock the door" while it works. That works today. But the *database itself*
+"lock the door" while it works. That works today. But the _database itself_
 doesn't enforce the rule — so a future developer who forgets to lock the door
 could accidentally bill a customer twice. We'd need a small database redesign to
 make that mistake impossible.
@@ -103,6 +104,7 @@ the app-layer checks to a friendly early-return.
 **Where:** several billing + accounts UI and service files.
 
 **Technical.** The same small mappings are hand-written in multiple places:
+
 - **`describePostFailure`** (postDocument codes → prose) in
   `services/billing/post-run.ts` duplicates the same code→message mapping in
   ~12 accounts panels (allocate-payment, capture-deposit/payment, raise-debit/
@@ -214,6 +216,7 @@ they are deferred to a dedicated performance pass rather than reshaping the
 heavily-tested approval-check module now.
 
 **Technical.**
+
 - **Redundant reads on the Approve preview.** `getApprovePreview` (force-dynamic
   RSC) calls `listPostableCurrencies` once, and `runPreApprovalChecks` re-runs
   it inside both `checkPeriodOpen` and `checkGlMappingsResolvable` — **3× the
@@ -266,7 +269,7 @@ latent edge cases, **neither reachable in v1**:
   stamps a user; audit rows for a run being approved are days old, far inside
   the 7-year retention, so pruning is not a factor.)
 
-**ELI5.** We decide who's *not allowed* to approve by reading the run's history
+**ELI5.** We decide who's _not allowed_ to approve by reading the run's history
 log. Today every trigger/rerun is stamped with a real person, so it works. If a
 robot ever triggered a run without a name, the rule could either lock everyone
 out or miss the robot — but no robot does that today.
@@ -305,7 +308,7 @@ the write path.
   and fail at first post rather than at compile. Left as-is for idiom
   consistency; a shared `requireLegTemplate()` load-time assert would close it.
 - **Stale four-eyes checklist on submit.** If a viewer becomes a barred actor
-  *between* page-load and submit, `ApproveAndPostPanel` shows the
+  _between_ page-load and submit, `ApproveAndPostPanel` shows the
   `FOUR_EYES_VIOLATION` error text but doesn't refresh the checklist (only
   `CHECKS_FAILED` calls `setChecks`), so `four_eyes` still renders green with the
   button enabled. Cosmetic — the service still refuses. Refresh the checklist on
@@ -346,7 +349,7 @@ via the live-Kestra smoke; bm38 wired the production deploy path (deployable +
 gated); bm39 audited the assembled phase (guardrails green, receivers unchanged, no
 new schema) and signed it off. The live cloud cutover — flipping the deploy flags
 and running the smoke against a real engine + SFTP — remains a gated ops step. Scope
-in `billmgmt-update-overview.md`.
+in `billmgmt-project-overview.md`.
 
 ---
 
@@ -370,6 +373,7 @@ taxation stage in a later unit if RevOps needs a tax line on the reviewed invoic
 ## 11. 🔴 The processor writes a zero-total bill for a zero-charge account
 
 **Where:** `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`
+
 - the `aggregation` stage's `ins_header` CTE.
 
 **Technical.** `ins_header` is a data-modifying CTE, so it runs **exactly once
@@ -387,7 +391,7 @@ non-blocking** NOTICE, and `listUnchargedForRun`'s `HAVING` keeps accounts with
 **Blast radius (all observed live on the `ci` seed's `BAN...04`).** The stray
 header broke the lifecycle twice in succession:
 
-1. **At approval** — `positive_totals` counted it, making *any* run containing a
+1. **At approval** — `positive_totals` counted it, making _any_ run containing a
    no-charges account permanently unapprovable.
 2. **At posting** — posting inserts the revenue line at `amount = subtotal`, so
    `document_line_amount_check` (`amount > 0`) rejected it and parked the account
@@ -440,7 +444,7 @@ indistinguishable:
 
 1. **A fully-discounted account wedges the whole run at approval.**
    `countNonPositivePostable` is `(subtotal <= 0 OR total_amount <= 0) AND
-   EXISTS(lines)`. A discounted-to-zero bill HAS lines, so it is counted,
+EXISTS(lines)`. A discounted-to-zero bill HAS lines, so it is counted,
    `positive_totals` fails, and **no account in that run can be approved** until
    someone intervenes. This is the same operational jam as §11, re-armed for a
    legitimate account — and it is the more likely of the two to be hit.
@@ -481,43 +485,58 @@ this entry that needs a business answer.
 
 ---
 
-## 13. 🔴 The DB-gated test suite destroys a co-located dev stack
+## 13. 🟡 The DB-gated test suite destroys a co-located dev stack (items 1 + 3 RESOLVED by bm40)
 
 **Where:** `tests/db/billrun-db-roles.integration.test.ts`
 (`beforeAll`/`afterAll`), `vitest.integration.config.ts`, `npm run test`.
 
 **Technical.** Three separate hazards, all confirmed live on 2026-09-17:
 
-1. **It drops the `kestra` database.** `afterAll` runs
+1. **RESOLVED (bm40/TC58).** `afterAll` used to run
    `DROP DATABASE IF EXISTS "kestra" WITH (FORCE)` — outside `DATABASE_URL`,
-   against the whole cluster. `FORCE` terminates every live connection first, so a
+   against the whole cluster. `FORCE` terminated every live connection first, so a
    running engine lost all Hikari connections at once (`SQLSTATE(08006)`), each
    queue poller logged `Fatal error while polling ... Initiating shutdown`, and
-   the container exited 0 with **every deployed flow gone**.
-2. **It rewrites cluster-level role passwords.** `ALTER ROLE app_runtime /
-   rating_runtime / billrun_runtime WITH PASSWORD 'bm14-test-only-pw'`. Roles are
+   the container exited 0 with **every deployed flow gone**. The teardown now
+   resets only the `public` **schema** inside the `kestra` database
+   (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`), never the database
+   object, and never `FORCE` — a stray live connection now causes an error (or a
+   lock wait), never a forced disconnect.
+2. **OPEN. It rewrites cluster-level role passwords.** `ALTER ROLE app_runtime /
+rating_runtime / billrun_runtime WITH PASSWORD 'bm14-test-only-pw'`. Roles are
    cluster-scoped, so the dev app then fails `28P01` and every flow DB task fails
    authentication. Restoring the password is not enough on its own — the app's
-   connection pool holds the old credential until it is restarted.
-3. **The promised "skip loudly" never fires.** Each suite carries
-   `describe.skipIf(!DATABASE_URL)`, but `db/client.ts` imports `lib/config.ts` at
-   module load and throws `Invalid environment configuration.` first, so every
-   DB-gated file **errors** instead of skipping.
+   connection pool holds the old credential until it is restarted. Out of bm40's
+   scope (TC58 targeted the cross-cluster `DROP DATABASE`/`FORCE` and the
+   skip-loudly bug only); the README recovery sequence still applies.
+3. **RESOLVED (bm40/TC58).** The promised "skip loudly" never fired: each suite
+   carried `describe.skipIf(!DATABASE_URL)`, but `db/client.ts` imports
+   `lib/config.ts` at module load and throws `Invalid environment
+   configuration.` first, so every DB-gated file **errored** instead of
+   skipping. A new fail-closed preflight (`tests/integration-global-setup.ts`,
+   wired as the DB-gated project's `globalSetup`) now runs BEFORE any test file
+   — and so before that import — refusing loudly with a clear message when
+   `DATABASE_URL` is unset, when `DESTRUCTIVE_DB_OK` isn't `"1"`, or when the
+   target lacks the disposable sentinel (`tests/helpers/disposable-database.ts`
+   — deliberately not a name/host match, which is spoofable).
 
-Consequently `npm run test` with a dev `.env` exported destroys the local stack,
-and the config's own comment about skipping is misleading.
+Consequently `npm run test` with a dev `.env` exported, `DESTRUCTIVE_DB_OK` unset
+and no sentinel marked now refuses outright rather than destroying the local
+stack; item 2's password rewrite remains a residual risk once the preflight is
+satisfied.
 
-**ELI5.** Running the full test suite against your development database doesn't
-just wipe that database — it also deletes the workflow engine's database and
-changes the shared login passwords, so the app and the engine both stop working
-until you put them back.
+**ELI5.** Running the full test suite against your development database used to
+wipe that database AND delete the workflow engine's own data — now it refuses to
+run at all unless you've explicitly opted in and marked the target database safe
+to destroy. It still changes the shared login passwords, so the app and the
+engine need a restart afterwards.
 
-**Recommendation.** Point `DATABASE_URL` at a **separate Postgres instance**, not
-merely a different database in the same cluster; or stop the engine for the run
-and rebuild afterwards (README "Tests, typecheck and lint" documents both, with
-the recovery sequence). The durable fix is to scope the teardown to the target
-database and stop rewriting cluster-level roles — `bm22 §21`'s "disposable
-database" wording understates the blast radius and should be amended with it.
+**Recommendation (residual).** Point `DATABASE_URL` at a **separate Postgres
+instance**, not merely a different database in the same cluster; or stop the
+engine for the run and rebuild afterwards (README "Tests, typecheck and lint"
+documents both, with the recovery sequence). A durable fix for item 2 — scoping
+the role-password rewrite so it never touches the shared cluster-level
+credential — remains open.
 
 ---
 
@@ -527,7 +546,7 @@ database" wording understates the blast radius and should be amended with it.
 
 **Technical.** A negative `total_amount` is a credit position — money owed **to**
 the customer — and has real economic substance. The zero-invoice skip (§11) is
-therefore deliberately scoped to *exactly* zero, never `<= 0`, with a
+therefore deliberately scoped to _exactly_ zero, never `<= 0`, with a
 `[CRITICAL]` test on that edge: suppressing a negative would understate the
 liability and silently deny the customer a credit. Nothing else handles it
 either, so such a bill reaches posting and is rejected by

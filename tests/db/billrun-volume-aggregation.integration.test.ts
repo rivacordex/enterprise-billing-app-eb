@@ -15,13 +15,14 @@ import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productOffering } from "@/db/schema/product";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { runAggregation } from "@/tests/db/helpers/billrun-aggregate";
+import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
 
 // bm35-spec §Implementation §4 / code-standards §9.31 — the `volume` profile's
-// guardrail. It drives the SAME shared aggregation flow-double
-// (tests/db/helpers/billrun-aggregate.ts) the bm28/bm29 suites use — the exact
-// `billrun_runtime` SQL the real bill_run_processing flow's Aggregation stage
-// runs — at HIGH usage-row cardinality, and proves the two things the `volume`
+// guardrail. It drives the SAME extracted-SQL aggregation harness
+// (tests/db/helpers/extract-flow-sql.ts, bm40/TC43) the bm28/bm29 suites use —
+// the exact `billrun_runtime` SQL the real bill_run_processing flow's
+// Aggregation stage runs — at HIGH usage-row cardinality, and proves the two
+// things the `volume`
 // profile exists to prove (bm35-spec §Design, code-standards §9.31):
 //
 //   1. LINE COUNT TRACKS PRODUCT FOOTPRINT, NOT RECORD COUNT. An account with
