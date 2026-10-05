@@ -48,6 +48,9 @@ export const customerBillLineRepository = {
         snapshotUnitPrice: customerBillLine.snapshotUnitPrice,
         snapshotQuantity: customerBillLine.snapshotQuantity,
         snapshotEffectiveDate: customerBillLine.snapshotEffectiveDate,
+        // bm41 — NULL until bm42 writes capacity lines.
+        ratedAmount: customerBillLine.ratedAmount,
+        additionalInfo: customerBillLine.additionalInfo,
       })
       .from(customerBillLine)
       .innerJoin(

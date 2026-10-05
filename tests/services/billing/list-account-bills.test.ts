@@ -136,6 +136,8 @@ describe("listAccountBills (bm05-spec §5 / bm06-spec §4)", () => {
       snapshotUnitPrice: null,
       snapshotQuantity: null,
       snapshotEffectiveDate: null,
+      ratedAmount: null,
+      additionalInfo: null,
       ...over,
     });
     mockListLines.mockResolvedValue([

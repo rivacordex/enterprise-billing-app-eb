@@ -200,6 +200,54 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     `specs/bm00-build-plan.md` exists in this checkout (same gap noted for
     pm28/pm30 in this tracker's history), so that sync could not be done.
 
+### Target Capacity Pricing update — Unit 1 (bm41)
+
+- **bm41 (2026-10-05) — `customer_bill_line` capacity columns, Drizzle mirror & grants.**
+  Spec: `context/billing-management/specs/bm41-customer-bill-line-capacity-columns.md`.
+  Schema-before-behavior unit, implemented as specified:
+  - **Migration** — `db/migrations/0044_customer_bill_line_capacity.sql`
+    (journal `idx` 44; `0042` stays unused, `0041`/`0043` were taken) adds
+    `rated_amount numeric(18,2)` + `additional_info jsonb` to
+    `billing.customer_bill_line`, both nullable, no new `source`/`line_type`
+    CHECK; the parent `ALTER` propagates to partitions (not individually
+    applied here).
+  - **Drizzle mirror** — `db/schema/billing/customer-bill-line.ts` gains
+    `ratedAmount`/`additionalInfo` (query typing only, not `drizzle-kit
+    push`ed); `additionalInfo` is `.$type<CapacityCalcTrace>()`.
+  - **Read model** — `types/billing.ts` extends `BillLineRow` with
+    `ratedAmount: string | null` + `additionalInfo: CapacityCalcTrace | null`
+    and declares `CapacityCalcTrace` (`{ v, productInventoryId, pricing,
+    calc[], summary[] }`, typing only — bm42 writes it, bm45 reads it).
+  - **Grants** — `db/bootstrap/billrun-db-roles.sql` adds enumerated
+    `billrun_runtime` `SELECT` on `product.product_specifications`,
+    `product.ratecard_ran_usage_lkp`, `product.ratecard_version` (none were
+    already present); no write grant, `USAGE ON SCHEMA "product"` already held.
+  - **Compile ripple (not in the spec's file boundary, required for `tsc`
+    green):** `db/repositories/billing/customer-bill-line.repository.ts`'s
+    `listForRun` select now also projects `ratedAmount`/`additionalInfo`
+    (still NULL until bm42 writes them) — omitting them left the method's
+    declared return type (`BillLineRow & {...}`) unsatisfied. Mirrored in the
+    `tests/services/billing/list-account-bills.test.ts` line fixture.
+  - **Grant assertion test** — `tests/db/billrun-db-roles.integration.test.ts`
+    gained `17h`/`17i` (SELECT resolves on the three new tables; INSERT/UPDATE/
+    DELETE refused on each), mirroring the existing `17f`/`17g` (bm29) pattern.
+  - **Doc sync** — `billmgmt-architecture.md` (storage-delta row + the
+    `billrun_runtime` grant bullet) and `billmgmt-code-standards.md` (the two
+    "adds to §6" bullets) now name **bm41** and migration `0044` explicitly.
+    `bm00-build-plan.md` doesn't exist in this checkout (same gap bm40 noted) —
+    that sync step could not be done.
+  - **Verified in this environment:** `npx tsc --noEmit` clean repo-wide;
+    `eslint` clean on every touched/added TS file; the DB-free unit suite
+    (`tests/services/billing/list-account-bills.test.ts`, 16 tests) green.
+  - **NOT verified here (no reachable Postgres in this environment, same gap
+    as bm40)** — pending a disposable-Postgres run before this unit ships: the
+    migration applying on the parent **and** a live partition; the new `17h`/
+    `17i` grant-assertion tests; the full DB-gated suite; confirming the three
+    new SELECT grants weren't already present (spec step 4's "first confirm"
+    — checked by reading `billrun-db-roles.sql`, not by a live grant query).
+  - bm42 (capacity aggregation) and bm45 (invoice appendix) are blocked on
+    this unit's DB-gated verification, not just this doc entry.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

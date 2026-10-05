@@ -1004,6 +1004,62 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
+    // ---- capacity reads — udr_type characteristic + ratecard lookup (bm41) --
+    describe("product_specifications + ratecard_ran_usage_lkp + ratecard_version — read-only capacity context (Step 3/8, bm41)", () => {
+      it("17h. billrun_runtime SELECTs product.product_specifications + product.ratecard_ran_usage_lkp + product.ratecard_version (schema USAGE + table SELECT granted)", async () => {
+        // Resolving at all proves the schema USAGE (Step 3 — `product`,
+        // already held) and the table SELECT (Step 8). bm42's capacity
+        // aggregation reads the `udrType` characteristic off
+        // product_specifications and the per-polygon rate off the ratecard
+        // pair; bm45's invoice appendix reads the ratecard pair again.
+        await expect(
+          billrunRuntime`SELECT 1 FROM product.product_specifications WHERE false`,
+        ).resolves.toBeDefined();
+        await expect(
+          billrunRuntime`SELECT 1 FROM product.ratecard_ran_usage_lkp WHERE false`,
+        ).resolves.toBeDefined();
+        await expect(
+          billrunRuntime`SELECT 1 FROM product.ratecard_version WHERE false`,
+        ).resolves.toBeDefined();
+      });
+
+      it("17i. [CRITICAL] billrun_runtime is refused INSERT/UPDATE/DELETE on the capacity reads — no write on product anywhere here (Inv #23)", async () => {
+        await expect(
+          billrunRuntime`INSERT INTO product.product_specifications DEFAULT VALUES`,
+        ).rejects.toThrow(/permission denied for table product_specifications/);
+        await expect(
+          billrunRuntime`UPDATE product.product_specifications SET name = name WHERE false`,
+        ).rejects.toThrow(/permission denied for table product_specifications/);
+        await expect(
+          billrunRuntime`DELETE FROM product.product_specifications WHERE false`,
+        ).rejects.toThrow(/permission denied for table product_specifications/);
+        await expect(
+          billrunRuntime`INSERT INTO product.ratecard_ran_usage_lkp DEFAULT VALUES`,
+        ).rejects.toThrow(
+          /permission denied for table ratecard_ran_usage_lkp/,
+        );
+        await expect(
+          billrunRuntime`UPDATE product.ratecard_ran_usage_lkp SET service_code = service_code WHERE false`,
+        ).rejects.toThrow(
+          /permission denied for table ratecard_ran_usage_lkp/,
+        );
+        await expect(
+          billrunRuntime`DELETE FROM product.ratecard_ran_usage_lkp WHERE false`,
+        ).rejects.toThrow(
+          /permission denied for table ratecard_ran_usage_lkp/,
+        );
+        await expect(
+          billrunRuntime`INSERT INTO product.ratecard_version DEFAULT VALUES`,
+        ).rejects.toThrow(/permission denied for table ratecard_version/);
+        await expect(
+          billrunRuntime`UPDATE product.ratecard_version SET card_name = card_name WHERE false`,
+        ).rejects.toThrow(/permission denied for table ratecard_version/);
+        await expect(
+          billrunRuntime`DELETE FROM product.ratecard_version WHERE false`,
+        ).rejects.toThrow(/permission denied for table ratecard_version/);
+      });
+    });
+
     // ---- bill_run_invoices — no access at all (bm19) ------------------------
     describe("bill_run_invoices — app-only, no billrun_runtime grant (bm19)", () => {
       it("17b. billrun_runtime is refused SELECT/INSERT/UPDATE/DELETE on bill_run_invoices — no ALTER DEFAULT PRIVILEGES was ever added for it (Step 11)", async () => {
