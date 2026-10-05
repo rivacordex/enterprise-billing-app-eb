@@ -312,6 +312,19 @@ GRANT SELECT ON TABLE
 TO billrun_runtime;
 --> statement-breakpoint
 
+-- bm41 (Target Capacity Pricing update, Unit 1) — read-only context the
+-- capacity aggregation (bm42) and the invoice appendix (bm45) need: the
+-- `udrType` characteristic off `product_specifications`, and the per-polygon
+-- ratecard lookup off `ratecard_ran_usage_lkp`/`ratecard_version`. SELECT
+-- only, enumerated per table (Inv #23), never ON ALL TABLES; `USAGE ON SCHEMA
+-- "product"` already held above — no write grant of any kind on these tables.
+GRANT SELECT ON TABLE
+  "product"."product_specifications",
+  "product"."ratecard_ran_usage_lkp",
+  "product"."ratecard_version"
+TO billrun_runtime;
+--> statement-breakpoint
+
 -- Step 9 — the run-state write REVOKE (billmgmt-architecture.md Inv #2). Strictly
 -- redundant (never granted) and kept as a declaration of intent a reviewer reads
 -- and a test asserts: the worker never writes run-state, the ingest handler does.

@@ -1,7 +1,8 @@
-import { char, date, integer, numeric, text } from "drizzle-orm/pg-core";
+import { char, date, integer, jsonb, numeric, text } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 import { billing } from "@/db/schema/billing/pg-schema";
+import type { CapacityCalcTrace } from "@/types/billing";
 
 // bm23-spec §Design/§Implementation §2, plan §6.3 (D5/D7). PHYSICAL DDL OF
 // RECORD: db/migrations/0039_customer_bill_line.sql. PARTITION BY RANGE
@@ -94,6 +95,18 @@ export const customerBillLine = billing.table("customer_bill_line", {
     scale: 6,
   }),
   snapshotEffectiveDate: date("snapshot_effective_date", { mode: "string" }),
+  // bm41-spec (Target Capacity Pricing update, Unit 1) — PHYSICAL DDL OF
+  // RECORD: db/migrations/0044_customer_bill_line_capacity.sql. Query typing
+  // only, mirroring the rest of this table; not drizzle-kit pushed. NULL for
+  // RECURRING / non-capacity USAGE until bm42 writes capacity lines.
+  ratedAmount: numeric("rated_amount", {
+    mode: "string",
+    precision: 18,
+    scale: 2,
+  }),
+  // Capacity lines only (NULL elsewhere) — the versioned calc trace. Never
+  // hashed into charge_checksum (Inv #35).
+  additionalInfo: jsonb("additional_info").$type<CapacityCalcTrace>(),
 });
 
 export type CustomerBillLine = typeof customerBillLine.$inferSelect;

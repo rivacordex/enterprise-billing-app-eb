@@ -302,6 +302,13 @@
       "when": 1790589600000,
       "tag": "0043_ratecard_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790676000000,
+      "tag": "0044_customer_bill_line_capacity",
+      "breakpoints": true
     }
   ]
 }

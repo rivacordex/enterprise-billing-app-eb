@@ -311,6 +311,25 @@ export interface BillLineRow {
   snapshotUnitPrice: string | null;
   snapshotQuantity: string | null;
   snapshotEffectiveDate: string | null;
+  // bm41-spec §Implementation §3 (Target Capacity Pricing update, Unit 1).
+  // `ratedAmount` is the rated side of the reconciliation: NULL for RECURRING,
+  // `= grossAmount` on non-capacity USAGE, the sum of the rated rows on a
+  // capacity line. `additionalInfo` is the versioned calc trace, set on
+  // capacity lines only (NULL elsewhere this phase) — opaque to the checksum
+  // (Inv #35). Both land NULL until bm42 writes capacity lines.
+  ratedAmount: string | null;
+  additionalInfo: CapacityCalcTrace | null;
+}
+
+// bm41-spec §Implementation §3 / billmgmt-code-standards.md §"TypeScript
+// conventions" — the versioned shape of `customer_bill_line.additional_info`.
+// Typing only here; bm42 is the writer and bm45 the invoice-appendix reader.
+export interface CapacityCalcTrace {
+  v: number;
+  productInventoryId: string;
+  pricing: Record<string, unknown>;
+  calc: unknown[];
+  summary: unknown[];
 }
 
 // bm28-spec §Design "the udr_rated drill-down". One claimed `rating.udr_rated`
