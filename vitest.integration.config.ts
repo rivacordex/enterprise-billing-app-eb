@@ -20,6 +20,10 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    // bm40-spec (TC58) — the destructive-DB preflight. Runs once, before any
+    // test file (and so before any `@/db/client.ts` import) — see
+    // tests/integration-global-setup.ts for why that ordering is load-bearing.
+    globalSetup: ["./tests/integration-global-setup.ts"],
     // `.property.test.ts` (fast-check) suites are also DB-backed — they run
     // here (with DATABASE_URL) alongside the `.integration.test.ts` files, not
     // in the DB-free default project where they would only ever skip.

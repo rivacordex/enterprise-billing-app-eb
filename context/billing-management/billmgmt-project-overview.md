@@ -43,7 +43,7 @@ Kestra, a real blob store and a real SFTP endpoint.
 > a contained per-account HARD failure leaves the run `PROCESSED` with the failed
 > account skippable/rerunnable. **The one remaining item is the cloud cutover** —
 > flipping the deploy flags and running the smoke against a real engine + SFTP — a
-> gated ops step, not a module-build gap (see `billmgmt-update-overview.md`).
+> gated ops step, not a module-build gap (see the Phase 4 section below).
 > Taxation is a ratified `0.00` interim.
 
 ## Lifecycle
@@ -51,6 +51,7 @@ Kestra, a real blob store and a real SFTP endpoint.
 ```
 SCHEDULED → PROCESSING → PROCESSED → APPROVED → POSTING → INVOICED → DISTRIBUTING → COMPLETED
 ```
+
 plus two rerunnable failure states `PROCESSING_FAILED` and `DISTRIBUTION_FAILED`,
 and `CANCELLED`. `INVOICED` means financially complete (postings done, invoice
 numbers consumed); `COMPLETED` means operationally complete. **Next-cycle
@@ -69,13 +70,13 @@ from `bill_run_account`, never by incrementing a counter.
    The service snapshots every eligible account into `bill_run_account` (freezing
    the population), sets the run `PROCESSING`, and triggers **Kestra execution #1
    (processing)** with `{bill_run_id, period_start, period_end, ban_ids, attempt,
-   gl_event_at}`. A second click while an execution is live is rejected.
+gl_event_at}`. A second click while an execution is live is rejected.
 3. **Process (execution #1, as `billrun_runtime`).** Per account, fanned out:
    - **Validation** asserts currency (`= billing_account.currency`) and window
      coverage against the correlated set (below). Zero-claimable is a zero-charge
      `DONE`, not an error.
    - **Collection** resolves each `RAN_USAGE` row `udr_subscriber_ref_id →
-     inventory.product_inventory → billing_account_id` (set-based, once per run),
+inventory.product_inventory → billing_account_id` (set-based, once per run),
      then claims the in-scope rows `RATED → BILL_DRAFT`, stamping the six claim
      columns. An unresolvable subscriber is left `RATED`/unclaimed and surfaced,
      never dropped or failed.
@@ -193,6 +194,18 @@ from `bill_run_account`, never by incrementing a counter.
   report, and **Kestra Enterprise / scoped per-flow tokens** — deferred.
 - **Production cutover** — the deploy path is being made deployable + wired in
   Phase 4; the live cloud run is a gated ops step, not part of the module build.
+
+## Phase 4 — signal-back, self-driving lifecycle & production wiring (delivered, bm36–bm39)
+
+_Folded from the former Phase-4 update overview (2026-09-16). Users: RevOps (in-app) and BSS Ops (Kestra engine + deploy layer). Phase 4 introduced **no new database schema or migrations** — its surface was flow YAML + bicep + Key Vault secrets + a smoke test._
+
+Phases 1–3 built the whole machinery, but a triggered run could not finish on its own: the processing flow's signal-back was stubbed (`bill_run_processing.yml` carried `io.kestra.plugin.core.log.Log` placeholders, zero `http.Request` tasks), so accounts never auto-reached `PROCESSED` and the run wedged in `PROCESSING`. Phase 4 wired that signal-back (success **and** terminal failure), proved the full `SCHEDULED → COMPLETED` lifecycle locally on the `ci` seed, and made the production deploy path deployable-and-wired — the cloud cutover left as a gated ops step.
+
+- **Processor signal-back (bm36 — the unblocker).** After each stage's SQL the flow POSTs a per-stage `DONE` to `/api/billrun/{runId}/stage/{stage}/complete` (`Authorization: Bearer {{ secret('BILLRUN_APP_TOKEN') }}`, body `{ban_id, attempt, status: DONE|FAILED, error_class?, error_code?, error_detail?}`, no charge payload — the receiver stays record-only). Real `errors: on_error` (terminal `FAILED`) and `afterExecution`/`on_finally` (terminal `/status` only for a `KILLED` whole-execution failure) POSTs replace the `Log` stubs, with `attempt`-guarded idempotency, retry/`allowFailure`, and `host.docker.internal` reachability — mirroring bm34's distributor callbacks verbatim.
+- **Failure model.** A contained **per-account** HARD failure is a `WARNING` execution: the account settles to `PROCESSING_FAILED` via its own `FAILED` stage POST while the run derives `PROCESSED` (a mixed terminal set), with the failed account `SKIPPED` at approval and the run rerunnable. A **whole-execution** failure (`FAILED` via `on_error`, or a KILL via `afterExecution: on_killed`) settles the run itself to `PROCESSING_FAILED` — no run-level terminal push for a partial run.
+- **End-to-end assertion + reconcile alignment (bm37).** `scripts/billrun-live-kestra-smoke.ts` drives and asserts the full `SCHEDULED → COMPLETED` journey on the `ci` seed — including reject → re-rate → reprocess, a forced processing failure that settles, and distribution with a forced mandatory failure → `DISTRIBUTION_FAILED` → rerun — and confirms the stall/reconcile gate no longer fires on a healthy run while still catching a wedged one (closing the bm16/bm20 live-Kestra gate locally).
+- **Production wiring (bm38 — deployable, gated).** Key Vault secrets + consumer mapping into the shared `workflow-engine` Container App bicep: the `billrun_runtime` DB credential as the `billrun-runtime-db-password` bare-password secret + the `BILLRUN_DB_*` split coords the flow actually reads (**not** the superseded `BILLRUN_RUNTIME_DATABASE_URL` URL), plus `billrun-engine-auth`/`-url` and the SFTP key/known-hosts, and the `billrun_runtime` password provisioning step. No new container — the collapsed-topology shared engine already hosts the `billrun` namespace and the `local-dev` flow is promoted as the production flow. Deploy flags (`deployWorkflowEngine`, `deployRatingFlows`, the billrun flow deploy, `runBillrunLiveKestraSmoke`) are readied but gated; the `template.yml` "separate repo, TBD owner" fiction is corrected; the taxation-`0.00` interim and the cutover runbook are recorded.
+- **Phase-4 exit (bm39).** The assembled phase was audited and signed off — signal-back incl. `FAILED` settlement, the reject/reprocess and distribution paths, and the prod-wiring artifacts all present and green; the full local journey run as the phase proof; no new schema/migration; `billmgmt-progress-tracker.md` updated and `billmgmt-known-issues.md` §9 closed. **The remaining item is the cloud cutover** — flip the gated flags and run the smoke against a real engine + SFTP — a gated ops step, not a module-build gap.
 
 ## Success criteria (module-level)
 

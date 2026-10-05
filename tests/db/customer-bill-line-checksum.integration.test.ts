@@ -123,7 +123,8 @@ describe.skipIf(!databaseUrl)(
     it("a recurring-only bill hashes to a real, non-empty checksum (not md5(''))", async () => {
       const billId = "CBL-BM31-REC";
       // Realistic RECURRING grouping keys — the real aggregation writes
-      // `offering || ':RECURRING'` (billrun-aggregate.ts), udr_type NULL.
+      // `offering || ':RECURRING'` (bill_run_processing.yml's `aggregation`
+      // step, extracted by tests/db/helpers/extract-flow-sql.ts), udr_type NULL.
       await insertLine({
         billId,
         lineNo: 1,
