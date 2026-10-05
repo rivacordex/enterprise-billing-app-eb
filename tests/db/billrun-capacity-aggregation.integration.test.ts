@@ -388,6 +388,48 @@ describe.skipIf(!databaseUrl)(
       return bill;
     }
 
+    // Shared single-account capacity fixture: account + offering + run +
+    // inventory, keyed off `label` (reduces the setup duplication that
+    // recurs across the anchor/guard test cases below).
+    async function setupSingleAccountCapacity(
+      label: string,
+      offeringName: string,
+      offeringOpts: Parameters<typeof newCapacityOffering>[1],
+    ): Promise<{
+      ban: string;
+      offeringId: string;
+      usageRatePriceId: string | null;
+      runId: string;
+      piId: string;
+    }> {
+      const ban = await newAccount(label);
+      const { offeringId, usageRatePriceId } = await newCapacityOffering(
+        offeringName,
+        offeringOpts,
+      );
+      const runId = `BRN-BM42-${label.toUpperCase()}`;
+      const piId = `PRDINV-BM42-${label.toUpperCase()}`;
+      await newRun(runId);
+      await newInventory({
+        piId,
+        ban,
+        offeringId,
+        quantity: 1,
+        orderItemId: `_bm42-oi-${label.toLowerCase()}`,
+      });
+      return { ban, offeringId, usageRatePriceId, runId, piId };
+    }
+
+    // A HARD guard must fail aggregate() for its account and leave no bill.
+    async function expectGuardRejection(
+      runId: string,
+      ban: string,
+      pattern: RegExp,
+    ): Promise<void> {
+      await expect(aggregate(runId, ban, 1)).rejects.toThrow(pattern);
+      expect(await readBill(runId, ban)).toBeUndefined();
+    }
+
     async function readLines(customerBillId: string) {
       return db
         .select({
@@ -476,26 +518,13 @@ describe.skipIf(!databaseUrl)(
         ];
 
         for (const a of anchors) {
-          const ban = await newAccount(a.label);
-          const { offeringId, usageRatePriceId } = await newCapacityOffering(
-            `Anchor Offering ${a.label}`,
-            {
+          const { ban, offeringId, usageRatePriceId, runId, piId } =
+            await setupSingleAccountCapacity(a.label, `Anchor Offering ${a.label}`, {
               baseRate: "100",
               committedQuantity: 1000,
               steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
               udrType: "RAN_USAGE",
-            },
-          );
-          const runId = `BRN-BM42-${a.label}`;
-          const piId = `PRDINV-BM42-${a.label}`;
-          await newRun(runId);
-          await newInventory({
-            piId,
-            ban,
-            offeringId,
-            quantity: 1,
-            orderItemId: `_bm42-oi-${a.label}`,
-          });
+            });
           if (a.ea > 0) {
             await insertCapacityVolumeRow({
               subRef: piId,
@@ -547,83 +576,67 @@ describe.skipIf(!databaseUrl)(
       "commitment-only (floor, discount 0) and motivation-only (topUp 0, discount " +
         "applied) offerings each bill correctly, independently (TC36)",
       async () => {
-        // Commitment-only: no motivation component. 500 EA < 1000 EA target.
-        const commitBan = await newAccount("CommitOnly");
-        const { offeringId: commitOff, usageRatePriceId: commitPriceId } =
-          await newCapacityOffering("Commitment-Only Offering", {
-            baseRate: "100",
-            committedQuantity: 1000,
-            steps: null,
-            udrType: "RAN_USAGE",
-          });
-        const commitRun = "BRN-BM42-COMMIT-ONLY";
-        const commitPi = "PRDINV-BM42-COMMIT-ONLY";
-        await newRun(commitRun);
-        await newInventory({
-          piId: commitPi,
-          ban: commitBan,
-          offeringId: commitOff,
-          quantity: 1,
-          orderItemId: "_bm42-oi-commit-only",
-        });
-        await insertCapacityVolumeRow({
-          subRef: commitPi,
-          runId: commitRun,
-          ban: commitBan,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "100.000000",
-          priceRef: commitPriceId,
-        });
-        await aggregate(commitRun, commitBan, 1);
-        const commitBill = await readBill(commitRun, commitBan);
-        const commitLines = await readLines(commitBill!.customerBillId);
-        expect(commitLines).toHaveLength(1);
-        // rated 500×100=50,000 + topUp (1000-500)×100=50,000 = gross 100,000;
-        // no motivation component ⇒ discount 0.
-        expect(commitLines[0]!.ratedAmount).toBe("50000.00");
-        expect(commitLines[0]!.grossAmount).toBe("100000.00");
-        expect(commitLines[0]!.discountAmount).toBe("0.00");
-        expect(commitLines[0]!.netAmount).toBe("100000.00");
+        const cases = [
+          {
+            label: "CommitOnly",
+            offeringName: "Commitment-Only Offering",
+            // Commitment-only: no motivation component. 500 EA < 1000 EA target.
+            opts: {
+              baseRate: "100",
+              committedQuantity: 1000,
+              steps: null,
+              udrType: "RAN_USAGE",
+            },
+            quantityEa: 500,
+            // rated 500×100=50,000 + topUp (1000-500)×100=50,000 = gross
+            // 100,000; no motivation component ⇒ discount 0.
+            rated: "50000.00",
+            gross: "100000.00",
+            discount: "0.00",
+            net: "100000.00",
+          },
+          {
+            label: "MotivOnly",
+            offeringName: "Motivation-Only Offering",
+            // Motivation-only: no commitment component. 1500 EA, step above 1000 @ 50.
+            opts: {
+              baseRate: "100",
+              committedQuantity: null,
+              steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
+              udrType: "RAN_USAGE",
+            },
+            quantityEa: 1500,
+            // rated 1500×100=150,000; no commitment ⇒ topUp 0 ⇒ gross
+            // 150,000; 500 EA above the 1000 threshold × (100-50) = 25,000
+            // discount.
+            rated: "150000.00",
+            gross: "150000.00",
+            discount: "25000.00",
+            net: "125000.00",
+          },
+        ] as const;
 
-        // Motivation-only: no commitment component. 1500 EA, step above 1000 @ 50.
-        const motivBan = await newAccount("MotivOnly");
-        const { offeringId: motivOff, usageRatePriceId: motivPriceId } =
-          await newCapacityOffering("Motivation-Only Offering", {
-            baseRate: "100",
-            committedQuantity: null,
-            steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
-            udrType: "RAN_USAGE",
+        for (const c of cases) {
+          const { ban, usageRatePriceId, runId, piId } =
+            await setupSingleAccountCapacity(c.label, c.offeringName, c.opts);
+          await insertCapacityVolumeRow({
+            subRef: piId,
+            runId,
+            ban,
+            attempt: 1,
+            quantityEa: c.quantityEa,
+            rate: "100.000000",
+            priceRef: usageRatePriceId,
           });
-        const motivRun = "BRN-BM42-MOTIV-ONLY";
-        const motivPi = "PRDINV-BM42-MOTIV-ONLY";
-        await newRun(motivRun);
-        await newInventory({
-          piId: motivPi,
-          ban: motivBan,
-          offeringId: motivOff,
-          quantity: 1,
-          orderItemId: "_bm42-oi-motiv-only",
-        });
-        await insertCapacityVolumeRow({
-          subRef: motivPi,
-          runId: motivRun,
-          ban: motivBan,
-          attempt: 1,
-          quantityEa: 1500,
-          rate: "100.000000",
-          priceRef: motivPriceId,
-        });
-        await aggregate(motivRun, motivBan, 1);
-        const motivBill = await readBill(motivRun, motivBan);
-        const motivLines = await readLines(motivBill!.customerBillId);
-        expect(motivLines).toHaveLength(1);
-        // rated 1500×100=150,000; no commitment ⇒ topUp 0 ⇒ gross 150,000;
-        // 500 EA above the 1000 threshold × (100-50) = 25,000 discount.
-        expect(motivLines[0]!.ratedAmount).toBe("150000.00");
-        expect(motivLines[0]!.grossAmount).toBe("150000.00");
-        expect(motivLines[0]!.discountAmount).toBe("25000.00");
-        expect(motivLines[0]!.netAmount).toBe("125000.00");
+          await aggregate(runId, ban, 1);
+          const bill = await readBill(runId, ban);
+          const lines = await readLines(bill!.customerBillId);
+          expect(lines).toHaveLength(1);
+          expect(lines[0]!.ratedAmount).toBe(c.rated);
+          expect(lines[0]!.grossAmount).toBe(c.gross);
+          expect(lines[0]!.discountAmount).toBe(c.discount);
+          expect(lines[0]!.netAmount).toBe(c.net);
+        }
       },
       120_000,
     );
@@ -696,26 +709,12 @@ describe.skipIf(!databaseUrl)(
       "[CRITICAL] CAPACITY_BASE_RATE_NOT_FOUND — a commitment/motivation with no " +
         "same-unit usage_rate fails HARD, no bill produced (Inv #32)",
       async () => {
-        const ban = await newAccount("NoBaseRate");
-        const { offeringId } = await newCapacityOffering("No-Base-Rate Offering", {
-          baseRate: null,
-          committedQuantity: 1000,
-          steps: null,
-          udrType: "RAN_USAGE",
-        });
-        const runId = "BRN-BM42-NOBASE";
-        await newRun(runId);
-        await newInventory({
-          piId: "PRDINV-BM42-NB0",
-          ban,
-          offeringId,
-          quantity: 1,
-          orderItemId: "_bm42-oi-nb0",
-        });
-        await expect(aggregate(runId, ban, 1)).rejects.toThrow(
-          /CAPACITY_BASE_RATE_NOT_FOUND/,
+        const { ban, runId } = await setupSingleAccountCapacity(
+          "NoBaseRate",
+          "No-Base-Rate Offering",
+          { baseRate: null, committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        expect(await readBill(runId, ban)).toBeUndefined();
+        await expectGuardRejection(runId, ban, /CAPACITY_BASE_RATE_NOT_FOUND/);
       },
       120_000,
     );
@@ -724,26 +723,11 @@ describe.skipIf(!databaseUrl)(
       "[CRITICAL] CAPACITY_UDR_TYPE_MISMATCH — a claimed row off-type from the " +
         "offering's spec udrType fails HARD, no bill produced (Inv #32)",
       async () => {
-        const ban = await newAccount("UdrTypeMismatch");
-        const { offeringId, usageRatePriceId } = await newCapacityOffering(
+        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+          "UdrTypeMismatch",
           "UDR-Type-Mismatch Offering",
-          {
-            baseRate: "100",
-            committedQuantity: 1000,
-            steps: null,
-            udrType: "RAN_USAGE",
-          },
+          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        const runId = "BRN-BM42-UDRTYPE";
-        const piId = "PRDINV-BM42-UT0";
-        await newRun(runId);
-        await newInventory({
-          piId,
-          ban,
-          offeringId,
-          quantity: 1,
-          orderItemId: "_bm42-oi-ut0",
-        });
         // Claimed row carries a DIFFERENT udr_type than the offering's spec.
         await insertCapacityVolumeRow({
           subRef: piId,
@@ -755,10 +739,7 @@ describe.skipIf(!databaseUrl)(
           priceRef: usageRatePriceId,
           udrType: "OTHER_USAGE",
         });
-        await expect(aggregate(runId, ban, 1)).rejects.toThrow(
-          /CAPACITY_UDR_TYPE_MISMATCH/,
-        );
-        expect(await readBill(runId, ban)).toBeUndefined();
+        await expectGuardRejection(runId, ban, /CAPACITY_UDR_TYPE_MISMATCH/);
       },
       120_000,
     );
@@ -768,23 +749,16 @@ describe.skipIf(!databaseUrl)(
         "/non-PER_UNIT row both fail HARD, no bill produced (IS DISTINCT FROM, TC35)",
       async () => {
         // A row rated at 85 instead of the resolved base_rate 100.
-        const mismatchBan = await newAccount("RateMismatch");
-        const { offeringId: mismatchOff, usageRatePriceId: mismatchPriceId } =
-          await newCapacityOffering("Rate-Mismatch Offering", {
-            baseRate: "100",
-            committedQuantity: 1000,
-            steps: null,
-            udrType: "RAN_USAGE",
-          });
-        const mismatchRun = "BRN-BM42-RATEMISMATCH";
-        const mismatchPi = "PRDINV-BM42-RM0";
-        await newRun(mismatchRun);
-        await newInventory({
-          piId: mismatchPi,
+        const {
           ban: mismatchBan,
-          offeringId: mismatchOff,
-          quantity: 1,
-          orderItemId: "_bm42-oi-rm0",
+          usageRatePriceId: mismatchPriceId,
+          runId: mismatchRun,
+          piId: mismatchPi,
+        } = await setupSingleAccountCapacity("RateMismatch", "Rate-Mismatch Offering", {
+          baseRate: "100",
+          committedQuantity: 1000,
+          steps: null,
+          udrType: "RAN_USAGE",
         });
         await insertCapacityVolumeRow({
           subRef: mismatchPi,
@@ -795,33 +769,19 @@ describe.skipIf(!databaseUrl)(
           rate: "85.000000",
           priceRef: mismatchPriceId,
         });
-        await expect(aggregate(mismatchRun, mismatchBan, 1)).rejects.toThrow(
-          /CAPACITY_RATE_MISMATCH/,
-        );
-        expect(await readBill(mismatchRun, mismatchBan)).toBeUndefined();
+        await expectGuardRejection(mismatchRun, mismatchBan, /CAPACITY_RATE_MISMATCH/);
 
         // A NULL-rate (non-PER_UNIT, e.g. a FLAT row) must COUNT as a
         // mismatch — IS DISTINCT FROM, not <> (TC35).
-        const nullRateBan = await newAccount("NullRateMismatch");
-        const { offeringId: nullRateOff } = await newCapacityOffering(
-          "Null-Rate-Mismatch Offering",
-          {
-            baseRate: "100",
-            committedQuantity: 1000,
-            steps: null,
-            udrType: "RAN_USAGE",
-          },
-        );
-        const nullRateRun = "BRN-BM42-NULLRATE";
-        const nullRatePi = "PRDINV-BM42-NR0";
-        await newRun(nullRateRun);
-        await newInventory({
-          piId: nullRatePi,
+        const {
           ban: nullRateBan,
-          offeringId: nullRateOff,
-          quantity: 1,
-          orderItemId: "_bm42-oi-nr0",
-        });
+          runId: nullRateRun,
+          piId: nullRatePi,
+        } = await setupSingleAccountCapacity(
+          "NullRateMismatch",
+          "Null-Rate-Mismatch Offering",
+          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
+        );
         await insertCapacityVolumeRow({
           subRef: nullRatePi,
           runId: nullRateRun,
@@ -831,10 +791,7 @@ describe.skipIf(!databaseUrl)(
           rate: null,
           priceRef: null,
         });
-        await expect(aggregate(nullRateRun, nullRateBan, 1)).rejects.toThrow(
-          /CAPACITY_RATE_MISMATCH/,
-        );
-        expect(await readBill(nullRateRun, nullRateBan)).toBeUndefined();
+        await expectGuardRejection(nullRateRun, nullRateBan, /CAPACITY_RATE_MISMATCH/);
       },
       120_000,
     );
@@ -844,8 +801,8 @@ describe.skipIf(!databaseUrl)(
         "under the default capacity_max_bands=1, and raising the input to 2 lets " +
         "it through (TC52)",
       async () => {
-        const ban = await newAccount("MultiStep");
-        const { offeringId, usageRatePriceId } = await newCapacityOffering(
+        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+          "MultiStep",
           "Multi-Step Offering",
           {
             baseRate: "100",
@@ -857,16 +814,6 @@ describe.skipIf(!databaseUrl)(
             udrType: "RAN_USAGE",
           },
         );
-        const runId = "BRN-BM42-MULTISTEP";
-        const piId = "PRDINV-BM42-MST0";
-        await newRun(runId);
-        await newInventory({
-          piId,
-          ban,
-          offeringId,
-          quantity: 1,
-          orderItemId: "_bm42-oi-mst0",
-        });
         await insertCapacityVolumeRow({
           subRef: piId,
           runId,
@@ -878,10 +825,7 @@ describe.skipIf(!databaseUrl)(
         });
 
         // Default capacity_max_bands (1) rejects a 2-band schedule.
-        await expect(aggregate(runId, ban, 1)).rejects.toThrow(
-          /CAPACITY_MULTI_STEP_UNSUPPORTED/,
-        );
-        expect(await readBill(runId, ban)).toBeUndefined();
+        await expectGuardRejection(runId, ban, /CAPACITY_MULTI_STEP_UNSUPPORTED/);
 
         // Raising the input to 2 is a config change, not a pricing-SQL edit —
         // the SAME account now bills. rated 2500×100=250,000; band1 (1000-2000)
@@ -904,30 +848,19 @@ describe.skipIf(!databaseUrl)(
       "[CRITICAL] CAPACITY_CURRENCY_MISMATCH (G3) — a component priced in a " +
         "currency other than the account's fails HARD, no bill produced",
       async () => {
-        const ban = await newAccount("CurrencyMismatch"); // account currency MYR
-        const { offeringId } = await newCapacityOffering(
+        // account currency MYR; offering priced in USD.
+        const { ban, runId } = await setupSingleAccountCapacity(
+          "CurrencyMismatch",
           "Currency-Mismatch Offering",
           {
             baseRate: "100",
             committedQuantity: 1000,
             steps: null,
             udrType: "RAN_USAGE",
-            currency: "USD", // != MYR
+            currency: "USD",
           },
         );
-        const runId = "BRN-BM42-CURRENCY";
-        await newRun(runId);
-        await newInventory({
-          piId: "PRDINV-BM42-CUR0",
-          ban,
-          offeringId,
-          quantity: 1,
-          orderItemId: "_bm42-oi-cur0",
-        });
-        await expect(aggregate(runId, ban, 1)).rejects.toThrow(
-          /CAPACITY_CURRENCY_MISMATCH/,
-        );
-        expect(await readBill(runId, ban)).toBeUndefined();
+        await expectGuardRejection(runId, ban, /CAPACITY_CURRENCY_MISMATCH/);
       },
       120_000,
     );
@@ -936,8 +869,8 @@ describe.skipIf(!databaseUrl)(
       "a capacity offering's usage in a DIFFERENT unit stays an ordinary USAGE " +
         "line, and the capacity volume is not double-counted there",
       async () => {
-        const ban = await newAccount("DifferentUnit");
-        const { offeringId, usageRatePriceId } = await newCapacityOffering(
+        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+          "DifferentUnit",
           "Different-Unit Offering",
           {
             unit: "EA",
@@ -947,16 +880,6 @@ describe.skipIf(!databaseUrl)(
             udrType: "RAN_USAGE",
           },
         );
-        const runId = "BRN-BM42-DIFFUNIT";
-        const piId = "PRDINV-BM42-DU0";
-        await newRun(runId);
-        await newInventory({
-          piId,
-          ban,
-          offeringId,
-          quantity: 1,
-          orderItemId: "_bm42-oi-du0",
-        });
         // Capacity volume in EA (the capacity unit).
         await insertCapacityVolumeRow({
           subRef: piId,

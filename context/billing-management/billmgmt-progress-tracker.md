@@ -336,6 +336,15 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
   - bm43 (verification + Model-2 + the `CAPACITY_RATE_MATCHING` gate), bm44
     (checksum append + read-model surfacing) and bm45 (invoice appendix) are
     next, per the spec's own Dependencies section.
+  - **SonarQube "Duplicated Lines on New Code" fix (2026-10-05).** The new
+    `billrun-capacity-aggregation.integration.test.ts` repeated the same
+    account+offering+run+inventory setup across the anchor loop and every
+    single-account guard test. Extracted `setupSingleAccountCapacity(label,
+    offeringName, offeringOpts)` and `expectGuardRejection(runId, ban,
+    pattern)` helpers; the commitment-only/motivation-only test (TC36) was
+    also converted from two near-identical hand-written blocks into a
+    `cases` loop, matching the anchors test's existing pattern. Assertions
+    and the fixture data are unchanged — `npx tsc --noEmit` clean.
 
 ## Outstanding / Next (post-Phase 4)
 
