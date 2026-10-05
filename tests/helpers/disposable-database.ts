@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const sql = postgres(databaseUrl, { max: 1 });
   try {
     await markDatabaseDisposable(sql);
-    logger.info("Marked database disposable", { databaseUrl });
+    logger.info("Marked database disposable");
   } finally {
     await sql.end({ timeout: 5 });
   }

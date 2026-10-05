@@ -224,7 +224,8 @@ db/migrations/…                # billing tables + partition_management rows + 
 workflow-management/flows/        # wfm-architecture.md §4 — function-first; spin-off subdirectory
   bill-run-processor/
     bill_run_processing.template.yml   # the contract doc (non-deployable)
-    bill_run_processing.yml            # phase 3 — the REAL flow: correlate, claim,
+    local-dev/
+      bill_run_processing.yml          # phase 3 — the REAL flow: correlate, claim,
                                        #   two-source aggregation into customer_bill_line,
                                        #   tax, verify, real stage + terminal signals
     README.md

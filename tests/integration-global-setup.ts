@@ -47,8 +47,8 @@ export default async function setup(): Promise<void> {
     const disposable = await isDisposableDatabase(sql);
     if (!disposable) {
       throw new Error(
-        `DESTRUCTIVE DB PREFLIGHT REFUSED: "${databaseUrl}" does not carry the ` +
-          "disposable sentinel.\n" +
+        "DESTRUCTIVE DB PREFLIGHT REFUSED: DATABASE_URL's target does not " +
+          "carry the disposable sentinel.\n" +
           "DESTRUCTIVE_DB_OK=1 alone is not sufficient — the target database " +
           "itself must be marked disposable (never inferred from its name or " +
           "host). Run: npx tsx tests/helpers/disposable-database.ts, with " +

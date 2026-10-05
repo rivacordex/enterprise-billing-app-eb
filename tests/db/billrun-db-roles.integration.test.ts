@@ -16,6 +16,10 @@ import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { billRun } from "@/db/schema/billing/bill-run";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import {
+  isDisposableDatabase,
+  markDatabaseDisposable,
+} from "@/tests/helpers/disposable-database";
 
 // bm14-spec §Implementation §5 + Verification checklist. The grant surface is
 // the deliverable, so every assertion runs against a LIVE database, via a LIVE
@@ -112,11 +116,21 @@ async function runKestraBootstrap(bootstrapUrl: string): Promise<void> {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
+  // Tracks whether THIS call is the one that created the `kestra` database —
+  // as opposed to one that already existed (e.g. a shared dev stack's live
+  // Kestra engine). Only a database we ourselves just created gets the
+  // disposable sentinel, so resetKestraSchema's destructive reset never
+  // nukes a sibling database based solely on the bootstrap database's own
+  // disposable status (bm40 follow-up).
+  let createdKestraDatabase = false;
   const sql = postgres(bootstrapUrl, { max: 1 });
   try {
     for (const statement of billingStatements) {
       try {
         await sql.unsafe(statement);
+        if (/CREATE\s+DATABASE\s+"?kestra"?/i.test(statement)) {
+          createdKestraDatabase = true;
+        }
       } catch (err) {
         if (isDuplicateDatabaseError(err)) continue;
         throw err;
@@ -133,6 +147,9 @@ async function runKestraBootstrap(bootstrapUrl: string): Promise<void> {
     try {
       for (const statement of kestraStatements) {
         await kestraSql.unsafe(statement);
+      }
+      if (createdKestraDatabase) {
+        await markDatabaseDisposable(kestraSql);
       }
     } finally {
       await kestraSql.end();
@@ -165,14 +182,30 @@ function isTolerableTeardownError(err: unknown): boolean {
 // this to error (or wait on a lock), never to be forcibly disconnected. A
 // missing `kestra` database (bootstrap never ran, or a prior reset already
 // dropped it) is tolerated as already-converged.
+//
+// `kestra` is a SIBLING database, not DATABASE_URL's own — the destructive-DB
+// preflight (tests/integration-global-setup.ts) only verifies DATABASE_URL's
+// database is disposable, never this one. Gate the destructive reset on
+// `kestra` itself carrying the sentinel (written by runKestraBootstrap only
+// when THIS run is the one that created it); a pre-existing `kestra` (e.g. a
+// shared dev stack's live engine) never gets marked, so the reset is skipped
+// rather than reset based solely on the bootstrap database's status.
 async function resetKestraSchema(bootstrapUrl: string): Promise<void> {
   const kestraSql = postgres(withDatabase(bootstrapUrl, "kestra"), {
     max: 1,
   });
   try {
+    if (!(await isDisposableDatabase(kestraSql))) return;
     await kestraSql.unsafe("DROP SCHEMA IF EXISTS public CASCADE");
     await kestraSql.unsafe("CREATE SCHEMA public");
-    await kestraSql.unsafe("GRANT CREATE ON SCHEMA public TO kestra_engine");
+    await kestraSql.unsafe(
+      "GRANT USAGE, CREATE ON SCHEMA public TO kestra_engine",
+    );
+    // The DROP above just destroyed the sentinel this function's own guard
+    // depends on (it lived in the `public` schema) — restore it so the
+    // disposable mark survives this reset for the next run against the same
+    // persistent `kestra` database.
+    await markDatabaseDisposable(kestraSql);
   } catch (err) {
     if (!isTolerableTeardownError(err)) throw err;
   } finally {
