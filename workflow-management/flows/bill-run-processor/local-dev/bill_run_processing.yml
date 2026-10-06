@@ -25,7 +25,12 @@
 # commitment floor + N-band motivation discount as inline SQL CTEs, the six
 # account-level HARD `CAPACITY_*` guards, and the `rated_amount`/
 # `additional_info` calc trace on every capacity line (bm41 added the two
-# columns) — same transaction, same whole-account replace, no new task. This
+# columns) — same transaction, same whole-account replace, no new task. bm43
+# then made `verification` replay against `rated_amount` (not `gross_amount`,
+# which a top-up inflates), added the capacity-line replay + internal
+# identities and the independent Model-2 cross-derivation, and introduced the
+# `capacity_rate_matching` gate (default ON) — threaded into both this step
+# AND bm42's G2 guard in `aggregation` (the one cross-step edit). This
 # is the "flow-double" the app-repo DB-gated
 # correlation/claim + aggregation + verification tests mirror (bm21 pattern): the
 # SAME billrun_runtime writes/reads, testable without a live Kestra. See
@@ -64,6 +69,14 @@ inputs:
   - id: capacity_max_bands
     type: INT
     defaults: 1
+  # bm43-spec §Implementation §1 — the capacity rate-match gate. Governs BOTH
+  # G2 (aggregation, bm42's guard) and the Model-2 cross-derivation
+  # (verification, bm43): ON (default) HARD-fails a rate disagreement, naming
+  # both rates and both version sources; OFF downgrades to a WARN, bills
+  # Model 1 anyway, and logs the relaxed state per account (Inv #29/#30, TC51).
+  - id: capacity_rate_matching
+    type: BOOLEAN
+    defaults: true
 tasks:
   - id: start
     type: io.kestra.plugin.core.log.Log
@@ -382,8 +395,17 @@ tasks:
                   -v period_start="{{ inputs.period_start }}" \
                   -v period_end="{{ inputs.period_end }}" \
                   -v gl_event_at="{{ inputs.gl_event_at }}" \
-                  -v capacity_max_bands="{{ inputs.capacity_max_bands }}" <<'SQL'
+                  -v capacity_max_bands="{{ inputs.capacity_max_bands }}" \
+                  -v capacity_rate_matching="{{ inputs.capacity_rate_matching }}" <<'SQL'
                 BEGIN;
+                -- bm43-spec §Implementation §2 — stamp the ban + the capacity
+                -- rate-match gate as GUCs: the DO $$ guard block below (G2)
+                -- cannot see psql's colon-quote bind-variable substitution
+                -- (it does not reach inside a dollar-quoted body, the
+                -- validation task's convention), so it reads them back with
+                -- current_setting().
+                SELECT set_config('billrun.ban', :'ban', false),
+                       set_config('billrun.capacity_rate_matching', :'capacity_rate_matching', false);
                 -- 0a. bm29 (Inv #20) — capture prior RECURRING lines BEFORE the replace
                 --     deletes them, so a rerun REUSES the original snapshot verbatim
                 --     rather than re-resolving the (possibly backdated) catalog price.
@@ -654,7 +676,7 @@ tasks:
                 --     below can DETECT the offending rows rather than silently exclude
                 --     them from the aggregate that follows.
                 CREATE TEMP TABLE _bm42_volume ON COMMIT DROP AS
-                  SELECT c.offering_id, c.unit, c.udr_type AS expected_udr_type,
+                  SELECT c.offering_id, c.offering_name, c.unit, c.udr_type AS expected_udr_type,
                          c.base_rate, c.base_price_ref,
                          ur.udr_type, ur.udr_usage_rate, ur.udr_price_ref
                   FROM   _bm42_capacity c
@@ -706,12 +728,34 @@ tasks:
                     RAISE EXCEPTION 'CAPACITY_UDR_TYPE_MISMATCH (HARD): % claimed row(s) carry a udr_type other than the offering''s spec udrType', v_udr_mismatch;
                   END IF;
 
-                  SELECT count(*) INTO v_rate_mismatch
+                  -- bm43-spec §Design D4/§Implementation §2 — G2 is now
+                  -- GATE-AWARE (the one cross-step edit this unit makes to
+                  -- bm42's aggregation guard): ON (default) HARD-fails exactly
+                  -- as bm42 shipped; OFF downgrades to a WARN and lets the
+                  -- account proceed to bill Model 1 anyway, so verification's
+                  -- own "bill Model 1 anyway" path (bm43) is reachable. v_detail
+                  -- names BOTH rates and BOTH version sources per offending row
+                  -- (spec §Implementation §5) — rating's stamped rate/price_ref
+                  -- vs the bill-run's resolved usage_rate/price-id.
+                  SELECT count(*),
+                         string_agg(
+                           offering_name || ': rating stamped rate '
+                             || COALESCE(udr_usage_rate::text, 'NULL')
+                             || ' (price_ref ' || COALESCE(udr_price_ref, 'NULL') || ')'
+                             || ' vs bill-run resolved usage_rate ' || base_rate
+                             || ' (price_ref ' || base_price_ref || ')', '; ')
+                    INTO v_rate_mismatch, v_detail
                   FROM   _bm42_volume
                   WHERE  udr_usage_rate IS DISTINCT FROM base_rate
                      OR  udr_price_ref  IS DISTINCT FROM base_price_ref;
                   IF v_rate_mismatch > 0 THEN
-                    RAISE EXCEPTION 'CAPACITY_RATE_MISMATCH (HARD): % claimed row(s) are rated at a rate/price-ref other than the resolved usage_rate', v_rate_mismatch;
+                    IF current_setting('billrun.capacity_rate_matching')::boolean THEN
+                      RAISE EXCEPTION 'CAPACITY_RATE_MISMATCH (HARD): account % — % claimed row(s) are rated at a rate/price_ref other than the resolved usage_rate: %',
+                        current_setting('billrun.ban'), v_rate_mismatch, v_detail;
+                    ELSE
+                      RAISE NOTICE 'CAPACITY_RATE_MATCHING=OFF: account % — % claimed row(s) mismatch the resolved rate; billing Model 1 anyway: %',
+                        current_setting('billrun.ban'), v_rate_mismatch, v_detail;
+                    END IF;
                   END IF;
 
                   SELECT count(*), string_agg(offering_name || ' (' || step_count || ' bands > capacity_max_bands=' || max_bands || ')', '; ')
@@ -1171,14 +1215,166 @@ tasks:
                 psql -v ON_ERROR_STOP=1 \
                   -v ban="{{ parents[0].taskrun.value }}" \
                   -v run="{{ inputs.bill_run_id }}" \
-                  -v attempt="{{ inputs.attempt }}" <<'SQL'
+                  -v attempt="{{ inputs.attempt }}" \
+                  -v capacity_rate_matching="{{ inputs.capacity_rate_matching }}" <<'SQL'
+                BEGIN;
+                -- the ON COMMIT DROP temp tables below (_bm43_capacity etc.)
+                -- must stay alive across every statement that reads them;
+                -- psql's default autocommit would drop each one right after
+                -- its own CREATE commits. Mirrors the aggregation task's
+                -- explicit BEGIN;/COMMIT; wrap.
                 SELECT set_config('billrun.ban',     :'ban',     false),
                        set_config('billrun.run',     :'run',     false),
-                       set_config('billrun.attempt', :'attempt', false);
+                       set_config('billrun.attempt', :'attempt', false),
+                       set_config('billrun.capacity_rate_matching', :'capacity_rate_matching', false);
+                -- bm43-spec §Implementation §4 — re-resolve THIS account's
+                -- capacity components off the PINNED offering version
+                -- (Inv #31), the SAME resolution bm42's _bm42_capacity
+                -- performs in aggregation, re-run here as an independent READ
+                -- (never written — verification stays SELECT-only). The as-of
+                -- date is the account's STORED billing_period_start (this
+                -- stage has no period_start input; the stored bill IS the
+                -- period this run processed).
+                CREATE TEMP TABLE _bm43_capacity ON COMMIT DROP AS
+                  WITH asof_period AS (
+                    SELECT billing_period_start AS period_start
+                    FROM   billing.customer_bill
+                    WHERE  ref_bill_run_id = :'run' AND ref_billing_account_id = :'ban'
+                  ),
+                  capacity_asof AS (
+                    SELECT offering_id, component_type, unit_of_measure, price_component,
+                           price_ref, currency
+                    FROM (
+                      SELECT pop.product_offering_id                       AS offering_id,
+                             pop.component_type                             AS component_type,
+                             pop.unit_of_measure                             AS unit_of_measure,
+                             pop.price_component                            AS price_component,
+                             pop.product_offering_price_id                  AS price_ref,
+                             pop.currency                                   AS currency,
+                             (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
+                             lead((pop.start_date_time AT TIME ZONE 'UTC')::date) OVER (
+                               PARTITION BY pop.product_offering_id, pop.component_type,
+                                            pop.unit_of_measure
+                               ORDER BY pop.start_date_time
+                             )                                              AS next_effective
+                      FROM   product.product_offering_price pop
+                      WHERE  pop.component_type IN ('usage_rate', 'capacity_commitment', 'capacity_motivation')
+                        AND  pop.product_offering_id IN (
+                               SELECT product_offering_id
+                               FROM   inventory.product_inventory
+                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE')
+                    ) w, asof_period ap
+                    WHERE  w.effective_date <= ap.period_start
+                      AND  (w.next_effective > ap.period_start OR w.next_effective IS NULL)
+                  ),
+                  commitments AS (
+                    SELECT offering_id, unit_of_measure,
+                           (price_component #>> '{params,committedQuantity}')::numeric(20,6) AS target,
+                           price_ref AS commitment_price_ref, currency
+                    FROM   capacity_asof WHERE component_type = 'capacity_commitment'
+                  ),
+                  motivations AS (
+                    SELECT offering_id, unit_of_measure,
+                           price_component #> '{params,steps}' AS steps,
+                           price_ref AS motivation_price_ref, currency
+                    FROM   capacity_asof WHERE component_type = 'capacity_motivation'
+                  ),
+                  usage_rates AS (
+                    SELECT offering_id, unit_of_measure,
+                           (price_component #>> '{params,ratePerUnit}')::numeric(18,6) AS base_rate,
+                           price_ref AS base_price_ref
+                    FROM   capacity_asof WHERE component_type = 'usage_rate'
+                  ),
+                  capacity_offerings AS (
+                    SELECT offering_id, unit_of_measure FROM commitments
+                    UNION
+                    SELECT offering_id, unit_of_measure FROM motivations
+                  )
+                  SELECT co.offering_id,
+                         co.unit_of_measure                                AS unit,
+                         ur.base_rate, ur.base_price_ref,
+                         cm.target, cm.commitment_price_ref,
+                         mo.steps, mo.motivation_price_ref,
+                         sp.default_value                                   AS udr_type
+                  FROM   capacity_offerings co
+                  LEFT   JOIN commitments cm ON cm.offering_id = co.offering_id AND cm.unit_of_measure = co.unit_of_measure
+                  LEFT   JOIN motivations mo ON mo.offering_id = co.offering_id AND mo.unit_of_measure = co.unit_of_measure
+                  LEFT   JOIN usage_rates ur ON ur.offering_id = co.offering_id AND ur.unit_of_measure = co.unit_of_measure
+                  LEFT   JOIN product.product_specifications sp
+                         ON  sp.ref_product_offering_id = co.offering_id AND sp.name = 'udrType';
+
+                -- bm43-spec §Implementation §4.1 — this account's capacity
+                -- VOLUME (Q, the rated sum, the claimed-row count) per
+                -- (offering, unit), re-summed from the SAME claimed BILL_DRAFT
+                -- rows aggregation read — scoped through product_inventory so
+                -- a same-unit/same-udrType row under a DIFFERENT offering is
+                -- never pulled in (mirrors aggregation's capacity_volume CTE).
+                CREATE TEMP TABLE _bm43_capacity_volume ON COMMIT DROP AS
+                  SELECT c.offering_id, c.unit,
+                         COALESCE(SUM(v.udr_usage_quantity), 0)::numeric(20,6) AS q,
+                         COALESCE(SUM(v.udr_rated_price), 0)::numeric(18,2)    AS rated_sum,
+                         COALESCE(count(v.udr_id), 0)::int                     AS udr_count
+                  FROM   _bm43_capacity c
+                  LEFT   JOIN LATERAL (
+                           SELECT ur.udr_id, ur.udr_usage_quantity, ur.udr_rated_price
+                           FROM   rating.udr_rated ur
+                           JOIN   inventory.product_inventory pi
+                                  ON pi.product_inventory_id = ur.udr_subscription_ref_id
+                           WHERE  ur.billrun_ref_id  = :'run'
+                             AND  ur.billrun_ban_id  = :'ban'
+                             AND  ur.billrun_attempt = :'attempt'::int
+                             AND  ur.status = 'BILL_DRAFT'
+                             AND  ur.udr_usage_unit = c.unit
+                             AND  ur.udr_type = c.udr_type
+                             AND  pi.product_offering_id = c.offering_id
+                         ) v ON true
+                  GROUP BY c.offering_id, c.unit;
+
+                -- bm43-spec §Implementation §4.3 — Model-2's N-band motivation
+                -- schedule, re-derived independently (never read from
+                -- additional_info) — the SAME generic band-walk aggregation's
+                -- capacity_bands/capacity_band_charges CTEs perform.
+                CREATE TEMP TABLE _bm43_bands ON COMMIT DROP AS
+                  SELECT c.offering_id, c.unit,
+                         (s.v ->> 'aboveQuantity')::numeric(20,6) AS above_quantity,
+                         (s.v ->> 'ratePerUnit')::numeric(18,6)   AS step_rate,
+                         lead((s.v ->> 'aboveQuantity')::numeric(20,6)) OVER (
+                           PARTITION BY c.offering_id, c.unit ORDER BY s.ord
+                         )                                        AS next_above
+                  FROM   _bm43_capacity c
+                  CROSS JOIN LATERAL jsonb_array_elements(c.steps) WITH ORDINALITY AS s(v, ord)
+                  WHERE  c.steps IS NOT NULL;
+
+                CREATE TEMP TABLE _bm43_model2 ON COMMIT DROP AS
+                  WITH band_amounts AS (
+                    SELECT b.offering_id, b.unit, b.step_rate, c.base_rate,
+                           round(GREATEST(LEAST(v.q, COALESCE(b.next_above, v.q)) - b.above_quantity, 0), 6) AS band_qty
+                    FROM   _bm43_bands b
+                    JOIN   _bm43_capacity c ON c.offering_id = b.offering_id AND c.unit = b.unit
+                    JOIN   _bm43_capacity_volume v ON v.offering_id = b.offering_id AND v.unit = b.unit
+                  ),
+                  band_discount AS (
+                    SELECT offering_id, unit,
+                           COALESCE(SUM(round(band_qty * (base_rate - step_rate), 2)), 0)::numeric(18,2) AS expected_discount
+                    FROM   band_amounts
+                    GROUP BY offering_id, unit
+                  )
+                  SELECT c.offering_id, c.unit,
+                         round(GREATEST(v.q, COALESCE(c.target, v.q)) * c.base_rate, 2)::numeric(18,2) AS expected_gross,
+                         COALESCE(bd.expected_discount, 0)::numeric(18,2) AS expected_discount
+                  FROM   _bm43_capacity c
+                  JOIN   _bm43_capacity_volume v ON v.offering_id = c.offering_id AND v.unit = c.unit
+                  LEFT   JOIN band_discount bd ON bd.offering_id = c.offering_id AND bd.unit = c.unit;
                 DO $$
                 DECLARE
                   v_mismatch  int;
                   v_bad_lines text;
+                  v_cap_mismatch     int;
+                  v_cap_bad_lines    text;
+                  v_identity_mismatch int;
+                  v_identity_detail   text;
+                  v_model2_mismatch   int;
+                  v_model2_detail     text;
                   v_total     numeric(18,2);
                 BEGIN
                   -- HARD: replay each USAGE charge line from its stored grouping_key and
@@ -1193,6 +1389,19 @@ tasks:
                   -- those are covered by the aggregation unit's own tests (bm28), not here.
                   -- IS DISTINCT FROM (not <>) so a NULL udr_count on a USAGE line is itself
                   -- flagged rather than silently passing via SQL three-valued logic.
+                  -- bm43-spec §Implementation §3 (D1) — replay against
+                  -- RATED_AMOUNT, not gross_amount: a commitment top-up makes
+                  -- gross = rated_amount + topUp > rated_amount, so every
+                  -- under-target capacity account would false-fail the old
+                  -- gross_amount check. rated_amount = gross_amount for a
+                  -- non-capacity USAGE line (bm42), so this is
+                  -- behaviour-preserving for them. bm43 (D2) also excludes
+                  -- capacity-volume claimed rows from THIS generic
+                  -- offering:udr_type replay — capacity lines are replayed
+                  -- separately below (§4.1) — and excludes capacity LINES
+                  -- (additional_info IS NOT NULL) from `mismatched`, since
+                  -- their grouping_key (`<offering>:CAPACITY:<unit>`) would
+                  -- never match this replay's `<offering>:<udr_type>` key.
                   WITH replay AS (
                     SELECT (pi.product_offering_id || ':' || ur.udr_type) AS grouping_key,
                            SUM(ur.udr_rated_price)::numeric(18,2)         AS replay_sum,
@@ -1204,11 +1413,17 @@ tasks:
                       AND  ur.billrun_ban_id  = current_setting('billrun.ban')
                       AND  ur.billrun_attempt = current_setting('billrun.attempt')::int
                       AND  ur.status = 'BILL_DRAFT'
+                      AND  NOT EXISTS (
+                             SELECT 1 FROM _bm43_capacity c
+                             WHERE  c.offering_id = pi.product_offering_id
+                               AND  c.unit = ur.udr_usage_unit
+                               AND  c.udr_type = ur.udr_type
+                           )
                     GROUP BY (pi.product_offering_id || ':' || ur.udr_type)
                   ),
                   mismatched AS (
                     SELECT l.customer_bill_line_id, l.grouping_key,
-                           l.gross_amount, l.udr_count,
+                           l.rated_amount, l.udr_count,
                            COALESCE(r.replay_sum, '0.00')::numeric(18,2) AS replay_sum,
                            COALESCE(r.replay_count, 0)                   AS replay_count
                     FROM   billing.customer_bill_line l
@@ -1219,13 +1434,14 @@ tasks:
                     WHERE  b.ref_bill_run_id = current_setting('billrun.run')
                       AND  b.ref_billing_account_id = current_setting('billrun.ban')
                       AND  l.source = 'USAGE' AND l.line_type = 'charge'
-                      AND  (COALESCE(r.replay_sum, '0.00')::numeric(18,2) IS DISTINCT FROM l.gross_amount
+                      AND  l.additional_info IS NULL
+                      AND  (COALESCE(r.replay_sum, '0.00')::numeric(18,2) IS DISTINCT FROM l.rated_amount
                             OR COALESCE(r.replay_count, 0) IS DISTINCT FROM l.udr_count)
                   )
                   SELECT count(*),
                          string_agg(
                            customer_bill_line_id || ' (grouping ' || grouping_key
-                           || ': claimed gross ' || gross_amount
+                           || ': claimed rated ' || rated_amount
                            || '/count ' || COALESCE(udr_count::text, 'NULL')
                            || ' vs replay ' || replay_sum || '/' || replay_count || ')', '; ')
                     INTO   v_mismatch, v_bad_lines
@@ -1241,6 +1457,138 @@ tasks:
                       current_setting('billrun.ban'), v_mismatch, v_bad_lines;
                   END IF;
 
+                  -- bm43-spec §Implementation §4.1 (D2) — capacity replay: the
+                  -- claimed BILL_DRAFT volume for each capacity line's
+                  -- (offering, unit, udrType) must sum/count to its stored
+                  -- rated_amount/udr_count. HARD, never gated (an internal
+                  -- reconciliation, not a rate disagreement).
+                  WITH cap_mismatched AS (
+                    SELECT l.customer_bill_line_id, l.grouping_key,
+                           l.rated_amount, l.udr_count,
+                           v.rated_sum, v.udr_count AS replay_count
+                    FROM   billing.customer_bill_line l
+                    JOIN   billing.customer_bill b
+                           ON b.customer_bill_id = l.ref_customer_bill_id
+                          AND b.period_partition = l.period_partition
+                    JOIN   _bm43_capacity_volume v
+                           ON l.grouping_key = (v.offering_id || ':CAPACITY:' || v.unit)
+                    WHERE  b.ref_bill_run_id = current_setting('billrun.run')
+                      AND  b.ref_billing_account_id = current_setting('billrun.ban')
+                      AND  l.additional_info IS NOT NULL
+                      AND  (v.rated_sum IS DISTINCT FROM l.rated_amount
+                            OR v.udr_count IS DISTINCT FROM l.udr_count)
+                  )
+                  SELECT count(*),
+                         string_agg(
+                           customer_bill_line_id || ' (grouping ' || grouping_key
+                           || ': claimed rated ' || rated_amount
+                           || '/count ' || COALESCE(udr_count::text, 'NULL')
+                           || ' vs replay ' || rated_sum || '/' || replay_count || ')', '; ')
+                    INTO   v_cap_mismatch, v_cap_bad_lines
+                  FROM   cap_mismatched;
+
+                  IF v_cap_mismatch > 0 THEN
+                    RAISE EXCEPTION 'RECONCILIATION_MISMATCH (HARD): account % has % capacity line(s) whose claimed volume does not reconcile to their claimed udr_rated rows: %',
+                      current_setting('billrun.ban'), v_cap_mismatch, v_cap_bad_lines;
+                  END IF;
+
+                  -- bm43-spec §Implementation §4.2 (D2) — capacity internal
+                  -- identities, HARD and NEVER gated (these bind
+                  -- additional_info to the hashed money columns — Inv #35 —
+                  -- and are an internal consistency check, not a rate
+                  -- disagreement): gross = rated_amount + topUp; net = gross -
+                  -- discount; the calc trace's 'total' op = the money
+                  -- columns; the sum of the calc trace's 'motivation' band
+                  -- discounts = discount_amount. topUp/band-discount default
+                  -- to 0 when their calc op is absent (commitment-only /
+                  -- motivation-only offerings, TC36).
+                  WITH cap_lines AS (
+                    SELECT l.customer_bill_line_id, l.grouping_key,
+                           l.gross_amount, l.net_amount, l.discount_amount, l.rated_amount,
+                           l.additional_info,
+                           COALESCE((SELECT (elem->>'topUp')::numeric(18,2)
+                                     FROM jsonb_array_elements(l.additional_info->'calc') elem
+                                     WHERE elem->>'op' = 'commitment'), 0.00) AS top_up,
+                           COALESCE((SELECT SUM((elem->>'discount')::numeric(18,2))
+                                     FROM jsonb_array_elements(l.additional_info->'calc') elem
+                                     WHERE elem->>'op' = 'motivation'), 0.00) AS band_discount_sum,
+                           (SELECT elem FROM jsonb_array_elements(l.additional_info->'calc') elem
+                            WHERE elem->>'op' = 'total') AS total_calc
+                    FROM   billing.customer_bill_line l
+                    JOIN   billing.customer_bill b
+                           ON b.customer_bill_id = l.ref_customer_bill_id
+                          AND b.period_partition = l.period_partition
+                    WHERE  b.ref_bill_run_id = current_setting('billrun.run')
+                      AND  b.ref_billing_account_id = current_setting('billrun.ban')
+                      AND  l.additional_info IS NOT NULL
+                  ),
+                  identity_mismatched AS (
+                    SELECT customer_bill_line_id, grouping_key
+                    FROM   cap_lines
+                    WHERE  gross_amount IS DISTINCT FROM (rated_amount + top_up)
+                       OR  net_amount IS DISTINCT FROM (gross_amount - discount_amount)
+                       OR  discount_amount IS DISTINCT FROM band_discount_sum
+                       OR  total_calc IS NULL
+                       OR  (total_calc->>'gross')::numeric(18,2) IS DISTINCT FROM gross_amount
+                       OR  (total_calc->>'discount')::numeric(18,2) IS DISTINCT FROM discount_amount
+                       OR  (total_calc->>'net')::numeric(18,2) IS DISTINCT FROM net_amount
+                  )
+                  SELECT count(*), string_agg(customer_bill_line_id || ' (' || grouping_key || ')', '; ')
+                    INTO v_identity_mismatch, v_identity_detail
+                  FROM   identity_mismatched;
+
+                  IF v_identity_mismatch > 0 THEN
+                    RAISE EXCEPTION 'RECONCILIATION_MISMATCH (HARD): account % has % capacity line(s) failing an internal identity check (gross/net/discount vs additional_info.calc): %',
+                      current_setting('billrun.ban'), v_identity_mismatch, v_identity_detail;
+                  END IF;
+
+                  -- bm43-spec §Implementation §4.3 (D3/D4) — Model-2: an
+                  -- INDEPENDENT cross-derivation (max(Q,target) * baseRate,
+                  -- plus the N-band motivation discount), re-resolved from the
+                  -- catalog (_bm43_capacity/_bm43_model2 above — NEVER read
+                  -- back from additional_info, so a corrupted trace alone
+                  -- cannot make this pass spuriously) and compared to the
+                  -- BILLED Model-1 figures. A disagreement is governed by the
+                  -- capacity_rate_matching gate (§5.4): ON HARD-fails naming
+                  -- both figures/version sources; OFF downgrades to a WARN
+                  -- and bills Model 1 anyway (never silent). No ±0.01
+                  -- tolerance (Inv #34) — exact for integer usage; the TC55/
+                  -- TC40 caveat (a ≤1¢ drift on fractional multi-row usage)
+                  -- is accepted and NOT fixed with a tolerance here; the gate
+                  -- is the documented operational relief if it ever trips.
+                  WITH model2_mismatch AS (
+                    SELECT l.customer_bill_line_id, m.offering_id, m.unit,
+                           l.gross_amount, l.discount_amount,
+                           m.expected_gross, m.expected_discount
+                    FROM   billing.customer_bill_line l
+                    JOIN   billing.customer_bill b
+                           ON b.customer_bill_id = l.ref_customer_bill_id
+                          AND b.period_partition = l.period_partition
+                    JOIN   _bm43_model2 m
+                           ON l.grouping_key = (m.offering_id || ':CAPACITY:' || m.unit)
+                    WHERE  b.ref_bill_run_id = current_setting('billrun.run')
+                      AND  b.ref_billing_account_id = current_setting('billrun.ban')
+                      AND  (l.gross_amount IS DISTINCT FROM m.expected_gross
+                            OR l.discount_amount IS DISTINCT FROM m.expected_discount)
+                  )
+                  SELECT count(*),
+                         string_agg(
+                           'offering ' || offering_id || ' unit ' || unit
+                             || ': Model 1 (billed) gross ' || gross_amount || '/discount ' || discount_amount
+                             || ' vs Model 2 (re-resolved) gross ' || expected_gross || '/discount ' || expected_discount, '; ')
+                    INTO v_model2_mismatch, v_model2_detail
+                  FROM   model2_mismatch;
+
+                  IF v_model2_mismatch > 0 THEN
+                    IF current_setting('billrun.capacity_rate_matching')::boolean THEN
+                      RAISE EXCEPTION 'CAPACITY_RATE_MISMATCH (HARD): account % — the Model-2 cross-derivation disagrees with the billed Model 1 figure on % capacity line(s): %',
+                        current_setting('billrun.ban'), v_model2_mismatch, v_model2_detail;
+                    ELSE
+                      RAISE NOTICE 'CAPACITY_RATE_MATCHING=OFF: account % — Model-2 disagrees with Model 1 on % capacity line(s); billing Model 1 anyway: %',
+                        current_setting('billrun.ban'), v_model2_mismatch, v_model2_detail;
+                    END IF;
+                  END IF;
+
                   -- SOFT: non-positive-total sanity (advisory, never blocks — bm07).
                   SELECT total_amount INTO v_total
                   FROM   billing.customer_bill
@@ -1251,6 +1599,7 @@ tasks:
                     RAISE NOTICE 'NON_POSITIVE_TOTAL (SOFT): total_amount % <= 0 (advisory, non-blocking)', v_total;
                   END IF;
                 END $$;
+                COMMIT;
                 SQL
           # bm36 §Implementation §1 — Verification DONE POST. verification is the
           # TERMINAL_STAGE the receiver keys on, so this DONE is what flips the

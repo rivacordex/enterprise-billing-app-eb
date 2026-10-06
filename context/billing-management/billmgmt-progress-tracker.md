@@ -387,6 +387,129 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     path), and has already been pushed. Needs an owner decision (plain removal
     commit vs. history rewrite) — not touched by this entry's changes.
 
+### Target Capacity Pricing update — Unit 3 (bm43)
+
+- **bm43 (2026-10-06) — implemented as specified.** Capacity verification:
+  replay every USAGE line against `rated_amount` (not `gross_amount`, which a
+  commitment top-up inflates), a capacity-line replay + internal identities,
+  the independent Model-2 cross-derivation, and the `CAPACITY_RATE_MATCHING`
+  gate shared with bm42's G2 in aggregation. Spec:
+  `context/billing-management/specs/bm43-capacity-verification-model2-gate.md`.
+  No DB function, no Python, no app/UI change, no migration.
+  - **Flow SQL** (`bill_run_processing.yml`, mirrored in `.template.yml`) —
+    a new `capacity_rate_matching` flow input (default `true`), threaded into
+    both the `aggregation` and `verification` psql `-v` lists.
+    - **Aggregation (the one cross-step edit, D4)** — `_bm42_volume` gained
+      `offering_name` (for the diagnostic); G2's unconditional
+      `RAISE EXCEPTION` is now gated: `SELECT set_config('billrun.ban', …),
+      set_config('billrun.capacity_rate_matching', …)` right after `BEGIN;`
+      feeds a `current_setting(...)::boolean` check inside the existing `DO
+      $$` guard block — ON raises exactly as bm42 shipped (now naming both
+      rates/price-refs via a `string_agg` detail), OFF downgrades to
+      `RAISE NOTICE` and lets the account proceed. The five structural guards
+      (multi-sub, base-rate-not-found, udr-type-mismatch, multi-step,
+      currency) are untouched — still unconditionally HARD.
+    - **Verification** — the `mismatched` CTE now compares
+      `SUM(udr_rated_price)` to `l.rated_amount` (was `gross_amount`) and
+      excludes capacity lines (`additional_info IS NULL`) and capacity-volume
+      claimed rows (a `NOT EXISTS` against a new `_bm43_capacity` read) from
+      its `offering:udr_type` replay — D1/D2, fixing the false-mismatch the
+      pre-bm43 flow would have hit on every under-target capacity account.
+      Three new read-only temp tables re-resolve the capacity components off
+      the subscription's pinned offering version as-of the account's STORED
+      `billing_period_start` (verification has no `period_start` input):
+      `_bm43_capacity` (mirrors `_bm42_capacity`), `_bm43_capacity_volume`
+      (mirrors `capacity_volume`), `_bm43_bands`/`_bm43_model2` (mirrors the
+      N-band walk, feeding `max(Q,target)×baseRate` + the band discount sum).
+      Three new HARD/gated checks run inside the existing `DO $$` block, in
+      order: (1) capacity replay (claimed volume vs. stored
+      `rated_amount`/`udr_count`, HARD, never gated); (2) internal identities
+      (`gross = rated_amount + topUp`, `net = gross − discount`, the
+      `additional_info.calc` trace's `'total'`/`'motivation'` ops vs. the
+      money columns, HARD, never gated — these bind the trace to the hashed
+      columns per Inv #35); (3) Model-2 (gated exactly like G2 — ON
+      HARD-fails `CAPACITY_RATE_MISMATCH` naming both figures, OFF
+      `RAISE NOTICE`s and bills Model 1 anyway). No ±0.01 tolerance (Inv #34);
+      the TC55/TC40 fractional-drift caveat is documented, not coded around.
+  - **Extracted-SQL harness** (`tests/db/helpers/extract-flow-sql.ts`) —
+    `AggregateParams`/`VerificationParams`/`runVerification` gained an
+    optional `capacityRateMatching` (default `true`), mirroring
+    `capacityMaxBands`'s bm42 pattern so every pre-bm43 caller is unaffected.
+  - **New DB-gated test** — `tests/db/billrun-capacity-verification.
+    integration.test.ts` (the bm28/bm29/bm42-pattern flow-double, reusing
+    `billrun-flow-double-fixtures.ts`): Model-2 reconciles on all four
+    anchors incl. the under-target 800/0 EA cases (the D1/D2 regression); a
+    tampered claimed-row count is caught by the capacity replay independently
+    of a tampered `gross_amount` (caught by the internal identity check); a
+    corrupted `additional_info.pricing` trace alone does not make Model-2
+    pass spuriously; gate ON — a post-aggregation catalog rate drift
+    HARD-fails `CAPACITY_RATE_MISMATCH` naming both Model-1/Model-2 figures;
+    gate OFF — the same drift downgrades to a WARN in verification and (a
+    separate case) a mismatched claimed rate no longer aborts G2 at
+    aggregation, both billing Model 1's actual number.
+  - **Verified in this environment:** `npx tsc --noEmit` clean repo-wide;
+    `eslint` clean on every touched/added file; the extracted-SQL harness
+    self-test suite (13 tests, DB-free, `--pool=threads` — the forks pool
+    hangs in this environment, a pre-existing local quirk) passes against the
+    real modified flow file (pebble-stripping, statement-splitting and
+    `:'var'` binding all still correct, including the new `_bm43_*` temp
+    tables and the gated `DO $$` blocks). The full DB-free guardrail/unit
+    suite (1016 tests) is green except two **pre-existing, unrelated**
+    failures: `trigger-run.service.test.ts` throws on missing
+    `DATABASE_URL`/`BETTER_AUTH_*` env vars (an ambient-env gap, not a code
+    defect — also seen duplicated under a leftover
+    `.claude/worktrees/brave-meitner-d65fff/` tree, not touched by this
+    unit), and `pricing-component-guardrails.test.ts` guardrail 31 (an
+    unrelated "no tiered/pricing_model residue" repo-wide scan) times out at
+    its 10s budget — plausibly slowed by that same leftover worktree
+    doubling the file count it walks. Neither failure involves capacity or
+    verification code.
+  - **NOT verified here (no reachable Postgres/Kestra in this environment,
+    same gap as bm40/bm41/bm42)** — the new
+    `billrun-capacity-verification.integration.test.ts` suite against a
+    disposable Postgres; a live-Kestra run on the `capacity` seed exercising
+    both gate states; the full existing DB-gated suite re-run (confirming the
+    non-capacity `bm30` reconciliation tests stay green against the
+    `rated_amount`-anchored replay, which is behaviour-preserving for them
+    per D1).
+  - **Doc sync:** `billmgmt-architecture.md` now names **bm43** on Inv #29/#30
+    and the capacity-pricing stack row (alongside bm42). `bm00-build-plan.md`
+    doesn't exist in this checkout (same gap bm40–bm42 noted) — that sync
+    step could not be done.
+  - bm44 (checksum append + read-model surfacing) and bm45 (invoice appendix)
+    are next, per the spec's own Dependencies section.
+  - **SonarQube "Duplicated Lines on New Code" fix (2026-10-06, 52.9% on
+    `billrun-capacity-verification.integration.test.ts`).** The BadCount/
+    BadGross/LiedTrace/RateDrift/RateDriftOff/G2Off guard tests each
+    hand-repeated the same `setupSingleAccountCapacity()` +
+    `insertCapacityVolumeRow()` + `aggregate()` + `readBill()`/`readLines()`
+    sequence (same pattern bm42's own round-1 fix addressed for its
+    account+offering+run+inventory setup — see that entry above). Extracted
+    a local `setupAndAggregateSingleLine(label, offeringName, { rate?,
+    aggregateOpts? })` helper that returns the resulting `bill`/`line`; the
+    six guard tests now call it instead of re-pasting the block. The anchors
+    loop (TC50) was already a loop and is unchanged. Assertions and fixture
+    data are unchanged — `npx tsc --noEmit` clean. Not re-run against a live
+    DB in this environment (same gap noted throughout bm40–bm43).
+  - **SonarQube "Duplicated Lines on New Code" finding, round 2 (2026-10-06,
+    39.1% on `billrun-capacity-verification.integration.test.ts`) — accepted,
+    no code change.** After the 52.9% fix above, the remaining duplication is
+    the ~180-line capacity-pricing fixture block (`insertOfferingPrice`/
+    `newUsageRate`/`newCapacityCommitment`/`newCapacityMotivation`/
+    `newCapacityOffering`/`insertCapacityVolumeRow`) shared verbatim (bar
+    "BM42"→"BM43" label strings) with `billrun-capacity-aggregation.
+    integration.test.ts`. This is the SAME duplication the round-2 fix above
+    already identified and deliberately did NOT factor out — per that entry's
+    owner decision, only the generic flow-double scaffolding went into
+    `billrun-flow-double-fixtures.ts`; the capacity-specific fixture shapes
+    stay self-contained per file, matching the bm28/bm29/bm35 convention this
+    file's own header comment calls out. Re-confirmed with the owner this
+    round: duplication stays, finding accepted as a known tradeoff rather
+    than chased further. If a FUTURE capacity-pricing unit (bm44/bm45) needs
+    the same fixtures a third time, that is the trigger to extract a shared
+    `billrun-capacity-pricing-fixtures.ts` for bm42+bm43+that unit — not
+    before.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
