@@ -277,6 +277,11 @@ export interface AggregateParams {
   // capacity test overrides it to exercise CAPACITY_MULTI_STEP_UNSUPPORTED
   // (TC52).
   capacityMaxBands?: number;
+  // bm43-spec §Implementation §1 — the flow's `capacity_rate_matching` gate
+  // (default true, mirroring the flow's own `defaults: true`). Optional so
+  // every pre-bm43 caller is unaffected; a gate test overrides it to false
+  // to exercise the WARN-and-bill-Model-1 path.
+  capacityRateMatching?: boolean;
 }
 
 export async function runAggregation(
@@ -289,6 +294,7 @@ export async function runAggregation(
     periodEnd,
     glEventAt,
     capacityMaxBands,
+    capacityRateMatching,
   }: AggregateParams,
 ): Promise<void> {
   const heredoc = stripExplicitTransactionBounds(
@@ -302,6 +308,7 @@ export async function runAggregation(
     period_end: periodEnd,
     gl_event_at: glEventAt,
     capacity_max_bands: String(capacityMaxBands ?? 1),
+    capacity_rate_matching: String(capacityRateMatching ?? true),
   };
   await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
 }
@@ -310,6 +317,8 @@ export interface VerificationParams {
   runId: string;
   ban: string;
   attempt: number;
+  // bm43-spec §Implementation §1 — see AggregateParams.capacityRateMatching.
+  capacityRateMatching?: boolean;
 }
 
 export interface VerificationOutcome {
@@ -320,13 +329,14 @@ export interface VerificationOutcome {
 
 export async function runVerification(
   sql: postgresjs.Sql,
-  { runId, ban, attempt }: VerificationParams,
+  { runId, ban, attempt, capacityRateMatching }: VerificationParams,
 ): Promise<VerificationOutcome> {
   const heredoc = extractStageHeredoc("verification");
   const values: Record<string, string> = {
     run: runId,
     ban,
     attempt: String(attempt),
+    capacity_rate_matching: String(capacityRateMatching ?? true),
   };
   // Runs the flow's OWN statements verbatim: the `SELECT set_config(...)`
   // (rebinding the GUCs the DO block below reads) then the `DO $$ ... END $$;`
