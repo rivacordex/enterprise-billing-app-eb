@@ -478,6 +478,19 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     step could not be done.
   - bm44 (checksum append + read-model surfacing) and bm45 (invoice appendix)
     are next, per the spec's own Dependencies section.
+  - **SonarQube "Duplicated Lines on New Code" fix (2026-10-06, 52.9% on
+    `billrun-capacity-verification.integration.test.ts`).** The BadCount/
+    BadGross/LiedTrace/RateDrift/RateDriftOff/G2Off guard tests each
+    hand-repeated the same `setupSingleAccountCapacity()` +
+    `insertCapacityVolumeRow()` + `aggregate()` + `readBill()`/`readLines()`
+    sequence (same pattern bm42's own round-1 fix addressed for its
+    account+offering+run+inventory setup — see that entry above). Extracted
+    a local `setupAndAggregateSingleLine(label, offeringName, { rate?,
+    aggregateOpts? })` helper that returns the resulting `bill`/`line`; the
+    six guard tests now call it instead of re-pasting the block. The anchors
+    loop (TC50) was already a loop and is unchanged. Assertions and fixture
+    data are unchanged — `npx tsc --noEmit` clean. Not re-run against a live
+    DB in this environment (same gap noted throughout bm40–bm43).
 
 ## Outstanding / Next (post-Phase 4)
 

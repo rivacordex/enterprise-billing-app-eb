@@ -354,6 +354,47 @@ describe.skipIf(!databaseUrl)(
       return { ban, offeringId, usageRatePriceId, runId, piId };
     }
 
+    // Shared single-line fixture: setupSingleAccountCapacity() + a single
+    // insertCapacityVolumeRow() + aggregate(), returning the resulting bill
+    // and its one line — reduces the setup duplication that recurs across
+    // the tamper/rate-drift guard test cases below (same SonarQube
+    // "Duplicated Lines" pattern bm42's own setupSingleAccountCapacity
+    // extraction addressed; see billmgmt-progress-tracker.md round 1).
+    async function setupAndAggregateSingleLine(
+      label: string,
+      offeringName: string,
+      opts?: {
+        rate?: string;
+        aggregateOpts?: Parameters<typeof aggregate>[3];
+      },
+    ): Promise<{
+      ban: string;
+      usageRatePriceId: string | null;
+      runId: string;
+      piId: string;
+      bill: NonNullable<Awaited<ReturnType<typeof readBill>>>;
+      line: Awaited<ReturnType<typeof readLines>>[number] | undefined;
+    }> {
+      const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+        label,
+        offeringName,
+        { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
+      );
+      await insertCapacityVolumeRow({
+        subRef: piId,
+        runId,
+        ban,
+        attempt: 1,
+        quantityEa: 500,
+        rate: opts?.rate ?? "100.000000",
+        priceRef: usageRatePriceId,
+      });
+      await aggregate(runId, ban, 1, opts?.aggregateOpts);
+      const bill = await readBill(runId, ban);
+      const [line] = await readLines(bill!.customerBillId);
+      return { ban, usageRatePriceId, runId, piId, bill: bill!, line };
+    }
+
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 5 });
@@ -446,30 +487,17 @@ describe.skipIf(!databaseUrl)(
         "caught HARD by the capacity replay, independently of the money-column " +
         "internal identity check",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+        const { ban, runId, bill, line } = await setupAndAggregateSingleLine(
           "BadCount",
           "Verify BadCount Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        await insertCapacityVolumeRow({
-          subRef: piId,
-          runId,
-          ban,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "100.000000",
-          priceRef: usageRatePriceId,
-        });
-        await aggregate(runId, ban, 1);
-        const bill = await readBill(runId, ban);
-        const [line] = await readLines(bill!.customerBillId);
         expect(line!.udrCount).toBe(1);
 
         // Money columns stay correct — only the claimed-row count is tampered.
         await sql`
           UPDATE billing.customer_bill_line
           SET    udr_count = 2
-          WHERE  customer_bill_line_id = ${await firstLineId(bill!.customerBillId)}
+          WHERE  customer_bill_line_id = ${await firstLineId(bill.customerBillId)}
         `;
 
         await expect(verify(runId, ban, 1)).rejects.toThrow(/RECONCILIATION_MISMATCH/);
@@ -481,29 +509,16 @@ describe.skipIf(!databaseUrl)(
       "[CRITICAL] a tampered gross_amount (out of step with rated_amount + topUp) " +
         "is caught HARD by the internal identity check",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+        const { ban, runId, bill, line } = await setupAndAggregateSingleLine(
           "BadGross",
           "Verify BadGross Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        await insertCapacityVolumeRow({
-          subRef: piId,
-          runId,
-          ban,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "100.000000",
-          priceRef: usageRatePriceId,
-        });
-        await aggregate(runId, ban, 1);
-        const bill = await readBill(runId, ban);
-        const [line] = await readLines(bill!.customerBillId);
         expect(line!.grossAmount).toBe("100000.00");
 
         await sql`
           UPDATE billing.customer_bill_line
           SET    gross_amount = '999999.00', net_amount = '999999.00'
-          WHERE  customer_bill_line_id = ${await firstLineId(bill!.customerBillId)}
+          WHERE  customer_bill_line_id = ${await firstLineId(bill.customerBillId)}
         `;
 
         await expect(verify(runId, ban, 1)).rejects.toThrow(/RECONCILIATION_MISMATCH/);
@@ -516,22 +531,10 @@ describe.skipIf(!databaseUrl)(
         "NOT make Model-2 pass spuriously — it is re-resolved from the catalog, " +
         "never read back from additional_info",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+        const { ban, runId, bill } = await setupAndAggregateSingleLine(
           "LiedTrace",
           "Verify LiedTrace Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        await insertCapacityVolumeRow({
-          subRef: piId,
-          runId,
-          ban,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "100.000000",
-          priceRef: usageRatePriceId,
-        });
-        await aggregate(runId, ban, 1);
-        const bill = await readBill(runId, ban);
 
         // Lie about the resolved rate in the STORED trace only — the money
         // columns (gross/net/discount/rated) and the calc.total op are left
@@ -539,7 +542,7 @@ describe.skipIf(!databaseUrl)(
         await sql`
           UPDATE billing.customer_bill_line
           SET    additional_info = jsonb_set(additional_info, '{pricing,usageRate,ratePerUnit}', '999'::jsonb)
-          WHERE  customer_bill_line_id = ${await firstLineId(bill!.customerBillId)}
+          WHERE  customer_bill_line_id = ${await firstLineId(bill.customerBillId)}
         `;
 
         const outcome = await verify(runId, ban, 1);
@@ -553,23 +556,10 @@ describe.skipIf(!databaseUrl)(
         "makes Model-2 disagree with the billed Model-1 figure, HARD-failing " +
         "CAPACITY_RATE_MISMATCH and naming both figures (Inv #29/#30)",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+        const { ban, usageRatePriceId, runId, line } = await setupAndAggregateSingleLine(
           "RateDrift",
           "Verify RateDrift Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        await insertCapacityVolumeRow({
-          subRef: piId,
-          runId,
-          ban,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "100.000000",
-          priceRef: usageRatePriceId,
-        });
-        await aggregate(runId, ban, 1);
-        const bill = await readBill(runId, ban);
-        const [line] = await readLines(bill!.customerBillId);
         expect(line!.grossAmount).toBe("100000.00"); // Model 1, billed at rate 100
 
         // The rate card changes AFTER aggregation ran — Model-2 (verification)
@@ -592,21 +582,10 @@ describe.skipIf(!databaseUrl)(
         "account's stage reaches DONE and the stored (Model-1) figure is untouched " +
         "(verification never writes)",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
+        const { ban, usageRatePriceId, runId } = await setupAndAggregateSingleLine(
           "RateDriftOff",
           "Verify RateDriftOff Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
         );
-        await insertCapacityVolumeRow({
-          subRef: piId,
-          runId,
-          ban,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "100.000000",
-          priceRef: usageRatePriceId,
-        });
-        await aggregate(runId, ban, 1);
 
         await sql`
           UPDATE product.product_offering_price
@@ -629,29 +608,15 @@ describe.skipIf(!databaseUrl)(
         "no longer aborts the account — it bills Model 1's actual number instead " +
         "of HARD-failing (Inv #29/#30)",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
-          "G2Off",
-          "Verify G2Off Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
-        );
         // Claimed row rated at 85, resolved base_rate is 100 — would HARD-fail
         // CAPACITY_RATE_MISMATCH under the default gate (proven by bm42's own
         // G2 test); here the gate is OFF.
-        await insertCapacityVolumeRow({
-          subRef: piId,
-          runId,
-          ban,
-          attempt: 1,
-          quantityEa: 500,
-          rate: "85.000000",
-          priceRef: usageRatePriceId,
-        });
-
-        await aggregate(runId, ban, 1, { capacityRateMatching: false });
-
-        const bill = await readBill(runId, ban);
+        const { ban, runId, bill, line } = await setupAndAggregateSingleLine(
+          "G2Off",
+          "Verify G2Off Offering",
+          { rate: "85.000000", aggregateOpts: { capacityRateMatching: false } },
+        );
         expect(bill).toBeDefined();
-        const [line] = await readLines(bill!.customerBillId);
         // rated = 500 * 85 = 42,500 (the ACTUAL claimed price, never
         // substituted); topUp uses the RESOLVED base_rate (100), not the
         // mismatched claimed rate: (1000-500)*100 = 50,000. gross = 92,500.
