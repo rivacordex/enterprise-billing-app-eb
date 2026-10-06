@@ -26,6 +26,12 @@ export interface BillLineTableProps {
   timezone: string;
 }
 
+/**
+ * Renders bill charge lines with usage drill-downs and recurring price snapshots.
+ * Shows the discount column when any line has a discount other than `"0.00"`,
+ * and an empty-state message when no lines are supplied.
+ * Formats amounts in each line's currency using the supplied locale.
+ */
 export function BillLineTable({
   billRunId,
   billingAccountId,
