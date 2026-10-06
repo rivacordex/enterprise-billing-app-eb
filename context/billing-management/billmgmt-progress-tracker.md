@@ -491,6 +491,24 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     loop (TC50) was already a loop and is unchanged. Assertions and fixture
     data are unchanged — `npx tsc --noEmit` clean. Not re-run against a live
     DB in this environment (same gap noted throughout bm40–bm43).
+  - **SonarQube "Duplicated Lines on New Code" finding, round 2 (2026-10-06,
+    39.1% on `billrun-capacity-verification.integration.test.ts`) — accepted,
+    no code change.** After the 52.9% fix above, the remaining duplication is
+    the ~180-line capacity-pricing fixture block (`insertOfferingPrice`/
+    `newUsageRate`/`newCapacityCommitment`/`newCapacityMotivation`/
+    `newCapacityOffering`/`insertCapacityVolumeRow`) shared verbatim (bar
+    "BM42"→"BM43" label strings) with `billrun-capacity-aggregation.
+    integration.test.ts`. This is the SAME duplication the round-2 fix above
+    already identified and deliberately did NOT factor out — per that entry's
+    owner decision, only the generic flow-double scaffolding went into
+    `billrun-flow-double-fixtures.ts`; the capacity-specific fixture shapes
+    stay self-contained per file, matching the bm28/bm29/bm35 convention this
+    file's own header comment calls out. Re-confirmed with the owner this
+    round: duplication stays, finding accepted as a known tradeoff rather
+    than chased further. If a FUTURE capacity-pricing unit (bm44/bm45) needs
+    the same fixtures a third time, that is the trigger to extract a shared
+    `billrun-capacity-pricing-fixtures.ts` for bm42+bm43+that unit — not
+    before.
 
 ## Outstanding / Next (post-Phase 4)
 

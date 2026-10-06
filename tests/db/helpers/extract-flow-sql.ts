@@ -331,7 +331,9 @@ export async function runVerification(
   sql: postgresjs.Sql,
   { runId, ban, attempt, capacityRateMatching }: VerificationParams,
 ): Promise<VerificationOutcome> {
-  const heredoc = extractStageHeredoc("verification");
+  const heredoc = stripExplicitTransactionBounds(
+    extractStageHeredoc("verification"),
+  );
   const values: Record<string, string> = {
     run: runId,
     ban,

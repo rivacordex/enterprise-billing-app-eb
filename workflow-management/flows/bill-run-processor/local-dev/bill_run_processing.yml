@@ -1217,6 +1217,12 @@ tasks:
                   -v run="{{ inputs.bill_run_id }}" \
                   -v attempt="{{ inputs.attempt }}" \
                   -v capacity_rate_matching="{{ inputs.capacity_rate_matching }}" <<'SQL'
+                BEGIN;
+                -- the ON COMMIT DROP temp tables below (_bm43_capacity etc.)
+                -- must stay alive across every statement that reads them;
+                -- psql's default autocommit would drop each one right after
+                -- its own CREATE commits. Mirrors the aggregation task's
+                -- explicit BEGIN;/COMMIT; wrap.
                 SELECT set_config('billrun.ban',     :'ban',     false),
                        set_config('billrun.run',     :'run',     false),
                        set_config('billrun.attempt', :'attempt', false),
@@ -1593,6 +1599,7 @@ tasks:
                     RAISE NOTICE 'NON_POSITIVE_TOTAL (SOFT): total_amount % <= 0 (advisory, non-blocking)', v_total;
                   END IF;
                 END $$;
+                COMMIT;
                 SQL
           # bm36 §Implementation §1 — Verification DONE POST. verification is the
           # TERMINAL_STAGE the receiver keys on, so this DONE is what flips the
