@@ -105,6 +105,18 @@ export const customerBillLineRepository = {
   // the anchor — and relies on the caller holding `customer_bill`'s `FOR UPDATE`
   // (bm28's whole-account replace cascades through the header) so the line set
   // can't tear mid-read.
+  //
+  // bm44-spec §Implementation §1 (Target Capacity Pricing update, Unit 4,
+  // Inv #35) — `rated_amount` is APPENDED as the eighth and last tuple element,
+  // never inserted mid-tuple: this preserves the serialized position of the
+  // first seven fields, so a non-capacity bill's existing stamp-time value is
+  // unaffected beyond the new trailing element. `rated_amount` is NULL on
+  // RECURRING lines (not rated); unlike `udr_type` it is NOT coalesced to an
+  // empty string — a NULL serializes to a distinct JSON `null` token inside
+  // `json_build_array`, which cannot collide with any numeric string, so a
+  // rated-to-zero USAGE line and an unrated RECURRING line stay distinguishable
+  // in the hash. `additional_info` is deliberately NOT hashed — verification
+  // binds the trace to the money columns, not the other way around (Inv #35).
   async computeChargeChecksum(
     tx: Database,
     customerBillId: string,
@@ -117,7 +129,7 @@ export const customerBillLineRepository = {
           ${customerBillLine.source}, ${customerBillLine.refProductOfferingId},
           COALESCE(${customerBillLine.udrType}, ''), ${customerBillLine.lineType},
           ${customerBillLine.grossAmount}::text, ${customerBillLine.discountAmount}::text,
-          ${customerBillLine.netAmount}::text
+          ${customerBillLine.netAmount}::text, ${customerBillLine.ratedAmount}::text
         )::text,
         ',' ORDER BY ${customerBillLine.lineNo}), ''))`,
       })

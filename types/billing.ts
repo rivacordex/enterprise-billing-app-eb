@@ -289,8 +289,12 @@ export type LineType = (typeof LINE_TYPES)[number];
 // and `null` for `RECURRING`; `quantity`/`unit`/`udrCount`/`description` are
 // nullable to admit both sources. A `RECURRING` line carries its price snapshot
 // (`snapshot*`, D19/Inv #20) — the reviewer's evidence in place of a `udr_rated`
-// drill-down (a derived recurring charge has no per-record source); all four are
-// `null` for `USAGE`. Ordered by `lineNo` (deterministic, Inv #21).
+// drill-down (a derived recurring charge has no per-record source); all four
+// snapshot fields are `null` for `USAGE`. bm44 (Target Capacity Pricing update,
+// Unit 4): a capacity `USAGE` line is the exception to the plain-USAGE shape —
+// it carries a non-null `ratedAmount`/`additionalInfo` pair (see below), unlike
+// an ordinary USAGE line which has no `additionalInfo`. Ordered by `lineNo`
+// (deterministic, Inv #21).
 export interface BillLineRow {
   customerBillLineId: string;
   lineNo: number;
