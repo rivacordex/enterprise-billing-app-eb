@@ -510,6 +510,73 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     `billrun-capacity-pricing-fixtures.ts` for bm42+bm43+that unit — not
     before.
 
+### Target Capacity Pricing update — Unit 4 (bm44)
+
+- **bm44 (2026-10-06) — implemented as specified.** Checksum re-anchor on
+  `rated_amount` + bill-line read-model surfacing. Spec:
+  `context/billing-management/specs/bm44-checksum-reanchor-bill-line-read-model.md`.
+  App-side `rated_amount` surface only — no flow change, no migration, no new
+  write of `customer_bill_line` (Inv #2 two-writer boundary holds).
+  - **Checksum append** (`customer-bill-line.repository.ts`'s
+    `computeChargeChecksum`) — `rated_amount` is now the **eighth and last**
+    element of the hashed `json_build_array(...)` tuple, appended (not
+    inserted mid-tuple) so the first seven fields' serialization and position
+    are unchanged for every existing line. Left un-coalesced (unlike
+    `udr_type`'s `COALESCE(..., '')`): a NULL `rated_amount` (RECURRING, not
+    rated) serializes to a distinct JSON `null` token, so it can never
+    collide with a rated-to-zero USAGE line's `"0.00"`. `additional_info`
+    stays unhashed (Inv #35 — verification binds the trace to the money
+    columns, not the reverse). No change to ordering (`line_no`), encoding,
+    the `COALESCE(string_agg(...), '')` empty-bill guard, or the posting call
+    site (`services/billing/post-run.ts`).
+  - **Read model** — `listForRun`'s select already projected `ratedAmount`/
+    `additionalInfo` (bm41 added this as a compile-ripple fix ahead of
+    schedule), so no change was needed here; verified the fields are still
+    present and typed against `BillLineRow`.
+  - **UI / types — comments only, no behavioural change** —
+    `bill-line-table.tsx`'s file-header and `showDiscount` comments
+    (previously asserting "no discount is computed this phase") now state
+    that a capacity motivation line carries a real discount and the column
+    un-suppresses honestly; explicitly notes the calc trace stays DB-only
+    (TC26), not rendered here. `types/billing.ts`'s `BillLineRow` header
+    comment now notes a capacity USAGE line is the exception to the
+    plain-USAGE shape (non-null `ratedAmount`/`additionalInfo`, unlike an
+    ordinary USAGE line). `showDiscount`, the header/cell/`colSpan` wiring,
+    and the capacity line's existing `UsageLineDrillDown` are all unchanged.
+  - **Checksum integration suite extended** —
+    `tests/db/customer-bill-line-checksum.integration.test.ts` gained an
+    optional `ratedAmount` on its `LineSpec`/`insertLine` (defaults to NULL,
+    the pre-bm42 shape) and two new cases: (1) position-preservation +
+    tamper-detection — a RECURRING and a plain-USAGE bill's checksum is
+    stable across recompute, and mutating ONLY `rated_amount` afterward
+    changes it; (2) the NULL-vs-`"0.00"` non-collision — a RECURRING line
+    (NULL) and a USAGE line rated to exactly zero (`"0.00"`), otherwise
+    identical, hash differently.
+  - **Verified in this environment:** `npx tsc --noEmit` clean repo-wide;
+    `eslint` clean on every touched file; the DB-free
+    `list-account-bills.test.ts` suite (16 tests) green; the full DB-free
+    unit/guardrail suite (7675 tests) green except the same **pre-existing,
+    unrelated** failures bm43 already documented — `trigger-run.service.
+    test.ts` (ambient-env gap, duplicated under the leftover
+    `.claude/worktrees/brave-meitner-d65fff/` tree) and
+    `ratecard-parse-csv.test.ts`'s csv-parse-import-scan timeout (plausibly
+    slowed by that same leftover worktree). Neither involves capacity,
+    checksum, or bill-line read-model code.
+  - **NOT verified here (no reachable Postgres in this environment — Docker
+    Desktop isn't running — same gap as bm40–bm43):** the extended checksum
+    integration suite against a disposable Postgres; the full existing
+    DB-gated suite re-run; a live-Kestra run on the `capacity` seed
+    confirming the Discount column renders for a capacity bill in the actual
+    Customers & Bills UI.
+  - **Doc sync:** `billmgmt-architecture.md` Inv #35 and
+    `billmgmt-ui-context.md` §6b now name **bm44** explicitly as the
+    checksum-append + discount-render unit. `bm00-build-plan.md` still
+    doesn't exist in this checkout (same gap bm40–bm43 noted) — that sync
+    step could not be done.
+  - bm45 (invoice appendix, reads `additionalInfo`/`ratedAmount` through this
+    read model) and bm46 (ship gate) are next, per the spec's own
+    Dependencies section.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

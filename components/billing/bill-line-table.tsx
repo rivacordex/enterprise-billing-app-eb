@@ -7,10 +7,11 @@
 // fetched on expand only, never eager, and scoped to that line's grain; a
 // RECURRING row has NO drill-down (a derived charge has no per-record source) —
 // its disclosure shows the stored price snapshot instead (D19/Inv #20), rendered
-// server-side from the row itself. `discount_amount` is hidden while every value
-// is `0.00` (D-delta, §4.1c — no discount is computed this phase, so suppressing
-// the column keeps the invoice honest). Each line carries its own `currency`
-// (char(3), NOT NULL), so money formats off `line.currency` directly.
+// server-side from the row itself. `discount_amount` is hidden while every line
+// is `0.00` (D-delta, §4.1c); bm44 (Target Capacity Pricing update, Unit 4) makes
+// this a real condition — a capacity motivation line can carry a non-`0.00`
+// discount, which un-suppresses the column honestly. Each line carries its own
+// `currency` (char(3), NOT NULL), so money formats off `line.currency` directly.
 
 import { ChargeSourceBadge } from "@/components/billing/charge-source-badge";
 import { formatCalendarDate, formatCurrency } from "@/lib/formatters";
@@ -25,6 +26,12 @@ export interface BillLineTableProps {
   timezone: string;
 }
 
+/**
+ * Renders bill charge lines with usage drill-downs and recurring price snapshots.
+ * Shows the discount column when any line has a discount other than `"0.00"`,
+ * and an empty-state message when no lines are supplied.
+ * Formats amounts in each line's currency using the supplied locale.
+ */
 export function BillLineTable({
   billRunId,
   billingAccountId,
@@ -41,7 +48,10 @@ export function BillLineTable({
   }
 
   // §4.1c — show the discount column only when some line actually carries a
-  // discount; every line is `0.00` this phase, so it stays hidden.
+  // discount. bm44: a capacity motivation line now carries a real per-unit
+  // discount, so the column appears whenever such a line is present; a
+  // non-capacity, no-discount bill still suppresses it. The calc trace
+  // (`additionalInfo`) stays DB-only this phase (TC26) — not rendered here.
   const showDiscount = lines.some((line) => line.discountAmount !== "0.00");
 
   return (

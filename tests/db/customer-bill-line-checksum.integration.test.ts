@@ -30,6 +30,14 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 //     the checksum — plus a `net`-preserving discount shift (gross +x, discount
 //     +x, net unchanged).
 //
+// bm44-spec §Verification checklist (Target Capacity Pricing update, Unit 4,
+// Inv #35) extends this suite for the appended eighth tuple element,
+// `rated_amount`: a RECURRING line's NULL appends as JSON `null` (not
+// `"0.00"`, so it never collides with a rated-to-zero USAGE line); the append
+// is position-preserving (a non-capacity bill's first-seven-field
+// serialization is unchanged); and mutating ONLY `rated_amount` after the
+// fact still changes the checksum (tamper detection over the new column).
+//
 // Lines are inserted directly with FK triggers off (session_replication_role =
 // replica), the bm27/bm28 fixture technique — the checksum reads ONLY
 // `customer_bill_line`, so no real `customer_bill`/`bill_run` header is needed.
@@ -51,6 +59,8 @@ type LineSpec = {
   discount: string;
   net: string;
   groupingKey: string;
+  // bm44 — optional; omitted means NULL (the RECURRING / pre-bm42 shape).
+  ratedAmount?: string | null;
 };
 
 describe.skipIf(!databaseUrl)(
@@ -83,11 +93,11 @@ describe.skipIf(!databaseUrl)(
           INSERT INTO billing.customer_bill_line
             (ref_customer_bill_id, period_partition, line_no, source, line_type,
              ref_product_offering_id, udr_type, gross_amount, discount_amount,
-             net_amount, grouping_key, currency)
+             net_amount, grouping_key, currency, rated_amount)
           VALUES
             (${spec.billId}, ${PERIOD}, ${spec.lineNo}, ${spec.source}, 'charge',
              ${spec.offeringId}, ${spec.udrType}, ${spec.gross}, ${spec.discount},
-             ${spec.net}, ${spec.groupingKey}, 'MYR')
+             ${spec.net}, ${spec.groupingKey}, 'MYR', ${spec.ratedAmount ?? null})
         `;
         return res.count;
       });
@@ -260,6 +270,109 @@ describe.skipIf(!databaseUrl)(
       // the tamper-evidence a net-only hash would miss — still changes it.
       const s4 = await setMoney("110.00", "10.00", "95.00");
       expect(s4).not.toBe(s3);
+    });
+
+    it("bm44: rated_amount is appended, position-preserving — a non-capacity bill's checksum changes only by the new trailing element", async () => {
+      // Same content as the money-column bills above (RECURRING + plain
+      // USAGE, both pre-bm42 shapes with no rated_amount set at aggregation
+      // time), computed once pre-append-awareness — i.e. with rated_amount
+      // left NULL/at gross — to confirm the append doesn't disturb the first
+      // seven fields' serialization or the ordering/encoding rules.
+      const recBillId = "CBL-BM44-REC";
+      await insertLine({
+        billId: recBillId,
+        lineNo: 1,
+        source: "RECURRING",
+        offeringId: "OFR-BM44-REC",
+        udrType: null,
+        gross: "40.00",
+        discount: "0.00",
+        net: "40.00",
+        groupingKey: "OFR-BM44-REC:RECURRING",
+        ratedAmount: null,
+      });
+      const recChecksum = await checksum(recBillId);
+      // Recompute is stable.
+      expect(await checksum(recBillId)).toBe(recChecksum);
+
+      const usageBillId = "CBL-BM44-USAGE";
+      await insertLine({
+        billId: usageBillId,
+        lineNo: 1,
+        source: "USAGE",
+        offeringId: "OFR-BM44-USAGE",
+        udrType: "RAN_USAGE",
+        gross: "60.00",
+        discount: "0.00",
+        net: "60.00",
+        groupingKey: "OFR-BM44-USAGE:RAN_USAGE",
+        // A non-capacity USAGE line's rated_amount equals its gross_amount.
+        ratedAmount: "60.00",
+      });
+      const usageChecksum = await checksum(usageBillId);
+      expect(await checksum(usageBillId)).toBe(usageChecksum);
+
+      // Changing ONLY rated_amount changes the checksum (it now participates
+      // in the hash as the appended element) — tamper detection over the new
+      // column, and proof it isn't silently ignored.
+      const bumpRated = async (
+        billId: string,
+        ratedAmount: string | null,
+      ): Promise<string> => {
+        const res = await sql`
+          UPDATE billing.customer_bill_line
+             SET rated_amount = ${ratedAmount}
+           WHERE ref_customer_bill_id = ${billId}
+             AND period_partition = ${PERIOD}
+        `;
+        expect(res.count).toBe(1);
+        return checksum(billId);
+      };
+
+      const usageRetamped = await bumpRated(usageBillId, "61.00");
+      expect(usageRetamped).not.toBe(usageChecksum);
+
+      const recRetamped = await bumpRated(recBillId, "0.00");
+      expect(recRetamped).not.toBe(recChecksum);
+    });
+
+    it("bm44: a RECURRING line's appended element is JSON null, not \"0.00\" — no collision with a rated-to-zero USAGE line", async () => {
+      // A RECURRING line (rated_amount NULL, unrated) and a USAGE line
+      // rated to exactly zero (rated_amount = '0.00') must hash DIFFERENTLY
+      // for otherwise-identical first-seven fields, proving NULL serializes
+      // to the distinct JSON `null` token rather than being coalesced to the
+      // same string as an explicit "0.00".
+      const nullBillId = "CBL-BM44-NULL";
+      await insertLine({
+        billId: nullBillId,
+        lineNo: 1,
+        source: "RECURRING",
+        offeringId: "OFR-BM44-NVZ",
+        udrType: null,
+        gross: "0.00",
+        discount: "0.00",
+        net: "0.00",
+        groupingKey: "OFR-BM44-NVZ:RECURRING",
+        ratedAmount: null,
+      });
+
+      const zeroBillId = "CBL-BM44-ZERO";
+      await insertLine({
+        billId: zeroBillId,
+        lineNo: 1,
+        source: "USAGE",
+        offeringId: "OFR-BM44-NVZ",
+        udrType: null,
+        gross: "0.00",
+        discount: "0.00",
+        net: "0.00",
+        groupingKey: "OFR-BM44-NVZ:RECURRING",
+        ratedAmount: "0.00",
+      });
+
+      const nullChecksum = await checksum(nullBillId);
+      const zeroChecksum = await checksum(zeroBillId);
+      expect(nullChecksum).not.toBe(zeroChecksum);
     });
 
     it("serialization is injective: a delimiter-laden udr_type cannot forge a colliding checksum", async () => {
