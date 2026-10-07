@@ -127,7 +127,7 @@ shortly"**; a failed/timed-out render shows an inline **Retry** button with a
 plain-language reason, in the destructive text color — never a frozen or
 empty frame.
 
-## 6d. Invoice usage appendix — per-polygon by state/district (Target Capacity, 2026-10-04)
+## 6d. Invoice usage appendix — per-polygon by state/district (Target Capacity, 2026-10-04; delivered bm45)
 
 A capacity offering's posted invoice PDF (rendered by `render-invoice-template.ts` — print CSS, **not** an app screen) carries a per-polygon usage appendix below the charge lines. It introduces **no new token** and follows the module's existing table conventions (§6b/§8/§9):
 
