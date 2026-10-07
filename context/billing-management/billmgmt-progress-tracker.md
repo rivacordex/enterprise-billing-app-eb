@@ -26,16 +26,24 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
 - **bm40 (2026-10-05)** — Target Capacity Pricing update, Unit 0: extracted-SQL
   harness (TC43) + DB-test safety (TC58); the flow-rename item was already
   satisfied before this unit started. See "Delivered units" below.
-- **Target Capacity Pricing update (bm40–bm46) audited and delivered, with two
-  OPEN items (2026-10-07).** bm42–bm45 shipped the capacity pricing/
-  verification/checksum/appendix behaviour; bm46 audited it (guardrails
-  36–42, invariants #29–#38, `tsc`/lint/DB-free suite all green, migration
-  count confirmed at exactly `0044`) and synced the owning docs. **OPEN:**
-  (1) the live-Kestra capacity journey (TC54) has no runnable harness —
-  `scripts/billrun-live-kestra-smoke.ts` is `ci`-seed-only — separately from
-  this environment lacking a live Postgres/Kestra stack to run it on; (2) the
-  DB-gated capacity suites have not been re-run against a disposable Postgres
-  in this environment. See the bm46 entry below for detail.
+- **Target Capacity Pricing update: bm40–bm45 delivered the implementation;
+  bm46 sign-off remains open (2026-10-07).** bm42–bm45 shipped the capacity
+  pricing/verification/checksum/appendix behaviour. bm46 (the ship gate)
+  audited it: guardrails 36–42 and invariants #29–#38 confirmed present,
+  migration count confirmed at exactly `0044`, `tsc` and lint clean. Vitest
+  (`npx vitest run --pool=threads`) reported **7680 passed, 5 failed, 927
+  skipped** — all 5 failures are argued pre-existing/unrelated to capacity
+  code (see the bm46 entry below for which), but a run with failures is not
+  a green suite, and update-overview.md success criterion 8 ("the vitest
+  suite pass") is **not yet met** on that basis alone. bm46 also synced the
+  owning docs. **OPEN, blocking full bm46 sign-off:** (1) the live-Kestra
+  capacity journey (TC54) has no runnable harness — `scripts/
+  billrun-live-kestra-smoke.ts` is `ci`-seed-only — separately from this
+  environment lacking a live Postgres/Kestra stack to run it on; (2) the
+  DB-gated capacity suites have not been re-run against a disposable
+  Postgres in this environment; (3) the 5 vitest failures above have not
+  been re-verified against a clean checkout. See the bm46 entry below for
+  detail.
 
 ## Delivered units
 
