@@ -21,6 +21,13 @@ recorded in `billmgmt-progress-tracker.md` and `README.md`; the entries here
 are the ones still OPEN, plus the two interim mitigations whose root cause
 (§11) is unaddressed.
 
+**§15–§17 were added by bm46 (2026-10-07), the Target Capacity Ship Gate.**
+§15 and §16 record the Target Capacity Pricing update's (bm40–bm45) ratified
+residuals — accepted trade-offs, not fixed here — per that unit's own
+closeout checklist. §17 is different in kind: it is an **unresolved business
+decision** (O-TC7, partial-period capacity pro-ration), not a ratified
+trade-off — no default has been chosen and none should be assumed.
+
 > **Status legend:** 🟡 deferred (conscious decision) · 🔴 real bug, out of
 > current scope · ⚪ cosmetic / low priority.
 
@@ -614,3 +621,95 @@ plan O-TC6). If rating ever stamps `ratecard_ran_usage_lkp_id` directly onto
 `udr_rated`, revisit both: the appendix join becomes a plain FK lookup
 (no key reconstruction, no coupling) and per-record version pinning becomes
 exact.
+
+---
+
+## 16. 🟡 Model-2 can diverge from Model 1 on fractional multi-row usage (TC40/TC55, accepted)
+
+**Where:** `bill_run_processing.yml`'s `verification` step (the Model-2
+cross-derivation, bm43); `aggregation`'s per-band rounding (bm42).
+
+**Technical.** The two models round at different points in the calculation.
+Model 1 (the billed figure) is `rated_amount + topUp`, where `rated_amount =
+SUM(udr_rated.udr_rated_price)` — each `udr_rated` row's price was already
+rounded (2 dp, HALF_UP) **per PER_UNIT record** by rating, before the bill
+run ever sums them; the top-up/band components are likewise rounded once
+each as they're computed, and `gross`/`net` are *derived* from those
+already-rounded parts, never re-rounded (Inv #34). Model 2 (verification's
+independent cross-derivation, bm43 D3) instead sums the **raw** quantities
+across all of an account's `udr_rated` rows first and rounds the aggregate
+`max(Q, target) × baseRate` **once**, at the end. Because Model 1 accumulates
+one rounding step per record and Model 2 takes exactly one rounding step
+overall, their totals can disagree whenever usage is spread across multiple
+fractional-quantity records — this is about how many individual records were
+rounded, not about whether the **summed** `Q` happens to be a whole number;
+with enough fractional-quantity rows the accumulated per-record rounding can
+put Model 1 more than one cent away from Model 2 even though the aggregate
+`Q` is an integer. This is TC40's accepted per-component rounding rule,
+re-surfaced in verification as TC55's comparison caveat.
+
+**Why deferred.** Fractional usage is not expected for this product's unit
+types this phase (TC45's PER_UNIT rating works in whole units for the
+capacity offerings shipped); the drift is theoretical for the anchors and
+scenarios this phase ships. The durable fix — reconciling Model 1 and Model 2
+at raw (unrounded) scale instead of at the rounded display scale — is
+deferred, not a widened tolerance on the rounded comparison (which would
+mask real rate mismatches instead of fixing the rounding-path mismatch).
+`CAPACITY_RATE_MATCHING` (default ON) is the operational relief if a
+fractional account ever trips the comparison: it raises
+`CAPACITY_RATE_MISMATCH`, a HARD, account-level failure that settles the
+account at `PROCESSING_FAILED` — the account never reaches the four-eyes
+approval step on that run until it's resolved and rerun, while every sibling
+account keeps processing. Set OFF, the same disagreement instead logs a WARN
+and bills Model 1's number, never silently.
+
+**ELI5.** Two different ways of calculating the same bill should give exactly
+the same answer, and they usually do. One way rounds each individual usage
+record as it's added up; the other adds all the raw usage first and rounds
+only once at the end. If usage is split across several fractional records,
+those two approaches can land more than a cent apart — even if the total
+usage itself is a round number — because it's the per-record rounding, not
+the total, that causes the drift. Not expected to happen with this product's
+usage units; if it ever does, there's a switch (the rate-matching gate) that
+either stops the affected account from billing until someone looks, or just
+logs a warning and bills anyway, depending on how it's configured.
+
+**Recommendation.** Accepted as-is (capacity plan TC40/TC55). If a fractional-
+usage capacity offering is ever introduced, reconcile Model 1/Model 2 at raw
+scale before rounding, rather than widening a tolerance on the rounded
+comparison.
+
+---
+
+## 17. 🟡 O-TC7 — partial-period capacity billing is an open business decision
+
+**Where:** scoping (account exclusion), ahead of `bill_run_processing.yml`;
+not a code defect.
+
+**Technical.** A partial-period account (mid-period start, cease or
+suspension) is `EXCLUDED` at scoping before the flow runs (Inv #26,
+unchanged by the Target Capacity Pricing update) — it bills neither recurring
+nor usage for that period, capacity included, and resumes at the next full
+cycle. For a capacity offering this means the commitment floor is simply
+**not charged** for a partial period, which is a revenue question (should a
+pro-rated floor apply, and how) that engineering has deliberately not
+answered: whether and how to pro-rate a partial-period capacity commitment is
+unresolved (capacity plan O-TC7), and no pro-ration method has been built or
+chosen.
+
+**Why deferred.** This is explicitly scoped as a **business** decision, not
+an engineering deferral (`billmgmt-update-overview.md` _Out of scope_;
+`billmgmt-ai-workflow-rules.md` Target Capacity §"Missing or ambiguous" item
+1: "never build a pro-ration method without it"). No default was guessed.
+
+**ELI5.** If a customer with a committed-usage plan only has the service for
+part of a month, right now they simply aren't billed for that month at all
+for that plan — not a fraction of the commitment, not the full commitment,
+nothing. Whether that's the right outcome, or whether they should pay a
+pro-rated share of their commitment, is a business policy question nobody
+has answered yet, so engineering hasn't built anything for it.
+
+**Recommendation.** Stays open until the business rules on partial-period
+capacity billing. When it is resolved, it is a new build unit (a pro-ration
+method is explicitly out of scope for this phase) — not a fix folded into an
+existing unit.

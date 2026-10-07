@@ -26,6 +26,24 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
 - **bm40 (2026-10-05)** — Target Capacity Pricing update, Unit 0: extracted-SQL
   harness (TC43) + DB-test safety (TC58); the flow-rename item was already
   satisfied before this unit started. See "Delivered units" below.
+- **Target Capacity Pricing update: bm40–bm45 delivered the implementation;
+  bm46 sign-off remains open (2026-10-07).** bm42–bm45 shipped the capacity
+  pricing/verification/checksum/appendix behaviour. bm46 (the ship gate)
+  audited it: guardrails 36–42 and invariants #29–#38 confirmed present,
+  migration count confirmed at exactly `0044`, `tsc` and lint clean. Vitest
+  (`npx vitest run --pool=threads`) reported **7680 passed, 5 failed, 927
+  skipped** — all 5 failures are argued pre-existing/unrelated to capacity
+  code (see the bm46 entry below for which), but a run with failures is not
+  a green suite, and update-overview.md success criterion 8 ("the vitest
+  suite pass") is **not yet met** on that basis alone. bm46 also synced the
+  owning docs. **OPEN, blocking full bm46 sign-off:** (1) the live-Kestra
+  capacity journey (TC54) has no runnable harness — `scripts/
+  billrun-live-kestra-smoke.ts` is `ci`-seed-only — separately from this
+  environment lacking a live Postgres/Kestra stack to run it on; (2) the
+  DB-gated capacity suites have not been re-run against a disposable
+  Postgres in this environment; (3) the 5 vitest failures above have not
+  been re-verified against a clean checkout. See the bm46 entry below for
+  detail.
 
 ## Delivered units
 
@@ -802,6 +820,102 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     touching it means editing 6 files not looked at this session, several
     already shipped; flagged here as known debt, not extracted.
 
+### Target Capacity Pricing update — Unit 6 (bm46)
+
+- **bm46 (2026-10-07) — audited; two items remain OPEN (not silently assumed
+  green).** Target Capacity Ship Gate: audit bm40–bm45 guardrails, assemble
+  the update-level proof, confirm no migration beyond bm41's `0044`, sync
+  docs. Spec: `context/billing-management/specs/bm46-capacity-ship-gate.md`.
+  No new build — audit, assemble, sign off (bm13/bm21/bm35/bm39 discipline).
+  Per owner decision this unit (no infra stand-up, no new unverified test
+  code): did everything verifiable in this environment; recorded the rest as
+  explicit open items rather than assuming green.
+  - **Guardrail audit (§1 of the spec) — present and consistent.** Confirmed
+    on disk: the six `CAPACITY_*` guard codes, `capacity_rate_matching` +
+    `capacity_max_bands` flow inputs, and `CAPACITY_APPENDIX_OVER_LIMIT` all
+    present in `bill_run_processing.yml`; no `billing.capacity_charge()`
+    function and no Python pricing task anywhere in `workflow-management/` or
+    `db/migrations/`; `billmgmt-code-standards.md` guardrails 36–42 and
+    architecture Inv #29–#38 are stated as greppable assertions and cite the
+    delivering unit (bm42–bm45) for each; the bm40/bm41/bm42/bm43/bm44/bm45
+    DB-gated test files, the extracted-SQL harness + its self-test, the
+    flow-double fixture helpers, and the destructive-DB preflight all exist on
+    disk at the paths the progress-tracker entries above name. `npm run
+    check:rating-rename-gate` confirms **zero** stale `udr_subscriber_ref_id`
+    references in the real code tree (1340 files scanned) — the only hits
+    found anywhere are inside a stale, untracked `.claude/worktrees/
+    brave-meitner-d65fff/` directory (pre-rename code, not part of the scan
+    roots, not part of this checkout's working tree — see below).
+  - **No-new-migration confirmation (§3) — PASSES.** `db/migrations/` +
+    `_journal.json` end at idx 44 = `0044_customer_bill_line_capacity.sql`
+    (bm41); `0042` is the pre-existing intentionally-unused gap (bm41's own
+    note: "`0041`/`0043` were taken"); nothing beyond `0044` exists. The
+    capacity update's only migration is confirmed to be exactly the one
+    bm41 shipped.
+  - **`tsc`/lint/DB-free suite (§ verification checklist item 7) — GREEN.**
+    `npx tsc --noEmit` clean repo-wide. `npx eslint . --max-warnings=0` clean
+    (exit 0, zero output). `npx vitest run --pool=threads`: **7680 passed, 5
+    failed, 927 skipped (8617 total)**; all 5 failures are **pre-existing and
+    unrelated** to capacity/billing code — 4 are under the same stale,
+    untracked `.claude/worktrees/brave-meitner-d65fff/` leftover tree
+    bm43/bm44 already flagged (ambient-env `AppError`s and a missing
+    `rating-engine/` path from before the `workflow-management/` rename —
+    that tree predates the rename and is not part of this working tree), and
+    the 5th is `tests/product/ratecard-parse-csv.test.ts`'s csv-parse-
+    import-scan hitting its 10s timeout — the exact pre-existing failure
+    bm43/bm44 both documented as "plausibly slowed by that same leftover
+    worktree doubling the file count it walks." No failure touches capacity,
+    checksum, verification, appendix, or bill-line code. The destructive-DB
+    preflight's three refusal paths (`DATABASE_URL` unset,
+    `DESTRUCTIVE_DB_OK` unset, and — by source read, matching bm40's prior
+    direct exercise — an unreachable/non-disposable target) were each
+    re-confirmed directly against `tests/integration-global-setup.ts`.
+  - **OPEN — the live-Kestra capacity journey (§2 of the spec, TC54) has no
+    runnable harness, not just no infra.** Auditing `scripts/
+    billrun-live-kestra-smoke.ts` (the repo's only live-Kestra harness) found
+    it is hardcoded to the `ci` seed profile only — zero references to
+    `capacity` anywhere in the file, and its safety gates (seeded-customer
+    check, single-due-period assumption) are built around the `ci` seed's
+    specific scenario shape. **Even with a running Postgres/Kestra stack,
+    there is currently no tooling that could drive the `_SAMPLE_` `capacity`
+    seed through a live execution and assert the four anchors, the six
+    guards, and the `CAPACITY_RATE_MATCHING` gate ON/OFF** — TC54 is
+    unimplemented, separately from this environment lacking Docker/Postgres.
+    Per owner decision this unit: recorded as a real missing deliverable, not
+    built here (a capacity-aware live-Kestra smoke harness would be
+    substantial, financially-significant new test code this environment
+    cannot execute or verify against live infra — writing it unverified was
+    explicitly declined). **This blocks a true TC54 sign-off** until either a
+    capacity-aware harness is built and run, or the business/eng owner
+    accepts the DB-gated flow-double suites (bm42/bm43/bm45, themselves not
+    re-run against a live Postgres in this environment either) as sufficient
+    proof without a live-Kestra capacity execution.
+  - **OPEN — DB-gated capacity suites not re-run.** Same environment gap as
+    bm40–bm45 (Docker Desktop not running, `DATABASE_URL` unset): the
+    `billrun-capacity-aggregation`/`-verification`/`-appendix`/
+    `customer-bill-line-checksum` integration suites, and the full existing
+    DB-gated suite re-run, remain unexecuted in this environment.
+  - **Docs synced this unit:** `billmgmt-architecture.md` (status line:
+    "Target Capacity Pricing update ... is delivered"; outstanding-items
+    note added) — confirmed Inv #29–#38 already cite their delivering unit,
+    no drift; `billmgmt-code-standards.md` — confirmed guardrails 36–42
+    already stated as greppable assertions citing their delivering unit, no
+    drift, no edit needed; `billmgmt-update-overview.md` (delivered-status
+    banner added); `billmgmt-project-overview.md` (new "Target Capacity
+    Pricing update" section folded in, mirroring the Phase-4 fold-in
+    precedent; current-state callout updated); `billmgmt-known-issues.md`
+    gained **§16** (the TC40/TC55 ≤1¢ Model-1/Model-2 rounding-drift
+    residual on fractional usage, accepted) and **§17** (O-TC7 — partial-
+    period capacity billing, an open business decision, EXCLUDED stands
+    until resolved).
+  - **Not touched, by explicit scope (pre-existing, flagged by prior units,
+    not this unit's to fix):** the stale `.claude/worktrees/
+    brave-meitner-d65fff/` leftover directory (pre-rename code, inflates
+    file-scan counts, not part of any `npm run check:*` scan root); the §13
+    item 2 shared role-password rewrite; the known-issues §11/§12 zero-charge/
+    fully-discounted-bill predicates; `bm00-build-plan.md` still does not
+    exist in this checkout (same gap bm40–bm45 all noted).
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
@@ -814,6 +928,17 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
 - **After pulling grant-file changes:** re-run `db:bootstrap-billrun-roles`.
 - **DB verification:** run the full DB-gated suite + `db:seed-sample` against a
   disposable/CI Postgres — never the shared dev DB (see test-safety gotchas).
+- **Build a capacity-aware live-Kestra smoke harness (bm46 finding, new).**
+  `scripts/billrun-live-kestra-smoke.ts` only knows the `ci` seed profile.
+  TC54 (the capacity update's live-Kestra sign-off proof) needs either a new
+  script or a parameterized extension that targets the `_SAMPLE_` `capacity`
+  seed, drives `SCHEDULED → COMPLETED`, and asserts the four anchors, the six
+  `CAPACITY_*` guards, and the `CAPACITY_RATE_MATCHING` gate ON/OFF. Blocked
+  on a live Postgres/Kestra stack to build it against and verify it on.
+- **Re-run the capacity DB-gated suites** (`billrun-capacity-aggregation`/
+  `-verification`/`-appendix`, `customer-bill-line-checksum`) against a
+  disposable Postgres — not yet executed in any environment this session had
+  access to (bm46).
 
 ## Key decisions (durable)
 
@@ -912,3 +1037,13 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
 - **Receiver hardening deferred (out of bm36 scope).** The run-level `PROCESSING_FAILED`
   `/status` push has no attempt/stale-execution guard (unlike `DISTRIBUTION_*`), and
   `handle-status-push.ts`'s 409 messages are inverted. Fold into a receiver-touching unit.
+- **OPEN (bm46) — TC54's harness doesn't exist.** The live-Kestra capacity
+  journey has no implementation to run, independent of this environment's
+  missing infra. Needs a build decision: extend `billrun-live-kestra-smoke.ts`
+  to accept a seed-profile parameter, or add a sibling script. Not resolved
+  here — recorded as an owner decision pending a live stack to build against.
+- **OPEN (bm46) — O-TC7, partial-period capacity billing.** Whether/how to
+  pro-rate a partial-period capacity commitment is an unresolved **business**
+  decision (`billmgmt-known-issues.md` §17); capacity accounts stay
+  `EXCLUDED` for a partial period until it is answered. Not an engineering
+  deferral — never build a pro-ration method without this decision.
