@@ -44,7 +44,15 @@ Kestra, a real blob store and a real SFTP endpoint.
 > account skippable/rerunnable. **The one remaining item is the cloud cutover** —
 > flipping the deploy flags and running the smoke against a real engine + SFTP — a
 > gated ops step, not a module-build gap (see the Phase 4 section below).
-> Taxation is a ratified `0.00` interim.
+> Taxation is a ratified `0.00` interim. **The Target Capacity Pricing update
+> (bm40–bm46) is delivered** — a commitment floor + motivation discount for
+> RAN_USAGE capacity offerings, computed as inline SQL in the existing
+> `bill_run_processing` flow, plus a per-polygon invoice usage appendix (see the
+> Target Capacity Pricing update section below). **Outstanding for that update:**
+> the live-Kestra capacity journey (TC54) and its DB-gated suites have not been
+> run against a live Postgres/Kestra stack in this checkout's environment
+> (`billmgmt-progress-tracker.md`), and **O-TC7** (partial-period capacity
+> billing) remains an open business decision.
 
 ## Lifecycle
 
@@ -206,6 +214,20 @@ Phases 1–3 built the whole machinery, but a triggered run could not finish on 
 - **End-to-end assertion + reconcile alignment (bm37).** `scripts/billrun-live-kestra-smoke.ts` drives and asserts the full `SCHEDULED → COMPLETED` journey on the `ci` seed — including reject → re-rate → reprocess, a forced processing failure that settles, and distribution with a forced mandatory failure → `DISTRIBUTION_FAILED` → rerun — and confirms the stall/reconcile gate no longer fires on a healthy run while still catching a wedged one (closing the bm16/bm20 live-Kestra gate locally).
 - **Production wiring (bm38 — deployable, gated).** Key Vault secrets + consumer mapping into the shared `workflow-engine` Container App bicep: the `billrun_runtime` DB credential as the `billrun-runtime-db-password` bare-password secret + the `BILLRUN_DB_*` split coords the flow actually reads (**not** the superseded `BILLRUN_RUNTIME_DATABASE_URL` URL), plus `billrun-engine-auth`/`-url` and the SFTP key/known-hosts, and the `billrun_runtime` password provisioning step. No new container — the collapsed-topology shared engine already hosts the `billrun` namespace and the `local-dev` flow is promoted as the production flow. Deploy flags (`deployWorkflowEngine`, `deployRatingFlows`, the billrun flow deploy, `runBillrunLiveKestraSmoke`) are readied but gated; the `template.yml` "separate repo, TBD owner" fiction is corrected; the taxation-`0.00` interim and the cutover runbook are recorded.
 - **Phase-4 exit (bm39).** The assembled phase was audited and signed off — signal-back incl. `FAILED` settlement, the reject/reprocess and distribution paths, and the prod-wiring artifacts all present and green; the full local journey run as the phase proof; no new schema/migration; `billmgmt-progress-tracker.md` updated and `billmgmt-known-issues.md` §9 closed. **The remaining item is the cloud cutover** — flip the gated flags and run the smoke against a real engine + SFTP — a gated ops step, not a module-build gap.
+
+## Target Capacity Pricing update — commitment floor, motivation discount & usage appendix (delivered, bm40–bm46)
+
+_Folded from `billmgmt-update-overview.md` (2026-10-04) per the bm46 ship gate. Users: Revenue Operations (RevOps, in-app) and BSS Ops (Kestra engine). Full design detail (anchors, guards, verification identities, the N-band SQL, the appendix sourcing) stays in `billmgmt-update-overview.md` and `billmgmt-architecture.md` Inv #29–#38 — this section folds the delivered narrative into the module's current state, per the bm13/bm21/bm35/bm39 ship-gate convention._
+
+Phases 1–4 billed usage and recurring charges at a flat per-unit rate. This update adds **target-capacity pricing** for RAN_USAGE offerings — a **commitment floor** (an account using less than its committed quantity is billed as if it used the target) and a **motivation discount** (usage above the target is billed at a lower per-unit rate, recorded as a discount) — computed as inline SQL in the existing `bill_run_processing` flow, plus a **per-polygon invoice usage appendix** grouped by state and district. A prerequisite repair (Unit 0) first fixed the recurring resolver, which a product change (PC14) had broken for every account by reshaping `product_offering_price` into one-row-per-component.
+
+- **Unit 0 — foundation repair (bm40).** The recurring resolver repaired onto the PC14 component schema; the hand-copied flow-double test replaced by a harness that extracts and runs the real `bill_run_processing.yml` SQL; a fail-closed destructive-DB preflight added (and the cross-cluster `DROP DATABASE … WITH (FORCE)` removed).
+- **Schema (bm41).** `customer_bill_line` gains `rated_amount numeric(18,2)` (NULL for RECURRING; = `gross_amount` on non-capacity USAGE) and `additional_info jsonb` (capacity lines only) — migration `0044`, the update's only migration — plus the three `billrun_runtime` read grants the capacity logic needs (`product_specifications`, `ratecard_ran_usage_lkp`, `ratecard_version`).
+- **Capacity aggregation (bm42).** The commitment floor + N-band motivation discount as inline SQL CTEs in `aggregation`, keyed off the subscription's pinned offering version; six HARD guards (`CAPACITY_MULTIPLE_SUBSCRIPTIONS`, `_BASE_RATE_NOT_FOUND`, `_UDR_TYPE_MISMATCH`, `_RATE_MISMATCH`, `_MULTI_STEP_UNSUPPORTED`, `_CURRENCY_MISMATCH`) each fail only their own account while siblings bill; the `additional_info` calc trace; the `capacity_max_bands` single-band production guard.
+- **Verification + the rate-matching gate (bm43).** USAGE lines replay against `rated_amount` (not `gross_amount`, which the top-up inflates); capacity lines replay their internal identities; an independent Model-2 cross-derivation (`max(Q, target) × baseRate`) checks Model 1 (the billed figure) without ever billing from it; `CAPACITY_RATE_MATCHING` (default ON) HARD-fails a mismatch, OFF logs a WARN and bills Model 1 anyway, recording the flag state.
+- **Checksum + read model (bm44).** `charge_checksum` appends `rated_amount` as its last tuple element (never hashing `additional_info`); the bill-line read model surfaces `rated_amount`/`additional_info`; the Customers & Bills discount column un-suppresses for a capacity line's real discount.
+- **Invoice usage appendix (bm45).** The posted invoice (final only, never the draft PRO-FORMA) renders every polygon's usage for the month below the capacity charge, grouped by state then district, with state/district joined from the `productCardLookUp` ratecard; bounded to ≤10,000 rows/account; a card-missing polygon is surfaced, not dropped.
+- **Ship gate (bm46).** Audited the assembled update against guardrails 36–42 and invariants #29–#38; confirmed no migration beyond `0044`; synced this overview, `billmgmt-architecture.md`, `billmgmt-code-standards.md`, `billmgmt-known-issues.md` (the bm45 D2/D4 residuals, the TC40/TC55 rounding-drift residual, and O-TC7) and `billmgmt-progress-tracker.md`. **The live-Kestra capacity journey (TC54) and the DB-gated capacity suites remain outstanding** — not run against a live Postgres/Kestra stack in this checkout's environment; see `billmgmt-progress-tracker.md`. **O-TC7 (partial-period capacity billing) is an open business decision** — partial-period capacity accounts stay `EXCLUDED` until business settles whether/how to pro-rate.
 
 ## Success criteria (module-level)
 

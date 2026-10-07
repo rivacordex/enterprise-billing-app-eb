@@ -2,6 +2,16 @@
 
 _Date: 2026-10-04 · Users: Revenue Operations (RevOps, in-app) and BSS Ops (Kestra engine + deploy layer). Derived from `_updatemodule-billing-billrun-target-capacity-plan.md`. The delivered Phases 1–4 (bm01–bm39) current-state lives in `billmgmt-project-overview.md`._
 
+> **Status (bm46, 2026-10-07): delivered.** Units bm40–bm45 shipped this
+> update's full design below; bm46 (the ship gate) audited it against
+> guardrails 36–42 and invariants #29–#38, confirmed no migration beyond
+> bm41's `0044`, and folded the delivered narrative into
+> `billmgmt-project-overview.md`. **Outstanding:** the live-Kestra capacity
+> journey (TC54) and the DB-gated capacity suites have not been run against a
+> live Postgres/Kestra stack in this checkout's environment; **O-TC7**
+> (partial-period capacity billing) remains an open business decision. See
+> `billmgmt-progress-tracker.md` for both.
+
 ## Overview
 
 The Billing Management module runs monthly bill runs for the Revenue Operations team: it materialises a `bill_run` per cycle, claims each account's already-rated usage from `rating.udr_rated`, derives recurring charges from `inventory.product_inventory`, assembles a draft bill (`customer_bill` + `customer_bill_line`), approves it under a four-eyes gate, posts one `INV` document per account into pgledger through the Accounts engine, renders and stores the invoice PDF, and distributes invoices plus the run report over SFTP. This update adds **target-capacity pricing** for RAN_USAGE offerings — a **commitment floor** (an account that uses less than its committed quantity is billed as if it used the target) and a **motivation discount** (usage above the target is billed at a lower per-unit rate, the difference recorded as a discount) — applied after aggregation at billing-account level as inline SQL in the existing `bill_run_processing` flow, and adds a **per-polygon invoice usage appendix** grouped by state and district. Because a recent product change (PC14) reshaped `product_offering_price` into one row per component, the bill run's recurring resolver no longer matches the schema and fails every account; this update first repairs that (Unit 0, a live P0) before any capacity logic lands. It depends on the finalized `_change-rating-configuration-plan.md` (PER_UNIT rating, the `udr_subscription_ref_id` rename, the real subscriber resolver), treated as shipped by the time this phase's build specs are written.
