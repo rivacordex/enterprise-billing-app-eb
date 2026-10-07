@@ -740,21 +740,67 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     internal versions directly, not those file-level wrappers, so they were
     genuinely dead code; `eslint`'s `no-unused-vars` caught this (bm45 keeps
     its own `newUsageRate`/`newCapacityCommitment` wrappers since
-    `newAppendixCapacityOffering` there calls them directly). The factory is
-    also **memoized per file** (`capacityFixturesInstance ??= ...`) rather
-    than recreated per call like the unrelated `fixtures()` helper above it
-    — it closes over a `seq` counter that must stay unique across every
-    `insertCapacityVolumeRow()` call in a file, unlike the stateless
-    flow-double scaffolding (an early draft recreated it per call, which
-    silently reset `seq` and would have collided every claim row's
-    `udr_key`; caught before commit). No intended behavioural change.
-    Verified: `npx tsc --noEmit` clean repo-wide; `eslint` clean (0
-    warnings) on touched/added files; `render-invoice-template.test.ts`'s own
-    suite re-run (32/32 passing, `--pool=threads`). **NOT re-run against a
-    live DB in this environment** (no reachable Postgres/Docker daemon here,
-    same gap as bm40–bm45) — the bm42/bm43/bm45 DB-gated suites need re-running
-    against a disposable Postgres before merge to confirm the extraction is
-    behaviour-preserving.
+    `newAppendixCapacityOffering` there calls them directly). An early draft
+    recreated the factory per call (`capacityFixtures()` as a function,
+    mirroring `fixtures()`'s pattern above it), which silently reset `seq`
+    and would have collided every claim row's `udr_key` — caught before
+    commit by memoizing it instead (`capacityFixturesInstance ??= ...`).
+    No intended behavioural change. Verified: `npx tsc --noEmit` clean
+    repo-wide; `eslint` clean (0 warnings) on touched/added files;
+    `render-invoice-template.test.ts`'s own suite re-run (32/32 passing,
+    `--pool=threads`). **NOT re-run against a live DB in this environment**
+    (no reachable Postgres/Docker daemon here, same gap as bm40–bm45) — the
+    bm42/bm43/bm45 DB-gated suites need re-running against a disposable
+    Postgres before merge to confirm the extraction is behaviour-preserving.
+  - **SonarQube fix, round 2 (2026-10-07) — re-check showed (a) was
+    barely moved (18.6% → 18.2% on bm45) and surfaced a second, pre-existing
+    duplicate.** Two things, both caught by re-running Sonar and eslint after
+    the round-1 fix above, not by inspection alone:
+    (1) The per-file `let capacityFixturesInstance; function
+    capacityFixtures() { return (capacityFixturesInstance ??=
+    createCapacityPricingFixtures({...})); }` memoization block round-1
+    introduced was itself near-identical across bm42/bm43/bm45 (bar
+    `labelPrefix`) — a brand-new 3-way duplicate, self-inflicted by the fix
+    that was supposed to remove duplication. Fixed by changing
+    `CapacityPricingFixturesDeps.sql` to `getSql: () => postgresjs.Sql` (the
+    same deferred-read trick `fixtures()` already uses for
+    `getActorId`/`getCycleId`): since the factory now defers reading `sql`
+    to invocation time rather than construction time, each file can call
+    `createCapacityPricingFixtures(...)` ONCE, eagerly, as a plain `const`
+    — no per-file memoization boilerplate needed at all.
+    (2) `setupSingleAccountCapacity` (account + offering + run + inventory
+    keyed by `label`) was byte-identical between bm42 and bm43 bar label
+    strings — pre-existing (bm43's own comment said "mirroring bm42's
+    setupSingleAccountCapacity," hand-copied when bm43 was written) and
+    never part of either reported finding, since it doesn't touch bm45 at
+    all (bm45's own `setupAccount` is differently shaped — it also seeds the
+    ratecard-lookup specs). Moved into
+    `billrun-capacity-pricing-fixtures.ts` too, gated on three new deps
+    (`newAccount`/`newRun`/`newInventory`) that bm45 must now also supply
+    (uniform interface) even though it never calls this particular method.
+    `labelPrefix` substitutes for the hardcoded "BM42"/"BM43" in the
+    generated `runId`/`piId`/`orderItemId` strings — reproduces the exact
+    same values. bm42 and bm43 each dropped ~42 lines net; bm45 is roughly
+    flat (gained the three new deps, lost the memoization block it never
+    needed fixture-sharing for in the first place). Verified: `npx tsc
+    --noEmit` clean repo-wide; `eslint` clean (0 warnings, confirmed via a
+    second full lint pass — the first one after round 1 had already caught
+    `newUsageRate`/`newCapacityCommitment`/`newCapacityMotivation` as dead
+    wrappers in bm42/bm43, this round caught `newCapacityOffering` as dead
+    in bm43 specifically, since bm43 — unlike bm42's Multi-Sub tests — never
+    calls it directly outside `setupSingleAccountCapacity`).
+    **Still NOT re-run against a live DB in this environment** — same gap as
+    above. **Also still out of scope, by explicit owner decision this
+    round:** the `beforeAll`/`afterAll` DB-bootstrap boilerplate
+    (`billrun_delete_trial_bill` + `appuser` + `billCycle` setup, ~44 lines)
+    duplicated across bm42/bm43/bm45 AND six other flow-double suites
+    (`billrun-aggregation`, `billrun-recurring-aggregation`,
+    `billrun-volume-aggregation`, `billrun-db-roles`, `billrun-phase3-journey`,
+    `billrun-verification-reconciliation`) — ~400 lines total, the oldest
+    and widest-spread duplication found, predating this session. Likely
+    still contributes to any residual Sonar percentage on these 3 files, but
+    touching it means editing 6 files not looked at this session, several
+    already shipped; flagged here as known debt, not extracted.
 
 ## Outstanding / Next (post-Phase 4)
 

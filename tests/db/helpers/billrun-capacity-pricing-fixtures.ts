@@ -17,13 +17,37 @@ import { persistablePricingComponentSchema } from "@/validation/product/pricing-
 // separate, more generic scaffolding, which this file's `newOffering`/
 // `newProductSpec` deps are expected to come from.
 export interface CapacityPricingFixturesDeps {
-  readonly sql: postgresjs.Sql;
+  // A getter, not the client itself: `sql`/`db` are normally only assigned
+  // inside `beforeAll`, so this factory — like `createFlowDoubleFixtures`'s
+  // `getActorId`/`getCycleId` — can be created ONCE, synchronously, at
+  // describe-body eval time, deferring the actual read until a returned
+  // function is invoked from inside a test. That in turn means callers don't
+  // need their own lazy-init/memoization boilerplate: this factory already
+  // closes over a `seq` counter that must survive across every
+  // insertCapacityVolumeRow() call, so a single eagerly-created instance is
+  // both simpler and correct, where recreating it per call (as
+  // `createFlowDoubleFixtures` deliberately does, having no such state)
+  // would silently reset `seq`.
+  readonly getSql: () => postgresjs.Sql;
   readonly newOffering: (name: string) => Promise<string>;
   readonly newProductSpec: (
     offeringId: string,
     name: string,
     defaultValue: string,
   ) => Promise<void>;
+  // Only used by setupSingleAccountCapacity (bm42/bm43's shape; bm45 has its
+  // own differently-shaped setupAccount and never calls it, but still needs
+  // to supply these three since the interface is uniform across callers).
+  readonly newAccount: (label: string) => Promise<string>;
+  readonly newRun: (runId: string) => Promise<void>;
+  readonly newInventory: (args: {
+    piId: string;
+    ban: string;
+    offeringId: string;
+    quantity: number;
+    orderItemId: string;
+    status?: string;
+  }) => Promise<void>;
   // udr_rated claim window — IN_WINDOW in each caller file.
   readonly claimAt: string;
   // Naming/labeling prefix, e.g. "BM42" (also lower-cased for the udr_key/
@@ -32,7 +56,16 @@ export interface CapacityPricingFixturesDeps {
 }
 
 export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps) {
-  const { sql, newOffering, newProductSpec, claimAt, labelPrefix } = deps;
+  const {
+    getSql,
+    newOffering,
+    newProductSpec,
+    newAccount,
+    newRun,
+    newInventory,
+    claimAt,
+    labelPrefix,
+  } = deps;
   const lower = labelPrefix.toLowerCase();
   let seq = 0;
 
@@ -48,6 +81,7 @@ export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps)
     currency: string,
     startIso: string,
   ): Promise<string> {
+    const sql = getSql();
     const [row] = await sql<{ product_offering_price_id: string }[]>`
       INSERT INTO product.product_offering_price
         (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
@@ -197,6 +231,40 @@ export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps)
     return { offeringId, usageRatePriceId };
   }
 
+  // Shared single-account capacity fixture: account + offering + run +
+  // inventory, keyed off `label` (bm42/bm43's shape — reduces the setup
+  // duplication that recurs across their own anchor/guard test cases; bm45
+  // has its own differently-shaped setupAccount, which also seeds the
+  // ratecard-lookup specs this one doesn't, and doesn't call this).
+  async function setupSingleAccountCapacity(
+    label: string,
+    offeringName: string,
+    offeringOpts: Parameters<typeof newCapacityOffering>[1],
+  ): Promise<{
+    ban: string;
+    offeringId: string;
+    usageRatePriceId: string | null;
+    runId: string;
+    piId: string;
+  }> {
+    const ban = await newAccount(label);
+    const { offeringId, usageRatePriceId } = await newCapacityOffering(
+      offeringName,
+      offeringOpts,
+    );
+    const runId = `BRN-${labelPrefix}-${label.toUpperCase()}`;
+    const piId = `PRDINV-${labelPrefix}-${label.toUpperCase()}`;
+    await newRun(runId);
+    await newInventory({
+      piId,
+      ban,
+      offeringId,
+      quantity: 1,
+      orderItemId: `_${lower}-oi-${label.toLowerCase()}`,
+    });
+    return { ban, offeringId, usageRatePriceId, runId, piId };
+  }
+
   // One claimed capacity-volume row (the PER_UNIT shape G2 requires). A
   // single row of `quantityEa` (rather than N 1-EA rows, the seed's shape) is
   // equivalent for the aggregation SQL — it only SUMs — and far faster for a
@@ -226,6 +294,7 @@ export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps)
       args.rate !== null
         ? (args.quantityEa * Number(args.rate)).toFixed(2)
         : "0.00";
+    const sql = getSql();
     await sql`
       INSERT INTO rating.udr_rated
         (partition_period, udr_type, start_datetime, end_datetime, status,
@@ -252,6 +321,7 @@ export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps)
     newCapacityCommitment,
     newCapacityMotivation,
     newCapacityOffering,
+    setupSingleAccountCapacity,
     insertCapacityVolumeRow,
   };
 }

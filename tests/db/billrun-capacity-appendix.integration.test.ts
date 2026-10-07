@@ -91,30 +91,33 @@ describe.skipIf(!databaseUrl)(
 
     // The shared capacity-pricing fixture scaffolding (newUsageRate/
     // newCapacityCommitment/insertCapacityVolumeRow — bm45 needs no
-    // newCapacityMotivation/newCapacityOffering, the appendix join being
-    // orthogonal to the band math) — see billrun-capacity-pricing-fixtures.ts
-    // for why this is factored out of this file and bm42's/bm43's (this is
-    // the documented third-occurrence trigger). Memoized (not recreated per
-    // call): the factory's `seq` counter must stay unique across every
-    // insertCapacityVolumeRow() call in this file.
-    let capacityFixturesInstance:
-      | ReturnType<typeof createCapacityPricingFixtures>
-      | undefined;
-    function capacityFixtures() {
-      return (capacityFixturesInstance ??= createCapacityPricingFixtures({
-        sql,
-        newOffering,
-        newProductSpec,
-        claimAt: IN_WINDOW,
-        labelPrefix: "BM45",
-      }));
-    }
+    // newCapacityMotivation/newCapacityOffering/setupSingleAccountCapacity,
+    // the appendix join being orthogonal to the band math, and has its own
+    // differently-shaped setupAccount below) — see
+    // billrun-capacity-pricing-fixtures.ts for why this is factored out of
+    // this file and bm42's/bm43's (this is the documented third-occurrence
+    // trigger). Created ONCE, eagerly: `getSql` defers the actual `sql` read
+    // to invocation time (same trick `fixtures()` above uses for
+    // actorId/cycleId), so — unlike `fixtures()`, which is recreated per call
+    // because it has no state — this factory can be a single instance for
+    // the whole file. It must be: it closes over a `seq` counter that has to
+    // stay unique across every insertCapacityVolumeRow() call here.
+    const capacityFixtures = createCapacityPricingFixtures({
+      getSql: () => sql,
+      newOffering,
+      newProductSpec,
+      newAccount,
+      newRun,
+      newInventory,
+      claimAt: IN_WINDOW,
+      labelPrefix: "BM45",
+    });
     const newUsageRate = (
       offeringId: string,
       unitOfMeasure: string,
       ratePerUnit: string,
     ) =>
-      capacityFixtures().newUsageRate(
+      capacityFixtures.newUsageRate(
         offeringId,
         unitOfMeasure,
         ratePerUnit,
@@ -125,7 +128,7 @@ describe.skipIf(!databaseUrl)(
       unitOfMeasure: string,
       committedQuantity: number,
     ) =>
-      capacityFixtures().newCapacityCommitment(
+      capacityFixtures.newCapacityCommitment(
         offeringId,
         unitOfMeasure,
         committedQuantity,
@@ -219,7 +222,7 @@ describe.skipIf(!databaseUrl)(
       priceRef: string;
       polygonId: string;
     }) =>
-      capacityFixtures().insertCapacityVolumeRow({
+      capacityFixtures.insertCapacityVolumeRow({
         subRef: args.subRef,
         runId: args.runId,
         ban: args.ban,

@@ -91,40 +91,29 @@ describe.skipIf(!databaseUrl)(
 
     // The shared capacity-pricing fixture scaffolding (insertOfferingPrice/
     // newUsageRate/newCapacityCommitment/newCapacityMotivation/
-    // newCapacityOffering/insertCapacityVolumeRow) — see
-    // billrun-capacity-pricing-fixtures.ts for why this is factored out of
-    // this file and bm42's (byte-identical bar "BM42"/"BM43" label strings;
-    // bm45 needing the same fixtures a third time was the documented trigger
-    // — billmgmt-progress-tracker.md). Memoized (unlike `fixtures()` above):
-    // the factory closes over a `seq` counter that must stay unique across
-    // every insertCapacityVolumeRow() call in this file, not reset per call.
-    // Only `newCapacityOffering`/`insertCapacityVolumeRow` are exposed here
-    // — this file never calls newUsageRate/newCapacityCommitment/
-    // newCapacityMotivation directly, only through newCapacityOffering's own
-    // (shared-factory-internal) composition.
-    let capacityFixturesInstance:
-      | ReturnType<typeof createCapacityPricingFixtures>
-      | undefined;
-    function capacityFixtures() {
-      return (capacityFixturesInstance ??= createCapacityPricingFixtures({
-        sql,
-        newOffering,
-        newProductSpec,
-        claimAt: IN_WINDOW,
-        labelPrefix: "BM43",
-      }));
-    }
-    const newCapacityOffering = (
-      name: string,
-      opts: Parameters<
-        ReturnType<typeof createCapacityPricingFixtures>["newCapacityOffering"]
-      >[1],
-    ) => capacityFixtures().newCapacityOffering(name, opts);
-    const insertCapacityVolumeRow = (
-      args: Parameters<
-        ReturnType<typeof createCapacityPricingFixtures>["insertCapacityVolumeRow"]
-      >[0],
-    ) => capacityFixtures().insertCapacityVolumeRow(args);
+    // newCapacityOffering/setupSingleAccountCapacity/insertCapacityVolumeRow)
+    // — see billrun-capacity-pricing-fixtures.ts for why this is factored out
+    // of this file and bm42's (byte-identical bar "BM42"/"BM43" label
+    // strings; bm45 needing the same fixtures a third time was the
+    // documented trigger — billmgmt-progress-tracker.md). Created ONCE,
+    // eagerly: `getSql` defers the actual `sql` read to invocation time (same
+    // trick `fixtures()` above uses for actorId/cycleId), so — unlike
+    // `fixtures()`, which is recreated per call because it has no state —
+    // this factory can be a single instance for the whole file. It must be:
+    // it closes over a `seq` counter that has to stay unique across every
+    // insertCapacityVolumeRow() call here.
+    const capacityFixtures = createCapacityPricingFixtures({
+      getSql: () => sql,
+      newOffering,
+      newProductSpec,
+      newAccount,
+      newRun,
+      newInventory,
+      claimAt: IN_WINDOW,
+      labelPrefix: "BM43",
+    });
+    const setupSingleAccountCapacity = capacityFixtures.setupSingleAccountCapacity;
+    const insertCapacityVolumeRow = capacityFixtures.insertCapacityVolumeRow;
 
     async function aggregate(
       runId: string,
@@ -171,37 +160,6 @@ describe.skipIf(!databaseUrl)(
         LIMIT  1
       `;
       return row!.customer_bill_line_id;
-    }
-
-    // Single-account capacity fixture (account + offering + run + inventory),
-    // mirroring bm42's setupSingleAccountCapacity.
-    async function setupSingleAccountCapacity(
-      label: string,
-      offeringName: string,
-      offeringOpts: Parameters<typeof newCapacityOffering>[1],
-    ): Promise<{
-      ban: string;
-      offeringId: string;
-      usageRatePriceId: string | null;
-      runId: string;
-      piId: string;
-    }> {
-      const ban = await newAccount(label);
-      const { offeringId, usageRatePriceId } = await newCapacityOffering(
-        offeringName,
-        offeringOpts,
-      );
-      const runId = `BRN-BM43-${label.toUpperCase()}`;
-      const piId = `PRDINV-BM43-${label.toUpperCase()}`;
-      await newRun(runId);
-      await newInventory({
-        piId,
-        ban,
-        offeringId,
-        quantity: 1,
-        orderItemId: `_bm43-oi-${label.toLowerCase()}`,
-      });
-      return { ban, offeringId, usageRatePriceId, runId, piId };
     }
 
     // Shared single-line fixture: setupSingleAccountCapacity() + a single
