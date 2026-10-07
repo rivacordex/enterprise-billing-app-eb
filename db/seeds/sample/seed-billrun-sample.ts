@@ -39,6 +39,7 @@ import {
   buildSampleUdrRatedRow,
   type SampleUdrRatedRow,
 } from "@/db/seeds/sample/udr-rated-sample";
+import { ensureSampleCapacityUsageCard } from "@/db/seeds/sample/capacity-usage-card";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import {
   assertNonProductionUrl,
@@ -88,6 +89,71 @@ const SAMPLE_CAPACITY_MOTIVATION_RATE = "50";
 const SAMPLE_CAPACITY_CARD_NAME = "_SAMPLE_ Capacity Service Card";
 const SAMPLE_CAPACITY_UDR_TYPE = "RAN_USAGE";
 
+// bm45-spec §Implementation §4 — every capacity PER_UNIT row now carries a
+// canonical cell (D2), so even the four anchors below get a synthetic,
+// per-row-unique polygon identity (never seeded on the usage card — they
+// render "Unmapped" if their invoice's appendix is ever viewed, which is
+// correct per D3, not a defect; they exist for the aggregation/guard
+// suites, not the appendix). The appendix fixture's own cells share ONE
+// subscriber identity (one subscription, one commercial unit) across >= 4
+// real polygons.
+const SAMPLE_CAPACITY_ANCHOR_MNO = "MNO-SAMPLE-ANCHOR";
+const SAMPLE_CAPACITY_ANCHOR_COMMERCIAL_UNIT = "CU-SAMPLE-ANCHOR";
+const SAMPLE_CAPACITY_APPENDIX_MNO = "MNO-SAMPLE-APPENDIX";
+const SAMPLE_CAPACITY_APPENDIX_COMMERCIAL_UNIT = "CU-SAMPLE-APPENDIX";
+
+// bm45-spec §Implementation §4 — the appendix fixture: >= 4 mapped polygons
+// over >= 2 states and >= 2 districts, plus one polygon with usage but NO
+// matching lookup-card row (D3). Quantities sum to exactly the fixture's
+// committed quantity (1000 EA) so this account's bill is a clean,
+// predictable "at target" anchor (net = rated_amount = 100,000, zero top-up,
+// zero discount) — the appendix behaviour is orthogonal to the pricing
+// anchors above and should not need its own pricing-math verification.
+interface CapacityAppendixCell {
+  polygonId: string;
+  usageQuantityEa: number;
+  mapped: boolean;
+  state?: string;
+  district?: string;
+  serviceCode?: string;
+}
+const SAMPLE_CAPACITY_APPENDIX_CELLS: readonly CapacityAppendixCell[] = [
+  {
+    polygonId: "POLY-APX-001",
+    usageQuantityEa: 300,
+    mapped: true,
+    state: "Selangor",
+    district: "Petaling",
+    serviceCode: "SVC-100",
+  },
+  {
+    polygonId: "POLY-APX-002",
+    usageQuantityEa: 250,
+    mapped: true,
+    state: "Selangor",
+    district: "Klang",
+    serviceCode: "SVC-101",
+  },
+  {
+    polygonId: "POLY-APX-003",
+    usageQuantityEa: 200,
+    mapped: true,
+    state: "Johor",
+    district: "Johor Bahru",
+    serviceCode: "SVC-102",
+  },
+  {
+    polygonId: "POLY-APX-004",
+    usageQuantityEa: 150,
+    mapped: true,
+    state: "Johor",
+    district: "Muar",
+    serviceCode: "SVC-103",
+  },
+  // D3 — usage, no matching lookup-card row: never seeded into the usage card.
+  { polygonId: "POLY-APX-UNMAPPED", usageQuantityEa: 100, mapped: false },
+];
+
 // bm26-spec §Implementation §2 — the `ci` profile: six scenarios covering the
 // shapes Collection (bm27) / Aggregation (bm28) / recurring-derivation (bm29) /
 // exception surfacing (bm32) must handle. "Recurring" is represented by real
@@ -134,7 +200,8 @@ type ScenarioKey =
   | "capacity-below-target"
   | "capacity-at-target"
   | "capacity-above-target"
-  | "capacity-zero-usage";
+  | "capacity-zero-usage"
+  | "capacity-appendix-multi-polygon";
 
 interface ScenarioSpec {
   key: ScenarioKey;
@@ -157,6 +224,11 @@ interface ScenarioSpec {
   // distinguished by `scenario.capacityUsageEa !== undefined` at the call
   // site, never truthiness.
   capacityUsageEa?: number;
+  // bm45-spec §Implementation §4 — the appendix scenario's per-polygon cells,
+  // in place of `capacityUsageEa`'s single EA count. Exactly one of the two
+  // is ever set on a capacity scenario; `seedSampleCapacityCharges` branches
+  // on which.
+  capacityAppendixCells?: readonly CapacityAppendixCell[];
 }
 
 const CI_SCENARIOS: readonly ScenarioSpec[] = [
@@ -269,6 +341,21 @@ const CAPACITY_SCENARIOS: readonly ScenarioSpec[] = [
     usageRowsPerSubscription: 0,
     billNotUsedRows: 0,
     capacityUsageEa: 0,
+  },
+  // bm45-spec §Implementation §4 — the appendix fixture: one ADDITIONAL
+  // multi-polygon account alongside the four anchors above (never replacing
+  // one of them). Spreads 1000 EA across >= 4 polygons over >= 2 states/
+  // >= 2 districts plus one card-missing polygon (D3); 1000 EA == the
+  // commitment target, so this bills as a clean "at target" anchor
+  // (net = 100,000) independent of the appendix rendering itself.
+  {
+    key: "capacity-appendix-multi-polygon",
+    banName: "_SAMPLE_ Capacity Billing Account 5 (multi-polygon appendix)",
+    isFullPeriod: true,
+    subscriptionCount: 1,
+    usageRowsPerSubscription: 0,
+    billNotUsedRows: 0,
+    capacityAppendixCells: SAMPLE_CAPACITY_APPENDIX_CELLS,
   },
 ];
 
@@ -1358,12 +1445,18 @@ async function seedSampleCharges(
 
 // bm42-spec §Implementation §7 — the capacity profile's charges: PER_UNIT
 // rows only (the factory extension, udr-rated-sample.ts §Implementation §7),
-// never the FLAT shape `seedSampleCharges` emits. `capacityUsageEa` seeds that
-// many 1-EA rows at the fixture's base rate against the account's one capacity
-// subscription, so Σ udr_usage_quantity = EA and Σ udr_rated_price = EA ×
-// base rate — bm42's capacity aggregation reproduces the anchor fixture
-// exactly. Zero EA (the TC15 anchor) seeds no rows: the capacity line is
-// generated from the subscription, never from the presence of rated rows.
+// never the FLAT shape `seedSampleCharges` emits. Every row now also carries
+// a D2 canonical `polygonCell` (bm45-spec §Implementation §4) — an anchor
+// scenario (`capacityUsageEa`) gets one synthetic, per-row-unique polygon
+// (never seeded onto the usage card, so it renders "Unmapped" if ever
+// viewed — correct, not a defect); the appendix scenario
+// (`capacityAppendixCells`) gets one row PER POLYGON at that polygon's own
+// quantity, and its mapped cells ARE seeded onto the usage card first so the
+// aggregation flow's D2 join resolves them. Σ udr_usage_quantity = EA and
+// Σ udr_rated_price = EA × base rate either way, so bm42's capacity
+// aggregation reproduces every anchor exactly. Zero EA (the TC15 anchor)
+// seeds no rows: the capacity line is generated from the subscription, never
+// from the presence of rated rows.
 async function seedSampleCapacityCharges(
   accountSubscriptions: AccountSubscriptions[],
   usageRatePriceRef: string,
@@ -1375,21 +1468,77 @@ async function seedSampleCapacityCharges(
     periodEnd,
   );
 
+  // bm45-spec §Implementation §4 — seed the usage card ONCE, before any
+  // udr_rated row, with every scenario's MAPPED cells (never the
+  // card-missing one). `productCardLookUp` names this exact card name
+  // (ensureSampleCapacityOffering, above), so the aggregation flow's ACTIVE-
+  // version resolution finds it.
+  const mappedPolygons = accountSubscriptions.flatMap(({ account }) =>
+    (account.scenario.capacityAppendixCells ?? [])
+      .filter((cell) => cell.mapped)
+      .map((cell) => ({
+        mnoPublicKey: SAMPLE_CAPACITY_APPENDIX_MNO,
+        commercialUnitPublicKey: SAMPLE_CAPACITY_APPENDIX_COMMERCIAL_UNIT,
+        polygonId: cell.polygonId,
+        state: cell.state ?? "",
+        district: cell.district ?? "",
+        serviceCode: cell.serviceCode,
+      })),
+  );
+  if (mappedPolygons.length > 0) {
+    await ensureSampleCapacityUsageCard(
+      SAMPLE_CAPACITY_CARD_NAME,
+      mappedPolygons,
+    );
+  }
+
   const rows: SampleUdrRatedRow[] = [];
   let sequence = 0;
 
   for (const { account, productInventoryIds } of accountSubscriptions) {
     const { scenario } = account;
-    const capacityUsageEa = scenario.capacityUsageEa;
-    if (capacityUsageEa === undefined) {
-      throw new Error(
-        `db:seed-sample: capacity profile scenario "${scenario.key}" has no capacityUsageEa.`,
-      );
-    }
     const anchorInventoryId = productInventoryIds[0];
     if (!anchorInventoryId) {
       throw new Error(
         `db:seed-sample: capacity profile scenario "${scenario.key}" has no subscription to anchor its usage.`,
+      );
+    }
+
+    if (scenario.capacityAppendixCells) {
+      for (const cell of scenario.capacityAppendixCells) {
+        sequence += 1;
+        rows.push(
+          buildSampleUdrRatedRow({
+            ban: account.billingAccountId,
+            subscriberRefId: anchorInventoryId,
+            priceRef: usageRatePriceRef,
+            startDatetime,
+            endDatetime,
+            ratedPrice: `${cell.usageQuantityEa * Number(SAMPLE_CAPACITY_BASE_RATE)}.00`,
+            currency: CURRENCY,
+            status: "RATED",
+            sequence,
+            udrType: SAMPLE_CAPACITY_UDR_TYPE,
+            usageQuantity: cell.usageQuantityEa,
+            usageRate: SAMPLE_CAPACITY_BASE_RATE,
+            rateType: "PER_UNIT",
+            usageUnit: SAMPLE_CAPACITY_UNIT,
+            polygonCell: {
+              mnoPublicKey: SAMPLE_CAPACITY_APPENDIX_MNO,
+              commercialUnitPublicKey:
+                SAMPLE_CAPACITY_APPENDIX_COMMERCIAL_UNIT,
+              polygonId: cell.polygonId,
+            },
+          }),
+        );
+      }
+      continue;
+    }
+
+    const capacityUsageEa = scenario.capacityUsageEa;
+    if (capacityUsageEa === undefined) {
+      throw new Error(
+        `db:seed-sample: capacity profile scenario "${scenario.key}" has no capacityUsageEa or capacityAppendixCells.`,
       );
     }
 
@@ -1411,6 +1560,13 @@ async function seedSampleCapacityCharges(
           usageRate: SAMPLE_CAPACITY_BASE_RATE,
           rateType: "PER_UNIT",
           usageUnit: SAMPLE_CAPACITY_UNIT,
+          // bm45-spec §Implementation §4 — a synthetic, per-row-unique
+          // canonical polygon (D2 shape), never seeded onto the usage card.
+          polygonCell: {
+            mnoPublicKey: SAMPLE_CAPACITY_ANCHOR_MNO,
+            commercialUnitPublicKey: SAMPLE_CAPACITY_ANCHOR_COMMERCIAL_UNIT,
+            polygonId: `${account.billingAccountId}-${sequence}`,
+          },
         }),
       );
     }

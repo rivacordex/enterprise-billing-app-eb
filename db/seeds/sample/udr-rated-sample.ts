@@ -37,6 +37,18 @@ export interface SampleChargeSpec {
   usageRate?: string; // per-unit rate (money string), required with PER_UNIT
   rateType?: "FLAT" | "PER_UNIT";
   usageUnit?: string; // default "EA"
+  // bm45-spec §Implementation §4 (D2) — when present, `udr_key` is built as
+  // the CANONICAL cell `commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>`
+  // (lower+trim, sorted key names) instead of the generic JSON shape — the
+  // format the invoice-appendix join reconstructs from the ratecard columns
+  // and matches against this exact string. Capacity-profile PER_UNIT rows
+  // always supply this; every other caller (FLAT `ci`/`volume` rows) omits it
+  // and keeps the untouched JSON `udr_key`.
+  polygonCell?: {
+    mnoPublicKey: string;
+    commercialUnitPublicKey: string;
+    polygonId: string;
+  };
 }
 
 // A row shaped exactly like `UdrRatedInsert` except `partitionPeriod`, which
@@ -47,11 +59,25 @@ export type SampleUdrRatedRow = Omit<UdrRatedInsert, "partitionPeriod"> & {
   partitionPeriod: SQL;
 };
 
-// Sorted-key, fixed-format `udr_key` (rm01-spec D5 precedent: half the
-// table's natural key). JSON.stringify on an object literal with keys
-// already declared in alphabetical order is deterministic across engines —
-// no external sort routine is needed for a four-field key.
+// Sorted-key, fixed-format `udr_key`. Two shapes:
+//  - the CANONICAL RAN_USAGE cell (`spec.polygonCell` present) — sorted key
+//    names `commercial_unit|mno_public_id|polygon_id`, values
+//    `lower(trim(...))`, `|`-joined — exactly the string the aggregation
+//    flow's D2 join reconstructs from the ratecard columns and matches
+//    against (bm45-spec §Implementation §4).
+//  - the pre-bm45 generic shape (rm01-spec D5 precedent: half the table's
+//    natural key) for every other caller — JSON.stringify on an object
+//    literal with keys already declared in alphabetical order is
+//    deterministic across engines, no external sort routine needed.
 function buildUdrKey(spec: SampleChargeSpec): string {
+  if (spec.polygonCell) {
+    const normalise = (value: string) => value.trim().toLowerCase();
+    return (
+      `commercial_unit=${normalise(spec.polygonCell.commercialUnitPublicKey)}` +
+      `|mno_public_id=${normalise(spec.polygonCell.mnoPublicKey)}` +
+      `|polygon_id=${normalise(spec.polygonCell.polygonId)}`
+    );
+  }
   return JSON.stringify({
     ban: spec.ban,
     priceRef: spec.priceRef,

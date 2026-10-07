@@ -1,4 +1,6 @@
 import { formatCalendarDate, formatCurrency } from "@/lib/formatters";
+import { sum as sumMoney } from "@/services/accounts/money";
+import type { InvoiceUsageAppendixRow } from "@/types/billing";
 
 // bm18-spec §Design "One throwaway template" — a single hand-built HTML/CSS
 // invoice template, deliberately NOT the production `bill_template_version`/
@@ -49,12 +51,25 @@ export interface BuildDraftInvoiceHtmlParams {
   locale: string;
 }
 
+// bm45-spec §Implementation §2/§3 — one per-polygon appendix row shaped for
+// render: the stored `InvoiceUsageAppendixRow` (from `CapacityCalcTrace.
+// appendix`, no `unit` field) plus the capacity line's own `unit`, attached
+// by the orchestrator (`render-invoice.ts`) when it shapes the template
+// param.
+export interface InvoiceAppendixRenderRow extends InvoiceUsageAppendixRow {
+  unit: string;
+}
+
 // bm19-spec §Design "Final render = draft renderer, no watermark, real
 // number" — the final (posted) invoice reuses this same template/params
 // shape, only substituting the real `INV…` number for the "pending
-// posting" placeholder and dropping the watermark entirely.
+// posting" placeholder and dropping the watermark entirely. bm45-spec
+// §Implementation §3/§Design D5 — `appendix` is optional and FINAL-ONLY (the
+// draft params type below carries no such field at all); rendered only when
+// present and non-empty.
 export interface BuildFinalInvoiceHtmlParams extends BuildDraftInvoiceHtmlParams {
   invoiceNumber: string;
+  appendix?: InvoiceAppendixRenderRow[] | undefined;
 }
 
 // Draft ≠ a valid invoice (Design): no invoice number exists pre-posting
@@ -84,7 +99,16 @@ export function buildFinalInvoiceHtml({
 }
 
 function renderInvoiceHtml(
-  { bill, taxItems, lines, run, locale }: BuildDraftInvoiceHtmlParams,
+  {
+    bill,
+    taxItems,
+    lines,
+    run,
+    locale,
+    appendix,
+  }: BuildDraftInvoiceHtmlParams & {
+    appendix?: InvoiceAppendixRenderRow[] | undefined;
+  },
   { invoiceNumber }: { invoiceNumber: string | null },
 ): string {
   const isDraft = invoiceNumber === null;
@@ -176,6 +200,20 @@ function renderInvoiceHtml(
   tfoot td { border-bottom: none; padding-top: 8px; }
   tfoot tr.total td { font-weight: 700; font-size: 13px; border-top: 1px solid #1a1a1a; padding-top: 8px; }
   .footer-note { margin-top: 28px; font-size: 10px; color: #6a7283; }
+  /* bm45-spec §Implementation §3 / ui-context §6d — the per-polygon usage
+     appendix. Reuses the shared table/tabular-nums rules above; no new
+     token. .section-label is the state/"Unmapped" heading (--text-overline
+     shape: uppercase, letter-spaced, muted); .unmapped-label recolors it
+     into the Info family (informational, never danger) per ui-context §6d. */
+  .appendix { margin-top: 32px; page-break-inside: auto; }
+  .appendix h2 { font-size: 14px; margin: 0 0 12px; border-top: 1px solid #1a1a1a; padding-top: 16px; }
+  .appendix-state { margin-bottom: 16px; }
+  .section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6a7283; margin: 12px 0 4px; }
+  .unmapped-label { color: #0c4084; }
+  table.appendix-district { margin-top: 4px; }
+  table.appendix-district caption { text-align: left; font-size: 11px; font-weight: 600; color: #353b46; padding: 4px; }
+  table.appendix-subtotal, table.appendix-grand-total { margin-top: 0; }
+  tr.subtotal td { font-weight: 600; border-top: 1px solid #e5e7eb; }
 </style>
 </head>
 <body>
@@ -222,6 +260,12 @@ function renderInvoiceHtml(
       </tfoot>
     </table>
 
+    ${
+      !isDraft && appendix && appendix.length > 0
+        ? buildAppendixHtml(appendix, bill.currency, locale)
+        : ""
+    }
+
     <p class="footer-note">
       ${
         isDraft
@@ -232,6 +276,145 @@ function renderInvoiceHtml(
   </div>
 </body>
 </html>`;
+}
+
+// bm45-spec §Implementation §3/§Design D3 — the per-polygon usage appendix,
+// grouped state → district → polygon (ui-context §6d). Final-only and
+// present-only (callers gate on `!isDraft && appendix.length > 0`). Money
+// subtotals are summed via `services/accounts/money.ts` (code-standards
+// §2.3 — never `Number()`/`reduce(+)` on a money string); `volume` is
+// display-only text, never summed. A card-missing polygon (`state === null`)
+// is collected into a trailing "Unmapped" group (D3), flagged in the Info
+// family per ui-context §6d — informational, never danger.
+function buildAppendixHtml(
+  appendix: InvoiceAppendixRenderRow[],
+  currency: string,
+  locale: string,
+): string {
+  const mapped = appendix.filter((row) => row.state !== null);
+  const unmapped = appendix.filter((row) => row.state === null);
+
+  const stateOrder: string[] = [];
+  const byState = new Map<string, Map<string, InvoiceAppendixRenderRow[]>>();
+  for (const row of mapped) {
+    const state = row.state as string;
+    const district = row.district ?? "—";
+    if (!byState.has(state)) {
+      byState.set(state, new Map());
+      stateOrder.push(state);
+    }
+    const districts = byState.get(state)!;
+    if (!districts.has(district)) districts.set(district, []);
+    districts.get(district)!.push(row);
+  }
+
+  const stateSections = stateOrder
+    .map((state) =>
+      buildAppendixStateSection(state, byState.get(state)!, currency, locale),
+    )
+    .join("");
+
+  const unmappedSection =
+    unmapped.length > 0
+      ? buildAppendixUnmappedSection(unmapped, currency, locale)
+      : "";
+
+  const grandTotal = sumMoney(...appendix.map((row) => row.amount));
+
+  return `<div class="appendix">
+    <h2>Usage appendix — per-polygon detail</h2>
+    ${stateSections}
+    ${unmappedSection}
+    <table class="appendix-grand-total">
+      <tfoot>
+        <tr class="total"><td>Total usage appendix</td><td class="num">${escapeHtml(formatCurrency(grandTotal, currency, locale))}</td></tr>
+      </tfoot>
+    </table>
+  </div>`;
+}
+
+function buildAppendixStateSection(
+  state: string,
+  districts: Map<string, InvoiceAppendixRenderRow[]>,
+  currency: string,
+  locale: string,
+): string {
+  const districtSections = Array.from(districts.entries())
+    .map(([district, rows]) =>
+      buildAppendixDistrictTable(district, rows, currency, locale),
+    )
+    .join("");
+  const stateRows = Array.from(districts.values()).flat();
+  const stateSubtotal = sumMoney(...stateRows.map((row) => row.amount));
+
+  return `<div class="appendix-state">
+    <p class="section-label">${escapeHtml(state)}</p>
+    ${districtSections}
+    <table class="appendix-subtotal">
+      <tfoot>
+        <tr class="subtotal"><td colspan="2">State subtotal</td><td class="num">${escapeHtml(formatCurrency(stateSubtotal, currency, locale))}</td></tr>
+      </tfoot>
+    </table>
+  </div>`;
+}
+
+function buildAppendixDistrictTable(
+  district: string,
+  rows: InvoiceAppendixRenderRow[],
+  currency: string,
+  locale: string,
+): string {
+  const polygonRows = rows
+    .map(
+      (row) => `<tr>
+        <td>${escapeHtml(row.polygon)}</td>
+        <td class="num">${escapeHtml(row.volume)} ${escapeHtml(row.unit)}</td>
+        <td class="num">${escapeHtml(formatCurrency(row.amount, currency, locale))}</td>
+      </tr>`,
+    )
+    .join("");
+  const districtSubtotal = sumMoney(...rows.map((row) => row.amount));
+
+  return `<table class="appendix-district">
+    <caption>${escapeHtml(district)}</caption>
+    <thead>
+      <tr><th>Polygon</th><th class="num">Volume</th><th class="num">Amount</th></tr>
+    </thead>
+    <tbody>${polygonRows}</tbody>
+    <tfoot>
+      <tr class="subtotal"><td colspan="2">District subtotal</td><td class="num">${escapeHtml(formatCurrency(districtSubtotal, currency, locale))}</td></tr>
+    </tfoot>
+  </table>`;
+}
+
+function buildAppendixUnmappedSection(
+  rows: InvoiceAppendixRenderRow[],
+  currency: string,
+  locale: string,
+): string {
+  const polygonRows = rows
+    .map(
+      (row) => `<tr>
+        <td>${escapeHtml(row.polygon)}</td>
+        <td class="num">${escapeHtml(row.volume)} ${escapeHtml(row.unit)}</td>
+        <td class="num">${escapeHtml(formatCurrency(row.amount, currency, locale))}</td>
+      </tr>`,
+    )
+    .join("");
+  const subtotal = sumMoney(...rows.map((row) => row.amount));
+
+  return `<div class="appendix-state appendix-unmapped">
+    <p class="section-label unmapped-label">Unmapped (no ratecard entry)</p>
+    <table class="appendix-district">
+      <thead>
+        <tr><th>Polygon</th><th class="num">Volume</th><th class="num">Amount</th></tr>
+      </thead>
+      <tbody>${polygonRows}</tbody>
+      <tfoot>
+        <tr class="subtotal"><td colspan="2">Unmapped subtotal</td><td class="num">${escapeHtml(formatCurrency(subtotal, currency, locale))}</td></tr>
+      </tfoot>
+    </table>
+  </div>`;
 }
 
 function toDateOnly(date: Date): string {

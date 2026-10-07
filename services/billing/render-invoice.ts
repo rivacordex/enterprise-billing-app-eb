@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 
 import { db } from "@/db/client";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
+import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
@@ -134,7 +135,7 @@ export async function renderFinalInvoice({
   if (!bill) {
     throw new FinalInvoiceNotFoundError(runId, banId);
   }
-  const [taxItems, lines, run] = await Promise.all([
+  const [taxItems, lines, run, capacityLines] = await Promise.all([
     customerBillTaxItemRepository.listForBill(
       db,
       bill.customerBillId,
@@ -142,12 +143,30 @@ export async function renderFinalInvoice({
     ),
     ratedLinesRepository.listClaimedForAccount(db, runId, banId),
     billRunRepository.findDetailById(db, runId),
+    customerBillLineRepository.listCapacityLinesForBill(
+      db,
+      bill.customerBillId,
+      bill.periodPartition,
+    ),
   ]);
   if (!run) {
     throw new FinalInvoiceNotFoundError(runId, banId);
   }
 
   const locale = await getAppLocale();
+
+  // bm45-spec §Implementation §2/§Design D5 — final invoice only; the appendix
+  // was already snapshotted at aggregation (one capacity line's
+  // additional_info.appendix), so this is a pure read + reshape, no
+  // udr_rated/ratecard join. `unit` is attached here (the capacity line's own
+  // column) — the stored jsonb carries no unit field (spec §Implementation
+  // §1). Flattened across every capacity line on the bill (ordinarily one).
+  const appendix = capacityLines.flatMap((line) =>
+    (line.additionalInfo?.appendix ?? []).map((row) => ({
+      ...row,
+      unit: line.unit ?? "",
+    })),
+  );
 
   const html = buildFinalInvoiceHtml({
     bill,
@@ -156,6 +175,7 @@ export async function renderFinalInvoice({
     run: { billRunId: run.billRunId, cycleName: run.cycleName },
     locale,
     invoiceNumber: invoiceNo,
+    appendix: appendix.length > 0 ? appendix : undefined,
   });
 
   return renderPdfFromHtml(html);

@@ -26,6 +26,9 @@ vi.mock("@/db/repositories/billing/customer-bill-tax-item.repository", () => ({
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
   ratedLinesRepository: { listClaimedForAccount: vi.fn() },
 }));
+vi.mock("@/db/repositories/billing/customer-bill-line.repository", () => ({
+  customerBillLineRepository: { listCapacityLinesForBill: vi.fn() },
+}));
 vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
   billRunRepository: { findDetailById: vi.fn() },
 }));
@@ -61,6 +64,7 @@ vi.mock("playwright", () => ({
 }));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
+import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
@@ -78,6 +82,9 @@ const mockFindForAccount = vi.mocked(customerBillRepository.findForAccount);
 const mockListForBill = vi.mocked(customerBillTaxItemRepository.listForBill);
 const mockListClaimed = vi.mocked(ratedLinesRepository.listClaimedForAccount);
 const mockFindDetailById = vi.mocked(billRunRepository.findDetailById);
+const mockListCapacityLinesForBill = vi.mocked(
+  customerBillLineRepository.listCapacityLinesForBill,
+);
 const mockLaunch = vi.mocked(chromium.launch);
 const mockBuildFinalInvoiceHtml = vi.mocked(buildFinalInvoiceHtml);
 
@@ -117,6 +124,7 @@ beforeEach(() => {
   mockListForBill.mockResolvedValue([]);
   mockListClaimed.mockResolvedValue([]);
   mockFindDetailById.mockResolvedValue(RUN);
+  mockListCapacityLinesForBill.mockResolvedValue([]);
   mockBuildFinalInvoiceHtml.mockReturnValue("<html>final-stub</html>");
 });
 
@@ -280,6 +288,82 @@ describe("renderFinalInvoice — read + render (D10/D19, Phase-2 review fold T9)
     ).rejects.toThrow("chromium crashed");
 
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  // bm45-spec §Implementation §2 — the appendix snapshot is read-and-reshape
+  // only: the orchestrator attaches the capacity line's own `unit` to each
+  // stored row (the jsonb carries no unit field) and passes `undefined`
+  // (never `[]`) when no capacity line/appendix exists.
+  it("passes no appendix param when no capacity line carries one (bm45-spec §Implementation §2)", async () => {
+    await renderFinalInvoice({
+      runId: "BRN00000042",
+      banId: "BAN00000001",
+      invoiceNo: "INV00000001",
+    });
+
+    expect(mockBuildFinalInvoiceHtml).toHaveBeenCalledWith(
+      expect.objectContaining({ appendix: undefined }),
+    );
+  });
+
+  it("shapes the capacity line's additionalInfo.appendix into the template param, attaching the line's unit (bm45-spec §Implementation §2)", async () => {
+    mockListCapacityLinesForBill.mockResolvedValue([
+      {
+        unit: "EA",
+        additionalInfo: {
+          v: 1,
+          productInventoryId: "PRDINV00000001",
+          pricing: {},
+          calc: [],
+          summary: [],
+          appendix: [
+            {
+              polygon: "POLY-001",
+              state: "Selangor",
+              district: "Petaling",
+              volume: "300.000000",
+              amount: "30000.00",
+            },
+            {
+              polygon: "POLY-UNMAPPED",
+              state: null,
+              district: null,
+              volume: "100.000000",
+              amount: "10000.00",
+            },
+          ],
+        },
+      },
+    ]);
+
+    await renderFinalInvoice({
+      runId: "BRN00000042",
+      banId: "BAN00000001",
+      invoiceNo: "INV00000001",
+    });
+
+    expect(mockBuildFinalInvoiceHtml).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appendix: [
+          {
+            polygon: "POLY-001",
+            state: "Selangor",
+            district: "Petaling",
+            volume: "300.000000",
+            amount: "30000.00",
+            unit: "EA",
+          },
+          {
+            polygon: "POLY-UNMAPPED",
+            state: null,
+            district: null,
+            volume: "100.000000",
+            amount: "10000.00",
+            unit: "EA",
+          },
+        ],
+      }),
+    );
   });
 
   // T9's fold explicitly extends the SAME concurrency guard to final

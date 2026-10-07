@@ -334,6 +334,28 @@ export interface CapacityCalcTrace {
   pricing: Record<string, unknown>;
   calc: unknown[];
   summary: unknown[];
+  // bm45-spec §Implementation §1 (Target Capacity Pricing update, Unit 5) —
+  // the per-polygon usage appendix snapshot, written by `aggregation` onto
+  // the capacity line alongside the calc trace (D1 — no new table). Optional:
+  // absent on a pre-bm45 line and on a capacity line with zero claimed
+  // polygons. `state`/`district` are `null` for a polygon with usage but no
+  // matching ratecard row (D3 — surfaced, never dropped).
+  appendix?: InvoiceUsageAppendixRow[];
+}
+
+// bm45-spec §Implementation §1 — one per-polygon row of the invoice usage
+// appendix, as stored in `CapacityCalcTrace.appendix` and read by the final
+// invoice render (`render-invoice.ts`/`render-invoice-template.ts`). `volume`/
+// `amount` are the polygon's SUM(udr_usage_quantity)/SUM(udr_rated_price)
+// over the account's claimed rows for that canonical cell (D2). No `unit`
+// field here (the unit is the capacity line's own `unit` column) — the
+// render orchestrator attaches it when shaping the template param.
+export interface InvoiceUsageAppendixRow {
+  polygon: string;
+  state: string | null;
+  district: string | null;
+  volume: string;
+  amount: string;
 }
 
 // bm28-spec §Design "the udr_rated drill-down". One claimed `rating.udr_rated`

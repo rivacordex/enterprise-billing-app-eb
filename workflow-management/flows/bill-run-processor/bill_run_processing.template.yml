@@ -22,8 +22,12 @@
 # `# REAL (bm43):` — the rated_amount replay, the capacity-line replay +
 # internal identities, the independent Model-2 cross-derivation, and the
 # `capacity_rate_matching` gate (which also threads into bm42's G2 guard in
-# `aggregation`, the one cross-step edit). The only remaining `# STUB:` is
-# the taxation compute. See ./README.md.
+# `aggregation`, the one cross-step edit). `aggregation` also carries
+# `# REAL (bm45):` — the per-polygon invoice usage appendix snapshot, joined
+# off `rating.udr_rated`'s claimed capacity volume to the `productCardLookUp`
+# ratecard via the D2 canonical-key reconstruction, written onto the SAME
+# `additional_info` the bm42 calc trace already carries (no new column). The
+# only remaining `# STUB:` is the taxation compute. See ./README.md.
 id: bill_run_processing
 namespace: billrun
 inputs:
@@ -241,13 +245,29 @@ tasks:
         #     is `verification`'s job (bm43), never billed here.
         #   - `rated_amount` + `additional_info` (bm41's columns) are written on
         #     every capacity line: `additional_info` is the versioned calc trace
-        #     `{ v, productInventoryId, pricing, calc[], summary[] }` built as
-        #     `jsonb_build_object` in the SAME SQL expression as the money
-        #     columns — never hashed into `charge_checksum` (Inv #35) and never
-        #     rendered in the app UI (database-only this phase). `snapshot_*`
-        #     stay NULL on a capacity line (O-TC1) — it is re-aggregated from
-        #     the live BILL_DRAFT rows every run, never read from a prior line
-        #     like a RECURRING snapshot.
+        #     `{ v, productInventoryId, pricing, calc[], summary[], appendix[] }`
+        #     built as `jsonb_build_object` in the SAME SQL expression as the
+        #     money columns — never hashed into `charge_checksum` (Inv #35) and
+        #     the `calc`/`summary`/`pricing` keys are never rendered in the app
+        #     UI (database-only this phase). `snapshot_*` stay NULL on a
+        #     capacity line (O-TC1) — it is re-aggregated from the live
+        #     BILL_DRAFT rows every run, never read from a prior line like a
+        #     RECURRING snapshot.
+        #   - REAL (bm45) — `appendix[]` is the ONE key of the trace that DOES
+        #     render: one row per distinct claimed `udr_key` (`{ polygon, state,
+        #     district, volume, amount }`), LEFT JOINed off the ratecard named
+        #     by the offering's `productCardLookUp` spec (its ACTIVE version,
+        #     D4) via the D2 canonical-key reconstruction
+        #     (`commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>`,
+        #     lower+btrim, matched against `ur.udr_key` — `udr_rated` itself
+        #     carries no polygon column). A card-missing polygon keeps its row
+        #     (`state`/`district` NULL) — surfaced, never dropped (D3) — and
+        #     never fails the account. A HARD, loud `CAPACITY_APPENDIX_OVER_LIMIT`
+        #     guard fires if the account's distinct-`udr_key` count exceeds
+        #     10,000 (TC57) — never a silent truncation. The final (posted)
+        #     invoice render reads this ONE snapshot (no render-time
+        #     `udr_rated`/ratecard join); the draft PRO-FORMA never renders it
+        #     (D5).
         #   On done: POST the record-only stage-complete signal (§4) — no charge payload.
         #   KNOWN LIMITATION (deferred): a zero-charge account (no USAGE and no
         #   RECURRING lines) still gets a subtotal-0.00 customer_bill. Per Inv #22

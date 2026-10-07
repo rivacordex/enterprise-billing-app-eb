@@ -560,3 +560,57 @@ can't issue that credit — it just fails with an unhelpful error.
 credit-note capability is scoped, give a negative total a **clear parked reason**
 instead of the generic failure, so the operator sees what happened. Until then
 this is correct-but-unfriendly behaviour, not a data-integrity risk.
+
+---
+
+## 15. 🟡 Invoice usage appendix (bm45) — two documented assumptions, not fixed here
+
+**Where:** `bill_run_processing.yml`'s `aggregation` step (the appendix
+snapshot, D1/D2/D4).
+
+**D2 rating coupling (accepted, documented).** The appendix joins a claimed
+`rating.udr_rated` row to its ratecard cell by **reconstructing** the
+canonical key from the ratecard's own `mno_public_key`/
+`commercial_unit_public_key`/`polygon_id` columns (sorted `k=v|…`,
+`lower(btrim(...))`) and matching it against `ur.udr_key` — because
+`udr_rated` carries no polygon column of its own, this is exactly the
+canonical-cell shape rating's own matcher builds (`prp.py`). This **couples**
+the bill run to three RAN_USAGE rating facts that are config-only/forbidden-
+edit on the rating side: the feed role-column **names**
+(`commercial_unit`/`mno_public_id`/`polygon_id`), the canonical **format**
+(sorted `k=v|…`), and the **normalisation** (`strip().casefold()` tracked by
+`btrim`+`lower()` — an ASCII-only assumption; a Unicode-only divergence is a
+known edge, not expected for polygon ids). A durable decoupling — rating
+itself stamping the matched `ratecard_ran_usage_lkp_id` onto `udr_rated` —
+is recorded as a future cross-plan hardening, not built in this unit.
+
+**D4 ratecard-version residual (accepted, documented).** The appendix
+resolves the **ACTIVE** version of the `productCardLookUp`-named card at
+aggregation time — the same resolution rating uses — because `udr_rated`
+carries no ratecard-version stamp, so true per-record pinning is not
+possible without a rating change. If the card is **re-versioned between
+rating and this bill run**, the appendix could read a newer version's
+state/district than rating actually used when it rated the usage. Mitigated
+only by sequencing (the capacity run follows rating closely) and by the
+snapshot being taken once at aggregation and never re-read against a later
+version (an already-aggregated bill's appendix is immutable even if the card
+is re-versioned afterward — proven by
+`tests/db/billrun-capacity-appendix.integration.test.ts`'s rerun-stability
+case). The durable fix is the same D2 rating-side stamp above.
+
+**ELI5.** The invoice's per-polygon breakdown gets its state/district labels
+by rebuilding a lookup key from the rate card and matching it to the usage
+record — a technique borrowed from how rating itself matches records, so a
+future change to rating's key format or column names would need a matching
+change here. Separately, if someone updates the rate card for a polygon
+right after this month's usage was rated but before the bill was produced,
+the invoice could show the rate card's newer state/district instead of the
+one rating actually used — a narrow timing window, not expected to matter in
+practice, and once an invoice's appendix is written it never silently
+changes afterward even if the card changes later.
+
+**Recommendation.** Both residuals are accepted for this phase (capacity
+plan O-TC6). If rating ever stamps `ratecard_ran_usage_lkp_id` directly onto
+`udr_rated`, revisit both: the appendix join becomes a plain FK lookup
+(no key reconstruction, no coupling) and per-record version pinning becomes
+exact.

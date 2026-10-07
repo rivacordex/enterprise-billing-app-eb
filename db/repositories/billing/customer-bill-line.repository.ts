@@ -1,9 +1,14 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
-import type { BillLineRow, ChargeSource, LineType } from "@/types/billing";
+import type {
+  BillLineRow,
+  CapacityCalcTrace,
+  ChargeSource,
+  LineType,
+} from "@/types/billing";
 
 // bm28-spec §Implementation §4. The read of `customer_bill_line` — the bill's
 // charge record (Inv #3), one row per `(product_offering_id, udr_type)` grain,
@@ -68,6 +73,35 @@ export const customerBillLineRepository = {
       source: r.source as ChargeSource,
       lineType: r.lineType as LineType,
     }));
+  },
+
+  // bm45-spec §Implementation §2 — the final-invoice render's scoped read:
+  // this bill's capacity line(s) only (`additional_info IS NOT NULL` is the
+  // capacity-line marker — bm44's comment on `BillLineRow`), so the render
+  // path does no `udr_rated`/ratecard join (D1 — the snapshot already
+  // happened at aggregation). Not `listForRun` (that reads every account's
+  // lines for the whole run); this is the one-bill scope the final render
+  // actually needs, mirroring `customerBillTaxItemRepository.listForBill`.
+  async listCapacityLinesForBill(
+    db: Database,
+    customerBillId: string,
+    periodPartition: string,
+  ): Promise<
+    { unit: string | null; additionalInfo: CapacityCalcTrace | null }[]
+  > {
+    return db
+      .select({
+        unit: customerBillLine.unit,
+        additionalInfo: customerBillLine.additionalInfo,
+      })
+      .from(customerBillLine)
+      .where(
+        and(
+          eq(customerBillLine.refCustomerBillId, customerBillId),
+          eq(customerBillLine.periodPartition, periodPartition),
+          isNotNull(customerBillLine.additionalInfo),
+        ),
+      );
   },
 
   // bm31-spec §Implementation §1 — the posting `charge_checksum`, re-anchored

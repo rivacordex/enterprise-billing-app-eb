@@ -7,13 +7,13 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { appuser } from "@/db/schema/identity";
 import { billCycle } from "@/db/schema/billing/catalogs";
-import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import {
   runAggregation,
   runVerification,
 } from "@/tests/db/helpers/extract-flow-sql";
 import { createFlowDoubleFixtures } from "@/tests/db/helpers/billrun-flow-double-fixtures";
+import { createCapacityPricingFixtures } from "@/tests/db/helpers/billrun-capacity-pricing-fixtures";
 
 // bm43-spec §Implementation / Verification checklist — the DB-gated capacity
 // VERIFICATION regression (the bm21/bm28/bm29/bm42 flow-double pattern). Drives
@@ -58,7 +58,6 @@ describe.skipIf(!databaseUrl)(
     let db: ReturnType<typeof drizzle<typeof schema>>;
     let actorId: string;
     let cycleId: string;
-    let seq = 0;
 
     function fixtures() {
       return createFlowDoubleFixtures({
@@ -90,191 +89,31 @@ describe.skipIf(!databaseUrl)(
     const readBill = (runId: string, ban: string) => fixtures().readBill(runId, ban);
     const readLines = (customerBillId: string) => fixtures().readLines(customerBillId);
 
-    // Same pricing-component shapes as billrun-capacity-aggregation
-    // (bm42) — this flow-double is self-contained (bm42's own convention: see
-    // that file's SonarQube round-2 note on why the scaffolding, not the
-    // capacity-specific fixture shapes, was factored out).
-    async function insertOfferingPrice(
-      offeringId: string,
-      name: string,
-      componentType: string,
-      envelope: Record<string, unknown>,
-      unitOfMeasure: string,
-      currency: string,
-      startIso: string,
-    ): Promise<string> {
-      const [row] = await sql<{ product_offering_price_id: string }[]>`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
-        VALUES
-          (${offeringId}, ${name}, ${componentType}, ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
-           ${unitOfMeasure}, ${currency}, ${startIso}::timestamptz)
-        RETURNING product_offering_price_id
-      `;
-      return row!.product_offering_price_id;
-    }
-
-    async function newUsageRate(
-      offeringId: string,
-      unitOfMeasure: string,
-      ratePerUnit: string,
-      startIso: string,
-      currency = "MYR",
-    ): Promise<string> {
-      const envelope = {
-        "@type": "usage_rate",
-        specVersion: 1,
-        plaSpecId: null,
-        priceType: "usage",
-        appliesAt: "rating",
-        basis: "quantity",
-        boundTo: { unitOfMeasure },
-        params: { ratePerUnit, rateCardLookUp: null },
-      };
-      return insertOfferingPrice(
-        offeringId,
-        "BM43 Usage Rate",
-        "usage_rate",
-        envelope,
-        unitOfMeasure,
-        currency,
-        startIso,
-      );
-    }
-
-    async function newCapacityCommitment(
-      offeringId: string,
-      unitOfMeasure: string,
-      committedQuantity: number,
-      startIso: string,
-      currency = "MYR",
-    ): Promise<string> {
-      const envelope = {
-        "@type": "capacity_commitment",
-        specVersion: 1,
-        plaSpecId: "PLA_CAPACITY_COMMITMENT",
-        priceType: "commitment",
-        appliesAt: "post_aggregation",
-        basis: "quantity",
-        boundTo: { unitOfMeasure },
-        params: { committedQuantity },
-      };
-      return insertOfferingPrice(
-        offeringId,
-        "BM43 Capacity Commitment",
-        "capacity_commitment",
-        envelope,
-        unitOfMeasure,
-        currency,
-        startIso,
-      );
-    }
-
-    async function newCapacityMotivation(
-      offeringId: string,
-      unitOfMeasure: string,
-      steps: readonly { aboveQuantity: number; ratePerUnit: string }[],
-      startIso: string,
-      currency = "MYR",
-    ): Promise<string> {
-      const envelope = {
-        "@type": "capacity_motivation",
-        specVersion: 1,
-        plaSpecId: "PLA_CAPACITY_MOTIVATION",
-        priceType: "discount",
-        appliesAt: "post_aggregation",
-        basis: "quantity",
-        boundTo: { unitOfMeasure },
-        params: { steps },
-      };
-      return insertOfferingPrice(
-        offeringId,
-        "BM43 Capacity Motivation",
-        "capacity_motivation",
-        envelope,
-        unitOfMeasure,
-        currency,
-        startIso,
-      );
-    }
-
-    async function newCapacityOffering(
-      name: string,
-      opts: {
-        unit?: string;
-        currency?: string;
-        baseRate?: string | null;
-        committedQuantity?: number | null;
-        steps?: readonly { aboveQuantity: number; ratePerUnit: string }[] | null;
-        udrType?: string | null;
-      },
-    ): Promise<{ offeringId: string; usageRatePriceId: string | null }> {
-      const unit = opts.unit ?? "EA";
-      const currency = opts.currency ?? "MYR";
-      const offeringId = await newOffering(name);
-      if (opts.udrType !== null) {
-        await newProductSpec(offeringId, "udrType", opts.udrType ?? "RAN_USAGE");
-      }
-      const usageRatePriceId =
-        opts.baseRate === null
-          ? null
-          : await newUsageRate(
-              offeringId,
-              unit,
-              opts.baseRate ?? "100",
-              "2026-01-01T00:00:00Z",
-              currency,
-            );
-      if (opts.committedQuantity !== null && opts.committedQuantity !== undefined) {
-        await newCapacityCommitment(
-          offeringId,
-          unit,
-          opts.committedQuantity,
-          "2026-01-01T00:00:00Z",
-          currency,
-        );
-      }
-      if (opts.steps !== null && opts.steps !== undefined) {
-        await newCapacityMotivation(offeringId, unit, opts.steps, "2026-01-01T00:00:00Z", currency);
-      }
-      return { offeringId, usageRatePriceId };
-    }
-
-    async function insertCapacityVolumeRow(args: {
-      subRef: string;
-      runId: string;
-      ban: string;
-      attempt: number;
-      quantityEa: number;
-      rate: string | null;
-      priceRef: string | null;
-      unit?: string;
-      udrType?: string;
-    }): Promise<void> {
-      seq += 1;
-      const unit = args.unit ?? "EA";
-      const udrType = args.udrType ?? "RAN_USAGE";
-      const rateType = args.rate !== null ? "PER_UNIT" : "FLAT";
-      const ratedPrice =
-        args.rate !== null ? (args.quantityEa * Number(args.rate)).toFixed(2) : "0.00";
-      await sql`
-        INSERT INTO rating.udr_rated
-          (partition_period, udr_type, start_datetime, end_datetime, status,
-           udr_subscription_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
-           udr_rate_type, udr_usage_rate, udr_price_ref, udr_rated_price,
-           udr_rated_price_raw, udr_rounding_mode, udr_currency, udr_ref_batch_id,
-           udr_source_file, rating_engine_version, rating_flow_revision,
-           billrun_ref_id, billrun_ban_id, billrun_attempt, billrun_checksum,
-           upsert_datetime)
-        VALUES
-          (rating.period_of(${IN_WINDOW}::timestamptz), ${udrType},
-           ${IN_WINDOW}::timestamptz, ${IN_WINDOW}::timestamptz, 'BILL_DRAFT',
-           ${args.subRef}, ${`_bm43-key-${seq}`}, ${args.quantityEa.toFixed(6)},
-           ${unit}, ${rateType}, ${args.rate}, ${args.priceRef}, ${ratedPrice},
-           ${ratedPrice}, 'HALF_UP', 'MYR', '_BM43_BATCH', '_BM43', '_BM43', 0,
-           ${args.runId}, ${args.ban}, ${args.attempt}, 'bm43-claim', now())
-      `;
-    }
+    // The shared capacity-pricing fixture scaffolding (insertOfferingPrice/
+    // newUsageRate/newCapacityCommitment/newCapacityMotivation/
+    // newCapacityOffering/setupSingleAccountCapacity/insertCapacityVolumeRow)
+    // — see billrun-capacity-pricing-fixtures.ts for why this is factored out
+    // of this file and bm42's (byte-identical bar "BM42"/"BM43" label
+    // strings; bm45 needing the same fixtures a third time was the
+    // documented trigger — billmgmt-progress-tracker.md). Created ONCE,
+    // eagerly: `getSql` defers the actual `sql` read to invocation time (same
+    // trick `fixtures()` above uses for actorId/cycleId), so — unlike
+    // `fixtures()`, which is recreated per call because it has no state —
+    // this factory can be a single instance for the whole file. It must be:
+    // it closes over a `seq` counter that has to stay unique across every
+    // insertCapacityVolumeRow() call here.
+    const capacityFixtures = createCapacityPricingFixtures({
+      getSql: () => sql,
+      newOffering,
+      newProductSpec,
+      newAccount,
+      newRun,
+      newInventory,
+      claimAt: IN_WINDOW,
+      labelPrefix: "BM43",
+    });
+    const setupSingleAccountCapacity = capacityFixtures.setupSingleAccountCapacity;
+    const insertCapacityVolumeRow = capacityFixtures.insertCapacityVolumeRow;
 
     async function aggregate(
       runId: string,
@@ -321,37 +160,6 @@ describe.skipIf(!databaseUrl)(
         LIMIT  1
       `;
       return row!.customer_bill_line_id;
-    }
-
-    // Single-account capacity fixture (account + offering + run + inventory),
-    // mirroring bm42's setupSingleAccountCapacity.
-    async function setupSingleAccountCapacity(
-      label: string,
-      offeringName: string,
-      offeringOpts: Parameters<typeof newCapacityOffering>[1],
-    ): Promise<{
-      ban: string;
-      offeringId: string;
-      usageRatePriceId: string | null;
-      runId: string;
-      piId: string;
-    }> {
-      const ban = await newAccount(label);
-      const { offeringId, usageRatePriceId } = await newCapacityOffering(
-        offeringName,
-        offeringOpts,
-      );
-      const runId = `BRN-BM43-${label.toUpperCase()}`;
-      const piId = `PRDINV-BM43-${label.toUpperCase()}`;
-      await newRun(runId);
-      await newInventory({
-        piId,
-        ban,
-        offeringId,
-        quantity: 1,
-        orderItemId: `_bm43-oi-${label.toLowerCase()}`,
-      });
-      return { ban, offeringId, usageRatePriceId, runId, piId };
     }
 
     // Shared single-line fixture: setupSingleAccountCapacity() + a single

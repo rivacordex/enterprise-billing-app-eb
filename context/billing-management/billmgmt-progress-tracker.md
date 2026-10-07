@@ -577,6 +577,231 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     read model) and bm46 (ship gate) are next, per the spec's own
     Dependencies section.
 
+### Target Capacity Pricing update — Unit 5 (bm45)
+
+- **bm45 (2026-10-07) — implemented as specified.** Invoice usage appendix:
+  per-polygon detail by state/district, snapshotted at `aggregation` into
+  the capacity line's `additional_info.appendix`, rendered below the
+  capacity charge on the **final posted** invoice only. Spec:
+  `context/billing-management/specs/bm45-invoice-usage-appendix.md`. No
+  migration (reuses the bm41 `additional_info` jsonb), no new grant (bm41
+  already granted the two ratecard tables + `product_specifications`).
+  - **Flow SQL** (`bill_run_processing.yml`'s `aggregation` step) — between
+    the bm42 six-guard `DO $$` block and the whole-account replace: `_bm45_card`
+    (resolves each capacity (offering, unit)'s `productCardLookUp` card name
+    + its ACTIVE `ratecard_version_id`, D4), `_bm45_volume` (per-`udr_key`
+    volume/amount/count from the account's BILL_DRAFT capacity claim, D2
+    scoping identical to `capacity_volume`'s), and a `DO $$` count guard
+    (`CAPACITY_APPENDIX_OVER_LIMIT`, HARD, > 10,000 distinct `udr_key`s —
+    TC57). Two new CTEs in the main `WITH`/`INSERT` — `capacity_appendix_mapped`
+    (LEFT JOIN each `udr_key` to `ratecard_ran_usage_lkp`, scoped to the
+    ACTIVE version, via the D2 canonical-key reconstruction
+    `commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>`, lower+btrim) and
+    `capacity_appendix` (one `jsonb_agg` per (offering, unit), ordered
+    state/district/polygon NULLS LAST — D3's trailing "Unmapped" ordering) —
+    joined into `capacity_totals` and merged as the `appendix` key onto
+    `capacity_lines`' existing `additional_info` trace (additive to the bm42
+    calc trace, same jsonb column). A card-missing polygon's `polygon` value
+    falls back to the `udr_key`'s own `polygon_id=` segment (via `substring`)
+    so it is never anonymous nor dropped (D3).
+  - **Types** (`types/billing.ts`) — `CapacityCalcTrace` gains an optional
+    `appendix?: InvoiceUsageAppendixRow[]`; new `InvoiceUsageAppendixRow`
+    (`{ polygon, state, district, volume, amount }`, no `unit` field — the
+    spec's literal jsonb shape).
+  - **Read model** (`db/repositories/billing/customer-bill-line.repository.ts`)
+    — new `listCapacityLinesForBill` (scoped to one bill, `additional_info IS
+    NOT NULL` is the capacity-line marker per bm44) in place of the
+    whole-run `listForRun`, since the final render only ever needs one
+    account's capacity line(s).
+  - **Render orchestrator** (`services/billing/render-invoice.ts`) —
+    `renderFinalInvoice` reads the new repository method, flattens every
+    capacity line's `additionalInfo.appendix` and attaches each line's own
+    `unit` column (the stored jsonb carries none), passing `appendix:
+    undefined` (never `[]`) when empty. `renderDraftInvoice` is untouched
+    (D5 — final-only).
+  - **Template** (`services/billing/render-invoice-template.ts`) — new
+    `InvoiceAppendixRenderRow` + optional `appendix` on
+    `BuildFinalInvoiceHtmlParams` only (not the draft params type). Renders
+    below the charge table, gated on `!isDraft && appendix.length > 0`:
+    state section (subtotal) → district table (subtotal) → per-polygon row
+    (`polygon`, `volume + unit`, `amount`), a trailing "Unmapped (no
+    ratecard entry)" group for `state === null` rows (Info-family styling
+    per ui-context §6d, no new token), and a grand total. Every subtotal is
+    summed via `services/accounts/money.ts`'s `sum()` — never
+    `Number()`/`reduce(+)` on a money string (code-standards §2.3); `volume`
+    is display-only text, never summed. Stays pure (no DB/Playwright
+    import) — `services/accounts/money.ts` and the `types/billing.ts` type
+    import are both DB-free.
+  - **`_SAMPLE_` fixture** (`db/seeds/sample/**`) — canonical `udr_key`s:
+    `udr-rated-sample.ts`'s `buildUdrKey` now emits the D2 canonical cell
+    when a caller supplies `polygonCell` (every capacity PER_UNIT row now
+    does; every FLAT `ci`/`volume` row still omits it and keeps the
+    untouched generic JSON key). `seed-billrun-sample.ts` gains a **fifth**
+    capacity scenario (`capacity-appendix-multi-polygon`, additive — the
+    four 800/1000/2000/0 EA anchors are unchanged in field shape and
+    amount): 4 mapped polygons over 2 states/2 districts + 1 card-missing
+    polygon, summing to exactly 1000 EA (a clean "at target" bill,
+    independent of the appendix itself). The four anchors now also carry a
+    canonical `udr_key` each (a synthetic, per-row-unique polygon, never
+    seeded onto the usage card — they render "Unmapped" if ever viewed,
+    which is correct per D3, not a defect) — same row count, same amounts,
+    zero behavioural change to the anchor bills themselves.
+  - **New file** `db/seeds/sample/capacity-usage-card.ts` —
+    `ensureSampleCapacityUsageCard` (idempotent find-ACTIVE-or-create +
+    `onConflictDoNothing` lkp rows), mirroring `sample-5g-fixture.ts`'s
+    `insertRanRatecard` precedent extended to carry a distinct state/
+    district **per row** (the 5G fixture shares one state across all rows;
+    bm45 needs ≥ 2 states/≥ 2 districts). Deliberately its **own file**, not
+    folded into `seed-billrun-sample.ts`: the pm67
+    `ratecard-demo-seed-boundary` guardrail forbids that file from naming
+    the card module/table at all, so the two comments in
+    `seed-billrun-sample.ts` that would otherwise have said "ratecard" were
+    reworded to "lookup-card" to keep that guardrail green untouched — no
+    guardrail-regex edit was needed or made.
+  - **New DB-gated test** — `tests/db/billrun-capacity-appendix.integration.test.ts`
+    (the bm42/bm43-pattern flow-double, reusing `billrun-flow-double-fixtures.ts`;
+    the capacity-pricing fixture helpers are a deliberately self-contained
+    trimmed copy, matching the "each flow-double test is self-contained"
+    convention bm42's round-2 Sonar fix documented rather than extracting a
+    shared file pre-emptively): a multi-polygon account's appendix groups
+    state/district correctly, state/district provably **card-sourced** (the
+    ratecard's values share nothing with any feed value), a card-missing
+    polygon surfaces under `state: null` and the account still bills (no
+    HARD fail), every row's `amount` sums to the line's `rated_amount`; a
+    rerun-stability case (re-version the card after aggregation, re-read
+    the already-written line unchanged — documents the D4 residual without
+    fixing it); and the `CAPACITY_APPENDIX_OVER_LIMIT` HARD-fail at 10,001
+    distinct polygons (bulk `INSERT … SELECT … FROM generate_series` for
+    speed).
+  - **Verified in this environment:** `npx tsc --noEmit` clean repo-wide;
+    `eslint` clean on every touched/added file; the extracted-SQL harness
+    self-test suite (13 tests, DB-free, `--pool=threads`) passes against the
+    real modified flow file (pebble-stripping/statement-splitting/`:'var'`
+    binding all still correct around the new `_bm45_*` temp tables and CTEs);
+    the DB-free `list-account-bills.test.ts` (16 tests), the existing
+    `render-invoice.service.test.ts`/`render-invoice-template.test.ts` suites
+    extended with bm45 cases (appendix shaping/attachment, grouping,
+    subtotal reconciliation, the Unmapped group, escaping, draft-never-renders)
+    (54 + 32 tests total across both files), and the pm67
+    `ratecard-demo-seed-boundary`/`billing-sample-seed-boundary` guardrails
+    all green.
+  - **NOT verified here (no reachable Postgres in this environment, same
+    gap as bm40–bm44):** the new `billrun-capacity-appendix.integration.test.ts`
+    suite against a disposable Postgres; the existing
+    `billrun-capacity-aggregation`/`billrun-capacity-verification` DB-gated
+    suites re-run (confirming the anchors' canonical-`udr_key` switch is
+    behaviour-preserving for their own assertions, which only check money/
+    count fields, never the key string); a live-Kestra run on the `capacity`
+    seed profile confirming the appendix section renders in an actual posted
+    invoice PDF.
+  - **Doc sync:** `billmgmt-architecture.md` Inv #36 and the capacity
+    stack/system-boundary delta tables now name **bm45** explicitly;
+    `billmgmt-ui-context.md` §6d now cites bm45 in its heading;
+    `billmgmt-known-issues.md` gained §15 recording the D2 rating-key
+    coupling and the D4 ratecard-version residual as documented, accepted
+    assumptions (not fixed this unit), per the spec's own checklist item.
+    `bm00-build-plan.md` still doesn't exist in this checkout (same gap
+    bm40–bm44 noted) — that sync step could not be done.
+  - bm46 (ship gate) is next, per the spec's own Dependencies section.
+  - **SonarQube "Duplicated Lines on New Code" fix (2026-10-07) — two
+    findings.**
+    (a) `tests/services/billing/render-invoice-template.test.ts` (28.5%): the
+    repeated `buildFinalInvoiceHtml({...BASE_PARAMS, invoiceNumber:
+    "INV00000042", ...})` call shape (8 call sites) and the per-polygon
+    `MAPPED_ROWS`/`UNMAPPED_ROW` object literals (same key shape, different
+    literal values — SonarQube's CPD normalizes literals) were the source.
+    Extracted local `renderDraft`/`renderFinal` helpers and an
+    `appendixRow(...)` factory; assertions and fixture data unchanged.
+    Verified: `npx tsc --noEmit` clean; `npx vitest run --pool=threads`
+    32/32 passing.
+    (b) `tests/db/billrun-capacity-appendix.integration.test.ts` (18.6%): the
+    same capacity-pricing fixture block (`insertOfferingPrice`/
+    `newUsageRate`/`newCapacityCommitment`/`insertCapacityVolumeRow`) already
+    hand-copied into bm42 and bm43 — and which bm43's own round-2 SonarQube
+    fix (above) deliberately left un-extracted, naming a THIRD
+    capacity-pricing unit needing the same fixtures as the trigger to extract
+    a shared file. bm45 is that third unit. Per owner decision this round:
+    extracted a new shared `tests/db/helpers/billrun-capacity-pricing-
+    fixtures.ts` (`createCapacityPricingFixtures({ sql, newOffering,
+    newProductSpec, claimAt, labelPrefix })`), covering
+    `insertOfferingPrice`/`newUsageRate`/`newCapacityCommitment`/
+    `newCapacityMotivation`/`newCapacityOffering`/`insertCapacityVolumeRow` —
+    parameterized by `labelPrefix` (reproduces each file's exact "BM42"/
+    "BM43"/"BM45" name/batch/source-file/checksum strings) and an optional
+    `udrKey` override on `insertCapacityVolumeRow` (bm45's D2 canonical-cell
+    key, which the shared seq-counter default doesn't produce). bm42, bm43,
+    and bm45 all switched to consume it via thin per-file wrappers; bm45's
+    own `newAppendixCapacityOffering`/`insertRatecardVersion`/
+    `canonicalUdrKey` stay local (appendix-specific, not duplicated
+    elsewhere). bm42/bm43 expose only `newCapacityOffering`/
+    `insertCapacityVolumeRow` wrappers — a first draft also wrapped
+    `newUsageRate`/`newCapacityCommitment`/`newCapacityMotivation`, but
+    `newCapacityOffering`'s own composition calls the shared factory's
+    internal versions directly, not those file-level wrappers, so they were
+    genuinely dead code; `eslint`'s `no-unused-vars` caught this (bm45 keeps
+    its own `newUsageRate`/`newCapacityCommitment` wrappers since
+    `newAppendixCapacityOffering` there calls them directly). An early draft
+    recreated the factory per call (`capacityFixtures()` as a function,
+    mirroring `fixtures()`'s pattern above it), which silently reset `seq`
+    and would have collided every claim row's `udr_key` — caught before
+    commit by memoizing it instead (`capacityFixturesInstance ??= ...`).
+    No intended behavioural change. Verified: `npx tsc --noEmit` clean
+    repo-wide; `eslint` clean (0 warnings) on touched/added files;
+    `render-invoice-template.test.ts`'s own suite re-run (32/32 passing,
+    `--pool=threads`). **NOT re-run against a live DB in this environment**
+    (no reachable Postgres/Docker daemon here, same gap as bm40–bm45) — the
+    bm42/bm43/bm45 DB-gated suites need re-running against a disposable
+    Postgres before merge to confirm the extraction is behaviour-preserving.
+  - **SonarQube fix, round 2 (2026-10-07) — re-check showed (a) was
+    barely moved (18.6% → 18.2% on bm45) and surfaced a second, pre-existing
+    duplicate.** Two things, both caught by re-running Sonar and eslint after
+    the round-1 fix above, not by inspection alone:
+    (1) The per-file `let capacityFixturesInstance; function
+    capacityFixtures() { return (capacityFixturesInstance ??=
+    createCapacityPricingFixtures({...})); }` memoization block round-1
+    introduced was itself near-identical across bm42/bm43/bm45 (bar
+    `labelPrefix`) — a brand-new 3-way duplicate, self-inflicted by the fix
+    that was supposed to remove duplication. Fixed by changing
+    `CapacityPricingFixturesDeps.sql` to `getSql: () => postgresjs.Sql` (the
+    same deferred-read trick `fixtures()` already uses for
+    `getActorId`/`getCycleId`): since the factory now defers reading `sql`
+    to invocation time rather than construction time, each file can call
+    `createCapacityPricingFixtures(...)` ONCE, eagerly, as a plain `const`
+    — no per-file memoization boilerplate needed at all.
+    (2) `setupSingleAccountCapacity` (account + offering + run + inventory
+    keyed by `label`) was byte-identical between bm42 and bm43 bar label
+    strings — pre-existing (bm43's own comment said "mirroring bm42's
+    setupSingleAccountCapacity," hand-copied when bm43 was written) and
+    never part of either reported finding, since it doesn't touch bm45 at
+    all (bm45's own `setupAccount` is differently shaped — it also seeds the
+    ratecard-lookup specs). Moved into
+    `billrun-capacity-pricing-fixtures.ts` too, gated on three new deps
+    (`newAccount`/`newRun`/`newInventory`) that bm45 must now also supply
+    (uniform interface) even though it never calls this particular method.
+    `labelPrefix` substitutes for the hardcoded "BM42"/"BM43" in the
+    generated `runId`/`piId`/`orderItemId` strings — reproduces the exact
+    same values. bm42 and bm43 each dropped ~42 lines net; bm45 is roughly
+    flat (gained the three new deps, lost the memoization block it never
+    needed fixture-sharing for in the first place). Verified: `npx tsc
+    --noEmit` clean repo-wide; `eslint` clean (0 warnings, confirmed via a
+    second full lint pass — the first one after round 1 had already caught
+    `newUsageRate`/`newCapacityCommitment`/`newCapacityMotivation` as dead
+    wrappers in bm42/bm43, this round caught `newCapacityOffering` as dead
+    in bm43 specifically, since bm43 — unlike bm42's Multi-Sub tests — never
+    calls it directly outside `setupSingleAccountCapacity`).
+    **Still NOT re-run against a live DB in this environment** — same gap as
+    above. **Also still out of scope, by explicit owner decision this
+    round:** the `beforeAll`/`afterAll` DB-bootstrap boilerplate
+    (`billrun_delete_trial_bill` + `appuser` + `billCycle` setup, ~44 lines)
+    duplicated across bm42/bm43/bm45 AND six other flow-double suites
+    (`billrun-aggregation`, `billrun-recurring-aggregation`,
+    `billrun-volume-aggregation`, `billrun-db-roles`, `billrun-phase3-journey`,
+    `billrun-verification-reconciliation`) — ~400 lines total, the oldest
+    and widest-spread duplication found, predating this session. Likely
+    still contributes to any residual Sonar percentage on these 3 files, but
+    touching it means editing 6 files not looked at this session, several
+    already shipped; flagged here as known debt, not extracted.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
