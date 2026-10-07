@@ -4,6 +4,7 @@ import {
   buildDraftInvoiceHtml,
   buildFinalInvoiceHtml,
 } from "@/services/billing/render-invoice-template";
+import type { BuildFinalInvoiceHtmlParams } from "@/services/billing/render-invoice-template";
 
 // bm18-spec §Design "Draft ≠ a valid invoice" / §Implementation §2 /
 // Verification checklist. Pure function — no DB/Next.js/Playwright import —
@@ -38,35 +39,51 @@ const BASE_PARAMS = {
   locale: "en-MY",
 };
 
+const INVOICE_NUMBER = "INV00000042";
+
+function renderDraft(overrides: Partial<typeof BASE_PARAMS> = {}): string {
+  return buildDraftInvoiceHtml({ ...BASE_PARAMS, ...overrides });
+}
+
+function renderFinal(
+  overrides: Partial<BuildFinalInvoiceHtmlParams> = {},
+): string {
+  return buildFinalInvoiceHtml({
+    ...BASE_PARAMS,
+    invoiceNumber: INVOICE_NUMBER,
+    ...overrides,
+  });
+}
+
 describe("buildDraftInvoiceHtml", () => {
   it("shows the pending-posting placeholder instead of a real invoice number", () => {
-    const html = buildDraftInvoiceHtml(BASE_PARAMS);
+    const html = renderDraft();
     expect(html).toContain("— pending posting —");
   });
 
   it("carries the DRAFT · PRO-FORMA · NOT A VALID INVOICE watermark", () => {
-    const html = buildDraftInvoiceHtml(BASE_PARAMS);
+    const html = renderDraft();
     expect(html).toContain("DRAFT");
     expect(html).toContain("PRO-FORMA");
     expect(html).toContain("NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE");
   });
 
   it("keeps the watermark behind an opaque sheet (never over the printed figures, ui-context §6c)", () => {
-    const html = buildDraftInvoiceHtml(BASE_PARAMS);
+    const html = renderDraft();
     expect(html).toMatch(/\.sheet\s*\{[^}]*background:\s*#ffffff/);
     expect(html).toMatch(/\.sheet\s*\{[^}]*z-index:\s*1/);
     expect(html).toMatch(/\.watermark\s*\{[^}]*z-index:\s*0/);
   });
 
   it("renders the claimed charge line and its formatted amount", () => {
-    const html = buildDraftInvoiceHtml(BASE_PARAMS);
+    const html = renderDraft();
     expect(html).toContain("DATA_USAGE");
     expect(html).toContain("1.000000");
     expect(html).toContain("GB");
   });
 
   it("renders each tax item and formats totals through formatCurrency (no bare numbers)", () => {
-    const html = buildDraftInvoiceHtml(BASE_PARAMS);
+    const html = renderDraft();
     expect(html).toContain("GST @ 8.00%");
     // formatCurrency(..., "MYR", "en-MY") always includes a currency marker —
     // a bare ">108.00<" would mean a hand-formatted number slipped through.
@@ -74,13 +91,12 @@ describe("buildDraftInvoiceHtml", () => {
   });
 
   it("falls back to an explicit empty state when there are no claimed lines yet", () => {
-    const html = buildDraftInvoiceHtml({ ...BASE_PARAMS, lines: [] });
+    const html = renderDraft({ lines: [] });
     expect(html).toContain("No claimed charge lines for this account yet.");
   });
 
   it("escapes free-text account names (no raw HTML injection)", () => {
-    const html = buildDraftInvoiceHtml({
-      ...BASE_PARAMS,
+    const html = renderDraft({
       bill: { ...BASE_PARAMS.bill, accountName: "<script>alert(1)</script>" },
     });
     expect(html).not.toContain("<script>alert(1)</script>");
@@ -92,29 +108,20 @@ describe("buildDraftInvoiceHtml", () => {
 // number" / §Implementation §3.
 describe("buildFinalInvoiceHtml", () => {
   it("shows the real INV… number instead of the pending-posting placeholder", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-    });
+    const html = renderFinal();
     expect(html).toContain("INV00000042");
     expect(html).not.toContain("— pending posting —");
   });
 
   it("[CRITICAL] carries no DRAFT/PRO-FORMA watermark markup (ui-context §6c — this IS the issued record)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-    });
+    const html = renderFinal();
     expect(html).not.toContain("PRO-FORMA");
     expect(html).not.toContain("NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE");
     expect(html).not.toMatch(/class="watermark"/);
   });
 
   it("drops the preview-only subtitle/footer copy", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-    });
+    const html = renderFinal();
     expect(html).not.toContain("Preview only");
     expect(html).not.toContain(
       "must not be sent to or relied upon by the customer",
@@ -122,10 +129,7 @@ describe("buildFinalInvoiceHtml", () => {
   });
 
   it("renders the same charge lines, tax items, and formatted totals as the draft (same template/engine)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-    });
+    const html = renderFinal();
     expect(html).toContain("DATA_USAGE");
     expect(html).toContain("GST @ 8.00%");
     // Positively assert the FINAL total renders — the `not.toMatch(/>108\.00</)`
@@ -139,9 +143,7 @@ describe("buildFinalInvoiceHtml", () => {
   });
 
   it("escapes free-text account names the same as the draft", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
+    const html = renderFinal({
       bill: { ...BASE_PARAMS.bill, accountName: "<script>alert(1)</script>" },
     });
     expect(html).not.toContain("<script>alert(1)</script>");
@@ -149,10 +151,7 @@ describe("buildFinalInvoiceHtml", () => {
   });
 
   it("escapes the invoice number too (defense in depth, though document ids are system-generated)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "<b>INV00000042</b>",
-    });
+    const html = renderFinal({ invoiceNumber: "<b>INV00000042</b>" });
     expect(html).not.toContain("<b>INV00000042</b>");
   });
 });
@@ -161,68 +160,46 @@ describe("buildFinalInvoiceHtml", () => {
 // appendix: final-only, present-only, grouped state -> district -> polygon,
 // a card-missing polygon surfaced under "Unmapped", every total reconciled
 // via `services/accounts/money.ts` (never JS float summation).
+function appendixRow(
+  polygon: string,
+  state: string | null,
+  district: string | null,
+  volume: string,
+  amount: string,
+  unit = "EA",
+) {
+  return { polygon, state, district, volume, amount, unit };
+}
+
 describe("buildFinalInvoiceHtml — usage appendix (bm45)", () => {
   const MAPPED_ROWS = [
-    {
-      polygon: "POLY-001",
-      state: "Selangor",
-      district: "Petaling",
-      volume: "300.000000",
-      amount: "30000.00",
-      unit: "EA",
-    },
-    {
-      polygon: "POLY-002",
-      state: "Selangor",
-      district: "Klang",
-      volume: "250.000000",
-      amount: "25000.00",
-      unit: "EA",
-    },
-    {
-      polygon: "POLY-003",
-      state: "Johor",
-      district: "Johor Bahru",
-      volume: "200.000000",
-      amount: "20000.00",
-      unit: "EA",
-    },
+    appendixRow("POLY-001", "Selangor", "Petaling", "300.000000", "30000.00"),
+    appendixRow("POLY-002", "Selangor", "Klang", "250.000000", "25000.00"),
+    appendixRow("POLY-003", "Johor", "Johor Bahru", "200.000000", "20000.00"),
   ];
-  const UNMAPPED_ROW = {
-    polygon: "POLY-UNMAPPED",
-    state: null,
-    district: null,
-    volume: "100.000000",
-    amount: "10000.00",
-    unit: "EA",
-  };
+  const UNMAPPED_ROW = appendixRow(
+    "POLY-UNMAPPED",
+    null,
+    null,
+    "100.000000",
+    "10000.00",
+  );
 
   it("never renders the appendix on the draft invoice (D5 — final-only)", () => {
-    const html = buildDraftInvoiceHtml(BASE_PARAMS);
+    const html = renderDraft();
     expect(html).not.toContain("Usage appendix");
   });
 
   it("renders nothing when no appendix is present or it is empty (final invoice, no capacity line)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-    });
+    const html = renderFinal();
     expect(html).not.toContain("Usage appendix");
 
-    const htmlEmpty = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-      appendix: [],
-    });
+    const htmlEmpty = renderFinal({ appendix: [] });
     expect(htmlEmpty).not.toContain("Usage appendix");
   });
 
   it("groups mapped rows state -> district -> polygon with volume+unit and formatted amounts", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-      appendix: MAPPED_ROWS,
-    });
+    const html = renderFinal({ appendix: MAPPED_ROWS });
     expect(html).toContain("Usage appendix");
     expect(html).toContain("Selangor");
     expect(html).toContain("Johor");
@@ -234,11 +211,7 @@ describe("buildFinalInvoiceHtml — usage appendix (bm45)", () => {
   });
 
   it("rolls district/state/grand subtotals up to the sum of the rows (Model-1 rated amount)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-      appendix: MAPPED_ROWS,
-    });
+    const html = renderFinal({ appendix: MAPPED_ROWS });
     // Selangor = 30000 + 25000 = 55000.00; Johor = 20000.00;
     // grand total = 75000.00.
     expect(html).toContain("55,000.00");
@@ -247,11 +220,7 @@ describe("buildFinalInvoiceHtml — usage appendix (bm45)", () => {
   });
 
   it("surfaces a card-missing polygon under an Unmapped group, never dropping it (D3)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
-      appendix: [...MAPPED_ROWS, UNMAPPED_ROW],
-    });
+    const html = renderFinal({ appendix: [...MAPPED_ROWS, UNMAPPED_ROW] });
     expect(html).toContain("Unmapped (no ratecard entry)");
     expect(html).toContain("POLY-UNMAPPED");
     // grand total now includes the unmapped row too: 75000 + 10000 = 85000.00.
@@ -259,18 +228,15 @@ describe("buildFinalInvoiceHtml — usage appendix (bm45)", () => {
   });
 
   it("escapes free-text state/district/polygon values (external, ratecard-sourced data)", () => {
-    const html = buildFinalInvoiceHtml({
-      ...BASE_PARAMS,
-      invoiceNumber: "INV00000042",
+    const html = renderFinal({
       appendix: [
-        {
-          polygon: "<script>alert(1)</script>",
-          state: "<b>State</b>",
-          district: "<i>District</i>",
-          volume: "1.000000",
-          amount: "100.00",
-          unit: "EA",
-        },
+        appendixRow(
+          "<script>alert(1)</script>",
+          "<b>State</b>",
+          "<i>District</i>",
+          "1.000000",
+          "100.00",
+        ),
       ],
     });
     expect(html).not.toContain("<script>alert(1)</script>");

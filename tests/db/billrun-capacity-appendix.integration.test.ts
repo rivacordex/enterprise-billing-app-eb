@@ -7,10 +7,10 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { appuser } from "@/db/schema/identity";
 import { billCycle } from "@/db/schema/billing/catalogs";
-import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
 import { createFlowDoubleFixtures } from "@/tests/db/helpers/billrun-flow-double-fixtures";
+import { createCapacityPricingFixtures } from "@/tests/db/helpers/billrun-capacity-pricing-fixtures";
 import type { InvoiceUsageAppendixRow } from "@/types/billing";
 
 // bm45-spec §Implementation / Verification checklist — the DB-gated invoice
@@ -18,12 +18,13 @@ import type { InvoiceUsageAppendixRow } from "@/types/billing";
 // `billrun_runtime` SQL the real `bill_run_processing` flow's Aggregation
 // stage now performs for the per-polygon appendix snapshot, so the
 // behaviour is provable without a live Kestra). Reuses the generic
-// scaffolding in `billrun-flow-double-fixtures.ts`; the capacity-pricing
-// fixture helpers below are a deliberately self-contained, trimmed copy of
-// `billrun-capacity-aggregation.integration.test.ts`'s own (usage_rate +
-// commitment only — no motivation needed to prove the appendix join),
-// matching the "each flow-double test is self-contained" convention bm42's
-// round-2 Sonar fix documented rather than a premature cross-file extract.
+// scaffolding in `billrun-flow-double-fixtures.ts` AND the capacity-pricing
+// scaffolding in `billrun-capacity-pricing-fixtures.ts` (usage_rate +
+// commitment only — no motivation needed to prove the appendix join). This
+// is the third capacity-pricing flow-double (after bm42/bm43), which is the
+// trigger bm43's own round-2 Sonar fix documented for extracting the shared
+// file instead of hand-copying the fixture block a third time
+// (billmgmt-progress-tracker.md).
 //
 // It asserts:
 //   * the appendix snapshots per-polygon rows grouped state/district,
@@ -88,77 +89,48 @@ describe.skipIf(!databaseUrl)(
     const readLines = (customerBillId: string) =>
       fixtures().readLines(customerBillId);
 
-    async function insertOfferingPrice(
-      offeringId: string,
-      name: string,
-      componentType: string,
-      envelope: Record<string, unknown>,
-      unitOfMeasure: string,
-      currency: string,
-      startIso: string,
-    ): Promise<string> {
-      const [row] = await sql<{ product_offering_price_id: string }[]>`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, unit_of_measure, currency, start_date_time)
-        VALUES
-          (${offeringId}, ${name}, ${componentType}, ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
-           ${unitOfMeasure}, ${currency}, ${startIso}::timestamptz)
-        RETURNING product_offering_price_id
-      `;
-      return row!.product_offering_price_id;
+    // The shared capacity-pricing fixture scaffolding (newUsageRate/
+    // newCapacityCommitment/insertCapacityVolumeRow — bm45 needs no
+    // newCapacityMotivation/newCapacityOffering, the appendix join being
+    // orthogonal to the band math) — see billrun-capacity-pricing-fixtures.ts
+    // for why this is factored out of this file and bm42's/bm43's (this is
+    // the documented third-occurrence trigger). Memoized (not recreated per
+    // call): the factory's `seq` counter must stay unique across every
+    // insertCapacityVolumeRow() call in this file.
+    let capacityFixturesInstance:
+      | ReturnType<typeof createCapacityPricingFixtures>
+      | undefined;
+    function capacityFixtures() {
+      return (capacityFixturesInstance ??= createCapacityPricingFixtures({
+        sql,
+        newOffering,
+        newProductSpec,
+        claimAt: IN_WINDOW,
+        labelPrefix: "BM45",
+      }));
     }
-
-    async function newUsageRate(
+    const newUsageRate = (
       offeringId: string,
       unitOfMeasure: string,
       ratePerUnit: string,
-    ): Promise<string> {
-      const envelope = {
-        "@type": "usage_rate",
-        specVersion: 1,
-        plaSpecId: null,
-        priceType: "usage",
-        appliesAt: "rating",
-        basis: "quantity",
-        boundTo: { unitOfMeasure },
-        params: { ratePerUnit, rateCardLookUp: null },
-      };
-      return insertOfferingPrice(
+    ) =>
+      capacityFixtures().newUsageRate(
         offeringId,
-        "BM45 Usage Rate",
-        "usage_rate",
-        envelope,
         unitOfMeasure,
-        "MYR",
+        ratePerUnit,
         "2026-01-01T00:00:00Z",
       );
-    }
-
-    async function newCapacityCommitment(
+    const newCapacityCommitment = (
       offeringId: string,
       unitOfMeasure: string,
       committedQuantity: number,
-    ): Promise<void> {
-      const envelope = {
-        "@type": "capacity_commitment",
-        specVersion: 1,
-        plaSpecId: "PLA_CAPACITY_COMMITMENT",
-        priceType: "commitment",
-        appliesAt: "post_aggregation",
-        basis: "quantity",
-        boundTo: { unitOfMeasure },
-        params: { committedQuantity },
-      };
-      await insertOfferingPrice(
+    ) =>
+      capacityFixtures().newCapacityCommitment(
         offeringId,
-        "BM45 Capacity Commitment",
-        "capacity_commitment",
-        envelope,
         unitOfMeasure,
-        "MYR",
+        committedQuantity,
         "2026-01-01T00:00:00Z",
       );
-    }
 
     // A minimal capacity offering (usage_rate + commitment, no motivation —
     // the appendix join is orthogonal to the band math) carrying the three
@@ -237,7 +209,7 @@ describe.skipIf(!databaseUrl)(
       );
     }
 
-    async function insertCapacityVolumeRow(args: {
+    const insertCapacityVolumeRow = (args: {
       subRef: string;
       runId: string;
       ban: string;
@@ -246,27 +218,17 @@ describe.skipIf(!databaseUrl)(
       rate: string;
       priceRef: string;
       polygonId: string;
-    }): Promise<void> {
-      const ratedPrice = (args.quantityEa * Number(args.rate)).toFixed(2);
-      await sql`
-        INSERT INTO rating.udr_rated
-          (partition_period, udr_type, start_datetime, end_datetime, status,
-           udr_subscription_ref_id, udr_key, udr_usage_quantity, udr_usage_unit,
-           udr_rate_type, udr_usage_rate, udr_price_ref, udr_rated_price,
-           udr_rated_price_raw, udr_rounding_mode, udr_currency, udr_ref_batch_id,
-           udr_source_file, rating_engine_version, rating_flow_revision,
-           billrun_ref_id, billrun_ban_id, billrun_attempt, billrun_checksum,
-           upsert_datetime)
-        VALUES
-          (rating.period_of(${IN_WINDOW}::timestamptz), 'RAN_USAGE',
-           ${IN_WINDOW}::timestamptz, ${IN_WINDOW}::timestamptz, 'BILL_DRAFT',
-           ${args.subRef}, ${canonicalUdrKey(args.polygonId)},
-           ${args.quantityEa.toFixed(6)}, 'EA', 'PER_UNIT', ${args.rate},
-           ${args.priceRef}, ${ratedPrice}, ${ratedPrice}, 'HALF_UP', 'MYR',
-           '_BM45_BATCH', '_BM45', '_BM45', 0,
-           ${args.runId}, ${args.ban}, ${args.attempt}, 'bm45-claim', now())
-      `;
-    }
+    }) =>
+      capacityFixtures().insertCapacityVolumeRow({
+        subRef: args.subRef,
+        runId: args.runId,
+        ban: args.ban,
+        attempt: args.attempt,
+        quantityEa: args.quantityEa,
+        rate: args.rate,
+        priceRef: args.priceRef,
+        udrKey: canonicalUdrKey(args.polygonId),
+      });
 
     async function aggregate(runId: string, ban: string): Promise<void> {
       await runAggregation(sql, {

@@ -703,6 +703,58 @@ environment-quirk detail trimmed to durable facts + decisions. Full history:
     `bm00-build-plan.md` still doesn't exist in this checkout (same gap
     bm40–bm44 noted) — that sync step could not be done.
   - bm46 (ship gate) is next, per the spec's own Dependencies section.
+  - **SonarQube "Duplicated Lines on New Code" fix (2026-10-07) — two
+    findings.**
+    (a) `tests/services/billing/render-invoice-template.test.ts` (28.5%): the
+    repeated `buildFinalInvoiceHtml({...BASE_PARAMS, invoiceNumber:
+    "INV00000042", ...})` call shape (8 call sites) and the per-polygon
+    `MAPPED_ROWS`/`UNMAPPED_ROW` object literals (same key shape, different
+    literal values — SonarQube's CPD normalizes literals) were the source.
+    Extracted local `renderDraft`/`renderFinal` helpers and an
+    `appendixRow(...)` factory; assertions and fixture data unchanged.
+    Verified: `npx tsc --noEmit` clean; `npx vitest run --pool=threads`
+    32/32 passing.
+    (b) `tests/db/billrun-capacity-appendix.integration.test.ts` (18.6%): the
+    same capacity-pricing fixture block (`insertOfferingPrice`/
+    `newUsageRate`/`newCapacityCommitment`/`insertCapacityVolumeRow`) already
+    hand-copied into bm42 and bm43 — and which bm43's own round-2 SonarQube
+    fix (above) deliberately left un-extracted, naming a THIRD
+    capacity-pricing unit needing the same fixtures as the trigger to extract
+    a shared file. bm45 is that third unit. Per owner decision this round:
+    extracted a new shared `tests/db/helpers/billrun-capacity-pricing-
+    fixtures.ts` (`createCapacityPricingFixtures({ sql, newOffering,
+    newProductSpec, claimAt, labelPrefix })`), covering
+    `insertOfferingPrice`/`newUsageRate`/`newCapacityCommitment`/
+    `newCapacityMotivation`/`newCapacityOffering`/`insertCapacityVolumeRow` —
+    parameterized by `labelPrefix` (reproduces each file's exact "BM42"/
+    "BM43"/"BM45" name/batch/source-file/checksum strings) and an optional
+    `udrKey` override on `insertCapacityVolumeRow` (bm45's D2 canonical-cell
+    key, which the shared seq-counter default doesn't produce). bm42, bm43,
+    and bm45 all switched to consume it via thin per-file wrappers; bm45's
+    own `newAppendixCapacityOffering`/`insertRatecardVersion`/
+    `canonicalUdrKey` stay local (appendix-specific, not duplicated
+    elsewhere). bm42/bm43 expose only `newCapacityOffering`/
+    `insertCapacityVolumeRow` wrappers — a first draft also wrapped
+    `newUsageRate`/`newCapacityCommitment`/`newCapacityMotivation`, but
+    `newCapacityOffering`'s own composition calls the shared factory's
+    internal versions directly, not those file-level wrappers, so they were
+    genuinely dead code; `eslint`'s `no-unused-vars` caught this (bm45 keeps
+    its own `newUsageRate`/`newCapacityCommitment` wrappers since
+    `newAppendixCapacityOffering` there calls them directly). The factory is
+    also **memoized per file** (`capacityFixturesInstance ??= ...`) rather
+    than recreated per call like the unrelated `fixtures()` helper above it
+    — it closes over a `seq` counter that must stay unique across every
+    `insertCapacityVolumeRow()` call in a file, unlike the stateless
+    flow-double scaffolding (an early draft recreated it per call, which
+    silently reset `seq` and would have collided every claim row's
+    `udr_key`; caught before commit). No intended behavioural change.
+    Verified: `npx tsc --noEmit` clean repo-wide; `eslint` clean (0
+    warnings) on touched/added files; `render-invoice-template.test.ts`'s own
+    suite re-run (32/32 passing, `--pool=threads`). **NOT re-run against a
+    live DB in this environment** (no reachable Postgres/Docker daemon here,
+    same gap as bm40–bm45) — the bm42/bm43/bm45 DB-gated suites need re-running
+    against a disposable Postgres before merge to confirm the extraction is
+    behaviour-preserving.
 
 ## Outstanding / Next (post-Phase 4)
 
