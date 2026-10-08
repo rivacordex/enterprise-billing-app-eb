@@ -313,6 +313,13 @@ DELIVERED" section.
     48's text ("where rating reads `rate_per_unit`" → "PRP's ratecard cell match") could
     not be corrected — that file is not in this repo; (4) deploying needs a worker-image
     rebuild (runtime is baked into the image), which re-stamps `rating_engine_version`.
+  - **SonarQube duplication fix (2026-10-08):** `rm23` was flagged at 26.2% duplicated
+    lines on new code (scaffolding copied from `rm13`). The shared RAN_USAGE harness (python
+    probe, role-SQL runner, schema drop, feed profile, Sample-5G graph seed, PRP/RP/RL
+    runners) now lives in `tests/helpers/rating-ran-harness.ts`, and both `rm13` and `rm23`
+    use it. No assertion changes. tsc/ESLint/Prettier are green; both suites are still
+    **unrun** (same host limits as above). `rm07`–`rm12` still carry their own older copies,
+    left as they were.
   - **Next:** bm49 switches the binder's usage section onto these columns.
 
 ## Outstanding / Next (post-Phase 4)

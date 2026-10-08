@@ -1,8 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -15,16 +11,17 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import {
-  insertRanOffering,
-  insertRanCustomer,
-  insertRanBillCycle,
-  insertRanBillingAccount,
-  insertRanSubscription,
-  insertRanRatecard,
+  createRatingPipeline,
+  dropModuleSchemas,
+  pythonRuntimeReady,
+  readManifest,
+  runSqlFile,
+  seedSample5gRatingGraph,
+  type RatingPipeline,
+} from "@/tests/helpers/rating-ran-harness";
+import {
   SAMPLE_5G_LKP_ROWS,
-  SAMPLE_5G_COMMERCIAL_UNIT,
   SAMPLE_5G_RATECARD_STATE,
 } from "@/db/seeds/sample/sample-5g-fixture";
 import { udrRated } from "@/db/schema/rating/udr-rated";
@@ -41,24 +38,6 @@ import { udrRated } from "@/db/schema/rating/udr-rated";
 // worker runtime; shells the real PRP/RP/RL modules exactly as the flow's tasks
 // do. Skips loudly otherwise — same posture as every rm06+ DB-gated suite.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(
-  process.cwd(),
-  "workflow-management",
-  "worker",
-  "workflow-engine",
-);
-
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm23-test-only-pw";
@@ -74,53 +53,12 @@ const BILLRUN_ROLES_SQL = join(
   process.cwd(),
   "db/bootstrap/billrun-db-roles.sql",
 );
-const ENGINE_VERSION = "rm23-test-engine@sha256:deadbeef";
 const MNO = "MNO-GEO-FROZEN";
 const PRODUCT_NAME = "Sample 5G Services geo-frozen";
 const CARD_NAME = "RATECARD_GEO_FROZEN";
 const REVISED_STATE = "Johor";
 const revisedDistrict = (i: number) => `REVISED-${i + 1}`;
 
-// The production 7-column RAN_USAGE `.udr` feed profile (rm21 §6), as rm13 uses.
-const FEED_PROFILE = JSON.stringify({
-  header: [
-    "mno_public_id",
-    "commercial_unit",
-    "polygon_id",
-    "datetime_YYYYMMDDHHMI",
-    "usage_volume",
-    "district_name",
-    "service_code",
-  ],
-  event_time_column: "datetime_YYYYMMDDHHMI",
-  event_time_assumed_tz: "Asia/Kuala_Lumpur",
-  usage_column: "usage_volume",
-  udr_key_columns: ["mno_public_id", "commercial_unit", "polygon_id"],
-  mno_column: "mno_public_id",
-  commercial_unit_column: "commercial_unit",
-  polygon_column: "polygon_id",
-  service_code_column: "service_code",
-  subscriber_ref: null,
-  interval_seconds: null,
-  future_tolerance_seconds: 300,
-});
-const FILE_KEY_RULE =
-  "^(?P<file_key>rating-input-file-\\d{12})(?:_v\\d+)?\\.udr$";
-const UDR_HEADER =
-  "mno_public_id,commercial_unit,polygon_id,datetime_YYYYMMDDHHMI,usage_volume,district_name,service_code";
-const NOW = "2026-09-01T00:00:00Z";
-
-function statements(path: string): string[] {
-  return readFileSync(path, "utf8")
-    .split("--> statement-breakpoint")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
-  for (const statement of statements(path)) {
-    await client.unsafe(statement);
-  }
-}
 function roleUrl(base: string, user: string): string {
   const url = new URL(base);
   url.username = user;
@@ -133,34 +71,13 @@ describe.skipIf(!databaseUrl || !pythonReady)(
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
-    let dbParams: { host: string; port: string; name: string };
-    let landingDir: string;
-    let errorDir: string;
-    let logsDir: string;
-    let archiveDir: string;
-    let workDir: string;
+    let pipeline: RatingPipeline;
     const roleClients: Record<string, postgresjs.Sql> = {};
-
-    const dropAll = async (client: postgresjs.Sql) => {
-      for (const s of [
-        "inventory",
-        "ordering",
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-      ]) {
-        await client.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    };
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       db = drizzle(sql, { schema });
       await migrate(db, {
         migrationsFolder: "./db/migrations",
@@ -179,66 +96,22 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         });
       }
 
-      const actorId = await getOrCreateAppUser(
-        db,
-        "rm23-geo-actor",
-        "rm23-geo@example.invalid",
-      );
-      const { offeringId } = await insertRanOffering(db, {
-        name: PRODUCT_NAME,
+      await seedSample5gRatingGraph(db, {
+        tag: "rm23-geo",
+        mno: MNO,
+        productName: PRODUCT_NAME,
         priceName: "Sample 5G Usage Rate geo-frozen",
-        udrTypeValue: "RAN_USAGE",
         cardName: CARD_NAME,
       });
-      const partyRoleId = await insertRanCustomer(db, {
-        organizationName: "rm23-geo-org",
-        registrationNumber: "_SAMPLE_-RM23-GEO",
-        partyRoleSpecification: { mnoPublicKey1: MNO },
-        actorId,
+      pipeline = createRatingPipeline({
+        databaseUrl: databaseUrl as string,
+        rolePassword: ROLE_PW,
+        engineVersion: "rm23-test-engine@sha256:deadbeef",
+        mno: MNO,
+        productName: PRODUCT_NAME,
+        now: "2026-09-01T00:00:00Z",
+        tmpPrefix: "rm23-geo-",
       });
-      const billCycleId = await insertRanBillCycle(db, {
-        name: "rm23-geo-cycle",
-        description: "rm23 geo fixture bill cycle",
-        actorId,
-      });
-      const billingAccountId = await insertRanBillingAccount(db, {
-        financialAccountName: "rm23-geo-fa",
-        billingAccountName: "rm23-geo-ban",
-        partyRoleId,
-        billCycleId,
-        actorId,
-      });
-      await insertRanSubscription(db, {
-        partyRoleId,
-        billingAccountId,
-        offeringId,
-        actorId,
-        reason: "rm23 geo fixture",
-      });
-      await insertRanRatecard(db, {
-        cardName: CARD_NAME,
-        mnoPublicKey: MNO,
-        lkpSubscriberRefId: partyRoleId,
-        rows: SAMPLE_5G_LKP_ROWS,
-        actorId,
-      });
-
-      const url = new URL(databaseUrl as string);
-      dbParams = {
-        host: url.hostname,
-        port: url.port || "5432",
-        name: url.pathname.replace(/^\//, ""),
-      };
-
-      const root = mkdtempSync(join(tmpdir(), "rm23-geo-"));
-      landingDir = join(root, "landing");
-      errorDir = join(root, "error");
-      logsDir = join(root, "logs");
-      archiveDir = join(root, "archive");
-      workDir = join(root, "work");
-      for (const d of [landingDir, errorDir, logsDir, archiveDir, workDir]) {
-        mkdirSync(d, { recursive: true });
-      }
     }, 120_000);
 
     afterAll(async () => {
@@ -246,112 +119,22 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         await client.end();
       }
       if (!sql) return;
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       await sql.end();
     });
 
-    const runEnv = () => ({
-      ...process.env,
-      SECRET_RATING_RUNTIME_PASSWORD: ROLE_PW,
-      RATING_DB_HOST: dbParams.host,
-      RATING_DB_PORT: dbParams.port,
-      RATING_DB_NAME: dbParams.name,
-      RATING_DB_USER: "rating_runtime",
-      RATING_LANDING_DIR: landingDir,
-      RATING_ERROR_DIR: errorDir,
-      RATING_LOGS_DIR: logsDir,
-      RATING_ARCHIVE_DIR: archiveDir,
-      RATING_ENGINE_VERSION: ENGINE_VERSION,
-    });
-
+    // file -> PRP -> RP -> RL, returning the batch id the rows were loaded under.
     // `volumeBase` varies the bytes: a byte-identical reissue would be DISCARDED
     // by PRP as a duplicate redelivery rather than re-rated.
-    function writeUdr(name: string, volumeBase: number): string {
-      const rows = SAMPLE_5G_LKP_ROWS.map((cell, i) =>
-        [
-          MNO,
-          SAMPLE_5G_COMMERCIAL_UNIT,
-          cell.polygonId,
-          `2026-08-14T10:0${i}:00`,
-          String(volumeBase * (i + 1)),
-          cell.district ?? "",
-          cell.serviceCode ?? "",
-        ].join(","),
-      );
-      const path = join(landingDir, name);
-      writeFileSync(path, [UDR_HEADER, ...rows].join("\n") + "\n", "utf8");
-      return path;
-    }
-
-    function runModule(module: string, args: string[]): string {
-      const out = execFileSync("python3", ["-m", module, ...args], {
-        cwd: workerDir,
-        encoding: "utf8",
-        env: runEnv(),
-      });
-      return out.trim().split("\n").pop() as string;
-    }
-
-    // file -> PRP -> RP -> RL, returning the batch id the rows were loaded under.
     function rateFile(name: string, tag: string, volumeBase: number): string {
-      const prpUri = runModule("runtime.prp", [
-        "--source-file",
-        writeUdr(name, volumeBase),
-        "--udr-type",
-        "RAN_USAGE",
-        "--profile",
-        FEED_PROFILE,
-        "--file-key-rule",
-        FILE_KEY_RULE,
-        "--reject-threshold",
-        "0",
-        "--chunk-size",
-        "10000",
-        "--subscription-product-name",
-        PRODUCT_NAME,
-        "--ratecard-coverage-enforcement",
-        "HARD_STOP",
-        "--workflow-execution-id",
+      const volumes = SAMPLE_5G_LKP_ROWS.map((_, i) => volumeBase * (i + 1));
+      const prpUri = pipeline.runPrp(
+        pipeline.writeUdr(name, volumes),
         `prp-${tag}`,
-        "--now",
-        NOW,
-        "--work-dir",
-        workDir,
-      ]);
-      const batchId = (
-        JSON.parse(readFileSync(fileURLToPath(prpUri.trim()), "utf8")) as {
-          batch_id: string;
-        }
-      ).batch_id;
-      const rpUri = runModule("runtime.rp", [
-        "--manifest",
-        prpUri,
-        "--udr-type",
-        "RAN_USAGE",
-        "--rounding-mode",
-        "HALF_UP",
-        "--subscriber-ref-column",
-        "product_inventory_id",
-        "--workflow-execution-id",
-        `rp-${tag}`,
-        "--flow-revision",
-        "1",
-        "--work-dir",
-        workDir,
-      ]);
-      runModule("runtime.rl", [
-        "--manifest",
-        rpUri,
-        "--udr-type",
-        "RAN_USAGE",
-        "--landing-dir",
-        landingDir,
-        "--workflow-execution-id",
-        `rl-${tag}`,
-        "--flow-revision",
-        "1",
-      ]);
-      return batchId;
+      );
+      const rpUri = pipeline.runRp(prpUri, `rp-${tag}`);
+      pipeline.runRl(rpUri, `rl-${tag}`);
+      return readManifest(prpUri).batch_id as string;
     }
 
     // polygon -> [state, district] for one batch's rows. udr_key carries the
