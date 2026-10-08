@@ -4,8 +4,8 @@ import { bind } from "@/services/billing/invoice-template/bind";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import { FinalInvoiceNotFoundError, InvoiceRenderError } from "@/types/billing";
 
-// bm47-spec §Design D2/D3/D4/D5, §Implementation §4, test plan row 1.
-// Pure, DB-free — `bind()` takes no DB/Handlebars/next import.
+// bm47-spec §Design D2/D3/D4/D5 + bm49-spec §Design D3/D4/D5/D6, test plan
+// rows. Pure, DB-free — `bind()` takes no DB/Handlebars/next import.
 
 function rawInput(
   overrides: Partial<RawInvoiceRenderInput> = {},
@@ -25,6 +25,7 @@ function rawInput(
       linesNetSum: "150.00",
       grossTotal: "150.00",
       discountTotal: "0.00",
+      usageRatedTotal: "0.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [
@@ -81,16 +82,23 @@ function rawInput(
       address: {
         line1: "Suite 5, Wisma Acme",
         line2: null,
-        city: "Petaling Jaya",
-        stateProvince: "Selangor",
+        city: "City-01",
+        stateProvince: "State-01",
         postalCode: "46050",
-        country: "Malaysia",
+        country: "Country-01",
       },
     },
     usage: null,
     ...overrides,
   };
 }
+
+const CTX = {
+  isDraft: true,
+  locale: "en-MY",
+  timezone: "UTC",
+  includeUsage: true,
+};
 
 describe("bind — reconciliation (D2)", () => {
   it("throws INVOICE_RECONCILIATION_FAILED with both strings when lines net sum != subtotal", () => {
@@ -100,7 +108,7 @@ describe("bind — reconciliation (D2)", () => {
 
     let caught: unknown;
     try {
-      bind(raw, { isDraft: true, locale: "en-MY", timezone: "UTC" });
+      bind(raw, CTX);
     } catch (err) {
       caught = err;
     }
@@ -127,13 +135,16 @@ describe("bind — reconciliation (D2)", () => {
         discountTotal: "0.00",
       },
     });
-    const bound = bind(raw, { isDraft: true, locale: "en-MY", timezone: "UTC" });
+    const bound = bind(raw, CTX);
     expect(bound.lineGroups).toEqual([]);
   });
 
   it("asserts the bound document id against the final render's requested invoice number", () => {
     const raw = rawInput({
-      document: { documentId: "INV00000001", postingDate: new Date("2026-09-05") },
+      document: {
+        documentId: "INV00000001",
+        postingDate: new Date("2026-09-05"),
+      },
     });
 
     let caught: unknown;
@@ -142,19 +153,27 @@ describe("bind — reconciliation (D2)", () => {
         isDraft: false,
         locale: "en-MY",
         timezone: "UTC",
+        includeUsage: true,
         invoiceNo: "INV00000002",
       });
     } catch (err) {
       caught = err;
     }
     expect(caught).toBeInstanceOf(InvoiceRenderError);
-    expect((caught as InvoiceRenderError).code).toBe("INVOICE_DOCUMENT_MISMATCH");
+    expect((caught as InvoiceRenderError).code).toBe(
+      "INVOICE_DOCUMENT_MISMATCH",
+    );
   });
 
   it("throws FinalInvoiceNotFoundError on a final bind with no billing.document row", () => {
     const raw = rawInput({ document: null });
     expect(() =>
-      bind(raw, { isDraft: false, locale: "en-MY", timezone: "UTC" }),
+      bind(raw, {
+        isDraft: false,
+        locale: "en-MY",
+        timezone: "UTC",
+        includeUsage: true,
+      }),
     ).toThrow(FinalInvoiceNotFoundError);
   });
 });
@@ -163,22 +182,37 @@ describe("bind — invoice date", () => {
   it("formats the posting date as the calendar day in the app timezone, not UTC", () => {
     // 2026-09-04T16:30Z is 2026-09-05 00:30 in Asia/Kuala_Lumpur (UTC+8).
     const raw = rawInput({
-      document: { documentId: "INV00000001", postingDate: new Date("2026-09-04T16:30:00Z") },
+      document: {
+        documentId: "INV00000001",
+        postingDate: new Date("2026-09-04T16:30:00Z"),
+      },
     });
-    const ctx = { isDraft: false, locale: "en-MY", invoiceNo: "INV00000001" };
-    expect(bind(raw, { ...ctx, timezone: "Asia/Kuala_Lumpur" }).invoice.date).toBe("2026-09-05");
-    expect(bind(raw, { ...ctx, timezone: "UTC" }).invoice.date).toBe("2026-09-04");
+    const ctx = {
+      isDraft: false,
+      locale: "en-MY",
+      includeUsage: true,
+      invoiceNo: "INV00000001",
+    };
+    expect(
+      bind(raw, { ...ctx, timezone: "Asia/Kuala_Lumpur" }).invoice.date,
+    ).toBe("2026-09-05");
+    expect(bind(raw, { ...ctx, timezone: "UTC" }).invoice.date).toBe(
+      "2026-09-04",
+    );
   });
 });
 
 describe("bind — line groups (D3)", () => {
   it("orders groups RECURRING -> USAGE -> OCC and omits an empty group", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
-    expect(bound.lineGroups.map((g) => g.source)).toEqual(["RECURRING", "USAGE"]);
+    const bound = bind(rawInput(), CTX);
+    expect(bound.lineGroups.map((g) => g.source)).toEqual([
+      "RECURRING",
+      "USAGE",
+    ]);
   });
 
   it("keeps a discount line in place inside its source group (no merge/compute)", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
+    const bound = bind(rawInput(), CTX);
     const usageGroup = bound.lineGroups.find((g) => g.source === "USAGE")!;
     expect(usageGroup.lines).toHaveLength(1);
     expect(usageGroup.lines[0]!.discountNote).toBe("Discount 16.666667%");
@@ -188,8 +222,9 @@ describe("bind — line groups (D3)", () => {
   });
 
   it("falls back unitPrice/quantity per D3 and carries the bill's period onto every line", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
-    const recurring = bound.lineGroups.find((g) => g.source === "RECURRING")!.lines[0]!;
+    const bound = bind(rawInput(), CTX);
+    const recurring = bound.lineGroups.find((g) => g.source === "RECURRING")!
+      .lines[0]!;
     expect(recurring.unitPrice).toBe("50.00");
     expect(recurring.periodStart).toBe("2026-08-01");
     expect(recurring.periodEnd).toBe("2026-08-31");
@@ -199,7 +234,7 @@ describe("bind — line groups (D3)", () => {
   });
 
   it("builds chargeSummary with one entry per present group at the group subtotal", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
+    const bound = bind(rawInput(), CTX);
     expect(bound.chargeSummary).toEqual([
       { name: "Recurring charges", source: "RECURRING", amount: "50.00" },
       { name: "Usage charges", source: "USAGE", amount: "100.00" },
@@ -209,7 +244,7 @@ describe("bind — line groups (D3)", () => {
 
 describe("bind — company/payment/G9 fields (G15/G9 interim)", () => {
   it("binds company and payment as null, and every G9 field as null", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
+    const bound = bind(rawInput(), CTX);
     expect(bound.company).toBeNull();
     expect(bound.payment).toBeNull();
     expect(bound.invoice.poRef).toBeNull();
@@ -218,7 +253,7 @@ describe("bind — company/payment/G9 fields (G15/G9 interim)", () => {
   });
 
   it("never leaves a key `undefined` anywhere in the bound object (deep walk)", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
+    const bound = bind(rawInput(), CTX);
     const offenders: string[] = [];
     const walk = (value: unknown, path: string) => {
       if (value === undefined) {
@@ -240,54 +275,233 @@ describe("bind — company/payment/G9 fields (G15/G9 interim)", () => {
   });
 });
 
-describe("bind — usage section (D5)", () => {
-  function usageRaw() {
+describe("bind — usage section (bm49 D5)", () => {
+  function row(
+    startDate: string,
+    cell: string,
+    quantity: string,
+    amount: string,
+    state: string | null,
+    district: string | null,
+  ) {
+    return {
+      startDate,
+      cell,
+      udrType: "RAN_USAGE",
+      quantity,
+      unit: "EA",
+      amount,
+      state,
+      district,
+    };
+  }
+  function dgroup(
+    state: string | null,
+    district: string | null,
+    rowCount: number,
+    amount: string,
+    quantity: string | null,
+    unit: string | null,
+  ) {
+    return {
+      state,
+      district,
+      gState: 0,
+      gDistrict: 0,
+      rowCount,
+      amount,
+      quantity,
+      unit,
+    };
+  }
+  function sgroup(
+    state: string | null,
+    rowCount: number,
+    amount: string,
+    quantity: string | null,
+    unit: string | null,
+  ) {
+    return {
+      state,
+      district: null,
+      gState: 0,
+      gDistrict: 1,
+      rowCount,
+      amount,
+      quantity,
+      unit,
+    };
+  }
+  function ggroup(
+    rowCount: number,
+    amount: string,
+    quantity: string | null,
+    unit: string | null,
+  ) {
+    return {
+      state: null,
+      district: null,
+      gState: 1,
+      gDistrict: 1,
+      rowCount,
+      amount,
+      quantity,
+      unit,
+    };
+  }
+
+  // Two states × two districts + one Unassigned row, already ordered as the
+  // repository returns them (state ASC NULLS LAST, district ASC NULLS LAST).
+  function usageRaw(
+    billOverrides: Partial<RawInvoiceRenderInput["bill"]> = {},
+  ): RawInvoiceRenderInput {
     return rawInput({
+      bill: {
+        ...rawInput().bill,
+        usageRatedTotal: "130000.00",
+        ...billOverrides,
+      },
       usage: {
+        overLimit: false,
         rows: [
-          { polygon: "POLY-001", state: "Selangor", district: "Petaling", volume: "300.000000", amount: "30000.00", unit: "EA" },
-          { polygon: "POLY-002", state: "Selangor", district: "Klang", volume: "250.000000", amount: "25000.00", unit: "EA" },
-          { polygon: "POLY-003", state: "Johor", district: "Johor Bahru", volume: "200.000000", amount: "20000.00", unit: "EA" },
-          { polygon: "POLY-UNMAPPED", state: null, district: null, volume: "100.000000", amount: "10000.00", unit: "EA" },
+          row(
+            "2026-08-07",
+            "POLY-003",
+            "700.000000",
+            "70000.00",
+            "State-01",
+            "District-01",
+          ),
+          row(
+            "2026-08-09",
+            "POLY-004",
+            "250.000000",
+            "25000.00",
+            "State-01",
+            "District-09",
+          ),
+          row(
+            "2026-08-03",
+            "POLY-001",
+            "300.000000",
+            "30000.00",
+            "State-02",
+            "District-03",
+          ),
+          row(
+            "2026-08-11",
+            "POLY-UNMAPPED",
+            "50.000000",
+            "5000.00",
+            null,
+            null,
+          ),
         ],
-        subtotals: [
-          { grain: "district" as const, state: "Selangor", district: "Petaling", amount: "30000.00" },
-          { grain: "district" as const, state: "Selangor", district: "Klang", amount: "25000.00" },
-          { grain: "district" as const, state: "Johor", district: "Johor Bahru", amount: "20000.00" },
-          { grain: "district" as const, state: null, district: null, amount: "10000.00" },
-          { grain: "state" as const, state: "Selangor", district: null, amount: "55000.00" },
-          { grain: "state" as const, state: "Johor", district: null, amount: "20000.00" },
-          { grain: "state" as const, state: null, district: null, amount: "10000.00" },
-          { grain: "grand" as const, state: null, district: null, amount: "85000.00" },
+        groups: [
+          dgroup("State-01", "District-01", 1, "70000.00", "700.000000", "EA"),
+          dgroup("State-01", "District-09", 1, "25000.00", "250.000000", "EA"),
+          dgroup("State-02", "District-03", 1, "30000.00", "300.000000", "EA"),
+          dgroup(null, null, 1, "5000.00", "50.000000", "EA"),
+          sgroup("State-01", 2, "95000.00", "950.000000", "EA"),
+          sgroup("State-02", 1, "30000.00", "300.000000", "EA"),
+          sgroup(null, 1, "5000.00", "50.000000", "EA"),
+          ggroup(4, "130000.00", "1300.000000", "EA"),
         ],
       },
     });
   }
 
-  it("is null when the bill has no appendix rows", () => {
-    const bound = bind(rawInput(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
+  it("is null when the bill has no billed usage rows", () => {
+    const bound = bind(rawInput(), CTX);
     expect(bound.usage).toBeNull();
   });
 
-  it("groups state -> district -> polygon, sorting the Unmapped state last, with SQL-summed subtotals", () => {
-    const bound = bind(usageRaw(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
+  it("groups state -> district -> rows, Unassigned last, with SQL-summed subtotals", () => {
+    const bound = bind(usageRaw(), CTX);
     const usage = bound.usage!;
-    expect(usage.states.map((s) => s.state)).toEqual(["Selangor", "Johor", null]);
-    expect(usage.states[0]!.subtotalAmount).toBe("55000.00");
-    expect(usage.states[0]!.districts.map((d) => d.district)).toEqual(["Petaling", "Klang"]);
-    expect(usage.states[0]!.districts[0]!.subtotalAmount).toBe("30000.00");
-    expect(usage.totalAmount).toBe("85000.00");
+    expect(usage.states.map((s) => s.state)).toEqual([
+      "State-01",
+      "State-02",
+      null,
+    ]);
+    expect(usage.states[0]!.amount).toBe("95000.00");
+    expect(usage.states[0]!.rowCount).toBe(2);
+    expect(usage.states[0]!.districts.map((d) => d.district)).toEqual([
+      "District-01",
+      "District-09",
+    ]);
+    expect(usage.states[0]!.districts[0]!.amount).toBe("70000.00");
+    expect(usage.states[2]!.label).toBe("Unassigned region");
+    expect(usage.states[2]!.districts[0]!.label).toBe("—");
+    expect(usage.totalAmount).toBe("130000.00");
+    expect(usage.totalQuantity).toBe("1300.000000");
+    expect(usage.unit).toBe("EA");
     expect(usage.rowCount).toBe(4);
-    expect(usage.states[2]!.label).toBe("Unmapped (no ratecard entry)");
   });
 
-  it("reports a single homogeneous unit, else null", () => {
-    const bound = bind(usageRaw(), { isDraft: true, locale: "en-MY", timezone: "UTC" });
-    expect(bound.usage!.unit).toBe("EA");
+  it("carries the itemised record fields onto each row (startDate/cell/udrType)", () => {
+    const bound = bind(usageRaw(), CTX);
+    const firstRow = bound.usage!.states[0]!.districts[0]!.rows[0]!;
+    expect(firstRow).toMatchObject({
+      startDate: "2026-08-07",
+      cell: "POLY-003",
+      udrType: "RAN_USAGE",
+      quantity: "700.000000",
+      unit: "EA",
+      amount: "70000.00",
+    });
+  });
 
-    const mixed = usageRaw();
-    mixed.usage!.rows[0]!.unit = "GB";
-    const boundMixed = bind(mixed, { isDraft: true, locale: "en-MY", timezone: "UTC" });
-    expect(boundMixed.usage!.unit).toBeNull();
+  it("leaves a group's quantity subtotal null when the group mixes units", () => {
+    const raw = usageRaw();
+    const grand = raw.usage as Extract<typeof raw.usage, { overLimit: false }>;
+    const grandGroup = grand.groups.find((g) => g.gState === 1)!;
+    grandGroup.quantity = null;
+    grandGroup.unit = null;
+    const bound = bind(raw, CTX);
+    expect(bound.usage!.totalQuantity).toBeNull();
+    expect(bound.usage!.unit).toBeNull();
+  });
+
+  it("D6 — throws INVOICE_RECONCILIATION_FAILED (detail 'usage') when the annex total != USAGE rated_amount", () => {
+    const raw = usageRaw({ usageRatedTotal: "129999.00" });
+    let caught: unknown;
+    try {
+      bind(raw, CTX);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InvoiceRenderError);
+    const err = caught as InvoiceRenderError;
+    expect(err.code).toBe("INVOICE_RECONCILIATION_FAILED");
+    expect(err.detail).toMatchObject({
+      detail: "usage",
+      annexTotal: "130000.00",
+    });
+  });
+});
+
+describe("bind — usage over limit (bm49 D3)", () => {
+  it("throws INVOICE_USAGE_OVER_LIMIT with the row count and the limit", () => {
+    const raw = rawInput({ usage: { overLimit: true, rowCount: 10001 } });
+    let caught: unknown;
+    try {
+      bind(raw, CTX);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InvoiceRenderError);
+    const err = caught as InvoiceRenderError;
+    expect(err.code).toBe("INVOICE_USAGE_OVER_LIMIT");
+    expect(err.detail).toMatchObject({ rowCount: 10001, limit: 10000 });
+  });
+});
+
+describe("bind — hidden annex (bm49 D4)", () => {
+  it("skips the read result entirely when includeUsage is false: usage null, no over-limit throw", () => {
+    // Even an over-limit marker is ignored when the section is hidden.
+    const raw = rawInput({ usage: { overLimit: true, rowCount: 999999 } });
+    const bound = bind(raw, { ...CTX, includeUsage: false });
+    expect(bound.usage).toBeNull();
   });
 });

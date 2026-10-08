@@ -70,9 +70,18 @@ export const customerBill = billing.table(
       scale: 2,
     }).notNull(),
     paymentDueDate: date("payment_due_date", { mode: "string" }).notNull(),
-    // Reserved — catalog/rendering phase deferred. No FK.
+    // Invoice-template posting stamps (Inv. #41) — stamped at posting by the
+    // app (bm54) in the same UPDATE as `ref_inv_document_id`, then frozen by
+    // the finalization guard. No FK (partitioned table + the plain-key stamp
+    // rule, 0029 precedent); integrity comes from being written only from rows
+    // `stampPosted` resolved. `billrun_runtime` lost its column grants on the
+    // first two (bm50, Inv #41) — these are app-only.
     refBillFormatId: text("ref_bill_format_id"),
     refBillTemplateVersionId: text("ref_bill_template_version_id"),
+    // bm50-spec §Design D6 — the company-profile `config_version` and the CSV
+    // generated-version id; nullable, no FK, app-only stamps.
+    refInvoiceProfileVersion: integer("ref_invoice_profile_version"),
+    refCsvTemplateVersionId: text("ref_csv_template_version_id"),
     // The finalization latch (Inv. #4), written at posting (bm11).
     refInvDocumentId: text("ref_inv_document_id"),
     postedAttempt: integer("posted_attempt"),

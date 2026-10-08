@@ -7,3 +7,16 @@ package-lock.json
 # escape hatch; the project docs use *italic* throughout, so exclude
 # markdown from formatting rather than fight it on every `format` run.
 *.md
+
+# Hand-authored invoice-template Handlebars layouts + the hand-written default
+# generated output are byte-frozen (Inv #44; bm50 seeds them, bm55 parity-checks
+# them against the generator). Prettier's glimmer parser reflows their inline
+# text, which breaks rendered-text assertions and would make the
+# generator-parity check impossible — never let it touch them.
+*.hbs
+
+# The whole invoice-template seed tree is byte-frozen: bm50 commits a SHA-256
+# `checksums.json` per version directory, and load() re-derives it on every
+# render (Inv #44/#45). Prettier reflowing any JSON/manifest/sample/csv-map
+# here would silently break those digests — exclude the entire tree.
+db/seeds/invoice-templates/

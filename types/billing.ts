@@ -4,6 +4,8 @@
 // (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
 // the service so the page never re-derives operability (code-standards §2.7).
 
+import type { ConfigStatus } from "@/types/system-config";
+
 export const RUN_STATUSES = [
   "SCHEDULED",
   "PROCESSING",
@@ -665,40 +667,69 @@ export interface InvoiceLineGroup {
   lines: InvoiceLine[];
 }
 
-// D5 — one per-polygon usage row, grouped state → district. `unit` is the
-// capacity line's own `unit` column (the stored appendix carries no unit
-// field, bm45).
+// bm49-spec §Design D5 — one billed `udr_rated` row in the usage annex. Every
+// field is `::text` from the repository (code-standards §2.3); `cell` is the
+// RAN polygon for a RAN cell, else the raw `udr_key`; `startDate` is the
+// row's `start_datetime` as a calendar date in the app timezone. `state`/
+// `district` live on the group, not the row. (Was bm45's per-polygon
+// `{polygon, volume, unit, amount}` snapshot row — replaced by the itemised
+// record, R9.)
 export interface InvoiceUsageRow {
-  polygon: string;
-  volume: string;
+  startDate: string;
+  cell: string;
+  udrType: string;
+  quantity: string;
   unit: string;
   amount: string;
 }
 
+// bm49-spec §Design D5 — a district group carries its own SQL-summed subtotal
+// (`amount`), record count, and a single-unit quantity subtotal
+// (`quantity`/`unit` are `null` when the group mixes units — volume is never
+// summed across units, the bm45 rule kept). `label` is `district ?? '—'`.
 export interface InvoiceUsageDistrictGroup {
   district: string | null;
   label: string;
-  subtotalAmount: string;
+  rowCount: number;
+  amount: string;
+  quantity: string | null;
+  unit: string | null;
   rows: InvoiceUsageRow[];
 }
 
+// bm49-spec §Design D5 — a state group with its per-state SQL subtotal and its
+// districts. `label` is `state ?? 'Unassigned region'`; the Unassigned group
+// (rows rated before bm48, or whose card row had no labels) sorts last.
 export interface InvoiceUsageStateGroup {
   state: string | null;
   label: string;
-  subtotalAmount: string;
+  rowCount: number;
+  amount: string;
+  quantity: string | null;
+  unit: string | null;
   districts: InvoiceUsageDistrictGroup[];
 }
 
-// D5 — bm47 carries the bm45 `additional_info.appendix` snapshot into this
-// shape unchanged in content (G4 interim, C1); bm49 replaces the source.
-// `unit` is the single unit when every contributing line shares one, else
-// `null`. `null` on the bound input when the bill has no appendix rows.
+// bm49-spec §Design D5 — the usage annex: every billed `udr_rated` row for the
+// account grouped state → district, with per-district/per-state subtotals (all
+// summed in SQL) and a grand total (`totalAmount`) that equals the bill's rated
+// usage. `totalQuantity`/`unit` are the single-unit grand totals (`null` when
+// units are mixed). `null` on the bound input when the bill has no billed usage
+// rows, or when the annex section is hidden (`includeUsage: false`, D4).
+// (Replaces bm47's snapshot-shaped section.)
 export interface InvoiceUsageSection {
+  rowCount: number;
+  totalAmount: string;
+  totalQuantity: string | null;
   unit: string | null;
   states: InvoiceUsageStateGroup[];
-  totalAmount: string;
-  rowCount: number;
 }
+
+// bm49-spec §Design D3 — the billed-usage-row bound, a named constant equal to
+// bm45's `CAPACITY_APPENDIX_OVER_LIMIT` (the load-tested bound). Over this, the
+// bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks; the repository
+// selects no rows. Changing it is a spec change, not a config value.
+export const INVOICE_USAGE_ROW_LIMIT = 10_000;
 
 // D9 — read from the layout manifest, validated by
 // `validation/billing/layout-page-setup.schema.ts`.
@@ -765,11 +796,75 @@ export interface InvoiceRenderInput {
   timezone: string;
 }
 
+// ============================================================================
+// bm50 — Invoice template catalog (Invoice Template update, Part 4). Unions +
+// the admin structure shape backing `billing.bill_template_version`. Schema in
+// `db/schema/billing/{bill-format,bill-template-version,bill-asset}.ts`.
+// ============================================================================
+
+export const BILL_FORMAT_CODES = ["INVOICE"] as const;
+export type BillFormatCode = (typeof BILL_FORMAT_CODES)[number];
+
+// No `xml` kind in v1 (R3).
+export const TEMPLATE_KINDS = ["layout", "generated", "csv"] as const;
+export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
+// DRAFT → ACTIVE → RETIRED — the same three values as `core.system_config.status`
+// (reused, never a second copy — code-standards Part 2 TS rule 1).
+export type TemplateVersionStatus = ConfigStatus;
+
+export const BILL_ASSET_KINDS = ["logo"] as const;
+export type BillAssetKind = (typeof BILL_ASSET_KINDS)[number];
+
+// The nine invoice sections an admin's structure toggles (header/pageTwoHeader/
+// footer are fixed layout parts, not section keys; accountSummary dropped, R2).
+export const INVOICE_SECTION_KEYS = [
+  "billTo",
+  "identification",
+  "amountDue",
+  "chargeSummary",
+  "taxSummary",
+  "payment",
+  "chargeDetails",
+  "usageAnnex",
+  "notes",
+] as const;
+export type InvoiceSectionKey = (typeof INVOICE_SECTION_KEYS)[number];
+
+// The three sections an admin may hide; every other section is mandatory-on.
+export const INVOICE_OPTIONAL_SECTION_KEYS = [
+  "payment",
+  "usageAnnex",
+  "notes",
+] as const;
+export type InvoiceOptionalSectionKey =
+  (typeof INVOICE_OPTIONAL_SECTION_KEYS)[number];
+
+// The four hideable charge-detail columns (no Tax column, R6).
+export const INVOICE_COLUMN_KEYS = [
+  "showServicePeriod",
+  "showDiscountColumn",
+  "showProductId",
+  "showUdrCount",
+] as const;
+export type InvoiceColumnKey = (typeof INVOICE_COLUMN_KEYS)[number];
+
+// The admin structure stored in `bill_template_version.structure` (the bm55 Zod
+// schema validates it; typed here so bm50's Drizzle mirror and repositories
+// have a shape before that schema exists).
+export interface InvoiceTemplateStructure {
+  sections: Record<InvoiceSectionKey, boolean>;
+  columns: Record<InvoiceColumnKey, boolean>;
+}
+
 // bm47-spec §Implementation §2 — binding names (code-standards TS rule 7).
 export const INVOICE_ERROR_CODES = [
   "INVOICE_RECONCILIATION_FAILED",
   "TEMPLATE_COMPILE_FAILED",
   "INVOICE_DOCUMENT_MISMATCH",
+  // bm49-spec §Design D3 — the usage annex exceeds the 10,000-row bound; the
+  // bind fails loud and the account parks (no truncation, no partial annex).
+  "INVOICE_USAGE_OVER_LIMIT",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

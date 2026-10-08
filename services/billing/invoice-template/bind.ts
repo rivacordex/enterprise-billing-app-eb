@@ -1,15 +1,14 @@
-import type {
-  RawInvoiceRenderInput,
-  RawInvoiceUsageSubtotal,
-} from "@/db/repositories/billing/invoice-render-input";
+import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import { todayInZone } from "@/lib/timezone";
 import {
   FinalInvoiceNotFoundError,
+  INVOICE_USAGE_ROW_LIMIT,
   InvoiceRenderError,
   type ChargeSource,
   type InvoiceLine,
   type InvoiceLineGroup,
   type InvoiceRenderInput,
+  type InvoiceUsageRow,
   type InvoiceUsageSection,
 } from "@/types/billing";
 
@@ -20,6 +19,12 @@ export interface BindContext {
   isDraft: boolean;
   locale: string;
   timezone: string;
+  // bm49-spec §Design D4 — when the template hides the Usage annex
+  // (`structure.sections.usageAnnex === false`) the usage read is skipped and
+  // the over-limit/reconcile checks never run. In bm49 the only template is
+  // the all-on default, so callers pass `true`; bm53 derives it from the
+  // resolved version's structure.
+  includeUsage: boolean;
   // The final render's requested invoice number (D1's "the binder takes the
   // number from billing.document and asserts it equals invoiceNo" — render-
   // invoice.ts §6). Unused on a draft bind.
@@ -60,9 +65,15 @@ export function bind(
   // wiring bug, never a data problem, and is a typed render failure (D10).
   if (!ctx.isDraft) {
     if (!raw.document) {
-      throw new FinalInvoiceNotFoundError(raw.run.billRunId, raw.bill.billingAccountId);
+      throw new FinalInvoiceNotFoundError(
+        raw.run.billRunId,
+        raw.bill.billingAccountId,
+      );
     }
-    if (ctx.invoiceNo !== undefined && raw.document.documentId !== ctx.invoiceNo) {
+    if (
+      ctx.invoiceNo !== undefined &&
+      raw.document.documentId !== ctx.invoiceNo
+    ) {
       throw new InvoiceRenderError(
         "INVOICE_DOCUMENT_MISMATCH",
         `bound document ${raw.document.documentId} does not match the requested invoice number ${ctx.invoiceNo}`,
@@ -77,14 +88,47 @@ export function bind(
     source: g.source,
     amount: g.subtotal,
   }));
-  const usage = buildUsageSection(raw.usage);
+
+  // D3/D4/D6 — the usage annex. When the section is hidden the read was
+  // skipped (`raw.usage` is `null`): no over-limit throw, no reconcile, `usage`
+  // is `null`.
+  let usage: InvoiceUsageSection | null = null;
+  if (ctx.includeUsage && raw.usage) {
+    if (raw.usage.overLimit) {
+      // D3 — fail loud (no truncation, no partial annex). The draft preview
+      // surfaces the code; the final render parks the account (bm47 D10).
+      throw new InvoiceRenderError(
+        "INVOICE_USAGE_OVER_LIMIT",
+        `customer_bill ${raw.bill.customerBillId}: ${raw.usage.rowCount} billed usage rows exceed the ${INVOICE_USAGE_ROW_LIMIT}-row annex limit`,
+        { rowCount: raw.usage.rowCount, limit: INVOICE_USAGE_ROW_LIMIT },
+      );
+    }
+    usage = buildUsageSection(raw.usage);
+
+    // D6 — the annex's grand total must equal `Σ rated_amount` over the bill's
+    // USAGE lines (both `::text` from the same snapshot). A `null` grand total
+    // (no billed rows) and a `"0.00"` rated total are the matching empty case.
+    const annexTotal = grandTotal(raw.usage) ?? "0.00";
+    if (annexTotal !== raw.bill.usageRatedTotal) {
+      throw new InvoiceRenderError(
+        "INVOICE_RECONCILIATION_FAILED",
+        `customer_bill ${raw.bill.customerBillId}: usage annex total ${annexTotal} does not equal USAGE rated_amount ${raw.bill.usageRatedTotal}`,
+        {
+          detail: "usage",
+          annexTotal,
+          usageRatedTotal: raw.bill.usageRatedTotal,
+          customerBillId: raw.bill.customerBillId,
+        },
+      );
+    }
+  }
 
   return {
     template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: null },
     company: null,
     payment: null,
     invoice: {
-      number: ctx.isDraft ? null : raw.document?.documentId ?? null,
+      number: ctx.isDraft ? null : (raw.document?.documentId ?? null),
       isDraft: ctx.isDraft,
       date:
         !ctx.isDraft && raw.document?.postingDate
@@ -178,79 +222,90 @@ function toInvoiceLine(
   };
 }
 
-// D5 — the rows are already ordered `state, district, polygon` by the
-// repository; grouping here is pure structuring (no money arithmetic — every
-// subtotal was summed in SQL, `readUsage`). The "Unmapped (no ratecard
-// entry)" group (a real `state IS NULL` row) sorts last.
-function buildUsageSection(
-  rawUsage: RawInvoiceRenderInput["usage"],
-): InvoiceUsageSection | null {
-  if (!rawUsage || rawUsage.rows.length === 0) return null;
+// D5 — the rows arrive already ordered `state ASC NULLS LAST, district ASC
+// NULLS LAST, start_datetime, udr_id`, so structuring here preserves that
+// order (the "Unassigned region" group lands last) and does NO money
+// arithmetic — every subtotal was summed in SQL (`listBilledUsageForInvoice`'s
+// GROUPING SETS). Labels: `state ?? 'Unassigned region'`, `district ?? '—'`.
+type UsageRead = Extract<RawInvoiceRenderInput["usage"], { overLimit: false }>;
+type UsageGroup = UsageRead["groups"][number];
 
-  const districtSubtotal = (state: string | null, district: string | null): string =>
-    findSubtotal(rawUsage.subtotals, "district", state, district);
-  const stateSubtotal = (state: string | null): string =>
-    findSubtotal(rawUsage.subtotals, "state", state, null);
-  const grandTotal = findSubtotal(rawUsage.subtotals, "grand", null, null);
+// A NULL-safe composite key so a real `state/district IS NULL` group is never
+// confused with a non-null one.
+function groupKey(state: string | null, district: string | null): string {
+  return `${state ?? " "}|${district ?? " "}`;
+}
 
-  const units = new Set(
-    rawUsage.rows.map((r) => r.unit).filter((u): u is string => u !== null),
-  );
-  const unit = units.size === 1 ? Array.from(units)[0]! : null;
+function grandTotal(usage: UsageRead): string | null {
+  return usage.groups.find((g) => g.gState === 1)?.amount ?? null;
+}
 
-  type UsageRow = NonNullable<RawInvoiceRenderInput["usage"]>["rows"][number];
+function buildUsageSection(usage: UsageRead): InvoiceUsageSection | null {
+  if (usage.rows.length === 0) return null;
+
+  const grand = usage.groups.find((g) => g.gState === 1);
+  const stateGroups = new Map<string | null, UsageGroup>();
+  const districtGroups = new Map<string, UsageGroup>();
+  for (const g of usage.groups) {
+    if (g.gState === 1) continue;
+    if (g.gDistrict === 1) stateGroups.set(g.state, g);
+    else districtGroups.set(groupKey(g.state, g.district), g);
+  }
+
   const stateOrder: (string | null)[] = [];
-  const byState = new Map<string | null, Map<string | null, UsageRow[]>>();
-  for (const row of rawUsage.rows) {
+  const byState = new Map<
+    string | null,
+    Map<string | null, InvoiceUsageRow[]>
+  >();
+  for (const row of usage.rows) {
     if (!byState.has(row.state)) {
       byState.set(row.state, new Map());
       stateOrder.push(row.state);
     }
     const districts = byState.get(row.state)!;
     if (!districts.has(row.district)) districts.set(row.district, []);
-    districts.get(row.district)!.push(row);
+    districts.get(row.district)!.push({
+      startDate: row.startDate,
+      cell: row.cell,
+      udrType: row.udrType,
+      quantity: row.quantity,
+      unit: row.unit,
+      amount: row.amount,
+    });
   }
 
-  stateOrder.sort((a, b) => (a === null ? 1 : b === null ? -1 : 0));
-
   const states = stateOrder.map((state) => {
+    const sg = stateGroups.get(state);
     const districts = byState.get(state)!;
     return {
       state,
-      label: state ?? "Unmapped (no ratecard entry)",
-      subtotalAmount: stateSubtotal(state),
-      districts: Array.from(districts.entries()).map(([district, rows]) => ({
-        district,
-        label: district ?? "Unmapped (no ratecard entry)",
-        subtotalAmount: districtSubtotal(state, district),
-        rows: rows.map((r) => ({
-          polygon: r.polygon,
-          volume: r.volume,
-          unit: r.unit ?? "",
-          amount: r.amount,
-        })),
-      })),
+      label: state ?? "Unassigned region",
+      rowCount: sg?.rowCount ?? 0,
+      amount: sg?.amount ?? "0.00",
+      quantity: sg?.quantity ?? null,
+      unit: sg?.unit ?? null,
+      districts: Array.from(districts.entries()).map(([district, rows]) => {
+        const dg = districtGroups.get(groupKey(state, district));
+        return {
+          district,
+          label: district ?? "—",
+          rowCount: dg?.rowCount ?? rows.length,
+          amount: dg?.amount ?? "0.00",
+          quantity: dg?.quantity ?? null,
+          unit: dg?.unit ?? null,
+          rows,
+        };
+      }),
     };
   });
 
   return {
-    unit,
+    rowCount: usage.rows.length,
+    totalAmount: grand?.amount ?? "0.00",
+    totalQuantity: grand?.quantity ?? null,
+    unit: grand?.unit ?? null,
     states,
-    totalAmount: grandTotal,
-    rowCount: rawUsage.rows.length,
   };
-}
-
-function findSubtotal(
-  subtotals: RawInvoiceUsageSubtotal[],
-  grain: RawInvoiceUsageSubtotal["grain"],
-  state: string | null,
-  district: string | null,
-): string {
-  const match = subtotals.find(
-    (s) => s.grain === grain && s.state === state && s.district === district,
-  );
-  return match?.amount ?? "0.00";
 }
 
 // The posting instant's calendar day in the app timezone, not UTC — a

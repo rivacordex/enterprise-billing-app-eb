@@ -25,6 +25,14 @@ const REVENUE_OPS_GRANTS: {
   permissionType: "READ" | "EDIT";
 }[] = [{ permissionName: "billrun_view", permissionType: "READ" }];
 
+// bm50-spec §Design D7 (G11 interim): invoice_settings — ADMIN/MANAGER EDIT,
+// USER READ. The per-role level is appended to each Revenue Ops role's grants
+// below; ADMIN carries EDIT in ADMIN_GRANTS.
+const INVOICE_SETTINGS_BY_ROLE: Record<
+  (typeof REVENUE_OPS_ROLES)[number],
+  "READ" | "EDIT"
+> = { MANAGER: "EDIT", USER: "READ" };
+
 const ADMIN_GRANTS: {
   permissionName: PermissionName;
   permissionType: "READ" | "EDIT";
@@ -32,6 +40,7 @@ const ADMIN_GRANTS: {
   { permissionName: "billrun_view", permissionType: "READ" },
   { permissionName: "billrun_operate", permissionType: "EDIT" },
   { permissionName: "billrun_approve", permissionType: "EDIT" },
+  { permissionName: "invoice_settings", permissionType: "EDIT" },
 ];
 
 async function resolvePermissionIds(
@@ -41,6 +50,7 @@ async function resolvePermissionIds(
     "billrun_view",
     "billrun_operate",
     "billrun_approve",
+    "invoice_settings",
   ];
   const rows = await tx
     .select({
@@ -55,7 +65,9 @@ async function resolvePermissionIds(
   for (const name of names) {
     if (!byName.has(name)) {
       throw new Error(
-        `Permission '${name}' not found. Run db:migrate first (0024_billrun_permissions).`,
+        `Permission '${name}' not found. Run db:migrate first ` +
+          `(billrun_* come from 0024_billrun_permissions, ` +
+          `invoice_settings from 0046_invoice_template_catalog).`,
       );
     }
   }
@@ -125,7 +137,13 @@ async function main(): Promise<void> {
             `${roleName} role not found. Run db:seed-rbac first.`,
           );
         }
-        await grant(tx, role.roleId, permissionIdByName, REVENUE_OPS_GRANTS);
+        await grant(tx, role.roleId, permissionIdByName, [
+          ...REVENUE_OPS_GRANTS,
+          {
+            permissionName: "invoice_settings",
+            permissionType: INVOICE_SETTINGS_BY_ROLE[roleName],
+          },
+        ]);
       }
 
       // 2) ADMIN → billrun_view:READ, billrun_operate:EDIT, billrun_approve:EDIT

@@ -28,6 +28,7 @@ function rawInput(
       linesNetSum: "150.00",
       grossTotal: "150.00",
       discountTotal: "0.00",
+      usageRatedTotal: "0.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [
@@ -94,6 +95,7 @@ async function renderDraft(overrides: Partial<RawInvoiceRenderInput> = {}) {
     isDraft: true,
     locale: "en-MY",
     timezone: "UTC",
+    includeUsage: true,
   });
   return render(input);
 }
@@ -101,13 +103,17 @@ async function renderDraft(overrides: Partial<RawInvoiceRenderInput> = {}) {
 async function renderFinal(overrides: Partial<RawInvoiceRenderInput> = {}) {
   const { render } = await loadDefaultTemplateFromRepo();
   const merged = rawInput({
-    document: { documentId: "INV00000042", postingDate: new Date("2026-09-05") },
+    document: {
+      documentId: "INV00000042",
+      postingDate: new Date("2026-09-05"),
+    },
     ...overrides,
   });
   const input = bind(merged, {
     isDraft: false,
     locale: "en-MY",
     timezone: "UTC",
+    includeUsage: true,
     invoiceNo: "INV00000042",
   });
   return render(input);
@@ -145,21 +151,61 @@ describe("the default generated template — draft", () => {
     );
   });
 
-  it("renders the usage annex on the draft too (D5 behavior change vs bm45)", async () => {
+  it("renders the usage annex on the draft too (bm49: billed udr_rated rows, state → district)", async () => {
     const html = await renderDraft({
+      bill: { ...rawInput().bill, usageRatedTotal: "30000.00" },
       usage: {
+        overLimit: false,
         rows: [
-          { polygon: "POLY-001", state: "Selangor", district: "Petaling", volume: "300.000000", amount: "30000.00", unit: "EA" },
+          {
+            startDate: "2026-08-03",
+            cell: "POLY-001",
+            udrType: "RAN_USAGE",
+            quantity: "300.000000",
+            unit: "EA",
+            amount: "30000.00",
+            state: "State-02",
+            district: "District-03",
+          },
         ],
-        subtotals: [
-          { grain: "district", state: "Selangor", district: "Petaling", amount: "30000.00" },
-          { grain: "state", state: "Selangor", district: null, amount: "30000.00" },
-          { grain: "grand", state: null, district: null, amount: "30000.00" },
+        groups: [
+          {
+            state: "State-02",
+            district: "District-03",
+            gState: 0,
+            gDistrict: 0,
+            rowCount: 1,
+            amount: "30000.00",
+            quantity: "300.000000",
+            unit: "EA",
+          },
+          {
+            state: "State-02",
+            district: null,
+            gState: 0,
+            gDistrict: 1,
+            rowCount: 1,
+            amount: "30000.00",
+            quantity: "300.000000",
+            unit: "EA",
+          },
+          {
+            state: null,
+            district: null,
+            gState: 1,
+            gDistrict: 1,
+            rowCount: 1,
+            amount: "30000.00",
+            quantity: "300.000000",
+            unit: "EA",
+          },
         ],
       },
     });
-    expect(html).toContain("Usage annex");
+    expect(html).toContain("Usage annex — billed usage by region");
     expect(html).toContain("POLY-001");
+    expect(html).toContain("State-02");
+    expect(html).toContain("Total rated usage");
   });
 
   it("escapes free-text account names", async () => {

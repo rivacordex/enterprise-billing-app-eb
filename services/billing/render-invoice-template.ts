@@ -65,14 +65,26 @@ export async function buildInvoiceHtml({
   invoiceNo,
 }: BuildInvoiceHtmlParams): Promise<BuildInvoiceHtmlResult> {
   const isDraft = mode === "draft";
+  const timezone = getAppTimezone();
+  // bm49-spec §Design D4 — the only template in bm49 is the all-on default, so
+  // the Usage annex is always included; bm53 derives this from the resolved
+  // version's `structure`.
+  const includeUsage = true;
 
   // D1 — one repeatable-read, read-only transaction, used for BOTH modes now
   // (moved here from render-invoice.ts's former draft-only snapshot). Once a
   // bill is posted it is immutable (the finalization guard, 0033), so the
   // snapshot costs nothing extra on the final path and keeps one pipeline
-  // for both.
+  // for both. bm49 threads `timezone`/`includeUsage` so the usage read sees
+  // the account's billed `udr_rated` rows in one snapshot with the lines.
   const raw = await db.transaction(
-    (tx) => invoiceRenderInputRepository.read(tx, { runId, banId }),
+    (tx) =>
+      invoiceRenderInputRepository.read(tx, {
+        runId,
+        banId,
+        timezone,
+        includeUsage,
+      }),
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
   if (!raw) {
@@ -85,12 +97,12 @@ export async function buildInvoiceHtml({
     getAppLocale(),
     loadPageSetup(),
   ]);
-  const timezone = getAppTimezone();
 
   const input = bind(raw, {
     isDraft,
     locale,
     timezone,
+    includeUsage,
     ...(invoiceNo !== undefined ? { invoiceNo } : {}),
   });
 

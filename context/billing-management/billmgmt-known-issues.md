@@ -727,3 +727,23 @@ has answered yet, so engineering hasn't built anything for it.
 capacity billing. When it is resolved, it is a new build unit (a pro-ration
 method is explicitly out of scope for this phase) — not a fix folded into an
 existing unit.
+
+## `ratecard` role grants are never seeded (observed bm50, not fixed)
+
+The `ratecard` permission row is created by migration `0043_ratecard_permission.sql`
+(whose header says "role grants are applied by the seed"), but **no seed grants
+it** — `db/seeds/billing.ts` grants only the `billrun_*` and (from bm50)
+`invoice_settings` permissions, and no other seed references `ratecard`. So on a
+fresh database the `ratecard` permission exists with zero role grants, and a
+user can reach the Rate Card page only if an admin assigns it by hand.
+
+**Observed while implementing bm50** (which used `0043` as the permission-row
+precedent and, unlike `ratecard`, actually wired its `invoice_settings` grants
+into `db/seeds/billing.ts`). **Not fixed here** — the bm50 spec explicitly says
+to raise this as a separate known-issue, not to fold a `ratecard` grant fix into
+the invoice-template unit.
+
+**Recommendation.** A small follow-up on the rate-card side: add `ratecard`
+(ADMIN/MANAGER EDIT, USER READ, per its own `0043` header intent) to the
+appropriate seed's `grant()` calls, idempotently, the same way bm50 did for
+`invoice_settings`.

@@ -14,6 +14,7 @@ export const PERMISSION_NAMES = [
   "billrun_operate",
   "billrun_approve",
   "ratecard",
+  "invoice_settings",
 ] as const;
 export type PermissionName = (typeof PERMISSION_NAMES)[number];
 
