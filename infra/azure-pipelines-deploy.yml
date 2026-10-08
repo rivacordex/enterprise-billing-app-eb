@@ -9,8 +9,8 @@
 #
 # Reuses the SAME service connection + variable group as the CI/CD pipeline
 # (created once in the Azure DevOps project, not in source control):
-#   - Azure Resource Manager service connection: "azure-service-connection"
-#   - Variable group "um30-infra" (per environment): ACR_NAME, RESOURCE_GROUP,
+#   - Azure Resource Manager service connection: "azure-service-connection2"
+#   - Variable group "infra-dev" (per environment): ACR_NAME, RESOURCE_GROUP,
 #     CONTAINERAPP_NAME (the app), CONTAINERAPP_JOB_NAME (app_migrate job),
 #     RATING_ENGINE_CONTAINERAPP_NAME (the workflow-engine app), KEYVAULT_NAME.
 #
@@ -65,7 +65,7 @@ trigger: none
 pr: none
 
 variables:
-  - group: um30-infra
+  - group: infra-dev
   - name: appRepository
     value: enterprise-billing-app
   - name: workflowEngineRepository
@@ -96,7 +96,7 @@ stages:
               # pipeline-compile time.
               APP_IMAGE_TAG_PARAM: ${{ parameters.appImageTag }}
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -140,7 +140,7 @@ stages:
               # into the Bash source (see the same note on resolve_app's task).
               APP_IMAGE_TAG: $(appImageTag)
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -222,7 +222,7 @@ stages:
                     # the same note on the migrate job's task above.
                     APP_IMAGE_TAG: $(appImageTag)
                   inputs:
-                    azureSubscription: azure-service-connection
+                    azureSubscription: azure-service-connection2
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
@@ -296,7 +296,7 @@ stages:
               # the same note on the resolve_app job's resolveTag task.
               WORKFLOW_ENGINE_IMAGE_TAG_PARAM: ${{ parameters.workflowEngineImageTag }}
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -336,7 +336,7 @@ stages:
                     # the same note on resolve_app's task.
                     ENGINE_IMAGE_TAG: $(engineImageTag)
                   inputs:
-                    azureSubscription: azure-service-connection
+                    azureSubscription: azure-service-connection2
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
