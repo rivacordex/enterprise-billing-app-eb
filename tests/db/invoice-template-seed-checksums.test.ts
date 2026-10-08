@@ -29,8 +29,10 @@ describe("bm50 seed checksums match the repo files", () => {
     it(`${label}: the migration digest equals the recomputed checksums.json digest`, () => {
       const { digest } = buildIndex(path.join(process.cwd(), dir));
       expect(digest).toMatch(/^[0-9a-f]{64}$/);
-      // The digest must appear verbatim in the migration (as the row's checksum).
-      expect(MIGRATION).toContain(digest);
+      // The digest must appear in the migration IN CHECKSUM POSITION — i.e. as a
+      // `'<digest>', 'sha256'` column pair in an INSERT — not merely somewhere in
+      // the file (which a stray comment could satisfy).
+      expect(MIGRATION).toContain(`'${digest}', 'sha256'`);
     });
   }
 

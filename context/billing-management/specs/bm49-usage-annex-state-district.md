@@ -69,7 +69,7 @@ Per row (all amounts and quantities `::text`):
 | Field | Source |
 | --- | --- |
 | `startDate` | `(ur.start_datetime AT TIME ZONE :tz)::date` — the app timezone (Asia/Kuala_Lumpur) |
-| `cell` | `COALESCE(substring(ur.udr_key from 'polygon_id=([^|]*)'), ur.udr_key)` — the polygon for RAN cells, the raw key otherwise |
+| `cell` | `COALESCE(substring(ur.udr_key from 'polygon_id=([^\|]*)'), ur.udr_key)` — the polygon for RAN cells, the raw key otherwise |
 | `udrType` | `ur.udr_type` |
 | `quantity`, `unit` | `ur.udr_usage_quantity`, `ur.udr_usage_unit` |
 | `amount` | `ur.udr_rated_price` |

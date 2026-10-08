@@ -220,7 +220,7 @@ VALUES
    'INVTPL-STD-A4',
    '{"format":"A4","orientation":"portrait","margin":{"top":"13mm","bottom":"16mm","left":"14mm","right":"14mm"},"displayHeaderFooter":true,"printBackground":true}'::jsonb,
    'invoice-templates/layouts/INVTPL-STD-A4/v1/',
-   '0b72122148ff9957a8b3e67be0a4e39db566b2d0a27efc6e7a988840c916e4cb', 'sha256',
+   '55cff2f3fcce23cd4815e09ecdf51c7c7a3c8189ece2c99f3c0a6a07b89a8220', 'sha256',
    'Seeded default layout INVTPL-STD-A4 v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"

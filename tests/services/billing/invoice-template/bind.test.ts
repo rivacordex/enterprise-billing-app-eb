@@ -82,10 +82,10 @@ function rawInput(
       address: {
         line1: "Suite 5, Wisma Acme",
         line2: null,
-        city: "Petaling Jaya",
-        stateProvince: "Selangor",
+        city: "City-01",
+        stateProvince: "State-01",
         postalCode: "46050",
-        country: "Malaysia",
+        country: "Country-01",
       },
     },
     usage: null,
@@ -369,24 +369,24 @@ describe("bind — usage section (bm49 D5)", () => {
             "POLY-003",
             "700.000000",
             "70000.00",
-            "Johor",
-            "Johor Bahru",
+            "State-01",
+            "District-01",
           ),
           row(
             "2026-08-09",
             "POLY-004",
             "250.000000",
             "25000.00",
-            "Johor",
-            "Kluang",
+            "State-01",
+            "District-09",
           ),
           row(
             "2026-08-03",
             "POLY-001",
             "300.000000",
             "30000.00",
-            "Selangor",
-            "Petaling",
+            "State-02",
+            "District-03",
           ),
           row(
             "2026-08-11",
@@ -398,12 +398,12 @@ describe("bind — usage section (bm49 D5)", () => {
           ),
         ],
         groups: [
-          dgroup("Johor", "Johor Bahru", 1, "70000.00", "700.000000", "EA"),
-          dgroup("Johor", "Kluang", 1, "25000.00", "250.000000", "EA"),
-          dgroup("Selangor", "Petaling", 1, "30000.00", "300.000000", "EA"),
+          dgroup("State-01", "District-01", 1, "70000.00", "700.000000", "EA"),
+          dgroup("State-01", "District-09", 1, "25000.00", "250.000000", "EA"),
+          dgroup("State-02", "District-03", 1, "30000.00", "300.000000", "EA"),
           dgroup(null, null, 1, "5000.00", "50.000000", "EA"),
-          sgroup("Johor", 2, "95000.00", "950.000000", "EA"),
-          sgroup("Selangor", 1, "30000.00", "300.000000", "EA"),
+          sgroup("State-01", 2, "95000.00", "950.000000", "EA"),
+          sgroup("State-02", 1, "30000.00", "300.000000", "EA"),
           sgroup(null, 1, "5000.00", "50.000000", "EA"),
           ggroup(4, "130000.00", "1300.000000", "EA"),
         ],
@@ -420,15 +420,15 @@ describe("bind — usage section (bm49 D5)", () => {
     const bound = bind(usageRaw(), CTX);
     const usage = bound.usage!;
     expect(usage.states.map((s) => s.state)).toEqual([
-      "Johor",
-      "Selangor",
+      "State-01",
+      "State-02",
       null,
     ]);
     expect(usage.states[0]!.amount).toBe("95000.00");
     expect(usage.states[0]!.rowCount).toBe(2);
     expect(usage.states[0]!.districts.map((d) => d.district)).toEqual([
-      "Johor Bahru",
-      "Kluang",
+      "District-01",
+      "District-09",
     ]);
     expect(usage.states[0]!.districts[0]!.amount).toBe("70000.00");
     expect(usage.states[2]!.label).toBe("Unassigned region");

@@ -164,14 +164,14 @@ describe("the default generated template — draft", () => {
             quantity: "300.000000",
             unit: "EA",
             amount: "30000.00",
-            state: "Selangor",
-            district: "Petaling",
+            state: "State-02",
+            district: "District-03",
           },
         ],
         groups: [
           {
-            state: "Selangor",
-            district: "Petaling",
+            state: "State-02",
+            district: "District-03",
             gState: 0,
             gDistrict: 0,
             rowCount: 1,
@@ -180,7 +180,7 @@ describe("the default generated template — draft", () => {
             unit: "EA",
           },
           {
-            state: "Selangor",
+            state: "State-02",
             district: null,
             gState: 0,
             gDistrict: 1,
@@ -204,7 +204,7 @@ describe("the default generated template — draft", () => {
     });
     expect(html).toContain("Usage annex — billed usage by region");
     expect(html).toContain("POLY-001");
-    expect(html).toContain("Selangor");
+    expect(html).toContain("State-02");
     expect(html).toContain("Total rated usage");
   });
 

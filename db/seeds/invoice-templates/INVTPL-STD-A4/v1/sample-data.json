@@ -13,10 +13,10 @@
     "address": {
       "line1": "Level 10, Menara Sample",
       "line2": "Jalan Contoh 1",
-      "city": "Kuala Lumpur",
-      "stateProvince": "Wilayah Persekutuan",
+      "city": "City-01",
+      "stateProvince": "State-01",
       "postalCode": "50450",
-      "country": "Malaysia"
+      "country": "Country-01"
     },
     "email": "billing@sampletelco.example",
     "phone": "+60 3-1234 5678",
@@ -56,10 +56,10 @@
     "address": {
       "line1": "Suite 5, Wisma Acme",
       "line2": null,
-      "city": "Petaling Jaya",
-      "stateProvince": "Selangor",
+      "city": "City-02",
+      "stateProvince": "State-02",
       "postalCode": "46050",
-      "country": "Malaysia"
+      "country": "Country-01"
     },
     "email": "accounts@acme.example",
     "phone": "+60 3-7654 3210"
@@ -142,16 +142,16 @@
     "unit": "EA",
     "states": [
       {
-        "state": "Selangor",
-        "label": "Selangor",
+        "state": "State-02",
+        "label": "State-02",
         "rowCount": 2,
         "amount": "50000.00",
         "quantity": "500.000000",
         "unit": "EA",
         "districts": [
           {
-            "district": "Petaling",
-            "label": "Petaling",
+            "district": "District-03",
+            "label": "District-03",
             "rowCount": 1,
             "amount": "30000.00",
             "quantity": "300.000000",
@@ -168,8 +168,8 @@
             ]
           },
           {
-            "district": "Klang",
-            "label": "Klang",
+            "district": "District-02",
+            "label": "District-02",
             "rowCount": 1,
             "amount": "20000.00",
             "quantity": "200.000000",
@@ -188,16 +188,16 @@
         ]
       },
       {
-        "state": "Johor",
-        "label": "Johor",
+        "state": "State-01",
+        "label": "State-01",
         "rowCount": 2,
         "amount": "95000.00",
         "quantity": "950.000000",
         "unit": "EA",
         "districts": [
           {
-            "district": "Johor Bahru",
-            "label": "Johor Bahru",
+            "district": "District-01",
+            "label": "District-01",
             "rowCount": 1,
             "amount": "70000.00",
             "quantity": "700.000000",
@@ -214,8 +214,8 @@
             ]
           },
           {
-            "district": "Kluang",
-            "label": "Kluang",
+            "district": "District-09",
+            "label": "District-09",
             "rowCount": 1,
             "amount": "25000.00",
             "quantity": "250.000000",

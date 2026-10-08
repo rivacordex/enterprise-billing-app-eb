@@ -18,12 +18,23 @@ import { pathToFileURL } from "node:url";
 
 const INDEX_FILE = "checksums.json";
 
+// The invoice-template seed tree — the only directory this script may touch
+// (path-traversal containment for the CLI arg; see main()).
+const SEED_ROOT = path.resolve(process.cwd(), "db/seeds/invoice-templates");
+
+// Locale-INDEPENDENT code-point order — deliberately NOT `localeCompare`: the
+// index bytes must be byte-reproducible across machines and locales so the
+// committed SHA-256 digest is stable, whereas `localeCompare` is
+// locale-dependent (it would change the digest and make it non-reproducible).
+const byCodePoint = (a: string, b: string): number =>
+  a < b ? -1 : a > b ? 1 : 0;
+
 function sha256Hex(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
 function walk(dir: string, base: string, out: string[]): void {
-  for (const entry of readdirSync(dir).sort()) {
+  for (const entry of readdirSync(dir).sort(byCodePoint)) {
     const abs = path.join(dir, entry);
     if (statSync(abs).isDirectory()) {
       walk(abs, base, out);
@@ -39,7 +50,7 @@ function walk(dir: string, base: string, out: string[]): void {
 export function buildIndex(dir: string): { bytes: Buffer; digest: string } {
   const files: string[] = [];
   walk(dir, dir, files);
-  files.sort();
+  files.sort(byCodePoint);
 
   const index: { algorithm: string; files: Record<string, string> } = {
     algorithm: "sha256",
@@ -59,6 +70,14 @@ function main(): void {
     throw new Error("usage: write-checksums.ts <version-dir>");
   }
   const dir = path.resolve(process.cwd(), dirArg);
+  // Path-traversal containment: the CLI argument is untrusted input, so refuse
+  // any resolved path outside the invoice-template seed tree before reading or
+  // writing anything.
+  if (dir !== SEED_ROOT && !dir.startsWith(SEED_ROOT + path.sep)) {
+    throw new Error(
+      `write-checksums: refusing a path outside ${SEED_ROOT}: ${dirArg}`,
+    );
+  }
   const { bytes, digest } = buildIndex(dir);
   writeFileSync(path.join(dir, INDEX_FILE), bytes);
   // eslint-disable-next-line no-console

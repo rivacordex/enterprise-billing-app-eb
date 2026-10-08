@@ -65,7 +65,9 @@ async function resolvePermissionIds(
   for (const name of names) {
     if (!byName.has(name)) {
       throw new Error(
-        `Permission '${name}' not found. Run db:migrate first (0024_billrun_permissions).`,
+        `Permission '${name}' not found. Run db:migrate first ` +
+          `(billrun_* come from 0024_billrun_permissions, ` +
+          `invoice_settings from 0046_invoice_template_catalog).`,
       );
     }
   }

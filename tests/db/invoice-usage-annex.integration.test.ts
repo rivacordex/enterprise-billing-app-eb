@@ -94,6 +94,40 @@ describe.skipIf(!databaseUrl)(
       `;
     }
 
+    // Terse positional wrapper over insertUdr so each row fixture is one line
+    // (keeps this file's duplicated-lines density low). Defaults: attempt 1,
+    // BILL_DRAFT, unit EA. A `cellKey` containing '=' is a raw udr_key;
+    // otherwise it is wrapped as a polygon key.
+    function mk(
+      runId: string,
+      ban: string,
+      startIso: string,
+      cellKey: string,
+      qty: string,
+      price: string,
+      state: string | null,
+      district: string | null,
+      opts: {
+        status?: "BILL_DRAFT" | "BILL_APPROVED" | "BILL_NOTUSED";
+        attempt?: number;
+        unit?: string;
+      } = {},
+    ): Promise<void> {
+      return insertUdr({
+        runId,
+        ban,
+        attempt: opts.attempt ?? 1,
+        status: opts.status ?? "BILL_DRAFT",
+        startIso,
+        udrKey: cellKey.includes("=") ? cellKey : polyKey(cellKey),
+        qty,
+        unit: opts.unit ?? "EA",
+        price,
+        state,
+        district,
+      });
+    }
+
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 5 });
@@ -138,105 +172,86 @@ describe.skipIf(!databaseUrl)(
         const runId = "BRN-BM49-GROUP";
         const ban = "BAN-BM49-GROUP";
 
-        // Selangor: Petaling (2 rows), Klang (1 row). Johor: Johor Bahru (1).
-        // Unassigned: a non-polygon key, and a TZ-edge start.
-        await insertUdr({
-          runId,
-          ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-03T10:00:00Z",
-          udrKey: polyKey("P-PT-1"),
-          qty: "300.000000",
-          unit: "EA",
-          price: "30000.00",
-          state: "Selangor",
-          district: "Petaling",
-        });
-        await insertUdr({
-          runId,
-          ban,
-          attempt: 1,
-          status: "BILL_APPROVED",
-          startIso: "2026-06-04T10:00:00Z",
-          udrKey: polyKey("P-PT-2"),
-          qty: "200.000000",
-          unit: "EA",
-          price: "20000.00",
-          state: "Selangor",
-          district: "Petaling",
-        });
-        await insertUdr({
-          runId,
-          ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-05T10:00:00Z",
-          udrKey: polyKey("P-KL-1"),
-          qty: "250.000000",
-          unit: "EA",
-          price: "25000.00",
-          state: "Selangor",
-          district: "Klang",
-        });
-        await insertUdr({
-          runId,
-          ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-07T10:00:00Z",
-          udrKey: polyKey("P-JB-1"),
-          qty: "700.000000",
-          unit: "EA",
-          price: "70000.00",
-          state: "Johor",
-          district: "Johor Bahru",
-        });
-        // Unassigned: raw (non-polygon) key → cell falls back to the whole key;
-        // start 2026-06-11T18:00Z is 2026-06-12 02:00 in Asia/KL (date must be
+        // State-02: District-03 (2 rows), District-02 (1 row). State-01: District-01 (1).
+        // Unassigned: a non-polygon key ("imsi=…"), with a TZ-edge start
+        // (2026-06-11T18:00Z is 2026-06-12 02:00 in Asia/KL — the date must be
         // the MYT day, not the UTC one).
-        await insertUdr({
+        await mk(
           runId,
           ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-11T18:00:00Z",
-          udrKey: "imsi=502130000000001",
-          qty: "50.000000",
-          unit: "EA",
-          price: "5000.00",
-          state: null,
-          district: null,
-        });
+          "2026-06-03T10:00:00Z",
+          "P-PT-1",
+          "300.000000",
+          "30000.00",
+          "State-02",
+          "District-03",
+        );
+        await mk(
+          runId,
+          ban,
+          "2026-06-04T10:00:00Z",
+          "P-PT-2",
+          "200.000000",
+          "20000.00",
+          "State-02",
+          "District-03",
+          { status: "BILL_APPROVED" },
+        );
+        await mk(
+          runId,
+          ban,
+          "2026-06-05T10:00:00Z",
+          "P-KL-1",
+          "250.000000",
+          "25000.00",
+          "State-02",
+          "District-02",
+        );
+        await mk(
+          runId,
+          ban,
+          "2026-06-07T10:00:00Z",
+          "P-JB-1",
+          "700.000000",
+          "70000.00",
+          "State-01",
+          "District-01",
+        );
+        await mk(
+          runId,
+          ban,
+          "2026-06-11T18:00:00Z",
+          "imsi=502130000000001",
+          "50.000000",
+          "5000.00",
+          null,
+          null,
+        );
 
         // Excluded: a BILL_NOTUSED row and a second-attempt row (distinct keys
         // so the live-row unique constraint never collides).
-        await insertUdr({
+        await mk(
           runId,
           ban,
-          attempt: 1,
-          status: "BILL_NOTUSED",
-          startIso: "2026-06-06T10:00:00Z",
-          udrKey: polyKey("P-NOTUSED"),
-          qty: "999.000000",
-          unit: "EA",
-          price: "99999.00",
-          state: "Selangor",
-          district: "Petaling",
-        });
-        await insertUdr({
+          "2026-06-06T10:00:00Z",
+          "P-NOTUSED",
+          "999.000000",
+          "99999.00",
+          "State-02",
+          "District-03",
+          { status: "BILL_NOTUSED" },
+        );
+        await mk(
           runId,
           ban,
-          attempt: 2,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-08T10:00:00Z",
-          udrKey: polyKey("P-ATTEMPT2"),
-          qty: "888.000000",
-          unit: "EA",
-          price: "88888.00",
-          state: "Johor",
-          district: "Kluang",
-        });
+          "2026-06-08T10:00:00Z",
+          "P-ATTEMPT2",
+          "888.000000",
+          "88888.00",
+          "State-01",
+          "District-09",
+          { attempt: 2 },
+        );
 
         const result = await ratedLinesRepository.listBilledUsageForInvoice(
           db,
@@ -255,10 +270,10 @@ describe.skipIf(!databaseUrl)(
         // ASC NULLS LAST then start.
         expect(result.rows).toHaveLength(5);
         expect(result.rows.map((r) => [r.state, r.district])).toEqual([
-          ["Johor", "Johor Bahru"],
-          ["Selangor", "Klang"],
-          ["Selangor", "Petaling"],
-          ["Selangor", "Petaling"],
+          ["State-01", "District-01"],
+          ["State-02", "District-02"],
+          ["State-02", "District-03"],
+          ["State-02", "District-03"],
           [null, null],
         ]);
 
@@ -280,7 +295,7 @@ describe.skipIf(!databaseUrl)(
         });
 
         const selangor = result.groups.find(
-          (g) => g.gState === 0 && g.gDistrict === 1 && g.state === "Selangor",
+          (g) => g.gState === 0 && g.gDistrict === 1 && g.state === "State-02",
         )!;
         expect(selangor).toMatchObject({
           rowCount: 3,
@@ -289,7 +304,7 @@ describe.skipIf(!databaseUrl)(
           unit: "EA",
         });
         const johor = result.groups.find(
-          (g) => g.gState === 0 && g.gDistrict === 1 && g.state === "Johor",
+          (g) => g.gState === 0 && g.gDistrict === 1 && g.state === "State-01",
         )!;
         expect(johor).toMatchObject({ rowCount: 1, amount: "70000.00" });
         const unassignedState = result.groups.find(
@@ -304,8 +319,8 @@ describe.skipIf(!databaseUrl)(
           (g) =>
             g.gState === 0 &&
             g.gDistrict === 0 &&
-            g.state === "Selangor" &&
-            g.district === "Petaling",
+            g.state === "State-02" &&
+            g.district === "District-03",
         )!;
         expect(petaling).toMatchObject({
           rowCount: 2,
@@ -317,8 +332,8 @@ describe.skipIf(!databaseUrl)(
           (g) =>
             g.gState === 0 &&
             g.gDistrict === 0 &&
-            g.state === "Selangor" &&
-            g.district === "Klang",
+            g.state === "State-02" &&
+            g.district === "District-02",
         )!;
         expect(klang).toMatchObject({ rowCount: 1, amount: "25000.00" });
       },
@@ -327,32 +342,27 @@ describe.skipIf(!databaseUrl)(
     it("D5 — a group mixing units reports no quantity subtotal (volume never summed across units)", async () => {
       const runId = "BRN-BM49-MIXED";
       const ban = "BAN-BM49-MIXED";
-      await insertUdr({
+      await mk(
         runId,
         ban,
-        attempt: 1,
-        status: "BILL_DRAFT",
-        startIso: "2026-06-03T10:00:00Z",
-        udrKey: polyKey("M-1"),
-        qty: "10.000000",
-        unit: "EA",
-        price: "100.00",
-        state: "Perak",
-        district: "Ipoh",
-      });
-      await insertUdr({
+        "2026-06-03T10:00:00Z",
+        "M-1",
+        "10.000000",
+        "100.00",
+        "State-03",
+        "District-04",
+      );
+      await mk(
         runId,
         ban,
-        attempt: 1,
-        status: "BILL_DRAFT",
-        startIso: "2026-06-04T10:00:00Z",
-        udrKey: polyKey("M-2"),
-        qty: "20.000000",
-        unit: "GB",
-        price: "200.00",
-        state: "Perak",
-        district: "Ipoh",
-      });
+        "2026-06-04T10:00:00Z",
+        "M-2",
+        "20.000000",
+        "200.00",
+        "State-03",
+        "District-04",
+        { unit: "GB" },
+      );
 
       const result = await ratedLinesRepository.listBilledUsageForInvoice(db, {
         runId,
@@ -391,7 +401,7 @@ describe.skipIf(!databaseUrl)(
           '_bm49-sub',
           'commercial_unit=' || lower(${CU}) || '|mno_public_id=' || lower(${MNO}) || '|polygon_id=over-' || g.i,
           '1.000000', 'EA', 'PER_UNIT', '1.00', '1.00', 'HALF_UP', 'MYR', '_BM49_BATCH',
-          '_BM49', '_BM49', 0, ${runId}, ${ban}, 1, 'bm49-over', now(), 'Selangor', 'Petaling'
+          '_BM49', '_BM49', 0, ${runId}, ${ban}, 1, 'bm49-over', now(), 'State-02', 'District-03'
         FROM generate_series(1, 10001) AS g(i)
       `;
 
@@ -454,45 +464,36 @@ describe.skipIf(!databaseUrl)(
           ratedAmount: "90000.00",
         });
 
-        await insertUdr({
+        await mk(
           runId,
           ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-03T10:00:00Z",
-          udrKey: polyKey("E-1"),
-          qty: "300.000000",
-          unit: "EA",
-          price: "30000.00",
-          state: "Selangor",
-          district: "Petaling",
-        });
-        await insertUdr({
+          "2026-06-03T10:00:00Z",
+          "E-1",
+          "300.000000",
+          "30000.00",
+          "State-02",
+          "District-03",
+        );
+        await mk(
           runId,
           ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-05T10:00:00Z",
-          udrKey: polyKey("E-2"),
-          qty: "400.000000",
-          unit: "EA",
-          price: "40000.00",
-          state: "Johor",
-          district: "Johor Bahru",
-        });
-        await insertUdr({
+          "2026-06-05T10:00:00Z",
+          "E-2",
+          "400.000000",
+          "40000.00",
+          "State-01",
+          "District-01",
+        );
+        await mk(
           runId,
           ban,
-          attempt: 1,
-          status: "BILL_DRAFT",
-          startIso: "2026-06-07T10:00:00Z",
-          udrKey: "no-polygon-key",
-          qty: "200.000000",
-          unit: "EA",
-          price: "20000.00",
-          state: null,
-          district: null,
-        });
+          "2026-06-07T10:00:00Z",
+          "no-polygon-key",
+          "200.000000",
+          "20000.00",
+          null,
+          null,
+        );
 
         const raw = await invoiceRenderInputRepository.read(db, {
           runId,
@@ -513,8 +514,8 @@ describe.skipIf(!databaseUrl)(
         expect(bound.usage!.totalAmount).toBe("90000.00");
         expect(bound.usage!.rowCount).toBe(3);
         expect(bound.usage!.states.map((s) => s.label)).toEqual([
-          "Johor",
-          "Selangor",
+          "State-01",
+          "State-02",
           "Unassigned region",
         ]);
         expect(bound.usage!.states[2]!.districts[0]!.label).toBe("—");

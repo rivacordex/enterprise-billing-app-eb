@@ -187,6 +187,36 @@ async function renderPdf(
   }
 }
 
+// Number of pages the laid-out content spans under print media — a
+// dependency-free multi-page check (no PDF parser). `scrollHeight` is the
+// continuous layout height; the paginated page count is
+// `ceil(height / printable-page-height)`. 1mm ≈ 96/25.4 CSS px at 96dpi; A4 is
+// 297mm tall portrait / 210mm landscape, minus the top+bottom print margins.
+async function printPageCount(
+  browser: Browser,
+  html: string,
+  pageSetup: Awaited<ReturnType<typeof loadPageSetup>>,
+): Promise<number> {
+  const PX_PER_MM = 96 / 25.4;
+  const pageHeightMm = pageSetup.orientation === "landscape" ? 210 : 297;
+  const printablePx =
+    (pageHeightMm -
+      parseFloat(pageSetup.margin.top) -
+      parseFloat(pageSetup.margin.bottom)) *
+    PX_PER_MM;
+  const page = await browser.newPage();
+  try {
+    await page.setContent(html, { waitUntil: "networkidle" });
+    await page.emulateMedia({ media: "print" });
+    const heightPx = await page.evaluate(
+      () => document.documentElement.scrollHeight,
+    );
+    return Math.ceil(heightPx / printablePx);
+  } finally {
+    await page.close();
+  }
+}
+
 describe.skipIf(!run)(
   "bm49 invoice render — real Chromium (RUN_CHROMIUM_E2E=1)",
   () => {
@@ -229,9 +259,13 @@ describe.skipIf(!run)(
       expect(bytes).toContain("%%EOF");
       expect(pdf.length).toBeGreaterThan(10_000);
 
-      // Opportunistic real page count: Chromium's Pages node usually carries a
-      // plain `/Count N`. When present (not inside an object stream), assert
-      // multi-page; otherwise the size + structural checks above stand.
+      // The laid-out content spans more than one A4 page — a reliable,
+      // parser-free multi-page proof (the 128-row annex far exceeds one
+      // printable page).
+      expect(await printPageCount(browser, html, pageSetup)).toBeGreaterThan(1);
+      // Opportunistic cross-check: Chromium's Pages node usually carries a plain
+      // `/Count N`; assert it agrees when present (it is absent when stored in
+      // an object stream, in which case the layout-height check above stands).
       const count = /\/Count\s+(\d+)/.exec(bytes);
       if (count) {
         expect(Number(count[1])).toBeGreaterThan(1);
