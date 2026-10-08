@@ -1,0 +1,44 @@
+<section class="sec sec--chargeDetails sec--full">
+  <p class="section-heading">Charge details</p>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Description</th>
+        [[if columns.showProductId]]<th>Offering ID</th>[[/if]]
+        [[if columns.showUdrCount]]<th>UDR type / count</th>[[/if]]
+        [[if columns.showServicePeriod]]<th>Service period</th>[[/if]]
+        <th class="num">Quantity</th>
+        <th class="num">Unit price</th>
+        <th class="num">Gross</th>
+        [[if columns.showDiscountColumn]]<th class="num">Discount</th>[[/if]]
+        <th class="num">Net amount</th>
+      </tr>
+    </thead>
+    {{#each lineGroups}}
+    <tbody class="line-group">
+      <tr><td colspan="[[num colCount]]"><strong>{{this.name}}</strong></td></tr>
+      {{#each this.lines}}
+      <tr>
+        <td class="mono">{{this.lineNo}}</td>
+        <td>{{this.description}}{{#if this.discountNote}} — {{this.discountNote}}{{/if}}</td>
+        [[if columns.showProductId]]<td class="mono">{{this.productOfferingId}}</td>[[/if]]
+        [[if columns.showUdrCount]]<td>{{#if this.udrType}}{{this.udrType}} × {{this.udrCount}}{{else}}—{{/if}}</td>[[/if]]
+        [[if columns.showServicePeriod]]<td>{{period this.periodStart this.periodEnd}}</td>[[/if]]
+        <td class="num">{{#if this.quantity}}{{qty this.quantity}} {{unitCode this.unit}}{{else}}—{{/if}}</td>
+        <td class="num">{{price this.unitPrice}}</td>
+        <td class="num">{{money this.grossAmount}}</td>
+        [[if columns.showDiscountColumn]]<td class="num">{{money this.discountAmount negate=true}}</td>[[/if]]
+        <td class="num">{{money this.netAmount}}</td>
+      </tr>
+      {{/each}}
+      <tr class="subtotal">
+        <td colspan="[[num subtotalSpan]]">Subtotal — {{this.name}}</td>
+        <td class="num">{{money this.grossTotal}}</td>
+        [[if columns.showDiscountColumn]]<td class="num">{{money this.discountTotal negate=true}}</td>[[/if]]
+        <td class="num">{{money this.subtotal}}</td>
+      </tr>
+    </tbody>
+    {{/each}}
+  </table>
+</section>

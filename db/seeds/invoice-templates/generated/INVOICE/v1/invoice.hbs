@@ -1,0 +1,294 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  /*
+   * bm47-spec §Design D7 / ui-context §10c. IBM Plex Sans 400/600 + IBM Plex
+   * Mono 400, embedded as base64 @font-face (G8 interim) — no url(http, no
+   * @import, no <link>. FOLLOW-UP (tracked in billmgmt-progress-tracker.md):
+   * this unit ships the @font-face declarations with the font's `src` left
+   * as a same-origin placeholder comment rather than the real OFL woff2
+   * binaries — subset the OFL woff2 files to Latin-1, base64-encode, and
+   * inline them here before bm50 seeds this file (immutable once seeded,
+   * Inv #44). Any later change is a new `v{n}` generated version (Inv #44).
+   */
+  @font-face {
+    font-family: "IBM Plex Sans";
+    font-weight: 400;
+    font-style: normal;
+    /* src: url(data:font/woff2;base64,<SUBSET WOFF2 — see follow-up above>) format("woff2"); */
+  }
+  @font-face {
+    font-family: "IBM Plex Sans";
+    font-weight: 600;
+    font-style: normal;
+    /* src: url(data:font/woff2;base64,<SUBSET WOFF2 — see follow-up above>) format("woff2"); */
+  }
+  @font-face {
+    font-family: "IBM Plex Mono";
+    font-weight: 400;
+    font-style: normal;
+    /* src: url(data:font/woff2;base64,<SUBSET WOFF2 — see follow-up above>) format("woff2"); */
+  }
+
+  :root {
+    --inv-brand: {{#if company}}{{company.brandColor}}{{else}}#2E45A9{{/if}};
+    --inv-accent: {{#if company}}{{company.accentColor}}{{else}}#006975{{/if}};
+    --inv-ink: #11141A;
+    --inv-body: #353B46;
+    --inv-muted: #6A7283;
+    --inv-line: #E0E4EB;
+    --inv-soft: #F7F8FA;
+    --inv-on-brand: #FFFFFF;
+    --inv-watermark: #D92D2D;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", Arial, Helvetica, sans-serif;
+    color: var(--inv-body);
+    font-size: 9pt;
+    line-height: 13pt;
+  }
+  .mono { font-family: "IBM Plex Mono", "Courier New", monospace; }
+
+  .watermark {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .watermark span {
+    display: block;
+    transform: rotate(-32deg);
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--inv-watermark);
+    opacity: 0.14;
+    white-space: nowrap;
+    line-height: 3.4;
+  }
+  .sheet { position: relative; z-index: 1; background: #ffffff; }
+
+  h1 { font-size: 16pt; line-height: 20pt; font-weight: 600; color: var(--inv-brand); margin: 0 0 4px; }
+  .section-heading {
+    font-size: 9pt; line-height: 12pt; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--inv-muted); margin: 0 0 6px;
+  }
+  .sec { margin-bottom: 16px; }
+  .sec--half { display: inline-block; width: 48%; vertical-align: top; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  th { text-align: left; font-weight: 600; border-bottom: 1px solid var(--inv-line); padding: 4px 4px; }
+  td { padding: 4px 4px; border-bottom: 1px solid var(--inv-line); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .line-group { break-inside: avoid; }
+  tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); }
+  tr.grand-total td { font-weight: 600; font-size: 14pt; line-height: 18pt; }
+
+  .amount-due-panel { background: var(--inv-soft); padding: 8px 12px; }
+  .footer-note { margin-top: 20px; font-size: 8pt; color: var(--inv-muted); }
+  .section-label { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; color: var(--inv-muted); margin: 12px 0 4px; }
+  .unmapped-label { color: #0C4084; }
+</style>
+</head>
+<body>
+  {{#if isDraft}}
+  <div class="watermark" aria-hidden="true">
+    <span>DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE<br />DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE<br />DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE</span>
+  </div>
+  {{/if}}
+  <div class="sheet">
+    <section class="sec sec--header sec--full">
+      {{#if company}}
+      <div class="issuer">
+        {{#if company.logoUrl}}<img src="{{company.logoUrl}}" alt="{{company.name}}" height="32" />{{/if}}
+        <div class="mono">{{company.name}}</div>
+      </div>
+      {{/if}}
+      <h1>{{#if invoice.isDraft}}PRO-FORMA — Draft Invoice{{else}}TAX INVOICE{{/if}}</h1>
+    </section>
+
+    <section class="sec sec--identification sec--half">
+      <p class="section-heading">Invoice identification</p>
+      <div class="mono">Invoice no. {{#if invoice.number}}{{invoice.number}}{{else}}— pending posting —{{/if}}</div>
+      <div>{{#if invoice.isDraft}}Indicative date{{else}}Date{{/if}}: {{date invoice.date}}</div>
+      <div>Billing period: {{period invoice.periodStart invoice.periodEnd}}</div>
+      <div class="mono">Bill run {{invoice.billRunId}} ({{invoice.cycleName}})</div>
+      {{#if invoice.poRef}}<div>PO reference: {{invoice.poRef}}</div>{{/if}}
+      {{#if invoice.contractRef}}<div>Contract reference: {{invoice.contractRef}}</div>{{/if}}
+    </section>
+
+    <section class="sec sec--billTo sec--half">
+      <p class="section-heading">Bill to</p>
+      <div>{{customer.name}}</div>
+      {{#if customer.tradingName}}<div>{{customer.tradingName}}</div>{{/if}}
+      <div class="mono">{{customer.billingAccountId}}</div>
+      {{#if customer.registrationNo}}<div class="mono">Reg. no. {{customer.registrationNo}}</div>{{/if}}
+      {{#if customer.tin}}<div class="mono">TIN {{customer.tin}}</div>{{/if}}
+      {{#if customer.sstRegNo}}<div class="mono">SST {{customer.sstRegNo}}</div>{{/if}}
+      {{#if customer.address}}
+      <div>
+        {{customer.address.line1}}{{#if customer.address.line2}}, {{customer.address.line2}}{{/if}}<br />
+        {{#if customer.address.postalCode}}{{customer.address.postalCode}} {{/if}}{{#if customer.address.city}}{{customer.address.city}}{{/if}}{{#if customer.address.stateProvince}}, {{customer.address.stateProvince}}{{/if}}<br />
+        {{#if customer.address.country}}{{customer.address.country}}{{/if}}
+      </div>
+      {{/if}}
+      {{#if customer.email}}<div>{{customer.email}}</div>{{/if}}
+      {{#if customer.phone}}<div>{{customer.phone}}</div>{{/if}}
+    </section>
+
+    <section class="sec sec--amountDue sec--full">
+      <div class="amount-due-panel">
+        <p class="section-heading">{{#if invoice.isDraft}}Total (indicative){{else}}Amount due{{/if}}</p>
+        <div class="grand-total">{{money totals.amountDue}}</div>
+        <p class="footer-note">Amount due covers the current charges on this invoice only.</p>
+      </div>
+    </section>
+
+    <section class="sec sec--chargeSummary sec--full">
+      <p class="section-heading">Summary of charges</p>
+      <table>
+        <tbody>
+          {{#each chargeSummary}}
+          <tr><td>{{this.name}}</td><td class="num">{{money this.amount}}</td></tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="sec sec--taxSummary sec--full">
+      <p class="section-heading">Tax summary</p>
+      <table>
+        <tbody>
+          {{#if taxes.length}}
+            {{#each taxes}}
+            <tr><td>{{this.category}} @ {{this.rate}}%</td><td class="num">{{money this.amount}}</td></tr>
+            {{/each}}
+          {{else}}
+            <tr><td>Tax</td><td class="num">{{money totals.taxTotal}}</td></tr>
+          {{/if}}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="sec sec--chargeDetails sec--full">
+      <p class="section-heading">Charge details</p>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Description</th>
+            <th>Offering ID</th>
+            <th>UDR type / count</th>
+            <th>Service period</th>
+            <th class="num">Quantity</th>
+            <th class="num">Unit price</th>
+            <th class="num">Gross</th>
+            <th class="num">Discount</th>
+            <th class="num">Net amount</th>
+          </tr>
+        </thead>
+        {{#each lineGroups}}
+        <tbody class="line-group">
+          <tr><td colspan="10"><strong>{{this.name}}</strong></td></tr>
+          {{#each this.lines}}
+          <tr>
+            <td class="mono">{{this.lineNo}}</td>
+            <td>{{this.description}}{{#if this.discountNote}} — {{this.discountNote}}{{/if}}</td>
+            <td class="mono">{{this.productOfferingId}}</td>
+            <td>{{#if this.udrType}}{{this.udrType}} × {{this.udrCount}}{{else}}—{{/if}}</td>
+            <td>{{period this.periodStart this.periodEnd}}</td>
+            <td class="num">{{#if this.quantity}}{{qty this.quantity}} {{unitCode this.unit}}{{else}}—{{/if}}</td>
+            <td class="num">{{price this.unitPrice}}</td>
+            <td class="num">{{money this.grossAmount}}</td>
+            <td class="num">{{money this.discountAmount negate=true}}</td>
+            <td class="num">{{money this.netAmount}}</td>
+          </tr>
+          {{/each}}
+          <tr class="subtotal">
+            <td colspan="7">Subtotal — {{this.name}}</td>
+            <td class="num">{{money this.grossTotal}}</td>
+            <td class="num">{{money this.discountTotal negate=true}}</td>
+            <td class="num">{{money this.subtotal}}</td>
+          </tr>
+        </tbody>
+        {{/each}}
+      </table>
+    </section>
+
+    {{#if payment}}
+    <section class="sec sec--payment sec--half">
+      <p class="section-heading">Payment information</p>
+      <div>{{payment.bankName}}</div>
+      <div>{{payment.accountName}}</div>
+      <div class="mono">{{payment.accountNo}}</div>
+      {{#if payment.swift}}<div class="mono">SWIFT {{payment.swift}}</div>{{/if}}
+      {{#if payment.jomPayBillerCode}}<div class="mono">JomPAY {{payment.jomPayBillerCode}}</div>{{/if}}
+      {{#if payment.remittanceEmail}}<div>{{payment.remittanceEmail}}</div>{{/if}}
+    </section>
+    {{/if}}
+
+    {{#if usage}}
+    <section class="sec sec--usageAnnex sec--full">
+      <p class="section-heading">Usage annex{{#if usage.unit}} ({{usage.unit}}){{/if}}</p>
+      {{#each usage.states}}
+      <div class="usage-state">
+        <p class="section-label{{#unless this.state}} unmapped-label{{/unless}}">{{this.label}}</p>
+        {{#each this.districts}}
+        <table class="usage-district">
+          <caption>{{this.label}}</caption>
+          <thead>
+            <tr><th>Polygon</th><th class="num">Volume</th><th class="num">Amount</th></tr>
+          </thead>
+          <tbody>
+            {{#each this.rows}}
+            <tr>
+              <td class="mono">{{this.polygon}}</td>
+              <td class="num">{{qty this.volume}} {{unitCode this.unit}}</td>
+              <td class="num">{{money this.amount}}</td>
+            </tr>
+            {{/each}}
+          </tbody>
+          <tfoot>
+            <tr class="subtotal"><td colspan="2">District subtotal</td><td class="num">{{money this.subtotalAmount}}</td></tr>
+          </tfoot>
+        </table>
+        {{/each}}
+        <table class="usage-state-subtotal">
+          <tfoot>
+            <tr class="subtotal"><td colspan="2">State subtotal</td><td class="num">{{money this.subtotalAmount}}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+      {{/each}}
+      <table class="usage-grand-total">
+        <tfoot>
+          <tr class="grand-total"><td>Total usage annex</td><td class="num">{{money usage.totalAmount}}</td></tr>
+        </tfoot>
+      </table>
+    </section>
+    {{/if}}
+
+    <section class="sec sec--notes sec--full">
+      <p class="section-heading">Notes &amp; terms</p>
+      <ol>
+        <li>This invoice reflects charges for the billing period stated above.</li>
+        <li>Payment is due by {{date invoice.dueDate}}.</li>
+        <li>
+          Questions about this invoice? Contact your account representative.
+          {{#if company}}{{company.email}}{{/if}}
+        </li>
+      </ol>
+    </section>
+  </div>
+</body>
+</html>

@@ -1,0 +1,7 @@
+<section class="sec sec--amountDue sec--full">
+  <div class="amount-due-panel">
+    <p class="section-heading">{{#if invoice.isDraft}}Total (indicative){{else}}Amount due{{/if}}</p>
+    <div class="grand-total">{{money totals.amountDue}}</div>
+    <p class="footer-note">Amount due covers the current charges on this invoice only.</p>
+  </div>
+</section>

@@ -1,247 +1,194 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildDraftInvoiceHtml,
-  buildFinalInvoiceHtml,
-} from "@/services/billing/render-invoice-template";
-import type { BuildFinalInvoiceHtmlParams } from "@/services/billing/render-invoice-template";
+import { bind } from "@/services/billing/invoice-template/bind";
+import { loadDefaultTemplateFromRepo } from "@/services/billing/invoice-template/load-stopgap";
+import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 
-// bm18-spec §Design "Draft ≠ a valid invoice" / §Implementation §2 /
-// Verification checklist. Pure function — no DB/Next.js/Playwright import —
-// so it's tested directly, without a database or browser.
+// bm47-spec §Design D1/D8, test plan row 3 ("rewritten, bm18/bm19 cases
+// moved"). DB-free: exercises the real seeded
+// `db/seeds/invoice-templates/generated/INVOICE/v1/*.hbs` through
+// `bind()` + the stopgap loader, over a hand-built `RawInvoiceRenderInput`
+// fixture — no database, no Playwright.
 
-const BASE_PARAMS = {
-  bill: {
-    billingAccountId: "BAN00000001",
-    accountName: "Acme Communications",
-    currency: "MYR",
-    billingPeriodStart: "2026-08-01",
-    billingPeriodEnd: "2026-08-31",
-    subtotal: "100.00",
-    taxTotal: "8.00",
-    totalAmount: "108.00",
-    paymentDueDate: "2026-09-15",
-  },
-  taxItems: [{ category: "GST", rate: "8.00", amount: "8.00" }],
-  lines: [
-    {
-      udrId: "01ABCDEF0000000000000000",
-      udrType: "DATA_USAGE",
-      startDatetime: new Date("2026-08-01T00:00:00Z"),
-      endDatetime: new Date("2026-08-01T01:00:00Z"),
-      udrUsageQuantity: "1.000000",
-      udrUsageUnit: "GB",
-      udrRatedPrice: "100.00",
-      udrCurrency: "MYR",
+function rawInput(
+  overrides: Partial<RawInvoiceRenderInput> = {},
+): RawInvoiceRenderInput {
+  return {
+    bill: {
+      customerBillId: "CBL00000001",
+      periodPartition: "2026-08-01",
+      billingAccountId: "BAN00000001",
+      currency: "MYR",
+      billingPeriodStart: "2026-08-01",
+      billingPeriodEnd: "2026-08-31",
+      paymentDueDate: "2026-09-15",
+      subtotal: "150.00",
+      taxTotal: "0.00",
+      totalAmount: "150.00",
+      linesNetSum: "150.00",
+      grossTotal: "150.00",
+      discountTotal: "0.00",
     },
-  ],
-  run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
-  locale: "en-MY",
-};
-
-const INVOICE_NUMBER = "INV00000042";
-
-function renderDraft(overrides: Partial<typeof BASE_PARAMS> = {}): string {
-  return buildDraftInvoiceHtml({ ...BASE_PARAMS, ...overrides });
+    run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
+    lines: [
+      {
+        lineNo: 1,
+        source: "RECURRING",
+        lineType: "charge",
+        description: "Enterprise Fibre 1Gbps",
+        refProductOfferingId: "POF00000010",
+        udrType: null,
+        udrCount: null,
+        quantity: "1.000000",
+        unit: "EA",
+        snapshotQuantity: "1.000000",
+        snapshotUnitPrice: "50.00",
+        grossAmount: "50.00",
+        discountAmount: "0.00",
+        netAmount: "50.00",
+        discountRate: null,
+        groupGrossTotal: "50.00",
+        groupDiscountTotal: "0.00",
+        groupNetTotal: "50.00",
+      },
+      {
+        lineNo: 2,
+        source: "USAGE",
+        lineType: "charge",
+        description: "RAN Usage",
+        refProductOfferingId: "POF00000020",
+        udrType: "RAN_USAGE",
+        udrCount: 2,
+        quantity: "100.000000",
+        unit: "GB",
+        snapshotQuantity: null,
+        snapshotUnitPrice: null,
+        grossAmount: "100.00",
+        discountAmount: "0.00",
+        netAmount: "100.00",
+        discountRate: null,
+        groupGrossTotal: "100.00",
+        groupDiscountTotal: "0.00",
+        groupNetTotal: "100.00",
+      },
+    ],
+    taxItems: [],
+    document: null,
+    customer: {
+      name: "Acme Communications Sdn Bhd",
+      tradingName: null,
+      registrationNumber: null,
+      taxId: null,
+      email: null,
+      phone: null,
+      address: null,
+    },
+    usage: null,
+    ...overrides,
+  };
 }
 
-function renderFinal(
-  overrides: Partial<BuildFinalInvoiceHtmlParams> = {},
-): string {
-  return buildFinalInvoiceHtml({
-    ...BASE_PARAMS,
-    invoiceNumber: INVOICE_NUMBER,
+async function renderDraft(overrides: Partial<RawInvoiceRenderInput> = {}) {
+  const { render } = await loadDefaultTemplateFromRepo();
+  const input = bind(rawInput(overrides), {
+    isDraft: true,
+    locale: "en-MY",
+    timezone: "UTC",
+  });
+  return render(input);
+}
+
+async function renderFinal(overrides: Partial<RawInvoiceRenderInput> = {}) {
+  const { render } = await loadDefaultTemplateFromRepo();
+  const merged = rawInput({
+    document: { documentId: "INV00000042", postingDate: new Date("2026-09-05") },
     ...overrides,
   });
+  const input = bind(merged, {
+    isDraft: false,
+    locale: "en-MY",
+    timezone: "UTC",
+    invoiceNo: "INV00000042",
+  });
+  return render(input);
 }
 
-describe("buildDraftInvoiceHtml", () => {
-  it("shows the pending-posting placeholder instead of a real invoice number", () => {
-    const html = renderDraft();
+describe("the default generated template — draft", () => {
+  it("shows the pending-posting placeholder and the indicative total label", async () => {
+    const html = await renderDraft();
     expect(html).toContain("— pending posting —");
+    expect(html).toContain("Total (indicative)");
   });
 
-  it("carries the DRAFT · PRO-FORMA · NOT A VALID INVOICE watermark", () => {
-    const html = renderDraft();
+  it("carries the DRAFT watermark, position: fixed", async () => {
+    const html = await renderDraft();
     expect(html).toContain("DRAFT");
-    expect(html).toContain("PRO-FORMA");
-    expect(html).toContain("NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE");
+    expect(html).toMatch(/\.watermark\s*\{[^}]*position:\s*fixed/);
   });
 
-  it("keeps the watermark behind an opaque sheet (never over the printed figures, ui-context §6c)", () => {
-    const html = renderDraft();
-    expect(html).toMatch(/\.sheet\s*\{[^}]*background:\s*#ffffff/);
-    expect(html).toMatch(/\.sheet\s*\{[^}]*z-index:\s*1/);
-    expect(html).toMatch(/\.watermark\s*\{[^}]*z-index:\s*0/);
+  it("renders every RECURRING and USAGE line", async () => {
+    const html = await renderDraft();
+    expect(html).toContain("Enterprise Fibre 1Gbps");
+    expect(html).toContain("RAN Usage");
   });
 
-  it("renders the claimed charge line and its formatted amount", () => {
-    const html = renderDraft();
-    expect(html).toContain("DATA_USAGE");
-    expect(html).toContain("1.000000");
-    expect(html).toContain("GB");
+  it("omits the issuer and payment blocks when company/payment are null (G15)", async () => {
+    const html = await renderDraft();
+    expect(html).not.toContain('class="issuer"');
+    expect(html).not.toContain("sec--payment");
   });
 
-  it("renders each tax item and formats totals through formatCurrency (no bare numbers)", () => {
-    const html = renderDraft();
-    expect(html).toContain("GST @ 8.00%");
-    // formatCurrency(..., "MYR", "en-MY") always includes a currency marker —
-    // a bare ">108.00<" would mean a hand-formatted number slipped through.
-    expect(html).not.toMatch(/>108\.00</);
-  });
-
-  it("falls back to an explicit empty state when there are no claimed lines yet", () => {
-    const html = renderDraft({ lines: [] });
-    expect(html).toContain("No claimed charge lines for this account yet.");
-  });
-
-  it("escapes free-text account names (no raw HTML injection)", () => {
-    const html = renderDraft({
-      bill: { ...BASE_PARAMS.bill, accountName: "<script>alert(1)</script>" },
-    });
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;");
-  });
-});
-
-// bm19-spec §Design "Final render = draft renderer, no watermark, real
-// number" / §Implementation §3.
-describe("buildFinalInvoiceHtml", () => {
-  it("shows the real INV… number instead of the pending-posting placeholder", () => {
-    const html = renderFinal();
-    expect(html).toContain("INV00000042");
-    expect(html).not.toContain("— pending posting —");
-  });
-
-  it("[CRITICAL] carries no DRAFT/PRO-FORMA watermark markup (ui-context §6c — this IS the issued record)", () => {
-    const html = renderFinal();
-    expect(html).not.toContain("PRO-FORMA");
-    expect(html).not.toContain("NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE");
-    expect(html).not.toMatch(/class="watermark"/);
-  });
-
-  it("drops the preview-only subtitle/footer copy", () => {
-    const html = renderFinal();
-    expect(html).not.toContain("Preview only");
-    expect(html).not.toContain(
-      "must not be sent to or relied upon by the customer",
+  it("states that amount due covers current charges only (Inv #50)", async () => {
+    const html = await renderDraft();
+    expect(html).toContain(
+      "Amount due covers the current charges on this invoice only.",
     );
   });
 
-  it("renders the same charge lines, tax items, and formatted totals as the draft (same template/engine)", () => {
-    const html = renderFinal();
-    expect(html).toContain("DATA_USAGE");
-    expect(html).toContain("GST @ 8.00%");
-    // Positively assert the FINAL total renders — the `not.toMatch(/>108\.00</)`
-    // guard alone is vacuous (formatCurrency emits "RM 108.00", so ">108.00<"
-    // never appears and it would pass even if the total row were dropped): the
-    // issued invoice shows the "Total due" label and the currency-formatted
-    // total, never a bare number.
-    expect(html).toContain("Total due");
-    expect(html).toContain("108.00");
-    expect(html).not.toMatch(/>108\.00</);
+  it("renders the usage annex on the draft too (D5 behavior change vs bm45)", async () => {
+    const html = await renderDraft({
+      usage: {
+        rows: [
+          { polygon: "POLY-001", state: "Selangor", district: "Petaling", volume: "300.000000", amount: "30000.00", unit: "EA" },
+        ],
+        subtotals: [
+          { grain: "district", state: "Selangor", district: "Petaling", amount: "30000.00" },
+          { grain: "state", state: "Selangor", district: null, amount: "30000.00" },
+          { grain: "grand", state: null, district: null, amount: "30000.00" },
+        ],
+      },
+    });
+    expect(html).toContain("Usage annex");
+    expect(html).toContain("POLY-001");
   });
 
-  it("escapes free-text account names the same as the draft", () => {
-    const html = renderFinal({
-      bill: { ...BASE_PARAMS.bill, accountName: "<script>alert(1)</script>" },
+  it("escapes free-text account names", async () => {
+    const html = await renderDraft({
+      customer: { ...rawInput().customer, name: "<script>alert(1)</script>" },
     });
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
-  });
-
-  it("escapes the invoice number too (defense in depth, though document ids are system-generated)", () => {
-    const html = renderFinal({ invoiceNumber: "<b>INV00000042</b>" });
-    expect(html).not.toContain("<b>INV00000042</b>");
   });
 });
 
-// bm45-spec §Implementation §3/§Design D3/D5 — the per-polygon usage
-// appendix: final-only, present-only, grouped state -> district -> polygon,
-// a card-missing polygon surfaced under "Unmapped", every total reconciled
-// via `services/accounts/money.ts` (never JS float summation).
-function appendixRow(
-  polygon: string,
-  state: string | null,
-  district: string | null,
-  volume: string,
-  amount: string,
-  unit = "EA",
-) {
-  return { polygon, state, district, volume, amount, unit };
-}
-
-describe("buildFinalInvoiceHtml — usage appendix (bm45)", () => {
-  const MAPPED_ROWS = [
-    appendixRow("POLY-001", "Selangor", "Petaling", "300.000000", "30000.00"),
-    appendixRow("POLY-002", "Selangor", "Klang", "250.000000", "25000.00"),
-    appendixRow("POLY-003", "Johor", "Johor Bahru", "200.000000", "20000.00"),
-  ];
-  const UNMAPPED_ROW = appendixRow(
-    "POLY-UNMAPPED",
-    null,
-    null,
-    "100.000000",
-    "10000.00",
-  );
-
-  it("never renders the appendix on the draft invoice (D5 — final-only)", () => {
-    const html = renderDraft();
-    expect(html).not.toContain("Usage appendix");
+describe("the default generated template — final", () => {
+  it("shows the real INV number and no watermark", async () => {
+    const html = await renderFinal();
+    expect(html).toContain("INV00000042");
+    expect(html).not.toContain("— pending posting —");
+    expect(html).not.toMatch(/class="watermark"/);
   });
 
-  it("renders nothing when no appendix is present or it is empty (final invoice, no capacity line)", () => {
-    const html = renderFinal();
-    expect(html).not.toContain("Usage appendix");
-
-    const htmlEmpty = renderFinal({ appendix: [] });
-    expect(htmlEmpty).not.toContain("Usage appendix");
+  it("renders every RECURRING and USAGE line, same template as the draft", async () => {
+    const html = await renderFinal();
+    expect(html).toContain("Enterprise Fibre 1Gbps");
+    expect(html).toContain("RAN Usage");
   });
 
-  it("groups mapped rows state -> district -> polygon with volume+unit and formatted amounts", () => {
-    const html = renderFinal({ appendix: MAPPED_ROWS });
-    expect(html).toContain("Usage appendix");
-    expect(html).toContain("Selangor");
-    expect(html).toContain("Johor");
-    expect(html).toContain("Petaling");
-    expect(html).toContain("Klang");
-    expect(html).toContain("Johor Bahru");
-    expect(html).toContain("POLY-001");
-    expect(html).toContain("300.000000 EA");
-  });
-
-  it("rolls district/state/grand subtotals up to the sum of the rows (Model-1 rated amount)", () => {
-    const html = renderFinal({ appendix: MAPPED_ROWS });
-    // Selangor = 30000 + 25000 = 55000.00; Johor = 20000.00;
-    // grand total = 75000.00.
-    expect(html).toContain("55,000.00");
-    expect(html).toContain("20,000.00");
-    expect(html).toContain("75,000.00");
-  });
-
-  it("surfaces a card-missing polygon under an Unmapped group, never dropping it (D3)", () => {
-    const html = renderFinal({ appendix: [...MAPPED_ROWS, UNMAPPED_ROW] });
-    expect(html).toContain("Unmapped (no ratecard entry)");
-    expect(html).toContain("POLY-UNMAPPED");
-    // grand total now includes the unmapped row too: 75000 + 10000 = 85000.00.
-    expect(html).toContain("85,000.00");
-  });
-
-  it("escapes free-text state/district/polygon values (external, ratecard-sourced data)", () => {
-    const html = renderFinal({
-      appendix: [
-        appendixRow(
-          "<script>alert(1)</script>",
-          "<b>State</b>",
-          "<i>District</i>",
-          "1.000000",
-          "100.00",
-        ),
-      ],
-    });
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).not.toContain("<b>State</b>");
-    expect(html).not.toContain("<i>District</i>");
-    expect(html).toContain("&lt;script&gt;");
+  it("states that amount due covers current charges only on the final too", async () => {
+    const html = await renderFinal();
+    expect(html).toContain(
+      "Amount due covers the current charges on this invoice only.",
+    );
   });
 });

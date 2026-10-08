@@ -1,0 +1,31 @@
+{
+  "layoutCode": "INVTPL-STD-A4",
+  "layoutVersion": 1,
+  "pageSetup": {
+    "format": "A4",
+    "orientation": "portrait",
+    "margin": { "top": "13mm", "bottom": "16mm", "left": "14mm", "right": "14mm" },
+    "displayHeaderFooter": true,
+    "printBackground": true
+  },
+  "sections": {
+    "header": { "mandatory": true },
+    "identification": { "mandatory": true },
+    "billTo": { "mandatory": true },
+    "amountDue": { "mandatory": true },
+    "chargeSummary": { "mandatory": true },
+    "taxSummary": { "mandatory": true },
+    "chargeDetails": { "mandatory": true },
+    "payment": { "mandatory": false },
+    "usageAnnex": { "mandatory": false },
+    "notes": { "mandatory": false }
+  },
+  "fixedColumns": ["#", "Description", "Quantity", "Unit price", "Gross", "Net amount"],
+  "columns": {
+    "showServicePeriod": { "mandatory": false },
+    "showDiscountColumn": { "mandatory": false },
+    "showProductId": { "mandatory": false },
+    "showUdrCount": { "mandatory": false }
+  },
+  "usageGrouping": ["state", "district"]
+}

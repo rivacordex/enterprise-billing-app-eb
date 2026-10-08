@@ -17,25 +17,6 @@ or making any architectural decision related to the change required
 Update `context/general-change-tracker.md` after each meaningful general implementation change.
 -->
  
-## Rating Module Update Context
-
-Read the following files in order before implementing
-or making any architectural decision related to Rating Module:
-
-1. `context/rating-management/ratemgmt-update-overview.md` — definition, goals, features, and scope
-2. `context/rating-management/ratemgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/rating-management/ratemgmt-ui-context.md` — theme, colors, typography, and component conventions
-4. `context/rating-management/ratemgmt-code-standards.md` — implementation rules and conventions
-5. `context/rating-management/ratemgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-6. `context/rating-management/ratemgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
-
-Update `context/rating-management/ratemgmt-progress-tracker.md` after each meaningful implementation change.
-
-Read also the general context document to support the changes as referenced by the context files above:
-1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  
-2. `context/code-standards.md`— implementation rules and conventions
-3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-4. `context/ui-context.md` — theme, colors, typography, and component conventions
 
 ## Billing Module Update Context
 

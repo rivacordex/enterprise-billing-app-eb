@@ -1,8 +1,10 @@
 # Billing Management (Bill Run) — Module Code Standards
 
-> Module-specific delta to `../code-standards.md` (the overarching standards). This file contains **only** Bill Run specifics; everything else (general rules, TypeScript, Next.js, styling, API, data, file organization, CI gates) is inherited unchanged and is **not** restated here. If a rule seems missing, it lives in the general file. Where this doc conflicts with the architecture **Module Invariants** (`billmgmt-architecture.md` §6), the Invariants win and the conflict is a bug to fix here.
+This document extends `context/code-standards.md` (the platform-wide standards every module inherits) and records **only** what the Billing Management module adds or does differently, including the two in-flight updates in `billmgmt-update-overview.md` (Part 1 Target Capacity Pricing; Part 2 Invoice Template). Everything else in the general file (general rules, TypeScript, Next.js, styling, API, data, file organization, CI gates) still applies and is **not** repeated here. If a rule seems missing, look in the general file. Where this doc conflicts with the architecture **Module Invariants** (`billmgmt-architecture.md` §6), the Invariants win and the conflict is a bug to fix here.
 
-**Companion docs (authoritative):** `billmgmt-project-overview.md` (product spec, flows, success criteria — the Phase-4 update overview is folded in) · `billmgmt-architecture.md` (technical design, **38** numbered **Module Invariants** §6; #15 retired) · `_updatemodule-billing-billrun-phase3-plan.md` (phase-3 decisions D1–D30) · `_newmodule-billing-billrun-plan.md` (phase-1 functional design & data model).
+**Companion docs (authoritative):** `billmgmt-project-overview.md` (product spec, flows, success criteria — the Phase-4 update overview is folded in) · `billmgmt-update-overview.md` (the two in-flight updates) · `billmgmt-architecture.md` (technical design, **38** numbered **Module Invariants** §6; #15 retired) · `_updatemodule-billing-invoice-template-merged-plan.md` (Part 2 decisions D1–D8, v1 review R1–R11; §15 wins over §§1–14) · `_updatemodule-billing-billrun-phase3-plan.md` (phase-3 decisions D1–D30) · `_newmodule-billing-billrun-plan.md` (phase-1 functional design & data model).
+
+**Where each update's rules live:** Part 1 → "Target Capacity Pricing update — code-standards deltas" · Part 2 → "Invoice Template update — code-standards deltas" (both at the end of this file). Part 2 replaces §6.15 below.
 
 **Status:** Phase 3 planning, ENG CLEARED (2026-09-14). Component/route/permission names below are the **binding** convention for the build.
 
@@ -147,7 +149,7 @@ This module owns the platform's first M2M Route Handlers. They are thin, uniform
 12. **The INV posting transaction never internally commits** (general posting integrity): the posting service calls `postDocument(tx, …)` inside the per-account transaction so INV create + ledger legs + `customer_bill` stamp roll back together. Invoice numbers come from the non-transactional `document_inv_seq` — a rolled-back create may leave a rare gap, which is tolerated (Inv. #7).
 13. **No `udr_mode`, `gl_date_basis`, or `fx_rate_set_id` column exists** — provenance/badge is the environment stub flag (§4.2), the GL date is the single `gl_event_at` date (§2.5), and v1 is single-currency. Do not reintroduce these columns without a spec change.
 14. **JSONB is not used for financially significant data** (general §6.17): `customer_bill_tax_item` is a first-class table, not JSONB. Any future JSONB column follows the schema-guard rule; there is no documented well-formed-only JSONB exemption in this module.
-15. **`bill_template_version` is immutable once `active`** — a change inserts a new row with a later `effective_from`; stamped on the bill at aggregation so a reprint renders through the template actually issued. No run-level template-override column.
+15. **~~`bill_template_version` is immutable once `active`~~ — SUPERSEDED by the Invoice Template update (Part 2).** The old rule had an `effective_from` column, stamped the version at aggregation, and had reprint re-render the invoice. All three are now wrong. The replacement uses DRAFT → ACTIVE → RETIRED status, stamps the versions at **posting** in the same `UPDATE` as `stampPosted`, and has reprint download the stored PDF ("Invoice Template update — code-standards deltas" › Data and storage). The table is not in the codebase yet: there is no `db/schema/billing/bill-template-version.ts`, even though §6.1, §6.4 and architecture §3 list the table. Part 2's migration creates it. Unchanged: there is still no run-level template-override column.
 
 ---
 
@@ -224,8 +226,7 @@ db/migrations/…                # billing tables + partition_management rows + 
 workflow-management/flows/        # wfm-architecture.md §4 — function-first; spin-off subdirectory
   bill-run-processor/
     bill_run_processing.template.yml   # the contract doc (non-deployable)
-    local-dev/
-      bill_run_processing.yml          # phase 3 — the REAL flow: correlate, claim,
+    bill_run_processing.yml            # phase 3 — the REAL flow: correlate, claim,
                                        #   two-source aggregation into customer_bill_line,
                                        #   tax, verify, real stage + terminal signals
     README.md
@@ -558,7 +559,7 @@ Per the header, this document is a delta to `../code-standards.md`; this section
 
 ### General rules (adds to §1)
 
-- **Capacity pricing computes and writes in one `aggregation` transaction; Model 1 is the billed number. Delivered by bm42** (the commitment floor + N-band motivation discount, the six `CAPACITY_*` guards, the `rated_amount`/`additional_info` calc trace, and the `_SAMPLE_` `capacity` seed profile — Model 2 + the `CAPACITY_RATE_MATCHING` gate + the checksum append are bm43/bm44). `gross = Σ udr_rated_price + topUp` (anchored on the rated rows) is what the bill carries; the Model-2 recompute (`max(Q,target) × baseRate`) exists **only** in `verification` as a cross-check. No code path bills from Model 2 (Inv #29).
+- **Capacity pricing computes and writes in one `aggregation` transaction; Model 1 is the billed number.** `gross = Σ udr_rated_price + topUp` (anchored on the rated rows) is what the bill carries; the Model-2 recompute (`max(Q,target) × baseRate`) exists **only** in `verification` as a cross-check. No code path bills from Model 2 (Inv #29).
 - **No DB function and no Python for pricing.** Capacity is inline SQL CTEs in `bill_run_processing.yml`, the delivered bm28/bm29 pattern. A `billing.capacity_charge()` DB function or a Python pricing task is a review-blocking defect — the module has no business-logic DB function by convention.
 - **Round each monetary component once (2 dp, HALF_UP); derive `gross`/`net`, never re-round** (Inv #34). Money stays in SQL `numeric`/`string`; the zero checks go through `money.compare` (integer sen), never `Number(<amount>)` — the `tests/accounts/grep-gates.test.ts` grep gate must stay green. The 6dp `discount_amount_raw` must not route through `services/accounts/money.ts` (it throws above 2dp).
 - **Detect a capacity offering by its components, never by a column**, and raise the six `CAPACITY_*` guards inside the account transaction (the D33 pattern) → `PROCESSING_FAILED`, siblings continue (Inv #32).
@@ -589,9 +590,9 @@ Per the header, this document is a delta to `../code-standards.md`; this section
 
 ### Data and storage rules (adds to §6)
 
-- **Two new columns on `customer_bill_line`:** `rated_amount numeric(18,2)` and `additional_info jsonb` (capacity lines only), in **one hand-authored migration** — `0044_customer_bill_line_capacity.sql` (delivered by **bm41**; `0041`/`0043` were taken); the partitioned-parent `ALTER` propagates to partitions; Drizzle mirror in `db/schema/billing/customer-bill-line.ts`. No new `source`/`line_type` CHECK — capacity lines are `USAGE`/`charge`.
+- **Two new columns on `customer_bill_line`:** `rated_amount numeric(18,2)` and `additional_info jsonb` (capacity lines only), in **one hand-authored migration** (next free number — `0041`/`0043` are taken); the partitioned-parent `ALTER` propagates to partitions; Drizzle mirror in `db/schema/billing/customer-bill-line.ts`. No new `source`/`line_type` CHECK — capacity lines are `USAGE`/`charge`.
 - **The `charge_checksum` tuple appends `rated_amount` as the last element** — never inserted mid-tuple — so existing lines' serialization is unchanged; `additional_info` is never hashed (Inv #35, extends §2.4/§6.3).
-- **New per-table `SELECT` grants for `billrun_runtime`:** `product.product_specifications` (the `udrType` characteristic), `product.ratecard_ran_usage_lkp`, `product.ratecard_version` — in `db/bootstrap/billrun-db-roles.sql`, enumerated, never `ON ALL TABLES` (§6.9/§6.10, Inv #23; delivered by **bm41**). The grant change updates the architecture Invariants in the same change set.
+- **New per-table `SELECT` grants for `billrun_runtime`:** `product.product_specifications` (the `udrType` characteristic), `product.ratecard_ran_usage_lkp`, `product.ratecard_version` — in `db/bootstrap/billrun-db-roles.sql`, enumerated, never `ON ALL TABLES` (§6.9/§6.10, Inv #23). The grant change updates the architecture Invariants in the same change set.
 - **`product_offering_price` is read as components** (PC14: one row per `component_type` + `price_component jsonb`; `amount`/`pricing_model`/`price_type` removed); the shared as-of reader is partitioned by `(product_offering_id, component_type, unit_of_measure)`.
 - **The per-polygon appendix is snapshotted at `aggregation`** (so the render does no cross-schema join); its state/district come from the `productCardLookUp` ratecard, **never from `udr_rated`**.
 
@@ -622,3 +623,193 @@ The `billrun_runtime`/`app_runtime` grant additions (above) must land or Custome
 40. **Altering `rated_amount` on a posted line changes the recomputed `charge_checksum`** (the append-tuple).
 41. **The invoice usage appendix** renders per-polygon by state/district from the `productCardLookUp` ratecard, load-tested to 10,000 rows/account; a card-missing polygon surfaces (not dropped).
 42. **DB suites run the SQL extracted from `bill_run_processing.yml`** (no hand-copied double); a **live-Kestra** capacity run drives `SCHEDULED → COMPLETED`; the destructive-DB preflight **refuses a non-disposable target**.
+
+---
+
+## Invoice Template update — code-standards deltas (2026-10-07)
+
+This section records **only** what the Invoice Template update (Part 2 of `billmgmt-update-overview.md`; `_updatemodule-billing-invoice-template-merged-plan.md`, with §15 R1–R11 taking precedence) adds to or changes in `context/code-standards.md` and §1–§9 above. Where something is unchanged, this section says so. `billmgmt-architecture.md` now carries the Part 2 invariants **#39–#50**, and they take precedence over this section. Map of the plan IDs still cited below: R1/R10 → Inv #39; R8 and park-on-failure → #40; stamping at posting → #41; R10/R11 resolution and default → #42; D8 reprint/C1 → #43; append-only versions → #44; checksum on load → #45; D3/D4 and locked Handlebars → #46; no fetch/ratecard at render → #47; logo validation → #48; server-side structure/activation checks and audit → #49; R2/R6 "current charges only", bill-level tax → #50. Replacing each inline D#/R# with its Inv # is still OPEN (bm47 follow-up 6, workflow rules §7.4). Names marked **binding** must be created exactly as written. A build spec that needs a different name updates this file first.
+
+### Decide before writing Part 2 build specs
+
+These four items conflict with the delivered code or with Part 1. The rules below assume the stated resolution. If a decision goes the other way, update this section first.
+
+| # | Conflict | Rule until decided |
+|---|---|---|
+| C1 | **Usage section source.** Part 1 (bm45, delivered in code: `render-invoice.ts` reads `customer_bill_line.additional_info.appendix`) takes state/district from the ratecard, snapshots them at aggregation, and caps at 10,000 rows. Part 2 R9 reads state/district persisted on `udr_rated`. Inv #36 says geo comes "never from `udr_rated`". | Build **one** usage-section binder, never two. Adopting R9 means amending Inv #36 in `billmgmt-architecture.md` **in the same change set** as the rating migration. Until then, the binder reads the Part 1 snapshot. |
+| C2 | **`ONE_TIME` charge source.** The overview lists RECURRING, USAGE and ONE_TIME lines. The `customer_bill_line_source_check` CHECK (migration `0039`) and `ChargeSource` (§2.1) only allow `USAGE`, `RECURRING` and `OCC`. | The binder groups by the existing `ChargeSource` union. Do not add `ONE_TIME` to a CHECK, union, label or fixture without a spec that also defines how one-time charges are sourced (see `_futurebuild_occ-charge-sourcing.md`). |
+| C3 | **Default version vs "one ACTIVE per kind".** R11 says the `is_default` version is "always ACTIVE". §6 says activating a new version retires the previous one, and only one version per kind is ACTIVE. | The one-ACTIVE partial unique index excludes the default (`WHERE status = 'ACTIVE' AND NOT is_default`). Resolution order is pinned → the current non-default ACTIVE → the `is_default` row. |
+| C4 | **Checksum algorithm (O2).** | New template and asset blobs use **SHA-256** (hex, stored in `checksum`). Invoice PDFs in `invoices/` keep md5 as built. Do not migrate existing PDFs. |
+
+### General rules (adds to §1)
+
+1. **Binder first (R10).** The first Part 2 unit re-points the final and draft renderers from `ratedLinesRepository.listClaimedForAccount` (`render-invoice.ts`) to `customer_bill_line`, `customer_bill_tax_item`, `billing.document` and `customer.organization`/`contact_medium`. That unit must assert `Σ net_amount = customer_bill.subtotal` before it renders. No editor page, action or component merges before this unit is green.
+2. **Never fall back to the legacy template (R8).** `buildDraftInvoiceHtml`/`buildFinalInvoiceHtml` and their `rating.udr_rated` read are **deleted** when the binder lands, not left behind a flag. Template resolution is pinned → ACTIVE → default (C3), so "no template" cannot happen. Any other failure (checksum mismatch, compile error, failed reconciliation, missing required field) throws a typed `AppError`.
+3. **"Park" reuses the existing render-pending surface.** A failed final render leaves the account posted with no `bill_run_invoices` row and writes the failure's error code. It then shows through the existing `RenderPendingRow` + `actions/billing/retry-render-invoice.action.ts`, and the D10 safety net (§9 item 14) blocks distribution `COMPLETED`. Do **not** add an `AccountStatus` member, a new table or a new tab for parking. A render failure still never rolls back a posted INV (§9 item 12).
+4. **Final renders read stamped versions, never the current ACTIVE.** `resolveTemplate(bill)` for a final render (and for the editor preview of a posted bill, R10) reads `ref_bill_template_version_id` and `ref_invoice_profile_version` from the bill. Only a draft/pro-forma render resolves the current ACTIVE versions, and it persists nothing.
+5. **Reprint is a byte download (D8).** Reprint serves the stored PDF from `bill_run_invoices`. No code path re-renders a posted invoice to answer a reprint. Reproducibility is checked by recomputing `charge_checksum` from the lines, never by hashing rendered HTML (§15 correction to §11 C1).
+6. **Admins choose structure only; developers own markup (D3/D4).** No action, schema or column accepts admin-supplied markup, CSS, labels, wording, section order, page setup or image slots. The only admin template input is the boolean `structure` map (TS rules below).
+7. **Handlebars runs locked down.** Compile with `{ knownHelpersOnly: true, strict: true }` and auto-escaping on. `{{{ }}}` (triple-stash) and `SafeString` are forbidden in layouts and helpers. Register only the nine helpers `money`, `date`, `period`, `qty`, `price`, `int`, `amt`, `unitCode`, `asset`. No helper evaluates, imports or fetches anything.
+8. **Every byte read from the blob store is checksum-verified before use.** This covers layout files, generated `.hbs` files and logo bytes. A mismatch throws, and the render fails (rule 3), with no retry using unverified bytes.
+9. **Saves and activations are audited atomically** (general §1.7). They write five new `AUDIT_EVENT_TYPES` in the same transaction as the change: `INVOICE_PROFILE_DRAFT_SAVED` (Change), `INVOICE_PROFILE_ACTIVATED` (Change), `INVOICE_LOGO_UPLOADED` (Additive), `INVOICE_TEMPLATE_DRAFT_SAVED` (Change) and `INVOICE_TEMPLATE_ACTIVATED` (Change). An activation row's `beforeData`/`afterData` names the retired and the activated version IDs plus the `change_note`. Retirement is part of the activation, so it has no separate event. Previews and downloads are reads and are not audited.
+10. **Activation is all-or-nothing.** The steps run in this order: validate → generate `invoice.hbs` + `footer.hbs` → test-render against the layout's `sample-data.json` → write the blobs (write-once) → one DB transaction (insert ACTIVE, retire previous, audit). Any failure leaves the previous ACTIVE version in place. A blob orphaned by a failed DB transaction is tolerated (write-once paths are never reused because `version_no` comes from the DB). It is never deleted inline.
+11. **No new money compute.** The binder groups and labels stored line amounts. Totals come from SQL (`customer_bill.subtotal`, `tax_total`, `total_amount`) or are summed in SQL in the binder's repository read. No `reduce(+)`, `Number()` or `parseFloat` on amounts (§2.3). The CSV's "line amounts sum exactly to the bill" property is asserted, never forced by adjusting a value.
+
+### TypeScript conventions (adds to §2)
+
+1. **New `as const` unions, each defined once in `types/billing.ts`:**
+   - `BillFormatCode`: `'INVOICE'` (D1; no credit/debit/pro-forma).
+   - `TemplateKind`: `'layout' | 'generated' | 'csv'`. **No `'xml'`** (R3).
+   - `TemplateVersionStatus`: `'DRAFT' | 'ACTIVE' | 'RETIRED'`. The same three values as `core.system_config.status`. Reuse the existing `types/system-config.ts` union if it exports one, and never declare a second copy.
+   - `BillAssetKind`: `'logo'`.
+   - `InvoiceSectionKey`: `'billTo' | 'identification' | 'amountDue' | 'chargeSummary' | 'taxSummary' | 'payment' | 'chargeDetails' | 'usageAnnex' | 'notes'`. These are the `INVTPL-STD-A4` manifest keys **minus `accountSummary`** (dropped, R2). `header`, `pageTwoHeader` and `footer` are fixed layout parts, not section keys.
+   - `InvoiceOptionalSectionKey`: `'payment' | 'usageAnnex' | 'notes'`. Every other key is mandatory and locked on.
+   - `InvoiceColumnKey`: `'showServicePeriod' | 'showDiscountColumn' | 'showProductId' | 'showUdrCount'` (manifest `columns` keys). The fixed columns are `#, Description, Quantity, Unit price, Gross, Net amount`, with **no `Tax` column** (R6). The seeded manifest must drop the `"Tax"` entry and the `accountSummary` section that the sample still carries.
+2. **The layout manifest is the runtime source of keys, and a test pins the unions to it.** A unit test loads the seeded `INVTPL-STD-A4` `manifest.json` and asserts its optional section keys and column keys equal the unions above. When a manifest and the code disagree, the test fails. It never fails silently at render.
+3. **`structure` is Zod-first** (`validation/billing/invoice-template-structure.schema.ts`): `{ sections: Record<InvoiceSectionKey, boolean>, columns: Record<InvoiceColumnKey, boolean> }`, `.strict()` (unknown keys rejected), with a refinement that every mandatory section is `true`. The jsonb column is typed `.$type<z.infer<…>>()` (general §6.17).
+4. **The bind input is one typed shape, `InvoiceRenderInput`** (`types/billing.ts`): `{ company, payment, invoice, customer, totals, lineGroups, usage, isDraft, locale, timezone }`. Its keys mirror the placeholder roots in `invoice-template/placeholder-catalog.md`. Money fields are `string` (§2.3). Calendar dates are `string` (`YYYY-MM-DD`) rendered by `formatCalendarDate`. `locale` and `timezone` are resolved server-side and passed in. Helpers never read config (general §2.13).
+5. **The company profile is a Zod schema, not loose `system_config` rows** (`validation/billing/invoice-profile.schema.ts`). The repository reads the `invoice.profile` group's rows for one `config_version` and parses them into `InvoiceProfile`. A parse failure is a typed error, never a partial profile. The field formats are fixed and copied from `invoice-template/placeholder-catalog.md` §B: TIN `^[A-Z]{1,2}\d{10,11}$`, SST no. `^[A-Z]\d{2}-\d{4}-\d{8}$` (optional, hidden when blank), postcode `^\d{5}$`, SWIFT `^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$`, JomPAY biller code digits only, email, colours `^#[0-9A-Fa-f]{6}$`, state code `^(0[1-9]|1[0-6])$`. If the catalog and this line ever disagree, the catalog wins and this line gets corrected.
+6. **New ID formats** (general §6.18; `^PREFIX\d+$` validators): `BTV` (bill_template_version, already reserved in §2.7), **`INVAST`** (bill_asset, the prefix the sample blob paths use) and **`INVASV`** (bill_asset_version). `bill_format` uses its code as its key: `bill_format_id = 'INVOICE'`, no sequence, because `customer_bill.ref_bill_format_id` is stamped with the literal `INVOICE`. `ref_invoice_profile_version` is an `integer`, the `system_config.config_version`.
+7. **New typed error codes** (`as const`, next to the existing billing codes): `TEMPLATE_CHECKSUM_MISMATCH`, `ASSET_CHECKSUM_MISMATCH`, `TEMPLATE_COMPILE_FAILED`, `INVOICE_RECONCILIATION_FAILED` (`Σ net_amount ≠ subtotal`), `PROFILE_LOGO_REQUIRED`, `CHANGE_NOTE_REQUIRED`, `MANDATORY_SECTION_HIDDEN`, `DEFAULT_VERSION_IMMUTABLE`, `LOGO_REJECTED` (with a reason in `error_detail`: size, dimensions, MIME/magic mismatch, SVG content).
+
+### Next.js rules (adds to §3)
+
+1. **Two new pages under `app/(app)/administration/invoice-settings/`** (the map is below). Each page is a thin RSC with `export const dynamic = 'force-dynamic'`, a `requirePermission(PERMISSIONS.INVOICE_SETTINGS, 'READ')` guard at the top, `metadata.title` ("Invoice Settings — Company profile" / "Invoice Settings — Invoice template"), `loading.tsx` and `error.tsx`. `/administration/invoice-settings` only `redirect()`s to `/administration/invoice-settings/company-profile`.
+2. **Tabs are `searchParams`, parsed and never trusted** (§3.3 pattern): `?tab=edit|history` on Company profile; `?tab=edit|generated|history` on Invoice template; `?version=<BTV…|n>` selects a version for read-only view. An invalid value falls back to `edit`.
+3. **Every mutation is a Server Action under `actions/billing/invoice-settings/`.** Each re-checks `invoice_settings : EDIT` server-side, then calls a service. Success calls `revalidatePath('/administration/invoice-settings', 'layout')`.
+4. **The logo upload is a Server Action taking `FormData`.** This sits within the existing `serverActions.bodySizeLimit: "5mb"` (`next.config.ts`). The 500 KB cap is enforced in the service on the actual byte length, never trusted from the client's `File.size`. Do not raise `bodySizeLimit` for this feature.
+5. **The live preview is a Server Action that returns HTML, shown in a sandboxed iframe.** `previewInvoiceTemplateAction({ structure, source: 'sample' | { billId } })` renders through the real pipeline with `isDraft: true`. The client sets it as `<iframe sandbox="" srcDoc={html}>`: an empty `sandbox` means no scripts, same-origin or forms. Do not use `dangerouslySetInnerHTML` in the app DOM. The preview generates in memory and writes nothing (no blob, no row).
+6. **`'use client'` leaves only:** `InvoiceStructureForm` (checkboxes + debounced preview call), `CompanyProfileForm` (React Hook Form + the shared Zod schema, general §4.12), `LogoUploadField`, `ActivateVersionDialog` (change-note required) and `InvoicePreviewFrame`. `VersionHistoryTable` and `GeneratedHbsViewer` stay server components.
+7. **File and byte downloads are session-guarded GET Route Handlers inside `app/(app)/…`**, following the bm18/bm19 `draft-invoice`/`stored-invoice` precedent. They are not `app/api/*` routes, because §5's "exactly three `app/api/billrun` handlers" stays true. Each handler runs `requirePermission` first, parses its params with a Zod ID schema, and returns 404 for unknown IDs.
+8. **Handlebars, the generator and Playwright never reach a client bundle.** They are imported only from `services/billing/invoice-template/**` (no `next/*`, general §3.14). A client import of `handlebars` fails the build-boundary lint.
+
+### Styling (adds to §4)
+
+1. **Invoice CSS lives in the layout files in the blob store, not in Tailwind.** The general §4.3 token rule (no raw hex) applies to app components only. The invoice layout uses `{{company.brandColor}}`/`{{company.accentColor}}` from the profile plus developer-fixed CSS in `shell.hbs`. App screens never import invoice CSS, and the layout never references Tailwind classes.
+2. **Fonts are embedded in the layout** (pending O4): `@font-face` with a data-URI or bundled file referenced by a checksum-verified path. No Google Fonts or other external `url()`. The rendered page must reach `networkidle` with zero network requests.
+3. **Images come only through `{{company.logoUrl}}` or `{{asset …}}`, and both resolve to a `data:` URI.** CI layout lint (`tests/guardrails/invoice-layout-lint.test.ts`) fails on `<img src="http`, `url(http`, `<script`, `{{{`, `<link`, `@import`, and on any helper name outside the nine registered helpers.
+4. **The pagination mechanics are fixed.** "Page X of Y" uses Chromium `displayHeaderFooter` + `footerTemplate` only (R5). The draft watermark stays the existing `position: fixed` `.watermark` (R5). `<thead>` repeats, line groups use `break-inside: avoid`, and the footer margin must not clip the watermark (success criterion 7).
+5. **Hidden means absent.** A section or column whose `structure` flag is `false` produces **no markup** in the generated `.hbs`. A hidden column also removes its total and adjusts `colspan` via `[[num …]]`. Do not use CSS `display:none` for structure. Blank optional profile fields are wrapped in `{{#if}}` and render nothing.
+6. **"Amount due" carries the fixed text stating it is this invoice's current charges only** (R2). This is developer wording in the layout, not a profile field.
+7. **Admin screens reuse existing primitives.** `VersionHistoryTable` reuses the Administration table primitives (§4.8). Status uses one new shared badge, `TemplateVersionStatusBadge` (`DRAFT` outline, `ACTIVE` success, `RETIRED` muted, plus a `Default` outline chip when `is_default`). Use it for both template and profile versions, and never fork a second treatment. Mandatory sections render as checked + disabled checkboxes with a lock icon (`lucide-react` `Lock`) and an accessible "Required" label.
+
+### API routes (adds to §5)
+
+1. **No new `app/api/*` handler and no change to the three M2M handlers.** The route-inventory test (§9 item 11) keeps asserting exactly three `POST` handlers.
+2. **New session-guarded GET handlers** (map below) follow general §5 status codes: `200` · `401` · `403` · `404` · `422` (bad ID shape). Byte responses set `Content-Disposition: attachment` (`.hbs`, `.csv`) or `inline` (logo, PDF) and always `X-Content-Type-Options: nosniff`.
+3. **The logo bytes handler also sends `Content-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'`.** It serves the stored MIME and never sniffs, so a sanitizer miss in an SVG cannot execute when opened directly.
+4. **The `.hbs` download serves exactly the stored, checksum-verified bytes** as `text/plain; charset=utf-8`. It never re-generates the file.
+
+### Data and storage rules (adds to §6)
+
+1. **New tables, all in `billing`, none partitioned** (catalog tables, like `bill_run`):
+   - `bill_format`: one seeded row, `INVOICE`.
+   - `bill_template_version`: `kind`, `version_no`, `status`, `is_default`, `layout_code` (for `layout` rows), `ref_layout_version_id` (for `generated` rows), `structure` jsonb (for `generated`), `page_setup` jsonb (for `layout`), `blob_ref`, `checksum`, `created_by/at`, `activated_by/at`, `retired_at`, `change_note`.
+   - `bill_asset` / `bill_asset_version`: `mime`, `width`, `height`, `byte_size`, `blob_ref`, `checksum`.
+   
+   Every table gets Drizzle schema in `db/schema/billing/`, FKs to `core` users for `*_by`, and per-table grants (rule 6).
+2. **Database constraints enforce the version rules:**
+   - UNIQUE `(ref_bill_format_id, kind, version_no)`.
+   - A partial UNIQUE `(ref_bill_format_id, kind) WHERE status = 'ACTIVE' AND NOT is_default` (C3).
+   - A CHECK that `status <> 'DRAFT'` implies `blob_ref`, `checksum`, `activated_by` and `activated_at` are NOT NULL. A DRAFT has a `structure` and no files.
+   - A CHECK that `status = 'ACTIVE'` or `'RETIRED'` implies `change_note` is NOT NULL and not blank.
+   - A CHECK that `kind = 'generated'` implies `ref_layout_version_id` is NOT NULL.
+3. **Versions are append-only and retire-only** (general §6.7 spirit; there is no tombstone because nothing is deleted). Allowed `UPDATE`s are DRAFT → ACTIVE (with the blob stamps), ACTIVE → RETIRED, and editing a DRAFT's `structure`. A trigger refuses any other `UPDATE` and every `DELETE`, and refuses any status change on an `is_default` row (`DEFAULT_VERSION_IMMUTABLE`). `app_runtime` gets no `DELETE` on these tables.
+4. **Stamp the versions in the same `UPDATE` as `stampPosted`.** `customer_bill_finalization_guard` (migration `0033`) refuses any `UPDATE` once `ref_inv_document_id` is set, so a later stamp is impossible. `customerBillRepository.stampPosted` gains `refBillFormatId`, `refBillTemplateVersionId`, `refInvoiceProfileVersion` and `refCsvTemplateVersionId`. `post-run.ts` resolves them inside the per-account posting transaction (Inv #6). The two new columns go on `customer_bill`, not on `bill_run_invoices`.
+5. **The company profile is `core.system_config` group `invoice.profile`** with the existing `config_version` + `status` columns. One version is N key rows sharing a `config_version`, and `is_secret = false` on every row (general §6.15). Bank details print on every invoice and are not secrets. The logo is stored as key `logo_asset_version_id` (an `INVASV…` ID). A version cannot become ACTIVE without it (`PROFILE_LOGO_REQUIRED`). The app branding logo (`app`/`app_logo_path`, `getBrandingLogo()`) is untouched.
+6. **Grants are per table** (Inv #23). `app_runtime` gets `SELECT, INSERT, UPDATE` on `bill_template_version`, `bill_asset` and `bill_asset_version`, `SELECT` on `bill_format`, and no `DELETE`. `billrun_runtime` gets nothing, because the flow never renders. If C1 resolves to R9, the rating migration adds nullable `state`/`district` columns to `rating.udr_rated`, and `rating_runtime` writes them at rating time. No backfill.
+7. **Generalize the blob store; do not fork it (R4).** `services/billing/blob-store.ts` gains `putObject(container, path, bytes, contentType, { writeOnce })` / `getObject(container, path)`, and `putInvoice`/`getInvoice` become thin callers. There are two new containers, `invoice-templates` and `invoice-assets`, using the paths `invoice-templates/layouts/{layoutCode}/v{n}/…`, `invoice-templates/generated/INVOICE/v{n}/{invoice.hbs,footer.hbs,structure.json}`, `invoice-templates/system/csv/v{n}/…` and `invoice-assets/{INVAST…}/v{n}/<file>`. There is no `system/xml` path (R3). Prod containers are a deploy-time prerequisite. `createIfNotExists` runs only on the Azurite connection-string path, as it does today.
+8. **The compiled-template cache is the one sanctioned in-memory cache.** It is a module-level `Map<bill_template_version_id, TemplateDelegate>` in `services/billing/invoice-template/load.ts`. It is safe because non-DRAFT versions are immutable. The cache holds compiled templates only. It never holds the "current ACTIVE" resolution, a profile, a logo or a bill (general §6.12).
+9. **Logo upload checks run server-side, in this order:** byte length ≤ 500 KB → magic bytes ∈ {PNG, JPEG, SVG} and equal to the declared MIME → dimensions ≥ 300 px on the shorter side (`sharp`, already installed) → for SVG, reject when it contains `<script`, `on*=` attributes, `<foreignObject`, or `href`/`xlink:href`/`url(` pointing outside `#` fragments. **Reject; do not repair.** A stripped SVG is a different artifact than the one the admin previewed.
+10. **The seed is a migration plus repo files.** The migration inserts `bill_format` `INVOICE`, `INVTPL-STD-A4` v1 (`kind = 'layout'`) and the default generated v1 (`is_default = true`, ACTIVE), plus the `invoice_settings` permission row (`ON CONFLICT DO NOTHING`, the `0043_ratecard_permission.sql` precedent). Role grants are applied by the seed. The layout's files live in the repo under `db/seeds/invoice-templates/INVTPL-STD-A4/v1/` and are uploaded write-once by `db:setup`. Use the next free migration number after `0044`.
+11. **Retired versions are retained** while any `customer_bill` references them (O10, recommended). There is no retention job in v1, so nothing ever deletes a version.
+
+### File organization (adds to §7)
+
+```
+app/(app)/administration/invoice-settings/
+  page.tsx                                   # redirect → company-profile
+  layout.tsx                                 # InvoiceSettingsTabs (Company profile | Invoice template)
+  company-profile/
+    page.tsx  loading.tsx  error.tsx         # CompanyProfilePage
+    logo/[assetVersionId]/route.ts           # GET logo bytes
+  invoice-template/
+    page.tsx  loading.tsx  error.tsx         # InvoiceTemplatePage
+    versions/[versionId]/files/[file]/route.ts   # GET invoice.hbs | footer.hbs | structure.json
+app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/csv/route.ts  # GET invoice CSV
+actions/billing/invoice-settings/
+  save-profile-draft.action.ts   activate-profile.action.ts   upload-logo.action.ts
+  save-template-draft.action.ts  activate-template.action.ts  preview-invoice-template.action.ts
+components/billing/invoice-settings/
+  invoice-settings-tabs.tsx  company-profile-form.tsx  logo-upload-field.tsx
+  invoice-structure-form.tsx  invoice-preview-frame.tsx  activate-version-dialog.tsx
+  version-history-table.tsx  generated-hbs-viewer.tsx  template-version-status-badge.tsx
+services/billing/invoice-template/
+  resolve-template.ts   # pinned → ACTIVE → default
+  load.ts               # blob get → checksum → compile (knownHelpersOnly) → cache
+  bind.ts               # InvoiceRenderInput from bill lines, tax items, document, organization
+  helpers.ts            # the nine registered helpers (wrap formatCurrency/formatCalendarDate)
+  generate.ts           # [[if]]/[[num]]/[[body]] directive resolution → .hbs
+  activate-template.ts  save-template-draft.ts
+  invoice-csv.ts        # fixed column map → CSV
+services/billing/invoice-profile/
+  activate-profile.ts  save-profile-draft.ts  upload-logo.ts  sanitize-logo.ts
+db/schema/billing/
+  bill-format.ts  bill-template-version.ts  bill-asset.ts
+db/repositories/billing/
+  bill-template-version.ts  bill-asset.ts  invoice-profile.ts  invoice-render-input.ts
+validation/billing/
+  invoice-template-structure.schema.ts  invoice-profile.schema.ts
+  activate-version.schema.ts  logo-upload.schema.ts  template-version-id.schema.ts
+db/seeds/invoice-templates/INVTPL-STD-A4/v1/
+  manifest.json  shell.hbs  footer.hbs  partials/*.hbs  sample-data.json
+```
+
+1. **`render-invoice-template.ts` becomes the binder's entry point, and `render-invoice.ts` keeps only the Chromium orchestration.** The semaphore, `BROWSER_CLOSE_TIMEOUT_MS` and `renderPdfFromHtml` stay unchanged except for reading `page_setup` and adding `footerTemplate`. The HTML string builders move into the layout files.
+2. **`invoice-render-input.ts` is the binder's only repository.** It reads `customer_bill_line`, `customer_bill_tax_item`, `document`, `organization` and `contact_medium` in one repeatable-read, read-only transaction, the draft-render idiom already in `render-invoice.ts`. It must not reference `rating.` (§7.6 boundary test), unless C1 resolves to R9. In that case the usage-row read goes in `rated-lines.ts`, which stays read-only.
+3. **Do not fork the nav (§7.4).** Add one `NAV_REGISTRY` entry under Administration (`href: '/administration/invoice-settings'`, `permission: 'invoice_settings'`, level READ) plus its glyph in `components/nav-icons.ts`. The CI nav guardrail then covers it.
+4. **`PERMISSIONS.INVOICE_SETTINGS = 'invoice_settings'`** goes in `auth/permission-constants.ts`, with the matching `PermissionName` member in `types/rbac.ts`, in the same PR as the migration.
+
+### Permission names & per-page permission map (adds to §8)
+
+**One new permission, `invoice_settings`, with levels READ and EDIT only.** There is no DELETE level because versions are retire-only and the default is immutable. It is separate from `billrun_*` (it is not a bill-run action) and from `system_config` (that page edits generic config rows). Admins edit the profile through its own validated screen, and the generic System Config page must not edit the `invoice.profile` group, so exclude that group from its editable list. Four-eyes does **not** apply to activation (not in the plan). Seeded role grants follow the `ratecard` precedent: ADMIN/MANAGER : EDIT, USER : READ, confirmed in the build spec.
+
+| Surface | Route | Top-level component(s) | Folder | Permission : level |
+|---|---|---|---|---|
+| Invoice Settings entry (redirect only) | `/administration/invoice-settings` | `page.tsx` → `redirect()` | `app/(app)/administration/invoice-settings/` | `invoice_settings` : **READ** |
+| Company profile — view, version history | `/administration/invoice-settings/company-profile` (`?tab=edit\|history`) | `CompanyProfilePage` → `InvoiceSettingsTabs`, `CompanyProfileForm` (read-only below EDIT), `VersionHistoryTable`, `TemplateVersionStatusBadge` | `app/(app)/administration/invoice-settings/company-profile/` | `invoice_settings` : **READ** |
+| Company profile — save draft, upload logo, activate | same page (form + dialog) | `CompanyProfileForm`, `LogoUploadField`, `ActivateVersionDialog` | `actions/billing/invoice-settings/{save-profile-draft,upload-logo,activate-profile}.action.ts` | `invoice_settings` : **EDIT** |
+| Logo bytes (profile preview, history) | `GET /administration/invoice-settings/company-profile/logo/[assetVersionId]` | `route.ts` → `billAssetRepository` + `blobStore.getObject` | `…/company-profile/logo/[assetVersionId]/` | `invoice_settings` : **READ** |
+| Invoice template — view, Generated .hbs, version history | `/administration/invoice-settings/invoice-template` (`?tab=edit\|generated\|history`) | `InvoiceTemplatePage` → `InvoiceSettingsTabs`, `InvoiceStructureForm` (read-only below EDIT), `InvoicePreviewFrame`, `GeneratedHbsViewer`, `VersionHistoryTable` | `app/(app)/administration/invoice-settings/invoice-template/` | `invoice_settings` : **READ** |
+| Invoice template — live preview | same page | `InvoicePreviewFrame` → `preview-invoice-template.action.ts` | `actions/billing/invoice-settings/preview-invoice-template.action.ts` | `invoice_settings` : **READ** (read-only render, persists nothing) |
+| Invoice template — save draft, activate | same page | `InvoiceStructureForm`, `ActivateVersionDialog` | `actions/billing/invoice-settings/{save-template-draft,activate-template}.action.ts` | `invoice_settings` : **EDIT** |
+| `.hbs` / `structure.json` download | `GET /administration/invoice-settings/invoice-template/versions/[versionId]/files/[file]` | `route.ts` → `blobStore.getObject` (checksum-verified) | `…/invoice-template/versions/[versionId]/files/[file]/` | `invoice_settings` : **READ** |
+| Invoice CSV download (posted bill) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` | `route.ts` → `buildInvoiceCsv` | `app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/csv/` | `billrun_view` : **READ** |
+| Draft PRO-FORMA preview (existing row) | `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` | unchanged route; now renders through the binder with the current ACTIVE versions | unchanged | `billrun_view` : **READ** (unchanged) |
+| Stored final invoice (existing row) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]` | unchanged; serves stored bytes (reprint, D8) | unchanged | `billrun_view` : **READ** (unchanged) |
+| Retry render (existing row) | `/billing/bill-runs/[runId]` (posting-progress view) | `RenderPendingRow` → `retry-render-invoice.action.ts`; now also the surface for a parked render (General rule 3) | unchanged | `billrun_approve` : **EDIT** (unchanged) |
+
+**Notes**
+
+- The route × level matrix gains the five new routes above: no permission → `/no-access` or 403; READ → view, preview and downloads but every EDIT action refused server-side; EDIT → everything. A READ user sees the forms disabled (show/hide only). The action guard is what is tested.
+- The live preview of a **posted** bill (`source: { billId }`) also requires `billrun_view : READ`. Customer billing data must not leak to a holder of `invoice_settings` alone.
+- These rows are the authz-sweep inventory additions (§8 note). The ZAP/Semgrep scopes already cover them.
+
+### Guardrail tests (extends §9, items 43–56)
+
+43. **[CRITICAL] Binder reconciliation (R1/R10).** On the `ci` seed every rendered invoice's charge details include every `customer_bill_line` row for the bill, and `Σ net_amount = customer_bill.subtotal`. A fixture with a deliberately unbalanced line fails the render with `INVOICE_RECONCILIATION_FAILED`.
+44. **[CRITICAL] No legacy fallback (R8).** `buildDraftInvoiceHtml`/`buildFinalInvoiceHtml` and `ratedLinesRepository.listClaimedForAccount` have no caller in the render path (grep gate). A forced render failure parks the account (render-pending + error code) and never produces a PDF.
+45. **Default resolution (R11/C3).** On a fresh DB `bill_format` has exactly one row, and the default layout + generated versions are ACTIVE with `is_default = true`. Retiring or deleting either is refused by the trigger. A run posted with no admin activity renders with the default.
+46. **[CRITICAL] Version pinning (D8).** Post under generated v2 + profile v1, then activate v3 + profile v2. The bill's four stamp columns and its stored PDF bytes are unchanged, and a new draft preview uses v3 + profile v2. The stamps land in the same `UPDATE` as `ref_inv_document_id` (a later stamp attempt is refused by `0033`).
+47. **[CRITICAL] Checksum tamper.** Changing one byte of a stored layout, generated `.hbs` or logo blob fails that account's render with `TEMPLATE_CHECKSUM_MISMATCH`/`ASSET_CHECKSUM_MISMATCH`. Other accounts post and render.
+48. **Generator.** For every combination of the 3 optional sections × 4 columns (128 cases) the generated `.hbs` compiles under `knownHelpersOnly`. It contains no `[[`, and contains no markup for any hidden key. A `structure` with a mandatory section `false` is rejected by the Zod schema.
+49. **Manifest ↔ union parity.** The seeded manifest's optional section and column keys equal `InvoiceOptionalSectionKey`/`InvoiceColumnKey`, and the manifest has no `accountSummary` section and no `Tax` fixed column.
+50. **[CRITICAL] Escaping.** A customer name, address and profile field containing `<script>alert(1)</script>` render escaped in HTML and PDF. Layout lint (Styling rule 3) fails on a seeded bad fixture.
+51. **Profile validation.** Activation is refused without a logo or a change note. Invalid TIN, SST, postcode, SWIFT, email and colour values are rejected.
+52. **Logo upload.** Each of these is rejected: >500 KB, <300 px, PNG bytes declared as SVG, SVG with `<script>`, `onload=`, `<foreignObject>` or an external `href`. The logo GET handler returns the CSP `sandbox` and `nosniff` headers.
+53. **Activation atomicity.** A forced DB failure after the blob write leaves the previous version ACTIVE and no new ACTIVE row. A success creates version n+1 ACTIVE and n RETIRED, with one `INVOICE_TEMPLATE_ACTIVATED` audit row.
+54. **Multi-page render.** A 3+ page fixture shows "Page X of Y" on every page, repeats `<thead>`, keeps each line group on one page, and the `position:fixed` watermark is not clipped (structural snapshot, not pixels).
+55. **CSV.** There is one row per `customer_bill_line`, and the `net_amount` column sums exactly to `customer_bill.subtotal` (compared as strings after SQL sum, never float).
+56. **Authz + grants.** The route × level matrix covers the five new routes and six actions (`invoice_settings` READ cannot save/activate/upload; no permission cannot open either page). The preview of a posted bill also requires `billrun_view`. `app_runtime` has no `DELETE` on the new tables, and `billrun_runtime` has no grant on them (asserted over `information_schema`).
+
+Golden-render snapshots per layout version run in CI. The bm18/bm19 tests are rewritten against the binder, not kept on the legacy builders.

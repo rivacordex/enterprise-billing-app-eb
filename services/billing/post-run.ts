@@ -16,6 +16,14 @@ import { blobStore } from "@/services/billing/blob-store";
 import { triggerDistribution } from "@/services/billing/distribute-run";
 import { logger } from "@/lib/logger";
 import type { BillRun } from "@/db/schema/billing/bill-run";
+import { InvoiceRenderError } from "@/types/billing";
+
+// bm47-spec §Implementation §7 — the binder's one typed failure shape
+// (`INVOICE_RECONCILIATION_FAILED`, `TEMPLATE_COMPILE_FAILED`); any other
+// thrown error (a Chromium failure, a missing bill) has no stable code.
+function renderErrorCodeOf(err: unknown): string | undefined {
+  return err instanceof InvoiceRenderError ? err.code : undefined;
+}
 
 // bm11-spec §Design/§Implementation. Approval drives posting: on `APPROVED`,
 // one INV per non-skipped account, each in its **own** transaction (Inv.
@@ -102,6 +110,7 @@ async function renderAndStoreInvoice(
         billingAccountId,
         documentId: posted.documentId,
         error: err instanceof Error ? err.message : String(err),
+        renderErrorCode: renderErrorCodeOf(err),
       },
     );
   }
@@ -116,7 +125,11 @@ async function renderAndStoreInvoice(
 // target account to actually be posted and not yet stored.
 export type RetryRenderResult =
   | { ok: true; value: { billingAccountId: string; blobRef: string } }
-  | { ok: false; code: "NOT_INVOICED" | "ALREADY_STORED" | "RENDER_FAILED" };
+  | { ok: false; code: "NOT_INVOICED" | "ALREADY_STORED" }
+  // bm47-spec §Implementation §7 — `detail` carries the binder's
+  // `renderErrorCode` (when the failure was a typed `InvoiceRenderError`)
+  // for the retry toast; `undefined` for an untyped failure (e.g. Chromium).
+  | { ok: false; code: "RENDER_FAILED"; detail?: string };
 
 export async function retryRenderInvoice(
   billRunId: string,
@@ -176,13 +189,19 @@ export async function retryRenderInvoice(
     if (stored) {
       return { ok: false, code: "ALREADY_STORED" };
     }
+    const renderErrorCode = renderErrorCodeOf(err);
     logger.error("post-run: retry-render failed", {
       billRunId,
       billingAccountId,
       documentId: bill.refInvDocumentId,
       error: err instanceof Error ? err.message : String(err),
+      renderErrorCode,
     });
-    return { ok: false, code: "RENDER_FAILED" };
+    return {
+      ok: false,
+      code: "RENDER_FAILED",
+      ...(renderErrorCode !== undefined ? { detail: renderErrorCode } : {}),
+    };
   }
 }
 

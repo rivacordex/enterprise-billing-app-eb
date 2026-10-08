@@ -1,44 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm18-spec §Implementation §2 / Verification checklist / Phase-2 review
-// fold T9. Mocks the DB, the pure template builder, and Playwright so the
-// orchestration (read snapshot → build HTML → launch-per-render, bounded by
-// the T9 semaphore → always close in `finally`) is provable without a real
-// database or browser — same DB-free-unit-suite convention as
-// list-account-bills.test.ts.
-
-const txStub = {};
-const transactionOptions: unknown[] = [];
-vi.mock("@/db/client", () => ({
-  db: {
-    transaction: vi.fn((cb: (tx: unknown) => unknown, opts: unknown) => {
-      transactionOptions.push(opts);
-      return cb(txStub);
-    }),
-  },
-}));
-vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
-  customerBillRepository: { findForAccount: vi.fn() },
-}));
-vi.mock("@/db/repositories/billing/customer-bill-tax-item.repository", () => ({
-  customerBillTaxItemRepository: { listForBill: vi.fn() },
-}));
-vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
-  ratedLinesRepository: { listClaimedForAccount: vi.fn() },
-}));
-vi.mock("@/db/repositories/billing/customer-bill-line.repository", () => ({
-  customerBillLineRepository: { listCapacityLinesForBill: vi.fn() },
-}));
-vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
-  billRunRepository: { findDetailById: vi.fn() },
-}));
-vi.mock("@/services/system-config/app-config-read.service", () => ({
-  getAppLocale: vi.fn().mockResolvedValue("en-MY"),
-}));
-vi.mock("@/services/billing/render-invoice-template", () => ({
-  buildDraftInvoiceHtml: vi.fn().mockReturnValue("<html>stub</html>"),
-  buildFinalInvoiceHtml: vi.fn().mockReturnValue("<html>final-stub</html>"),
-}));
+// bm47-spec §Implementation §6, test plan row 4 ("updated"). Mocks
+// `buildInvoiceHtml` (the binder entry point, now the sole DB/bind/compile
+// surface) and Playwright, so the orchestration this file still owns — one
+// launch per render, bounded by the T9 semaphore, the browser always closes
+// in `finally`, and the new `page.pdf` options — is provable without a real
+// database or browser.
 
 let activeLaunches = 0;
 let maxActiveLaunches = 0;
@@ -63,102 +30,51 @@ vi.mock("playwright", () => ({
   },
 }));
 
-import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
-import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
-import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
-import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
-import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
+vi.mock("@/services/billing/render-invoice-template", () => ({
+  buildInvoiceHtml: vi.fn(),
+}));
+
 import { chromium } from "playwright";
+import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import {
-  DraftInvoiceNotFoundError,
-  FinalInvoiceNotFoundError,
   renderDraftInvoice,
   renderFinalInvoice,
 } from "@/services/billing/render-invoice";
-import { buildFinalInvoiceHtml } from "@/services/billing/render-invoice-template";
-import { db } from "@/db/client";
 
-const mockFindForAccount = vi.mocked(customerBillRepository.findForAccount);
-const mockListForBill = vi.mocked(customerBillTaxItemRepository.listForBill);
-const mockListClaimed = vi.mocked(ratedLinesRepository.listClaimedForAccount);
-const mockFindDetailById = vi.mocked(billRunRepository.findDetailById);
-const mockListCapacityLinesForBill = vi.mocked(
-  customerBillLineRepository.listCapacityLinesForBill,
-);
 const mockLaunch = vi.mocked(chromium.launch);
-const mockBuildFinalInvoiceHtml = vi.mocked(buildFinalInvoiceHtml);
+const mockBuildInvoiceHtml = vi.mocked(buildInvoiceHtml);
 
-const BILL = {
-  customerBillId: "CBL00000001",
-  periodPartition: "2026-08-01",
-  billingAccountId: "BAN00000001",
-  accountName: "Acme Communications",
-  currency: "MYR",
-  category: "trial",
-  billingPeriodStart: "2026-08-01",
-  billingPeriodEnd: "2026-08-31",
-  subtotal: "100.00",
-  taxTotal: "8.00",
-  totalAmount: "108.00",
-  paymentDueDate: "2026-09-15",
-  refInvDocumentId: null,
-};
-
-const RUN = {
-  billRunId: "BRN00000042",
-  cycleName: "Enterprise Monthly",
-  periodStart: "2026-08-01",
-  periodEnd: "2026-08-31",
-  scheduledRunDate: "2026-09-01",
-  status: "PROCESSED",
-  lastProgressAt: null,
+const PAGE_SETUP = {
+  format: "A4" as const,
+  orientation: "portrait" as const,
+  margin: { top: "13mm", bottom: "16mm", left: "14mm", right: "14mm" },
+  displayHeaderFooter: true,
+  printBackground: true,
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  transactionOptions.length = 0;
   launchDelaysMs.length = 0;
   activeLaunches = 0;
   maxActiveLaunches = 0;
-  mockFindForAccount.mockResolvedValue(BILL);
-  mockListForBill.mockResolvedValue([]);
-  mockListClaimed.mockResolvedValue([]);
-  mockFindDetailById.mockResolvedValue(RUN);
-  mockListCapacityLinesForBill.mockResolvedValue([]);
-  mockBuildFinalInvoiceHtml.mockReturnValue("<html>final-stub</html>");
-});
-
-describe("renderDraftInvoice — not-found (spec §2 step 1)", () => {
-  it("throws DraftInvoiceNotFoundError when no bill exists for the account", async () => {
-    mockFindForAccount.mockResolvedValue(null);
-
-    await expect(
-      renderDraftInvoice({ runId: "BRN00000042", banId: "BAN00000001" }),
-    ).rejects.toBeInstanceOf(DraftInvoiceNotFoundError);
-    expect(mockLaunch).not.toHaveBeenCalled();
-  });
-
-  it("throws DraftInvoiceNotFoundError when the run detail row is missing", async () => {
-    mockFindDetailById.mockResolvedValue(null);
-
-    await expect(
-      renderDraftInvoice({ runId: "BRN00000042", banId: "BAN00000001" }),
-    ).rejects.toBeInstanceOf(DraftInvoiceNotFoundError);
-    expect(mockLaunch).not.toHaveBeenCalled();
+  mockBuildInvoiceHtml.mockResolvedValue({
+    html: "<html>stub</html>",
+    footerHtml: "<div>footer</div>",
+    pageSetup: PAGE_SETUP,
   });
 });
 
-describe("renderDraftInvoice — read snapshot", () => {
-  it("reads inside one repeatable-read, read-only transaction (no straddled commit)", async () => {
+describe("renderDraftInvoice", () => {
+  it("builds the HTML via the binder entry point in draft mode", async () => {
     await renderDraftInvoice({ runId: "BRN00000042", banId: "BAN00000001" });
 
-    expect(transactionOptions).toEqual([
-      { isolationLevel: "repeatable read", accessMode: "read only" },
-    ]);
+    expect(mockBuildInvoiceHtml).toHaveBeenCalledWith({
+      runId: "BRN00000042",
+      banId: "BAN00000001",
+      mode: "draft",
+    });
   });
-});
 
-describe("renderDraftInvoice — Chromium render (D18/D19)", () => {
   it("renders via Chromium and returns the PDF buffer", async () => {
     const pdf = await renderDraftInvoice({
       runId: "BRN00000042",
@@ -167,6 +83,38 @@ describe("renderDraftInvoice — Chromium render (D18/D19)", () => {
 
     expect(mockLaunch).toHaveBeenCalledTimes(1);
     expect(pdf.toString()).toBe("PDF-BYTES");
+  });
+
+  it("calls page.pdf with the layout's page setup and the footer/header templates (D9)", async () => {
+    const pdfMock = vi.fn().mockResolvedValue(Buffer.from("PDF-BYTES"));
+    mockLaunch.mockResolvedValueOnce({
+      newPage: vi.fn().mockResolvedValue({
+        setContent: vi.fn().mockResolvedValue(undefined),
+        pdf: pdfMock,
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+
+    await renderDraftInvoice({ runId: "BRN00000042", banId: "BAN00000001" });
+
+    expect(pdfMock).toHaveBeenCalledWith({
+      format: "A4",
+      landscape: false,
+      printBackground: true,
+      margin: PAGE_SETUP.margin,
+      displayHeaderFooter: true,
+      headerTemplate: "<span></span>",
+      footerTemplate: "<div>footer</div>",
+    });
+  });
+
+  it("propagates a binder error without launching Chromium", async () => {
+    mockBuildInvoiceHtml.mockRejectedValueOnce(new Error("reconciliation failed"));
+
+    await expect(
+      renderDraftInvoice({ runId: "BRN00000042", banId: "BAN00000001" }),
+    ).rejects.toThrow("reconciliation failed");
+    expect(mockLaunch).not.toHaveBeenCalled();
   });
 
   it("closes the browser even when rendering fails (no leaked processes)", async () => {
@@ -201,61 +149,20 @@ describe("renderDraftInvoice — Chromium render (D18/D19)", () => {
   });
 });
 
-// bm19-spec §Design "Final render = draft renderer, no watermark, real
-// number" / §Implementation §3.
-describe("renderFinalInvoice — not-found (bm19-spec §Implementation §3)", () => {
-  it("throws FinalInvoiceNotFoundError when no bill exists for the account", async () => {
-    mockFindForAccount.mockResolvedValue(null);
-
-    await expect(
-      renderFinalInvoice({
-        runId: "BRN00000042",
-        banId: "BAN00000001",
-        invoiceNo: "INV00000001",
-      }),
-    ).rejects.toBeInstanceOf(FinalInvoiceNotFoundError);
-    expect(mockLaunch).not.toHaveBeenCalled();
-  });
-
-  it("throws FinalInvoiceNotFoundError when the run detail row is missing", async () => {
-    mockFindDetailById.mockResolvedValue(null);
-
-    await expect(
-      renderFinalInvoice({
-        runId: "BRN00000042",
-        banId: "BAN00000001",
-        invoiceNo: "INV00000001",
-      }),
-    ).rejects.toBeInstanceOf(FinalInvoiceNotFoundError);
-    expect(mockLaunch).not.toHaveBeenCalled();
-  });
-});
-
-describe("renderFinalInvoice — read + render (D10/D19, Phase-2 review fold T9)", () => {
-  it("reads via a plain (non-transactional) query — no repeatable-read snapshot needed once posted", async () => {
+describe("renderFinalInvoice", () => {
+  it("builds the HTML via the binder entry point in final mode, passing invoiceNo", async () => {
     await renderFinalInvoice({
       runId: "BRN00000042",
       banId: "BAN00000001",
       invoiceNo: "INV00000001",
     });
 
-    expect(mockFindForAccount).toHaveBeenCalledWith(
-      db,
-      "BRN00000042",
-      "BAN00000001",
-    );
-  });
-
-  it("builds the final HTML with the real invoice number, no watermark params", async () => {
-    await renderFinalInvoice({
+    expect(mockBuildInvoiceHtml).toHaveBeenCalledWith({
       runId: "BRN00000042",
       banId: "BAN00000001",
+      mode: "final",
       invoiceNo: "INV00000001",
     });
-
-    expect(mockBuildFinalInvoiceHtml).toHaveBeenCalledWith(
-      expect.objectContaining({ invoiceNumber: "INV00000001" }),
-    );
   });
 
   it("renders via Chromium and returns the PDF buffer", async () => {
@@ -288,82 +195,6 @@ describe("renderFinalInvoice — read + render (D10/D19, Phase-2 review fold T9)
     ).rejects.toThrow("chromium crashed");
 
     expect(closeMock).toHaveBeenCalledTimes(1);
-  });
-
-  // bm45-spec §Implementation §2 — the appendix snapshot is read-and-reshape
-  // only: the orchestrator attaches the capacity line's own `unit` to each
-  // stored row (the jsonb carries no unit field) and passes `undefined`
-  // (never `[]`) when no capacity line/appendix exists.
-  it("passes no appendix param when no capacity line carries one (bm45-spec §Implementation §2)", async () => {
-    await renderFinalInvoice({
-      runId: "BRN00000042",
-      banId: "BAN00000001",
-      invoiceNo: "INV00000001",
-    });
-
-    expect(mockBuildFinalInvoiceHtml).toHaveBeenCalledWith(
-      expect.objectContaining({ appendix: undefined }),
-    );
-  });
-
-  it("shapes the capacity line's additionalInfo.appendix into the template param, attaching the line's unit (bm45-spec §Implementation §2)", async () => {
-    mockListCapacityLinesForBill.mockResolvedValue([
-      {
-        unit: "EA",
-        additionalInfo: {
-          v: 1,
-          productInventoryId: "PRDINV00000001",
-          pricing: {},
-          calc: [],
-          summary: [],
-          appendix: [
-            {
-              polygon: "POLY-001",
-              state: "Selangor",
-              district: "Petaling",
-              volume: "300.000000",
-              amount: "30000.00",
-            },
-            {
-              polygon: "POLY-UNMAPPED",
-              state: null,
-              district: null,
-              volume: "100.000000",
-              amount: "10000.00",
-            },
-          ],
-        },
-      },
-    ]);
-
-    await renderFinalInvoice({
-      runId: "BRN00000042",
-      banId: "BAN00000001",
-      invoiceNo: "INV00000001",
-    });
-
-    expect(mockBuildFinalInvoiceHtml).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appendix: [
-          {
-            polygon: "POLY-001",
-            state: "Selangor",
-            district: "Petaling",
-            volume: "300.000000",
-            amount: "30000.00",
-            unit: "EA",
-          },
-          {
-            polygon: "POLY-UNMAPPED",
-            state: null,
-            district: null,
-            volume: "100.000000",
-            amount: "10000.00",
-            unit: "EA",
-          },
-        ],
-      }),
-    );
   });
 
   // T9's fold explicitly extends the SAME concurrency guard to final
