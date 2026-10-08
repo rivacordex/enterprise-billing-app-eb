@@ -196,6 +196,84 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
 });
 
 // ---------------------------------------------------------------------
+// bm48-spec D2/D4 — RL's COPY row builder and the geo columns. Exercises the
+// real `runtime.rl.build_chunk_rows` on hand-built rated frames (python3 only,
+// no DB): the two columns are appended last, copied as-is when present, required
+// for RAN_USAGE (the KeyError guard that PRP stamped + RP carried them), and
+// written NULL only for a usage type that reads no ratecard.
+// ---------------------------------------------------------------------
+const BUILD_ROW_SCRIPT = [
+  "import sys, json",
+  "from datetime import datetime, timezone",
+  "import polars as pl",
+  "from runtime import rl",
+  "udr_type, with_geo = sys.argv[1], sys.argv[2] == '1'",
+  "ts = datetime(2026, 8, 14, 10, tzinfo=timezone.utc)",
+  "data = {'udr_type': [udr_type], 'start_datetime': [ts], 'end_datetime': [ts],",
+  "  'udr_subscription_ref_id': ['PIV1'], 'udr_key': ['K1'],",
+  "  'udr_usage_quantity': ['1.000000'], 'udr_usage_unit': ['EA'],",
+  "  'udr_usage_rate': ['1.000000'], 'udr_rate_type': ['PER_UNIT'],",
+  "  'udr_rate_detail': ['{}'], 'udr_rated_price': ['1.00'],",
+  "  'udr_rated_price_raw': ['1.000000'], 'udr_rounding_mode': ['HALF_UP'],",
+  "  'udr_currency': ['MYR'], 'udr_price_ref': ['OPP1'],",
+  "  'udr_price_effective_date': [ts], 'udr_price_override_ref': [None],",
+  "  'udr_ref_batch_id': ['B1'], 'udr_source_file': ['f.csv'],",
+  "  'rating_engine_version': ['v'], 'rating_flow_revision': [1],",
+  "  'rated_datetime': [ts]}",
+  "if with_geo:",
+  "  data['state'] = ['Selangor']",
+  "  data['district'] = pl.Series('district', [None], dtype=pl.Utf8)",
+  "try:",
+  "  row = rl.build_chunk_rows(pl.DataFrame(data))[0]",
+  "  print(json.dumps({'ok': True, 'tail': list(rl.COPY_COLUMNS[-2:]),",
+  "    'state': row[rl.COPY_COLUMNS.index('state')],",
+  "    'district': row[rl.COPY_COLUMNS.index('district')]}))",
+  "except KeyError:",
+  "  print(json.dumps({'ok': False}))",
+].join("\n");
+
+describe.skipIf(!pythonReady)(
+  "rl COPY row builder carries udr_rated geo (bm48-spec D2/D4, requires python3+runtime)",
+  () => {
+    function buildRow(udrType: string, withGeo: boolean) {
+      const out = execFileSync(
+        "python3",
+        ["-c", BUILD_ROW_SCRIPT, udrType, withGeo ? "1" : "0"],
+        { cwd: workerDir, encoding: "utf8" },
+      );
+      return JSON.parse(out.trim().split(/\r?\n/).pop() as string) as {
+        ok: boolean;
+        tail?: string[];
+        state?: string | null;
+        district?: string | null;
+      };
+    }
+
+    it("appends state/district last and copies them as-is (NULL stays NULL)", () => {
+      expect(buildRow("RAN_USAGE", true)).toEqual({
+        ok: true,
+        tail: ["state", "district"],
+        state: "Selangor",
+        district: null,
+      });
+    });
+
+    it("a RAN_USAGE chunk missing the geo columns fails loud (KeyError guard)", () => {
+      expect(buildRow("RAN_USAGE", false)).toEqual({ ok: false });
+    });
+
+    it("a usage type that reads no ratecard writes NULL geo when the columns are absent", () => {
+      expect(buildRow("SMS_USAGE", false)).toEqual({
+        ok: true,
+        tail: ["state", "district"],
+        state: null,
+        district: null,
+      });
+    });
+  },
+);
+
+// ---------------------------------------------------------------------
 // Black-box guarded load — live DB + the real prp/rp/rl modules.
 // ---------------------------------------------------------------------
 describe.skipIf(!databaseUrl || !pythonReady)(

@@ -149,6 +149,10 @@ In addition to the platform invariants (`context/architecture.md` §7). Each is 
 24. **[CRITICAL] A card-driven `usage_rate` (`plaSpecId = 'PLA_USAGE_RATE'`) is not rateable** — RP raises a loud `CARD_DRIVEN_RATING_UNSUPPORTED`, never a silent/partial result.
 25. **Every input row must map to a ratecard entry (hard-stop batch);** ratecard→input completeness is enforced with `ratecard_coverage_enforcement` (default `HARD_STOP`, `WARN` tolerates zero-traffic cells). The reconciliation identity `parsed = rated + rejected + discarded` holds because the refusal lives in PRP.
 
+**Added — billing Invoice Template update, bm48 (2026-10-08, cross-module R9):**
+
+26. **Ratecard geo is frozen onto the rated row at rating.** `udr_rated.state` / `.district` (nullable text, migration `0045`) carry the labels of the ACTIVE ratecard cell PRP matched the record to (the same `canonical_udr_key` match that drives Inv #20(b) and `service_code` — G13, no new mapping rule). PRP captures them, RP passes them through untouched, RL COPYs them (appended last in `COPY_COLUMNS`; required for `RAN_USAGE`, `NULL` only for a usage type that reads no ratecard). Labels are stored exactly as on the card (a blank label → `NULL`). Write-once by construction under Inv #2: `rating_runtime`'s table-level `INSERT` covers them and **no role holds `UPDATE`** on them, so a later card re-version never changes an already-rated row. Rows rated before bm48 stay `NULL` — no backfill. This is what the billing invoice groups usage by (billing Inv #36 / #47); the bill run and the render never join the ratecard for geo.
+
 ---
 
 ## 7. Platform deviations (as-is)

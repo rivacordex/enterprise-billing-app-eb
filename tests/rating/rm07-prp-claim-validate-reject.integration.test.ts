@@ -27,6 +27,7 @@ import {
   insertRanRatecard,
   SAMPLE_5G_LKP_ROWS,
   SAMPLE_5G_COMMERCIAL_UNIT,
+  SAMPLE_5G_RATECARD_STATE,
 } from "@/db/seeds/sample/sample-5g-fixture";
 
 // rm21-spec §8 — the rm07 suite refreshed for the PER_UNIT RAN-usage shape.
@@ -937,6 +938,99 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(manifest.status).toBe("PROCESSING");
       expect(manifest.parsed_count).toBe(4);
       expect(manifest.rejected_count).toBe(0);
+    });
+
+    // -----------------------------------------------------------------
+    // bm48-spec D2 — PRP stamps the matched ratecard cell's state/district.
+    // -----------------------------------------------------------------
+    // polars prints a null as the string "None".
+    function polygonToGeo(manifestUri: string): Map<string, [string, string]> {
+      const manifest = JSON.parse(
+        readFileSync(fileURLToPath(manifestUri), "utf8"),
+      );
+      const chunk = manifest.chunk_uris[0] as string;
+      const polygons = readParquetColumn(chunk, "key__polygon_id");
+      const states = readParquetColumn(chunk, "state");
+      const districts = readParquetColumn(chunk, "district");
+      return new Map(
+        polygons.map((p, i) => [
+          p,
+          [states[i]!, districts[i]!] as [string, string],
+        ]),
+      );
+    }
+
+    it("bm48. the PRP chunk carries each record's matched ratecard cell state/district", async () => {
+      const s = await seedBaseScenario("geo", "MNO-GEO");
+      const path = writeUdr(udrName(), cleanRows("MNO-GEO"));
+      const { manifestUri } = runPrp(path, { productName: s.productName });
+      const geo = polygonToGeo(manifestUri);
+      for (const lkp of SAMPLE_5G_LKP_ROWS) {
+        expect(geo.get(lkp.polygonId)).toEqual([
+          SAMPLE_5G_RATECARD_STATE,
+          lkp.district,
+        ]);
+      }
+    });
+
+    it("bm48. a ratecard cell with blank state/district labels yields NULL geo, not ''", async () => {
+      const tag = "geoblank";
+      const mno = "MNO-GEOBLANK";
+      const card = `RATECARD_${tag}`;
+      const { offeringId } = await seedOffering(tag, "RAN_USAGE", card);
+      const partyRoleId = await seedCustomer(tag, { mnoPublicKey1: mno });
+      const billingAccountId = await seedBillingAccount(tag, partyRoleId);
+      await seedSubscription(partyRoleId, billingAccountId, offeringId);
+      await insertRanRatecard(db, {
+        cardName: card,
+        mnoPublicKey: mno,
+        lkpSubscriberRefId: partyRoleId,
+        rows: SAMPLE_5G_LKP_ROWS.map((r) => ({ ...r, district: "   " })),
+        state: "",
+        actorId,
+      });
+      const path = writeUdr(udrName(), cleanRows(mno));
+      const { manifestUri } = runPrp(path, {
+        productName: `Sample 5G Services ${tag}`,
+      });
+      for (const [, [state, district]] of polygonToGeo(manifestUri)) {
+        expect(state).toBe("None");
+        expect(district).toBe("None");
+      }
+    });
+
+    it("bm48. a duplicate canonical cell on the ACTIVE card still fails closed before any claim", async () => {
+      const tag = "geodup";
+      const mno = "MNO-GEODUP";
+      const card = `RATECARD_${tag}`;
+      const { offeringId } = await seedOffering(tag, "RAN_USAGE", card);
+      const partyRoleId = await seedCustomer(tag, { mnoPublicKey1: mno });
+      const billingAccountId = await seedBillingAccount(tag, partyRoleId);
+      await seedSubscription(partyRoleId, billingAccountId, offeringId);
+      const first = SAMPLE_5G_LKP_ROWS[0]!;
+      await insertRanRatecard(db, {
+        cardName: card,
+        mnoPublicKey: mno,
+        lkpSubscriberRefId: partyRoleId,
+        // A case-variant of cell 0: distinct to the raw-row UNIQUE index, the
+        // same canonical cell to PRP.
+        rows: [
+          ...SAMPLE_5G_LKP_ROWS,
+          {
+            ...first,
+            polygonId: first.polygonId.toLowerCase(),
+            district: "OTHER",
+          },
+        ],
+        actorId,
+      });
+      const path = writeUdr(udrName(), cleanRows(mno));
+      expect(() =>
+        runPrp(path, { productName: `Sample 5G Services ${tag}` }),
+      ).toThrow();
+      const batches = await sql`
+        SELECT 1 FROM rating.udr_batch WHERE file_key = ${fileKeyOf(path)}`;
+      expect(batches).toHaveLength(0);
     });
   },
 );

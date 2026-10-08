@@ -116,6 +116,10 @@ _RAW_SCALE = 6
 # fractional digits (so this quantize never rounds, D8 "round once").
 _RAW_UNIT = Decimal("0.000001")
 
+# bm48 — the ratecard geo columns PRP stamps on a matched RAN record; RP passes
+# them through to the rated Parquet untouched.
+_GEO_COLUMNS: tuple[str, ...] = ("state", "district")
+
 
 def _exceeds_scale(value: Decimal, scale: int) -> bool:
     """True if ``value`` has more than ``scale`` SIGNIFICANT fractional digits —
@@ -735,6 +739,15 @@ def process_chunks(
         udr_keys = [str(v) for v in frame["udr_key"].to_list()]
         quantities = [str(v) for v in frame["udr_usage_quantity"].to_list()]
         subscriber_refs = subscriber_series(frame, subscriber_ref_column)
+        # bm48 — PRP's matched-cell geo, passed through unchanged (RP does no geo
+        # logic). Carried only when PRP emitted it, so RL's COPY KeyError guard
+        # still catches a RAN chunk that lost it somewhere upstream.
+        geo_in = {
+            name: frame[name].to_list()
+            for name in _GEO_COLUMNS
+            if name in frame.columns
+        }
+        geo_out: dict[str, list[Any]] = {name: [] for name in geo_in}
 
         # ONE set-based as-of query for the whole chunk (Inv #10, no per-record
         # fan-out). Resolve against the PINNED version through the price chain.
@@ -765,6 +778,8 @@ def process_chunks(
                     rounding_mode=rounding_mode,
                 )
             )
+            for name, values in geo_in.items():
+                geo_out[name].append(values[i])
 
         if not rated:
             continue
@@ -776,6 +791,10 @@ def process_chunks(
             flow_revision=flow_revision,
             rated_datetime=rated_datetime,
         )
+        if geo_out:
+            rated_frame = rated_frame.with_columns(
+                [pl.Series(name, values, dtype=pl.Utf8) for name, values in geo_out.items()]
+            )
         chunk_path = work_dir / f"{batch_id}-rated-{idx:04d}.parquet"
         storage.write_parquet(rated_frame, chunk_path)
         outcome.rated += len(rated)

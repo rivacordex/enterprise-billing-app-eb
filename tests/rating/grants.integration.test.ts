@@ -328,6 +328,43 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
+      // bm48-spec D1 — the ratecard geo columns are write-once at INSERT: no
+      // runtime role holds UPDATE on them, rating_runtime's table-level INSERT
+      // already covers them (no grant change shipped with 0045).
+      it("10a. no runtime role can UPDATE udr_rated.state / .district; rating_runtime can INSERT them (bm48)", async () => {
+        const roles = await sql<{ rolname: string }[]>`
+          SELECT rolname FROM pg_roles
+          WHERE rolname IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
+        `;
+        expect(roles.map((r) => r.rolname)).toEqual(
+          expect.arrayContaining(["app_runtime", "rating_runtime"]),
+        );
+        for (const { rolname } of roles) {
+          for (const col of ["state", "district"]) {
+            const [row] = await sql<{ p: boolean }[]>`
+              SELECT has_column_privilege(${rolname}, 'rating.udr_rated', ${col}, 'UPDATE') AS p
+            `;
+            expect(row?.p, `${rolname} UPDATE ${col}`).toBe(false);
+          }
+        }
+        const columnGrants = await sql<{ grantee: string }[]>`
+          SELECT grantee FROM information_schema.column_privileges
+          WHERE table_schema = 'rating' AND table_name = 'udr_rated'
+            AND column_name IN ('state', 'district')
+            AND privilege_type = 'UPDATE'
+            AND grantee IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
+        `;
+        expect(columnGrants).toEqual([]);
+
+        await expect(
+          ratingRuntime`INSERT INTO rating.udr_rated ${ratingRuntime({
+            ...ratedRow(),
+            state: "Selangor",
+            district: "Petaling",
+          })}`,
+        ).resolves.toBeDefined();
+      });
+
       it("11. rating_runtime holds no DELETE and no TRUNCATE on any rating table", async () => {
         for (const table of [
           "udr_rated",

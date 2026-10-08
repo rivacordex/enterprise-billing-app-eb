@@ -3,6 +3,10 @@ import { sql, type SQL } from "drizzle-orm";
 import { udrRateDetailSchema } from "@/validation/rating/udr-rate-detail.schema";
 import { toScaled } from "@/validation/rating/decimal-string";
 import type { UdrRatedInsert } from "@/db/schema/rating/udr-rated";
+import {
+  SAMPLE_5G_LKP_ROWS,
+  SAMPLE_5G_RATECARD_STATE,
+} from "@/db/seeds/sample/sample-5g-fixture";
 
 // bm15-spec §Implementation §2 — the D28 stand-in for rating's own
 // `udr_rated` row-factory (not yet exposed at runtime): billing-owned,
@@ -49,7 +53,25 @@ export interface SampleChargeSpec {
     commercialUnitPublicKey: string;
     polygonId: string;
   };
+  // bm48-spec §Implementation §5 — the geo labels rating freezes onto a RAN row
+  // from its matched card cell. Default NULL: a row rated before bm48, or one
+  // whose cell is not on any card.
+  state?: string | null;
+  district?: string | null;
 }
+
+// bm48-spec §Implementation §5 — the Sample-5G card's own labels (state + the
+// three cell districts), so seeded RAN rows carry the same geo real rating
+// would have stamped from that card. Lives here, not in seed-billrun-sample.ts,
+// because the pm67 seed-boundary guardrail forbids that file from naming the
+// card module.
+export const SAMPLE_RAN_GEO_LABELS: readonly {
+  state: string;
+  district: string | null;
+}[] = SAMPLE_5G_LKP_ROWS.map((row) => ({
+  state: SAMPLE_5G_RATECARD_STATE,
+  district: row.district,
+}));
 
 // A row shaped exactly like `UdrRatedInsert` except `partitionPeriod`, which
 // is computed by calling rating's own `IMMUTABLE rating.period_of()` helper
@@ -153,5 +175,7 @@ export function buildSampleUdrRatedRow(
     udrSourceFile: SAMPLE_UDR_SOURCE_FILE,
     ratingEngineVersion: SAMPLE_PROVENANCE_SENTINEL,
     ratingFlowRevision: 0,
+    state: spec.state ?? null,
+    district: spec.district ?? null,
   };
 }

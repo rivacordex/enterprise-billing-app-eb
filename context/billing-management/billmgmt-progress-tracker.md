@@ -283,6 +283,49 @@ DELIVERED" section.
   See `context/billing-management/specs/bm47-invoice-binder-reconciliation.md` for the
   full design/implementation/test plan this unit builds toward.
 
+## Invoice Template update — bm48 DELIVERED (code), DB/python suites UNRUN (2026-10-08)
+
+- **bm48 — Rating persists `state`/`district` on `udr_rated` (cross-module, rating-only
+  boundary).** Migration `0045_rating_udr_rated_geo.sql` (+ journal `idx 45`), Drizzle
+  mirror; PRP stamps the matched ACTIVE ratecard cell's labels per record → RP passes
+  them through → RL appends them last in `COPY_COLUMNS` (required for `RAN_USAGE`, `NULL`
+  for a non-ratecard usage type). Seeds: `udr-rated-sample.ts` gains optional geo +
+  `SAMPLE_RAN_GEO_LABELS` (from the Sample-5G card); the `ci`/`volume` RAN rows cycle
+  those labels with **exactly one** row left `NULL` (sequence 1, for bm49's "Unassigned
+  region"); capacity-appendix rows carry their cell's geo (the card-missing polygon stays
+  `NULL`). Tests: `rm01` 15b, `grants` 10a, `rm07` ×3, `rm09` ×3 (`build_chunk_rows`),
+  `rm13` geo assertions, new `rm23-udr-geo-frozen`. No billing code under the spec's
+  boundary paths.
+  - **Gates/decisions:** G13 decided 2026-10-08 (reuse PRP's canonical cell match);
+    one PR with ordered commits under a recorded bm48-only waiver of rating §4.1/§4.3.
+  - **Docs closed in this change set:** Inv #36 amended; X1 removed from the architecture
+    conflict table, C1 from code-standards, _Overlap_ + rating follow-ups from the
+    overview's open items; workflow rules §5 DECIDED item 5; known-issues §15 D4 marked
+    closed for post-bm48 rows; `ratemgmt-architecture.md` Inv #26,
+    `ratemgmt-project-overview.md` column note, `ratemgmt-progress-tracker.md`.
+  - **Verified:** `npm run typecheck`, ESLint on every changed TS file,
+    `check:rating-migration-boundary` (classifies `0045`, no `billing.*` writes), and the
+    DB-free seed/boundary guardrails (141 tests) — all green.
+  - **OPEN (not silently assumed green):** (1) every DB-gated / python-gated rating suite
+    touched here (`rm01`, `grants`, `rm07`, `rm09`, `rm13`, `rm23`) is authored but
+    **unrun** — this host has no `python3` and no disposable Postgres; (2) the rm13
+    live-Kestra RAN journey with geo populated has not run; (3) `bm00-build-plan.md` Unit
+    48's text ("where rating reads `rate_per_unit`" → "PRP's ratecard cell match") could
+    not be corrected — that file is not in this repo; (4) deploying needs a worker-image
+    rebuild (runtime is baked into the image), which re-stamps `rating_engine_version`.
+  - **SonarQube duplication fix (2026-10-08):** `rm23` was flagged at 26.2% duplicated
+    lines on new code (scaffolding copied from `rm13`). The shared RAN_USAGE harness (python
+    probe, role-SQL runner, schema drop, feed profile, Sample-5G graph seed, PRP/RP/RL
+    runners) now lives in `tests/helpers/rating-ran-harness.ts`, and both `rm13` and `rm23`
+    use it. No assertion changes. tsc/ESLint/Prettier are green; both suites are still
+    **unrun** (same host limits as above). `rm07`–`rm12` still carry their own older copies,
+    left as they were. Second review (Sonar S4036, PATH hotspot): the harness now runs
+    python3 by **absolute path** only. It uses `RATING_PYTHON3` if that is set to an
+    absolute path, otherwise `/usr/bin/python3` or `/usr/local/bin/python3`. A local
+    py3.12 venv/shim that is found only through `PATH` must now be named in
+    `RATING_PYTHON3`, or rm13/rm23 skip.
+  - **Next:** bm49 switches the binder's usage section onto these columns.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

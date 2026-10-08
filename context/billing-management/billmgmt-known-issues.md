@@ -622,6 +622,20 @@ plan O-TC6). If rating ever stamps `ratecard_ran_usage_lkp_id` directly onto
 (no key reconstruction, no coupling) and per-record version pinning becomes
 exact.
 
+**Update — bm48 (2026-10-08): D4 CLOSED for rows rated after bm48.** Rating
+now freezes the matched ratecard cell's `state`/`district` onto
+`rating.udr_rated` at INSERT (migration `0045`; captured in PRP from the
+ACTIVE card it rated against). A card re-versioned after rating can no longer
+change those labels (`tests/rating/rm23-udr-geo-frozen.integration.test.ts`).
+Two things stay open until bm49: (1) the invoice still reads the bm45
+aggregation-time snapshot — bm49 switches the usage section to the frozen
+`udr_rated` columns, which is what removes the D4 window from the invoice;
+(2) rows rated **before** bm48 carry `NULL` geo (no backfill) and render
+under an "Unassigned region" group. The **D2 key-reconstruction coupling**
+also stays for as long as the flow keeps writing the bm45 snapshot (it does
+— Part 2 makes no `bill-run-*` flow change). It was stamping geo, not the lkp
+row id, that rating adopted, so the FK-lookup option above was not taken.
+
 ---
 
 ## 16. 🟡 Model-2 can diverge from Model 1 on fractional multi-row usage (TC40/TC55, accepted)

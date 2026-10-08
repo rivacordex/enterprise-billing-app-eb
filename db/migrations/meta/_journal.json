@@ -309,6 +309,13 @@
       "when": 1790676000000,
       "tag": "0044_customer_bill_line_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1790762400000,
+      "tag": "0045_rating_udr_rated_geo",
+      "breakpoints": true
     }
   ]
 }

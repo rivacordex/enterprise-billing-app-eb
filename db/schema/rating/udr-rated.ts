@@ -146,6 +146,11 @@ export const udrRated = rating.table(
       precision: 3,
       mode: "date",
     }),
+    // bm48 (0045) — the matched RAN ratecard cell's labels, written once at
+    // INSERT by RL; no role holds UPDATE on them. NULL = rated before bm48 or
+    // the card row had no label.
+    state: text("state"),
+    district: text("district"),
   },
   (t) => [
     // Composite PK is required because partition_period is the partition key

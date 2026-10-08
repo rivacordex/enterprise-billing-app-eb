@@ -93,6 +93,7 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 - `rating.udr_rated` and `rating.process_log` partitioned monthly by `pg_partman` on a `date` control column, registered on the existing daily maintenance job, **detached, never dropped** — `udr_rated` at 7 years, `process_log` at 24 months — matching the billing tables' archival contract rather than `audit_log`'s drop-on-expiry.
 - Partition granularity chosen when an environment is first built, not changeable at runtime: changing it on a live table is a physical re-partition with downtime.
 - `rating.udr_batch` unpartitioned — files are low-volume.
+- `rating.udr_rated.state` / `.district` (bm48, migration `0045`, nullable `text`): the matched RAN ratecard cell's labels, captured by PRP and written once by RL at INSERT; no role may UPDATE them. `NULL` = rated before bm48, a card label left blank, or a usage type that reads no ratecard. Consumed by the billing invoice's usage section (billing bm49); no index (the bill run reads by `billrun_*`).
 - Four mounted locations: landing, archive, error, logs. Raw archive retained 7 years; reject and log files 24 months.
 
 ### Access, isolation and deployment

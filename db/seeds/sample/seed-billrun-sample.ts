@@ -36,6 +36,7 @@ import { transitionCustomerStatus } from "@/services/customer/transition-custome
 import { createOrder } from "@/services/ordering/create-order";
 import { currentDuePeriod } from "@/services/billing/derive-periods";
 import {
+  SAMPLE_RAN_GEO_LABELS,
   buildSampleUdrRatedRow,
   type SampleUdrRatedRow,
 } from "@/db/seeds/sample/udr-rated-sample";
@@ -1405,6 +1406,7 @@ async function seedSampleCharges(
             currency: CURRENCY,
             status: "RATED",
             sequence,
+            ...sampleRanGeo(sequence),
           }),
         );
       }
@@ -1433,6 +1435,7 @@ async function seedSampleCharges(
             currency: CURRENCY,
             status: "BILL_NOTUSED",
             sequence,
+            ...sampleRanGeo(sequence),
           }),
         );
       }
@@ -1441,6 +1444,21 @@ async function seedSampleCharges(
 
   await insertUdrRatedChunked(rows);
   return rows.length;
+}
+
+// bm48-spec §Implementation §5 — the geo rating would have frozen onto a RAN
+// row, cycling through the Sample-5G card's labels. Exactly ONE row (the first
+// seeded) keeps NULL geo, so bm49's "Unassigned region" path has a fixture.
+const SAMPLE_NULL_GEO_SEQUENCE = 1;
+function sampleRanGeo(sequence: number): {
+  state: string | null;
+  district: string | null;
+} {
+  if (sequence === SAMPLE_NULL_GEO_SEQUENCE) {
+    return { state: null, district: null };
+  }
+  const label = SAMPLE_RAN_GEO_LABELS[sequence % SAMPLE_RAN_GEO_LABELS.length]!;
+  return { state: label.state, district: label.district };
 }
 
 // bm42-spec §Implementation §7 — the capacity profile's charges: PER_UNIT
@@ -1529,6 +1547,10 @@ async function seedSampleCapacityCharges(
                 SAMPLE_CAPACITY_APPENDIX_COMMERCIAL_UNIT,
               polygonId: cell.polygonId,
             },
+            // bm48 — the geo rating freezes from the usage card's matched
+            // cell; the card-missing polygon has none (NULL).
+            state: cell.mapped ? (cell.state ?? null) : null,
+            district: cell.mapped ? (cell.district ?? null) : null,
           }),
         );
       }
