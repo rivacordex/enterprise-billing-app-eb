@@ -17,8 +17,15 @@ import { logger } from "@/lib/logger";
 // `invoices` is listed too, for completeness on a fresh volume: the app creates
 // it on first write (services/billing/blob-store.ts), so it normally exists
 // already — but a developer who runs distribution before ever posting would
-// otherwise hit the same 404 from the other side.
-const CONTAINERS = ["kestra-internal", "invoices"] as const;
+// otherwise hit the same 404 from the other side. `invoice-templates` /
+// `invoice-assets` (bm51) are likewise auto-created by the app on first use on
+// the connection-string path; listed here so a fresh volume has them upfront.
+const CONTAINERS = [
+  "kestra-internal",
+  "invoices",
+  "invoice-templates",
+  "invoice-assets",
+] as const;
 
 // The HOST-facing Azurite connection string (127.0.0.1). The engine reaches the
 // same Azurite in-network as `azurite:10000`; this script runs on the host, so

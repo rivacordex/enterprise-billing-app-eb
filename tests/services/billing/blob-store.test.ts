@@ -221,4 +221,259 @@ describe("blobStore.getInvoice", () => {
     );
     expect(pdf.toString()).toBe("PDF-BYTES");
   });
+
+  it("throws INVALID_BLOB_PATH when the ref's container is not invoices", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+
+    await expect(
+      blobStore.getInvoice(
+        "invoice-templates/generated/INVOICE/v1/invoice.hbs",
+      ),
+    ).rejects.toMatchObject({
+      name: "BlobStoreError",
+      code: "INVALID_BLOB_PATH",
+    });
+  });
+});
+
+// bm51-spec §Design D1–D3 — the generalized primitives the wrappers sit on.
+describe("blobStore.putObject", () => {
+  it("writes to the named container and records the checksum algorithm", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+
+    const bytes = Buffer.from("TEMPLATE-BYTES");
+    const result = await blobStore.putObject(
+      "invoice-templates",
+      "generated/INVOICE/v1/invoice.hbs",
+      bytes,
+      "text/plain; charset=utf-8",
+      { writeOnce: true, checksumAlgorithm: "sha256" },
+    );
+
+    expect(mockGetContainerClient).toHaveBeenCalledWith("invoice-templates");
+    expect(mockGetBlockBlobClient).toHaveBeenCalledWith(
+      "generated/INVOICE/v1/invoice.hbs",
+    );
+    expect(mockUploadData).toHaveBeenCalledWith(
+      bytes,
+      expect.objectContaining({
+        blobHTTPHeaders: { blobContentType: "text/plain; charset=utf-8" },
+        conditions: { ifNoneMatch: "*" },
+      }),
+    );
+    expect(result).toStrictEqual({
+      blobRef: "invoice-templates/generated/INVOICE/v1/invoice.hbs",
+      checksum: createHash("sha256").update(bytes).digest("hex"),
+      checksumAlgorithm: "sha256",
+      created: true,
+    });
+  });
+
+  it("md5 and sha256 produce the documented, distinct digests of the same bytes", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    const bytes = Buffer.from("PDF-BYTES");
+
+    const md5 = await blobStore.putObject("invoices", "a/b.pdf", bytes, "x", {
+      writeOnce: false,
+      checksumAlgorithm: "md5",
+    });
+    const sha = await blobStore.putObject(
+      "invoice-assets",
+      "a/b.bin",
+      bytes,
+      "x",
+      { writeOnce: false, checksumAlgorithm: "sha256" },
+    );
+
+    expect(md5.checksum).toBe("5cb3d06635eacf45e7946275cd49e3f2");
+    expect(sha.checksum).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(md5.checksum).not.toBe(sha.checksum);
+  });
+
+  it("writeOnce: false sends no if-none-match condition (unconditional overwrite)", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+
+    await blobStore.putObject(
+      "invoices",
+      "a/b.csv",
+      Buffer.from("x"),
+      "text/csv",
+      {
+        writeOnce: false,
+        checksumAlgorithm: "md5",
+      },
+    );
+
+    expect(mockUploadData).toHaveBeenCalledWith(
+      Buffer.from("x"),
+      expect.not.objectContaining({ conditions: expect.anything() }),
+    );
+  });
+
+  it("onExists: 'returnExisting' adopts the stored bytes' digest with created: false on 412", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    mockUploadData.mockRejectedValueOnce({ statusCode: 412 });
+    mockDownloadToBuffer.mockResolvedValueOnce(Buffer.from("WINNER"));
+
+    const result = await blobStore.putObject(
+      "invoices",
+      "a/b.pdf",
+      Buffer.from("LOSER"),
+      "application/pdf",
+      { writeOnce: true, onExists: "returnExisting", checksumAlgorithm: "md5" },
+    );
+
+    expect(result.created).toBe(false);
+    expect(result.checksum).toBe(
+      createHash("md5").update(Buffer.from("WINNER")).digest("hex"),
+    );
+  });
+
+  it("onExists: 'throw' (the default) raises BLOB_ALREADY_EXISTS on 412", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    mockUploadData.mockRejectedValueOnce({ statusCode: 412 });
+
+    await expect(
+      blobStore.putObject(
+        "invoice-templates",
+        "generated/INVOICE/v1/invoice.hbs",
+        Buffer.from("x"),
+        "text/plain",
+        { writeOnce: true, checksumAlgorithm: "sha256" },
+      ),
+    ).rejects.toMatchObject({
+      name: "BlobStoreError",
+      code: "BLOB_ALREADY_EXISTS",
+      detail: { blobRef: "invoice-templates/generated/INVOICE/v1/invoice.hbs" },
+    });
+    expect(mockDownloadToBuffer).not.toHaveBeenCalled();
+  });
+
+  it("auto-creates each container once per process, only on the connection-string path", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    const opts = { writeOnce: false, checksumAlgorithm: "md5" as const };
+
+    await blobStore.putObject("invoices", "a/b", Buffer.from("x"), "x", opts);
+    await blobStore.putObject("invoices", "c/d", Buffer.from("x"), "x", opts);
+    await blobStore.putObject(
+      "invoice-templates",
+      "e/f",
+      Buffer.from("x"),
+      "x",
+      opts,
+    );
+
+    // once for invoices (memoized across its two writes) + once for templates.
+    expect(mockCreateIfNotExists).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects unsafe paths and unknown containers before any upload", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    const opts = { writeOnce: false, checksumAlgorithm: "md5" as const };
+    const bad = [
+      "../etc/passwd",
+      "/leading",
+      "trailing/",
+      "a b/c",
+      "a/%2e%2e/b",
+    ];
+
+    for (const path of bad) {
+      await expect(
+        blobStore.putObject("invoices", path, Buffer.from("x"), "x", opts),
+      ).rejects.toMatchObject({
+        name: "BlobStoreError",
+        code: "INVALID_BLOB_PATH",
+      });
+    }
+    await expect(
+      // @ts-expect-error — deliberately off-union, as a stored blob_ref might be.
+      blobStore.putObject("secrets", "a/b", Buffer.from("x"), "x", opts),
+    ).rejects.toMatchObject({
+      name: "BlobStoreError",
+      code: "INVALID_BLOB_PATH",
+    });
+    expect(mockUploadData).not.toHaveBeenCalled();
+  });
+});
+
+describe("blobStore.getObject", () => {
+  it("downloads raw bytes from the named container, no verification", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+
+    const bytes = await blobStore.getObject(
+      "invoice-assets",
+      "INVAST1/v1/logo.png",
+    );
+
+    expect(mockGetContainerClient).toHaveBeenCalledWith("invoice-assets");
+    expect(mockGetBlockBlobClient).toHaveBeenCalledWith("INVAST1/v1/logo.png");
+    expect(bytes.toString()).toBe("PDF-BYTES");
+  });
+});
+
+describe("blobStore.parseBlobRef / digest", () => {
+  it("round-trips every container's ref into { container, path }", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+
+    expect(blobStore.parseBlobRef("invoices/2026-10/INV1.pdf")).toStrictEqual({
+      container: "invoices",
+      path: "2026-10/INV1.pdf",
+    });
+    expect(
+      blobStore.parseBlobRef(
+        "invoice-templates/generated/INVOICE/v1/invoice.hbs",
+      ),
+    ).toStrictEqual({
+      container: "invoice-templates",
+      path: "generated/INVOICE/v1/invoice.hbs",
+    });
+    expect(() => blobStore.parseBlobRef("no-slash")).toThrow();
+    expect(() => blobStore.parseBlobRef("bogus/a/b")).toThrow();
+  });
+
+  it("digest is a plain hex digest over the exact bytes", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    const bytes = Buffer.from("PDF-BYTES");
+
+    expect(blobStore.digest(bytes, "md5")).toBe(
+      "5cb3d06635eacf45e7946275cd49e3f2",
+    );
+    expect(blobStore.digest(bytes, "sha256")).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+  });
 });
