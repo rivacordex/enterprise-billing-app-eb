@@ -34,4 +34,5 @@ export const PERMISSION_DISPLAY_NAMES: Record<PermissionName, string> = {
   billrun_operate: "Bill Runs – Operate",
   billrun_approve: "Bill Runs – Approve",
   ratecard: "Rate Card",
+  invoice_settings: "Invoice Settings",
 } as const;

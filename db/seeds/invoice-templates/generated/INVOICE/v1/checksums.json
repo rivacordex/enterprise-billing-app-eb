@@ -1,0 +1,8 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "footer.hbs": "9727654f54c7602aa51bf143a43bc30d8f8427c69fe243bb4fc6887019588349",
+    "invoice.hbs": "8f7ef760a3bf3e0c352629df719c2f12023728c7cf49b4598431f4fc343e9c1c",
+    "structure.json": "7390a20791f0d67f5e554d5f4330773e053c3d269b4f02b98ea8a05b3203e6b8"
+  }
+}

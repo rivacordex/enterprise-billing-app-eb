@@ -439,6 +439,76 @@ DELIVERED" section.
     ("Unassigned region", source = `udr_rated`, itemised rows); `placeholder-catalog.md`
     `usage.*` shape; this tracker.
 
+## Invoice Template update — bm50 IN PROGRESS (started 2026-10-08)
+
+- **bm50 — Invoice template catalog schema, seed rows, permission row and grants
+  (Invoice Template update, Part 4).** Schema + grants + seed only (lands before any
+  consumer; nothing renders from these rows until bm53, no page until bm55). Spec:
+  `context/billing-management/specs/bm50-template-catalog-schema-seed.md`. Creates the
+  four `billing` catalog tables (`bill_format`, `bill_template_version`, `bill_asset`,
+  `bill_asset_version`) with the DB-enforced version rules (two guard triggers,
+  `DEFAULT_VERSION_IMMUTABLE`/`VERSION_IMMUTABLE`/`VERSION_DELETE_FORBIDDEN`), the
+  partial unique indexes (one-ACTIVE-non-default / one-default / one-draft per kind),
+  the two `customer_bill` stamp columns (`ref_invoice_profile_version`,
+  `ref_csv_template_version_id`), the seed rows (`INVOICE`, layout `INVTPL-STD-A4` v1,
+  default generated v1, CSV v1 — each with the SHA-256 of its `checksums.json`), the
+  `invoice_settings` permission set (minus the nav entry — deferred to bm55), the
+  `app_runtime` grants + the `billrun_runtime` revoke of the two reserved stamp
+  columns, the read-only repositories, unions + ID schemas, the CSV v1 column map, and
+  a `write-checksums.ts` repo script. Migration `0046` (bm48 owns `0045`).
+  - **Gate decisions recorded as decided (interim) per the spec:** G3/X3/C3 (partial
+    unique index excludes the default; resolution pinned → non-default ACTIVE →
+    default); G6 (SHA-256 hex for template/asset blobs, algorithm stored per row); G7
+    (notes/footer are fixed layout text); G10 (nothing deletes a version); G11 (ADMIN
+    EDIT, MANAGER EDIT, USER READ); G12 (`customer_bill.ref_csv_template_version_id`).
+  - **Delivered:** migration `0046_invoice_template_catalog.sql` (+ journal idx 46) —
+    the four catalog tables, the CHECK family, the three partial unique indexes
+    (`btv_one_active_uq` excluding the default, `btv_one_default_uq`, `btv_one_draft_uq`),
+    the two guard triggers (`bill_template_version_guard`/`bill_asset_version_guard` +
+    the `bill_catalog_forbid` shared forbid for `bill_format`/`bill_asset`), the two
+    `customer_bill` stamp columns, the seed rows (`INVOICE` + BTV00000001 layout /
+    00000002 generated / 00000003 csv, each with its directory's SHA-256), and the
+    `invoice_settings` permission row. Drizzle mirrors `bill-format.ts`/
+    `bill-template-version.ts`/`bill-asset.ts` (+ `customer-bill.ts` columns, index
+    exports). Grants: `bootstrap-db-roles.sql` (`app_runtime` SELECT on `bill_format`,
+    SELECT/INSERT/UPDATE on the other three, sequence USAGE, no DELETE) and
+    `billrun-db-roles.sql` (dropped `ref_bill_format_id`/`ref_bill_template_version_id`
+    from the `customer_bill` INSERT/UPDATE grants + idempotent REVOKE + `REVOKE ALL` on
+    the four tables, Inv #41). Permission set across `permission-constants.ts`,
+    `rbac.ts`, `permissions.ts`, `roles.ts` (display label) + `db/seeds/billing.ts`
+    grants (ADMIN/MANAGER EDIT, USER READ). Read-only repositories
+    `bill-template-version.ts` (findById/findActive/findDefault/listForKind+usedByCount/
+    nextVersionNo-via-advisory-lock) and `bill-asset.ts`. Unions +
+    `InvoiceTemplateStructure` in `types/billing.ts`; ID schemas in
+    `validation/billing/template-version-id.schema.ts`. CSV v1 column map
+    (`system/csv/v1/invoice.csv.columns.json`) + the `write-checksums.ts` script + the
+    three committed `checksums.json`. The nav entry is **deferred to bm55** (D7 — no
+    page yet; the one sanctioned split of "the permission map moves as one").
+  - **Verified:** `npm run typecheck` + ESLint clean. DB-free tests green
+    (`invoice-template-seed-checksums` — the migration digests recompute from the repo
+    files; `permission-registry`; `customer-bill-schema` updated — 16 tests). Against
+    the disposable Postgres (`docker-compose.test.yml`, `DESTRUCTIVE_DB_OK=1` + the
+    sentinel): `invoice-template-catalog.integration` **9/9** (seed rows, the CHECK
+    family, all three unique indexes, the guard triggers incl. `DEFAULT_VERSION_IMMUTABLE`
+    / `VERSION_DELETE_FORBIDDEN` / `VERSION_IMMUTABLE`, the generated structure = all
+    union keys true, the permission row) and `invoice-settings-grants.integration`
+    **3/3** (runs the real bootstrap SQL and asserts the grant set over
+    `information_schema`). The existing `billrun-db-roles.integration` is **37/38** with
+    my bootstrap edits — the 1 failure is a **pre-existing** PC14 drift (the test
+    `UPDATE product.product_offering_price SET amount…` hits a since-removed `amount`
+    column), unrelated to bm50.
+  - **Note on the grants test name:** the spec named it
+    `tests/guardrails/invoice-settings-grants.test.ts`, but a schema-dropping DB test
+    must carry the `.integration.test.ts` suffix to run under the destructive-DB-guarded
+    integration project (the default project is DB-free and unguarded). Renamed to
+    `invoice-settings-grants.integration.test.ts` — a safety-driven deviation.
+  - **Still to close (docs):** X3 in the architecture conflict table / overview /
+    code-standards C3; the G6/G10/G11/G12 records; architecture §3 storage + §4
+    permission rows; code-standards §8 row + TS rule 7 (`VERSION_IMMUTABLE`,
+    `VERSION_DELETE_FORBIDDEN`) + data rule 2 (`checksum_algorithm`/`checksums.json`);
+    `billmgmt-known-issues.md` "ratecard role grants are not seeded" (observed, not
+    fixed); `infra/docs/db-role-verification.md` re-run order.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

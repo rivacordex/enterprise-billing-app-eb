@@ -4,6 +4,8 @@
 // (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
 // the service so the page never re-derives operability (code-standards §2.7).
 
+import type { ConfigStatus } from "@/types/system-config";
+
 export const RUN_STATUSES = [
   "SCHEDULED",
   "PROCESSING",
@@ -792,6 +794,67 @@ export interface InvoiceRenderInput {
   isDraft: boolean;
   locale: string;
   timezone: string;
+}
+
+// ============================================================================
+// bm50 — Invoice template catalog (Invoice Template update, Part 4). Unions +
+// the admin structure shape backing `billing.bill_template_version`. Schema in
+// `db/schema/billing/{bill-format,bill-template-version,bill-asset}.ts`.
+// ============================================================================
+
+export const BILL_FORMAT_CODES = ["INVOICE"] as const;
+export type BillFormatCode = (typeof BILL_FORMAT_CODES)[number];
+
+// No `xml` kind in v1 (R3).
+export const TEMPLATE_KINDS = ["layout", "generated", "csv"] as const;
+export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
+// DRAFT → ACTIVE → RETIRED — the same three values as `core.system_config.status`
+// (reused, never a second copy — code-standards Part 2 TS rule 1).
+export type TemplateVersionStatus = ConfigStatus;
+
+export const BILL_ASSET_KINDS = ["logo"] as const;
+export type BillAssetKind = (typeof BILL_ASSET_KINDS)[number];
+
+// The nine invoice sections an admin's structure toggles (header/pageTwoHeader/
+// footer are fixed layout parts, not section keys; accountSummary dropped, R2).
+export const INVOICE_SECTION_KEYS = [
+  "billTo",
+  "identification",
+  "amountDue",
+  "chargeSummary",
+  "taxSummary",
+  "payment",
+  "chargeDetails",
+  "usageAnnex",
+  "notes",
+] as const;
+export type InvoiceSectionKey = (typeof INVOICE_SECTION_KEYS)[number];
+
+// The three sections an admin may hide; every other section is mandatory-on.
+export const INVOICE_OPTIONAL_SECTION_KEYS = [
+  "payment",
+  "usageAnnex",
+  "notes",
+] as const;
+export type InvoiceOptionalSectionKey =
+  (typeof INVOICE_OPTIONAL_SECTION_KEYS)[number];
+
+// The four hideable charge-detail columns (no Tax column, R6).
+export const INVOICE_COLUMN_KEYS = [
+  "showServicePeriod",
+  "showDiscountColumn",
+  "showProductId",
+  "showUdrCount",
+] as const;
+export type InvoiceColumnKey = (typeof INVOICE_COLUMN_KEYS)[number];
+
+// The admin structure stored in `bill_template_version.structure` (the bm55 Zod
+// schema validates it; typed here so bm50's Drizzle mirror and repositories
+// have a shape before that schema exists).
+export interface InvoiceTemplateStructure {
+  sections: Record<InvoiceSectionKey, boolean>;
+  columns: Record<InvoiceColumnKey, boolean>;
 }
 
 // bm47-spec §Implementation §2 — binding names (code-standards TS rule 7).

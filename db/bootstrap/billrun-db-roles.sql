@@ -112,8 +112,10 @@ GRANT USAGE ON SEQUENCE "billing"."customer_bill_line_seq"     TO billrun_runtim
 --> statement-breakpoint
 
 -- Step 5 — customer_bill: the trial columns only. INSERT and UPDATE are
--- column-scoped to EXCLUDE the three posting stamps (ref_inv_document_id,
--- posted_attempt, charge_checksum) — app-only, set at posting (bm19). SELECT
+-- column-scoped to EXCLUDE the posting stamps (ref_inv_document_id,
+-- posted_attempt, charge_checksum, and — bm50, Inv #41 — ref_bill_format_id,
+-- ref_bill_template_version_id, ref_invoice_profile_version,
+-- ref_csv_template_version_id) — app-only, set at posting (bm19/bm54). SELECT
 -- only at the table level; DELETE is deliberately NOT a table grant (T10) — a
 -- Postgres DELETE grant cannot be predicate-scoped, so a table-level DELETE
 -- would let the worker wipe every unposted trial bill in the schema. The
@@ -124,14 +126,29 @@ GRANT SELECT ON TABLE "billing"."customer_bill" TO billrun_runtime;
 GRANT INSERT (
   "customer_bill_id","ref_bill_run_id","ref_billing_account_id","period_partition",
   "category","state","billing_period_start","billing_period_end",
-  "subtotal","tax_total","total_amount","payment_due_date",
-  "ref_bill_format_id","ref_bill_template_version_id"
+  "subtotal","tax_total","total_amount","payment_due_date"
 ) ON TABLE "billing"."customer_bill" TO billrun_runtime;
 --> statement-breakpoint
 GRANT UPDATE (
   "category","state","subtotal","tax_total","total_amount",
-  "payment_due_date","ref_bill_format_id","ref_bill_template_version_id"
+  "payment_due_date"
 ) ON TABLE "billing"."customer_bill" TO billrun_runtime;
+--> statement-breakpoint
+-- bm50 (Inv #41) — revoke the two reserved stamp columns from already-bootstrapped
+-- databases (idempotent; the GRANT lists above no longer include them). The
+-- template/profile/csv stamps are app-only posting stamps now.
+REVOKE INSERT ("ref_bill_format_id","ref_bill_template_version_id"),
+       UPDATE ("ref_bill_format_id","ref_bill_template_version_id")
+  ON TABLE "billing"."customer_bill" FROM billrun_runtime;
+--> statement-breakpoint
+-- bm50 — the engine never renders and never touches the invoice template
+-- catalog (belt-and-braces; it never held any grant on the four tables).
+REVOKE ALL ON TABLE
+  "billing"."bill_format",
+  "billing"."bill_template_version",
+  "billing"."bill_asset",
+  "billing"."bill_asset_version"
+FROM billrun_runtime;
 --> statement-breakpoint
 
 -- Step 5a — customer_bill_line (bm23-spec §Implementation §4). The charge

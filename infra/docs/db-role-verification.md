@@ -332,6 +332,14 @@ workflow-management flow repo); `deploy_workflow_flows` pushes both to the
    `db:bootstrap-billrun-roles`** — it is idempotent, and the
    `billrun_status_guard` it installs now permits the `REJECTED → BILL_DRAFT`
    re-claim; a stale bootstrap 403s the reject-then-reprocess path.
+   **bm50 touched both bootstrap files**, so after applying `0046` re-run
+   **`db:bootstrap-roles` then `db:bootstrap-billrun-roles`** (in that order,
+   after `db:migrate`): the former grants `app_runtime` on the four new invoice
+   template catalog tables; the latter revokes `billrun_runtime`'s
+   `ref_bill_format_id`/`ref_bill_template_version_id` column grants on
+   `customer_bill` and `REVOKE ALL` on the catalog tables (Inv #41). Both are
+   idempotent; a stale bootstrap leaves the engine able to write the two
+   reserved stamp columns it must no longer touch.
 2. **Store the Key Vault secrets (out-of-band, never in git):**
    - `billrun-runtime-db-password` — the BARE `billrun_runtime` password (§2),
      exposed to the `workflow-engine` container as

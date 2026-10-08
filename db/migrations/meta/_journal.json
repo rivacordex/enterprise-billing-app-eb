@@ -316,6 +316,13 @@
       "when": 1790762400000,
       "tag": "0045_rating_udr_rated_geo",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1790848800000,
+      "tag": "0046_invoice_template_catalog",
+      "breakpoints": true
     }
   ]
 }

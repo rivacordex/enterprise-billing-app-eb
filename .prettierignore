@@ -14,3 +14,9 @@ package-lock.json
 # text, which breaks rendered-text assertions and would make the
 # generator-parity check impossible — never let it touch them.
 *.hbs
+
+# The whole invoice-template seed tree is byte-frozen: bm50 commits a SHA-256
+# `checksums.json` per version directory, and load() re-derives it on every
+# render (Inv #44/#45). Prettier reflowing any JSON/manifest/sample/csv-map
+# here would silently break those digests — exclude the entire tree.
+db/seeds/invoice-templates/

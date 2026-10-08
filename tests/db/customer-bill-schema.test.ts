@@ -33,6 +33,10 @@ describe("billing.customer_bill", () => {
         "payment_due_date",
         "ref_bill_format_id",
         "ref_bill_template_version_id",
+        // bm50 — the invoice-profile and CSV template-version posting stamps,
+        // stamped at posting by the app (bm54).
+        "ref_invoice_profile_version",
+        "ref_csv_template_version_id",
         "ref_inv_document_id",
         "posted_attempt",
         "charge_checksum",
@@ -71,10 +75,12 @@ describe("billing.customer_bill", () => {
     expect(getTableColumns(customerBill).state.default).toBe("new");
   });
 
-  it("ref_bill_format_id/ref_bill_template_version_id/ref_inv_document_id/posted_attempt/charge_checksum are nullable (reserved, no FK)", () => {
+  it("the posting-stamp columns are nullable (stamped at posting by the app, bm54; no FK)", () => {
     const columns = getTableColumns(customerBill);
     expect(columns.refBillFormatId.notNull).toBe(false);
     expect(columns.refBillTemplateVersionId.notNull).toBe(false);
+    expect(columns.refInvoiceProfileVersion.notNull).toBe(false);
+    expect(columns.refCsvTemplateVersionId.notNull).toBe(false);
     expect(columns.refInvDocumentId.notNull).toBe(false);
     expect(columns.postedAttempt.notNull).toBe(false);
     expect(columns.chargeChecksum.notNull).toBe(false);

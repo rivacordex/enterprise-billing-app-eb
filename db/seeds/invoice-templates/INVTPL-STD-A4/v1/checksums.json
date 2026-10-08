@@ -1,0 +1,20 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "fonts/OFL.txt": "ea3437d14918a535b87af4a2ab3ada0d10b577e4e44afb49a9183f2dc589842e",
+    "footer.hbs": "9727654f54c7602aa51bf143a43bc30d8f8427c69fe243bb4fc6887019588349",
+    "manifest.json": "9045dd0aed9e24a28ecbd94001759977cd7af6fea8960a70eb21246b6bbc0ecc",
+    "partials/amountDue.hbs": "c79aea4c47092bc2e0918fe7274b9645250da886aac8366e3c8afcc82a2827d8",
+    "partials/billTo.hbs": "0ba4520ef2c8de980f88e056e0f75e828648355b0454b3789d89ab398544686f",
+    "partials/chargeDetails.hbs": "3ff63a83a403372040ea4c21fa6e9d6348f1e2b0c5e7bd1c665938708a76f6e7",
+    "partials/chargeSummary.hbs": "f3030142ba049725ed26c747a3dc76386d9784da56ecfe5ce42dfdcd59842d28",
+    "partials/header.hbs": "10deb66eb84903c33090a3ac82a33196f21ea03c754fb5b229376fc508bff96a",
+    "partials/identification.hbs": "91803df65f619a44fcf1cef3b717c7cad1fc4f09c34797a49d31dd4b5da32d58",
+    "partials/notes.hbs": "6a3d12d28893519a75fe7b4f5e94cd34bb2de15331ba1551a25b476073bd3310",
+    "partials/payment.hbs": "d24ef37834d041db96750d4c9f079eac58260252dbb62a2c11fdadf7e48450f3",
+    "partials/taxSummary.hbs": "09af767eb1249379b04de0c1effe33675f1ac7037f60019b551daf0df5c0fae6",
+    "partials/usageAnnex.hbs": "3d6fdaf9e403042863902efacaae3c7a462afab66a7c8008bf2012e8a5815c21",
+    "sample-data.json": "f8f0af07c68bba94589713a082717fbf12de73af8d2376513eb0e5a4b7fd553a",
+    "shell.hbs": "95aa108cd98809fe3d59a3450f0f27f0f6a65e8f36ad81f3d6f36a1e9408c3b7"
+  }
+}

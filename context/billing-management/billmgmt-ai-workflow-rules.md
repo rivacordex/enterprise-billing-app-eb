@@ -119,18 +119,13 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 
 | Topic | Where it is tracked (same issue, three IDs) | Interim rule |
 | --- | --- | --- |
-| `is_default` versus one-ACTIVE | X3 / C3 | Code-standards C3 (the partial index excludes the default), pending spec confirmation |
-| Same file, two rewrites | X4 | §1.2 |
 | `ONE_TIME` charge sourcing | C2 | §3.7 |
-| Checksum algorithm for templates and assets | O2 / C4 | SHA-256 for new blobs, md5 for invoice PDFs. Record the algorithm with each checksum |
-| Notes & terms and the footer sentence: layout text or profile fields | O3 | Ask before adding profile fields |
 | Embedded fonts | O4 | No external font fetch, ever |
 | Customer SST no., PO and contract references | O5 | Fragments stay hidden while blank. Add no columns |
-| Retention of retired versions | O10 | Nothing deletes a version |
 | Four-eyes on company-profile activation | Architecture _Noted gap_ versus code-standards ("does not apply") | **Conflict: stop and ask.** Do not build the activation action until it is decided |
-| Seeded `invoice_settings` role grants | Code-standards §8 delta | Confirm in the spec |
-| Where the CSV template version column lives | Architecture storage deltas ("settle in specs") versus code-standards (`customer_bill`) | Settle in the spec before migrating |
 | Partial-period billing | O-TC7 | A **business** decision. Never build a method |
+
+**Decided and delivered (no longer open):** X3/C3 (`is_default` vs one-ACTIVE — the one-ACTIVE index excludes the default), X4 (same-file two-rewrites — carried by the bm47–bm49 binder), O2/C4/G6 (SHA-256 for template/asset blobs, md5 for invoice PDFs, algorithm recorded per row), O3/G7 (notes & footer are fixed layout text), O10/G10 (nothing deletes a version), G11 (role grants ADMIN/MANAGER EDIT, USER READ), G12 (CSV version on `customer_bill.ref_csv_template_version_id`) — all delivered by bm50 (2026-10-08). The seeded `invoice_settings` role grants are confirmed in the bm50 spec and applied by `db:seed-billing`.
 
 **Record every resolution in all three places that track it,** in the same change (§7.2).
 

@@ -179,6 +179,26 @@ GRANT SELECT, INSERT ON TABLE
   "billing"."ledger_binding"
 TO app_runtime;
 --> statement-breakpoint
+-- bm50 — invoice template catalog (Inv #23, enumerated per table). bill_format
+-- is seed-fixed (SELECT only); the other three are written by the Invoice
+-- Settings services (bm57/bm58/bm60). NO DELETE on any of the four (Inv #44 —
+-- versions are retire-only; the guard triggers refuse DELETE regardless).
+GRANT SELECT ON TABLE
+  "billing"."bill_format"
+TO app_runtime;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE ON TABLE
+  "billing"."bill_template_version",
+  "billing"."bill_asset",
+  "billing"."bill_asset_version"
+TO app_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SEQUENCE
+  "billing"."bill_template_version_seq",
+  "billing"."bill_asset_seq",
+  "billing"."bill_asset_version_seq"
+TO app_runtime;
+--> statement-breakpoint
 GRANT SELECT ON TABLE
   "billing"."pgledger_accounts_view",
   "billing"."pgledger_transfers_view",
