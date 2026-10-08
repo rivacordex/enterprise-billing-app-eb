@@ -270,5 +270,4 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 - **O4** Confirm fonts are fixed and embedded in the layout.
 - **O5** Missing database fields (customer SST no., PO reference, contract reference); their fragments stay hidden while blank.
 - **O10** Retention of retired versions (recommended: as long as any invoice references them).
-- **Rating follow-ups:** confirm the `udr_key` → `(mno_public_key, commercial_unit_public_key, polygon_id)` mapping used to join `ratecard_ran_usage_lkp`, and extend the rating flow to write `state`/`district` onto `udr_rated`.
-- **Overlap with Part 1:** Part 1's usage appendix (bm45) joins state/district from the `productCardLookUp` ratecard at render and is bounded to 10,000 rows per account; Part 2 (R9) reads geo persisted on `udr_rated` and expects a few hundred rows. Decide which design the shared usage section follows before writing Part 2's specs.
+- _Closed by bm48 (2026-10-08):_ the rating follow-ups (the `udr_key` → ratecard-cell mapping reuses PRP's existing canonical cell match — G13; the rating runtime now writes `state`/`district` onto `udr_rated`) and the _Overlap with Part 1_ geo-source question (R9 chosen; Inv #36 amended — same issue as architecture X1 / code-standards C1). The usage section's row bound stays tracked under architecture X2.

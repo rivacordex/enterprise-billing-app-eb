@@ -384,6 +384,40 @@ describe.skipIf(!databaseUrl)(
         expect(indexesOnRated).toHaveLength(0);
       });
 
+      // bm48-spec D1 (0045) — the ratecard geo columns: nullable text on the
+      // partitioned parent, propagated to every partition by the ALTER.
+      it("15b. udr_rated carries nullable text state / district on the parent and on a partition (bm48)", async () => {
+        const parentCols = await sql<
+          { column_name: string; data_type: string; is_nullable: string }[]
+        >`
+          SELECT column_name, data_type, is_nullable FROM information_schema.columns
+          WHERE table_schema = 'rating' AND table_name = 'udr_rated'
+            AND column_name IN ('state', 'district')
+          ORDER BY column_name
+        `;
+        expect(parentCols).toEqual([
+          { column_name: "district", data_type: "text", is_nullable: "YES" },
+          { column_name: "state", data_type: "text", is_nullable: "YES" },
+        ]);
+
+        const [partition] = await sql<{ relname: string }[]>`
+          SELECT c.relname FROM pg_inherits i
+          JOIN pg_class c ON c.oid = i.inhrelid
+          WHERE i.inhparent = 'rating.udr_rated'::regclass
+          LIMIT 1
+        `;
+        expect(partition).toBeDefined();
+        const partitionCols = await sql<
+          { column_name: string; data_type: string; is_nullable: string }[]
+        >`
+          SELECT column_name, data_type, is_nullable FROM information_schema.columns
+          WHERE table_schema = 'rating' AND table_name = ${partition!.relname}
+            AND column_name IN ('state', 'district')
+          ORDER BY column_name
+        `;
+        expect(partitionCols).toEqual(parentCols);
+      });
+
       it("16. money columns have the specified precision and scale", async () => {
         const rows = await sql<
           {

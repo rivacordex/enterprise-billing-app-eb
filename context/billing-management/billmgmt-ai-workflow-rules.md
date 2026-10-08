@@ -112,12 +112,12 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 2. Part 1 build opens are resolved in their owning specs: O-TC1 and O-TC2 in bm42/bm43, O-TC6 in bm45. Cite the spec. Do not re-decide.
 3. Part 2: everything in Plan §15 R1–R11 and Inv #39–#50. This includes binder-first, no fallback, park via the existing render-pending surface, pinned → ACTIVE → default resolution, reprint as a byte download, and reproducibility through `charge_checksum`.
 4. Field formats are those in `invoice-template/placeholder-catalog.md` §B. If code-standards disagrees, the catalog wins.
+5. Usage-section geo source (X1 / C1 / overview _Overlap_): **R9** — rating persists the matched ratecard cell's `state`/`district` onto `rating.udr_rated` at INSERT (bm48, migration `0045`); Inv #36 is amended. The `udr_key` → ratecard-cell mapping (G13) reuses PRP's existing canonical cell match — no new mapping rule (decided 2026-10-08).
 
 **OPEN. Stop and ask one precise question with the options. Never pick a default:**
 
 | Topic | Where it is tracked (same issue, three IDs) | Interim rule |
 | --- | --- | --- |
-| Usage-section geo source: ratecard snapshot or `udr_rated` columns | X1 / C1 / overview _Overlap with Part 1_ | The binder reads the Part 1 `additional_info.appendix` snapshot. No rating change |
 | Usage-section scope, row bound and over-limit behavior | X2 | Multi-page tests use Part 1's 10,000-row bound |
 | `is_default` versus one-ACTIVE | X3 / C3 | Code-standards C3 (the partial index excludes the default), pending spec confirmation |
 | Same file, two rewrites | X4 | §1.2 |
@@ -130,7 +130,6 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 | Four-eyes on company-profile activation | Architecture _Noted gap_ versus code-standards ("does not apply") | **Conflict: stop and ask.** Do not build the activation action until it is decided |
 | Seeded `invoice_settings` role grants | Code-standards §8 delta | Confirm in the spec |
 | Where the CSV template version column lives | Architecture storage deltas ("settle in specs") versus code-standards (`customer_bill`) | Settle in the spec before migrating |
-| `udr_key` → `(mno_public_key, commercial_unit_public_key, polygon_id)` mapping | Overview rating follow-ups | Rating decides (`ratemgmt` §5.1) |
 | Partial-period billing | O-TC7 | A **business** decision. Never build a method |
 
 **Record every resolution in all three places that track it,** in the same change (§7.2).

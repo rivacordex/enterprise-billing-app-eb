@@ -142,7 +142,17 @@ COPY_COLUMNS: tuple[str, ...] = (
     "rating_engine_version",
     "rating_flow_revision",
     "rated_datetime",
+    # bm48 — appended last so the existing column order is untouched.
+    "state",
+    "district",
 )
+
+# bm48 D4 — the ONLY COPY columns a rated chunk may omit, and only for a usage type
+# that reads no ratecard (they are then written NULL). A named allowlist, not a
+# general default: a RAN_USAGE chunk without them still fails loud, which is the
+# guard that PRP stamped and RP carried the matched cell's geo.
+_GEO_OPTIONAL_COLUMNS: tuple[str, ...] = ("state", "district")
+_GEO_REQUIRED_UDR_TYPE = "RAN_USAGE"
 
 # The bounded sample of colliding keys carried in a batch-level refusal's
 # additional_info (§7.7 — reference values, bounded). The refusal reports the
@@ -236,9 +246,10 @@ def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
     rows: list[tuple[Any, ...]] = []
     for i in range(frame.height):
         start_dt = start_dts[i]
+        udr_type = str(cols["udr_type"][i])
         row: dict[str, Any] = {
             "partition_period": period_of(start_dt),
-            "udr_type": str(cols["udr_type"][i]),
+            "udr_type": udr_type,
             "start_datetime": start_dt,
             "end_datetime": end_dts[i],
             "status": "RATED",
@@ -268,8 +279,24 @@ def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
             "rating_flow_revision": int(cols["rating_flow_revision"][i]),
             "rated_datetime": rated_dts[i],
         }
+        for name in _GEO_OPTIONAL_COLUMNS:
+            row[name] = _geo_value(cols, name, i, udr_type)
         rows.append(tuple(row[name] for name in COPY_COLUMNS))
     return rows
+
+
+def _geo_value(cols: dict[str, list[Any]], name: str, i: int, udr_type: str) -> str | None:
+    """A ``state``/``district`` value for one row (bm48 D4). Present in the chunk →
+    copied as-is (NULL stays NULL). Absent → NULL only for a non-RAN usage type; a
+    RAN_USAGE chunk without it raises, like any other missing COPY column."""
+    if name in cols:
+        return _opt_str(cols[name][i])
+    if udr_type == _GEO_REQUIRED_UDR_TYPE:
+        raise KeyError(
+            f"rated chunk for {udr_type} has no {name!r} column — PRP stamps the "
+            "matched ratecard cell's geo and RP carries it; the handoff is broken."
+        )
+    return None
 
 
 def _money(value: Any, column: str) -> Decimal:

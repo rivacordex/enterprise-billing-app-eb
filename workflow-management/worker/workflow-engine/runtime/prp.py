@@ -421,15 +421,19 @@ def resolve_pin(conn: psycopg.Connection, subscription_product_name: str) -> Pin
 @dataclass(frozen=True)
 class RatecardCell:
     """One ACTIVE ratecard ``mno|cu|polygon`` cell (rm21 §1) — the factor-2 and
-    service_code references the per-record checks compare against."""
+    service_code references the per-record checks compare against, plus the
+    cell's ``state``/``district`` labels (bm48), stamped onto every record that
+    matches it so geo is frozen at rating time."""
 
     lkp_subscriber_ref_id: str
     service_code: str | None
+    state: str | None
+    district: str | None
 
 
 _RATECARD_SQL = """
 SELECT l.mno_public_key, l.commercial_unit_public_key, l.polygon_id,
-       l.lkp_subscriber_ref_id, l.service_code
+       l.lkp_subscriber_ref_id, l.service_code, l.state, l.district
 FROM   product.ratecard_version v
 JOIN   product.ratecard_ran_usage_lkp l
        ON l.ratecard_version_id = v.ratecard_version_id
@@ -477,8 +481,20 @@ def extract_ratecard(
             # hard-stop the whole batch SERVICE_CODE_MISMATCH (rm21 §4). Case is
             # kept exact per the spec's '==' agreement.
             service_code=(str(sc).strip() or None if sc is not None else None),
+            state=_geo_label(r["state"]),
+            district=_geo_label(r["district"]),
         )
     return index
+
+
+def _geo_label(value: Any) -> str | None:
+    """A ratecard ``state``/``district`` label as stored on the card (bm48 D2 — no
+    trim or case change; the card owns the label and the invoice groups on it).
+    A blank label carries no geo, so it becomes ``None`` rather than ``''``."""
+    if value is None:
+        return None
+    text = str(value)
+    return text if text.strip() else None
 
 
 # ---------------------------------------------------------------------------
@@ -675,6 +691,9 @@ class ParsedRow:
     product_inventory_id: str | None = None
     party_role_id: str | None = None
     family_id: str | None = None
+    # bm48 — the matched ratecard cell's geo labels, carried to udr_rated.
+    state: str | None = None
+    district: str | None = None
 
     @property
     def rejected(self) -> bool:
@@ -836,6 +855,10 @@ def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) ->
         ),
         "party_role_id": pl.Series([r.party_role_id for r in chunk], dtype=pl.Utf8),
         "family_id": pl.Series([r.family_id for r in chunk], dtype=pl.Utf8),
+        # bm48 — the matched ratecard cell's geo (nullable), passed through RP to
+        # RL's COPY onto udr_rated.state/district.
+        "state": pl.Series([r.state for r in chunk], dtype=pl.Utf8),
+        "district": pl.Series([r.district for r in chunk], dtype=pl.Utf8),
     }
     # The opaque key dimensions, kept for forensics (D1) — the engine does not map
     # them to typed business columns here.
@@ -1120,6 +1143,9 @@ def process_file(
             row.product_inventory_id = resolution.product_inventory_id
             row.party_role_id = resolution.party_role_id
             row.family_id = resolution.family_id
+            # bm48 — freeze the matched cell's geo onto the record.
+            row.state = ratecard_cell.state
+            row.district = ratecard_cell.district
             chunk_buffer.append(row)
             if len(chunk_buffer) >= chunk_size:
                 flush()

@@ -100,6 +100,8 @@ Split whenever any holds. When in doubt, split.
 
 Sequence within a unit: **DDL → grants → seed → flow section → logging → tests.** Finish each before the next.
 
+**Recorded waiver — billing bm48 only (owner decision, 2026-10-08).** bm48 (`udr_rated.state`/`.district`, migration `0045` + PRP/RP/RL) lands as **one PR** rather than the split §4.1 and §4.3 require, to reduce PR count. The waiver keeps the rule's intent through **ordered commits** in this file's dependency order — migration + Drizzle → PRP → RP → RL → seeds + tests → docs — so each step stays separately reviewable and revertable. It is scoped to bm48 and is **not precedent**: any other unit that needs the same exception records its own, by name, here.
+
 ---
 
 ## 5. Missing or Ambiguous Requirements

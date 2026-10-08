@@ -26,6 +26,7 @@ import {
   SAMPLE_5G_LKP_ROWS,
   SAMPLE_5G_COMMERCIAL_UNIT,
   SAMPLE_5G_RATE_PER_UNIT,
+  SAMPLE_5G_RATECARD_STATE,
 } from "@/db/seeds/sample/sample-5g-fixture";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { udrBatch } from "@/db/schema/rating/udr-batch";
@@ -424,6 +425,15 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         ratePerUnit: "100.000000",
         quantity: "100",
         amountRaw: "10000.000000",
+      });
+
+      // bm48 — every rated row carries its matched ratecard cell's geo, frozen
+      // at rating. Cell i was written at volume [100, 200, 300][i].
+      SAMPLE_5G_LKP_ROWS.forEach((cell, i) => {
+        const quantity = `${[100, 200, 300][i]}.000000`;
+        const row = rated.find((r) => r.udrUsageQuantity === quantity)!;
+        expect(row.state).toBe(SAMPLE_5G_RATECARD_STATE);
+        expect(row.district).toBe(cell.district);
       });
 
       // One live row per (partition_period, udr_key).
