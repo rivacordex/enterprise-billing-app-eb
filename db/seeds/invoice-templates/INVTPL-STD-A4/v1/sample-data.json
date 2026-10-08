@@ -1,5 +1,9 @@
 {
-  "template": { "layoutCode": "INVTPL-STD-A4", "layoutVersion": 1, "version": 1 },
+  "template": {
+    "layoutCode": "INVTPL-STD-A4",
+    "layoutVersion": 1,
+    "version": 1
+  },
   "company": {
     "name": "Sample Telco Sdn Bhd",
     "tradingName": "Sample Telco",
@@ -70,7 +74,11 @@
   },
   "taxes": [],
   "chargeSummary": [
-    { "name": "Recurring charges", "source": "RECURRING", "amount": "10000.00" },
+    {
+      "name": "Recurring charges",
+      "source": "RECURRING",
+      "amount": "10000.00"
+    },
     { "name": "Usage charges", "source": "USAGE", "amount": "150000.00" }
   ],
   "lineGroups": [
@@ -128,27 +136,53 @@
     }
   ],
   "usage": {
+    "rowCount": 5,
+    "totalAmount": "150000.00",
+    "totalQuantity": "1500.000000",
     "unit": "EA",
     "states": [
       {
         "state": "Selangor",
         "label": "Selangor",
-        "subtotalAmount": "55000.00",
+        "rowCount": 2,
+        "amount": "50000.00",
+        "quantity": "500.000000",
+        "unit": "EA",
         "districts": [
           {
             "district": "Petaling",
             "label": "Petaling",
-            "subtotalAmount": "30000.00",
+            "rowCount": 1,
+            "amount": "30000.00",
+            "quantity": "300.000000",
+            "unit": "EA",
             "rows": [
-              { "polygon": "POLY-001", "volume": "300.000000", "unit": "EA", "amount": "30000.00" }
+              {
+                "startDate": "2026-08-03",
+                "cell": "POLY-001",
+                "udrType": "RAN_USAGE",
+                "quantity": "300.000000",
+                "unit": "EA",
+                "amount": "30000.00"
+              }
             ]
           },
           {
             "district": "Klang",
             "label": "Klang",
-            "subtotalAmount": "25000.00",
+            "rowCount": 1,
+            "amount": "20000.00",
+            "quantity": "200.000000",
+            "unit": "EA",
             "rows": [
-              { "polygon": "POLY-002", "volume": "250.000000", "unit": "EA", "amount": "25000.00" }
+              {
+                "startDate": "2026-08-05",
+                "cell": "POLY-002",
+                "udrType": "RAN_USAGE",
+                "quantity": "200.000000",
+                "unit": "EA",
+                "amount": "20000.00"
+              }
             ]
           }
         ]
@@ -156,29 +190,78 @@
       {
         "state": "Johor",
         "label": "Johor",
-        "subtotalAmount": "95000.00",
+        "rowCount": 2,
+        "amount": "95000.00",
+        "quantity": "950.000000",
+        "unit": "EA",
         "districts": [
           {
             "district": "Johor Bahru",
             "label": "Johor Bahru",
-            "subtotalAmount": "70000.00",
+            "rowCount": 1,
+            "amount": "70000.00",
+            "quantity": "700.000000",
+            "unit": "EA",
             "rows": [
-              { "polygon": "POLY-003", "volume": "700.000000", "unit": "EA", "amount": "70000.00" }
+              {
+                "startDate": "2026-08-07",
+                "cell": "POLY-003",
+                "udrType": "RAN_USAGE",
+                "quantity": "700.000000",
+                "unit": "EA",
+                "amount": "70000.00"
+              }
             ]
           },
           {
             "district": "Kluang",
             "label": "Kluang",
-            "subtotalAmount": "25000.00",
+            "rowCount": 1,
+            "amount": "25000.00",
+            "quantity": "250.000000",
+            "unit": "EA",
             "rows": [
-              { "polygon": "POLY-004", "volume": "250.000000", "unit": "EA", "amount": "25000.00" }
+              {
+                "startDate": "2026-08-09",
+                "cell": "POLY-004",
+                "udrType": "RAN_USAGE",
+                "quantity": "250.000000",
+                "unit": "EA",
+                "amount": "25000.00"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "state": null,
+        "label": "Unassigned region",
+        "rowCount": 1,
+        "amount": "5000.00",
+        "quantity": "50.000000",
+        "unit": "EA",
+        "districts": [
+          {
+            "district": null,
+            "label": "—",
+            "rowCount": 1,
+            "amount": "5000.00",
+            "quantity": "50.000000",
+            "unit": "EA",
+            "rows": [
+              {
+                "startDate": "2026-08-11",
+                "cell": "POLY-UNMAPPED",
+                "udrType": "RAN_USAGE",
+                "quantity": "50.000000",
+                "unit": "EA",
+                "amount": "5000.00"
+              }
             ]
           }
         ]
       }
-    ],
-    "totalAmount": "150000.00",
-    "rowCount": 4
+    ]
   },
   "isDraft": false,
   "locale": "en-MY",

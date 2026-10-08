@@ -61,7 +61,148 @@ function orphanConditions() {
 // The posting `charge_checksum` NO LONGER lives here (bm31): it re-anchored
 // onto `customer_bill_line` content (the bill's own charge record, Inv #3) and
 // now lives in `customer-bill-line.repository.ts`'s `computeChargeChecksum`.
+//
+// bm49-spec §Implementation §1 — the R9 home of the invoice usage-annex read
+// (workflow rules §6.1: this file stays READ-ONLY; the usage-row read lands
+// here as a read). `listBilledUsageForInvoice` reads geo straight off the
+// claimed `udr_rated` rows (`state`/`district`, bm48) with no ratecard query.
+// It is built with the Drizzle query builder + schema-object `sql` fragments
+// (never a literal schema-qualified table reference), so the
+// `billing-rating-write-boundary` guardrail's write-surface scan stays clean —
+// every statement here is a plain `SELECT`.
+
+// bm49-spec §Design D5 — one billed usage row (all `::text`). `cell` is the RAN
+// polygon (`polygon_id=` from `udr_key`) or the raw key; `startDate` is the
+// row's calendar day in the app timezone. `state`/`district` drive grouping.
+export interface BilledUsageRowRaw {
+  startDate: string;
+  cell: string;
+  udrType: string;
+  quantity: string;
+  unit: string;
+  amount: string;
+  state: string | null;
+  district: string | null;
+}
+
+// bm49-spec §Design D5 — one GROUPING SETS row: a district subtotal
+// (`gState=0,gDistrict=0`), a state subtotal (`gState=0,gDistrict=1`) or the
+// grand total (`gState=1`). `GROUPING()` disambiguates a real `state IS NULL`
+// ("Unassigned region") row from a rolled-up grouping-set row. `quantity`/
+// `unit` are set only when the group has a single unit (volume is never summed
+// across units). `amount` is `null` only for the grand total over zero rows.
+export interface BilledUsageGroupRaw {
+  state: string | null;
+  district: string | null;
+  gState: number;
+  gDistrict: number;
+  rowCount: number;
+  amount: string | null;
+  quantity: string | null;
+  unit: string | null;
+}
+
+export type BilledUsageResult =
+  | { overLimit: true; rowCount: number }
+  | {
+      overLimit: false;
+      rows: BilledUsageRowRaw[];
+      groups: BilledUsageGroupRaw[];
+    };
+
 export const ratedLinesRepository = {
+  // bm49-spec §Implementation §1 / §Design D2/D3/D5 — count, then rows, then the
+  // GROUPING SETS aggregate, all under the bm47 repeatable-read read-only
+  // transaction the binder opens (so rows and lines share one snapshot). D3:
+  // `count(*)` first; over `limit` it returns `{ overLimit: true }` and selects
+  // nothing (no truncation, no partial annex — the bind fails loud and the
+  // account parks). D2 scope: every billed `udr_rated` row for the account on
+  // the attempt the bill was built on (`billrun_attempt` makes a rerun's
+  // released-and-reclaimed rows unambiguous, Inv #19), both `BILL_DRAFT`
+  // (draft) and `BILL_APPROVED` (approved); `BILL_NOTUSED` is excluded (Inv #22,
+  // not billed). Covers rows feeding capacity lines AND ordinary USAGE lines.
+  async listBilledUsageForInvoice(
+    db: Database,
+    {
+      runId,
+      banId,
+      attempt,
+      timezone,
+      limit,
+    }: {
+      runId: string;
+      banId: string;
+      attempt: number;
+      timezone: string;
+      limit: number;
+    },
+  ): Promise<BilledUsageResult> {
+    const scope = and(
+      eq(udrRated.billrunRefId, runId),
+      eq(udrRated.billrunBanId, banId),
+      eq(udrRated.billrunAttempt, attempt),
+      inArray(udrRated.status, ["BILL_DRAFT", "BILL_APPROVED"]),
+    );
+
+    // D3 — bound first.
+    const [countRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(udrRated)
+      .where(scope);
+    const rowCount = countRow?.count ?? 0;
+    if (rowCount > limit) {
+      return { overLimit: true, rowCount };
+    }
+
+    // D5 — rows (deterministic order: state/district NULLS LAST, then the
+    // record's start and `udr_id` PK tiebreak).
+    const rows = await db
+      .select({
+        startDate: sql<string>`(${udrRated.startDatetime} AT TIME ZONE ${timezone})::date::text`,
+        cell: sql<string>`COALESCE(substring(${udrRated.udrKey} FROM 'polygon_id=([^|]*)'), ${udrRated.udrKey})`,
+        udrType: udrRated.udrType,
+        quantity: sql<string>`${udrRated.udrUsageQuantity}::text`,
+        unit: udrRated.udrUsageUnit,
+        amount: sql<string>`${udrRated.udrRatedPrice}::text`,
+        state: udrRated.state,
+        district: udrRated.district,
+      })
+      .from(udrRated)
+      .where(scope)
+      .orderBy(
+        sql`${udrRated.state} ASC NULLS LAST`,
+        sql`${udrRated.district} ASC NULLS LAST`,
+        udrRated.startDatetime,
+        udrRated.udrId,
+      );
+
+    // D5 — subtotals computed IN SQL (never JS): per-district, per-state and
+    // grand total in one GROUPING SETS statement. A quantity subtotal prints
+    // only when the group has a single unit.
+    const groups = await db
+      .select({
+        state: udrRated.state,
+        district: udrRated.district,
+        gState: sql<number>`grouping(${udrRated.state})::int`,
+        gDistrict: sql<number>`grouping(${udrRated.district})::int`,
+        rowCount: sql<number>`count(*)::int`,
+        amount: sql<string | null>`sum(${udrRated.udrRatedPrice})::text`,
+        quantity: sql<
+          string | null
+        >`CASE WHEN count(DISTINCT ${udrRated.udrUsageUnit}) = 1 THEN sum(${udrRated.udrUsageQuantity})::text END`,
+        unit: sql<
+          string | null
+        >`CASE WHEN count(DISTINCT ${udrRated.udrUsageUnit}) = 1 THEN min(${udrRated.udrUsageUnit}) END`,
+      })
+      .from(udrRated)
+      .where(scope)
+      .groupBy(
+        sql`GROUPING SETS ((${udrRated.state}, ${udrRated.district}), (${udrRated.state}), ())`,
+      );
+
+    return { overLimit: false, rows, groups };
+  },
+
   async listClaimedForAccount(
     db: Database,
     billRunId: string,

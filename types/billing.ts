@@ -665,40 +665,69 @@ export interface InvoiceLineGroup {
   lines: InvoiceLine[];
 }
 
-// D5 — one per-polygon usage row, grouped state → district. `unit` is the
-// capacity line's own `unit` column (the stored appendix carries no unit
-// field, bm45).
+// bm49-spec §Design D5 — one billed `udr_rated` row in the usage annex. Every
+// field is `::text` from the repository (code-standards §2.3); `cell` is the
+// RAN polygon for a RAN cell, else the raw `udr_key`; `startDate` is the
+// row's `start_datetime` as a calendar date in the app timezone. `state`/
+// `district` live on the group, not the row. (Was bm45's per-polygon
+// `{polygon, volume, unit, amount}` snapshot row — replaced by the itemised
+// record, R9.)
 export interface InvoiceUsageRow {
-  polygon: string;
-  volume: string;
+  startDate: string;
+  cell: string;
+  udrType: string;
+  quantity: string;
   unit: string;
   amount: string;
 }
 
+// bm49-spec §Design D5 — a district group carries its own SQL-summed subtotal
+// (`amount`), record count, and a single-unit quantity subtotal
+// (`quantity`/`unit` are `null` when the group mixes units — volume is never
+// summed across units, the bm45 rule kept). `label` is `district ?? '—'`.
 export interface InvoiceUsageDistrictGroup {
   district: string | null;
   label: string;
-  subtotalAmount: string;
+  rowCount: number;
+  amount: string;
+  quantity: string | null;
+  unit: string | null;
   rows: InvoiceUsageRow[];
 }
 
+// bm49-spec §Design D5 — a state group with its per-state SQL subtotal and its
+// districts. `label` is `state ?? 'Unassigned region'`; the Unassigned group
+// (rows rated before bm48, or whose card row had no labels) sorts last.
 export interface InvoiceUsageStateGroup {
   state: string | null;
   label: string;
-  subtotalAmount: string;
+  rowCount: number;
+  amount: string;
+  quantity: string | null;
+  unit: string | null;
   districts: InvoiceUsageDistrictGroup[];
 }
 
-// D5 — bm47 carries the bm45 `additional_info.appendix` snapshot into this
-// shape unchanged in content (G4 interim, C1); bm49 replaces the source.
-// `unit` is the single unit when every contributing line shares one, else
-// `null`. `null` on the bound input when the bill has no appendix rows.
+// bm49-spec §Design D5 — the usage annex: every billed `udr_rated` row for the
+// account grouped state → district, with per-district/per-state subtotals (all
+// summed in SQL) and a grand total (`totalAmount`) that equals the bill's rated
+// usage. `totalQuantity`/`unit` are the single-unit grand totals (`null` when
+// units are mixed). `null` on the bound input when the bill has no billed usage
+// rows, or when the annex section is hidden (`includeUsage: false`, D4).
+// (Replaces bm47's snapshot-shaped section.)
 export interface InvoiceUsageSection {
+  rowCount: number;
+  totalAmount: string;
+  totalQuantity: string | null;
   unit: string | null;
   states: InvoiceUsageStateGroup[];
-  totalAmount: string;
-  rowCount: number;
 }
+
+// bm49-spec §Design D3 — the billed-usage-row bound, a named constant equal to
+// bm45's `CAPACITY_APPENDIX_OVER_LIMIT` (the load-tested bound). Over this, the
+// bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks; the repository
+// selects no rows. Changing it is a spec change, not a config value.
+export const INVOICE_USAGE_ROW_LIMIT = 10_000;
 
 // D9 — read from the layout manifest, validated by
 // `validation/billing/layout-page-setup.schema.ts`.
@@ -770,6 +799,9 @@ export const INVOICE_ERROR_CODES = [
   "INVOICE_RECONCILIATION_FAILED",
   "TEMPLATE_COMPILE_FAILED",
   "INVOICE_DOCUMENT_MISMATCH",
+  // bm49-spec §Design D3 — the usage annex exceeds the 10,000-row bound; the
+  // bind fails loud and the account parks (no truncation, no partial annex).
+  "INVOICE_USAGE_OVER_LIMIT",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

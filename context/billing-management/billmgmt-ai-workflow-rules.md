@@ -113,12 +113,12 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 3. Part 2: everything in Plan §15 R1–R11 and Inv #39–#50. This includes binder-first, no fallback, park via the existing render-pending surface, pinned → ACTIVE → default resolution, reprint as a byte download, and reproducibility through `charge_checksum`.
 4. Field formats are those in `invoice-template/placeholder-catalog.md` §B. If code-standards disagrees, the catalog wins.
 5. Usage-section geo source (X1 / C1 / overview _Overlap_): **R9** — rating persists the matched ratecard cell's `state`/`district` onto `rating.udr_rated` at INSERT (bm48, migration `0045`); Inv #36 is amended. The `udr_key` → ratecard-cell mapping (G13) reuses PRP's existing canonical cell match — no new mapping rule (decided 2026-10-08).
+6. Usage-section scope, row bound and over-limit behaviour (X2 / G2): **delivered by bm49** — the annex lists every billed `udr_rated` row for the account (all USAGE lines), grouped state → district, bounded to 10,000 rows/account; over the bound the bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks (INV stays posted). Part 2's multi-page tests use this 10,000-row bound (decided 2026-10-07, delivered 2026-10-08).
 
 **OPEN. Stop and ask one precise question with the options. Never pick a default:**
 
 | Topic | Where it is tracked (same issue, three IDs) | Interim rule |
 | --- | --- | --- |
-| Usage-section scope, row bound and over-limit behavior | X2 | Multi-page tests use Part 1's 10,000-row bound |
 | `is_default` versus one-ACTIVE | X3 / C3 | Code-standards C3 (the partial index excludes the default), pending spec confirmation |
 | Same file, two rewrites | X4 | §1.2 |
 | `ONE_TIME` charge sourcing | C2 | §3.7 |

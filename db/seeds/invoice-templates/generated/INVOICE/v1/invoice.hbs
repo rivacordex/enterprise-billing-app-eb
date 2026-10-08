@@ -96,8 +96,31 @@
 
   .amount-due-panel { background: var(--inv-soft); padding: 8px 12px; }
   .footer-note { margin-top: 20px; font-size: 8pt; color: var(--inv-muted); }
-  .section-label { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; color: var(--inv-muted); margin: 12px 0 4px; }
-  .unmapped-label { color: #0C4084; }
+
+  /* bm49 §Design D7 / ui-context §10c — the Usage annex: 8pt/11pt table,
+     tabular-nums on numeric columns, state/district headers as overline
+     labels, subtotal rows semibold with a top rule. `thead` repeats (global
+     rule); `tbody.state` is deliberately NOT `break-inside: avoid` (a state
+     can span pages); only the subtotal row pairs use `break-before: avoid`. */
+  .annex { margin-bottom: 16px; }
+  .annex h3 {
+    font-size: 9pt; line-height: 12pt; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--inv-muted); margin: 0 0 6px;
+  }
+  table.usage { font-size: 8pt; line-height: 11pt; }
+  table.usage th, table.usage td { padding: 3px 4px; border-bottom: 1px solid var(--inv-line); }
+  table.usage td.n, table.usage th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  table.usage tr.state-h td {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    color: var(--inv-muted); border-bottom: none; padding-top: 8px;
+  }
+  table.usage tr.district-h td {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--inv-muted); border-bottom: none;
+  }
+  table.usage tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); border-bottom: none; break-before: avoid; }
+  table.usage tfoot td { font-weight: 600; border-top: 1px solid var(--inv-line); }
+  .annex .sub { margin-top: 8px; font-size: 8pt; color: var(--inv-muted); }
 </style>
 </head>
 <body>
@@ -238,43 +261,24 @@
     {{/if}}
 
     {{#if usage}}
-    <section class="sec sec--usageAnnex sec--full">
-      <p class="section-heading">Usage annex{{#if usage.unit}} ({{usage.unit}}){{/if}}</p>
-      {{#each usage.states}}
-      <div class="usage-state">
-        <p class="section-label{{#unless this.state}} unmapped-label{{/unless}}">{{this.label}}</p>
-        {{#each this.districts}}
-        <table class="usage-district">
-          <caption>{{this.label}}</caption>
-          <thead>
-            <tr><th>Polygon</th><th class="num">Volume</th><th class="num">Amount</th></tr>
-          </thead>
-          <tbody>
-            {{#each this.rows}}
-            <tr>
-              <td class="mono">{{this.polygon}}</td>
-              <td class="num">{{qty this.volume}} {{unitCode this.unit}}</td>
-              <td class="num">{{money this.amount}}</td>
-            </tr>
-            {{/each}}
-          </tbody>
-          <tfoot>
-            <tr class="subtotal"><td colspan="2">District subtotal</td><td class="num">{{money this.subtotalAmount}}</td></tr>
-          </tfoot>
-        </table>
+    <section class="annex">
+      <h3>Usage annex — billed usage by region</h3>
+      <table class="usage">
+        <thead><tr><th>Date</th><th>Cell</th><th>UDR type</th><th class="n">Quantity</th><th>Unit</th><th class="n">Rated amount</th></tr></thead>
+        {{#each usage.states}}
+        <tbody class="state">
+          <tr class="state-h"><td colspan="6">{{label}}</td></tr>
+          {{#each districts}}
+          <tr class="district-h"><td colspan="6">{{label}}</td></tr>
+          {{#each rows}}<tr><td>{{date startDate}}</td><td class="mono">{{cell}}</td><td>{{udrType}}</td><td class="n">{{qty quantity}}</td><td>{{unit}}</td><td class="n">{{money amount}}</td></tr>{{/each}}
+          <tr class="subtotal"><td colspan="3">Subtotal — {{label}} · {{int rowCount}} records</td><td class="n">{{#if quantity}}{{qty quantity}}{{/if}}</td><td>{{#if unit}}{{unit}}{{/if}}</td><td class="n">{{money amount}}</td></tr>
+          {{/each}}
+          <tr class="subtotal state-total"><td colspan="3">Total — {{label}} · {{int rowCount}} records</td><td class="n">{{#if quantity}}{{qty quantity}}{{/if}}</td><td>{{#if unit}}{{unit}}{{/if}}</td><td class="n">{{money amount}}</td></tr>
+        </tbody>
         {{/each}}
-        <table class="usage-state-subtotal">
-          <tfoot>
-            <tr class="subtotal"><td colspan="2">State subtotal</td><td class="num">{{money this.subtotalAmount}}</td></tr>
-          </tfoot>
-        </table>
-      </div>
-      {{/each}}
-      <table class="usage-grand-total">
-        <tfoot>
-          <tr class="grand-total"><td>Total usage annex</td><td class="num">{{money usage.totalAmount}}</td></tr>
-        </tfoot>
+        <tfoot><tr><td colspan="5">Total rated usage · {{int usage.rowCount}} records</td><td class="n">{{money usage.totalAmount}}</td></tr></tfoot>
       </table>
+      <p class="sub">Usage is billed on the charge lines above; this annex itemises the rated records and carries no separate charge.</p>
     </section>
     {{/if}}
 

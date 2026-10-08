@@ -4,17 +4,32 @@ import type { Database } from "@/db/client";
 import { billCycle } from "@/db/schema/billing/catalogs";
 import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRun } from "@/db/schema/billing/bill-run";
+import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { document } from "@/db/schema/billing/documents";
 import { contactMedium, organization, partyRole } from "@/db/schema/customer";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
+import {
+  ratedLinesRepository,
+  type BilledUsageResult,
+} from "@/db/repositories/billing/rated-lines.repository";
+import { INVOICE_USAGE_ROW_LIMIT } from "@/types/billing";
 import type { ChargeSource, InvoiceAddress, LineType } from "@/types/billing";
 
 // bm47-spec §Implementation §3 — the binder's only repository (D1). Every
 // amount is selected `::text` (code-standards §2.3); no JS arithmetic on
 // money anywhere in this file — group/bill-level subtotals are SQL `SUM`s
-// (D2/D3). No `rating.` reference (file-org rule 2 boundary test).
+// (D2/D3). No rating-schema reference: the bm49 usage read is delegated to
+// `ratedLinesRepository.listBilledUsageForInvoice` (the R9 home of the read),
+// so this file still never touches the rating schema (file-org rule 2 boundary
+// test).
+
+// bm49-spec §Design D5 — the usage read result the binder reconciles and
+// shapes: the over-limit marker (D3) or the billed rows + GROUPING SETS
+// subtotals. `null` on `RawInvoiceRenderInput.usage` when the annex section is
+// hidden (`includeUsage: false`, D4) and the read is skipped.
+export type RawInvoiceUsage = BilledUsageResult;
 
 export interface RawInvoiceLine {
   lineNo: number;
@@ -39,20 +54,6 @@ export interface RawInvoiceLine {
   groupNetTotal: string;
 }
 
-export interface RawInvoiceUsageRow {
-  polygon: string;
-  state: string | null;
-  district: string | null;
-  volume: string;
-  amount: string;
-  unit: string | null;
-}
-
-export type RawInvoiceUsageSubtotal =
-  | { grain: "district"; state: string | null; district: string | null; amount: string }
-  | { grain: "state"; state: string | null; district: null; amount: string }
-  | { grain: "grand"; state: null; district: null; amount: string };
-
 export interface RawInvoiceRenderInput {
   bill: {
     customerBillId: string;
@@ -69,6 +70,11 @@ export interface RawInvoiceRenderInput {
     linesNetSum: string;
     grossTotal: string;
     discountTotal: string;
+    // bm49-spec §Implementation §2 / §Design D6 — `SUM(rated_amount) FILTER
+    // (WHERE source = 'USAGE')`; the usage annex's grand total must equal it
+    // (bm44: `rated_amount` is anchored on the same `udr_rated` rows the annex
+    // itemises). Compared as a string in `bind()` (no new error code).
+    usageRatedTotal: string;
   };
   run: { billRunId: string; cycleName: string };
   lines: RawInvoiceLine[];
@@ -84,35 +90,35 @@ export interface RawInvoiceRenderInput {
     phone: string | null;
     address: InvoiceAddress | null;
   };
-  // `null` when the bill has no appendix rows (D5).
-  usage: {
-    rows: RawInvoiceUsageRow[];
-    subtotals: RawInvoiceUsageSubtotal[];
-  } | null;
+  // bm49 (D4) — `null` when the annex section is hidden (`includeUsage:
+  // false`); otherwise the usage read result (which itself may be the
+  // over-limit marker, D3).
+  usage: RawInvoiceUsage | null;
 }
 
 async function readBillHeader(
   tx: Database,
   runId: string,
   banId: string,
-): Promise<
-  | {
-      customerBillId: string;
-      periodPartition: string;
-      billingAccountId: string;
-      currency: string;
-      billingPeriodStart: string;
-      billingPeriodEnd: string;
-      paymentDueDate: string;
-      subtotal: string;
-      taxTotal: string;
-      totalAmount: string;
-      refPartyRoleId: string;
-      billRunId: string;
-      cycleName: string;
-    }
-  | null
-> {
+): Promise<{
+  customerBillId: string;
+  periodPartition: string;
+  billingAccountId: string;
+  currency: string;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  paymentDueDate: string;
+  subtotal: string;
+  taxTotal: string;
+  totalAmount: string;
+  refPartyRoleId: string;
+  billRunId: string;
+  cycleName: string;
+  // bm49-spec §Implementation §2 — `bill_run_account.attempt_count`, the
+  // same value `post-run.ts` stamps as `posted_attempt`; it scopes the
+  // usage read to the attempt the bill was built on (D2).
+  attempt: number;
+} | null> {
   const [row] = await tx
     .select({
       customerBillId: customerBill.customerBillId,
@@ -128,6 +134,7 @@ async function readBillHeader(
       refPartyRoleId: billingAccount.refPartyRoleId,
       billRunId: billRun.billRunId,
       cycleName: billCycle.name,
+      attempt: billRunAccount.attemptCount,
     })
     .from(customerBill)
     .innerJoin(billRun, eq(billRun.billRunId, customerBill.refBillRunId))
@@ -135,6 +142,17 @@ async function readBillHeader(
     .innerJoin(
       billingAccount,
       eq(billingAccount.billingAccountId, customerBill.refBillingAccountId),
+    )
+    .innerJoin(
+      billRunAccount,
+      and(
+        eq(billRunAccount.refBillRunId, customerBill.refBillRunId),
+        eq(
+          billRunAccount.refBillingAccountId,
+          customerBill.refBillingAccountId,
+        ),
+        eq(billRunAccount.periodPartition, customerBill.periodPartition),
+      ),
     )
     .where(
       and(
@@ -155,6 +173,7 @@ async function readLines(
   linesNetSum: string;
   grossTotal: string;
   discountTotal: string;
+  usageRatedTotal: string;
 }> {
   const scope = and(
     eq(customerBillLine.refCustomerBillId, customerBillId),
@@ -191,6 +210,8 @@ async function readLines(
       linesNetSum: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}), 0)::numeric(18,2)::text`,
       grossTotal: sql<string>`COALESCE(SUM(${customerBillLine.grossAmount}), 0)::numeric(18,2)::text`,
       discountTotal: sql<string>`COALESCE(SUM(${customerBillLine.discountAmount}), 0)::numeric(18,2)::text`,
+      // bm49 §Design D6 — the rated side of the usage reconciliation.
+      usageRatedTotal: sql<string>`COALESCE(SUM(${customerBillLine.ratedAmount}) FILTER (WHERE ${customerBillLine.source} = 'USAGE'), 0)::numeric(18,2)::text`,
     })
     .from(customerBillLine)
     .where(scope);
@@ -204,6 +225,7 @@ async function readLines(
     linesNetSum: sums?.linesNetSum ?? "0.00",
     grossTotal: sums?.grossTotal ?? "0.00",
     discountTotal: sums?.discountTotal ?? "0.00",
+    usageRatedTotal: sums?.usageRatedTotal ?? "0.00",
   };
 }
 
@@ -246,7 +268,10 @@ async function readCustomer(
       preferredContactMediumId: partyRole.contactMedium,
     })
     .from(partyRole)
-    .innerJoin(organization, eq(organization.organizationId, partyRole.engagedParty))
+    .innerJoin(
+      organization,
+      eq(organization.organizationId, partyRole.engagedParty),
+    )
     .where(eq(partyRole.partyRoleId, refPartyRoleId))
     .limit(1);
   if (!org) {
@@ -317,82 +342,27 @@ async function readCustomer(
   };
 }
 
-// D5 — reads the bm45 `additional_info->'appendix'` snapshot (G4 interim,
-// C1) via `jsonb_to_recordset`, with `GROUP BY GROUPING SETS ((state,
-// district), (state), ())` for the subtotals, so no JS money sum is
-// introduced. `GROUPING(state)`/`GROUPING(district)` disambiguate a real
-// `state IS NULL` ("Unmapped") row from a rolled-up grouping-set row — both
-// would otherwise serialize to the same `(NULL, NULL)` pair.
-async function readUsage(
-  tx: Database,
-  customerBillId: string,
-  periodPartition: string,
-): Promise<{ rows: RawInvoiceUsageRow[]; subtotals: RawInvoiceUsageSubtotal[] } | null> {
-  const rowsResult = await tx.execute<{
-    polygon: string;
-    state: string | null;
-    district: string | null;
-    volume: string;
-    amount: string;
-    unit: string | null;
-  }>(sql`
-    SELECT r.polygon, r.state, r.district, r.volume::text AS volume,
-           r.amount::numeric(18,2)::text AS amount, cbl.unit
-    FROM billing.customer_bill_line cbl
-    CROSS JOIN LATERAL jsonb_to_recordset(
-      COALESCE(cbl.additional_info->'appendix', '[]'::jsonb)
-    ) AS r(polygon text, state text, district text, volume text, amount text)
-    WHERE cbl.ref_customer_bill_id = ${customerBillId}
-      AND cbl.period_partition = ${periodPartition}
-      AND cbl.additional_info IS NOT NULL
-    ORDER BY r.state NULLS LAST, r.district NULLS LAST, r.polygon
-  `);
-  const rows = Array.from(rowsResult);
-  if (rows.length === 0) return null;
-
-  const subtotalsResult = await tx.execute<{
-    state: string | null;
-    district: string | null;
-    state_grouped: number;
-    district_grouped: number;
-    subtotal: string;
-  }>(sql`
-    SELECT r.state, r.district,
-           GROUPING(r.state) AS state_grouped,
-           GROUPING(r.district) AS district_grouped,
-           SUM(r.amount::numeric(18,2))::text AS subtotal
-    FROM billing.customer_bill_line cbl
-    CROSS JOIN LATERAL jsonb_to_recordset(
-      COALESCE(cbl.additional_info->'appendix', '[]'::jsonb)
-    ) AS r(polygon text, state text, district text, volume text, amount text)
-    WHERE cbl.ref_customer_bill_id = ${customerBillId}
-      AND cbl.period_partition = ${periodPartition}
-      AND cbl.additional_info IS NOT NULL
-    GROUP BY GROUPING SETS ((r.state, r.district), (r.state), ())
-  `);
-
-  const subtotals: RawInvoiceUsageSubtotal[] = Array.from(subtotalsResult).map((r) => {
-    if (Number(r.state_grouped) === 1) {
-      return { grain: "grand", state: null, district: null, amount: r.subtotal };
-    }
-    if (Number(r.district_grouped) === 1) {
-      return { grain: "state", state: r.state, district: null, amount: r.subtotal };
-    }
-    return {
-      grain: "district",
-      state: r.state,
-      district: r.district,
-      amount: r.subtotal,
-    };
-  });
-
-  return { rows, subtotals };
-}
-
 export const invoiceRenderInputRepository = {
+  // bm49-spec §Implementation §2 — `includeUsage` (D4) and `timezone` thread
+  // through to the usage read. When `includeUsage` is false the annex section
+  // is hidden, so the usage read AND the over-limit/reconcile checks are
+  // skipped and `usage` is `null` (a hidden annex must not park an account for
+  // a section it doesn't print). The usage read is delegated to
+  // `ratedLinesRepository` (its R9 home) so this file keeps no rating-schema
+  // reference; it runs under the same transaction the binder opened.
   async read(
     tx: Database,
-    { runId, banId }: { runId: string; banId: string },
+    {
+      runId,
+      banId,
+      timezone,
+      includeUsage,
+    }: {
+      runId: string;
+      banId: string;
+      timezone: string;
+      includeUsage: boolean;
+    },
   ): Promise<RawInvoiceRenderInput | null> {
     const header = await readBillHeader(tx, runId, banId);
     if (!header) return null;
@@ -406,7 +376,15 @@ export const invoiceRenderInputRepository = {
       ),
       readDocument(tx, header.customerBillId, header.periodPartition),
       readCustomer(tx, header.refPartyRoleId),
-      readUsage(tx, header.customerBillId, header.periodPartition),
+      includeUsage
+        ? ratedLinesRepository.listBilledUsageForInvoice(tx, {
+            runId,
+            banId,
+            attempt: header.attempt,
+            timezone,
+            limit: INVOICE_USAGE_ROW_LIMIT,
+          })
+        : Promise.resolve(null),
     ]);
 
     return {
@@ -424,6 +402,7 @@ export const invoiceRenderInputRepository = {
         linesNetSum: lineData.linesNetSum,
         grossTotal: lineData.grossTotal,
         discountTotal: lineData.discountTotal,
+        usageRatedTotal: lineData.usageRatedTotal,
       },
       run: { billRunId: header.billRunId, cycleName: header.cycleName },
       lines: lineData.lines,

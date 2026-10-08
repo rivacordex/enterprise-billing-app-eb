@@ -326,6 +326,119 @@ DELIVERED" section.
     `RATING_PYTHON3`, or rm13/rm23 skip.
   - **Next:** bm49 switches the binder's usage section onto these columns.
 
+## Invoice Template update — bm49 DELIVERED (code + docs), DB/Playwright suites DEFERRED (2026-10-08)
+
+- **bm49 — Usage annex: billed usage by state → district, with subtotals
+  (Invoice Template update, Part 4).** Switched the binder's usage section off the
+  bm45 `additional_info.appendix` snapshot and onto the bm48 `udr_rated.state`/
+  `district` columns (R9; architecture **X2 closed** to R9's "every billed
+  `udr_rated` row" design, G2). Spec:
+  `context/billing-management/specs/bm49-usage-annex-state-district.md`.
+  - **Delivered (production + templates):**
+    - `db/repositories/billing/rated-lines.repository.ts` — new READ-only
+      `listBilledUsageForInvoice({ runId, banId, attempt, timezone, limit })` (its
+      R9 home, workflow rules §6.1): `count(*)` first (D3 — over `limit` returns
+      `{ overLimit: true, rowCount }` and selects nothing), then the D5 rows
+      (`cell` = `polygon_id` from `udr_key` else the raw key; `startDate` in the app
+      TZ), then the `GROUPING SETS ((state,district),(state),())` subtotal aggregate
+      with `GROUPING()` disambiguation and single-unit quantity subtotals. Built with
+      the Drizzle query builder + schema-object `sql` fragments (no literal
+      schema-qualified reference), so `billing-rating-write-boundary` stays green.
+    - `db/repositories/billing/invoice-render-input.ts` — dropped the bm45
+      `jsonb_to_recordset(additional_info->'appendix')` read; added
+      `usage_rated_total = SUM(rated_amount) FILTER (WHERE source='USAGE')` to the
+      line aggregates and `bill_run_account.attempt_count` to the header read; the
+      usage read is **delegated** to `ratedLinesRepository` (file keeps no
+      rating-schema reference). `read()` now takes `{ runId, banId, timezone,
+      includeUsage }`.
+    - `services/billing/invoice-template/bind.ts` — `BindContext.includeUsage` (D4);
+      over-limit throw `INVOICE_USAGE_OVER_LIMIT` (D3); the new state→district
+      `InvoiceUsageSection` builder (labels `state ?? 'Unassigned region'`,
+      `district ?? '—'`, Unassigned last); usage reconciliation (D6 — annex grand
+      total == `usage_rated_total`, else `INVOICE_RECONCILIATION_FAILED` with
+      `detail: 'usage'`).
+    - `services/billing/render-invoice-template.ts` — threads `timezone` +
+      `includeUsage: true` (bm53 derives it from `structure`).
+    - `types/billing.ts` — rewritten `InvoiceUsageRow`/`InvoiceUsageDistrictGroup`/
+      `InvoiceUsageStateGroup`/`InvoiceUsageSection`; new `INVOICE_USAGE_ROW_LIMIT =
+      10_000` and `INVOICE_USAGE_OVER_LIMIT` error code.
+    - `db/seeds/invoice-templates/INVTPL-STD-A4/v1/partials/usageAnnex.hbs` + the
+      hand-written `generated/INVOICE/v1/invoice.hbs` (inlined D7 markup + the §10c
+      annex CSS) + `sample-data.json` (2 states × 2 districts + one Unassigned row).
+      **`*.hbs` added to `.prettierignore`** — the hand-authored layouts/generated
+      output are byte-frozen (Inv #44) and prettier's glimmer parser reflows their
+      inline text, breaking rendered-text assertions and generator parity.
+    - **No migration, no grant change, no `workflow-management/**` change** (the flow
+      keeps writing the bm45 snapshot; nothing reads it after this unit).
+  - **Layout v1 is frozen by this unit** — the last change before bm50 seeds it
+    (workflow rules §6.6). Any later change is a new `v{n}` generated version
+    (Inv #44). *The real embedded-font follow-up from bm47 (OFL woff2 base64) must
+    still land before bm50 seeds these bytes.*
+  - **Tests (DB-free, run + green here):** `bind.test.ts` (rewritten usage-section
+    tests to the new shape; added over-limit D3, hidden-annex D4, and reconcile D6
+    cases), `render-invoice-template.test.ts` (usage annex now the itemised
+    billed-row shape), `build-invoice-html.test.ts` + `helpers.test.ts` (unchanged,
+    still green), new `tests/guardrails/invoice-render-source-boundary.test.ts`
+    (`invoice-render-input.ts` has no `rating.`; no render-path file reads
+    `additional_info`/`ratecard_ran_usage_lkp`, Inv #47). The touched-file slice
+    (63 tests) and the full guardrail suite (25 files / 186 tests) are green;
+    ESLint clean on every changed file. `npm run typecheck` is **fully clean** (the
+    earlier `yaml` error was pre-existing node_modules drift — `yaml@2.9.1` is
+    declared + lock-pinned but was absent from `node_modules`; materialised locally,
+    the lockfile left untouched).
+  - **DB-gated test (authored + RUN GREEN on the disposable Postgres, 2026-10-08):**
+    `tests/db/invoice-usage-annex.integration.test.ts` (new) — **4/4 passing**
+    against the `docker-compose.test.yml` throwaway stack (`ebill-test`, port 5434,
+    `DESTRUCTIVE_DB_OK=1` + the disposable sentinel). It proves the genuinely
+    DB-specific code the unit tests can't: the `AT TIME ZONE` date cast (a
+    2026-06-11T18:00Z row dates to 2026-06-12 in Asia/KL), the
+    `substring(... 'polygon_id=([^|]*)')` cell extraction (raw key fallback for a
+    non-polygon key), the `GROUPING SETS` district/state/grand subtotals + the
+    single-unit quantity rule, the `billrun_attempt`/`status` D2 filters
+    (`BILL_NOTUSED` + other-attempt rows excluded), the D3 over-limit marker
+    (10,001 rows), and the full `invoiceRenderInputRepository.read → bind` path
+    incl. the D6 grand-total-vs-`rated_amount` reconciliation and its tamper
+    failure. It deliberately does NOT use the `extract-flow-sql` harness, so it
+    needs no `yaml` and no live Kestra.
+  - **Real-Chromium render (authored + RUN GREEN, 2026-10-08):**
+    `tests/services/billing/invoice-render-chromium.e2e.test.ts` (new) — **2/2
+    passing**. The Playwright `chromium` binary was already installed
+    (`ms-playwright/chromium-1243`); the render pipeline was never missing it (the
+    old `render-invoice.service.test.ts` just *mocks* Chromium). This test drives
+    the actually-seeded generated template through `bind` → Handlebars → a **real
+    Chromium `page.pdf()`** with the exact `render-invoice.ts` options (A4 page
+    setup from the manifest, `displayHeaderFooter` + the `footer.hbs` footer), over
+    an 8-state × 4-district × 4-row annex fixture (128 itemised records → multi-page
+    at the §10c 8pt size). Asserts a valid PDF (`%PDF-` / `%%EOF`), that the large
+    fixture out-sizes a 1-row fixture (pagination proxy; opportunistic `/Count > 1`
+    when Chromium emits a plain Pages count), the draft watermark/final INV number,
+    and — covering guardrail 54's structural intent — the `thead` repeat
+    (`display: table-header-group`), the fixed-layer watermark, and the footer's
+    `pageNumber`/`totalPages` spans. DB-free and gated behind `RUN_CHROMIUM_E2E=1`
+    (skips in the normal `npm test` unit run). This is the render-level coverage the
+    earlier pass had deferred for "no Chromium".
+  - **Still DEFERRED (need the full app route + `ci` seed, or the capacity flow
+    harness):** `tests/guardrails/invoice-usage-over-limit.test.ts` (the `ci`-seed
+    draft-**422** / final-**park** guardrail — that is render-route + posting wiring;
+    the bind-layer over-limit throw is covered DB-free, and the repository's
+    over-limit marker is covered on real Postgres), the
+    `billrun-capacity-appendix.integration.test.ts` premise-correction update, the
+    `invoice-multipage.test.ts` guardrail-54 fixture rename, and the
+    `invoice-golden.test.ts` regenerate (the render is now proven real end to end
+    above; a committed golden snapshot is the only remaining nicety).
+  - **Observed while running the disposable DB (pre-existing, NOT bm49):** the bm45
+    `billrun-capacity-appendix.integration.test.ts` fails in its own
+    `extract-flow-sql` harness (`statement references :'var' but no test value was
+    supplied` + ZodErrors) — flow-YAML/fixture drift in the capacity flow-double,
+    unrelated to and untouched by bm49 (matches the standing "capacity DB suites not
+    re-run against a disposable Postgres in this environment" note).
+  - **Docs closed in this change set:** architecture X2 (conflict table + header
+    note + a Resolved paragraph); overview _Open items_ (X2/G2 closed by bm49);
+    workflow rules §5 OPEN→DECIDED; code-standards TS rule 7 (+`INVOICE_USAGE_OVER_LIMIT`,
+    `INVOICE_DOCUMENT_MISMATCH`, the `detail:'usage'` reconcile note); ui-context §6d
+    ("Unassigned region", source = `udr_rated`, itemised rows); `placeholder-catalog.md`
+    `usage.*` shape; this tracker.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
