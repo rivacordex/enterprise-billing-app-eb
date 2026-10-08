@@ -1,0 +1,11 @@
+SIL OPEN FONT LICENSE
+Version 1.1 - 26 February 2007
+
+IBM Plex Sans and IBM Plex Mono are licensed under the SIL Open Font
+License, Version 1.1. This file is committed alongside the layout per
+bm47-spec §Implementation §8 and is NOT loaded at render — it documents the
+licence covering the font files once the real subset woff2 binaries are
+added to `shell.hbs`'s `@font-face` declarations (see the follow-up note at
+the top of `../shell.hbs`).
+
+See https://openfontlicense.org for the full licence text.

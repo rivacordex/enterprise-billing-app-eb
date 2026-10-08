@@ -1,16 +1,17 @@
-# Billing Management — Bill Run — Target Capacity Pricing Update Overview
+# Billing Management — Update Overview
+
+This file holds the two in-flight updates to the Billing Management module. Each is folded into `billmgmt-project-overview.md` at its ship gate.
+
+| Part | Update | Source plan | Status |
+|---|---|---|---|
+| 1 | Bill Run — Target Capacity Pricing | `_updatemodule-billing-billrun-target-capacity-plan.md` | Specs built (bm40–bm46), not yet delivered |
+| 2 | Invoice Template (company profile + structure-configurable template) | `_updatemodule-billing-invoice-template-merged-plan.md` (§15 v1 review is authoritative) | Eng-reviewed 2026-10-06, ready for build specs |
+
+---
+
+# Part 1 — Bill Run — Target Capacity Pricing
 
 _Date: 2026-10-04 · Users: Revenue Operations (RevOps, in-app) and BSS Ops (Kestra engine + deploy layer). Derived from `_updatemodule-billing-billrun-target-capacity-plan.md`. The delivered Phases 1–4 (bm01–bm39) current-state lives in `billmgmt-project-overview.md`._
-
-> **Status (bm46, 2026-10-07): delivered.** Units bm40–bm45 shipped this
-> update's full design below; bm46 (the ship gate) audited it against
-> guardrails 36–42 and invariants #29–#38, confirmed no migration beyond
-> bm41's `0044`, and folded the delivered narrative into
-> `billmgmt-project-overview.md`. **Outstanding:** the live-Kestra capacity
-> journey (TC54) and the DB-gated capacity suites have not been run against a
-> live Postgres/Kestra stack in this checkout's environment; **O-TC7**
-> (partial-period capacity billing) remains an open business decision. See
-> `billmgmt-progress-tracker.md` for both.
 
 ## Overview
 
@@ -118,5 +119,156 @@ The Billing Management module runs monthly bill runs for the Revenue Operations 
 4. Verification catches a tampered `rated_amount`/`gross`/`discount`/`calc.total` via both detectors; every capacity line holds `discount_amount ≥ 0` and `net_amount ≥ 0`.
 5. The posted invoice renders the per-polygon usage appendix grouped by state and district, with state/district joined from the `productCardLookUp` ratecard, load-tested to 10,000 polygon rows per account; a polygon absent from the card is surfaced, not dropped.
 6. A rerun reproduces identical lines and `line_no` (whole-account replace).
-7. The deployed, pebble-rendered flow drives a capacity account `SCHEDULED → COMPLETED` on the `_SAMPLE_` `capacity` seed (the seeder's dedicated capacity-offering profile — `ci` has no capacity accounts) through a real Kestra execution, not only the extracted-SQL harness — this needs a capacity-aware live-Kestra smoke path, since `scripts/billrun-live-kestra-smoke.ts` today only drives the `ci` profile; Unit 0's existing aggregation/recurring/volume/verification/checksum suites pass against the PC14 schema.
+7. The deployed, pebble-rendered flow drives a capacity account `SCHEDULED → COMPLETED` on the `ci` seed through a real Kestra execution (not only the extracted-SQL harness); Unit 0's existing aggregation/recurring/volume/verification/checksum suites pass against the PC14 schema.
 8. No new migration beyond the one adding `rated_amount` + `additional_info`; `npm run typecheck`, `npm run lint`, and the vitest suite pass; the owning docs (`billmgmt-architecture.md`, `billmgmt-code-standards.md`, `billmgmt-progress-tracker.md`) are synced.
+
+---
+
+# Part 2 — Invoice Template
+
+_Date: 2026-10-07 · Users: Revenue Operations billing admins (in-app, new `invoice_settings` permission) and developers (layout authoring in the repo). Derived from `_updatemodule-billing-invoice-template-merged-plan.md`; where its body (§§1–14) and its v1 engineering review (§15, R1–R11) disagree, §15 wins and is what this part reflects._
+
+## Overview
+
+The Billing Management module runs the monthly bill run for Revenue Operations: it claims rated usage, derives recurring charges, assembles `customer_bill` + `customer_bill_line`, posts one `INV` document per account under a four-eyes gate, renders and stores the invoice PDF in `bill_run_invoices`, and distributes it over SFTP. Today the invoice is a hardcoded TypeScript template (`render-invoice-template.ts`) whose renderer still reads `rating.udr_rated` (`render-invoice.ts:88`), so it omits recurring, one-time and discount charges. This update replaces it with three things: (1) one global, versioned **company profile** (issuer name, SSM no., TIN, SST no., address, bank details, colours, and a required logo) edited under Administration › Invoice Settings; (2) one developer-authored **Handlebars layout** (`INVTPL-STD-A4`) shared by every MNO, where billing admins can only show/hide optional sections and charge-detail columns, each activation generating an immutable `invoice.hbs` + `footer.hbs` version stored write-once in the blob store; and (3) a **binder** that builds the render input from `customer_bill_line`, `customer_bill_tax_item`, `billing.document` and `customer.organization`/`contact_medium`, including a detailed usage section grouped state → district. The template and profile versions used are stamped on the bill at posting, so an issued invoice never changes. Scope is the tax invoice only; outputs are PDF, HTML and CSV.
+
+## Goals
+
+1. **Bind the invoice to the real charge record first (R1, R10).** Re-point the renderer from `rating.udr_rated` to `customer_bill_line` (sources RECURRING, USAGE, ONE_TIME, with discount, offering and net), aggregated on the fly with no new charge-copy table, and prove `Σ net_amount = customer_bill.subtotal` on every rendered invoice before any editor UI is built.
+2. **Always have a template (R11).** Seed a developer-authored default layout `INVTPL-STD-A4` and a default generated structure version, flagged `is_default`, always ACTIVE and undeletable. Resolution order is pinned version → current ACTIVE → default, so "no template configured" cannot occur.
+3. **Give RevOps one versioned company profile (D5).** Store it as `core.system_config` group `invoice.profile` with DRAFT → ACTIVE → RETIRED versions; activation requires a logo and a change note.
+4. **Let billing admins control structure, not layout (D3, D4, R7).** Admins tick optional sections and charge-detail columns on or off; developers own section order, positions, page size, margins, fonts, labels and CSS.
+5. **Freeze what was issued (D8).** At posting, record on the bill the generated template version, the company profile version and the CSV template version. Reprint downloads the stored PDF; reproducibility is checked with the existing `customer_bill.charge_checksum`, not a re-render.
+6. **Fail loudly, never silently (R8).** A render or validation failure parks that account in the run's exception surface. The legacy `udr_rated` template is never used as a fallback.
+7. **Show detailed usage by region (R9).** List every billed `udr_rated` row in a usage section subsectioned state → district, reading geo that rating persisted onto `udr_rated`.
+8. **Keep admin input and stored files tamper-proof.** Handlebars auto-escaping with `knownHelpersOnly`, checksums verified at render for templates and logo, sanitized SVG uploads, append-only versions, audit-logged saves and activations.
+
+## Core user flow
+
+1. **Seed (developer, once).** The migration creates `billing.bill_format` (one row, `INVOICE`), layout `INVTPL-STD-A4` v1 (`manifest.json`, `shell.hbs`, `footer.hbs`, `partials/*.hbs`, `sample-data.json`) and the default generated version (`is_default = true`, ACTIVE). On first setup the current `/brand/logo.svg` can be imported as the initial logo artifact.
+2. **Maintain the company profile (billing admin, `invoice_settings` EDIT).** Open Administration › Invoice Settings › **Company profile**:
+   - edit company details, payment details, brand/accent colours and default payment terms;
+   - upload the logo (PNG/JPEG/SVG, ≤ 500 KB, ≥ 300 px; MIME checked against magic bytes; SVG scripts, event handlers, `<foreignObject>` and external references stripped or rejected), stored as a `bill_asset_version`;
+   - preview, then **Activate** with a change note. Activation is blocked without a logo. The new version becomes ACTIVE, the previous one RETIRED.
+3. **Choose what the invoice shows (billing admin).** Open Administration › Invoice Settings › **Invoice template**:
+   - tick optional sections (Payment information, Usage annex, Notes & terms) and optional columns (Service period, Discount, Product offering ID, UDR type & count); mandatory sections are locked on;
+   - check the live preview, rendered through the real pipeline (`isDraft: true`) against the layout's sample bill or a recent posted bill (a posted bill is previewed with **its own pinned versions**, not the current ACTIVE);
+   - **Save draft** (never used for invoices) or **Activate** with a change note. Activation validates mandatory sections, generates `invoice.hbs` + `footer.hbs`, test-renders against the sample bill, writes the files with checksums to `invoice-templates/generated/{id}/v{n}/`, sets the new version ACTIVE and the previous one RETIRED.
+4. **Rate usage (rating module, cross-module change).** RAN-usage rating, which already reads the `ratecard_ran_usage_lkp` row for `rate_per_unit`, also writes that row's `state` and `district` onto the `udr_rated` row. Forward-only; no backfill.
+5. **Process and review the bill run (unchanged).** The draft (pro-forma) preview resolves the current ACTIVE generated version + ACTIVE profile, shows the `position:fixed` draft watermark, and persists nothing.
+6. **Approve → Post.** A second `billrun_approve` user approves. `services/billing/post-run.ts` posts the `INV`, computes `charge_checksum` as today, and stamps `customer_bill.ref_bill_format_id = INVOICE`, `ref_bill_template_version_id` (the generated version, which pins its layout version), `ref_invoice_profile_version` and the CSV template version.
+7. **Render the final invoice.** `resolveTemplate` takes the stamped versions → the blob is loaded and its checksum verified → `Handlebars.compile` (cached per version id) → `bind()` merges profile, logo data URI, bill lines, tax items, customer identity, INV number and usage rows → Playwright/Chromium renders the PDF with a "Page X of Y" footer → the PDF is stored once in `bill_run_invoices`. A failure parks the account and shows it in the run's exception surface; other accounts continue.
+8. **Distribute (unchanged).** Kestra execution #2 SFTPs the stored PDF.
+9. **Reprint and audit.** Reprint downloads the stored PDF. The **Version history** tab on both screens lists every version with status, author, created/activated/retired dates, change note, "used by N invoices", a read-only preview and a `.hbs` download.
+
+## Features
+
+### Company profile
+
+- Fields: legal name, SSM reg. no., TIN, SST no., address lines, postcode, city, state (MyInvois code 01–16), country, phone, email, website; bank name, account name, account no., SWIFT, JomPAY biller code, remittance email; brand and accent colours (`#RRGGBB`); default payment terms (days, used when the billing account has no override).
+- Validation per the placeholder catalog (TIN, SST, postcode, SWIFT, email, colour format); blank optional fields are hidden on the invoice.
+- Logo required to activate; the profile version pins a specific logo asset version.
+- The application logo (`system_config` `app`/`app_logo_path`, `getBrandingLogo()`) is unchanged and separate from the invoice logo.
+
+### Invoice template editor
+
+- Mandatory, locked sections: Header (issuer, logo, title), Invoice identification, Bill-to, Amount due, Summary of charges, Tax summary, Charge details, Page footer.
+- Optional sections an admin can hide: Payment information, Usage annex, Notes & terms. (Account summary is dropped from v1, R2.)
+- Fixed charge-detail columns: #, Description, Quantity, Unit price, Gross, Net amount. Hideable: Service period, Discount, Product offering ID, UDR type & count. (No per-line tax column, R6.)
+- Positions never move: hiding a section closes the gap; a half-width section whose partner is hidden widens to full width.
+- Live preview with "show placeholders" and outline toggles; read-only **Generated .hbs** tab; **Version history** tab.
+
+### Template engine
+
+- Handlebars 4.7 added as a direct dependency.
+- Data placeholders: `{{company.*}}`, `{{payment.*}}`, `{{invoice.*}}`, `{{customer.*}}`, `{{totals.*}}`, `{{#each lineGroups}}`.
+- Helpers: `money`, `date`, `period`, `qty`, `price`, `int`, `amt`, `unitCode`, `asset`, wrapping the existing `formatCurrency` / `formatCalendarDate`.
+- Generation-time directives in the developer layout: `[[if sections.<key>]]`, `[[if columns.<key>]]`, `[[num …]]` (derived `colspan`), `[[body]]`. Generated files contain only `{{ }}` placeholders, so the stored file is exactly what was rendered.
+
+### Render binder and pipeline
+
+- `render-invoice-template.ts` becomes the binder: `resolveTemplate` → `load` (checksum, compile, cache) → `bind` → `renderPdfFromHtml`.
+- Render input from `customer_bill_line`, `customer_bill_tax_item` (bill-level tax summary), `billing.document` (INV anchor), `customer.organization` + `contact_medium` (tax identity and address).
+- "Amount due" = this invoice's current charges only, and the template states it.
+- PDF: A4 page setup from the layout, Chromium `displayHeaderFooter` used only for "Page X of Y", `position:fixed` draft watermark kept (R5); existing semaphore, concurrency cap and close-timeout unchanged.
+- Logo fetched, checksum-verified and inlined as a data URI; no external URLs.
+
+### Detailed usage section
+
+- Every billed `udr_rated` row for the account, grouped state → district, with per-district and per-state subtotals.
+- Geo read directly off the claimed `udr_rated` rows; no render-time ratecard lookup and no ratecard version pinning.
+- Expected volume a few hundred rows (~6–10 pages) per account.
+
+### Storage, versioning and data model
+
+- `billing.bill_template_version`: immutable, append-only; `kind` = `layout` | `generated` | `csv` (no `xml` in v1); one ACTIVE per (`ref_bill_format_id`, `kind`); `structure` jsonb (sections, columns), `page_setup` jsonb, `blob_ref`, `checksum`, author/activation/retirement stamps, `change_note`.
+- `billing.bill_asset` / `bill_asset_version`: logo artifact (`kind = logo`), retire-only.
+- New bill columns: `ref_invoice_profile_version` and the CSV template version (or recorded on `bill_run_invoices`); the reserved `ref_bill_format_id` and `ref_bill_template_version_id` are populated.
+- Blob store generalized to `putObject/getObject(container, path, bytes, contentType, {writeOnce})`; `putInvoice` refactored onto it (R4).
+
+### Output formats
+
+- PDF (legal copy, stored write-once) and HTML (preview, email body) from the generated `.hbs`; admin structure options apply.
+- CSV from a fixed column map: one row per line item, line amounts sum exactly to the bill.
+
+### Security, access and audit
+
+- Auto-escaping on; triple-stash forbidden; `knownHelpersOnly`; no eval-style helpers.
+- CI layout lint: no raw `<img src>` or external URLs; images only via `{{company.logoUrl}}` / `{{asset}}`.
+- New permission `invoice_settings` (READ / EDIT) guards both screens; every save and activation writes `AUDIT_LOG`.
+- Checksum mismatch on a template or logo fails the render.
+
+## In scope
+
+- Binder over `customer_bill_line` + `customer_bill_tax_item` + `billing.document` + `organization`/`contact_medium`, with the `Σ net_amount = subtotal` reconciliation (built and verified first).
+- Seeded default layout `INVTPL-STD-A4` + default generated version (`is_default`), and the pinned → ACTIVE → default resolution.
+- Company profile screen, validation, logo upload as a versioned artifact, activation with change note, version history.
+- Invoice template editor: section and column show/hide, live preview, save draft, activate, Generated .hbs tab, version history.
+- Handlebars engine, helpers, generation-time directives, generator.
+- Tables `bill_format`, `bill_template_version`, `bill_asset`, `bill_asset_version`; the new bill version columns; stamping in `post-run.ts`.
+- Generalized blob store and `putInvoice` refactor.
+- Detailed usage section by state → district, plus the rating-side change that writes `state`/`district` onto `udr_rated`.
+- PDF, HTML and CSV outputs; "Page X of Y" footer.
+- Park-on-failure handling in the run exception surface.
+- `invoice_settings` permission, audit logging, SVG sanitizer, layout lint.
+- Unit, golden-render, multi-page, pinning, tamper and Playwright e2e tests.
+
+## Out of scope
+
+- Credit notes, debit notes, and a separate pro-forma document type (pro-forma = draft render) (D1).
+- Per-MNO or per-customer templates and MNO assignment (D2).
+- Admin control of section order or position, labels, wording, colours within the template, image slots, page setup or fonts (D3, D4).
+- An admin code editor and a drag-and-drop designer.
+- Multi-brand / multi-entity issuing.
+- Account summary / balance brought forward (R2) — revisit with the payments/credit-note ledger.
+- MyInvois UBL XML, the MyInvois submission/validation module, all `einvoice.*` fields, the classification code and state-code mapping (R3); no `kind = xml`, `system/xml` paths or sample XML.
+- Per-line tax and SST tax-invoice compliance (R6); real taxation (the ratified `0.00` interim stays).
+- Shared asset library (signatures, stamps, letterheads, banners) and generated DuitNow QR codes.
+- Bilingual BM/EN invoices.
+- Re-rendering for reprint, and any fallback to the legacy `udr_rated` template.
+- Backfilling `state`/`district` onto `udr_rated` rows rated before the rating change.
+
+## Success criteria
+
+1. On the `ci` seed, every posted invoice's charge details include its RECURRING, USAGE and ONE_TIME lines and discounts, and `Σ net_amount` on the invoice equals `customer_bill.subtotal`.
+2. On a fresh database, `bill_format` has exactly one row (`INVOICE`), and `INVTPL-STD-A4` v1 plus the default generated version are ACTIVE with `is_default = true`; the default cannot be deleted or retired, and a bill run posted with no admin activity renders with it.
+3. The company profile cannot be activated without a logo or without a change note; invalid TIN, SST, postcode, SWIFT, email or colour values are rejected; a logo over 500 KB, under 300 px, with a MIME/magic-byte mismatch, or an SVG containing `<script>` is rejected.
+4. In the template editor, mandatory sections cannot be unticked; hiding Discount removes the column and its total from the preview; activating creates version n+1 as ACTIVE and n as RETIRED, listed in Version history with author, dates and change note; the generated `.hbs` contains no markup for hidden sections or columns and no `[[ ]]` directives.
+5. After an invoice is posted under generated v2 and profile v1, activating v3 and profile v2 leaves that bill's recorded versions and stored PDF unchanged, while a new draft preview uses v3 and profile v2.
+6. Changing one byte of a stored template or logo blob makes its render fail the checksum check: that account is parked and appears in the run's exception surface, other accounts post, and no invoice is rendered with the legacy template.
+7. A fixture forcing 3+ pages shows "Page X of Y" on every page, repeats the table header, keeps each line group on one page, and the draft watermark is not clipped by the footer margin.
+8. The detailed usage section lists every billed `udr_rated` row under its state and district with correct per-district and per-state subtotals, reading geo from `udr_rated` with no ratecard query at render.
+9. The CSV has one row per line item and its line amounts sum exactly to the bill.
+10. Reprint returns the stored PDF bytes unchanged, and recomputing `charge_checksum` from the bill's lines matches the stored value.
+11. A user without `invoice_settings` READ cannot open either screen; a READ-only user cannot save or activate; every save and activation writes an `AUDIT_LOG` entry; a customer name containing `<script>` renders escaped.
+12. Golden-render snapshots of each layout version pass in CI; existing bm18/bm19 tests are updated to the new binder and pass; `npm run typecheck`, `npm run lint`, the vitest suite and the Playwright e2e pass; `billmgmt-architecture.md`, `billmgmt-code-standards.md` and `billmgmt-progress-tracker.md` are synced.
+
+## Open items to close before build specs
+
+- **O2** Checksum algorithm: SHA-256 for new template/asset objects (recommended) vs md5 as the invoice blob store uses.
+- **O3** Where notes & terms and the footer sentence live: fixed in the layout, or company-profile fields.
+- **O4** Confirm fonts are fixed and embedded in the layout.
+- **O5** Missing database fields (customer SST no., PO reference, contract reference); their fragments stay hidden while blank.
+- **O10** Retention of retired versions (recommended: as long as any invoice references them).
+- **Rating follow-ups:** confirm the `udr_key` → `(mno_public_key, commercial_unit_public_key, polygon_id)` mapping used to join `ratecard_ran_usage_lkp`, and extend the rating flow to write `state`/`district` onto `udr_rated`.
+- **Overlap with Part 1:** Part 1's usage appendix (bm45) joins state/district from the `productCardLookUp` ratecard at render and is bounded to 10,000 rows per account; Part 2 (R9) reads geo persisted on `udr_rated` and expects a few hundred rows. Decide which design the shared usage section follows before writing Part 2's specs.

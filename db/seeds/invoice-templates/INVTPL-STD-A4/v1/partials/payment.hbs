@@ -1,0 +1,11 @@
+{{#if payment}}
+<section class="sec sec--payment sec--half">
+  <p class="section-heading">Payment information</p>
+  <div>{{payment.bankName}}</div>
+  <div>{{payment.accountName}}</div>
+  <div class="mono">{{payment.accountNo}}</div>
+  {{#if payment.swift}}<div class="mono">SWIFT {{payment.swift}}</div>{{/if}}
+  {{#if payment.jomPayBillerCode}}<div class="mono">JomPAY {{payment.jomPayBillerCode}}</div>{{/if}}
+  {{#if payment.remittanceEmail}}<div>{{payment.remittanceEmail}}</div>{{/if}}
+</section>
+{{/if}}

@@ -1,0 +1,186 @@
+{
+  "template": { "layoutCode": "INVTPL-STD-A4", "layoutVersion": 1, "version": 1 },
+  "company": {
+    "name": "Sample Telco Sdn Bhd",
+    "tradingName": "Sample Telco",
+    "registrationNo": "199901012345",
+    "tin": "C12345678901",
+    "sstRegNo": "A10-1234-56781234",
+    "address": {
+      "line1": "Level 10, Menara Sample",
+      "line2": "Jalan Contoh 1",
+      "city": "Kuala Lumpur",
+      "stateProvince": "Wilayah Persekutuan",
+      "postalCode": "50450",
+      "country": "Malaysia"
+    },
+    "email": "billing@sampletelco.example",
+    "phone": "+60 3-1234 5678",
+    "brandColor": "#12355B",
+    "accentColor": "#1F9E89",
+    "logoUrl": null
+  },
+  "payment": {
+    "bankName": "Sample Bank Berhad",
+    "accountName": "Sample Telco Sdn Bhd",
+    "accountNo": "1234567890",
+    "swift": "SAMPMYKL",
+    "jomPayBillerCode": "12345",
+    "remittanceEmail": "remittance@sampletelco.example"
+  },
+  "invoice": {
+    "number": "INV00000042",
+    "isDraft": false,
+    "date": "2026-09-05",
+    "periodStart": "2026-08-01",
+    "periodEnd": "2026-08-31",
+    "dueDate": "2026-09-15",
+    "currency": "MYR",
+    "billRunId": "BRN00000042",
+    "cycleName": "Enterprise Monthly",
+    "billRef": "CBL00000001",
+    "poRef": null,
+    "contractRef": null
+  },
+  "customer": {
+    "billingAccountId": "BAN00000001",
+    "name": "Acme Communications Sdn Bhd",
+    "tradingName": "Acme Communications",
+    "registrationNo": "201001098765",
+    "tin": "C98765432109",
+    "sstRegNo": null,
+    "address": {
+      "line1": "Suite 5, Wisma Acme",
+      "line2": null,
+      "city": "Petaling Jaya",
+      "stateProvince": "Selangor",
+      "postalCode": "46050",
+      "country": "Malaysia"
+    },
+    "email": "accounts@acme.example",
+    "phone": "+60 3-7654 3210"
+  },
+  "totals": {
+    "grossTotal": "210000.00",
+    "discountTotal": "50000.00",
+    "subtotalExclTax": "160000.00",
+    "taxTotal": "0.00",
+    "totalAmount": "160000.00",
+    "amountDue": "160000.00"
+  },
+  "taxes": [],
+  "chargeSummary": [
+    { "name": "Recurring charges", "source": "RECURRING", "amount": "10000.00" },
+    { "name": "Usage charges", "source": "USAGE", "amount": "150000.00" }
+  ],
+  "lineGroups": [
+    {
+      "name": "Recurring charges",
+      "source": "RECURRING",
+      "grossTotal": "10000.00",
+      "discountTotal": "0.00",
+      "subtotal": "10000.00",
+      "lines": [
+        {
+          "lineNo": 1,
+          "source": "RECURRING",
+          "description": "Enterprise Fibre 1Gbps",
+          "productOfferingId": "POF00000010",
+          "udrType": null,
+          "udrCount": null,
+          "periodStart": "2026-08-01",
+          "periodEnd": "2026-08-31",
+          "quantity": "1.000000",
+          "unit": "EA",
+          "unitPrice": "10000.00",
+          "grossAmount": "10000.00",
+          "discountAmount": "0.00",
+          "netAmount": "10000.00",
+          "discountNote": null
+        }
+      ]
+    },
+    {
+      "name": "Usage charges",
+      "source": "USAGE",
+      "grossTotal": "200000.00",
+      "discountTotal": "50000.00",
+      "subtotal": "150000.00",
+      "lines": [
+        {
+          "lineNo": 2,
+          "source": "USAGE",
+          "description": "RAN Usage — Target Capacity",
+          "productOfferingId": "POF00000020",
+          "udrType": "RAN_USAGE",
+          "udrCount": 4,
+          "periodStart": "2026-08-01",
+          "periodEnd": "2026-08-31",
+          "quantity": "2000.000000",
+          "unit": "EA",
+          "unitPrice": null,
+          "grossAmount": "200000.00",
+          "discountAmount": "50000.00",
+          "netAmount": "150000.00",
+          "discountNote": "Discount 25.000000%"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "unit": "EA",
+    "states": [
+      {
+        "state": "Selangor",
+        "label": "Selangor",
+        "subtotalAmount": "55000.00",
+        "districts": [
+          {
+            "district": "Petaling",
+            "label": "Petaling",
+            "subtotalAmount": "30000.00",
+            "rows": [
+              { "polygon": "POLY-001", "volume": "300.000000", "unit": "EA", "amount": "30000.00" }
+            ]
+          },
+          {
+            "district": "Klang",
+            "label": "Klang",
+            "subtotalAmount": "25000.00",
+            "rows": [
+              { "polygon": "POLY-002", "volume": "250.000000", "unit": "EA", "amount": "25000.00" }
+            ]
+          }
+        ]
+      },
+      {
+        "state": "Johor",
+        "label": "Johor",
+        "subtotalAmount": "95000.00",
+        "districts": [
+          {
+            "district": "Johor Bahru",
+            "label": "Johor Bahru",
+            "subtotalAmount": "70000.00",
+            "rows": [
+              { "polygon": "POLY-003", "volume": "700.000000", "unit": "EA", "amount": "70000.00" }
+            ]
+          },
+          {
+            "district": "Kluang",
+            "label": "Kluang",
+            "subtotalAmount": "25000.00",
+            "rows": [
+              { "polygon": "POLY-004", "volume": "250.000000", "unit": "EA", "amount": "25000.00" }
+            ]
+          }
+        ]
+      }
+    ],
+    "totalAmount": "150000.00",
+    "rowCount": 4
+  },
+  "isDraft": false,
+  "locale": "en-MY",
+  "timezone": "Asia/Kuala_Lumpur"
+}

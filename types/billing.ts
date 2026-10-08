@@ -588,3 +588,226 @@ export interface RejectedPendingRow {
   accountName: string;
   errorDetail: string | null;
 }
+
+// ============================================================================
+// bm47 — Invoice binder (Invoice Template update, Part 4). `InvoiceRenderInput`
+// is the Handlebars bind target produced by `services/billing/invoice-template/
+// bind.ts` from `customer_bill_line` + `customer_bill_tax_item` +
+// `billing.document` + `customer.organization`/`contact_medium` (Inv #39).
+// Every optional key is present with `null`, never `undefined` — Handlebars
+// `strict: true` throws on a missing property, a present `null` is falsy for
+// `{{#if}}` and does not throw (D4). `company`/`payment` stay `null` until a
+// profile exists (G15 interim; bm53/bm61 fill them).
+// ============================================================================
+
+export interface InvoiceAddress {
+  line1: string;
+  line2: string | null;
+  city: string | null;
+  stateProvince: string | null;
+  postalCode: string | null;
+  country: string | null;
+}
+
+export interface InvoiceCompany {
+  name: string;
+  tradingName: string | null;
+  registrationNo: string | null;
+  tin: string | null;
+  sstRegNo: string | null;
+  address: InvoiceAddress | null;
+  email: string | null;
+  phone: string | null;
+  brandColor: string;
+  accentColor: string;
+  logoUrl: string | null;
+}
+
+export interface InvoicePayment {
+  bankName: string;
+  accountName: string;
+  accountNo: string;
+  swift: string | null;
+  jomPayBillerCode: string | null;
+  remittanceEmail: string | null;
+}
+
+// D3 — one bound charge-detail row. `periodStart`/`periodEnd` come from the
+// bill header (lines carry no own period in v1); `unitPrice` is the RECURRING
+// price snapshot (NULL for USAGE, rendered "—" by the `price` helper).
+export interface InvoiceLine {
+  lineNo: number;
+  source: ChargeSource;
+  description: string;
+  productOfferingId: string;
+  udrType: string | null;
+  udrCount: number | null;
+  periodStart: string;
+  periodEnd: string;
+  quantity: string | null;
+  unit: string | null;
+  unitPrice: string | null;
+  grossAmount: string;
+  discountAmount: string;
+  netAmount: string;
+  discountNote: string | null;
+}
+
+// D3 — one charge-source group, in the fixed order RECURRING → USAGE → OCC. A
+// group with no lines is omitted. `grossTotal`/`discountTotal`/`subtotal` are
+// SQL `SUM`s per source, never a JS reduce (code-standards General rule 11).
+export interface InvoiceLineGroup {
+  name: string;
+  source: ChargeSource;
+  grossTotal: string;
+  discountTotal: string;
+  subtotal: string;
+  lines: InvoiceLine[];
+}
+
+// D5 — one per-polygon usage row, grouped state → district. `unit` is the
+// capacity line's own `unit` column (the stored appendix carries no unit
+// field, bm45).
+export interface InvoiceUsageRow {
+  polygon: string;
+  volume: string;
+  unit: string;
+  amount: string;
+}
+
+export interface InvoiceUsageDistrictGroup {
+  district: string | null;
+  label: string;
+  subtotalAmount: string;
+  rows: InvoiceUsageRow[];
+}
+
+export interface InvoiceUsageStateGroup {
+  state: string | null;
+  label: string;
+  subtotalAmount: string;
+  districts: InvoiceUsageDistrictGroup[];
+}
+
+// D5 — bm47 carries the bm45 `additional_info.appendix` snapshot into this
+// shape unchanged in content (G4 interim, C1); bm49 replaces the source.
+// `unit` is the single unit when every contributing line shares one, else
+// `null`. `null` on the bound input when the bill has no appendix rows.
+export interface InvoiceUsageSection {
+  unit: string | null;
+  states: InvoiceUsageStateGroup[];
+  totalAmount: string;
+  rowCount: number;
+}
+
+// D9 — read from the layout manifest, validated by
+// `validation/billing/layout-page-setup.schema.ts`.
+export interface LayoutPageSetup {
+  format: "A4";
+  orientation: "portrait" | "landscape";
+  margin: { top: string; bottom: string; left: string; right: string };
+  displayHeaderFooter: boolean;
+  printBackground: boolean;
+}
+
+// D4 — keys mirror the placeholder roots in
+// `invoice-template/placeholder-catalog.md`. `poRef`/`contractRef`/`sstRegNo`
+// are always `null` this unit (G9 interim — no source before a profile
+// exists); their fragments are wrapped in `{{#if}}` in the layout and never
+// render a blank label.
+export interface InvoiceRenderInput {
+  template: {
+    layoutCode: string;
+    layoutVersion: number;
+    version: number | null;
+  };
+  company: InvoiceCompany | null;
+  payment: InvoicePayment | null;
+  invoice: {
+    number: string | null;
+    isDraft: boolean;
+    date: string | null;
+    periodStart: string;
+    periodEnd: string;
+    dueDate: string | null;
+    currency: string;
+    billRunId: string;
+    cycleName: string;
+    billRef: string;
+    poRef: null;
+    contractRef: null;
+  };
+  customer: {
+    billingAccountId: string;
+    name: string;
+    tradingName: string | null;
+    registrationNo: string | null;
+    tin: string | null;
+    sstRegNo: null;
+    address: InvoiceAddress | null;
+    email: string | null;
+    phone: string | null;
+  };
+  totals: {
+    grossTotal: string;
+    discountTotal: string;
+    subtotalExclTax: string;
+    taxTotal: string;
+    totalAmount: string;
+    amountDue: string;
+  };
+  taxes: { category: string; rate: string; amount: string }[];
+  chargeSummary: { name: string; source: ChargeSource; amount: string }[];
+  lineGroups: InvoiceLineGroup[];
+  usage: InvoiceUsageSection | null;
+  isDraft: boolean;
+  locale: string;
+  timezone: string;
+}
+
+// bm47-spec §Implementation §2 — binding names (code-standards TS rule 7).
+export const INVOICE_ERROR_CODES = [
+  "INVOICE_RECONCILIATION_FAILED",
+  "TEMPLATE_COMPILE_FAILED",
+] as const;
+export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
+
+// The binder/compiler's one typed failure shape (D2/D6/D10) — any thrown
+// error on the render path is wrapped as one of these so `post-run.ts`'s
+// catch block can log a stable `renderErrorCode` (Inv #40, D10).
+export class InvoiceRenderError extends Error {
+  readonly code: InvoiceErrorCode;
+  readonly detail: Record<string, unknown> | undefined;
+
+  constructor(
+    code: InvoiceErrorCode,
+    message: string,
+    detail?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "InvoiceRenderError";
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+// bm18-spec §Design, moved here (bm47-spec §Implementation §3) so
+// `render-invoice-template.ts`'s binder entry point can throw the mode-
+// appropriate not-found error without an import cycle back to
+// `render-invoice.ts` (which imports the entry point). Re-exported from
+// `services/billing/render-invoice.ts` unchanged for existing callers/tests.
+export class DraftInvoiceNotFoundError extends Error {
+  constructor(runId: string, banId: string) {
+    super(`No draft bill found for run ${runId} / account ${banId}.`);
+    this.name = "DraftInvoiceNotFoundError";
+  }
+}
+
+// bm19-spec §Implementation §3, moved here (bm47-spec §Implementation §3) —
+// see `DraftInvoiceNotFoundError` above for why.
+export class FinalInvoiceNotFoundError extends Error {
+  constructor(runId: string, banId: string) {
+    super(`No posted bill found for run ${runId} / account ${banId}.`);
+    this.name = "FinalInvoiceNotFoundError";
+  }
+}

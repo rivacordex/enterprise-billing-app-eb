@@ -1,0 +1,9 @@
+<section class="sec sec--header sec--full">
+  {{#if company}}
+  <div class="issuer">
+    {{#if company.logoUrl}}<img src="{{company.logoUrl}}" alt="{{company.name}}" height="32" />{{/if}}
+    <div class="mono">{{company.name}}</div>
+  </div>
+  {{/if}}
+  <h1>{{#if invoice.isDraft}}PRO-FORMA — Draft Invoice{{else}}TAX INVOICE{{/if}}</h1>
+</section>

@@ -1,0 +1,11 @@
+<section class="sec sec--notes sec--full">
+  <p class="section-heading">Notes &amp; terms</p>
+  <ol>
+    <li>This invoice reflects charges for the billing period stated above.</li>
+    <li>Payment is due by {{date invoice.dueDate}}.</li>
+    <li>
+      Questions about this invoice? Contact your account representative.
+      {{#if company}}{{company.email}}{{/if}}
+    </li>
+  </ol>
+</section>

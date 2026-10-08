@@ -1,0 +1,18 @@
+<section class="sec sec--billTo sec--half">
+  <p class="section-heading">Bill to</p>
+  <div>{{customer.name}}</div>
+  {{#if customer.tradingName}}<div>{{customer.tradingName}}</div>{{/if}}
+  <div class="mono">{{customer.billingAccountId}}</div>
+  {{#if customer.registrationNo}}<div class="mono">Reg. no. {{customer.registrationNo}}</div>{{/if}}
+  {{#if customer.tin}}<div class="mono">TIN {{customer.tin}}</div>{{/if}}
+  {{#if customer.sstRegNo}}<div class="mono">SST {{customer.sstRegNo}}</div>{{/if}}
+  {{#if customer.address}}
+  <div>
+    {{customer.address.line1}}{{#if customer.address.line2}}, {{customer.address.line2}}{{/if}}<br />
+    {{#if customer.address.postalCode}}{{customer.address.postalCode}} {{/if}}{{#if customer.address.city}}{{customer.address.city}}{{/if}}{{#if customer.address.stateProvince}}, {{customer.address.stateProvince}}{{/if}}<br />
+    {{#if customer.address.country}}{{customer.address.country}}{{/if}}
+  </div>
+  {{/if}}
+  {{#if customer.email}}<div>{{customer.email}}</div>{{/if}}
+  {{#if customer.phone}}<div>{{customer.phone}}</div>{{/if}}
+</section>

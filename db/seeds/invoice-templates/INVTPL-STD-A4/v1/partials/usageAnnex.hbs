@@ -1,0 +1,40 @@
+{{#if usage}}
+<section class="sec sec--usageAnnex sec--full">
+  <p class="section-heading">Usage annex{{#if usage.unit}} ({{usage.unit}}){{/if}}</p>
+  {{#each usage.states}}
+  <div class="usage-state">
+    <p class="section-label{{#unless this.state}} unmapped-label{{/unless}}">{{this.label}}</p>
+    {{#each this.districts}}
+    <table class="usage-district">
+      <caption>{{this.label}}</caption>
+      <thead>
+        <tr><th>Polygon</th><th class="num">Volume</th><th class="num">Amount</th></tr>
+      </thead>
+      <tbody>
+        {{#each this.rows}}
+        <tr>
+          <td class="mono">{{this.polygon}}</td>
+          <td class="num">{{qty this.volume}} {{unitCode this.unit}}</td>
+          <td class="num">{{money this.amount}}</td>
+        </tr>
+        {{/each}}
+      </tbody>
+      <tfoot>
+        <tr class="subtotal"><td colspan="2">District subtotal</td><td class="num">{{money this.subtotalAmount}}</td></tr>
+      </tfoot>
+    </table>
+    {{/each}}
+    <table class="usage-state-subtotal">
+      <tfoot>
+        <tr class="subtotal"><td colspan="2">State subtotal</td><td class="num">{{money this.subtotalAmount}}</td></tr>
+      </tfoot>
+    </table>
+  </div>
+  {{/each}}
+  <table class="usage-grand-total">
+    <tfoot>
+      <tr class="grand-total"><td>Total usage annex</td><td class="num">{{money usage.totalAmount}}</td></tr>
+    </tfoot>
+  </table>
+</section>
+{{/if}}
