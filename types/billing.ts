@@ -769,6 +769,7 @@ export interface InvoiceRenderInput {
 export const INVOICE_ERROR_CODES = [
   "INVOICE_RECONCILIATION_FAILED",
   "TEMPLATE_COMPILE_FAILED",
+  "INVOICE_DOCUMENT_MISMATCH",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

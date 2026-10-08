@@ -2,7 +2,9 @@ import type {
   RawInvoiceRenderInput,
   RawInvoiceUsageSubtotal,
 } from "@/db/repositories/billing/invoice-render-input";
+import { todayInZone } from "@/lib/timezone";
 import {
+  FinalInvoiceNotFoundError,
   InvoiceRenderError,
   type ChargeSource,
   type InvoiceLine,
@@ -51,15 +53,20 @@ export function bind(
     );
   }
 
-  // render-invoice.ts §6 — the binder asserts the bound document id equals
-  // the caller's requested invoice number; a mismatch indicates a wiring bug,
-  // never a data problem, so it is wrapped the same as any other render
-  // failure (D10) rather than left to throw an uncaught invariant error.
-  if (!ctx.isDraft && raw.document && ctx.invoiceNo !== undefined) {
-    if (raw.document.documentId !== ctx.invoiceNo) {
+  // A final render needs its posted `billing.document` row — without it the
+  // bound invoice would carry no number or date under a "TAX INVOICE" title.
+  // render-invoice.ts §6 — when the caller names the requested invoice
+  // number, the bound document id must equal it; a mismatch indicates a
+  // wiring bug, never a data problem, and is a typed render failure (D10).
+  if (!ctx.isDraft) {
+    if (!raw.document) {
+      throw new FinalInvoiceNotFoundError(raw.run.billRunId, raw.bill.billingAccountId);
+    }
+    if (ctx.invoiceNo !== undefined && raw.document.documentId !== ctx.invoiceNo) {
       throw new InvoiceRenderError(
-        "TEMPLATE_COMPILE_FAILED",
+        "INVOICE_DOCUMENT_MISMATCH",
         `bound document ${raw.document.documentId} does not match the requested invoice number ${ctx.invoiceNo}`,
+        { documentId: raw.document.documentId, invoiceNo: ctx.invoiceNo },
       );
     }
   }
@@ -81,7 +88,7 @@ export function bind(
       isDraft: ctx.isDraft,
       date:
         !ctx.isDraft && raw.document?.postingDate
-          ? toDateOnly(raw.document.postingDate)
+          ? toDateOnly(raw.document.postingDate, ctx.timezone)
           : null,
       periodStart: raw.bill.billingPeriodStart,
       periodEnd: raw.bill.billingPeriodEnd,
@@ -246,6 +253,8 @@ function findSubtotal(
   return match?.amount ?? "0.00";
 }
 
-function toDateOnly(date: Date): string {
-  return date.toISOString().slice(0, 10);
+// The posting instant's calendar day in the app timezone, not UTC — a
+// posting at 00:30 MYT belongs to that local day, not the previous UTC one.
+function toDateOnly(date: Date, timeZone: string): string {
+  return todayInZone(date, timeZone);
 }

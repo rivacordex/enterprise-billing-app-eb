@@ -1021,7 +1021,9 @@ plus the `npx vitest run` 5-failure detail folded into the bm46 entry below.
     note: "`0041`/`0043` were taken"); nothing beyond `0044` exists. The
     capacity update's only migration is confirmed to be exactly the one
     bm41 shipped.
-  - **`tsc`/lint/DB-free suite (§ verification checklist item 7) — GREEN.**
+  - **`tsc`/lint/DB-free suite (§ verification checklist item 7) — `tsc` +
+    lint CLEAN; vitest NOT GREEN (5 failures, argued pre-existing, not
+    independently confirmed; no exception accepted).**
     `npx tsc --noEmit` clean repo-wide. `npx eslint . --max-warnings=0` clean
     (exit 0, zero output). `npx vitest run --pool=threads`: **7680 passed, 5
     failed, 927 skipped (8617 total)**; all 5 failures are **pre-existing and

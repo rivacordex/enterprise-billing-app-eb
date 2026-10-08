@@ -16,15 +16,7 @@ Read `context/ai-workflow-rules.md` first and obey it in full. This supplement c
 1. For in-flight work, `billmgmt-update-overview.md` is the overview.
 2. Inside the Part 2 plan, §15 wins over the body. Never build the four superseded body items: the legacy-template fallback, the rendered-HTML hash, the watermark move, and `kind = xml`.
 
-**State as of 2026-10-07 (verify it before you start; do not trust this line blindly):**
-
-| Work | State in `enterprise-billing-app` (`dev1`) | Docs say |
-| --- | --- | --- |
-| bm01–bm39 (phases 1–4) | Delivered | Delivered |
-| Part 1: bm40–bm44 | Committed | Progress tracker Part 3 still says "planned, not delivered". This is **stale**, so fix it (§7.3) |
-| Part 1: bm45 (usage appendix) | In the working tree, **uncommitted** (`render-invoice*.ts`, flow YAML, seeds) | Spec exists |
-| Part 1: bm46 (ship gate) | Not started | Spec exists |
-| Part 2: Invoice Template | No code, no `bm` specs | Eng-reviewed 2026-10-06. X1–X4 and O-items are open |
+**Current state:** `billmgmt-progress-tracker.md` is the only status source. This file keeps no dated status snapshot. Check the tracker against `git log` on `dev1` before you start.
 
 ---
 

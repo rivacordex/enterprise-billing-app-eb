@@ -4,8 +4,8 @@ This file holds the two in-flight updates to the Billing Management module. Each
 
 | Part | Update | Source plan | Status |
 |---|---|---|---|
-| 1 | Bill Run — Target Capacity Pricing | `_updatemodule-billing-billrun-target-capacity-plan.md` | Specs built (bm40–bm46), not yet delivered |
-| 2 | Invoice Template (company profile + structure-configurable template) | `_updatemodule-billing-invoice-template-merged-plan.md` (§15 v1 review is authoritative) | Eng-reviewed 2026-10-06, ready for build specs |
+| 1 | Bill Run — Target Capacity Pricing | `_updatemodule-billing-billrun-target-capacity-plan.md` | Code delivered (bm40–bm46, `dev1`); bm46 sign-off **OPEN**: live-Kestra capacity journey (TC54) has no harness, DB-gated capacity suites not re-run, 5 vitest failures unconfirmed |
+| 2 | Invoice Template (company profile + structure-configurable template) | `_updatemodule-billing-invoice-template-merged-plan.md` (§15 v1 review is authoritative) | In build: bm47 core binder committed, **incomplete** (gates G4/G5/G8/G9 and guardrails open); bm48 code delivered, DB/python suites not run |
 
 ---
 
@@ -119,7 +119,7 @@ The Billing Management module runs monthly bill runs for the Revenue Operations 
 4. Verification catches a tampered `rated_amount`/`gross`/`discount`/`calc.total` via both detectors; every capacity line holds `discount_amount ≥ 0` and `net_amount ≥ 0`.
 5. The posted invoice renders the per-polygon usage appendix grouped by state and district, with state/district joined from the `productCardLookUp` ratecard, load-tested to 10,000 polygon rows per account; a polygon absent from the card is surfaced, not dropped.
 6. A rerun reproduces identical lines and `line_no` (whole-account replace).
-7. The deployed, pebble-rendered flow drives a capacity account `SCHEDULED → COMPLETED` on the `ci` seed through a real Kestra execution (not only the extracted-SQL harness); Unit 0's existing aggregation/recurring/volume/verification/checksum suites pass against the PC14 schema.
+7. **OPEN (bm46):** no capacity-aware live harness exists yet (`scripts/billrun-live-kestra-smoke.ts` is `ci`-scenario only), so this criterion is not met. Required: the deployed, pebble-rendered flow drives a capacity account `SCHEDULED → COMPLETED` on the `ci` seed through a real Kestra execution (not only the extracted-SQL harness); Unit 0's existing aggregation/recurring/volume/verification/checksum suites pass against the PC14 schema.
 8. No new migration beyond the one adding `rated_amount` + `additional_info`; `npm run typecheck`, `npm run lint`, and the vitest suite pass; the owning docs (`billmgmt-architecture.md`, `billmgmt-code-standards.md`, `billmgmt-progress-tracker.md`) are synced.
 
 ---
@@ -134,7 +134,7 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 
 ## Goals
 
-1. **Bind the invoice to the real charge record first (R1, R10).** Re-point the renderer from `rating.udr_rated` to `customer_bill_line` (sources RECURRING, USAGE, ONE_TIME, with discount, offering and net), aggregated on the fly with no new charge-copy table, and prove `Σ net_amount = customer_bill.subtotal` on every rendered invoice before any editor UI is built.
+1. **Bind the invoice to the real charge record first (R1, R10).** Re-point the renderer from `rating.udr_rated` to `customer_bill_line` (every `ChargeSource`: today RECURRING, USAGE, OCC; `ONE_TIME` is open conflict C2 / bm47 gate G5, not built until a spec defines how it is sourced; with discount, offering and net), aggregated on the fly with no new charge-copy table, and prove `Σ net_amount = customer_bill.subtotal` on every rendered invoice before any editor UI is built.
 2. **Always have a template (R11).** Seed a developer-authored default layout `INVTPL-STD-A4` and a default generated structure version, flagged `is_default`, always ACTIVE and undeletable. Resolution order is pinned version → current ACTIVE → default, so "no template configured" cannot occur.
 3. **Give RevOps one versioned company profile (D5).** Store it as `core.system_config` group `invoice.profile` with DRAFT → ACTIVE → RETIRED versions; activation requires a logo and a change note.
 4. **Let billing admins control structure, not layout (D3, D4, R7).** Admins tick optional sections and charge-detail columns on or off; developers own section order, positions, page size, margins, fonts, labels and CSS.
@@ -250,7 +250,7 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 
 ## Success criteria
 
-1. On the `ci` seed, every posted invoice's charge details include its RECURRING, USAGE and ONE_TIME lines and discounts, and `Σ net_amount` on the invoice equals `customer_bill.subtotal`.
+1. On the `ci` seed, every posted invoice's charge details include all of its `customer_bill_line` rows (RECURRING, USAGE, OCC; ONE_TIME only once C2 is decided) and discounts, and `Σ net_amount` on the invoice equals `customer_bill.subtotal`.
 2. On a fresh database, `bill_format` has exactly one row (`INVOICE`), and `INVTPL-STD-A4` v1 plus the default generated version are ACTIVE with `is_default = true`; the default cannot be deleted or retired, and a bill run posted with no admin activity renders with it.
 3. The company profile cannot be activated without a logo or without a change note; invalid TIN, SST, postcode, SWIFT, email or colour values are rejected; a logo over 500 KB, under 300 px, with a MIME/magic-byte mismatch, or an SVG containing `<script>` is rejected.
 4. In the template editor, mandatory sections cannot be unticked; hiding Discount removes the column and its total from the preview; activating creates version n+1 as ACTIVE and n as RETIRED, listed in Version history with author, dates and change note; the generated `.hbs` contains no markup for hidden sections or columns and no `[[ ]]` directives.

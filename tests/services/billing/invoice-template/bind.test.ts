@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { bind } from "@/services/billing/invoice-template/bind";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
-import { InvoiceRenderError } from "@/types/billing";
+import { FinalInvoiceNotFoundError, InvoiceRenderError } from "@/types/billing";
 
 // bm47-spec §Design D2/D3/D4/D5, §Implementation §4, test plan row 1.
 // Pure, DB-free — `bind()` takes no DB/Handlebars/next import.
@@ -136,14 +136,38 @@ describe("bind — reconciliation (D2)", () => {
       document: { documentId: "INV00000001", postingDate: new Date("2026-09-05") },
     });
 
-    expect(() =>
+    let caught: unknown;
+    try {
       bind(raw, {
         isDraft: false,
         locale: "en-MY",
         timezone: "UTC",
         invoiceNo: "INV00000002",
-      }),
-    ).toThrow(InvoiceRenderError);
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InvoiceRenderError);
+    expect((caught as InvoiceRenderError).code).toBe("INVOICE_DOCUMENT_MISMATCH");
+  });
+
+  it("throws FinalInvoiceNotFoundError on a final bind with no billing.document row", () => {
+    const raw = rawInput({ document: null });
+    expect(() =>
+      bind(raw, { isDraft: false, locale: "en-MY", timezone: "UTC" }),
+    ).toThrow(FinalInvoiceNotFoundError);
+  });
+});
+
+describe("bind — invoice date", () => {
+  it("formats the posting date as the calendar day in the app timezone, not UTC", () => {
+    // 2026-09-04T16:30Z is 2026-09-05 00:30 in Asia/Kuala_Lumpur (UTC+8).
+    const raw = rawInput({
+      document: { documentId: "INV00000001", postingDate: new Date("2026-09-04T16:30:00Z") },
+    });
+    const ctx = { isDraft: false, locale: "en-MY", invoiceNo: "INV00000001" };
+    expect(bind(raw, { ...ctx, timezone: "Asia/Kuala_Lumpur" }).invoice.date).toBe("2026-09-05");
+    expect(bind(raw, { ...ctx, timezone: "UTC" }).invoice.date).toBe("2026-09-04");
   });
 });
 

@@ -13,7 +13,7 @@
 
 **Specs from:** Inv #39, #40, #42 (resolution half), #46, #47, #50; code-standards _Invoice Template deltas_ General rules 1–3, 7, 11, TS rules 1–4, 7, Styling rules 1–6, guardrails 43, 44, 49, 50, 54; `billmgmt-ui-context.md` §6c, §6d, §10c; `invoice-template/placeholder-catalog.md`; merged plan §15 R1, R2, R5, R6, R8, R10.
 
-**Depends on:** bm46 green (G4 — **met**: `60be173` + `501456f` on `dev1`).
+**Depends on:** bm46 committed (**met**: `60be173` + `501456f` on `dev1`; bm46's own TC54/DB-suite items remain OPEN — progress tracker).
 
 **Gates:**
 
@@ -28,7 +28,9 @@
 | G9 SST / PO / contract refs | **OPEN** (interim) | Fragments wrapped in `{{#if}}` and fed `null`; no columns added |
 
 > **Build may not start until G4, G5, G8 and G9 are recorded as decided** (workflow rules §5, §8.8). If any is decided differently from the interim, revise this spec first.
-
+>
+> **Status (2026-10-08):** the core binder was built on the four interims above on explicit owner direction ("core binder first"). G4, G5, G8 and G9 are **still OPEN**, and bm47 is **not complete** until they are decided and the guardrails in the verification checklist are green (progress tracker, bm47 follow-ups).
+>
 > **Verified against `enterprise-billing-app` `dev1` (2026-10-07).**
 >
 > - `render-invoice-template.ts` (431 lines) is pure. It exports `buildDraftInvoiceHtml` (`:82`) and `buildFinalInvoiceHtml` (`:94`) plus the param types `DraftInvoiceBill` (`:12`), `DraftInvoiceTaxItem` (`:24`), `DraftInvoiceLine` (`:30`), `DraftInvoiceRun` (`:41`), `BuildFinalInvoiceHtmlParams` (`:70`, with `appendix?: InvoiceAppendixRenderRow[]`). Watermark: `.watermark { position: fixed; inset: 0; … }` (`:157-177`), markup `:220-226`, text "DRAFT · PRO-FORMA · NOT A VALID INVOICE", `#d92d2d` at `0.14`. Font: `Arial, Helvetica, sans-serif`. bm45 appendix builders `:289-418`.
@@ -194,7 +196,7 @@ bm55 builds the generator. Until then, bm47 commits the **default generated** ou
 - `…/generated/INVOICE/v1/footer.hbs` — the layout footer (it has no directives).
 - `…/generated/INVOICE/v1/structure.json` — all sections and columns `true`.
 
-`services/billing/invoice-template/load-stopgap.ts` reads these two `.hbs` files from the repo once per process via `fs.readFile` (path resolved from `process.cwd()`), compiles them, and memoizes the delegates. **It is deleted in bm53**; it carries a header comment saying so and no export other than `loadDefaultTemplateFromRepo()`. bm55's parity test then proves the hand-written file is right. Because the generator doesn't exist yet and bm50 freezes these bytes, the test is **semantic**: both templates must render byte-identical HTML for `sample-data.json` and the multi-page fixture. To keep that easy, write the file the way the generator will: remove each directive in place, keep LF line endings, and wrap each section `<section class="sec sec--{key} sec--{half|full}">` as specified in bm55 D1.
+`services/billing/invoice-template/load-stopgap.ts` reads these two `.hbs` files from the repo once per process via `fs.readFile` (path resolved from `process.cwd()`), compiles them, and memoizes the delegates. **Interim exception to Inv #42 (not a precedent):** until bm54 stamps `ref_bill_template_version_id`, a final render has no stamped version to resolve, so this stopgap serves final renders too (`template.version = null`). Its bytes are the default generated v1 that bm50 freezes, so the content is fixed. But a bill posted before bm54 has no pin, so a retry-render after a later activation is not version-pinned. Whether to block final renders until bm54 or accept this window is an **owner decision, OPEN**. **It is deleted in bm53**; it carries a header comment saying so and no export other than `loadDefaultTemplateFromRepo()`. bm55's parity test then proves the hand-written file is right. Because the generator doesn't exist yet and bm50 freezes these bytes, the test is **semantic**: both templates must render byte-identical HTML for `sample-data.json` and the multi-page fixture. To keep that easy, write the file the way the generator will: remove each directive in place, keep LF line endings, and wrap each section `<section class="sec sec--{key} sec--{half|full}">` as specified in bm55 D1.
 
 ### D9 — Pagination and the PDF call
 
@@ -224,7 +226,7 @@ The watermark is `position: fixed` inside the page body, so Chromium repeats it 
 ### 2. Types (`types/billing.ts`)
 
 - Add `InvoiceRenderInput`, `InvoiceCompany`, `InvoicePayment`, `InvoiceAddress`, `InvoiceLine`, `InvoiceLineGroup`, `InvoiceUsageSection`, `LayoutPageSetup` (D4, D5, D9).
-- Add `INVOICE_ERROR_CODES` entries `INVOICE_RECONCILIATION_FAILED`, `TEMPLATE_COMPILE_FAILED` next to the existing billing codes (binding names, code-standards TS rule 7). The other Part 2 codes arrive with their units.
+- Add `INVOICE_ERROR_CODES` entries `INVOICE_RECONCILIATION_FAILED`, `TEMPLATE_COMPILE_FAILED`, `INVOICE_DOCUMENT_MISMATCH` next to the existing billing codes (binding names, code-standards TS rule 7). The other Part 2 codes arrive with their units.
 - Remove `InvoiceAppendixRenderRow` usage from the template module; keep `InvoiceUsageAppendixRow`/`CapacityCalcTrace` (the flow still writes them).
 
 ### 3. Repository (`db/repositories/billing/invoice-render-input.ts`)
@@ -268,7 +270,7 @@ It opens the repeatable-read read-only transaction (moved here from `render-invo
 ### 6. Orchestrator (`services/billing/render-invoice.ts`)
 
 - `renderDraftInvoice` / `renderFinalInvoice` keep their signatures and error classes; each becomes `const { html, footerHtml, pageSetup } = await buildInvoiceHtml(…); return renderPdfFromHtml(html, { pageSetup, footerHtml });`.
-- `renderFinalInvoice` keeps `invoiceNo` in its signature for callers; the binder takes the number from `billing.document` and **asserts** it equals `invoiceNo` (mismatch → `TEMPLATE_COMPILE_FAILED`-class internal error; it indicates a wiring bug).
+- `renderFinalInvoice` keeps `invoiceNo` in its signature for callers; the binder takes the number from `billing.document` and **asserts** it equals `invoiceNo` (mismatch → `INVOICE_DOCUMENT_MISMATCH`; it indicates a wiring bug). A final bind with no `billing.document` row throws `FinalInvoiceNotFoundError`.
 - Delete the `ratedLinesRepository` and `listCapacityLinesForBill` imports and the appendix reshape.
 - `renderPdfFromHtml` per D9.
 

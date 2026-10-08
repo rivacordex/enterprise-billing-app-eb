@@ -211,7 +211,7 @@ DELIVERED" section.
   Postgres in this environment; (3) the 5 vitest failures above are
   unconfirmed. See "Outstanding / Next" below.
 
-## Invoice Template update — bm47 CORE DELIVERED, follow-ups OPEN (2026-10-08)
+## Invoice Template update — bm47 INCOMPLETE: core binder committed, gates + guardrails OPEN (2026-10-08)
 
 - **bm47 — Invoice binder on `customer_bill_line` + reconciliation (Handlebars layout
   `INVTPL-STD-A4` v1).** Part 4 of `bm00-build-plan.md`. Scoped on explicit user
@@ -274,6 +274,12 @@ DELIVERED" section.
     in this unit (confirmed: `app_runtime` already holds the needed `customer.*`/
     `billing.document` grants via the existing schema-wide/per-table grants in
     `db/bootstrap/bootstrap-db-roles.sql` — no grant file change was needed).
+  - **Review fixes (2026-10-08):** a final `bind()` with no `billing.document` row now
+    throws `FinalInvoiceNotFoundError`; a document/`invoiceNo` mismatch is the new
+    `INVOICE_DOCUMENT_MISMATCH` code (was `TEMPLATE_COMPILE_FAILED`); `invoice.date`
+    is the posting day in the app timezone (was UTC). Spec D8 now records the stopgap
+    serving final renders before bm54 as an **interim exception to Inv #42**. Whether
+    to block final renders until bm54 is an **OPEN** owner decision.
   See `context/billing-management/specs/bm47-invoice-binder-reconciliation.md` for the
   full design/implementation/test plan this unit builds toward.
 

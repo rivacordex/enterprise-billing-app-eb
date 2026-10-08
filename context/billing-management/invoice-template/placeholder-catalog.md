@@ -17,7 +17,7 @@ Every optional key is present with `null`, never `undefined` (Handlebars
 
 | Root | Shape | Notes |
 | --- | --- | --- |
-| `template.*` | `{ layoutCode, layoutVersion, version }` | `version` (the `bill_template_version` id) is `null` until bm53/54 stamp a real generated version. |
+| `template.*` | `{ layoutCode, layoutVersion, version }` | `version` (the `bill_template_version` id) is `null` until bm53/54 stamp a real generated version. A `null` on a **final** render is the bm47 D8 stopgap only (an interim exception to Inv #42); from bm54 a final render must carry a stamped version. |
 | `company.*` | `InvoiceCompany \| null` | `null` until a company profile exists (G15, bm53/61). Fields: `name`, `tradingName`, `registrationNo`, `tin`, `sstRegNo`, `address`, `email`, `phone`, `brandColor`, `accentColor`, `logoUrl`. |
 | `payment.*` | `InvoicePayment \| null` | `null` until a profile exists (G15). Fields: `bankName`, `accountName`, `accountNo`, `swift`, `jomPayBillerCode`, `remittanceEmail`. |
 | `invoice.*` | — | `number` (`null` on draft → "— pending posting —"), `isDraft`, `date` (posting date, `null` on draft), `periodStart`/`periodEnd`, `dueDate`, `currency`, `billRunId`, `cycleName`, `billRef` (= `customer_bill_id`), `poRef`/`contractRef` (always `null` this unit — G9 interim, no source before a profile exists). |
@@ -51,7 +51,7 @@ item 4).
 | JomPAY biller code | digits only |
 | Email | standard email format |
 | Brand / accent colour | `^#[0-9A-Fa-f]{6}$` |
-| MyInvois state code | `^(0[1-9]|1[0-6])$` |
+| MyInvois state code | `^(0[1-9]\|1[0-6])$` |
 
 ## C. Layout generation-time directives (developer layout only — bm50+)
 
