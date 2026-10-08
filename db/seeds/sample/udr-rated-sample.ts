@@ -111,8 +111,12 @@ function buildUdrKey(spec: SampleChargeSpec): string {
 // Exact bigint-scaled amountRaw = ratePerUnit × quantity (never float —
 // mirrors validation/rating/decimal-string.ts's own superRefine check so a
 // PER_UNIT row is guaranteed to pass udrRateDetailSchema).
-function computePerUnitAmountRaw(ratePerUnit: string, quantity: string): string {
-  const scaledAmount = (toScaled(ratePerUnit) * toScaled(quantity)) / 1_000_000n;
+function computePerUnitAmountRaw(
+  ratePerUnit: string,
+  quantity: string,
+): string {
+  const scaledAmount =
+    (toScaled(ratePerUnit) * toScaled(quantity)) / 1_000_000n;
   const sign = scaledAmount < 0n ? "-" : "";
   const abs = scaledAmount < 0n ? -scaledAmount : scaledAmount;
   const digits = abs.toString().padStart(7, "0");
@@ -159,7 +163,7 @@ export function buildSampleUdrRatedRow(
     udrRoundingMode: "HALF_UP",
     udrCurrency: spec.currency,
     udrPriceRef: spec.priceRef,
-    udrUsageRate: rateType === "PER_UNIT" ? spec.usageRate ?? null : null,
+    udrUsageRate: rateType === "PER_UNIT" ? (spec.usageRate ?? null) : null,
     // Fully unclaimed & unattributed (bm26-spec §Implementation §1) — all FOUR
     // billrun_* columns NULL, byte-for-byte the shape rl.py's build_chunk_rows
     // leaves (it writes none of them; they default NULL). billrun_ban_id was

@@ -1035,19 +1035,13 @@ describe.skipIf(!databaseUrl)(
         ).rejects.toThrow(/permission denied for table product_specifications/);
         await expect(
           billrunRuntime`INSERT INTO product.ratecard_ran_usage_lkp DEFAULT VALUES`,
-        ).rejects.toThrow(
-          /permission denied for table ratecard_ran_usage_lkp/,
-        );
+        ).rejects.toThrow(/permission denied for table ratecard_ran_usage_lkp/);
         await expect(
           billrunRuntime`UPDATE product.ratecard_ran_usage_lkp SET service_code = service_code WHERE false`,
-        ).rejects.toThrow(
-          /permission denied for table ratecard_ran_usage_lkp/,
-        );
+        ).rejects.toThrow(/permission denied for table ratecard_ran_usage_lkp/);
         await expect(
           billrunRuntime`DELETE FROM product.ratecard_ran_usage_lkp WHERE false`,
-        ).rejects.toThrow(
-          /permission denied for table ratecard_ran_usage_lkp/,
-        );
+        ).rejects.toThrow(/permission denied for table ratecard_ran_usage_lkp/);
         await expect(
           billrunRuntime`INSERT INTO product.ratecard_version DEFAULT VALUES`,
         ).rejects.toThrow(/permission denied for table ratecard_version/);

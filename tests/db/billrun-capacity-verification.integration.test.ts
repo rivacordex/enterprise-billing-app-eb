@@ -86,8 +86,10 @@ describe.skipIf(!databaseUrl)(
       quantity: number;
       orderItemId: string;
     }) => fixtures().newInventory(args);
-    const readBill = (runId: string, ban: string) => fixtures().readBill(runId, ban);
-    const readLines = (customerBillId: string) => fixtures().readLines(customerBillId);
+    const readBill = (runId: string, ban: string) =>
+      fixtures().readBill(runId, ban);
+    const readLines = (customerBillId: string) =>
+      fixtures().readLines(customerBillId);
 
     // The shared capacity-pricing fixture scaffolding (insertOfferingPrice/
     // newUsageRate/newCapacityCommitment/newCapacityMotivation/
@@ -112,7 +114,8 @@ describe.skipIf(!databaseUrl)(
       claimAt: IN_WINDOW,
       labelPrefix: "BM43",
     });
-    const setupSingleAccountCapacity = capacityFixtures.setupSingleAccountCapacity;
+    const setupSingleAccountCapacity =
+      capacityFixtures.setupSingleAccountCapacity;
     const insertCapacityVolumeRow = capacityFixtures.insertCapacityVolumeRow;
 
     async function aggregate(
@@ -128,7 +131,9 @@ describe.skipIf(!databaseUrl)(
         periodStart: PERIOD_START,
         periodEnd: PERIOD_END,
         glEventAt: GL_EVENT_AT,
-        ...(opts?.capacityMaxBands !== undefined && { capacityMaxBands: opts.capacityMaxBands }),
+        ...(opts?.capacityMaxBands !== undefined && {
+          capacityMaxBands: opts.capacityMaxBands,
+        }),
         ...(opts?.capacityRateMatching !== undefined && {
           capacityRateMatching: opts.capacityRateMatching,
         }),
@@ -183,11 +188,13 @@ describe.skipIf(!databaseUrl)(
       bill: NonNullable<Awaited<ReturnType<typeof readBill>>>;
       line: Awaited<ReturnType<typeof readLines>>[number] | undefined;
     }> {
-      const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
-        label,
-        offeringName,
-        { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
-      );
+      const { ban, usageRatePriceId, runId, piId } =
+        await setupSingleAccountCapacity(label, offeringName, {
+          baseRate: "100",
+          committedQuantity: 1000,
+          steps: null,
+          udrType: "RAN_USAGE",
+        });
       await insertCapacityVolumeRow({
         subRef: piId,
         runId,
@@ -261,16 +268,17 @@ describe.skipIf(!databaseUrl)(
         const anchors = [800, 1000, 2000, 0];
         for (const ea of anchors) {
           const label = `Anchor${ea}`;
-          const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
-            label,
-            `Verify Anchor Offering ${ea}`,
-            {
-              baseRate: "100",
-              committedQuantity: 1000,
-              steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
-              udrType: "RAN_USAGE",
-            },
-          );
+          const { ban, usageRatePriceId, runId, piId } =
+            await setupSingleAccountCapacity(
+              label,
+              `Verify Anchor Offering ${ea}`,
+              {
+                baseRate: "100",
+                committedQuantity: 1000,
+                steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
+                udrType: "RAN_USAGE",
+              },
+            );
           if (ea > 0) {
             await insertCapacityVolumeRow({
               subRef: piId,
@@ -308,7 +316,9 @@ describe.skipIf(!databaseUrl)(
           WHERE  customer_bill_line_id = ${await firstLineId(bill.customerBillId)}
         `;
 
-        await expect(verify(runId, ban, 1)).rejects.toThrow(/RECONCILIATION_MISMATCH/);
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          /RECONCILIATION_MISMATCH/,
+        );
       },
       120_000,
     );
@@ -329,7 +339,9 @@ describe.skipIf(!databaseUrl)(
           WHERE  customer_bill_line_id = ${await firstLineId(bill.customerBillId)}
         `;
 
-        await expect(verify(runId, ban, 1)).rejects.toThrow(/RECONCILIATION_MISMATCH/);
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          /RECONCILIATION_MISMATCH/,
+        );
       },
       120_000,
     );
@@ -364,10 +376,11 @@ describe.skipIf(!databaseUrl)(
         "makes Model-2 disagree with the billed Model-1 figure, HARD-failing " +
         "CAPACITY_RATE_MISMATCH and naming both figures (Inv #29/#30)",
       async () => {
-        const { ban, usageRatePriceId, runId, line } = await setupAndAggregateSingleLine(
-          "RateDrift",
-          "Verify RateDrift Offering",
-        );
+        const { ban, usageRatePriceId, runId, line } =
+          await setupAndAggregateSingleLine(
+            "RateDrift",
+            "Verify RateDrift Offering",
+          );
         expect(line!.grossAmount).toBe("100000.00"); // Model 1, billed at rate 100
 
         // The rate card changes AFTER aggregation ran — Model-2 (verification)
@@ -378,9 +391,15 @@ describe.skipIf(!databaseUrl)(
           WHERE  product_offering_price_id = ${usageRatePriceId}
         `;
 
-        await expect(verify(runId, ban, 1)).rejects.toThrow(/CAPACITY_RATE_MISMATCH/);
-        await expect(verify(runId, ban, 1)).rejects.toThrow(/Model 1 \(billed\)/);
-        await expect(verify(runId, ban, 1)).rejects.toThrow(/Model 2 \(re-resolved\)/);
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          /CAPACITY_RATE_MISMATCH/,
+        );
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          /Model 1 \(billed\)/,
+        );
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          /Model 2 \(re-resolved\)/,
+        );
       },
       120_000,
     );
@@ -390,10 +409,11 @@ describe.skipIf(!databaseUrl)(
         "account's stage reaches DONE and the stored (Model-1) figure is untouched " +
         "(verification never writes)",
       async () => {
-        const { ban, usageRatePriceId, runId } = await setupAndAggregateSingleLine(
-          "RateDriftOff",
-          "Verify RateDriftOff Offering",
-        );
+        const { ban, usageRatePriceId, runId } =
+          await setupAndAggregateSingleLine(
+            "RateDriftOff",
+            "Verify RateDriftOff Offering",
+          );
 
         await sql`
           UPDATE product.product_offering_price

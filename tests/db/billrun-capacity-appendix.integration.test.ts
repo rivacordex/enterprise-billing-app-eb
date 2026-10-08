@@ -403,7 +403,8 @@ describe.skipIf(!databaseUrl)(
         const line = lines[0]!;
         expect(line.ratedAmount).toBe("100000.00");
 
-        const appendix = line.additionalInfo!.appendix as InvoiceUsageAppendixRow[];
+        const appendix = line.additionalInfo!
+          .appendix as InvoiceUsageAppendixRow[];
         expect(appendix).toHaveLength(4);
 
         const a1 = findAppendixRow(appendix, "POLY-A1");

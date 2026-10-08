@@ -34,8 +34,15 @@ export interface FlowDoubleFixturesDeps {
 }
 
 export function createFlowDoubleFixtures(deps: FlowDoubleFixturesDeps) {
-  const { sql, db, getActorId, getCycleId, periodStart, periodEnd, labelPrefix } =
-    deps;
+  const {
+    sql,
+    db,
+    getActorId,
+    getCycleId,
+    periodStart,
+    periodEnd,
+    labelPrefix,
+  } = deps;
   const scheduledRunDate = deps.scheduledRunDate ?? "2026-07-01";
 
   async function dropAll(client: postgresjs.Sql): Promise<void> {

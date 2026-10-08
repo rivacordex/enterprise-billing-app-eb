@@ -1,6 +1,9 @@
 import Handlebars from "handlebars";
 
-import { KNOWN_HELPERS, registerInvoiceHelpers } from "@/services/billing/invoice-template/helpers";
+import {
+  KNOWN_HELPERS,
+  registerInvoiceHelpers,
+} from "@/services/billing/invoice-template/helpers";
 import { InvoiceRenderError } from "@/types/billing";
 import type { InvoiceRenderInput } from "@/types/billing";
 

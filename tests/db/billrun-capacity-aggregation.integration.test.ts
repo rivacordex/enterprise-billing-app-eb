@@ -111,7 +111,8 @@ describe.skipIf(!databaseUrl)(
       labelPrefix: "BM42",
     });
     const newCapacityOffering = capacityFixtures.newCapacityOffering;
-    const setupSingleAccountCapacity = capacityFixtures.setupSingleAccountCapacity;
+    const setupSingleAccountCapacity =
+      capacityFixtures.setupSingleAccountCapacity;
     const insertCapacityVolumeRow = capacityFixtures.insertCapacityVolumeRow;
 
     async function aggregate(
@@ -131,7 +132,8 @@ describe.skipIf(!databaseUrl)(
       });
     }
 
-    const readBill = (runId: string, ban: string) => fixtures().readBill(runId, ban);
+    const readBill = (runId: string, ban: string) =>
+      fixtures().readBill(runId, ban);
 
     // A HARD guard must fail aggregate() for its account and leave no bill.
     async function expectGuardRejection(
@@ -143,7 +145,8 @@ describe.skipIf(!databaseUrl)(
       expect(await readBill(runId, ban)).toBeUndefined();
     }
 
-    const readLines = (customerBillId: string) => fixtures().readLines(customerBillId);
+    const readLines = (customerBillId: string) =>
+      fixtures().readLines(customerBillId);
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
@@ -204,20 +207,56 @@ describe.skipIf(!databaseUrl)(
         "150,000 (gross 200,000 − discount 50,000) / 100,000 (TC14/TC15/TC18)",
       async () => {
         const anchors = [
-          { label: "A800", ea: 800, gross: "100000.00", discount: "0.00", net: "100000.00", rated: "80000.00", udrCount: 1 },
-          { label: "A1000", ea: 1000, gross: "100000.00", discount: "0.00", net: "100000.00", rated: "100000.00", udrCount: 1 },
-          { label: "A2000", ea: 2000, gross: "200000.00", discount: "50000.00", net: "150000.00", rated: "200000.00", udrCount: 1 },
-          { label: "A0", ea: 0, gross: "100000.00", discount: "0.00", net: "100000.00", rated: "0.00", udrCount: 0 },
+          {
+            label: "A800",
+            ea: 800,
+            gross: "100000.00",
+            discount: "0.00",
+            net: "100000.00",
+            rated: "80000.00",
+            udrCount: 1,
+          },
+          {
+            label: "A1000",
+            ea: 1000,
+            gross: "100000.00",
+            discount: "0.00",
+            net: "100000.00",
+            rated: "100000.00",
+            udrCount: 1,
+          },
+          {
+            label: "A2000",
+            ea: 2000,
+            gross: "200000.00",
+            discount: "50000.00",
+            net: "150000.00",
+            rated: "200000.00",
+            udrCount: 1,
+          },
+          {
+            label: "A0",
+            ea: 0,
+            gross: "100000.00",
+            discount: "0.00",
+            net: "100000.00",
+            rated: "0.00",
+            udrCount: 0,
+          },
         ];
 
         for (const a of anchors) {
           const { ban, offeringId, usageRatePriceId, runId, piId } =
-            await setupSingleAccountCapacity(a.label, `Anchor Offering ${a.label}`, {
-              baseRate: "100",
-              committedQuantity: 1000,
-              steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
-              udrType: "RAN_USAGE",
-            });
+            await setupSingleAccountCapacity(
+              a.label,
+              `Anchor Offering ${a.label}`,
+              {
+                baseRate: "100",
+                committedQuantity: 1000,
+                steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
+                udrType: "RAN_USAGE",
+              },
+            );
           if (a.ea > 0) {
             await insertCapacityVolumeRow({
               subRef: piId,
@@ -405,7 +444,12 @@ describe.skipIf(!databaseUrl)(
         const { ban, runId } = await setupSingleAccountCapacity(
           "NoBaseRate",
           "No-Base-Rate Offering",
-          { baseRate: null, committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
+          {
+            baseRate: null,
+            committedQuantity: 1000,
+            steps: null,
+            udrType: "RAN_USAGE",
+          },
         );
         await expectGuardRejection(runId, ban, /CAPACITY_BASE_RATE_NOT_FOUND/);
       },
@@ -416,11 +460,17 @@ describe.skipIf(!databaseUrl)(
       "[CRITICAL] CAPACITY_UDR_TYPE_MISMATCH — a claimed row off-type from the " +
         "offering's spec udrType fails HARD, no bill produced (Inv #32)",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
-          "UdrTypeMismatch",
-          "UDR-Type-Mismatch Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
-        );
+        const { ban, usageRatePriceId, runId, piId } =
+          await setupSingleAccountCapacity(
+            "UdrTypeMismatch",
+            "UDR-Type-Mismatch Offering",
+            {
+              baseRate: "100",
+              committedQuantity: 1000,
+              steps: null,
+              udrType: "RAN_USAGE",
+            },
+          );
         // Claimed row carries a DIFFERENT udr_type than the offering's spec.
         await insertCapacityVolumeRow({
           subRef: piId,
@@ -447,12 +497,16 @@ describe.skipIf(!databaseUrl)(
           usageRatePriceId: mismatchPriceId,
           runId: mismatchRun,
           piId: mismatchPi,
-        } = await setupSingleAccountCapacity("RateMismatch", "Rate-Mismatch Offering", {
-          baseRate: "100",
-          committedQuantity: 1000,
-          steps: null,
-          udrType: "RAN_USAGE",
-        });
+        } = await setupSingleAccountCapacity(
+          "RateMismatch",
+          "Rate-Mismatch Offering",
+          {
+            baseRate: "100",
+            committedQuantity: 1000,
+            steps: null,
+            udrType: "RAN_USAGE",
+          },
+        );
         await insertCapacityVolumeRow({
           subRef: mismatchPi,
           runId: mismatchRun,
@@ -462,7 +516,11 @@ describe.skipIf(!databaseUrl)(
           rate: "85.000000",
           priceRef: mismatchPriceId,
         });
-        await expectGuardRejection(mismatchRun, mismatchBan, /CAPACITY_RATE_MISMATCH/);
+        await expectGuardRejection(
+          mismatchRun,
+          mismatchBan,
+          /CAPACITY_RATE_MISMATCH/,
+        );
 
         // A NULL-rate (non-PER_UNIT, e.g. a FLAT row) must COUNT as a
         // mismatch — IS DISTINCT FROM, not <> (TC35).
@@ -473,7 +531,12 @@ describe.skipIf(!databaseUrl)(
         } = await setupSingleAccountCapacity(
           "NullRateMismatch",
           "Null-Rate-Mismatch Offering",
-          { baseRate: "100", committedQuantity: 1000, steps: null, udrType: "RAN_USAGE" },
+          {
+            baseRate: "100",
+            committedQuantity: 1000,
+            steps: null,
+            udrType: "RAN_USAGE",
+          },
         );
         await insertCapacityVolumeRow({
           subRef: nullRatePi,
@@ -484,7 +547,11 @@ describe.skipIf(!databaseUrl)(
           rate: null,
           priceRef: null,
         });
-        await expectGuardRejection(nullRateRun, nullRateBan, /CAPACITY_RATE_MISMATCH/);
+        await expectGuardRejection(
+          nullRateRun,
+          nullRateBan,
+          /CAPACITY_RATE_MISMATCH/,
+        );
       },
       120_000,
     );
@@ -494,10 +561,8 @@ describe.skipIf(!databaseUrl)(
         "under the default capacity_max_bands=1, and raising the input to 2 lets " +
         "it through (TC52)",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
-          "MultiStep",
-          "Multi-Step Offering",
-          {
+        const { ban, usageRatePriceId, runId, piId } =
+          await setupSingleAccountCapacity("MultiStep", "Multi-Step Offering", {
             baseRate: "100",
             committedQuantity: null,
             steps: [
@@ -505,8 +570,7 @@ describe.skipIf(!databaseUrl)(
               { aboveQuantity: 2000, ratePerUnit: "25" },
             ],
             udrType: "RAN_USAGE",
-          },
-        );
+          });
         await insertCapacityVolumeRow({
           subRef: piId,
           runId,
@@ -518,7 +582,11 @@ describe.skipIf(!databaseUrl)(
         });
 
         // Default capacity_max_bands (1) rejects a 2-band schedule.
-        await expectGuardRejection(runId, ban, /CAPACITY_MULTI_STEP_UNSUPPORTED/);
+        await expectGuardRejection(
+          runId,
+          ban,
+          /CAPACITY_MULTI_STEP_UNSUPPORTED/,
+        );
 
         // Raising the input to 2 is a config change, not a pricing-SQL edit —
         // the SAME account now bills. rated 2500×100=250,000; band1 (1000-2000)
@@ -562,17 +630,18 @@ describe.skipIf(!databaseUrl)(
       "a capacity offering's usage in a DIFFERENT unit stays an ordinary USAGE " +
         "line, and the capacity volume is not double-counted there",
       async () => {
-        const { ban, usageRatePriceId, runId, piId } = await setupSingleAccountCapacity(
-          "DifferentUnit",
-          "Different-Unit Offering",
-          {
-            unit: "EA",
-            baseRate: "100",
-            committedQuantity: 1000,
-            steps: null,
-            udrType: "RAN_USAGE",
-          },
-        );
+        const { ban, usageRatePriceId, runId, piId } =
+          await setupSingleAccountCapacity(
+            "DifferentUnit",
+            "Different-Unit Offering",
+            {
+              unit: "EA",
+              baseRate: "100",
+              committedQuantity: 1000,
+              steps: null,
+              udrType: "RAN_USAGE",
+            },
+          );
         // Capacity volume in EA (the capacity unit).
         await insertCapacityVolumeRow({
           subRef: piId,

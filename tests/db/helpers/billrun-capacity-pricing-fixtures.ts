@@ -55,7 +55,9 @@ export interface CapacityPricingFixturesDeps {
   readonly labelPrefix: string;
 }
 
-export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps) {
+export function createCapacityPricingFixtures(
+  deps: CapacityPricingFixturesDeps,
+) {
   const {
     getSql,
     newOffering,
@@ -210,7 +212,10 @@ export function createCapacityPricingFixtures(deps: CapacityPricingFixturesDeps)
             "2026-01-01T00:00:00Z",
             currency,
           );
-    if (opts.committedQuantity !== null && opts.committedQuantity !== undefined) {
+    if (
+      opts.committedQuantity !== null &&
+      opts.committedQuantity !== undefined
+    ) {
       await newCapacityCommitment(
         offeringId,
         unit,

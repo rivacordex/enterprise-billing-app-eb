@@ -1349,9 +1349,7 @@ function periodToUtcRange(
 // postgres.js's ~65k bind-parameter ceiling as the profile is tuned up — each
 // row carries ~two dozen bound values, so a single `.values(rows)` for the
 // whole set would wall out somewhere past ~2,700 rows. `ci` fits in one chunk.
-async function insertUdrRatedChunked(
-  rows: SampleUdrRatedRow[],
-): Promise<void> {
+async function insertUdrRatedChunked(rows: SampleUdrRatedRow[]): Promise<void> {
   const INSERT_CHUNK = 1000;
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
     await db.insert(udrRated).values(rows.slice(i, i + INSERT_CHUNK));
@@ -1543,8 +1541,7 @@ async function seedSampleCapacityCharges(
             usageUnit: SAMPLE_CAPACITY_UNIT,
             polygonCell: {
               mnoPublicKey: SAMPLE_CAPACITY_APPENDIX_MNO,
-              commercialUnitPublicKey:
-                SAMPLE_CAPACITY_APPENDIX_COMMERCIAL_UNIT,
+              commercialUnitPublicKey: SAMPLE_CAPACITY_APPENDIX_COMMERCIAL_UNIT,
               polygonId: cell.polygonId,
             },
             // bm48 — the geo rating freezes from the usage card's matched
