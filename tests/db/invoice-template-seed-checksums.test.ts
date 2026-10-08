@@ -27,8 +27,15 @@ const DIRS: { label: string; dir: string }[] = [
 describe("bm50 seed checksums match the repo files", () => {
   for (const { label, dir } of DIRS) {
     it(`${label}: the migration digest equals the recomputed checksums.json digest`, () => {
-      const { digest } = buildIndex(path.join(process.cwd(), dir));
+      const dirPath = path.join(process.cwd(), dir);
+      const { bytes, digest } = buildIndex(dirPath);
       expect(digest).toMatch(/^[0-9a-f]{64}$/);
+      // The committed checksums.json must be byte-identical to the freshly built
+      // index — catches an index that drifted from the files (e.g. a file edited
+      // without re-running write-checksums), which the digest-vs-migration check
+      // alone would miss.
+      const committed = readFileSync(path.join(dirPath, "checksums.json"));
+      expect(committed.equals(bytes)).toBe(true);
       // The digest must appear in the migration IN CHECKSUM POSITION — i.e. as a
       // `'<digest>', 'sha256'` column pair in an INSERT — not merely somewhere in
       // the file (which a stray comment could satisfy).

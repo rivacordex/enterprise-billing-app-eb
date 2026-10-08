@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -69,13 +75,17 @@ function main(): void {
   if (!dirArg) {
     throw new Error("usage: write-checksums.ts <version-dir>");
   }
-  const dir = path.resolve(process.cwd(), dirArg);
-  // Path-traversal containment: the CLI argument is untrusted input, so refuse
-  // any resolved path outside the invoice-template seed tree before reading or
-  // writing anything.
-  if (dir !== SEED_ROOT && !dir.startsWith(SEED_ROOT + path.sep)) {
+  // Path-traversal containment: the CLI argument is untrusted input. Canonicalize
+  // BOTH the seed root and the requested dir with realpathSync (resolving any
+  // symlinks) before the containment check, and use the canonical dir for the
+  // subsequent reads/writes — so a symlinked argument cannot redirect the write
+  // outside the seed tree. realpathSync throws if the dir does not exist, which
+  // is the correct fail-loud for a non-existent version directory.
+  const root = realpathSync(SEED_ROOT);
+  const dir = realpathSync(path.resolve(process.cwd(), dirArg));
+  if (dir !== root && !dir.startsWith(root + path.sep)) {
     throw new Error(
-      `write-checksums: refusing a path outside ${SEED_ROOT}: ${dirArg}`,
+      `write-checksums: refusing a path outside ${root}: ${dirArg}`,
     );
   }
   const { bytes, digest } = buildIndex(dir);
