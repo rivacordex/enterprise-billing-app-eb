@@ -1,7 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type postgresjs from "postgres";
@@ -30,9 +36,20 @@ export const RATING_WORKER_DIR = join(
   "workflow-engine",
 );
 
+// python3 is invoked by ABSOLUTE path, never resolved through PATH (a writable
+// PATH entry could shadow it). RATING_PYTHON3 selects a local interpreter (e.g.
+// a py3.12 venv); otherwise the fixed system locations CI installs into.
+const PYTHON3_CANDIDATES = ["/usr/bin/python3", "/usr/local/bin/python3"];
+const PYTHON3: string | undefined = (() => {
+  const override = process.env.RATING_PYTHON3;
+  if (override) return isAbsolute(override) ? override : undefined;
+  return PYTHON3_CANDIDATES.find((p) => existsSync(p));
+})();
+
 export function pythonRuntimeReady(): boolean {
+  if (!PYTHON3) return false;
   try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
+    execFileSync(PYTHON3, ["-c", "import runtime, polars, psycopg"], {
       cwd: RATING_WORKER_DIR,
       stdio: "ignore",
     });
@@ -212,7 +229,8 @@ export function createRatingPipeline(
   };
 
   function runModule(module: string, args: string[]): string {
-    const out = execFileSync("python3", ["-m", module, ...args], {
+    if (!PYTHON3) throw new Error("no absolute python3 (set RATING_PYTHON3)");
+    const out = execFileSync(PYTHON3, ["-m", module, ...args], {
       cwd: RATING_WORKER_DIR,
       encoding: "utf8",
       env,

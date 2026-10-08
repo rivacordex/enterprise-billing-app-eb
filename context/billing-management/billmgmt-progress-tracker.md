@@ -319,7 +319,11 @@ DELIVERED" section.
     runners) now lives in `tests/helpers/rating-ran-harness.ts`, and both `rm13` and `rm23`
     use it. No assertion changes. tsc/ESLint/Prettier are green; both suites are still
     **unrun** (same host limits as above). `rm07`–`rm12` still carry their own older copies,
-    left as they were.
+    left as they were. Second review (Sonar S4036, PATH hotspot): the harness now runs
+    python3 by **absolute path** only. It uses `RATING_PYTHON3` if that is set to an
+    absolute path, otherwise `/usr/bin/python3` or `/usr/local/bin/python3`. A local
+    py3.12 venv/shim that is found only through `PATH` must now be named in
+    `RATING_PYTHON3`, or rm13/rm23 skip.
   - **Next:** bm49 switches the binder's usage section onto these columns.
 
 ## Outstanding / Next (post-Phase 4)
