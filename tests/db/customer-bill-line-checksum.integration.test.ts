@@ -336,7 +336,7 @@ describe.skipIf(!databaseUrl)(
       expect(recRetamped).not.toBe(recChecksum);
     });
 
-    it("bm44: a RECURRING line's appended element is JSON null, not \"0.00\" — no collision with a rated-to-zero USAGE line", async () => {
+    it('bm44: a RECURRING line\'s appended element is JSON null, not "0.00" — no collision with a rated-to-zero USAGE line', async () => {
       // A RECURRING line (rated_amount NULL, unrated) and a USAGE line
       // rated to exactly zero (rated_amount = '0.00') must hash DIFFERENTLY
       // for otherwise-identical first-seven fields, proving NULL serializes

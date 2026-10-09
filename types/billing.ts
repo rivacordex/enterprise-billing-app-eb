@@ -907,3 +907,53 @@ export class FinalInvoiceNotFoundError extends Error {
     this.name = "FinalInvoiceNotFoundError";
   }
 }
+
+// ============================================================================
+// bm51 — Generalized write-once blob store (Invoice Template update, Part 4).
+// `services/billing/blob-store.ts` serves three containers; `putInvoice`/
+// `getInvoice`/`putReport` are thin wrappers over it. No consumer of the two
+// new containers exists until bm53.
+// ============================================================================
+
+// The three blob containers, all in the same storage account (D3 — no new env
+// var). `invoices` keeps md5 as built; the template/asset containers use
+// SHA-256 (C4/G6). `createIfNotExists` runs per container on the connection-
+// string path only.
+export const BLOB_CONTAINERS = [
+  "invoices",
+  "invoice-templates",
+  "invoice-assets",
+] as const;
+export type BlobContainer = (typeof BLOB_CONTAINERS)[number];
+
+// The checksum algorithm is recorded with every stored object (G6). Both values
+// are valid `node:crypto` hash names, so `createHash(algorithm)` is direct.
+export const CHECKSUM_ALGORITHMS = ["md5", "sha256"] as const;
+export type ChecksumAlgorithm = (typeof CHECKSUM_ALGORITHMS)[number];
+
+// The blob store's typed failures (code-standards Part 2 TS rule 7). A
+// dedicated class rather than `AppError` because these codes live here with the
+// other billing codes (not in `lib/errors.ts`'s closed HTTP-mapped union) and
+// carry a structured `detail` (e.g. the conflicting `blobRef`) — the same
+// pattern as `InvoiceRenderError` above.
+export const BLOB_STORE_ERROR_CODES = [
+  "BLOB_ALREADY_EXISTS",
+  "INVALID_BLOB_PATH",
+] as const;
+export type BlobStoreErrorCode = (typeof BLOB_STORE_ERROR_CODES)[number];
+
+export class BlobStoreError extends Error {
+  readonly code: BlobStoreErrorCode;
+  readonly detail: Record<string, unknown> | undefined;
+
+  constructor(
+    code: BlobStoreErrorCode,
+    message: string,
+    detail?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "BlobStoreError";
+    this.code = code;
+    this.detail = detail;
+  }
+}

@@ -41,9 +41,7 @@ export async function isDisposableDatabase(
  * Postgres instance — never against a shared or production database (hence
  * the `assertTestDatabaseUrl` sanity check in the CLI entrypoint below).
  */
-export async function markDatabaseDisposable(
-  sql: postgres.Sql,
-): Promise<void> {
+export async function markDatabaseDisposable(sql: postgres.Sql): Promise<void> {
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS public.${SENTINEL_TABLE} (
       marker     text PRIMARY KEY,

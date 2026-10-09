@@ -24,6 +24,18 @@
 # stage in this pipeline (no stage here applies main.bicep — existing
 # convention, ratemgmt-progress-tracker.md). Queue manually with
 # scanRatingEngineDast=true once a real engine is deployed and reachable.
+#
+# A stages template has its OWN parameter scope — `${{ parameters.X }}` here does
+# NOT inherit the root pipeline's parameters. So scanRatingEngineDast MUST be
+# declared below (default false) and passed in by the root include
+# (`parameters: { scanRatingEngineDast: ${{ parameters.scanRatingEngineDast }} }`),
+# otherwise the reference expands to empty and the condition becomes the
+# un-parseable `eq(, true)` — which fails compilation of the WHOLE pipeline.
+parameters:
+  - name: scanRatingEngineDast
+    type: boolean
+    default: false
+
 stages:
   - stage: zap_scan_workflow_engine
     displayName: OWASP ZAP DAST (rating engine)
@@ -37,7 +49,7 @@ stages:
         steps:
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |

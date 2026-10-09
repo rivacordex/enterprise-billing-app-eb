@@ -40,7 +40,11 @@ describe("buildInvoiceHtml — not found", () => {
     mockRead.mockResolvedValue(null);
 
     await expect(
-      buildInvoiceHtml({ runId: "BRN00000042", banId: "BAN00000001", mode: "draft" }),
+      buildInvoiceHtml({
+        runId: "BRN00000042",
+        banId: "BAN00000001",
+        mode: "draft",
+      }),
     ).rejects.toBeInstanceOf(DraftInvoiceNotFoundError);
   });
 
@@ -61,9 +65,11 @@ describe("buildInvoiceHtml — not found", () => {
 describe("buildInvoiceHtml — read snapshot (D1)", () => {
   it("reads inside one repeatable-read, read-only transaction for the draft mode", async () => {
     mockRead.mockResolvedValue(null);
-    await buildInvoiceHtml({ runId: "BRN00000042", banId: "BAN00000001", mode: "draft" }).catch(
-      () => {},
-    );
+    await buildInvoiceHtml({
+      runId: "BRN00000042",
+      banId: "BAN00000001",
+      mode: "draft",
+    }).catch(() => {});
     expect(transactionOptions).toEqual([
       { isolationLevel: "repeatable read", accessMode: "read only" },
     ]);

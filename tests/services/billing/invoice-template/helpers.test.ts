@@ -7,7 +7,9 @@ import type { InvoiceRenderInput } from "@/types/billing";
 // bm47-spec §Design D6, test plan row 2. Each of the nine helpers, compiled
 // through the real locked-down env (`knownHelpersOnly`, `strict`).
 
-function fixture(overrides: Partial<InvoiceRenderInput> = {}): InvoiceRenderInput {
+function fixture(
+  overrides: Partial<InvoiceRenderInput> = {},
+): InvoiceRenderInput {
   return {
     template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: null },
     company: null,
@@ -60,6 +62,14 @@ function render(source: string, data: InvoiceRenderInput): string {
   return compileInvoiceTemplate(source)(data);
 }
 
+// Most helper cases render a template against a single overridden `amountDue`.
+function renderAmount(source: string, amountDue: string): string {
+  return render(
+    source,
+    fixture({ totals: { ...fixture().totals, amountDue } }),
+  );
+}
+
 describe("money", () => {
   it("formats through the shared formatCurrency (no bare number)", () => {
     const html = render("{{money totals.amountDue}}", fixture());
@@ -68,18 +78,12 @@ describe("money", () => {
   });
 
   it("brackets a negative amount", () => {
-    const html = render(
-      "{{money totals.amountDue}}",
-      fixture({ totals: { ...fixture().totals, amountDue: "-50.00" } }),
-    );
+    const html = renderAmount("{{money totals.amountDue}}", "-50.00");
     expect(html).toMatch(/^\(.*50\.00.*\)$/);
   });
 
   it("negate=true prints – for a zero amount", () => {
-    const html = render(
-      '{{money totals.amountDue negate=true}}',
-      fixture({ totals: { ...fixture().totals, amountDue: "0.00" } }),
-    );
+    const html = renderAmount("{{money totals.amountDue negate=true}}", "0.00");
     expect(html).toBe("–");
   });
 });
@@ -90,42 +94,41 @@ describe("date / period", () => {
   });
 
   it("renders a dash for a null date", () => {
-    expect(render("{{date invoice.date}}", fixture({ invoice: { ...fixture().invoice, date: null } }))).toBe("—");
+    expect(
+      render(
+        "{{date invoice.date}}",
+        fixture({ invoice: { ...fixture().invoice, date: null } }),
+      ),
+    ).toBe("—");
   });
 
   it("joins two dates with an en dash", () => {
-    expect(render("{{period invoice.periodStart invoice.periodEnd}}", fixture())).toBe(
-      "01 Aug 2026 – 31 Aug 2026",
-    );
+    expect(
+      render("{{period invoice.periodStart invoice.periodEnd}}", fixture()),
+    ).toBe("01 Aug 2026 – 31 Aug 2026");
   });
 });
 
 describe("qty / price / int / amt", () => {
   it("qty renders 3 dp, grouped", () => {
-    const html = render("{{qty totals.amountDue}}", fixture({ totals: { ...fixture().totals, amountDue: "1234.5" } }));
+    const html = renderAmount("{{qty totals.amountDue}}", "1234.5");
     expect(html).toBe("1,234.500");
   });
 
   it("price renders 2 dp at or above 1", () => {
-    expect(render("{{price totals.amountDue}}", fixture({ totals: { ...fixture().totals, amountDue: "12.5" } }))).toBe(
-      "12.50",
-    );
+    expect(renderAmount("{{price totals.amountDue}}", "12.5")).toBe("12.50");
   });
 
   it("price renders 4 dp below 1 (sub-cent unit rates)", () => {
-    expect(render("{{price totals.amountDue}}", fixture({ totals: { ...fixture().totals, amountDue: "0.0125" } }))).toBe(
-      "0.0125",
-    );
+    expect(renderAmount("{{price totals.amountDue}}", "0.0125")).toBe("0.0125");
   });
 
   it("int renders a grouped integer, no decimals", () => {
-    expect(render("{{int totals.amountDue}}", fixture({ totals: { ...fixture().totals, amountDue: "12345" } }))).toBe(
-      "12,345",
-    );
+    expect(renderAmount("{{int totals.amountDue}}", "12345")).toBe("12,345");
   });
 
   it("amt renders 2 dp with no grouping", () => {
-    expect(render("{{amt totals.amountDue}}", fixture({ totals: { ...fixture().totals, amountDue: "12345.6" } }))).toBe(
+    expect(renderAmount("{{amt totals.amountDue}}", "12345.6")).toBe(
       "12345.60",
     );
   });
@@ -133,23 +136,33 @@ describe("qty / price / int / amt", () => {
 
 describe("unitCode", () => {
   it("maps a known unit to UN/ECE rec 20", () => {
-    expect(render("{{unitCode customer.billingAccountId}}", fixture({ customer: { ...fixture().customer, billingAccountId: "GB" } }))).toBe(
-      "E34",
-    );
+    expect(
+      render(
+        "{{unitCode customer.billingAccountId}}",
+        fixture({
+          customer: { ...fixture().customer, billingAccountId: "GB" },
+        }),
+      ),
+    ).toBe("E34");
   });
 
   it("passes an unrecognised unit through unchanged", () => {
-    expect(render("{{unitCode customer.billingAccountId}}", fixture({ customer: { ...fixture().customer, billingAccountId: "XX" } }))).toBe(
-      "XX",
-    );
+    expect(
+      render(
+        "{{unitCode customer.billingAccountId}}",
+        fixture({
+          customer: { ...fixture().customer, billingAccountId: "XX" },
+        }),
+      ),
+    ).toBe("XX");
   });
 });
 
 describe("asset", () => {
   it("throws TEMPLATE_COMPILE_FAILED — reserved, never used by layout v1", () => {
-    expect(() => render("{{asset customer.billingAccountId}}", fixture())).toThrow(
-      InvoiceRenderError,
-    );
+    expect(() =>
+      render("{{asset customer.billingAccountId}}", fixture()),
+    ).toThrow(InvoiceRenderError);
   });
 });
 
@@ -157,7 +170,9 @@ describe("no helper returns SafeString", () => {
   it("escapes HTML in a value money/date/etc. wrap (the layout never needs {{{)", () => {
     const html = render(
       "{{customer.name}}",
-      fixture({ customer: { ...fixture().customer, name: "<script>alert(1)</script>" } }),
+      fixture({
+        customer: { ...fixture().customer, name: "<script>alert(1)</script>" },
+      }),
     );
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");

@@ -509,6 +509,68 @@ DELIVERED" section.
     `billmgmt-known-issues.md` "ratecard role grants are not seeded" (observed, not
     fixed); `infra/docs/db-role-verification.md` re-run order.
 
+## Invoice Template update — bm51 DELIVERED (code + docs), Azurite round-trip UNRUN (2026-10-09)
+
+- **bm51 — Generalized write-once blob store + template/asset containers (Invoice
+  Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm51-generalized-blob-store.md`. Generalized the
+  single-container invoice client into `putObject`/`getObject(container, path, …)` over
+  the three containers (`invoices`, `invoice-templates`, `invoice-assets`) with an
+  explicit write-once mode and a per-object checksum algorithm; `putInvoice`/`getInvoice`/
+  `putReport` are now thin wrappers whose bytes, paths, content types, md5 checksums and
+  412 behaviour are unchanged. **No consumer of the two new containers exists yet** (grep
+  gate; nothing reads them until bm53). Gate G6/O2/C4 OPEN (interim): `invoices` keeps
+  md5, the new containers use SHA-256, every put returns the algorithm.
+  - **Delivered:**
+    - `types/billing.ts` — `BLOB_CONTAINERS`/`BlobContainer`, `CHECKSUM_ALGORITHMS`/
+      `ChecksumAlgorithm`, and `BLOB_STORE_ERROR_CODES` (`BLOB_ALREADY_EXISTS`,
+      `INVALID_BLOB_PATH`) with a dedicated `BlobStoreError` class.
+    - `services/billing/blob-store.ts` — rewritten per D1–D4: a memoized **service**
+      client (same two auth paths, same mutual-exclusion/HTTPS/clear-on-rejection) plus a
+      `Map<BlobContainer, Promise<ContainerClient>>` with per-container
+      `createIfNotExists` on the connection-string path only; `putObject` (writeOnce +
+      `onExists: 'returnExisting' | 'throw'` + `checksumAlgorithm`, returns
+      `{ blobRef, checksum, checksumAlgorithm, created }`), `getObject` (raw bytes, **no
+      verification** — the caller's job), `parseBlobRef`, `digest`; D2 path-safety regex
+      (`..`/leading-/trailing-`/`/space/`%`/>512 rejected) + runtime container check.
+    - `scripts/azurite-init.ts` — added `invoice-templates`, `invoice-assets` to the
+      local container list.
+  - **Deviation from the spec wording (recorded):** D1/D2 write `AppError('BLOB_ALREADY_EXISTS', …)`
+    / `AppError('INVALID_BLOB_PATH')`, but the real `AppError` (`lib/errors.ts`) is a
+    closed 6-code HTTP-mapped union taking `(code, message)` and cannot carry the
+    `{ blobRef }` detail; and implementation step 1 places the codes in `types/billing.ts`.
+    These cannot both hold, so the codes live in `types/billing.ts` as `BLOB_STORE_ERROR_CODES`
+    thrown via a dedicated `BlobStoreError` class — the exact `InvoiceRenderError`
+    precedent. The test table asserts on the `code`, which is satisfied either way.
+  - **Tests (DB-free, RUN GREEN here):** `tests/services/billing/blob-store.test.ts`
+    (extended: `putObject` per container, `ifNoneMatch:'*'`, 412+`returnExisting` →
+    existing digest/`created:false`, 412+`throw` → `BLOB_ALREADY_EXISTS`, `writeOnce:false`
+    sends no condition, md5-vs-sha256 digests, path/container validation, `parseBlobRef`
+    round-trip, `createIfNotExists` once per container on the connection-string path),
+    `blob-store-invoice-parity.test.ts` (new — byte-equality: the `uploadData` call and
+    `{ blobRef, checksum }` of `putInvoice`/`putReport`/`getInvoice` equal a recorded
+    pre-bm51 fixture). The two files (**24 tests**) are green; the dependent service
+    suites `post-run.service`/`get-stored-invoice`/`distribute-run.service` (**64 tests**)
+    stay green untouched. `npm run typecheck` + ESLint on every changed file clean.
+  - **Authored + UNRUN here (same host limits as bm49/bm50):**
+    `tests/db/blob-store.azurite.integration.test.ts` (new) — real round-trip in all
+    three containers, second write-once put to a template path refused, second
+    `putInvoice` returns the first md5. It needs a reachable Azurite
+    (`BILLRUN_BLOB_CONNECTION_STRING`) and skips loudly otherwise; the `.integration.test.ts`
+    suffix keeps it out of the DB-free unit run but also couples it behind the
+    destructive-DB preflight (it touches no Postgres) — a known cost of the spec's
+    `tests/db/` naming. The bm34 distribution **api** suites were not re-run (untouched by
+    this unit).
+  - **Docs closed in this change set:** code-standards data rule 7 (full `putObject`
+    signature with `onExists`/`checksumAlgorithm`, write-once/412 behaviour, path
+    validation, the connection-string-path-is-also-prod correction) + TS rule 7 (the two
+    `BLOB_STORE_ERROR_CODES`); architecture storage delta (`blob-store.ts` row + the
+    `infra/**` boundary row corrected: prod runs the connection-string path today, so
+    `createIfNotExists` runs there too until bm52 moves it to Managed Identity); this
+    tracker.
+  - **Next:** bm52 provisions the prod containers + MI write grant; bm53 adds the first
+    consumer (template upload/load).
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

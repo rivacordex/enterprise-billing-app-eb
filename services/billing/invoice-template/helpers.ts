@@ -46,9 +46,7 @@ function formatNumberString(
   // Node 22's `Intl.NumberFormat.prototype.format` accepts a decimal string
   // directly (ECMA-402 ToIntlMathematicalValue) — no `Number()` conversion on
   // the money/quantity value itself (D6).
-  return new Intl.NumberFormat(locale, opts).format(
-    value as unknown as number,
-  );
+  return new Intl.NumberFormat(locale, opts).format(value as unknown as number);
 }
 
 export function registerInvoiceHelpers(hb: typeof Handlebars): void {
@@ -57,7 +55,8 @@ export function registerInvoiceHelpers(hb: typeof Handlebars): void {
     (amount: unknown, options: Handlebars.HelperOptions) => {
       const root = rootOf(options);
       const negate = Boolean(options.hash?.negate);
-      const str = typeof amount === "string" ? amount : String(amount ?? "0.00");
+      const str =
+        typeof amount === "string" ? amount : String(amount ?? "0.00");
       if (negate && isZeroString(str)) return "–";
       const trimmed = str.trim();
       if (trimmed.startsWith("-")) {
@@ -74,8 +73,10 @@ export function registerInvoiceHelpers(hb: typeof Handlebars): void {
   });
 
   hb.registerHelper("period", (a: unknown, b: unknown) => {
-    const start = a === null || a === undefined ? "—" : formatCalendarDate(String(a));
-    const end = b === null || b === undefined ? "—" : formatCalendarDate(String(b));
+    const start =
+      a === null || a === undefined ? "—" : formatCalendarDate(String(a));
+    const end =
+      b === null || b === undefined ? "—" : formatCalendarDate(String(b));
     return `${start} – ${end}`;
   });
 

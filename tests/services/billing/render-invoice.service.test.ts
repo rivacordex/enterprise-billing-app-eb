@@ -109,7 +109,9 @@ describe("renderDraftInvoice", () => {
   });
 
   it("propagates a binder error without launching Chromium", async () => {
-    mockBuildInvoiceHtml.mockRejectedValueOnce(new Error("reconciliation failed"));
+    mockBuildInvoiceHtml.mockRejectedValueOnce(
+      new Error("reconciliation failed"),
+    );
 
     await expect(
       renderDraftInvoice({ runId: "BRN00000042", banId: "BAN00000001" }),

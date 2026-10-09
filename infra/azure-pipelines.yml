@@ -8,8 +8,8 @@
 #
 # Required service connections / variable groups (created once in the Azure
 # DevOps project, not in source control):
-#   - Azure Resource Manager service connection: "azure-service-connection"
-#   - Variable group "um30-infra" (non-secret, per environment): ACR_NAME,
+#   - Azure Resource Manager service connection: "azure-service-connection2"
+#   - Variable group "infra-dev" (non-secret, per environment): ACR_NAME,
 #     RESOURCE_GROUP, CONTAINERAPP_NAME, CONTAINERAPP_JOB_NAME,
 #     CONTAINER_APPS_ENV, KEYVAULT_NAME, APP_MI_RESOURCE_ID,
 #     MIGRATE_MI_RESOURCE_ID, STAGING_FQDN, MICROSOFT_CLIENT_ID,
@@ -145,7 +145,7 @@ resources:
         - 5432:5432
 
 variables:
-  - group: um30-infra
+  - group: infra-dev
   - name: imageRepository
     value: enterprise-billing-app
 
@@ -283,6 +283,11 @@ stages:
   - stage: containerize
     displayName: Containerize
     dependsOn: test_scan
+    # PR-safe: a pull-request validation build runs ONLY build + test_scan.
+    # Everything from here on (image build/push, migrate, deploy of both the app
+    # and the workflow-engine) is skipped on a PR and runs only on merge-to-main
+    # (Build.Reason != PullRequest).
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     pool:
       vmImage: ubuntu-latest
     jobs:
@@ -299,7 +304,7 @@ stages:
 
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -325,19 +330,17 @@ stages:
   # passes — see ratemgmt-progress-tracker.md). Runs in parallel with
   # `containerize`, not gated by it — the two images are independent.
   #
-  # GATED by the buildRatingEngine parameter (default false): the Dockerfile
-  # base image is a placeholder digest and requirements.txt is not yet fully
-  # hashed, so `docker build` would fail. Automatic CI/PR runs therefore skip
-  # this stage; it only runs when the pipeline is queued with
-  # buildRatingEngine=true (after the D0 spike, once both placeholders are
-  # resolved).
+  # Integrated into the normal flow: builds on every non-PR run (merge-to-main)
+  # and is skipped on PR validation, exactly like `containerize`. The Dockerfile
+  # is fully pinned (real base digest + hashed requirements — the image the
+  # running engine was built from), so the old buildRatingEngine gate is gone.
   - stage: containerize_workflow_engine
-    displayName: Containerize (rating engine)
+    displayName: Containerize (workflow engine)
     dependsOn: test_scan
-    # A custom condition replaces the implicit succeeded() gate on dependsOn,
-    # so and(succeeded(), ...) keeps test_scan a hard prerequisite — never
-    # build/push the worker image off a failed test_scan.
-    condition: and(succeeded(), eq(${{ parameters.buildRatingEngine }}, true))
+    # PR-safe + integrated: build the workflow-engine image on every non-PR run
+    # (merge-to-main), skip on PR validation. succeeded() keeps test_scan a hard
+    # prerequisite — never build off a failed test_scan.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     pool:
       vmImage: ubuntu-latest
     jobs:
@@ -361,7 +364,7 @@ stages:
 
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -387,7 +390,7 @@ stages:
 
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -454,7 +457,7 @@ stages:
         steps:
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -646,6 +649,8 @@ stages:
   - stage: migrate
     displayName: Migrate (no traffic shift)
     dependsOn: containerize
+    # PR-safe: never run DB migrations on a PR validation build.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     variables:
       imageTag: $[ stageDependencies.containerize.build_and_push.outputs['setImageTag.imageTag'] ]
     pool:
@@ -656,7 +661,7 @@ stages:
         steps:
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -731,6 +736,8 @@ stages:
     dependsOn:
       - containerize
       - migrate
+    # PR-safe: never deploy on a PR validation build.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     variables:
       imageTag: $[ stageDependencies.containerize.build_and_push.outputs['setImageTag.imageTag'] ]
     pool:
@@ -745,7 +752,7 @@ stages:
               steps:
                 - task: AzureCLI@2
                   inputs:
-                    azureSubscription: azure-service-connection
+                    azureSubscription: azure-service-connection2
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
@@ -859,6 +866,80 @@ stages:
                   displayName: Create revision, migrate-gated smoke test, traffic shift
 
   # ---------------------------------------------------------------------
+  # Deploy the workflow-engine (Kestra) container — the SECOND container in the
+  # two-app topology (the app deploy above handles the first). Single-revision
+  # image swap (activeRevisionsMode 'Single'): the updated revision becomes the
+  # sole active one, so there is no blue-green traffic split; env vars/secrets
+  # carry forward from the current template. No DB migration (the engine runs
+  # Kestra's own startup migrations on the `kestra` DB). PR-safe via the same
+  # Build.Reason gate; runs on merge-to-main after its image is built by
+  # containerize_workflow_engine and after the app deploy succeeds.
+  - stage: deploy_workflow_engine
+    displayName: Deploy workflow-engine
+    dependsOn:
+      - containerize_workflow_engine
+      - deploy
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    variables:
+      workflowEngineImageTag: $[ stageDependencies.containerize_workflow_engine.lint_and_build.outputs['setWorkflowEngineImageTag.workflowEngineImageTag'] ]
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - deployment: deploy_engine_dev
+        displayName: Deploy workflow-engine to dev
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  env:
+                    # Passed via env, not spliced into the script text — the tag
+                    # is a stage-dependency output, not a literal.
+                    ENGINE_IMAGE_TAG: $(workflowEngineImageTag)
+                  inputs:
+                    azureSubscription: azure-service-connection2
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      TAG="$(echo "$ENGINE_IMAGE_TAG" | xargs || true)"
+                      if [ -z "$TAG" ] || ! [[ "$TAG" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+                        echo "Resolved workflow-engine image tag '$TAG' is empty or invalid." >&2
+                        exit 1
+                      fi
+                      IMAGE="$(ACR_NAME).azurecr.io/workflow-engine:$TAG"
+
+                      # DNS-label-safe, unique-per-run revision suffix.
+                      SAFE=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//' | cut -c1-40)
+                      SUFFIX="${SAFE}-r$(Build.BuildId)"
+                      echo "Deploying $IMAGE as revision suffix $SUFFIX"
+
+                      # Single-revision mode: the update replaces the active
+                      # revision. Env/secrets inherited from the current template.
+                      az containerapp update \
+                        --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" \
+                        --resource-group "$(RESOURCE_GROUP)" \
+                        --image "$IMAGE" \
+                        --revision-suffix "$SUFFIX"
+
+                      NEW_REVISION="$(RATING_ENGINE_CONTAINERAPP_NAME)--$SUFFIX"
+
+                      # Readiness gate on the revision's healthState (Kestra's
+                      # /health on the management port 8081; ~30-60s to start). ~4 min.
+                      for i in $(seq 1 24); do
+                        HEALTH=$(az containerapp revision show --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" --resource-group "$(RESOURCE_GROUP)" --revision "$NEW_REVISION" --query "properties.healthState" -o tsv)
+                        RUNNING=$(az containerapp revision show --name "$(RATING_ENGINE_CONTAINERAPP_NAME)" --resource-group "$(RESOURCE_GROUP)" --revision "$NEW_REVISION" --query "properties.runningState" -o tsv)
+                        echo "attempt $i: health=$HEALTH running=$RUNNING"
+                        [ "$HEALTH" = "Healthy" ] && { echo "workflow-engine revision $NEW_REVISION is Healthy."; exit 0; }
+                        [ "$RUNNING" = "Failed" ] && { echo "New engine revision entered Failed state." >&2; exit 1; }
+                        sleep 10
+                      done
+                      echo "workflow-engine readiness gate timed out." >&2
+                      exit 1
+                  displayName: Image swap → readiness gate
+
+  # ---------------------------------------------------------------------
   - template: zap-scan-stage.yml
 
   # ---------------------------------------------------------------------
@@ -867,6 +948,11 @@ stages:
   # zap-scan-workflow-engine-stage.yml's header for the full gating rationale
   # (scanRatingEngineDast, default false).
   - template: zap-scan-workflow-engine-stage.yml
+    parameters:
+      # Pass the root param into the template's own parameter scope — without
+      # this the template's ${{ parameters.scanRatingEngineDast }} is empty and
+      # its condition becomes the un-parseable eq(, true).
+      scanRatingEngineDast: ${{ parameters.scanRatingEngineDast }}
 
   # ---------------------------------------------------------------------
   # bm21-spec §Implementation §3/Phase-2 review fold T3 — the billing
@@ -881,7 +967,7 @@ stages:
   # environment" shape as zap-scan-workflow-engine-stage.yml, not
   # rating_fanout_gate's local docker-compose stack).
   #
-  # Required Key Vault secrets (KEYVAULT_NAME, um30-infra variable group):
+  # Required Key Vault secrets (KEYVAULT_NAME, infra-dev variable group):
   # `pg-connection-string-app` (the existing app-runtime DB connection — the
   # SAME database the deployed engine's `billrun_runtime` role connects to)
   # plus `billrun-engine-url`/`billrun-engine-auth` (the real
@@ -913,7 +999,7 @@ stages:
 
           - task: AzureCLI@2
             inputs:
-              azureSubscription: azure-service-connection
+              azureSubscription: azure-service-connection2
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
