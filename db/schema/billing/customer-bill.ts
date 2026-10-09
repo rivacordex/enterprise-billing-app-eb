@@ -22,8 +22,10 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 // express partitioning or the composite-PK-on-partitioned-table, so this
 // declaration exists for query typing only — do not `drizzle-kit push` it.
 //
-// `ref_bill_format_id`/`ref_bill_template_version_id` are reserved, nullable,
-// carry NO FK (the catalog/rendering phase is deferred). `ref_inv_document_id`
+// `ref_bill_format_id`/`ref_bill_template_version_id` (and bm50's
+// `ref_invoice_profile_version`/`ref_csv_template_version_id`) are nullable,
+// carry NO FK, and are stamped at posting by the app (bm54, `stampPosted`).
+// `ref_inv_document_id`
 // is the finalization latch (architecture Inv. #4) — a row with it set is
 // never UPDATEd/DELETEd; Aggregation's rerun-safe write is a conditional
 // `DELETE ... WHERE ref_inv_document_id IS NULL` + INSERT
@@ -71,15 +73,17 @@ export const customerBill = billing.table(
     }).notNull(),
     paymentDueDate: date("payment_due_date", { mode: "string" }).notNull(),
     // Invoice-template posting stamps (Inv. #41) — stamped at posting by the
-    // app (bm54) in the same UPDATE as `ref_inv_document_id`, then frozen by
-    // the finalization guard. No FK (partitioned table + the plain-key stamp
-    // rule, 0029 precedent); integrity comes from being written only from rows
-    // `stampPosted` resolved. `billrun_runtime` lost its column grants on the
-    // first two (bm50, Inv #41) — these are app-only.
+    // app (bm54): `stampPosted` writes all four in the same UPDATE as
+    // `ref_inv_document_id`, from the rows `resolveVersionsForPosting`
+    // resolved, then the finalization guard (0033) freezes them. No FK
+    // (partitioned table + the plain-key stamp rule, 0029 precedent).
+    // `billrun_runtime` lost its column grants on the first two (bm50, Inv
+    // #41) — these are app-only. NULL on every bill posted before bm54.
     refBillFormatId: text("ref_bill_format_id"),
     refBillTemplateVersionId: text("ref_bill_template_version_id"),
-    // bm50-spec §Design D6 — the company-profile `config_version` and the CSV
-    // generated-version id; nullable, no FK, app-only stamps.
+    // bm50-spec §Design D6 — the company-profile `config_version` (NULL when
+    // no profile was ACTIVE at posting, G15 A) and the CSV version id;
+    // nullable, no FK, app-only stamps, stamped at posting by the app (bm54).
     refInvoiceProfileVersion: integer("ref_invoice_profile_version"),
     refCsvTemplateVersionId: text("ref_csv_template_version_id"),
     // The finalization latch (Inv. #4), written at posting (bm11).

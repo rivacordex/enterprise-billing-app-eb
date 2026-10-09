@@ -62,7 +62,21 @@ vi.mock("@/services/billing/render-invoice", () => ({
   renderFinalInvoice: vi.fn(),
 }));
 vi.mock("@/services/billing/blob-store", () => ({
-  blobStore: { putInvoice: vi.fn() },
+  blobStore: { putInvoice: vi.fn(), getObject: vi.fn(), getInvoice: vi.fn() },
+}));
+// bm54-spec §Design D1 — the REAL `resolveVersionsForPosting` runs inside the
+// posting transaction over these mocked catalog/profile reads, so the suite
+// proves posting resolves from DB rows only (the blob-store mock above is the
+// no-blob-I/O spy).
+vi.mock("@/db/repositories/billing/bill-template-version", () => ({
+  billTemplateVersionRepository: {
+    findById: vi.fn(),
+    findActive: vi.fn(),
+    findDefault: vi.fn(),
+  },
+}));
+vi.mock("@/db/repositories/billing/invoice-profile", () => ({
+  invoiceProfileRepository: { findActiveVersion: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/bill-run-invoices.repository", () => ({
   billRunInvoicesRepository: {
@@ -91,6 +105,8 @@ import { renderFinalInvoice } from "@/services/billing/render-invoice";
 import { blobStore } from "@/services/billing/blob-store";
 import { billRunInvoicesRepository } from "@/db/repositories/billing/bill-run-invoices.repository";
 import { triggerDistribution } from "@/services/billing/distribute-run";
+import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockMarkPosting = vi.mocked(billRunRepository.markPosting);
@@ -116,6 +132,21 @@ const mockFindStoredInvoice = vi.mocked(
   billRunInvoicesRepository.findByRunAndAccount,
 );
 const mockTriggerDistribution = vi.mocked(triggerDistribution);
+const mockFindActiveTemplate = vi.mocked(
+  billTemplateVersionRepository.findActive,
+);
+const mockFindDefaultTemplate = vi.mocked(
+  billTemplateVersionRepository.findDefault,
+);
+const mockFindActiveProfile = vi.mocked(
+  invoiceProfileRepository.findActiveVersion,
+);
+
+// bm50 seed ids: BTV00000002 = default generated v1, BTV00000003 = default CSV v1.
+const DEFAULT_TEMPLATE_IDS = {
+  generated: "BTV00000002",
+  csv: "BTV00000003",
+} as Record<string, string>;
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -182,6 +213,14 @@ beforeEach(() => {
     billRunInvoiceId: "BRI00000001",
   });
   mockFindStoredInvoice.mockResolvedValue(null);
+  // bm54 — a fresh catalog: no non-default ACTIVE (→ the defaults) and an
+  // ACTIVE company profile v1.
+  mockFindActiveTemplate.mockResolvedValue(null);
+  mockFindDefaultTemplate.mockImplementation(
+    async (_db, { kind }) =>
+      ({ billTemplateVersionId: DEFAULT_TEMPLATE_IDS[kind] }) as never,
+  );
+  mockFindActiveProfile.mockResolvedValue(1);
   mockTriggerDistribution.mockResolvedValue({
     ok: true,
     value: {
@@ -316,6 +355,11 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         refInvDocumentId: "INV00000001",
         postedAttempt: 1,
         chargeChecksum: "abc123",
+        // bm54 — the four version stamps ride in the same stamp call.
+        refBillFormatId: "INVOICE",
+        refBillTemplateVersionId: "BTV00000002",
+        refInvoiceProfileVersion: 1,
+        refCsvTemplateVersionId: "BTV00000003",
       },
     );
     expect(mockUpdateStatus).toHaveBeenCalledWith(
@@ -659,6 +703,113 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
 
 // bm19-spec §Design "Render + store is a SEPARATE step from the posting
 // transaction (D10)" / §Implementation §4.
+describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)", () => {
+  it("stampPosted receives the four stamps resolved inside the posting transaction: the non-default ACTIVE generated/CSV versions over the defaults", async () => {
+    mockFindActiveTemplate.mockImplementation(
+      async (_db, { kind }) =>
+        ({
+          billTemplateVersionId:
+            kind === "generated" ? "BTV00000010" : "BTV00000011",
+        }) as never,
+    );
+    mockFindActiveProfile.mockResolvedValue(3);
+
+    await postRun("BRN00000001", "user-1");
+
+    // Resolved on the posting transaction, not the pool.
+    expect(mockFindActiveTemplate).toHaveBeenCalledWith(txStub, {
+      kind: "generated",
+    });
+    expect(mockFindActiveTemplate).toHaveBeenCalledWith(txStub, {
+      kind: "csv",
+    });
+    expect(mockFindActiveProfile).toHaveBeenCalledWith(txStub);
+    expect(mockStampPosted).toHaveBeenCalledWith(
+      txStub,
+      "CBL00000001",
+      "2026-07-01",
+      expect.objectContaining({
+        refInvDocumentId: "INV00000001",
+        refBillFormatId: "INVOICE",
+        refBillTemplateVersionId: "BTV00000010",
+        refInvoiceProfileVersion: 3,
+        refCsvTemplateVersionId: "BTV00000011",
+      }),
+    );
+  });
+
+  it("G15 A — no ACTIVE company profile at posting stamps refInvoiceProfileVersion: null", async () => {
+    mockFindActiveProfile.mockResolvedValue(null);
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockStampPosted).toHaveBeenCalledWith(
+      txStub,
+      "CBL00000001",
+      "2026-07-01",
+      expect.objectContaining({
+        refBillTemplateVersionId: "BTV00000002",
+        refInvoiceProfileVersion: null,
+        refCsvTemplateVersionId: "BTV00000003",
+      }),
+    );
+  });
+
+  it("[CRITICAL] resolveVersionsForPosting makes no blob call — the posting transaction reads DB rows only", async () => {
+    // Fail the post-commit render so ONLY the posting transaction's I/O is
+    // observed (the render hook's own blob writes are not under test here).
+    mockRenderFinalInvoice.mockRejectedValue(new Error("render skipped"));
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockStampPosted).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(blobStore.getObject)).not.toHaveBeenCalled();
+    expect(vi.mocked(blobStore.getInvoice)).not.toHaveBeenCalled();
+    expect(mockPutInvoice).not.toHaveBeenCalled();
+  });
+
+  it("the stamps are resolved AFTER the bill is locked and BEFORE stampPosted, inside the same transaction", async () => {
+    await postRun("BRN00000001", "user-1");
+
+    const lockOrder = mockLockBill.mock.invocationCallOrder[0]!;
+    const resolveOrder = mockFindActiveProfile.mock.invocationCallOrder[0]!;
+    const stampOrder = mockStampPosted.mock.invocationCallOrder[0]!;
+    expect(lockOrder).toBeLessThan(resolveOrder);
+    expect(resolveOrder).toBeLessThan(stampOrder);
+  });
+
+  it("a skipped (already-posted) or zero-total bill resolves no versions", async () => {
+    mockLockBill.mockResolvedValue(bill({ refInvDocumentId: "INV00000099" }));
+    await postRun("BRN00000001", "user-1");
+    mockLockBill.mockResolvedValue(
+      bill({ subtotal: "0.00", taxTotal: "0.00", totalAmount: "0.00" }),
+    );
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockFindActiveProfile).not.toHaveBeenCalled();
+    expect(mockFindDefaultTemplate).not.toHaveBeenCalled();
+  });
+
+  it("a catalog read failure rolls the whole posting transaction back — no stamp, account parked", async () => {
+    mockFindDefaultTemplate.mockResolvedValue(null);
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    expect(mockStampPosted).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        results: [
+          {
+            billingAccountId: "BAN00000001",
+            result: { status: "parked", code: "POSTING_FAILED" },
+          },
+        ],
+      },
+    });
+  });
+});
+
 describe("postAccount — final render + store (bm19-spec §Design D10)", () => {
   it("renders and stores the final invoice AFTER the posting transaction commits", async () => {
     await postRun("BRN00000001", "user-1");

@@ -888,6 +888,16 @@ export interface PostedBillStamps {
   refCsvTemplateVersionId: string | null;
 }
 
+// bm54-spec §Design D1/D2 — the four values `resolveVersionsForPosting`
+// resolves and `stampPosted` writes in the same UPDATE as
+// `ref_inv_document_id` (Inv #41). Only the profile version can be null (G15 A).
+export interface PostingVersionStamps {
+  refBillFormatId: "INVOICE";
+  refBillTemplateVersionId: string;
+  refInvoiceProfileVersion: number | null;
+  refCsvTemplateVersionId: string;
+}
+
 // D1 — a draft (pro-forma, editor sample preview) resolves the current
 // versions; a final render and the editor preview of a posted bill resolve the
 // bill's stamps (Inv #42 — never the current ACTIVE).

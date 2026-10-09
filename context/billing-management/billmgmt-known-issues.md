@@ -760,6 +760,35 @@ needs revisiting if the business wants the letterhead on reprints of
 pre-bm54 invoices. That would be a deliberate re-stamp decision, and the
 finalization guard (`0033`) forbids it today.
 
+**bm54 update (2026-10-09).** Bills posted from bm54 on carry all four stamps.
+Bills posted before bm54 are **not back-stamped**: `0033` refuses the
+`UPDATE`, so they keep `NULL` stamps for good and keep rendering as described
+above.
+
+## 19. 🟡 An activation during a run can give that run's accounts different template versions (bm54, by design)
+
+**Where:** `services/billing/invoice-template/resolve-template.ts`
+(`resolveVersionsForPosting`), `services/billing/post-run.ts` (`postAccount`).
+
+**Technical.** Each account posts in its own transaction (Inv #6), and each
+transaction resolves the current generated, profile and CSV versions without
+locking the catalog rows (bm54 D1). If an admin activates a new version while
+a run is posting, accounts posted before the activation are stamped with the
+old version and the rest with the new one. Each bill records exactly the
+versions it was posted under, and that record is what pinning promises
+(Inv #41/#42). A run-wide freeze would need a new `bill_run` column, which is
+out of scope.
+
+**ELI5.** If someone changes the invoice design while a batch of invoices is
+going out, some invoices in that batch use the old design and some use the
+new one. Each invoice remembers which design it used, so a reprint always
+matches the original.
+
+**Recommendation.** Accept for now. Activation pages arrive with bm58/bm61. If
+one design per run becomes a requirement, add a run-level version snapshot
+taken at `APPROVED → POSTING` and resolve from it in `postAccount`. That needs
+a migration and a separate unit.
+
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 
 The `ratecard` permission row is created by migration `0043_ratecard_permission.sql`

@@ -11,6 +11,8 @@ import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/loa
 import { retryRenderInvoice } from "@/services/billing/post-run";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import {
+  GENERATED_FIXTURE_FILES,
+  insertGeneratedTemplateFixture,
   setupInvoiceRenderFixtures,
   type InvoiceRenderFixtures,
 } from "@/tests/db/helpers/invoice-render-fixtures";
@@ -22,8 +24,13 @@ import {
 // `bill_run_invoices` row is produced, and no legacy/unverified render happens
 // (guardrail 44 proves no other render path exists). Each account parks on its
 // own — one account's failure does not stop the next. A tampered logo on a
-// fixture ACTIVE profile parks with `ASSET_CHECKSUM_MISMATCH`. (The "a bill
-// pinned to a different version still renders" half lands with bm54's pins.)
+// fixture ACTIVE profile parks with `ASSET_CHECKSUM_MISMATCH`.
+//
+// Second half (bm54-spec §Tests): with posting-time pins, a tamper is scoped
+// to the bills pinned to the tampered version — account C (pinned to a
+// fixture generated v2 whose stored invoice.hbs is tampered) parks with
+// `TEMPLATE_CHECKSUM_MISMATCH`, while account A (pinned to the intact default
+// v1) still renders and stores its PDF (requires Playwright Chromium).
 //
 // The tamper is a test-only raw SDK overwrite of the real seeded path
 // (bypassing write-once); `afterAll` ALWAYS restores the original bytes. Run
@@ -37,6 +44,7 @@ const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 const RUN = "BRN-BM53-G47";
 const TEMPLATE_PATH = "generated/INVOICE/v1/invoice.hbs";
 const LOGO_PATH = `it-${Date.now().toString(36)}/v1/logo.png`;
+const FIXTURE_DIR_TAG = `it-bm54-g47-${Date.now().toString(36)}`;
 const LOGO = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
@@ -73,6 +81,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       : null;
     let original: Buffer | null = null;
     const accounts: { banId: string; invoiceNo: string }[] = [];
+    let fixtureDir: string | null = null;
 
     function rawBlob(container: string, path: string) {
       return service!.getContainerClient(container).getBlockBlobClient(path);
@@ -129,6 +138,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         ?.getContainerClient("invoice-assets")
         .deleteBlob(LOGO_PATH)
         .catch(() => undefined);
+      if (fixtureDir) {
+        for (const name of GENERATED_FIXTURE_FILES) {
+          await service
+            ?.getContainerClient("invoice-templates")
+            .deleteBlob(`${fixtureDir}${name}`)
+            .catch(() => undefined);
+        }
+      }
       clearLoadedTemplateMemo();
       if (sql) {
         await fx?.dropAll();
@@ -185,5 +202,51 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       await assertParked(banId, invoiceNo, "ASSET_CHECKSUM_MISMATCH");
     });
+
+    it("[CRITICAL] guardrail 47 second half — a tampered PINNED v2 parks only its own bill (C); a bill pinned to the intact default v1 (A) still stores its PDF", async () => {
+      // The seeded default is intact again (restored above); only v2 is bad.
+      await rawBlob("invoice-templates", TEMPLATE_PATH).uploadData(original!);
+      ({ dir: fixtureDir } = await insertGeneratedTemplateFixture(sql, {
+        id: "BTV00000010",
+        versionNo: 2,
+        dirTag: FIXTURE_DIR_TAG,
+      }));
+
+      const pinnedA = await fx.postedBill({
+        label: "PINA",
+        runId: RUN,
+        invoiceNo: "INV91000021",
+        refBillTemplateVersionId: "BTV00000002",
+      });
+      const pinnedC = await fx.postedBill({
+        label: "PINC",
+        runId: RUN,
+        invoiceNo: "INV91000022",
+        refBillTemplateVersionId: "BTV00000010",
+      });
+
+      const v2Invoice = rawBlob(
+        "invoice-templates",
+        `${fixtureDir}invoice.hbs`,
+      );
+      const tampered = await v2Invoice.downloadToBuffer();
+      tampered[0] = tampered[0]! ^ 0x01;
+      await v2Invoice.uploadData(tampered);
+      clearLoadedTemplateMemo(); // cold memo
+
+      await assertParked(
+        pinnedC.banId,
+        "INV91000022",
+        "TEMPLATE_CHECKSUM_MISMATCH",
+      );
+
+      expect(await retryRenderInvoice(RUN, pinnedA.banId)).toMatchObject({
+        ok: true,
+      });
+      const [stored] = await sql<{ ref_inv_document_id: string }[]>`
+        SELECT ref_inv_document_id FROM billing.bill_run_invoices
+        WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${pinnedA.banId}`;
+      expect(stored?.ref_inv_document_id).toBe("INV91000021");
+    }, 120_000);
   },
 );

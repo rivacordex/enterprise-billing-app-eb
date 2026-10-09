@@ -19,7 +19,10 @@ import type { Database } from "@/db/client";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
-import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
+import {
+  resolveTemplate,
+  resolveVersionsForPosting,
+} from "@/services/billing/invoice-template/resolve-template";
 import { InvoiceRenderError, type TemplateKind } from "@/types/billing";
 import { SEEDED_GENERATED_ROW } from "@/tests/helpers/seeded-invoice-template";
 
@@ -224,5 +227,62 @@ describe("resolveTemplate — layout", () => {
     await resolveTemplate(DB, { kind: "draft" });
     expect(repo.findDefault).toHaveBeenCalledTimes(4);
     expect(repo.findById).toHaveBeenCalledTimes(2);
+  });
+});
+
+// bm54-spec §Design D1 — the posting stamp shares the draft's "current"
+// precedence (one private helper), so a pro-forma and the bill posted next can
+// never disagree. DB rows only: no layout lookup, no blob I/O.
+describe("resolveVersionsForPosting", () => {
+  it("fresh catalog → the default generated + CSV ids, format INVOICE, profile null (G15 A)", async () => {
+    expect(await resolveVersionsForPosting(DB)).toEqual({
+      refBillFormatId: "INVOICE",
+      refBillTemplateVersionId: "BTV00000002",
+      refInvoiceProfileVersion: null,
+      refCsvTemplateVersionId: "BTV00000003",
+    });
+  });
+
+  it("the non-default ACTIVE versions + the ACTIVE profile version win over the defaults", async () => {
+    repo.findActive.mockImplementation(async (_db, { kind }) =>
+      kind === "generated" ? ACTIVE_GENERATED : ACTIVE_CSV,
+    );
+    profileRepo.findActiveVersion.mockResolvedValue(2);
+
+    expect(await resolveVersionsForPosting(DB)).toEqual({
+      refBillFormatId: "INVOICE",
+      refBillTemplateVersionId: "BTV00000010",
+      refInvoiceProfileVersion: 2,
+      refCsvTemplateVersionId: "BTV00000011",
+    });
+  });
+
+  it("agrees with a draft resolve on the same catalog state", async () => {
+    repo.findActive.mockImplementation(async (_db, { kind }) =>
+      kind === "generated" ? ACTIVE_GENERATED : null,
+    );
+    profileRepo.findActiveVersion.mockResolvedValue(4);
+
+    const draft = await resolveTemplate(DB, { kind: "draft" });
+    const posting = await resolveVersionsForPosting(DB);
+    expect(posting.refBillTemplateVersionId).toBe(
+      draft.generated.billTemplateVersionId,
+    );
+    expect(posting.refCsvTemplateVersionId).toBe(
+      draft.csv.billTemplateVersionId,
+    );
+    expect(posting.refInvoiceProfileVersion).toBe(draft.profileVersion);
+  });
+
+  it("reads the catalog rows only — no layout/by-id lookup", async () => {
+    await resolveVersionsForPosting(DB);
+    expect(repo.findById).not.toHaveBeenCalled();
+  });
+
+  it("a missing default (corrupted DB) → TEMPLATE_VERSION_NOT_FOUND (the posting transaction rolls back)", async () => {
+    repo.findDefault.mockResolvedValue(null);
+    await expect(resolveVersionsForPosting(DB)).rejects.toMatchObject({
+      code: "TEMPLATE_VERSION_NOT_FOUND",
+    });
   });
 });

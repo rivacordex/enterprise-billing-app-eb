@@ -11,6 +11,7 @@ import { postDocument } from "@/services/accounts/post-document";
 import type { PostDocumentResult } from "@/services/accounts/post-document";
 import * as money from "@/services/accounts/money";
 import { firstOfMonth } from "@/services/billing/derive-periods";
+import { resolveVersionsForPosting } from "@/services/billing/invoice-template/resolve-template";
 import { renderFinalInvoice } from "@/services/billing/render-invoice";
 import { blobStore } from "@/services/billing/blob-store";
 import { triggerDistribution } from "@/services/billing/distribute-run";
@@ -73,6 +74,10 @@ class PostAccountFailureSignal extends Error {
 // recorded via the ABSENCE of a `bill_run_invoices` row (no separate
 // "render-pending" flag column exists; `retryRenderInvoice` below re-derives
 // exactly this same absence).
+//
+// bm54-spec §Design D3 (Inv #42) — both this and `retryRenderInvoice` render
+// from the bill's stamps only: `renderFinalInvoice` resolves
+// `{ kind: 'final', bill: <stamps> }` (bm53 D1), never the current ACTIVE.
 async function renderAndStoreInvoice(
   billRunId: string,
   billingAccountId: string,
@@ -240,7 +245,8 @@ function describePostFailure(
 //      unlimited limit; a failure throws so the whole transaction (INV +
 //      any posted legs) rolls back.
 //   5. Stamp the bill (`ref_inv_document_id`/`posted_attempt`/
-//      `charge_checksum`/`category='normal'`) and mark the account
+//      `charge_checksum`/`category='normal'` + the four invoice-template
+//      version stamps, bm54) and mark the account
 //      `INVOICED` — all inside the same transaction as steps 3-4.
 export async function postAccount(
   run: BillRun,
@@ -408,6 +414,10 @@ export async function postAccount(
           bill.customerBillId,
           bill.periodPartition,
         );
+      // bm54-spec §Design D1/D2 (Inv #41) — the versions this bill is posted
+      // under (DB rows only, no blob I/O), stamped in the same UPDATE as the
+      // finalization latch below.
+      const versions = await resolveVersionsForPosting(tx);
       const stamped = await customerBillRepository.stampPosted(
         tx,
         bill.customerBillId,
@@ -416,6 +426,7 @@ export async function postAccount(
           refInvDocumentId: doc.documentId,
           postedAttempt: bill.attemptCount,
           chargeChecksum,
+          ...versions,
         },
       );
       if (!stamped) {

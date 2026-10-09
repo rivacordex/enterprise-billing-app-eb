@@ -6,6 +6,7 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { customerBill } from "@/db/schema/billing/customer-bill";
+import type { PostedBillStamps, PostingVersionStamps } from "@/types/billing";
 
 // bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
 // `listForRun` backs the Customers & Bills tab read. The trial-bill write
@@ -314,17 +315,22 @@ export const customerBillRepository = {
     billRunId: string,
     billingAccountId: string,
     periodPartition: string,
-  ): Promise<{
-    customerBillId: string;
-    periodPartition: string;
-    subtotal: string;
-    taxTotal: string;
-    totalAmount: string;
-    refInvDocumentId: string | null;
-    attemptCount: number;
-    refFinancialAccountId: string;
-    currency: string;
-  } | null> {
+  ): Promise<
+    | ({
+        customerBillId: string;
+        periodPartition: string;
+        subtotal: string;
+        taxTotal: string;
+        totalAmount: string;
+        refInvDocumentId: string | null;
+        attemptCount: number;
+        refFinancialAccountId: string;
+        currency: string;
+        // bm54 — the bill's version stamps (NULL until posted / pre-bm54).
+        refBillFormatId: string | null;
+      } & PostedBillStamps)
+    | null
+  > {
     // Postgres requires `FOR UPDATE OF <unqualified name>`, but drizzle
     // schema-qualifies base tables (`"billing"."customer_bill"`), which
     // Postgres rejects. Aliasing the locked table emits the bare alias in the
@@ -345,6 +351,10 @@ export const customerBillRepository = {
         attemptCount: billRunAccount.attemptCount,
         refFinancialAccountId: billingAccount.refFinancialAccountId,
         currency: billingAccount.currency,
+        refBillFormatId: cb.refBillFormatId,
+        refBillTemplateVersionId: cb.refBillTemplateVersionId,
+        refInvoiceProfileVersion: cb.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: cb.refCsvTemplateVersionId,
       })
       .from(cb)
       .innerJoin(
@@ -398,6 +408,11 @@ export const customerBillRepository = {
   // partial UNIQUE index (`document_ref_customer_bill_id_unique`,
   // 0037_document_customer_bill_latch.sql) structurally refuses a second
   // posted INV for the same bill regardless of what this guard does.
+  //
+  // bm54-spec §Design D2 (Inv #41) — the four invoice-template version stamps
+  // ride in this SAME statement (not a second UPDATE, not a trigger). Once it
+  // commits, the finalization guard (0033) refuses every further UPDATE, so a
+  // stamp can never be added or corrected afterwards (guardrail 46).
   async stampPosted(
     tx: Database,
     customerBillId: string,
@@ -406,7 +421,7 @@ export const customerBillRepository = {
       refInvDocumentId: string;
       postedAttempt: number;
       chargeChecksum: string;
-    },
+    } & PostingVersionStamps,
   ): Promise<boolean> {
     const stamped = await tx
       .update(customerBill)
@@ -415,6 +430,10 @@ export const customerBillRepository = {
         postedAttempt: data.postedAttempt,
         chargeChecksum: data.chargeChecksum,
         category: "normal",
+        refBillFormatId: data.refBillFormatId,
+        refBillTemplateVersionId: data.refBillTemplateVersionId,
+        refInvoiceProfileVersion: data.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: data.refCsvTemplateVersionId,
       })
       .where(
         and(
@@ -439,21 +458,27 @@ export const customerBillRepository = {
     db: Database,
     billRunId: string,
     billingAccountId: string,
-  ): Promise<{
-    customerBillId: string;
-    periodPartition: string;
-    billingAccountId: string;
-    accountName: string;
-    currency: string;
-    category: string;
-    billingPeriodStart: string;
-    billingPeriodEnd: string;
-    subtotal: string;
-    taxTotal: string;
-    totalAmount: string;
-    paymentDueDate: string;
-    refInvDocumentId: string | null;
-  } | null> {
+  ): Promise<
+    | ({
+        customerBillId: string;
+        periodPartition: string;
+        billingAccountId: string;
+        accountName: string;
+        currency: string;
+        category: string;
+        billingPeriodStart: string;
+        billingPeriodEnd: string;
+        subtotal: string;
+        taxTotal: string;
+        totalAmount: string;
+        paymentDueDate: string;
+        refInvDocumentId: string | null;
+        // bm54-spec §Design D3 — the version stamps a posted bill renders from
+        // (NULL on a bill posted before bm54 → the default, bm53 D1).
+        refBillFormatId: string | null;
+      } & PostedBillStamps)
+    | null
+  > {
     const [row] = await db
       .select({
         customerBillId: customerBill.customerBillId,
@@ -469,6 +494,10 @@ export const customerBillRepository = {
         totalAmount: customerBill.totalAmount,
         paymentDueDate: customerBill.paymentDueDate,
         refInvDocumentId: customerBill.refInvDocumentId,
+        refBillFormatId: customerBill.refBillFormatId,
+        refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
+        refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,
       })
       .from(customerBill)
       .innerJoin(
