@@ -915,6 +915,134 @@ DELIVERED" section.
     fixture bills.
   - **Next:** bm55 (posted-bill preview reads the stamps; "used by N invoices").
 
+## Invoice Template update — bm55 DELIVERED (code + tests + docs), unit suite RUN GREEN (2026-10-09)
+
+- **bm55 — Invoice Settings shell + Invoice template read page, generator and live
+  preview (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm55-invoice-settings-shell-template-read-preview.md`.
+  Boundary: the `administration/invoice-settings` pages, the files GET handler, the
+  generator (`generate.ts`), the READ-only preview action/service, the
+  `invoice-settings` components, the structure + search-params schemas, and the nav
+  entry deferred from bm50. No mutation (no save/activate — bm57/bm58), no migration,
+  no grant change, no npm dependency.
+  - **Delivered:**
+    - `validation/billing/invoice-template-structure.schema.ts`: the D2 schema
+      (strict, `MANDATORY_SECTION_HIDDEN` refinement) plus the preview action's
+      input schema. The Drizzle `structure` column is retyped from it.
+      `MANDATORY_SECTION_KEYS` is in `types/billing.ts`.
+      `invoice-settings-search-params.schema.ts` holds `?tab` / `?version`.
+    - `services/billing/invoice-template/generate.ts`: `generate(layout,
+      structure, { annotate })` and `layoutFilesFromVerified`. `load.ts` gains
+      `loadGeneratedFiles` (verified invoice.hbs, footer.hbs and
+      structure.json; not memoized).
+    - `services/billing/invoice-template/preview.ts` and
+      `actions/billing/invoice-settings/preview-invoice-template.action.ts`:
+      guard READ → Zod → `billrun_view` for any `{ billId }` (before any read)
+      → 30/60 s limiter → service. The sample source and an unposted bill
+      generate in memory. A posted bill renders its stamped version through
+      `buildInvoiceHtml({ mode: 'preview-posted' })`, so the structure is
+      ignored. Nothing is written.
+    - `services/billing/read/invoice-template-settings.ts` (page data, Generated
+      .hbs bytes, file download, recent posted bills).
+      `customer-bill.repository` gains `findPreviewTarget` and
+      `listRecentPosted` (LIMIT 20, newest INV first).
+    - Pages: the shell `layout.tsx` (guard READ + tabs), an index `page.tsx`
+      that redirects to `invoice-template` until bm56, and
+      `invoice-template/{page,loading,error}.tsx`. The GET handler is
+      `…/versions/[versionId]/files/[file]/route.ts`.
+    - Components: `InvoiceSettingsTabs`, `InvoiceStructureForm`,
+      `InvoicePreviewFrame` (`sandbox=""` + `srcDoc`), `GeneratedHbsViewer`,
+      `VersionHistoryTable` and `TemplateVersionStatusBadge`.
+    - Nav: `NAV_REGISTRY` "Invoice Settings" (READ) after System Configuration,
+      with the `FileText` icon. `invoice-template` is in the nav guard's
+      `UNLISTED_BY_DESIGN`, and both pages are in the route manifest.
+  - **Deviations (recorded):**
+    1. **Generator follows the seeded layout v1 as authored (owner decision,
+       2026-10-09).** Spec D1's sketch doesn't fit the immutable layout. The
+       layout's partials self-wrap in `<section class="sec sec--{key} …">`, and
+       it has no zones, no `pageTwoHeader` partial and no `row-2` markup. So
+       the generator inserts partials in manifest order, indented at
+       `[[body]]`. A half section widens only when its *layout pair partner* is
+       hidden, so payment stays `sec--half` as stored. `colCount` counts all
+       four optional columns (the spec formula gave 8; v1 renders 10), and
+       `subtotalSpan = colCount − 2 − showDiscountColumn`. The formulas are in
+       placeholder-catalog §C.
+    2. **Parity is `<body>`-only.** The generated and stored v1 render a
+       byte-identical `<body>` for `sample-data.json` (draft and issued) and a
+       multi-page fixture. The `<head>` `<style>` differs because layout v1's
+       shell has no bm49 usage-annex CSS. This is recorded as an `it.fails`
+       case and as **known-issues §20 (OPEN — needs a layout v2 before
+       bm58)**. Until then the sample and unposted-bill previews render the
+       annex unstyled.
+    3. **Error class.** `TEMPLATE_GENERATION_FAILED` and
+       `MANDATORY_SECTION_HIDDEN` are `INVOICE_ERROR_CODES` thrown as
+       `InvoiceRenderError`, not `AppError` (the bm51 rationale:
+       `lib/errors.ts` is a closed HTTP union). Recorded in code-standards TS
+       rule 7.
+    4. **`buildInvoiceHtml`** (`render-invoice-template.ts`, outside the
+       listed boundary) gains a draft-only `override` (structure + in-memory
+       `load`), so the unposted-bill preview reuses the one binder pipeline
+       instead of forking it. `preview-posted` now binds `isDraft: false`
+       (spec D3: `isDraft: !posted`); it had no caller before bm55.
+    5. **Extra files beyond the spec list:** the read service above;
+       `pinnedVersionNo` on the action's ok result, which drives the "as
+       issued" banner; and a `SEEDED_LAYOUT_ROW` plus the layout path mapping
+       in `tests/helpers/seeded-invoice-template.ts`.
+    6. **Annotate scope.** Placeholders inside `<style>`/raw-text elements are
+       not wrapped (wrapping would break the CSS colours). A posted-bill
+       preview is never annotated because its stored template is not
+       regenerated; outline still applies.
+    7. **Tabs in a layout** cannot see the path. With one tab it is always
+       current; bm56 must pass `active` when it adds Company profile.
+    8. The `FileText` nav icon (spec D6) is also GL Journal's.
+  - **Tests (all new suites green):**
+    - `generate.test.ts`, guardrail 48 (146): all 128 combinations compile
+      under knownHelpersOnly/strict and execute. Each has no `[[`/`]]`/CR,
+      no markup for hidden sections or columns (incl. the discount total),
+      colspans that equal the formulas, and a header cell count equal to
+      `colCount`. Also covered: pairing and widening on a synthetic layout,
+      Zod and generator mandatory rejection, every
+      `TEMPLATE_GENERATION_FAILED` case, annotate scope and escaping, LF
+      determinism, canonical structure.json, and the client-bundle boundary.
+    - `generate-parity.test.ts` (5 + 1 expected fail).
+    - `preview-invoice-template.action.test.ts` (14). It runs through the real
+      service, resolver, loaders and binder. Covered: READ allowed;
+      FORBIDDEN; a `{ billId }` source without `billrun_view` is FORBIDDEN
+      before any read; VALIDATION_ERROR ×4. A posted bill renders its stamped
+      v1 with the structure ignored, and the current ACTIVE is never
+      resolved. Also: unposted draft, NOT_FOUND, PREVIEW_FAILED with its
+      code, the 30/60 s limit, and zero `putObject`/`putInvoice`/DML.
+    - `tests/app/invoice-settings/files-route.test.ts` (14): 401 ×2, 403, 422
+      ×4, 404 for unknown/layout/DRAFT, exact stored bytes for all three
+      files plus headers, and a tampered blob → 500 with an empty body.
+    - Component tests (23) and `invoice-settings-authz-matrix.test.ts`
+      (guardrail 56 routes, 9). `nav-registry-guard` and `route-manifest`
+      are green.
+    - **Ripples fixed:** `tests/lib/nav-registry.test.ts` (the ADMIN map gains
+      `invoice_settings`) and `status-literal-allowlist.ts` (the
+      version-history row's `"RETIRED"`).
+    - `tsc` is clean, and ESLint + Prettier are clean on every changed file.
+      Full `npx vitest run --pool=threads --exclude ".claude/**"`: 3877
+      passed. The failures are the **13 pre-existing tests in 5 files**
+      recorded under bm53/bm54, plus two failures now fixed (the nav-registry
+      ADMIN map and the status-literal allowlist). Two more were load-only
+      effects that pass on their own: the `route-manifest` stale-reference
+      scan hit its 10 s timeout under parallel load, and the 6 env-only files
+      pass 6/6 (34 tests) with `.env` loaded.
+  - **Not run here:** no browser or `next build` run of the pages (the
+    client-bundle boundary is asserted by a source test, not a build). No
+    DB/Azurite run: bm55 adds no SQL beyond two `SELECT`s on
+    `customer_bill`, both mocked in the unit suites.
+  - **Docs closed in this change set:** code-standards TS rule 7, file
+    organization, the permission-map notes (index redirect target, the
+    billrun_view check as built, the authz matrix home) and guardrail 48 as
+    built; placeholder-catalog §C (the directive grammar, formulas and
+    annotate rule); ui-context §10b (preview styles confirmed); the
+    architecture boundary row (built note); known-issues §20; this tracker.
+  - **Next:** seed layout v2 with the annex CSS (known-issues §20) before
+    bm58; bm56 (Company profile, which reuses the shell, badge and history
+    table and switches the index redirect).
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

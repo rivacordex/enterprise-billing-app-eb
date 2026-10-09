@@ -127,4 +127,13 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
     reason:
       "system-config module: dims a RETIRED config-item row — unrelated to product lifecycle.",
   },
+
+  // ── Unrelated domain: invoice template versions (bm55) reuse the
+  //    system-config DRAFT/ACTIVE/RETIRED union (`TemplateVersionStatus`).
+  {
+    file: "components/billing/invoice-settings/version-history-table.tsx",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm55): mutes a RETIRED invoice-template version row in Version history — its own TemplateVersionStatus, unrelated to product lifecycle.",
+  },
 ];

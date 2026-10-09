@@ -47,6 +47,8 @@ import type { NavHref } from "@/lib/nav-registry";
 // `TableProperties` for Rate Card (pm65, ui-context §10 — the mockup's tabler
 // `table-options`): a table-with-settings glyph, no collision with
 // `Package`/`PackagePlus`/`ClipboardList`/`Layers`.
+// `FileText` for Invoice Settings is the glyph bm55-spec D6 names. It is also
+// GL Journal's; the two sit in different sections (Accounts / Administration).
 export const NAV_ICONS: Record<NavHref, LucideIcon> = {
   "/products/product-offering": Package,
   "/products/manage-products": PackagePlus,
@@ -64,6 +66,7 @@ export const NAV_ICONS: Record<NavHref, LucideIcon> = {
   "/administration/users": Users,
   "/administration/roles": ShieldHalf,
   "/administration/system-config": Settings,
+  "/administration/invoice-settings": FileText,
   "/administration/audit-log": ScrollText,
   "/administration/accounts-settings": SlidersHorizontal,
 };

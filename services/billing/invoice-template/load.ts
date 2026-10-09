@@ -358,6 +358,29 @@ export async function loadGenerated(
   return loaded;
 }
 
+// bm55-spec §Design D4/D5 — a generated version's stored files as verified
+// bytes (index + per-file digest), for the Generated .hbs viewer and the
+// download handler. Exactly the stored bytes, never regenerated (API rule 4).
+// Not memoized — it returns bytes, not a delegate.
+export const GENERATED_VERSION_FILES = [
+  "invoice.hbs",
+  "footer.hbs",
+  "structure.json",
+] as const;
+export type GeneratedVersionFile = (typeof GENERATED_VERSION_FILES)[number];
+
+export async function loadGeneratedFiles(
+  row: BillTemplateVersion,
+): Promise<Record<GeneratedVersionFile, Buffer>> {
+  assertLoadable(row, "generated");
+  const files = await verifyVersionFiles(row, GENERATED_VERSION_FILES);
+  return {
+    "invoice.hbs": files.get("invoice.hbs")!,
+    "footer.hbs": files.get("footer.hbs")!,
+    "structure.json": files.get("structure.json")!,
+  };
+}
+
 // For bm55/bm58 (generator + activation): the layout's whole verified file set
 // as raw bytes. Not memoized — it returns bytes, not a delegate.
 export async function loadLayout(

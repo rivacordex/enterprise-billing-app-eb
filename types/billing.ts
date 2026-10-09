@@ -858,6 +858,17 @@ export const INVOICE_OPTIONAL_SECTION_KEYS = [
 export type InvoiceOptionalSectionKey =
   (typeof INVOICE_OPTIONAL_SECTION_KEYS)[number];
 
+// bm55-spec §Design D2 — `InvoiceSectionKey` minus `InvoiceOptionalSectionKey`:
+// the sections that are locked on (the structure schema refuses `false`).
+export type InvoiceMandatorySectionKey = Exclude<
+  InvoiceSectionKey,
+  InvoiceOptionalSectionKey
+>;
+export const MANDATORY_SECTION_KEYS = INVOICE_SECTION_KEYS.filter(
+  (key): key is InvoiceMandatorySectionKey =>
+    !(INVOICE_OPTIONAL_SECTION_KEYS as readonly string[]).includes(key),
+);
+
 // The four hideable charge-detail columns (no Tax column, R6).
 export const INVOICE_COLUMN_KEYS = [
   "showServicePeriod",
@@ -873,6 +884,33 @@ export type InvoiceColumnKey = (typeof INVOICE_COLUMN_KEYS)[number];
 export interface InvoiceTemplateStructure {
   sections: Record<InvoiceSectionKey, boolean>;
   columns: Record<InvoiceColumnKey, boolean>;
+}
+
+// bm55-spec §Design D4 — Version history read model (one row per generated
+// version, newest first). `usedByCount` counts `customer_bill` rows stamped
+// with the version (SQL count, `listForKind`). `createdBy` is the stored
+// appuser id (names are not resolved — the rate-card precedent).
+export interface TemplateVersionHistoryRow {
+  billTemplateVersionId: string;
+  versionNo: number;
+  status: TemplateVersionStatus;
+  isDefault: boolean;
+  layoutLabel: string;
+  createdBy: string | null;
+  createdAt: Date;
+  activatedAt: Date | null;
+  retiredAt: Date | null;
+  changeNote: string | null;
+  usedByCount: number;
+}
+
+// bm55-spec §Design D4 — a posted bill offered as a live-preview source
+// (only to `billrun_view : READ` holders).
+export interface RecentPostedBill {
+  customerBillId: string;
+  invoiceNumber: string;
+  billingAccountId: string;
+  accountName: string;
 }
 
 // ============================================================================
@@ -943,6 +981,13 @@ export const INVOICE_ERROR_CODES = [
   // bm53-spec §Design D3 — the profile version's rows fail
   // `invoiceProfileSchema` (never a partial profile, TS rule 5).
   "INVOICE_PROFILE_INVALID",
+  // bm55-spec §Design D1 — the generator met an unknown directive or key, a
+  // `[[body]]` count ≠ 1, an unbalanced or nested `[[if]]`, or left a `[[`/`]]`
+  // in its output; `detail: { directive, file }`.
+  "TEMPLATE_GENERATION_FAILED",
+  // bm55-spec §Design D1/D2 — a structure hides a mandatory section. The Zod
+  // schema rejects it first; `generate` re-asserts it.
+  "MANDATORY_SECTION_HIDDEN",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

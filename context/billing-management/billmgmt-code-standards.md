@@ -692,7 +692,7 @@ These items conflict with the delivered code or with Part 1. The rules below ass
    | `payment_terms_days` | `invoice.paymentTermsDays` | integer 0–120 |
    | `logo_asset_version_id` | `company.logoUrl` (verified `data:` URI) | optional here (`INVASV\d{8}`); required for ACTIVE at activation (bm61) |
 6. **New ID formats** (general §6.18; `^PREFIX\d+$` validators): `BTV` (bill_template_version, already reserved in §2.7), **`INVAST`** (bill_asset, the prefix the sample blob paths use) and **`INVASV`** (bill_asset_version). `bill_format` uses its code as its key: `bill_format_id = 'INVOICE'`, no sequence, because `customer_bill.ref_bill_format_id` is stamped with the literal `INVOICE`. `ref_invoice_profile_version` is an `integer`, the `system_config.config_version`.
-7. **New typed error codes** (`as const`, next to the existing billing codes): `TEMPLATE_CHECKSUM_MISMATCH` (bm53 — a stored template file or its `checksums.json` index does not match the recorded SHA-256; `detail: { versionId, file }`), `ASSET_CHECKSUM_MISMATCH` (bm53 — logo bytes; `detail: { assetVersionId }`), `TEMPLATE_VERSION_NOT_FOUND` (bm53 — a stamped id missing/DRAFT/wrong kind, or a missing default row), `INVOICE_PROFILE_INVALID` (bm53 — a profile version fails `invoiceProfileSchema`, or names an unknown logo; `detail: { configVersion, issues }`), `TEMPLATE_COMPILE_FAILED` (also raised by bm53's load-time probe execution), `INVOICE_RECONCILIATION_FAILED` (`Σ net_amount ≠ subtotal`, and — bm49 — the usage annex total ≠ `Σ rated_amount` on the USAGE lines, carrying `detail: 'usage'`), `INVOICE_DOCUMENT_MISMATCH`, `INVOICE_USAGE_OVER_LIMIT` (bm49 — the usage annex exceeds `INVOICE_USAGE_ROW_LIMIT = 10_000`; the account parks), `PROFILE_LOGO_REQUIRED`, `CHANGE_NOTE_REQUIRED`, `MANDATORY_SECTION_HIDDEN`, `DEFAULT_VERSION_IMMUTABLE`, `VERSION_IMMUTABLE` and `VERSION_DELETE_FORBIDDEN` (bm50 — the version-rules trigger raises these three with SQLSTATE `23001` and a message beginning with the code, which the app maps to a typed `AppError`), `LOGO_REJECTED` (with a reason in `error_detail`: size, dimensions, MIME/magic mismatch, SVG content). The blob store (bm51) adds `BLOB_ALREADY_EXISTS` (write-once `onExists: 'throw'`, detail `{ blobRef }`) and `INVALID_BLOB_PATH` (bad path or unknown container) as a separate `BLOB_STORE_ERROR_CODES` union in `types/billing.ts`, thrown as a dedicated `BlobStoreError` class (the `InvoiceRenderError` pattern) rather than `AppError`, because these are framework-agnostic store codes with a structured `detail`, not members of `lib/errors.ts`'s closed HTTP-mapped union.
+7. **New typed error codes** (`as const`, next to the existing billing codes): `TEMPLATE_CHECKSUM_MISMATCH` (bm53 — a stored template file or its `checksums.json` index does not match the recorded SHA-256; `detail: { versionId, file }`), `ASSET_CHECKSUM_MISMATCH` (bm53 — logo bytes; `detail: { assetVersionId }`), `TEMPLATE_VERSION_NOT_FOUND` (bm53 — a stamped id missing/DRAFT/wrong kind, or a missing default row), `INVOICE_PROFILE_INVALID` (bm53 — a profile version fails `invoiceProfileSchema`, or names an unknown logo; `detail: { configVersion, issues }`), `TEMPLATE_COMPILE_FAILED` (also raised by bm53's load-time probe execution), `INVOICE_RECONCILIATION_FAILED` (`Σ net_amount ≠ subtotal`, and — bm49 — the usage annex total ≠ `Σ rated_amount` on the USAGE lines, carrying `detail: 'usage'`), `INVOICE_DOCUMENT_MISMATCH`, `INVOICE_USAGE_OVER_LIMIT` (bm49 — the usage annex exceeds `INVOICE_USAGE_ROW_LIMIT = 10_000`; the account parks), `PROFILE_LOGO_REQUIRED`, `CHANGE_NOTE_REQUIRED`, `MANDATORY_SECTION_HIDDEN` (bm55 — the structure schema's issue message for a hidden mandatory section, and the code `generate` throws when it re-asserts that rule; detail `{ section }`), `TEMPLATE_GENERATION_FAILED` (bm55 — the generator met an unknown directive or key, a `[[body]]` count ≠ 1, an unbalanced or nested `[[if]]`, or a `[[`/`]]` left in its output; detail `{ directive, file }`), `DEFAULT_VERSION_IMMUTABLE`, `VERSION_IMMUTABLE` and `VERSION_DELETE_FORBIDDEN` (bm50 — the version-rules trigger raises these three with SQLSTATE `23001` and a message beginning with the code, which the app maps to a typed `AppError`), `LOGO_REJECTED` (with a reason in `error_detail`: size, dimensions, MIME/magic mismatch, SVG content). The blob store (bm51) adds `BLOB_ALREADY_EXISTS` (write-once `onExists: 'throw'`, detail `{ blobRef }`) and `INVALID_BLOB_PATH` (bad path or unknown container) as a separate `BLOB_STORE_ERROR_CODES` union in `types/billing.ts`, thrown as a dedicated `BlobStoreError` class (the `InvoiceRenderError` pattern) rather than `AppError`, because these are framework-agnostic store codes with a structured `detail`, not members of `lib/errors.ts`'s closed HTTP-mapped union. **bm55:** for the same reason, `TEMPLATE_GENERATION_FAILED` and `MANDATORY_SECTION_HIDDEN` are members of `INVOICE_ERROR_CODES` and are thrown as `InvoiceRenderError`. The bm55 spec says `AppError`, but the live preview maps every `InvoiceRenderError` to `PREVIEW_FAILED` with the code as its `detail`.
 
 ### Next.js rules (adds to §3)
 
@@ -751,8 +751,8 @@ These items conflict with the delivered code or with Part 1. The rules below ass
 
 ```
 app/(app)/administration/invoice-settings/
-  page.tsx                                   # redirect → company-profile
-  layout.tsx                                 # InvoiceSettingsTabs (Company profile | Invoice template)
+  page.tsx                                   # redirect → invoice-template (bm55) → company-profile (bm56)
+  layout.tsx                                 # guard READ + InvoiceSettingsTabs (Invoice template; bm56 adds Company profile)
   company-profile/
     page.tsx  loading.tsx  error.tsx         # CompanyProfilePage
     logo/[assetVersionId]/route.ts           # GET logo bytes
@@ -772,8 +772,11 @@ services/billing/invoice-template/
   load.ts               # blob get → checksum → compile (knownHelpersOnly) → cache
   bind.ts               # InvoiceRenderInput from bill lines, tax items, document, organization
   helpers.ts            # the nine registered helpers (wrap formatCurrency/formatCalendarDate)
-  generate.ts           # [[if]]/[[num]]/[[body]] directive resolution → .hbs
+  generate.ts           # [[if]]/[[num]]/[[body]] directive resolution → .hbs (bm55)
+  preview.ts            # live preview: in-memory generate (sample / unposted) or stamped (posted) → HTML (bm55)
   activate-template.ts  save-template-draft.ts
+services/billing/read/
+  invoice-template-settings.ts  # page data, Generated .hbs bytes, file download, recent posted bills (bm55)
   invoice-csv.ts        # fixed column map → CSV
 services/billing/invoice-profile/
   activate-profile.ts  save-profile-draft.ts  upload-logo.ts  sanitize-logo.ts
@@ -783,6 +786,7 @@ db/repositories/billing/
   bill-template-version.ts  bill-asset.ts  invoice-profile.ts  invoice-render-input.ts
 validation/billing/
   invoice-template-structure.schema.ts  invoice-profile.schema.ts
+  invoice-settings-search-params.schema.ts   # ?tab=edit|generated|history, ?version=BTV… (bm55)
   activate-version.schema.ts  logo-upload.schema.ts  template-version-id.schema.ts
 db/seeds/invoice-templates/INVTPL-STD-A4/v1/
   manifest.json  shell.hbs  footer.hbs  partials/*.hbs  sample-data.json
@@ -815,7 +819,9 @@ db/seeds/invoice-templates/INVTPL-STD-A4/v1/
 **Notes**
 
 - The route × level matrix gains the five new routes above: no permission → `/no-access` or 403; READ → view, preview and downloads but every EDIT action refused server-side; EDIT → everything. A READ user sees the forms disabled (show/hide only). The action guard is what is tested.
-- The live preview of a **posted** bill (`source: { billId }`) also requires `billrun_view : READ`. Customer billing data must not leak to a holder of `invoice_settings` alone.
+- The live preview of a **posted** bill (`source: { billId }`) also requires `billrun_view : READ`. Customer billing data must not leak to a holder of `invoice_settings` alone. **Built (bm55):** the action checks it with `hasLevel` before any read, for every `{ billId }` source (posted or not), and the page lists posted bills only for a `billrun_view` holder.
+- **Index redirect target (bm55):** until bm56 ships Company profile, `/administration/invoice-settings` redirects to `/administration/invoice-settings/invoice-template`. bm56 switches it to `company-profile` (Next.js rule 1). The page and the layout both guard `invoice_settings : READ`, and the nav entry is registered at the index. `invoice-template` is listed in the nav guard's `UNLISTED_BY_DESIGN` ("reached via the Invoice Settings tabs").
+- **Authz matrix (bm55):** `tests/guardrails/invoice-settings-authz-matrix.test.ts` holds the `MatrixRow[]` for guardrail 56's routes. bm56–bm62 append their rows to it.
 - These rows are the authz-sweep inventory additions (§8 note). The ZAP/Semgrep scopes already cover them.
 
 ### Guardrail tests (extends §9, items 43–56)
@@ -825,7 +831,7 @@ db/seeds/invoice-templates/INVTPL-STD-A4/v1/
 45. **Default resolution (R11/C3).** On a fresh DB `bill_format` has exactly one row, and the default layout + generated versions are ACTIVE with `is_default = true`. Retiring or deleting either is refused by the trigger. A run posted with no admin activity renders with the default.
 46. **[CRITICAL] Version pinning (D8).** Post under generated v2 + profile v1, then activate v3 + profile v2. The bill's four stamp columns and its stored PDF bytes are unchanged, and a new draft preview uses v3 + profile v2. The stamps land in the same `UPDATE` as `ref_inv_document_id` (a later stamp attempt is refused by `0033`).
 47. **[CRITICAL] Checksum tamper.** Changing one byte of a stored layout, generated `.hbs` or logo blob fails that account's render with `TEMPLATE_CHECKSUM_MISMATCH`/`ASSET_CHECKSUM_MISMATCH`. Other accounts post and render.
-48. **Generator.** For every combination of the 3 optional sections × 4 columns (128 cases) the generated `.hbs` compiles under `knownHelpersOnly`. It contains no `[[`, and contains no markup for any hidden key. A `structure` with a mandatory section `false` is rejected by the Zod schema.
+48. **Generator.** For every combination of the 3 optional sections × 4 columns (128 cases) the generated `.hbs` compiles under `knownHelpersOnly`. It contains no `[[`, and contains no markup for any hidden key. A `structure` with a mandatory section `false` is rejected by the Zod schema. **Built (bm55):** `tests/services/billing/invoice-template/generate.test.ts` runs the 128 cases against the seeded layout v1 through the verified `loadLayout`. It also checks the `colspan` formulas, the header cell count, layout-pair widening, `TEMPLATE_GENERATION_FAILED`, annotate scope, and the client-bundle boundary (no `'use client'` module imports `handlebars` or `services/billing/invoice-template`). Semantic parity with the hand-written v1 is in `generate-parity.test.ts`: the `<body>` is byte-identical, and the `<style>` gap is known-issues §20.
 49. **Manifest ↔ union parity.** The seeded manifest's optional section and column keys equal `InvoiceOptionalSectionKey`/`InvoiceColumnKey`, and the manifest has no `accountSummary` section and no `Tax` fixed column.
 50. **[CRITICAL] Escaping.** A customer name, address and profile field containing `<script>alert(1)</script>` render escaped in HTML and PDF. Layout lint (Styling rule 3) fails on a seeded bad fixture.
 51. **Profile validation.** Activation is refused without a logo or a change note. Invalid TIN, SST, postcode, SWIFT, email and colour values are rejected.

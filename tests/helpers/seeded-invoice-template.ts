@@ -26,8 +26,44 @@ export const repoBlobStoreModule = {
     digest: (bytes: Buffer, algorithm: string) =>
       createHash(algorithm).update(bytes).digest("hex"),
     getObject: (_container: string, blobPath: string) =>
-      Promise.resolve(readFileSync(path.join(SEED_ROOT, blobPath))),
+      Promise.resolve(readFileSync(seedFilePath(blobPath))),
   },
+};
+
+// A layout's blob path carries a `layouts/` segment that its repo directory
+// does not (db/seeds/invoice-templates.ts); every other path maps 1:1.
+export function seedFilePath(blobPath: string): string {
+  return path.join(SEED_ROOT, blobPath.replace(/^layouts\//, ""));
+}
+
+// bm55 — the migration's BTV00000001 row (0046), the seeded layout v1.
+export const SEEDED_LAYOUT_ROW: BillTemplateVersion = {
+  billTemplateVersionId: "BTV00000001",
+  refBillFormatId: "INVOICE",
+  kind: "layout",
+  versionNo: 1,
+  status: "ACTIVE",
+  isDefault: true,
+  layoutCode: "INVTPL-STD-A4",
+  refLayoutVersionId: null,
+  structure: null,
+  pageSetup: {
+    format: "A4",
+    orientation: "portrait",
+    margin: { top: "13mm", bottom: "16mm", left: "14mm", right: "14mm" },
+    displayHeaderFooter: true,
+    printBackground: true,
+  },
+  blobRef: "invoice-templates/layouts/INVTPL-STD-A4/v1/",
+  checksum: "55cff2f3fcce23cd4815e09ecdf51c7c7a3c8189ece2c99f3c0a6a07b89a8220",
+  checksumAlgorithm: "sha256",
+  changeNote: null,
+  createdBy: null,
+  createdDatetime: new Date("2026-10-08T00:00:00Z"),
+  activatedBy: null,
+  activatedDatetime: new Date("2026-10-08T00:00:00Z"),
+  retiredDatetime: null,
+  lastModifiedDatetime: new Date("2026-10-08T00:00:00Z"),
 };
 
 // The migration's BTV00000002 row (0046), as `resolveTemplate` returns it.

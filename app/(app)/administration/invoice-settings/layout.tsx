@@ -1,0 +1,26 @@
+import { requirePermission } from "@/auth/guard";
+import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
+
+// bm55-spec §Design D4 — the Administration › Invoice Settings shell. Guarded
+// at `invoice_settings : READ` (each page re-guards, Inv #49); renders the
+// section tabs over the child page.
+export const dynamic = "force-dynamic";
+
+export default async function InvoiceSettingsLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}): Promise<React.JSX.Element> {
+  await requirePermission(PERMISSIONS.INVOICE_SETTINGS, LEVELS.READ);
+
+  return (
+    <div className="space-y-6 p-6">
+      <h1 className="text-h1 font-semibold text-foreground">
+        Invoice Settings
+      </h1>
+      <InvoiceSettingsTabs />
+      {children}
+    </div>
+  );
+}

@@ -234,6 +234,24 @@ One badge serves both template and company-profile versions (code-standards › 
 | Read-only view (READ without EDIT)                        | Fields render as text, with no disabled-input grey wash. Save, Activate and Upload are not rendered                                                                                          |
 | Preview loading, queued and error states                  | Reuse the §6c PDF skeleton and captions as they are                                                                                                                                           |
 
+**Confirmed as built (bm55).** The preview service appends one
+`<style data-preview="true">` to the rendered document. It is never part of a
+stored file. On "Show placeholders" it adds
+`.ph { background:#E2F8FA; color:#006975 }` (the cyan-50 / cyan-700 hexes
+above), and the generator wraps each text-content placeholder in
+`<span class="ph" data-ph="…">`. The mono label is the `data-ph` attribute.
+On "Outline" it adds `.sec { outline:1px dashed #99A1B0 }`. These are raw hex
+because the iframe document cannot use app tokens (§10c).
+
+A posted bill previews its stored, stamped template. That template is not
+regenerated, so only the outline applies to it, and the form shows a
+"Showing as issued under template vN" Info-family status line. The frame is
+`<iframe sandbox="" srcDoc>`, A4-proportioned (`aspect-[210/297]`) and square.
+
+The read-only view renders "Shown"/"Hidden" as text, and mandatory sections
+keep their `Lock` "Required" mark. Neither Save nor Activate is rendered in
+bm55; they arrive with bm57/bm58.
+
 ### 10c. Invoice document palette and typography (print — not app tokens)
 
 The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice Template deltas, rendering rule 1). It **cannot** use `globals.css` variables or Tailwind. The layout defines its own `--inv-*` custom properties. The fixed values below reuse shared hexes so the invoice reads as the same family as the app. Only the two profile colours are admin-controlled.

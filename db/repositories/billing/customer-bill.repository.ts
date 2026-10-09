@@ -1,4 +1,13 @@
-import { and, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import type { Database } from "@/db/client";
@@ -512,6 +521,66 @@ export const customerBillRepository = {
       )
       .limit(1);
     return row ?? null;
+  },
+
+  // bm55-spec §Design D3 — the invoice-template preview's `{ billId }`
+  // source: which run/account the bill belongs to and whether it is posted
+  // (its stamps are read again by the binder in its own snapshot). `null` when
+  // no such bill exists.
+  async findPreviewTarget(
+    db: Database,
+    customerBillId: string,
+  ): Promise<{
+    customerBillId: string;
+    billRunId: string;
+    billingAccountId: string;
+    refInvDocumentId: string | null;
+    refBillTemplateVersionId: string | null;
+  } | null> {
+    const [row] = await db
+      .select({
+        customerBillId: customerBill.customerBillId,
+        billRunId: customerBill.refBillRunId,
+        billingAccountId: customerBill.refBillingAccountId,
+        refInvDocumentId: customerBill.refInvDocumentId,
+        refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
+      })
+      .from(customerBill)
+      .where(eq(customerBill.customerBillId, customerBillId))
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm55-spec §Design D4 — the preview source select's posted bills, newest
+  // first. `ref_inv_document_id` comes from the monotonic `document_inv_seq`,
+  // so ordering by it is posting order. LIMIT in SQL.
+  async listRecentPosted(
+    db: Database,
+    limit: number,
+  ): Promise<
+    {
+      customerBillId: string;
+      invoiceNumber: string;
+      billingAccountId: string;
+      accountName: string;
+    }[]
+  > {
+    const rows = await db
+      .select({
+        customerBillId: customerBill.customerBillId,
+        invoiceNumber: customerBill.refInvDocumentId,
+        billingAccountId: customerBill.refBillingAccountId,
+        accountName: billingAccount.name,
+      })
+      .from(customerBill)
+      .innerJoin(
+        billingAccount,
+        eq(customerBill.refBillingAccountId, billingAccount.billingAccountId),
+      )
+      .where(isNotNull(customerBill.refInvDocumentId))
+      .orderBy(desc(customerBill.refInvDocumentId))
+      .limit(limit);
+    return rows.map((r) => ({ ...r, invoiceNumber: r.invoiceNumber! }));
   },
 
   // bm05-spec §Visual — one row per trial bill, joined to the account name +
