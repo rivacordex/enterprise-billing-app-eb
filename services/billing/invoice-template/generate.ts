@@ -151,6 +151,38 @@ function isColumnKey(key: string): key is InvoiceColumnKey {
   return (INVOICE_COLUMN_KEYS as readonly string[]).includes(key);
 }
 
+// Every `[[…]]` whose inner text contains no `]` — the same matches as
+// /\[\[([^\]]*)\]\]/g, found by a linear indexOf scan instead of a regex that
+// backtracks quadratically on unterminated `[[` runs.
+function* directiveMatches(
+  source: string,
+): Generator<{ raw: string; inner: string; index: number }> {
+  let from = 0;
+  for (;;) {
+    const start = source.indexOf("[[", from);
+    if (start === -1) return;
+    const close = source.indexOf("]", start + 2);
+    if (close === -1) return;
+    if (source[close + 1] !== "]") {
+      // Any `[[` before this lone `]` would stop at the same `]` — skip past.
+      from = close + 1;
+      continue;
+    }
+    yield {
+      raw: source.slice(start, close + 2),
+      inner: source.slice(start + 2, close),
+      index: start,
+    };
+    from = close + 2;
+  }
+}
+
+function stripTrailingNewlines(source: string): string {
+  let end = source.length;
+  while (end > 0 && source[end - 1] === "\n") end--;
+  return source.slice(0, end);
+}
+
 // One pass over a file: `[[if sections.<key>]]…[[/if]]` and
 // `[[if columns.<key>]]…[[/if]]` keep or drop their body ENTIRELY (no
 // `[[else]]`, no nesting), `[[num …]]` becomes its number, and `[[body]]`
@@ -163,7 +195,6 @@ function resolveDirectives(
   allowBody: boolean,
 ): string {
   const nums = numbers(structure.columns);
-  const directive = /\[\[([^\]]*)\]\]/g;
   let out = "";
   let cursor = 0;
   let open: { keep: boolean; directive: string } | null = null;
@@ -172,9 +203,9 @@ function resolveDirectives(
     if (open === null || open.keep) out += chunk;
   };
 
-  for (const match of source.matchAll(directive)) {
-    const raw = match[0];
-    const body = match[1]!.trim();
+  for (const match of directiveMatches(source)) {
+    const raw = match.raw;
+    const body = match.inner.trim();
     emit(source.slice(cursor, match.index));
     cursor = match.index + raw.length;
 
@@ -390,12 +421,21 @@ export function annotatePlaceholders(source: string): string {
 
 // --- canonical structure.json ----------------------------------------------
 
+// Locale-independent UTF-16 code-unit order (same as the default sort), made
+// explicit. Deliberately not localeCompare: its ordering varies with ICU data
+// and runtime locale, which would break byte-stable structure.json output.
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.keys(value)
-        .sort()
+        .sort(compareCodeUnits)
         .map((k) => [k, canonicalize((value as Record<string, unknown>)[k])]),
     );
   }
@@ -448,7 +488,7 @@ export function generate(
     if (partner !== undefined && !visible(partner)) {
       resolved = widen(resolved);
     }
-    sections.push(resolved.replace(/\n+$/, ""));
+    sections.push(stripTrailingNewlines(resolved));
   }
 
   let invoiceHbs = spliceBody(
