@@ -42,13 +42,13 @@ blobStore.digest(bytes, algorithm): string                                     /
 ```
 
 - `blobRef` = `${container}/${path}` for every container (the existing `invoices/…` refs keep their exact form).
-- **Write-once** = `conditions: { ifNoneMatch: '*' }`. On HTTP 412: `onExists: 'returnExisting'` downloads the existing blob and returns **its** digest with `created: false` (today's `putInvoice` behavior, kept for posting-retry idempotency); `onExists: 'throw'` throws `AppError('BLOB_ALREADY_EXISTS', { blobRef })` — the mode every Part 2 consumer uses (a template/asset path is never reused, Inv #44).
+- **Write-once** = `conditions: { ifNoneMatch: '*' }`. On HTTP 412: `onExists: 'returnExisting'` downloads the existing blob and returns **its** digest with `created: false` (today's `putInvoice` behavior, kept for posting-retry idempotency); `onExists: 'throw'` throws `BlobStoreError('BLOB_ALREADY_EXISTS', { blobRef })` — the mode every Part 2 consumer uses (a template/asset path is never reused, Inv #44).
 - `writeOnce: false` = unconditional upload (only `putReport` uses it).
 - `getObject` returns raw bytes. **It does not verify** — verification is the caller's job against the DB checksum (bm53 `load`, bm56 logo route), because only the caller knows the expected digest. `getInvoice` keeps no verification either (`get-stored-invoice.ts` verifies md5, unchanged).
 
 ### D2 — Path safety
 
-`path` must match `^(?!/)(?!.*\.\.)[A-Za-z0-9._\-/]{1,512}$` and must not end with `/`; otherwise `AppError('INVALID_BLOB_PATH')`. `container` is checked against the union at runtime (callers pass literals, but the value also comes from `parseBlobRef` of DB data). No user-supplied string is ever used as a path segment without passing through an ID schema first (callers' responsibility; documented in the JSDoc).
+`path` must match `^(?!/)(?!.*\.\.)[A-Za-z0-9._\-/]{1,512}$` and must not end with `/`; otherwise `BlobStoreError('INVALID_BLOB_PATH')`. `container` is checked against the union at runtime (callers pass literals, but the value also comes from `parseBlobRef` of DB data). No user-supplied string is ever used as a path segment without passing through an ID schema first (callers' responsibility; documented in the JSDoc).
 
 ### D3 — Clients per container, same auth paths
 

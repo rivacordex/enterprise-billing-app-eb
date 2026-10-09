@@ -62,6 +62,14 @@ function render(source: string, data: InvoiceRenderInput): string {
   return compileInvoiceTemplate(source)(data);
 }
 
+// Most helper cases render a template against a single overridden `amountDue`.
+function renderAmount(source: string, amountDue: string): string {
+  return render(
+    source,
+    fixture({ totals: { ...fixture().totals, amountDue } }),
+  );
+}
+
 describe("money", () => {
   it("formats through the shared formatCurrency (no bare number)", () => {
     const html = render("{{money totals.amountDue}}", fixture());
@@ -70,18 +78,12 @@ describe("money", () => {
   });
 
   it("brackets a negative amount", () => {
-    const html = render(
-      "{{money totals.amountDue}}",
-      fixture({ totals: { ...fixture().totals, amountDue: "-50.00" } }),
-    );
+    const html = renderAmount("{{money totals.amountDue}}", "-50.00");
     expect(html).toMatch(/^\(.*50\.00.*\)$/);
   });
 
   it("negate=true prints – for a zero amount", () => {
-    const html = render(
-      "{{money totals.amountDue negate=true}}",
-      fixture({ totals: { ...fixture().totals, amountDue: "0.00" } }),
-    );
+    const html = renderAmount("{{money totals.amountDue negate=true}}", "0.00");
     expect(html).toBe("–");
   });
 });
@@ -109,47 +111,26 @@ describe("date / period", () => {
 
 describe("qty / price / int / amt", () => {
   it("qty renders 3 dp, grouped", () => {
-    const html = render(
-      "{{qty totals.amountDue}}",
-      fixture({ totals: { ...fixture().totals, amountDue: "1234.5" } }),
-    );
+    const html = renderAmount("{{qty totals.amountDue}}", "1234.5");
     expect(html).toBe("1,234.500");
   });
 
   it("price renders 2 dp at or above 1", () => {
-    expect(
-      render(
-        "{{price totals.amountDue}}",
-        fixture({ totals: { ...fixture().totals, amountDue: "12.5" } }),
-      ),
-    ).toBe("12.50");
+    expect(renderAmount("{{price totals.amountDue}}", "12.5")).toBe("12.50");
   });
 
   it("price renders 4 dp below 1 (sub-cent unit rates)", () => {
-    expect(
-      render(
-        "{{price totals.amountDue}}",
-        fixture({ totals: { ...fixture().totals, amountDue: "0.0125" } }),
-      ),
-    ).toBe("0.0125");
+    expect(renderAmount("{{price totals.amountDue}}", "0.0125")).toBe("0.0125");
   });
 
   it("int renders a grouped integer, no decimals", () => {
-    expect(
-      render(
-        "{{int totals.amountDue}}",
-        fixture({ totals: { ...fixture().totals, amountDue: "12345" } }),
-      ),
-    ).toBe("12,345");
+    expect(renderAmount("{{int totals.amountDue}}", "12345")).toBe("12,345");
   });
 
   it("amt renders 2 dp with no grouping", () => {
-    expect(
-      render(
-        "{{amt totals.amountDue}}",
-        fixture({ totals: { ...fixture().totals, amountDue: "12345.6" } }),
-      ),
-    ).toBe("12345.60");
+    expect(renderAmount("{{amt totals.amountDue}}", "12345.6")).toBe(
+      "12345.60",
+    );
   });
 });
 

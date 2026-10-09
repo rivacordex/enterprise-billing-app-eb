@@ -2,57 +2,38 @@ import { createHash } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  MockDefaultAzureCredential,
+  mockCreateIfNotExists,
+  mockDownloadToBuffer,
+  mockFromConnectionString,
+  mockGetBlockBlobClient,
+  mockGetContainerClient,
+  mockUploadData,
+  registerAzureBlobDoMocks,
+  resetBlobSdkMocks,
+} from "@/tests/helpers/azure-blob-sdk-mock";
+
 // bm19-spec §Implementation §2 — the artifact store. Mocks `@azure/storage-
 // blob`/`@azure/identity` at the module boundary (same precedent as
 // render-invoice.service.test.ts mocking `playwright`) so this suite never
-// touches a real Azurite/Azure Blob endpoint. `vi.resetModules()` per test
-// (config.test.ts's own precedent) isolates the module-level container-
-// client cache, since `getContainerClient` memoizes across calls.
-
-const mockUploadData = vi.fn();
-const mockDownloadToBuffer = vi.fn();
-const mockCreateIfNotExists = vi.fn();
-const mockGetBlockBlobClient = vi.fn(() => ({
-  uploadData: mockUploadData,
-  downloadToBuffer: mockDownloadToBuffer,
-}));
-const mockGetContainerClient = vi.fn(() => ({
-  getBlockBlobClient: mockGetBlockBlobClient,
-  createIfNotExists: mockCreateIfNotExists,
-}));
-const mockFromConnectionString = vi.fn(() => ({
-  getContainerClient: mockGetContainerClient,
-}));
-// A real `function` (not an arrow) so `new BlobServiceClient(...)` works —
-// the Managed Identity path constructs it directly rather than via the
-// static `fromConnectionString` factory.
-function MockBlobServiceClient(this: unknown) {
-  return { getContainerClient: mockGetContainerClient };
-}
-MockBlobServiceClient.fromConnectionString = mockFromConnectionString;
-
-vi.mock("@azure/storage-blob", () => ({
-  BlobServiceClient: MockBlobServiceClient,
-}));
-const MockDefaultAzureCredential = vi.fn();
-vi.mock("@azure/identity", () => ({
-  DefaultAzureCredential: MockDefaultAzureCredential,
-}));
+// touches a real Azurite/Azure Blob endpoint. The shared mock harness lives in
+// `tests/helpers/azure-blob-sdk-mock.ts` (bm51 — reused by the parity suite).
+// `vi.resetModules()` per test (config.test.ts's own precedent) isolates the
+// module-level container-client cache, since `getContainerClient` memoizes.
 
 async function loadBlobStoreWithConfig(config: {
   connectionString: string | null;
   accountUrl: string | null;
 }) {
   vi.resetModules();
+  registerAzureBlobDoMocks();
   vi.doMock("@/lib/config", () => ({ billRunBlobConfig: config }));
   return import("@/services/billing/blob-store");
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  mockCreateIfNotExists.mockResolvedValue(undefined);
-  mockUploadData.mockResolvedValue(undefined);
-  mockDownloadToBuffer.mockResolvedValue(Buffer.from("PDF-BYTES"));
+  resetBlobSdkMocks();
 });
 
 afterEach(() => {

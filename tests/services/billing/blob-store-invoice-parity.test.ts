@@ -2,40 +2,26 @@ import { createHash } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  mockDownloadToBuffer,
+  mockGetBlockBlobClient,
+  mockGetContainerClient,
+  mockUploadData,
+  registerAzureBlobDoMocks,
+  resetBlobSdkMocks,
+} from "@/tests/helpers/azure-blob-sdk-mock";
+
 // bm51-spec §Tests — byte-equality parity. Proves the generalized `putObject`
 // did not change the invoice/report/get wrappers' observable behaviour: the
 // SDK `uploadData` call (container, path, body bytes, content type, conditions)
 // and the returned `{ blobRef, checksum }` equal a RECORDED fixture of the
 // pre-bm51 implementation (`CONTAINER_NAME = "invoices"`, path
 // `${YYYY-MM}/${invoiceNo}.pdf`, `application/pdf`, `ifNoneMatch: "*"`, md5 of
-// the uploaded bytes). Same mock-at-the-boundary approach as blob-store.test.ts.
-
-const mockUploadData = vi.fn();
-const mockDownloadToBuffer = vi.fn();
-const mockCreateIfNotExists = vi.fn();
-const mockGetBlockBlobClient = vi.fn(() => ({
-  uploadData: mockUploadData,
-  downloadToBuffer: mockDownloadToBuffer,
-}));
-const mockGetContainerClient = vi.fn(() => ({
-  getBlockBlobClient: mockGetBlockBlobClient,
-  createIfNotExists: mockCreateIfNotExists,
-}));
-const mockFromConnectionString = vi.fn(() => ({
-  getContainerClient: mockGetContainerClient,
-}));
-function MockBlobServiceClient(this: unknown) {
-  return { getContainerClient: mockGetContainerClient };
-}
-MockBlobServiceClient.fromConnectionString = mockFromConnectionString;
-
-vi.mock("@azure/storage-blob", () => ({
-  BlobServiceClient: MockBlobServiceClient,
-}));
-vi.mock("@azure/identity", () => ({ DefaultAzureCredential: vi.fn() }));
+// the uploaded bytes). Shares the Azure-SDK mock harness with blob-store.test.ts.
 
 async function loadBlobStore() {
   vi.resetModules();
+  registerAzureBlobDoMocks();
   vi.doMock("@/lib/config", () => ({
     billRunBlobConfig: {
       connectionString: "UseDevelopmentStorage=true",
@@ -69,9 +55,8 @@ const FIXTURE = {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  mockCreateIfNotExists.mockResolvedValue(undefined);
-  mockUploadData.mockResolvedValue(undefined);
+  resetBlobSdkMocks();
+  // Parity pins the fixed PDF buffer, not the harness default bytes.
   mockDownloadToBuffer.mockResolvedValue(PDF);
 });
 

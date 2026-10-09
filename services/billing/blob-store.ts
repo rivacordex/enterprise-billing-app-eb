@@ -148,6 +148,11 @@ export interface PutObjectResult {
   blobRef: string;
   checksum: string;
   checksumAlgorithm: ChecksumAlgorithm;
+  // Write-once semantics: `true` when this put created the blob, `false` when a
+  // write-once put lost the race and adopted the existing blob's digest
+  // (`onExists: 'returnExisting'`). An unconditional (`writeOnce: false`) put
+  // always reports `true` — it cannot cheaply tell create from overwrite, and no
+  // caller needs that distinction (only write-once callers read `created`).
   created: boolean;
 }
 
@@ -201,16 +206,23 @@ export const blobStore = {
     const blockBlobClient = client.getBlockBlobClient(path);
     const blobRef = `${container}/${path}`;
     const headers = { blobHTTPHeaders: { blobContentType: contentType } };
+    // The one result shape — the digest is always over `data` (the uploaded
+    // bytes on a successful write, the stored bytes when a write-once put adopts
+    // an existing blob).
+    const toResult = (data: Buffer, created: boolean): PutObjectResult => ({
+      blobRef,
+      checksum: this.digest(data, opts.checksumAlgorithm),
+      checksumAlgorithm: opts.checksumAlgorithm,
+      created,
+    });
 
     if (!opts.writeOnce) {
-      // Unconditional overwrite (only `putReport` uses this).
+      // Unconditional overwrite (only `putReport` uses this). `created` is true
+      // because the write always stored these bytes — it does NOT mean the path
+      // was previously empty (see the PutObjectResult doc; only write-once
+      // distinguishes create vs adopt).
       await blockBlobClient.uploadData(bytes, headers);
-      return {
-        blobRef,
-        checksum: this.digest(bytes, opts.checksumAlgorithm),
-        checksumAlgorithm: opts.checksumAlgorithm,
-        created: true,
-      };
+      return toResult(bytes, true);
     }
 
     try {
@@ -218,12 +230,7 @@ export const blobStore = {
         ...headers,
         conditions: { ifNoneMatch: "*" },
       });
-      return {
-        blobRef,
-        checksum: this.digest(bytes, opts.checksumAlgorithm),
-        checksumAlgorithm: opts.checksumAlgorithm,
-        created: true,
-      };
+      return toResult(bytes, true);
     } catch (err) {
       if (!isBlobAlreadyExists(err)) throw err;
       // The path is already taken. `onExists: 'throw'` (default — every
@@ -238,12 +245,7 @@ export const blobStore = {
         );
       }
       const stored = await blockBlobClient.downloadToBuffer();
-      return {
-        blobRef,
-        checksum: this.digest(stored, opts.checksumAlgorithm),
-        checksumAlgorithm: opts.checksumAlgorithm,
-        created: false,
-      };
+      return toResult(stored, false);
     }
   },
 
