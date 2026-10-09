@@ -43,6 +43,18 @@ const MATRIX: MatrixRow[] = [
     kind: "page",
   },
   {
+    surface: "/administration/invoice-settings/company-profile",
+    file: "app/(app)/administration/invoice-settings/company-profile/page.tsx",
+    level: "READ",
+    kind: "page",
+  },
+  {
+    surface: "GET …/company-profile/logo/[assetVersionId]",
+    file: "app/(app)/administration/invoice-settings/company-profile/logo/[assetVersionId]/route.ts",
+    level: "READ",
+    kind: "route",
+  },
+  {
     surface: "/administration/invoice-settings/invoice-template",
     file: "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
     level: "READ",

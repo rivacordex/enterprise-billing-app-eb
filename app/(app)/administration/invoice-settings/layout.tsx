@@ -1,10 +1,10 @@
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
-import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
 
 // bm55-spec §Design D4 — the Administration › Invoice Settings shell. Guarded
 // at `invoice_settings : READ` (each page re-guards, Inv #49); renders the
-// section tabs over the child page.
+// heading over the child page. Each page renders its own tab strip (a layout
+// cannot see the current path, so only the page can mark the active tab).
 export const dynamic = "force-dynamic";
 
 export default async function InvoiceSettingsLayout({
@@ -19,7 +19,6 @@ export default async function InvoiceSettingsLayout({
       <h1 className="text-h1 font-semibold text-foreground">
         Invoice Settings
       </h1>
-      <InvoiceSettingsTabs />
       {children}
     </div>
   );

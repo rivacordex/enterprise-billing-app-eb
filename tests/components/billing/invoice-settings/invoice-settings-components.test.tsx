@@ -214,10 +214,14 @@ describe("GeneratedHbsViewer", () => {
 });
 
 describe("InvoiceSettingsTabs", () => {
-  it("renders only the Invoice template tab until bm56 adds Company profile", () => {
-    render(<InvoiceSettingsTabs />);
+  it("lists Company profile first, then Invoice template, marking the active tab", () => {
+    render(<InvoiceSettingsTabs active="invoice-template" />);
     const links = screen.getAllByRole("link");
-    expect(links.map((l) => l.textContent)).toEqual(["Invoice template"]);
-    expect(links[0]).toHaveAttribute("aria-current", "page");
+    expect(links.map((l) => l.textContent)).toEqual([
+      "Company profile",
+      "Invoice template",
+    ]);
+    expect(links[0]).not.toHaveAttribute("aria-current");
+    expect(links[1]).toHaveAttribute("aria-current", "page");
   });
 });

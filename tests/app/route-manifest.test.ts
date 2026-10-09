@@ -45,6 +45,7 @@ const ROUTE_MANIFEST = [
   "/administration/accounts-settings",
   "/administration/accounts-settings/flows",
   "/administration/invoice-settings",
+  "/administration/invoice-settings/company-profile",
   "/administration/invoice-settings/invoice-template",
 ] as const;
 

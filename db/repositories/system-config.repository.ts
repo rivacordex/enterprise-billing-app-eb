@@ -1,8 +1,9 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
 import { systemConfig } from "@/db/schema/system-config";
+import { INVOICE_PROFILE_CONFIG_GROUP } from "@/types/billing";
 import type {
   ConfigStatus,
   SystemConfigDisplayRow,
@@ -14,7 +15,8 @@ export const systemConfigRepository = {
   // `is_secret = TRUE` rows so a secret config row is never read into app
   // memory, let alone rendered. Returns rows across all statuses (DRAFT,
   // ACTIVE, RETIRED) — status filtering is a display concern, not a query
-  // concern.
+  // concern. The company profile group (`invoice.profile`) is excluded too: it
+  // is changed only through its validated Invoice Settings screen (bm56 D4).
   async findAllNonSecret(db: Database): Promise<SystemConfigDisplayRow[]> {
     const rows = await db
       .select({
@@ -32,7 +34,12 @@ export const systemConfigRepository = {
       })
       .from(systemConfig)
       .leftJoin(appuser, eq(systemConfig.modifiedBy, appuser.id))
-      .where(eq(systemConfig.isSecret, false))
+      .where(
+        and(
+          eq(systemConfig.isSecret, false),
+          ne(systemConfig.configGroup, INVOICE_PROFILE_CONFIG_GROUP),
+        ),
+      )
       .orderBy(asc(systemConfig.configGroup), asc(systemConfig.configKey));
 
     return rows.map((row) => ({

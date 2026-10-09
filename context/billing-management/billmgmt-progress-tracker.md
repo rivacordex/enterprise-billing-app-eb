@@ -1043,6 +1043,59 @@ DELIVERED" section.
     bm58; bm56 (Company profile, which reuses the shell, badge and history
     table and switches the index redirect).
 
+## Invoice Template update — bm56 DELIVERED (code + tests + docs), unit suites RUN GREEN (2026-10-10)
+
+- **bm56 — Company profile read page (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm56-company-profile-read-page.md`. A READ user sees the
+  ACTIVE company profile (or an Info empty state), its logo, and its version history;
+  `invoice.profile` is removed from the generic System Config page. No profile mutation, no
+  migration, no grant change, no npm dependency. Depends on bm55, bm53.
+  - **Delivered:**
+    - `types/billing.ts`: `INVOICE_PROFILE_CONFIG_GROUP`, `INVOICE_PROFILE_META_KEYS` (D2),
+      `ProfileHistoryRow`, `InvoiceProfileView`, `CompanyProfilePageModel`.
+    - `db/repositories/billing/invoice-profile.ts`: `readVersion` now returns field rows only
+      (`meta.*` split out so the strict schema never sees them); new `readVersionRaw`,
+      `findVersionStatus`, `resolveUserNames`; `listVersions` also returns each version's `meta`
+      and a used-by count (`count(*)` of `customer_bill.ref_invoice_profile_version`).
+    - `services/billing/invoice-profile/read-profile.ts`: `getCompanyProfilePageModel` (shown
+      version = `?version` ?? ACTIVE ?? DRAFT for EDIT users ?? `null`; a DRAFT is hidden from
+      READ users in the form and the history; the unparsed field map is returned) and
+      `getVerifiedLogo`. `services/billing/read/company-profile-settings.ts` binds `db` for the
+      page and route (app code may not import `db`).
+    - Pages: `company-profile/{page,loading,error}.tsx`; the logo GET handler
+      `company-profile/logo/[assetVersionId]/route.ts` (401, 403, 422, 404; digest check, 500
+      with no body on mismatch; stored MIME, inline, nosniff, sandbox CSP, no-store).
+    - Components: `CompanyProfileForm` (`mode: 'read' | 'edit'`, only read wired; colour
+      swatches are a 20x20 inline `<svg>` because inline `style` props are lint-banned) and
+      `VersionHistoryTable` generalized with `kind="profile"` (no Layout column, no Default chip,
+      no .hbs download, numeric `?version=`).
+    - Shell: `InvoiceSettingsTabs` lists Company profile first and now requires `active`; the
+      layout no longer renders the strip (it cannot see the path) — each page does. The index
+      redirects to `company-profile`.
+    - System Config (D4): `findAllNonSecret` excludes the group; `updateConfigValue` returns
+      `GROUP_NOT_EDITABLE` (no write, no audit); the action union and edit dialog copy gain it.
+  - **Deviations (recorded):** (1) the spec calls `VersionHistoryTable` "kind-agnostic", but
+    bm55 built it template-specific, so it was generalized here with a `kind` prop instead of
+    forking a second table. (2) The tab strip moved from the layout into the pages (bm55
+    deviation 7 anticipated this). (3) `listVersions` ran two extra queries (all `meta.*` rows,
+    per-version bill counts) rather than a joined aggregate. (4) "Created by" shows the
+    appuser name of the most recently modified row, falling back to the id.
+  - **Tests (all new suites green):** `read-profile.test.ts` (9), `logo-route.test.ts` (11),
+    `company-profile-form.test.tsx` (10, incl. the profile history table),
+    `system-config-exclusion.test.ts` (3, incl. the built WHERE clause), authz-matrix rows for the
+    page and the logo route, nav-registry-guard (`UNLISTED_BY_DESIGN`), route manifest, and the
+    updated tabs test. `tests/guardrails` + `tests/actions` (607 tests in 80 files) stay green.
+    `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** `tests/db/invoice-profile.integration.test.ts` (the repository's `meta`
+    split, `listVersions` used-by count, `resolveUserNames`) needs the disposable Postgres and
+    was not re-run; no browser or `next build` run of the new page.
+  - **Docs closed in this change set:** code-standards data rule 5 (the `meta.*` keys), the
+    file-organization tree, the permission-map notes (logo route, index redirect target,
+    `GROUP_NOT_EDITABLE`); ui-context §10b (empty-state copy); this tracker.
+  - **Next:** bm57 (Invoice template save draft), bm59 (profile edit mode + "Create a draft"),
+    bm60 (logo upload), bm61 (activation writes `meta.*`). Known-issues §20 (layout v2) still
+    precedes bm58.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

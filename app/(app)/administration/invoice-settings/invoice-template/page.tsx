@@ -5,6 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/generated-hbs-viewer";
+import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
 import { InvoiceStructureForm } from "@/components/billing/invoice-settings/invoice-structure-form";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { VersionHistoryTable } from "@/components/billing/invoice-settings/version-history-table";
@@ -77,6 +78,7 @@ export default async function InvoiceTemplatePage({
 
   return (
     <div className="space-y-4">
+      <InvoiceSettingsTabs active="invoice-template" />
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-h2 font-semibold text-foreground">
           Invoice template{" "}

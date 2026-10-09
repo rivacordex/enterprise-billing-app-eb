@@ -232,6 +232,7 @@ One badge serves both template and company-profile versions (code-standards › 
 | Colour fields (`brandColor`, `accentColor`)               | Mono `#RRGGBB` input plus a 20×20 swatch (`--radius-xs`, `--border-default`). **Recommended:** a non-blocking **Warning** hint when white text on the brand colour is below 4.5:1 contrast        |
 | Bank details changed vs the ACTIVE version                | **Warning** family callout in `ActivateVersionDialog` ("Bank details change on every new invoice"). This addresses the single-signature gap in the architecture without adding a new hue      |
 | Read-only view (READ without EDIT)                        | Fields render as text, with no disabled-input grey wash. Save, Activate and Upload are not rendered                                                                                          |
+| Company profile empty state (no ACTIVE profile) | **Info** alert, no action for READ: "No company profile is active. Invoices are issued without the issuer and payment blocks until a profile is activated." EDIT users gain a "Create a draft" action in bm59 (not rendered earlier — a link to nothing would mislead) |
 | Preview loading, queued and error states                  | Reuse the §6c PDF skeleton and captions as they are                                                                                                                                           |
 
 **Confirmed as built (bm55).** The preview service appends one

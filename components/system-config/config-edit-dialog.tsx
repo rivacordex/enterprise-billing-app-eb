@@ -35,6 +35,7 @@ interface ConfigEditDialogProps {
 type ConfigEditErrorCode =
   | "NOT_FOUND"
   | "SECRET_ROW"
+  | "GROUP_NOT_EDITABLE"
   | "FORBIDDEN"
   | "SERVER_ERROR";
 
@@ -42,6 +43,8 @@ const ERROR_MESSAGES: Record<ConfigEditErrorCode, string> = {
   NOT_FOUND:
     "Configuration parameter not found. It may have been modified by another admin.",
   SECRET_ROW: "This parameter is marked secret and cannot be edited here.",
+  GROUP_NOT_EDITABLE:
+    "This parameter group is managed on its own screen and cannot be edited here.",
   FORBIDDEN: "You don't have permission to edit configuration parameters.",
   SERVER_ERROR: "Something went wrong. Please try again.",
 };
