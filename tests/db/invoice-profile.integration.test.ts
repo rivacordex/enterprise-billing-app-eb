@@ -174,11 +174,9 @@ describe.skipIf(!databaseUrl)(
       beforeAll(async () => {
         const container = service!.getContainerClient("invoice-assets");
         await container.createIfNotExists();
-        await container
-          .getBlockBlobClient(logoPath)
-          .uploadData(LOGO, {
-            blobHTTPHeaders: { blobContentType: "image/png" },
-          });
+        await container.getBlockBlobClient(logoPath).uploadData(LOGO, {
+          blobHTTPHeaders: { blobContentType: "image/png" },
+        });
         await sql`INSERT INTO billing.bill_asset (bill_asset_id, kind, name) VALUES ('INVAST00000001', 'logo', 'Company logo')`;
         await sql`
           INSERT INTO billing.bill_asset_version

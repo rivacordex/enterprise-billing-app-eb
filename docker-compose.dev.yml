@@ -97,9 +97,16 @@ services:
       # The react-server export condition makes it a no-op — same fix the CI/CD
       # migrate job uses (bare `npm run db:migrate` doesn't carry the flag).
       NODE_OPTIONS: --conditions=react-server
+      # db:seed-invoice-templates (part of db:setup) uploads the seeded invoice
+      # template files to blob storage, so `setup` needs the in-network Azurite
+      # endpoint too (same override as `app`; .env's 127.0.0.1 default is host-only).
+      BILLRUN_BLOB_CONNECTION_STRING: >-
+        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
     depends_on:
       db:
         condition: service_healthy
+      azurite:
+        condition: service_started
     restart: "no"
 
   app:

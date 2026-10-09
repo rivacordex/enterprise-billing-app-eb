@@ -252,7 +252,7 @@ function resolveDirectives(
     }
 
     const numMatch = /^num ([A-Za-z]+)$/.exec(body);
-    if (numMatch && numMatch[1]! in nums) {
+    if (numMatch && Object.hasOwn(nums, numMatch[1]!)) {
       emit(String(nums[numMatch[1] as NumberDirective]));
       continue;
     }
@@ -330,6 +330,14 @@ function indentLines(block: string, indent: string): string {
 
 function spliceBody(shell: string, body: string): string {
   const at = shell.indexOf(BODY_MARKER);
+  // The marker is absent when `[[body]]` sat inside a hidden `[[if]]` block.
+  if (at === -1 || shell.indexOf(BODY_MARKER, at + 1) !== -1) {
+    throw generationFailed(
+      "[[body]]",
+      "shell.hbs",
+      "[[body]] must survive generation exactly once (not inside a hidden [[if]] block)",
+    );
+  }
   const lineStart = shell.lastIndexOf("\n", at - 1) + 1;
   const indent = shell.slice(lineStart, at);
   const bodyIndent = /^[ \t]*$/.test(indent) ? indent : "";
@@ -462,7 +470,10 @@ export function generate(
   }
 
   const shellSource = toLf(layout.shell);
-  const bodyCount = shellSource.split("[[body]]").length - 1;
+  let bodyCount = 0;
+  for (const m of directiveMatches(shellSource)) {
+    if (m.inner.trim() === "body") bodyCount++;
+  }
   if (bodyCount !== 1) {
     throw generationFailed(
       "[[body]]",

@@ -1174,3 +1174,19 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
   decision (`billmgmt-known-issues.md` §17); capacity accounts stay
   `EXCLUDED` for a partial period until it is answered. Not an engineering
   deferral — never build a pro-ration method without this decision.
+
+- **DONE (bm55 review) — `listRecentPosted` index.** Migration `0047_customer_bill_posted_idx`
+  adds a partial btree on `customer_bill (ref_inv_document_id DESC) WHERE ref_inv_document_id IS NOT NULL`
+  (mirrored in `db/schema/billing/customer-bill.ts`). Query and partition scope unchanged.
+
+- **DONE (bm55 code-review fixes, 2026-10-09).** Dev compose `setup` now gets Azurite + the in-network blob
+  connection string (db:setup seeds invoice templates); `.gitattributes` pins `db/seeds/invoice-templates/**`
+  to LF (SHA-256 contract); `generate.ts` rejects a swallowed `[[body]]` and prototype-key `[[num …]]`;
+  `load.ts` fetches version files in parallel and maps a blob 404 to `TEMPLATE_VERSION_NOT_FOUND`;
+  migration `0048` indexes the two posting stamps and `listForKind` skips counts for layouts;
+  `isChecksumAlgorithm` and the `BTV` id regex de-duplicated; version-pinning test now deletes its stored PDFs.
+- **MOVED (2026-10-09):** the open owner-review items are tracked in `billmgmt-design-review.md`.
+- **DONE (2026-10-09) — review decisions.** `archive.tar` removed from git and ignored; migrations 0047/0048
+  carry a locking note (plain `CREATE INDEX`, run outside an active bill run on a large table — owner chose
+  "keep plain, document"). Deferred design items now live in `billmgmt-design-review.md` (DR-01 profile
+  validity gate → bm61, DR-02 CSV resolution, DR-03 preview `bind()`, DR-04 accepted unused exports).

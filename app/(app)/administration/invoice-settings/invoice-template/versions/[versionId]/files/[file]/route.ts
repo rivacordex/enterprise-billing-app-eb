@@ -24,9 +24,10 @@ import { GENERATED_VERSION_FILES } from "@/services/billing/invoice-template/loa
 import { getGeneratedVersionFile } from "@/services/billing/read/invoice-template-settings";
 import { InvoiceRenderError } from "@/types/billing";
 import { meetsLevel } from "@/types/permissions";
+import { billTemplateVersionIdSchema } from "@/validation/billing/template-version-id.schema";
 
 const paramsSchema = z.object({
-  versionId: z.string().regex(/^BTV\d{8}$/),
+  versionId: billTemplateVersionIdSchema,
   file: z.enum(GENERATED_VERSION_FILES),
 });
 

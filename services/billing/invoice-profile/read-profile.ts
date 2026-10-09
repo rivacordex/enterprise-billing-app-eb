@@ -9,9 +9,8 @@ import {
   toInvoiceProfileInput,
 } from "@/validation/billing/invoice-profile.schema";
 import {
-  CHECKSUM_ALGORITHMS,
   InvoiceRenderError,
-  type ChecksumAlgorithm,
+  isChecksumAlgorithm,
   type InvoiceProfile,
 } from "@/types/billing";
 
@@ -109,10 +108,6 @@ export async function readInvoiceProfile(
     );
   }
   return { profile, logo };
-}
-
-function isChecksumAlgorithm(value: string): value is ChecksumAlgorithm {
-  return (CHECKSUM_ALGORITHMS as readonly string[]).includes(value);
 }
 
 // D4 — blob-only half: fetch the logo bytes, verify them against the row's

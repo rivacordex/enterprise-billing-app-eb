@@ -1054,6 +1054,10 @@ export type BlobContainer = (typeof BLOB_CONTAINERS)[number];
 export const CHECKSUM_ALGORITHMS = ["md5", "sha256"] as const;
 export type ChecksumAlgorithm = (typeof CHECKSUM_ALGORITHMS)[number];
 
+export function isChecksumAlgorithm(value: string): value is ChecksumAlgorithm {
+  return (CHECKSUM_ALGORITHMS as readonly string[]).includes(value);
+}
+
 // The blob store's typed failures (code-standards Part 2 TS rule 7). A
 // dedicated class rather than `AppError` because these codes live here with the
 // other billing codes (not in `lib/errors.ts`'s closed HTTP-mapped union) and

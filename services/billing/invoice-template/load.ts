@@ -9,7 +9,7 @@ import {
 import {
   CHECKSUM_ALGORITHMS,
   InvoiceRenderError,
-  type ChecksumAlgorithm,
+  isChecksumAlgorithm,
   type InvoiceRenderInput,
   type InvoiceTemplateStructure,
   type TemplateKind,
@@ -75,10 +75,6 @@ function mismatch(
   );
 }
 
-function isChecksumAlgorithm(value: string): value is ChecksumAlgorithm {
-  return (CHECKSUM_ALGORITHMS as readonly string[]).includes(value);
-}
-
 // A version's `blob_ref` is its directory (`invoice-templates/generated/
 // INVOICE/v1/`). Each file is addressed as that prefix + its index name, and
 // the full ref goes through `parseBlobRef`, so every path is validated (bm51
@@ -89,7 +85,20 @@ async function getVersionFile(
 ): Promise<Buffer> {
   const base = row.blobRef!.endsWith("/") ? row.blobRef! : `${row.blobRef!}/`;
   const { container, path } = blobStore.parseBlobRef(`${base}${file}`);
-  return blobStore.getObject(container, path);
+  try {
+    return await blobStore.getObject(container, path);
+  } catch (err) {
+    // A version whose files were never uploaded (e.g. `db:seed-invoice-templates`
+    // not run) must surface as a typed render error, not a raw Azure RestError.
+    if ((err as { statusCode?: unknown }).statusCode === 404) {
+      throw new InvoiceRenderError(
+        "TEMPLATE_VERSION_NOT_FOUND",
+        `template version ${row.billTemplateVersionId}: ${file} is missing from blob storage`,
+        { versionId: row.billTemplateVersionId, file },
+      );
+    }
+    throw err;
+  }
 }
 
 function assertLoadable(row: BillTemplateVersion, kind: TemplateKind): void {
@@ -142,19 +151,25 @@ async function verifyVersionFiles(
   }
 
   const names = files ?? Object.keys(parsed.files);
-  const verified = new Map<string, Buffer>();
-  for (const name of names) {
+  // Resolve every name against the index first (so an unlisted file fails
+  // before any I/O), then fetch the blobs in parallel — a layout is ~16 files.
+  const expectedByName = names.map((name) => {
     const expected = parsed.files[name];
     if (expected === undefined) {
       throw mismatch(row, name, "is not listed in checksums.json");
     }
-    const bytes = await getVersionFile(row, name);
-    if (blobStore.digest(bytes, algorithm) !== expected) {
-      throw mismatch(row, name, "does not match its checksums.json entry");
-    }
-    verified.set(name, bytes);
-  }
-  return verified;
+    return [name, expected] as const;
+  });
+  const entries = await Promise.all(
+    expectedByName.map(async ([name, expected]) => {
+      const bytes = await getVersionFile(row, name);
+      if (blobStore.digest(bytes, algorithm) !== expected) {
+        throw mismatch(row, name, "does not match its checksums.json entry");
+      }
+      return [name, bytes] as const;
+    }),
+  );
+  return new Map(entries);
 }
 
 // D2 step 6 — Handlebars compiles lazily, so a delegate is executed once

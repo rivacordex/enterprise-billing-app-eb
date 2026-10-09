@@ -110,6 +110,17 @@ export const customerBill = billing.table(
     ),
     index("customer_bill_ref_bill_run_id_idx").on(t.refBillRunId),
     index("customer_bill_period_partition_idx").on(t.periodPartition),
+    // 0047 — backs `listRecentPosted` (posted bills, newest invoice first).
+    index("customer_bill_posted_inv_document_idx")
+      .on(t.refInvDocumentId.desc())
+      .where(sql`${t.refInvDocumentId} IS NOT NULL`),
+    // 0048 — back `bill_template_version.listForKind`'s used-by counts.
+    index("customer_bill_ref_bill_template_version_id_idx")
+      .on(t.refBillTemplateVersionId)
+      .where(sql`${t.refBillTemplateVersionId} IS NOT NULL`),
+    index("customer_bill_ref_csv_template_version_id_idx")
+      .on(t.refCsvTemplateVersionId)
+      .where(sql`${t.refCsvTemplateVersionId} IS NOT NULL`),
     check(
       "customer_bill_category_check",
       sql`category IN ('trial','normal','last')`,

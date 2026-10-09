@@ -202,6 +202,19 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         .catch(() => undefined);
       clearLoadedTemplateMemo();
       if (sql) {
+        // `dropAll` resets `document_inv_seq`, so the next run re-posts
+        // INV00000001; `putInvoice` is write-once and would adopt this run's
+        // stored PDFs. Delete them (blob_refs read before the rows go).
+        const stored = await sql<{ blob_ref: string }[]>`
+          SELECT blob_ref FROM billing.bill_run_invoices
+          WHERE ref_bill_run_id IN (${RUN}, ${RUN_DRAFT})`.catch(() => []);
+        for (const { blob_ref } of stored) {
+          const { container, path } = blobStore.parseBlobRef(blob_ref);
+          await service
+            ?.getContainerClient(container)
+            .deleteBlob(path)
+            .catch(() => undefined);
+        }
         await fx?.dropAll();
         await sql.end();
       }

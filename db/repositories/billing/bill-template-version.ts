@@ -73,16 +73,20 @@ export const billTemplateVersionRepository = {
   // or the CSV stamp). Counted in SQL (no JS reduce).
   async listForKind(
     db: Database,
-    { kind }: { kind: TemplateKind },
+    { kind, withUsage = true }: { kind: TemplateKind; withUsage?: boolean },
   ): Promise<TemplateVersionWithUsage[]> {
+    // `withUsage: false` skips the `customer_bill` count (callers that only
+    // need labels, e.g. layout versions, whose count is always 0).
     const rows = await db
       .select({
         version: billTemplateVersion,
-        usedByCount: sql<number>`(
+        usedByCount: withUsage
+          ? sql<number>`(
           SELECT count(*)::int FROM ${customerBill} cb
           WHERE cb.ref_bill_template_version_id = ${billTemplateVersion.billTemplateVersionId}
              OR cb.ref_csv_template_version_id = ${billTemplateVersion.billTemplateVersionId}
-        )`,
+        )`
+          : sql<number>`0`,
       })
       .from(billTemplateVersion)
       .where(

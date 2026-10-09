@@ -324,6 +324,30 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
     );
   });
 
+  it("rejects a [[body]] hidden inside a false [[if]] block", () => {
+    expectGenerationFailed(
+      () =>
+        generate(
+          {
+            ...layout,
+            shell: layout.shell.replace(
+              "[[body]]",
+              "[[if sections.notes]][[body]][[/if]]",
+            ),
+          },
+          { ...ALL_ON, sections: { ...ALL_ON.sections, notes: false } },
+        ),
+      "shell.hbs",
+    );
+  });
+
+  it("rejects a [[num]] name that is only an Object.prototype key", () => {
+    expectGenerationFailed(
+      () => generate(withPartial("notes", "[[num constructor]]"), ALL_ON),
+      "partials/notes.hbs",
+    );
+  });
+
   it("rejects output that still carries a directive bracket", () => {
     expectGenerationFailed(
       () => generate(withPartial("notes", "<p>[[ unterminated</p>"), ALL_ON),

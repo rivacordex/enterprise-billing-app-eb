@@ -28,6 +28,13 @@
 # Data files whose exact bytes are asserted by tests — always LF on disk.
 *.sql text eol=lf
 
+# Invoice-template seed files are SHA-256 hashed byte-for-byte (checksums.json, the
+# 0046 migration literals, db/seeds/invoice-templates.ts) — always LF on disk.
+# After pulling this, run `git add --renormalize db/seeds/invoice-templates` on an
+# existing CRLF checkout (or re-checkout the folder).
+db/seeds/invoice-templates/** text eol=lf
+db/seeds/invoice-templates/**/*.woff2 binary
+
 # Binary — never touch these.
 *.png binary
 *.jpg binary

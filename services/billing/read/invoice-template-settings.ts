@@ -73,7 +73,10 @@ export async function getInvoiceTemplatePageData(
         ? Promise.resolve(null)
         : billTemplateVersionRepository.findById(db, versionId),
       billTemplateVersionRepository.listForKind(db, { kind: "generated" }),
-      billTemplateVersionRepository.listForKind(db, { kind: "layout" }),
+      billTemplateVersionRepository.listForKind(db, {
+        kind: "layout",
+        withUsage: false,
+      }),
     ]);
 
   const current = active ?? fallback;
