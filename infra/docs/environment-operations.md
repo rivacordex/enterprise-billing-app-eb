@@ -760,6 +760,17 @@ and VNet links are created alongside the Container Apps.
 > ⏱ **~8–12 min.** Container App + Job + workflow-engine App + private DNS zone
 > are created in parallel — no output until all finish. The shell blocks silently.
 
+> **Blob container prerequisites (bm52).** With `enableBlobArtifacts = true`
+> (dev sets it), this deploy declares the app's three containers on the engine's
+> storage account, next to Kestra's `archive`/`error`/`logs`/`kestra-internal`:
+> `invoices` (bill-run invoices + run reports), `invoice-templates` and
+> `invoice-assets` (invoice template/asset versions, consumed from bm53). All are
+> `publicAccess: None` with no lifecycle rule. They must exist before a bm53+ app
+> release — do not rely on the app's `createIfNotExists`. App auth stays the
+> `billrun-blob-connection-string` Key Vault secret unless `appBlobAuth =
+> managedIdentity` (gate G16) — see `db-role-verification.md`, "Production
+> cutover", step 6.
+
 ```powershell
 # Set ACA_DEFAULT_DOMAIN to the value captured in step 6b
 $env:ACA_DEFAULT_DOMAIN = $ACA_DEFAULT_DOMAIN   # captured above, or re-query:

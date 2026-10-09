@@ -571,6 +571,82 @@ DELIVERED" section.
   - **Next:** bm52 provisions the prod containers + MI write grant; bm53 adds the first
     consumer (template upload/load).
 
+## Invoice Template update — bm52 DELIVERED + VERIFIED by what-if on dev (2026-10-09)
+
+- **bm52 — Prod `invoice-templates` / `invoice-assets` containers + app blob access
+  (Invoice Template update, Part 4; `infra/**` only, no application code).** Spec:
+  `context/billing-management/specs/bm52-prod-blob-containers-infra.md`. Declares the
+  app's three blob containers (`invoices` drift fix + `invoice-templates`,
+  `invoice-assets`) in `workflow-engine-storage.bicep`, outputs their resource ids, and
+  adds the parameter-gated (`appBlobAuth`, default `connectionString` = no behaviour
+  change) container-scoped Managed Identity `Storage Blob Data Contributor` path for the
+  app. New gate **G16 (prod app blob auth) — OPEN**. Must be deployed before any prod
+  release that includes bm53.
+  - **Delivered:**
+    - `infra/bicep/modules/workflow-engine-storage.bicep` — D1 `appBlobContainers`
+      param + looped `appContainers` (`@2023-05-01`, `publicAccess: 'None'`, gated
+      `if (enableBlobArtifacts)`; no WORM policy, no lifecycle rule); D2
+      `appContainerIds` output (name → id, `{}` when off — built with `resourceId()`
+      because Bicep forbids lambda indexing of a resource array); D3 `appBlobAuth`
+      (`@allowed connectionString|managedIdentity`, default `connectionString`) +
+      `appManagedIdentityPrincipalId` and a looped `appContainerBlobDataContributor`
+      (`Storage Blob Data Contributor`, **scope = each container**, name
+      `guid(containerId, principalId, roleId)`). Engine's account-scoped grant untouched.
+    - `infra/bicep/modules/container-app.bicep` — `appBlobAuth`/`blobAccountUrl`/
+      `appManagedIdentityClientId`; the KV connection-string secret + env are emitted
+      only on the connection-string path; the MI path emits `BILLRUN_BLOB_ACCOUNT_URL`
+      + `AZURE_CLIENT_ID` and no connection string (`lib/config.ts` rejects both).
+    - `infra/bicep/main.bicep` — new `appBlobAuth` param (G16, default
+      `connectionString`); threads `enableBlobArtifacts`/`appBlobAuth`/the app MI
+      principal id into the **collapsed** storage module and the **billrun** storage
+      module under split-by-module (the rating account gets no app containers); derives
+      `appBlobAccountUrl` = `https://<artifact account>.blob.${environment().suffixes.storage}`
+      (not a hardcoded `core.windows.net` — the `no-hardcoded-env-urls` linter rule)
+      and passes it + the MI client id to `container-app.bicep`.
+    - Parameter files unchanged — `appBlobAuth` unset everywhere until G16 is decided.
+    - Runbooks: `db-role-verification.md` bm38 cutover gains step 6 "bm52 — invoice
+      template containers" (what-if → containers; MI path: confirm 3 container-scoped
+      assignments, roll revision, smoke `stored-invoice`; then release bm53; Delete-right
+      caveat). `environment-operations.md` §6e gains a blob-container prerequisites note.
+  - **Deviation (recorded):** the spec puts the container list in
+    `environment-operations.md` "§5 (prerequisites) next to `invoices`", but §5 there is
+    the DB bootstrap and the file never mentioned the `invoices` container. The note went
+    into §6e (the step that deploys the bicep) instead.
+  - **Verified:** `az bicep build` + `az bicep lint` on `main.bicep` (Bicep 0.46.1) — no
+    new errors or warnings (only the two pre-existing `easy-auth.bicep` BCP081). `dev.bicepparam`
+    builds (with dummy `POSTGRES_SERVER_NAME`/`PIPELINE_SP_ID`); staging/prod param
+    builds fail exactly as before on the two deploy-time params. The compiled ARM
+    confirms each role assignment's `scope` is
+    `resourceId('…/blobServices/containers', account, 'default', name)` and its condition is
+    `enableBlobArtifacts && appBlobAuth == 'managedIdentity'`. No infra tests exist under
+    `infra/`/`tests/`. No application file changed.
+  - **What-if VERIFIED against dev (`dnb_billing`, 2026-10-09; read-only, nothing
+    deployed).** The live stack's last `ebill-main-dev` deploy (2026-09-25) predates
+    `HEAD`, so raw what-if carries unrelated drift; bm52 was isolated by running the same
+    what-if (`dev.bicepparam` + the 2026-09-25 deploy-time values + `deployWorkloads=true
+    deployWorkflowEngine=true`) on the committed `HEAD` bicep and on bm52, and diffing:
+    - **HEAD → bm52 default:** only `+ Create` `invoice-templates` and `invoice-assets`,
+      and `invoices` going from ignored (undeclared) to a no-op Modify — the only delta is
+      the two server-defaulted encryption-scope fields, the same noise the untouched
+      `archive` container shows; `publicAccess` already `None`. **No role assignment.**
+      The engine app, migrate job and storage account after-states are byte-identical;
+      the app's differs only by a trailing empty `createArray()` in the env `concat`
+      (the off MI branch) — it resolves to the same env, still
+      `BILLRUN_BLOB_CONNECTION_STRING` via the KV secret.
+    - **bm52 default → `appBlobAuth=managedIdentity`:** exactly three role assignments
+      added — `ebill-dev-app-mi`, role `ba92f5b4…` (Storage Blob Data Contributor), one
+      scoped to each of `containers/invoices|invoice-templates|invoice-assets`, none on
+      the account (what-if lists them as `Unsupported` only because the name's
+      `guid()` uses the identity's runtime `principalId`). App env gains
+      `BILLRUN_BLOB_ACCOUNT_URL=https://ebilldevratingstg3nlvkhl.blob.core.windows.net`
+      + `AZURE_CLIENT_ID`, and both `BILLRUN_BLOB_CONNECTION_STRING` and its KV secret ref
+      are gone.
+  - **Docs closed:** G16 added to the overview open items, architecture open items and
+    code-standards C5; architecture §1 artifact-storage row, §3 blob row, the `infra/**`
+    boundary row and the auth delta corrected (`invoices` declared in bicep from bm52;
+    the app reaches blob by connection string unless G16 flips it); code-standards data
+    rule 7 tail; `bm00` Unit 52 text + its G16 row.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
