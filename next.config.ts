@@ -1,11 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Allows dev-mode access (HMR + JS chunks) from the machine's Tailscale
-  // address, not just localhost — without this, Next blocks those requests
-  // cross-origin, the client bundle never loads, and the page silently never
-  // hydrates (every form submit falls back to a native browser GET).
-  allowedDevOrigins: ["100.68.190.22"],
+  // Allows dev-mode access (HMR + JS chunks) from the machine's Tailscale and
+  // ebill-dev-hub VPN addresses, not just localhost — without this, Next blocks
+  // those requests cross-origin, the client bundle never loads, and the page
+  // silently never hydrates (every form submit falls back to a native browser
+  // GET). Sign-in from these origins also needs BETTER_AUTH_TRUSTED_ORIGINS.
+  allowedDevOrigins: ["100.68.190.22", "172.16.0.2", "192.168.56.1"],
   // pm66 (rate card, RC15 / code-standards §6.34, D9): raise the Server Action
   // body limit from Next's 1 MB default. A ~5,400-row rate-card CSV is ~0.5 MB
   // and fits the default, but the day a card does not fit, this makes the

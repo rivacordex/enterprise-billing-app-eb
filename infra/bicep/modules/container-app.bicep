@@ -77,6 +77,21 @@ param billRunEngineUrl string = ''
 @description('bm19/bm34 — wire BILLRUN_BLOB_CONNECTION_STRING (from the billrun-blob-connection-string KV secret) for invoice artifact storage + distribution. Default false.')
 param enableBlobArtifacts bool = false
 
+// bm52 D3 / gate G16 — the app's blob auth path (only meaningful with
+// enableBlobArtifacts). `connectionString` (default, G16 interim): the KV secret
+// above, unchanged. `managedIdentity`: BILLRUN_BLOB_ACCOUNT_URL + AZURE_CLIENT_ID
+// (so blob-store.ts's DefaultAzureCredential picks the user-assigned identity) and
+// NO connection string — lib/config rejects both being set. The container-scoped
+// role assignments are made in workflow-engine-storage.bicep.
+@allowed(['connectionString', 'managedIdentity'])
+param appBlobAuth string = 'connectionString'
+
+@description('bm52 — https://<account>.blob.<storage suffix> of the artifact account. Required when appBlobAuth is managedIdentity.')
+param blobAccountUrl string = ''
+
+@description('bm52 — client id of the app\'s user-assigned identity, set as AZURE_CLIENT_ID under appBlobAuth=managedIdentity.')
+param appManagedIdentityClientId string = ''
+
 // The client secret is only referenced when SSO is configured: a Key Vault
 // reference to a secret that doesn't exist fails the whole revision, and
 // lib/config treats all three SSO vars as optional.
@@ -86,6 +101,10 @@ var ssoEnabled = !empty(microsoftClientId)
 // Vault secrets (and emit the env vars) when a URL is supplied, so an engine-less
 // environment never fails resolving a secret that isn't provisioned.
 var engineWired = !empty(billRunEngineUrl)
+
+// bm52 — the connection-string secret is referenced only on that auth path.
+var blobViaConnectionString = enableBlobArtifacts && appBlobAuth == 'connectionString'
+var blobViaManagedIdentity = enableBlobArtifacts && appBlobAuth == 'managedIdentity'
 
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
@@ -150,7 +169,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
               }
             ]
           : [],
-        enableBlobArtifacts
+        blobViaConnectionString
           ? [
               // bm19/bm34 — plain account connection string for the invoice/report
               // artifact store (the engine reads the base64 twin of this value).
@@ -209,9 +228,16 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
                 ]
               : [],
             // bm19/bm34 — invoice/report artifact store connection string.
-            enableBlobArtifacts
+            blobViaConnectionString
               ? [
                   { name: 'BILLRUN_BLOB_CONNECTION_STRING', secretRef: 'billrun-blob-connection-string' }
+                ]
+              : [],
+            // bm52 D3 / G16 — Managed Identity path (container-scoped grants).
+            blobViaManagedIdentity
+              ? [
+                  { name: 'BILLRUN_BLOB_ACCOUNT_URL', value: blobAccountUrl }
+                  { name: 'AZURE_CLIENT_ID', value: appManagedIdentityClientId }
                 ]
               : []
           )

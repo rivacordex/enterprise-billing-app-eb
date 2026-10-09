@@ -36,11 +36,12 @@
     "db:seed-accounts": "node --conditions=react-server --env-file=.env --import tsx db/seeds/accounts/seed-accounts.ts",
     "db:seed-ordering": "node --conditions=react-server --env-file=.env --import tsx db/seeds/ordering-inventory.ts",
     "db:seed-billing": "node --conditions=react-server --env-file=.env --import tsx db/seeds/billing.ts",
+    "db:seed-invoice-templates": "node --conditions=react-server --env-file=.env --import tsx db/seeds/invoice-templates.ts",
     "db:seed-rating": "node --conditions=react-server --env-file=.env --import tsx db/seeds/rating-event-catalog.ts",
     "db:seed-sample": "node --conditions=react-server --env-file=.env --import tsx db/seeds/sample/seed-billrun-sample.ts",
     "db:seed-sample-5g": "node --conditions=react-server --env-file=.env --import tsx db/seeds/sample/sample-5g-rating.ts",
     "db:seed-demo": "node --conditions=react-server --env-file=.env --import tsx db/seeds/demo/seed-demo.ts",
-    "db:setup": "npm run db:migrate && npm run db:setup-partman && npm run db:setup-partman-billing && npm run db:setup-partman-rating && npm run db:seed && npm run db:seed-rbac && npm run db:seed-product && npm run db:seed-customer && npm run db:seed-accounts && npm run db:seed-ordering && npm run db:seed-billing && npm run db:seed-rating",
+    "db:setup": "npm run db:migrate && npm run db:setup-partman && npm run db:setup-partman-billing && npm run db:setup-partman-rating && npm run db:seed && npm run db:seed-rbac && npm run db:seed-product && npm run db:seed-customer && npm run db:seed-accounts && npm run db:seed-ordering && npm run db:seed-billing && npm run db:seed-invoice-templates && npm run db:seed-rating",
     "db:introspect": "drizzle-kit introspect",
     "dev:azurite-init": "node --env-file=.env --import tsx scripts/azurite-init.ts",
     "billrun:live-kestra-smoke": "node --conditions=react-server --env-file=.env --import tsx scripts/billrun-live-kestra-smoke.ts"

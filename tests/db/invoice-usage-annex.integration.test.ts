@@ -16,6 +16,7 @@ import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repo
 import { invoiceRenderInputRepository } from "@/db/repositories/billing/invoice-render-input";
 import { bind } from "@/services/billing/invoice-template/bind";
 import { INVOICE_USAGE_ROW_LIMIT, InvoiceRenderError } from "@/types/billing";
+import { SEEDED_TEMPLATE_STAMP } from "@/tests/helpers/seeded-invoice-template";
 
 // bm49-spec §Implementation §5 (test plan) — the DB-gated usage-annex
 // regression, run against a real Postgres (the genuinely DB-specific code the
@@ -509,6 +510,8 @@ describe.skipIf(!databaseUrl)(
           locale: "en-MY",
           timezone: TZ,
           includeUsage: true,
+          template: SEEDED_TEMPLATE_STAMP,
+          profile: null,
         });
         expect(bound.usage).not.toBeNull();
         expect(bound.usage!.totalAmount).toBe("90000.00");
@@ -540,6 +543,8 @@ describe.skipIf(!databaseUrl)(
             locale: "en-MY",
             timezone: TZ,
             includeUsage: true,
+            template: SEEDED_TEMPLATE_STAMP,
+            profile: null,
           });
         } catch (err) {
           caught = err;

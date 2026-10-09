@@ -137,6 +137,18 @@ param enableLocalDistributionSink bool = true
 @description('bm19/bm34 — enable the invoice artifact store on the app + billrun engine (BILLRUN_BLOB_CONNECTION_STRING / SECRET_AZURE_STORAGE_CONNECTION_STRING). Requires the billrun-blob-connection-string + -b64 Key Vault secrets. Default false.')
 param enableBlobArtifacts bool = false
 
+// bm52 D3 / gate G16 (OPEN) — how the app reaches the artifact account. The
+// default `connectionString` is the G16 interim (no behaviour change: KV
+// connection string, no role assignment). `managedIdentity` switches the app to
+// its user-assigned identity with a Storage Blob Data Contributor scoped to each
+// of the three app containers (never the account) and drops the connection
+// string from the app. Only meaningful with enableBlobArtifacts + an engine
+// storage account (deployWorkflowEngine). Leave unset in every *.bicepparam until
+// G16 is decided — the decision is this parameter flip.
+@description('bm52 / G16 — app blob auth: connectionString (default, interim) or managedIdentity (container-scoped role, no connection string). Requires enableBlobArtifacts + deployWorkflowEngine.')
+@allowed(['connectionString', 'managedIdentity'])
+param appBlobAuth string = 'connectionString'
+
 // wfm01 §4b / wfm-architecture §5 — logical→physical engine topology, a single
 // deploy parameter. `collapsed` (default): ONE `workflow-engine` instance hosting
 // both the `rating` and `billrun` namespaces (the base deployment; carries the
@@ -355,6 +367,18 @@ var billRunEngineUrl = empty(billRunEngineFqdn)
   ? ''
   : 'https://${billRunEngineFqdn}/api/v1/main'
 
+// bm52 D3 — the artifact account's blob URL for the app's Managed Identity path:
+// the account the billrun engine reads from (collapsed instance, or the billrun
+// instance under split-by-module). Empty when no engine storage is deployed.
+var artifactStorageAccountName = !deployWorkflowEngine
+  ? ''
+  : (splitByModule
+      ? workflowEngineBillrunStorage!.outputs.storageAccountName
+      : workflowEngineStorage!.outputs.storageAccountName)
+var appBlobAccountUrl = empty(artifactStorageAccountName)
+  ? ''
+  : 'https://${artifactStorageAccountName}.blob.${environment().suffixes.storage}'
+
 module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
   name: 'containerApp'
   params: {
@@ -384,6 +408,11 @@ module containerApp 'modules/container-app.bicep' = if (deployWorkloads) {
     billRunEngineUrl: billRunEngineUrl
     // bm19/bm34 — invoice artifact store (same knob as the engine below).
     enableBlobArtifacts: enableBlobArtifacts
+    // bm52 D3 / G16 — blob auth path; the MI variant needs the account URL and
+    // the identity's client id (AZURE_CLIENT_ID for DefaultAzureCredential).
+    appBlobAuth: appBlobAuth
+    blobAccountUrl: appBlobAccountUrl
+    appManagedIdentityClientId: appManagedIdentity.properties.clientId
   }
 }
 
@@ -409,6 +438,10 @@ module workflowEngineStorage 'modules/workflow-engine-storage.bicep' = if (deplo
     location: location
     storageAccountName: take(replace('${namePrefix}ratingstg${uniqueSuffix}', '-', ''), 24)
     workflowEngineManagedIdentityPrincipalId: workflowEngineManagedIdentity.properties.principalId
+    // bm52 D1/D3 — the collapsed account holds the app's artifact containers.
+    enableBlobArtifacts: enableBlobArtifacts
+    appBlobAuth: appBlobAuth
+    appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
   }
 }
 
@@ -488,6 +521,11 @@ module workflowEngineBillrunStorage 'modules/workflow-engine-storage.bicep' = if
     location: location
     storageAccountName: take(replace('${namePrefix}wfbstg${uniqueSuffix}', '-', ''), 24)
     workflowEngineManagedIdentityPrincipalId: workflowEngineBillrunManagedIdentity.properties.principalId
+    // bm52 D1/D3 — under split-by-module the BILLRUN account holds the app's
+    // artifact containers (the rating account above gets none).
+    enableBlobArtifacts: enableBlobArtifacts
+    appBlobAuth: appBlobAuth
+    appManagedIdentityPrincipalId: appManagedIdentity.properties.principalId
   }
 }
 

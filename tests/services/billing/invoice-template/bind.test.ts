@@ -93,11 +93,15 @@ function rawInput(
   };
 }
 
+const TEMPLATE = { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: 1 };
+
 const CTX = {
   isDraft: true,
   locale: "en-MY",
   timezone: "UTC",
   includeUsage: true,
+  template: TEMPLATE,
+  profile: null,
 };
 
 describe("bind — reconciliation (D2)", () => {
@@ -154,6 +158,8 @@ describe("bind — reconciliation (D2)", () => {
         locale: "en-MY",
         timezone: "UTC",
         includeUsage: true,
+        template: TEMPLATE,
+        profile: null,
         invoiceNo: "INV00000002",
       });
     } catch (err) {
@@ -173,6 +179,8 @@ describe("bind — reconciliation (D2)", () => {
         locale: "en-MY",
         timezone: "UTC",
         includeUsage: true,
+        template: TEMPLATE,
+        profile: null,
       }),
     ).toThrow(FinalInvoiceNotFoundError);
   });
@@ -191,6 +199,8 @@ describe("bind — invoice date", () => {
       isDraft: false,
       locale: "en-MY",
       includeUsage: true,
+      template: TEMPLATE,
+      profile: null,
       invoiceNo: "INV00000001",
     };
     expect(

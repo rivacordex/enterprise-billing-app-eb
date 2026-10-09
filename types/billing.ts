@@ -4,6 +4,7 @@
 // (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
 // the service so the page never re-derives operability (code-standards §2.7).
 
+import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import type { ConfigStatus } from "@/types/system-config";
 
 export const RUN_STATUSES = [
@@ -611,15 +612,27 @@ export interface InvoiceAddress {
   country: string | null;
 }
 
+// bm53-spec §Design D3 — populated from the ACTIVE (or stamped) `invoice.profile`
+// version; the field names are the D3 placeholder names (catalog §A). `state`/
+// `country` are labels derived from the codes (`lib/myinvois-states.ts`).
+// `logoUrl` is the checksum-verified logo as a `data:` URI (D4), or `null` when
+// the profile carries no logo (the header then hides it).
 export interface InvoiceCompany {
   name: string;
-  tradingName: string | null;
-  registrationNo: string | null;
-  tin: string | null;
+  registrationNo: string;
+  tin: string;
   sstRegNo: string | null;
-  address: InvoiceAddress | null;
-  email: string | null;
-  phone: string | null;
+  addressLine1: string;
+  addressLine2: string | null;
+  postcode: string;
+  city: string;
+  stateCode: string;
+  state: string;
+  countryCode: string;
+  country: string;
+  phone: string;
+  email: string;
+  website: string | null;
   brandColor: string;
   accentColor: string;
   logoUrl: string | null;
@@ -629,9 +642,9 @@ export interface InvoicePayment {
   bankName: string;
   accountName: string;
   accountNo: string;
-  swift: string | null;
+  swift: string;
   jomPayBillerCode: string | null;
-  remittanceEmail: string | null;
+  remittanceEmail: string;
 }
 
 // D3 — one bound charge-detail row. `periodStart`/`periodEnd` come from the
@@ -747,10 +760,12 @@ export interface LayoutPageSetup {
 // exists); their fragments are wrapped in `{{#if}}` in the layout and never
 // render a blank label.
 export interface InvoiceRenderInput {
+  // bm53-spec §Design D5 — the resolved layout's code/version_no and the
+  // resolved generated version's version_no.
   template: {
     layoutCode: string;
     layoutVersion: number;
-    version: number | null;
+    version: number;
   };
   company: InvoiceCompany | null;
   payment: InvoicePayment | null;
@@ -761,6 +776,9 @@ export interface InvoiceRenderInput {
     periodStart: string;
     periodEnd: string;
     dueDate: string | null;
+    // bm53-spec §Design D5 — the profile's `payment_terms_days`, or `null`
+    // when no profile resolves (G15 A).
+    paymentTermsDays: number | null;
     currency: string;
     billRunId: string;
     cycleName: string;
@@ -857,6 +875,46 @@ export interface InvoiceTemplateStructure {
   columns: Record<InvoiceColumnKey, boolean>;
 }
 
+// ============================================================================
+// bm53 — Template and profile resolution (Invoice Template update, Part 4).
+// `services/billing/invoice-template/resolve-template.ts` + `load.ts`.
+// ============================================================================
+
+// The three `customer_bill` stamp columns (bm50 D5). All `null` on a bill
+// posted before bm54, which introduces the stamping.
+export interface PostedBillStamps {
+  refBillTemplateVersionId: string | null;
+  refInvoiceProfileVersion: number | null;
+  refCsvTemplateVersionId: string | null;
+}
+
+// D1 — a draft (pro-forma, editor sample preview) resolves the current
+// versions; a final render and the editor preview of a posted bill resolve the
+// bill's stamps (Inv #42 — never the current ACTIVE).
+export type RenderMode =
+  | { kind: "draft" }
+  | { kind: "final"; bill: PostedBillStamps }
+  | { kind: "preview-posted"; bill: PostedBillStamps };
+
+// D1 — never cached (workflow rules §3.9): every render queries the rows.
+export interface ResolvedTemplate {
+  generated: BillTemplateVersion; // kind = 'generated', never DRAFT
+  layout: BillTemplateVersion; // generated.ref_layout_version_id (page_setup)
+  profileVersion: number | null; // G15 A: null when none ACTIVE / none stamped
+  csv: BillTemplateVersion; // kind = 'csv'
+}
+
+// D3 — the parsed `invoice.profile` version (`invoiceProfileSchema`). The
+// logo is carried as its asset-version id; `company.logoUrl` holds the
+// verified `data:` URI once D4 inlines it (`null` before, or without a logo).
+export interface InvoiceProfile {
+  configVersion: number;
+  company: InvoiceCompany;
+  payment: InvoicePayment;
+  paymentTermsDays: number;
+  logoAssetVersionId: string | null;
+}
+
 // bm47-spec §Implementation §2 — binding names (code-standards TS rule 7).
 export const INVOICE_ERROR_CODES = [
   "INVOICE_RECONCILIATION_FAILED",
@@ -865,6 +923,16 @@ export const INVOICE_ERROR_CODES = [
   // bm49-spec §Design D3 — the usage annex exceeds the 10,000-row bound; the
   // bind fails loud and the account parks (no truncation, no partial annex).
   "INVOICE_USAGE_OVER_LIMIT",
+  // bm53-spec §Design D2/D4 — a stored template file (or its `checksums.json`
+  // index) or a logo's bytes do not match the recorded SHA-256 (Inv #45).
+  "TEMPLATE_CHECKSUM_MISMATCH",
+  "ASSET_CHECKSUM_MISMATCH",
+  // bm53-spec §Design D1 — a stamped version id that does not exist / is a
+  // DRAFT / is the wrong kind, or a missing default row (corrupted DB).
+  "TEMPLATE_VERSION_NOT_FOUND",
+  // bm53-spec §Design D3 — the profile version's rows fail
+  // `invoiceProfileSchema` (never a partial profile, TS rule 5).
+  "INVOICE_PROFILE_INVALID",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

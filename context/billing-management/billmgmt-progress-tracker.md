@@ -571,6 +571,231 @@ DELIVERED" section.
   - **Next:** bm52 provisions the prod containers + MI write grant; bm53 adds the first
     consumer (template upload/load).
 
+## Invoice Template update — bm52 DELIVERED + VERIFIED by what-if on dev (2026-10-09)
+
+- **bm52 — Prod `invoice-templates` / `invoice-assets` containers + app blob access
+  (Invoice Template update, Part 4; `infra/**` only, no application code).** Spec:
+  `context/billing-management/specs/bm52-prod-blob-containers-infra.md`. Declares the
+  app's three blob containers (`invoices` drift fix + `invoice-templates`,
+  `invoice-assets`) in `workflow-engine-storage.bicep`, outputs their resource ids, and
+  adds the parameter-gated (`appBlobAuth`, default `connectionString` = no behaviour
+  change) container-scoped Managed Identity `Storage Blob Data Contributor` path for the
+  app. New gate **G16 (prod app blob auth) — OPEN**. Must be deployed before any prod
+  release that includes bm53.
+  - **Delivered:**
+    - `infra/bicep/modules/workflow-engine-storage.bicep` — D1 `appBlobContainers`
+      param + looped `appContainers` (`@2023-05-01`, `publicAccess: 'None'`, gated
+      `if (enableBlobArtifacts)`; no WORM policy, no lifecycle rule); D2
+      `appContainerIds` output (name → id, `{}` when off — built with `resourceId()`
+      because Bicep forbids lambda indexing of a resource array); D3 `appBlobAuth`
+      (`@allowed connectionString|managedIdentity`, default `connectionString`) +
+      `appManagedIdentityPrincipalId` and a looped `appContainerBlobDataContributor`
+      (`Storage Blob Data Contributor`, **scope = each container**, name
+      `guid(containerId, principalId, roleId)`). Engine's account-scoped grant untouched.
+    - `infra/bicep/modules/container-app.bicep` — `appBlobAuth`/`blobAccountUrl`/
+      `appManagedIdentityClientId`; the KV connection-string secret + env are emitted
+      only on the connection-string path; the MI path emits `BILLRUN_BLOB_ACCOUNT_URL`
+      + `AZURE_CLIENT_ID` and no connection string (`lib/config.ts` rejects both).
+    - `infra/bicep/main.bicep` — new `appBlobAuth` param (G16, default
+      `connectionString`); threads `enableBlobArtifacts`/`appBlobAuth`/the app MI
+      principal id into the **collapsed** storage module and the **billrun** storage
+      module under split-by-module (the rating account gets no app containers); derives
+      `appBlobAccountUrl` = `https://<artifact account>.blob.${environment().suffixes.storage}`
+      (not a hardcoded `core.windows.net` — the `no-hardcoded-env-urls` linter rule)
+      and passes it + the MI client id to `container-app.bicep`.
+    - Parameter files unchanged — `appBlobAuth` unset everywhere until G16 is decided.
+    - Runbooks: `db-role-verification.md` bm38 cutover gains step 6 "bm52 — invoice
+      template containers" (what-if → containers; MI path: confirm 3 container-scoped
+      assignments, roll revision, smoke `stored-invoice`; then release bm53; Delete-right
+      caveat). `environment-operations.md` §6e gains a blob-container prerequisites note.
+  - **Deviation (recorded):** the spec puts the container list in
+    `environment-operations.md` "§5 (prerequisites) next to `invoices`", but §5 there is
+    the DB bootstrap and the file never mentioned the `invoices` container. The note went
+    into §6e (the step that deploys the bicep) instead.
+  - **Verified:** `az bicep build` + `az bicep lint` on `main.bicep` (Bicep 0.46.1) — no
+    new errors or warnings (only the two pre-existing `easy-auth.bicep` BCP081). `dev.bicepparam`
+    builds (with dummy `POSTGRES_SERVER_NAME`/`PIPELINE_SP_ID`); staging/prod param
+    builds fail exactly as before on the two deploy-time params. The compiled ARM
+    confirms each role assignment's `scope` is
+    `resourceId('…/blobServices/containers', account, 'default', name)` and its condition is
+    `enableBlobArtifacts && appBlobAuth == 'managedIdentity'`. No infra tests exist under
+    `infra/`/`tests/`. No application file changed.
+  - **What-if VERIFIED against dev (`dnb_billing`, 2026-10-09; read-only, nothing
+    deployed).** The live stack's last `ebill-main-dev` deploy (2026-09-25) predates
+    `HEAD`, so raw what-if carries unrelated drift; bm52 was isolated by running the same
+    what-if (`dev.bicepparam` + the 2026-09-25 deploy-time values + `deployWorkloads=true
+    deployWorkflowEngine=true`) on the committed `HEAD` bicep and on bm52, and diffing:
+    - **HEAD → bm52 default:** only `+ Create` `invoice-templates` and `invoice-assets`,
+      and `invoices` going from ignored (undeclared) to a no-op Modify — the only delta is
+      the two server-defaulted encryption-scope fields, the same noise the untouched
+      `archive` container shows; `publicAccess` already `None`. **No role assignment.**
+      The engine app, migrate job and storage account after-states are byte-identical;
+      the app's differs only by a trailing empty `createArray()` in the env `concat`
+      (the off MI branch) — it resolves to the same env, still
+      `BILLRUN_BLOB_CONNECTION_STRING` via the KV secret.
+    - **bm52 default → `appBlobAuth=managedIdentity`:** exactly three role assignments
+      added — `ebill-dev-app-mi`, role `ba92f5b4…` (Storage Blob Data Contributor), one
+      scoped to each of `containers/invoices|invoice-templates|invoice-assets`, none on
+      the account (what-if lists them as `Unsupported` only because the name's
+      `guid()` uses the identity's runtime `principalId`). App env gains
+      `BILLRUN_BLOB_ACCOUNT_URL=https://ebilldevratingstg3nlvkhl.blob.core.windows.net`
+      + `AZURE_CLIENT_ID`, and both `BILLRUN_BLOB_CONNECTION_STRING` and its KV secret ref
+      are gone.
+  - **Docs closed:** G16 added to the overview open items, architecture open items and
+    code-standards C5; architecture §1 artifact-storage row, §3 blob row, the `infra/**`
+    boundary row and the auth delta corrected (`invoices` declared in bicep from bm52;
+    the app reaches blob by connection string unless G16 flips it); code-standards data
+    rule 7 tail; `bm00` Unit 52 text + its G16 row.
+
+## Invoice Template update — bm53 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-09)
+
+- **bm53 — Template and profile resolution, checksum-verified load, seed upload
+  (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm53-template-resolution-load-seed-upload.md`.
+  No migration, no grant change, no page, no action, no dependency change.
+  **bm52 must be deployed before this unit is released to prod**, and the template
+  seed must run after it (environment-operations.md §6e).
+  - **Gate check:** G6 was already recorded as decided (closed by bm50: workflow
+    rules §5, architecture X3 Resolved, overview open items), so the "build may not
+    start" gate was met. G3 and G15 (option A) were decided.
+  - **Delivered:**
+    - `types/billing.ts`: `PostedBillStamps`, `RenderMode`, `ResolvedTemplate`,
+      `InvoiceProfile`. `InvoiceCompany` was reshaped to the D3 placeholder names
+      (`addressLine1/2`, `postcode`, `city`, `stateCode`/`state`,
+      `countryCode`/`country`, `website`; bm47's unused `tradingName`/`address` were
+      dropped, and the frozen v1 template never read them). `InvoicePayment.swift` and
+      `remittanceEmail` are now required. `template.version` is a number, and
+      `invoice.paymentTermsDays` is new. Four new `INVOICE_ERROR_CODES`:
+      `TEMPLATE_CHECKSUM_MISMATCH`, `ASSET_CHECKSUM_MISMATCH`,
+      `TEMPLATE_VERSION_NOT_FOUND`, `INVOICE_PROFILE_INVALID`.
+    - `validation/billing/invoice-profile.schema.ts`: the one `.strict()` schema
+      over the D3 key set, plus `toInvoiceProfileInput` (blank/`null` → absent,
+      `payment_terms_days` → int). `lib/myinvois-states.ts` holds the 01–16 state
+      labels and the country label (data only).
+    - `db/repositories/billing/invoice-profile.ts`: `findActiveVersion`,
+      `readVersion`, `listVersions`. Read-only, and it never reads `is_secret`
+      rows.
+    - `services/billing/invoice-profile/read-profile.ts`: `parseInvoiceProfile`,
+      `readInvoiceProfile` (DB only), `inlineLogo` (blob only: SHA-256 verify →
+      `data:` URI, or `ASSET_CHECKSUM_MISMATCH`), and `getInvoiceProfile`.
+    - `services/billing/invoice-template/resolve-template.ts` (D1): draft resolves
+      non-default ACTIVE ?? default plus the ACTIVE profile ?? `null`.
+      final/preview-posted resolve each stamp, with an unstamped column falling back
+      to the default and the profile staying `null`. It never reads the current
+      ACTIVE for a posted bill and is never cached.
+    - `services/billing/invoice-template/load.ts` (D2): `loadGenerated` verifies
+      the `checksums.json` digest, then the index algorithm, then each file; then it
+      compiles and probe-executes both delegates against the frozen
+      `PROBE_RENDER_INPUT`, then memoizes. The memo is the one sanctioned cache and
+      holds only verified, compiled templates. `loadLayout` and `loadCsvMap` verify
+      but are not memoized.
+    - `render-invoice-template.ts` (D5): one RR read-only txn covers stamps →
+      resolve → raw read (`includeUsage` comes from the resolved
+      `structure.sections.usageAnnex`) → profile rows. Template and logo blob I/O
+      happens after the txn closes. `pageSetup` comes from the resolved layout's
+      `page_setup`, and `{ html, footerHtml, pageSetup, resolved }` is returned.
+      Also adds the `preview-posted` mode (for bm55) and
+      `invoiceRenderInputRepository.readBillStamps`. **`load-stopgap.ts` is
+      deleted.** The repo-`fs` manifest read went with it.
+    - `db/seeds/invoice-templates.ts` + `db:seed-invoice-templates` (D6),
+      appended to `db:setup` after `db:seed-billing`. All three rows are verified
+      before the first put (`SEED_CHECKSUM_DRIFT`). Puts are write-once with
+      `returnExisting`, and a differing stored blob raises `SEED_BLOB_CONFLICT`.
+      Re-running is idempotent. `package.json` changed in scripts only.
+  - **Deviations (recorded):**
+    1. **Error class.** D2–D4 write `AppError(code, {…})`, but `AppError` is the
+       closed HTTP-mapped union (the bm51 finding). The four codes are thrown as
+       `InvoiceRenderError` (same `code` + `detail`), which is what `post-run.ts`'s
+       `renderErrorCodeOf` logs and parks on.
+    2. **Blob paths.** A version's `blob_ref` is its directory (trailing `/`),
+       which `parseBlobRef` rejects. `load.ts` therefore parses `blob_ref + file`
+       per file, so every object path is still validated.
+    3. **Layout repo dir.** D6 says "repo dir = path after container". The layout's
+       blob path carries `layouts/`, but its repo files live at
+       `db/seeds/invoice-templates/INVTPL-STD-A4/v1/` (code-standards data rule
+       10). The seed strips the `layouts/` segment. `OFL.txt` uploads as
+       `text/plain; charset=utf-8` (D6 lists no `.txt` type).
+    4. **Payment terms.** D5 says "billing-account override ?? profile ?? null",
+       but `billing_account` has no payment-terms column, so it is
+       `profile ?? null`.
+    5. **Lint carve-out.** `db/**` may not import `services/**`, so
+       `eslint.config.mjs` gains a `db-seed-invoice-templates` element for this one
+       file (the `db-seed-sample`/`db-seed-demo` precedent).
+    6. **Test names.** The two DB+blob guardrails are
+       `invoice-default-resolution.integration.test.ts` and
+       `invoice-checksum-tamper.integration.test.ts`. They drop schemas, so they
+       must run under the destructive-DB preflight (the bm50 grants-test
+       precedent). Their posted bills are written directly by
+       `tests/db/helpers/invoice-render-fixtures.ts` rather than by driving a `ci`
+       run, because no workflow engine is available to a test. The render path
+       reads exactly those rows. The tamper guardrail parks through
+       `retryRenderInvoice`. "Posting of the remaining accounts continues" is shown
+       as each account parking independently. The posting loop's swallow is the
+       existing `renderAndStoreInvoice` catch, which this unit did not change.
+    7. **README + runbook.** `db:setup` now needs Azurite up, so README step 3
+       starts Azurite before step 4. environment-operations.md §5h leaves the
+       template seed out of its loop on purpose and runs it at the end of §6e,
+       after bm52 creates the container.
+  - **Pre-existing bm51 defect found and FIXED here:**
+    `blob-store.ts`'s write-once conflict check only matched HTTP 412. A real
+    Put Blob with `if-none-match: *` on an existing blob returns **409
+    `BlobAlreadyExists`** (confirmed against Azurite). So `onExists:
+    'returnExisting'` (including `putInvoice`'s posting-retry idempotency) and
+    `'throw'` never fired against a real store. bm51's Azurite suite had never been
+    run. `isBlobAlreadyExists` now accepts 412 or 409+`BlobAlreadyExists`, with
+    two new unit cases. bm51's `blob-store.azurite.integration` now passes.
+  - **Tests:**
+    - New DB-free tests: `resolve-template.test.ts`, `load.test.ts` (verify-
+      then-compile order, index/file/algorithm mismatch, memo hit, no memo on
+      failure, three compile-failure kinds, memo value type, real seeded default +
+      CSV v1 verified from repo bytes), `invoice-profile.schema.test.ts` (every §B
+      format, lengths, required keys, `.strict()`), and
+      `guardrails/invoice-no-legacy-render.test.ts` (guardrail 44: legacy
+      builders, `listClaimedForAccount`, no `fs` under `invoice-template/**`,
+      stopgap gone).
+    - Extended: `build-invoice-html.test.ts` (txn-then-blob ordering, mode →
+      RenderMode, G15 profile wiring, hidden-usage structure skips the usage read)
+      and `render-invoice-template.test.ts` (G15 A no-profile / fixture-profile
+      issuer + `data:` logo + bank block / escaping; the default now loads through
+      the real `loadGenerated`, served repo bytes by the new
+      `tests/helpers/seeded-invoice-template.ts`).
+    - The touched unit slice is green. `tsc` is clean, and ESLint + Prettier are
+      clean on every changed file.
+    - Full `npx vitest run` with `.env` exported: in this tree, the only failures
+      are **13 tests in 5 files that fail identically on a clean `HEAD`**
+      (verified via stash). Four of the files are the bm50 `invoice_settings`
+      permission-count ripple (`resolver`, `permission-matrix-editor`,
+      `role-detail`, `roles-read.service` still expect 15 rows). The fifth,
+      `ratecard-parse-csv` "one importer", trips on duplicate files under
+      `.claude/worktrees/**`. The vitest run also picks up those stale worktrees'
+      DB suites. These are pre-existing and not fixed here.
+    - **Run green on a throwaway Postgres (`enterprise-billing-app-db` image,
+      :5434, sentinel + `DESTRUCTIVE_DB_OK=1`) and a throwaway Azurite (:10010)**,
+      removed afterwards: `invoice-profile.integration`,
+      `invoice-template-seed-upload.integration`,
+      `blob-store.azurite.integration` (16/16), guardrails 45 + 47 +
+      `invoice-usage-annex.integration` (8/8), and `invoice-template-catalog` +
+      `billing-e2e-happy-path` (10/10).
+    - `billrun-phase3-journey.integration` fails at aggregation in the
+      `extract-flow-sql` harness (`:'var' … no test value`). This is the
+      **pre-existing** drift recorded under bm49, and it fails before any render
+      code runs.
+  - **Docs closed in this change set:**
+    - code-standards: General rule 4 (stamp read + NULL-stamp default rule), TS
+      rule 5 (key-name table), TS rule 7 (four codes), data rule 8 (memo value
+      type).
+    - Architecture Inv #42 (NULL-stamp note).
+    - known-issues §18 (pre-bm54 bills render with the default and no profile;
+      the memo-after-verify residual).
+    - `placeholder-catalog.md` (`template.*`, `company.*`, `payment.*`,
+      `invoice.paymentTermsDays`), environment-operations.md §5h/§6e, README, and
+      this tracker.
+  - **OPEN / not built here:** guardrails 49, 50 (as a standalone file), 54 and
+    the layout lint are still bm47 follow-ups, so the checklist's "guardrails
+    43–45, 47, 49, 50, 54 green" is only partly satisfiable. Guardrail 47's
+    "pinned bill still renders" half lands in bm54.
+  - **Next:** bm54 stamps `resolved` onto `customer_bill` at posting.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

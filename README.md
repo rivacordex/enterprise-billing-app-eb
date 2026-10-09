@@ -151,6 +151,15 @@ Wait until it reports healthy (a few seconds after the build):
 docker inspect -f '{{.State.Health.Status}}' enterprise-billing-app-db-1
 ```
 
+Also start Azurite now. `db:setup` (step 4) uploads the seeded invoice
+templates into its `invoice-templates` container (`db:seed-invoice-templates`,
+bm53), so Azurite has to be running before that step. Step 9 runs the same
+command again, which does nothing if Azurite is already up.
+
+```powershell
+docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml up -d --no-deps azurite
+```
+
 ### 4. Migrate + set up partitioning + seed (as the superuser)
 
 The initial migrate must run as the **superuser/owner** (the `app_runtime` role
@@ -163,7 +172,14 @@ $env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/enterprise_bill
 
 `db:setup` runs: migrations → pg_partman setup (audit/billing/rating) → the full
 baseline seeds (admin, RBAC, product, customer, accounts, ordering, billing,
-rating catalog). It ends with `Rating event catalog seeded successfully.`
+invoice templates, rating catalog). It ends with `Rating event catalog seeded
+successfully.`
+
+The invoice-template seed uploads the three seeded template versions' files to
+Azurite, write-once. It checks every file against the SHA-256 in the migration
+first. It fails with `SEED_CHECKSUM_DRIFT` if the repo files changed, or
+`SEED_BLOB_CONFLICT` if a stored blob differs from the repo. Re-running it
+uploads nothing new.
 
 > Bash: `DATABASE_URL='postgresql://postgres:postgres@localhost:5432/enterprise_billing' npm run db:setup`
 >
@@ -849,7 +865,8 @@ fi
 | `npm run lint` | `eslint .` |
 | `npm run test` | unit **+ DB-gated** suites — ⛔ never run as-is against your dev DB; see "Tests" |
 | `npx vitest run` | DB-free unit suite (export `.env` first) |
-| `npm run db:setup` | migrate + partman + full baseline seed |
+| `npm run db:setup` | migrate + partman + full baseline seed (needs Azurite up — it includes the invoice-template upload) |
+| `npm run db:seed-invoice-templates` | upload + verify the seeded invoice templates in blob (idempotent; part of `db:setup`) |
 | `npm run db:migrate` | apply any new forward migrations (idempotent) |
 | `npm run db:seed-sample` | `_SAMPLE_*` bill-run demo scenario — run as **superuser**, see Part 3 |
 | `npm run db:bootstrap-roles` | create `app_runtime`/`app_migrate` + grants |

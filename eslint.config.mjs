@@ -68,6 +68,16 @@ const BOUNDARIES_ELEMENTS = [
   // other seed under `db/seeds/**` stays repository-only under the general
   // "db" rule below.
   { type: "db-seed-demo", mode: "full", pattern: "db/seeds/demo/**" },
+  // Carved out ahead of the general "db" pattern (bm53-spec §Design D6): the
+  // invoice-template seed uploads the seeded version files through the app's
+  // own write-once blob store (`services/billing/blob-store.ts`), so the
+  // stored bytes, paths, content types and 412 handling are exactly what the
+  // render path later verifies — not a second hand-rolled SDK client.
+  {
+    type: "db-seed-invoice-templates",
+    mode: "full",
+    pattern: "db/seeds/invoice-templates.ts",
+  },
   { type: "db", mode: "full", pattern: "db/**" },
   { type: "components", mode: "full", pattern: "components/**" },
   { type: "types", mode: "full", pattern: "types/**" },
@@ -289,6 +299,15 @@ const eslintConfig = defineConfig([
                     "lib",
                   ],
                 },
+              },
+            },
+            {
+              // bm53-spec §Design D6 — the invoice-template seed reaches
+              // "services" only for the blob store (see the element carve-out
+              // comment above).
+              from: { type: "db-seed-invoice-templates" },
+              allow: {
+                to: { type: ["db", "services", "types", "lib"] },
               },
             },
             {

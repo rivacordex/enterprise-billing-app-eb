@@ -229,7 +229,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 | G13 | Mapping `udr_key` → `(mno_public_key, commercial_unit_public_key, polygon_id)` | overview rating follow-ups | 48 | Rating decides (`ratemgmt` §5.1) |
 | G14 | Four-eyes on company-profile activation | architecture _Noted gap_ vs code-standards ("does not apply") | 61 | **Stop and ask.** Unit 61 is not built until this is decided |
 | G15 | **New:** how invoices render before the first profile is activated. Option A: issuer and payment blocks hidden, `ref_invoice_profile_version` NULL. Option B: a seeded profile v1 | Not tracked yet. Add it to all three places | 47, 53, 54 | Recommended: option A. Today's invoice has no issuer block, so nothing regresses. A seeded profile would print placeholder legal and bank details on real invoices |
-| G16 | **New (bm52):** prod app blob auth — keep the Key Vault connection string, or switch to the app's user-assigned Managed Identity with container-scoped `Storage Blob Data Contributor` | Not tracked yet. Add it to all three places | 52 (prod release of 53, 58, 60) | Recommended: Managed Identity. bm52 builds it behind `appBlobAuth`, default `connectionString` |
+| G16 | **New (bm52):** prod app blob auth — keep the Key Vault connection string, or switch to the app's user-assigned Managed Identity with container-scoped `Storage Blob Data Contributor` | Tracked (bm52): overview open items, architecture open items, code-standards C5 | 52 (prod release of 53, 58, 60) | Recommended: Managed Identity. bm52 builds it behind `appBlobAuth`, default `connectionString` |
 
 ## Unit table
 
@@ -387,10 +387,10 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 
 - **Boundary:** `infra/**` only (general §2.8, workflow rules §3.4).
 - **Builds:**
-  - bicep for the `invoice-templates` and `invoice-assets` containers
-  - a write role on those containers for the app's Managed Identity, scoped to them
-  - a line in the cutover runbook. The containers must exist before deploy, like `invoices/`.
-- **Visible result:** bicep what-if or deploy shows both containers and the role assignment, and the runbook lists them.
+  - bicep for all three app containers — `invoices` (previously undeclared: it existed in prod only through the app's connection-string `createIfNotExists`), `invoice-templates` and `invoice-assets`
+  - a parameter-gated (`appBlobAuth`, G16; default `connectionString` = no change) switch of the app from its Key Vault connection string to its Managed Identity, with a `Storage Blob Data Contributor` scoped to each of the three containers — a change of auth path, not an added grant
+  - a step in the cutover runbook. The containers must exist before deploy.
+- **Visible result:** bicep what-if or deploy shows the three containers; with `appBlobAuth=managedIdentity`, also the three container-scoped role assignments and the app env switch. The runbook lists them.
 - **Depends on:** 51, which fixes the container names. Must be deployed before any prod release that includes 53.
 
 ### Unit 53 — Template and profile resolution, checksum-verified load, seed upload (`bm53`)

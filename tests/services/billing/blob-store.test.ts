@@ -141,6 +141,44 @@ describe("blobStore.putInvoice — write-once (concurrent render race)", () => {
     ).rejects.toMatchObject({ statusCode: 500 });
     expect(mockDownloadToBuffer).not.toHaveBeenCalled();
   });
+
+  // bm53 — Put Blob answers a lost `if-none-match: *` race with 409
+  // `BlobAlreadyExists` (observed on Azurite), not only 412.
+  it("adopts the stored artifact on a 409 BlobAlreadyExists too", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    mockUploadData.mockRejectedValueOnce({
+      statusCode: 409,
+      code: "BlobAlreadyExists",
+    });
+    mockDownloadToBuffer.mockResolvedValueOnce(Buffer.from("WINNER-BYTES"));
+
+    const result = await blobStore.putInvoice(
+      "2026-07-01",
+      "INV00000001",
+      Buffer.from("LOSER-BYTES"),
+    );
+    expect(result.checksum).toBe(
+      createHash("md5").update(Buffer.from("WINNER-BYTES")).digest("hex"),
+    );
+  });
+
+  it("propagates any other 409 (not a duplicate)", async () => {
+    const { blobStore } = await loadBlobStoreWithConfig({
+      connectionString: "UseDevelopmentStorage=true",
+      accountUrl: null,
+    });
+    mockUploadData.mockRejectedValueOnce({
+      statusCode: 409,
+      code: "LeaseIdMissing",
+    });
+    await expect(
+      blobStore.putInvoice("2026-07-01", "INV00000001", Buffer.from("x")),
+    ).rejects.toMatchObject({ statusCode: 409, code: "LeaseIdMissing" });
+    expect(mockDownloadToBuffer).not.toHaveBeenCalled();
+  });
 });
 
 describe("blobStore.putInvoice — Managed Identity (prod) path", () => {

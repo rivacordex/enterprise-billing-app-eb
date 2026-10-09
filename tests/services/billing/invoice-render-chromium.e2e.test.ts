@@ -1,18 +1,33 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { chromium, type Browser } from "playwright";
 
+// bm53 — the seeded default comes through the real verified loader; the blob
+// transport serves the committed repo bytes (tests/helpers/seeded-invoice-template).
+vi.mock(
+  "@/services/billing/blob-store",
+  async () =>
+    (await import("@/tests/helpers/seeded-invoice-template"))
+      .repoBlobStoreModule,
+);
+
 import { bind } from "@/services/billing/invoice-template/bind";
-import { loadDefaultTemplateFromRepo } from "@/services/billing/invoice-template/load-stopgap";
+import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
+import { loadGenerated } from "@/services/billing/invoice-template/load";
+import {
+  SEEDED_GENERATED_ROW,
+  SEEDED_TEMPLATE_STAMP,
+} from "@/tests/helpers/seeded-invoice-template";
+import type { InvoiceRenderInput } from "@/types/billing";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import { layoutPageSetupSchema } from "@/validation/billing/layout-page-setup.schema";
 
 // bm49 — a REAL Chromium render (not the mocked `render-invoice.service.test.ts`)
 // that drives the actually-seeded generated template through `bind` → Handlebars
 // → Chromium PDF, exercising the new state→district usage annex end to end. The
-// pipeline needs no DB (the stopgap loader reads the repo `.hbs`), so this is
+// pipeline needs no DB (the verified loader is served the repo `.hbs`), so this is
 // gated behind RUN_CHROMIUM_E2E=1 to keep it out of the fast unit run:
 //
 //   RUN_CHROMIUM_E2E=1 node --env-file=.env node_modules/vitest/vitest.mjs run \
@@ -217,6 +232,17 @@ async function printPageCount(
   }
 }
 
+async function loadSeededDefault(): Promise<{
+  render: (input: InvoiceRenderInput) => string;
+  renderFooter: (input: InvoiceRenderInput) => string;
+}> {
+  const { invoice, footer } = await loadGenerated(SEEDED_GENERATED_ROW);
+  return {
+    render: (input) => executeInvoiceTemplate(invoice, input),
+    renderFooter: (input) => executeInvoiceTemplate(footer, input),
+  };
+}
+
 describe.skipIf(!run)(
   "bm49 invoice render — real Chromium (RUN_CHROMIUM_E2E=1)",
   () => {
@@ -231,7 +257,7 @@ describe.skipIf(!run)(
     });
 
     it("renders a valid multi-page PDF for a large state→district annex (draft), with the Page X of Y footer wired", async () => {
-      const { render, renderFooter } = await loadDefaultTemplateFromRepo();
+      const { render, renderFooter } = await loadSeededDefault();
       const pageSetup = await loadPageSetup();
 
       // 8 states × 4 districts × 4 rows = 128 itemised records → well over one A4
@@ -241,6 +267,8 @@ describe.skipIf(!run)(
         locale: "en-MY",
         timezone: TZ,
         includeUsage: true,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
       });
       const html = render(big);
       const footer = renderFooter(big);
@@ -273,7 +301,7 @@ describe.skipIf(!run)(
     }, 120_000);
 
     it("renders the final invoice (real INV number, no watermark) and a small annex yields a smaller PDF than the large one", async () => {
-      const { render, renderFooter } = await loadDefaultTemplateFromRepo();
+      const { render, renderFooter } = await loadSeededDefault();
       const pageSetup = await loadPageSetup();
 
       const smallRaw = rawInput(buildUsage(1, 1, 1));
@@ -286,6 +314,8 @@ describe.skipIf(!run)(
         locale: "en-MY",
         timezone: TZ,
         includeUsage: true,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
         invoiceNo: "INV00000042",
       });
       const smallHtml = render(small);
@@ -306,6 +336,8 @@ describe.skipIf(!run)(
         locale: "en-MY",
         timezone: TZ,
         includeUsage: true,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
       });
       const bigPdf = await renderPdf(
         browser,

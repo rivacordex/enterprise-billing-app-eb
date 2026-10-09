@@ -386,6 +386,43 @@ workflow-management flow repo); `deploy_workflow_flows` pushes both to the
    can never split-brain) — but only once `sftp-private-key`/`sftp-known-hosts`
    are provisioned (step 2), or the deploy fails closed on the missing secret
    reference.
+6. **bm52 — invoice template containers.** The app's three blob containers —
+   `invoices`, `invoice-templates`, `invoice-assets` — are declared in
+   `workflow-engine-storage.bicep` (`publicAccess: None`) on the artifact account
+   (the collapsed engine's; the billrun instance's under split-by-module)
+   whenever `enableBlobArtifacts = true`. The app must never rely on its
+   `createIfNotExists` in prod. **Deploy this before any prod release that
+   includes bm53.**
+   1. **Deploy the bicep, what-if first** (`az deployment group what-if …`).
+      `enableBlobArtifacts` defaults to `false` in `main.bicep` (only
+      `dev.bicepparam` sets it), so **set `enableBlobArtifacts = true` for the
+      target environment before the bm52 deploy** — with it off, the containers
+      are not declared and the what-if shows nothing for them. The what-if
+      **must** show `+ Create` or `= NoChange` (where `createIfNotExists`
+      already made `invoices` — an idempotent PUT, no data moves) for **all
+      three** containers; if any of the three is missing, stop — do not release
+      bm53. Under the default `appBlobAuth = connectionString` expect **no**
+      role assignment. If the flag was already `true` there is no app env change
+      either; if this deploy is what flips it on, the app also gains the
+      `BILLRUN_BLOB_CONNECTION_STRING` env + `billrun-blob-connection-string`
+      Key Vault secret ref, so that secret must already exist. After the
+      deploy, confirm all three containers are present.
+   2. **If `appBlobAuth = managedIdentity`** (gate G16 — default
+      `connectionString` is the interim): confirm the three role assignments —
+      `Storage Blob Data Contributor` for the app's user-assigned identity, each
+      scoped `…/blobServices/default/containers/<name>`, **never the account**
+      (`az role assignment list --assignee <app-mi-principal-id> --all`). The app
+      env gains `BILLRUN_BLOB_ACCOUNT_URL` + `AZURE_CLIENT_ID` and loses
+      `BILLRUN_BLOB_CONNECTION_STRING` (`lib/config.ts` rejects both). Then roll
+      the app revision and smoke
+      `GET /billing/bill-runs/<run>/stored-invoice/<ban>` (reads `invoices/`).
+      The engine's account-scoped grant is unchanged (the distributor reads
+      `invoices/`). The role's **Delete** right is broader than the app needs —
+      there is no built-in write-without-delete data role; write-once and
+      no-delete are enforced in the app (bm51) and by review, and a custom role
+      is out of scope.
+   3. **Only then release bm53** (it uploads the seeded templates on `db:setup`
+      and reads them at render).
 
 ### Taxation — `0.00` interim (recorded)
 

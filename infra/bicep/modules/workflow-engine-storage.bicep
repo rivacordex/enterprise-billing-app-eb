@@ -26,6 +26,26 @@ param archiveRetentionDays int = 2555
 @description('Blob lifecycle retention for error/ and logs/, in days. 24 months = 730 days (D4).')
 param shortRetentionDays int = 730
 
+// bm52 D1 — the billing app's artifact containers live on this account
+// (main.bicep's enableBlobArtifacts: "artifacts share the engine's storage
+// account"). True only on the account the app + billrun engine share — the
+// collapsed instance's, or the billrun instance's under split-by-module.
+@description('bm52 — declare the app-owned blob containers (appBlobContainers) on this account. Default false.')
+param enableBlobArtifacts bool = false
+
+@description('App-owned containers (billing). Declared so they exist before deploy; the app must never rely on createIfNotExists in prod.')
+param appBlobContainers array = ['invoices', 'invoice-templates', 'invoice-assets']
+
+// bm52 D3 / gate G16 — how the app authenticates to blob. `connectionString`
+// (default, G16 interim): no role assignment, the app keeps the Key Vault
+// connection string. `managedIdentity`: a container-scoped Storage Blob Data
+// Contributor per app container for the app's user-assigned identity.
+@allowed(['connectionString', 'managedIdentity'])
+param appBlobAuth string = 'connectionString'
+
+@description('bm52 D3 — principal (object) id of the app\'s user-assigned identity. Used only when appBlobAuth is managedIdentity.')
+param appManagedIdentityPrincipalId string = ''
+
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
@@ -82,6 +102,19 @@ resource kestraInternalContainer 'Microsoft.Storage/storageAccounts/blobServices
   parent: blobService
   name: 'kestra-internal'
 }
+
+// bm52 D1 — the app's three containers. publicAccess is stated per container
+// for review clarity (the account already disables public blob access).
+// Declaring `invoices` where the app's createIfNotExists already made it is an
+// idempotent PUT — no data moves. No immutability (WORM) policy in v1 (write-once
+// is the app's ifNoneMatch '*', bm51; a container policy would block the
+// transient run-report overwrite in `invoices`) and no lifecycle rule (Inv #44 —
+// nothing deletes a version), so none of these appear in lifecyclePolicy below.
+resource appContainers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for name in appBlobContainers: if (enableBlobArtifacts) {
+  parent: blobService
+  name: name
+  properties: { publicAccess: 'None' }
+}]
 
 // Lifecycle rules (D4). Scoped by container-name prefix match since a
 // management policy is per-storage-account, not per-container. No rule for
@@ -184,6 +217,23 @@ resource workflowEngineFileDataSmbContributor 'Microsoft.Authorization/roleAssig
   }
 }
 
+// bm52 D3 / G16 — the app's blob write grant under appBlobAuth=managedIdentity:
+// one assignment PER CONTAINER, never the account (the account scope would also
+// reach Kestra's archive/error/logs/kestra-internal). The role's Delete right is
+// broader than the app needs — there is no built-in write-without-delete data
+// role; write-once/no-delete are enforced in the app (bm51) and by review, and a
+// custom role is out of scope. The engine's account-scoped grant above is
+// untouched (the distributor reads `invoices/`).
+resource appContainerBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in appBlobContainers: if (enableBlobArtifacts && appBlobAuth == 'managedIdentity') {
+  name: guid(appContainers[i].id, appManagedIdentityPrincipalId, storageBlobDataContributorRoleId)
+  scope: appContainers[i]
+  properties: {
+    roleDefinitionId: storageBlobDataContributorRoleId
+    principalId: appManagedIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}]
+
 // The account key is NEVER exported across a module boundary. The ACA
 // Environment's Azure Files storage definition needs it (no MI mount option
 // for Files on Container Apps — see the account's allowBlobPublicAccess
@@ -200,3 +250,11 @@ output archiveContainerName string = archiveContainer.name
 output errorContainerName string = errorContainer.name
 output logsContainerName string = logsContainer.name
 output kestraInternalContainerName string = kestraInternalContainer.name
+// bm52 D2 — app container name → resource id ({} when enableBlobArtifacts is false).
+output appContainerIds object = enableBlobArtifacts
+  ? toObject(
+      appBlobContainers,
+      name => name,
+      name => resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', storageAccount.name, 'default', name)
+    )
+  : {}
