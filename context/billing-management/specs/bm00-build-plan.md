@@ -538,6 +538,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 - **Boundary:** `activate-profile.action.ts` + `services/billing/invoice-profile/activate-profile.ts`, reusing `ActivateVersionDialog`.
 - **Builds:**
   - server-side `PROFILE_LOGO_REQUIRED` and `CHANGE_NOTE_REQUIRED` checks
+  - a full validity gate before DRAFT → ACTIVE: the version must pass `readInvoiceProfile` (schema parse + logo asset row) and `inlineLogo` (logo blob checksum), else activation is refused with `INVOICE_PROFILE_INVALID`. Posting stamps the ACTIVE profile version without validating it (bm54 D1) and the stamp is permanent (guardrail 46), so an invalid ACTIVE version would leave every bill posted under it render-pending forever (design review DR-01)
   - DRAFT → ACTIVE, the previous version → RETIRED, and an `INVOICE_PROFILE_ACTIVATED` audit row
   - the "Bank details change on every new invoice" warning callout
   - a second signature, if G14 requires one

@@ -160,6 +160,15 @@ export const NAV_REGISTRY = [
         level: "READ",
       },
       {
+        // bm55 (D6) — completes the bm50 `invoice_settings` permission set
+        // (workflow rules §7.7). READ opens the screens; EDIT is enforced by
+        // each mutation's action guard (bm57/bm58), never by the nav.
+        label: "Invoice Settings",
+        href: "/administration/invoice-settings",
+        permission: "invoice_settings",
+        level: "READ",
+      },
+      {
         label: "Audit Log",
         href: "/administration/audit-log",
         permission: "audit_log",

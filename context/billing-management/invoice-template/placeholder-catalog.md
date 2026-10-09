@@ -55,11 +55,31 @@ item 4).
 
 ## C. Layout generation-time directives (developer layout only — bm50+)
 
-Not placeholders — these are resolved once at template-activation time (bm55's
-generator) against the admin's `structure` map, and never survive into the
-generated `.hbs` bm47 commits by hand (D8 stopgap):
+Not placeholders — these are resolved once by the generator
+(`services/billing/invoice-template/generate.ts`, bm55; run at activation by
+bm58 and in memory by the live preview) against the admin's `structure` map.
+No directive survives into a generated `.hbs`; the generator asserts that its
+output contains no `[[` and no `]]` (Inv #46). (bm55-spec cites this section as
+"§A".)
 
-- `[[if sections.<key>]]` / `[[if columns.<key>]]`
-- `[[num colCount|subtotalSpan|totalSpan]]`
-- `[[body]]` (the one shell-level directive, replaced by every section in
-  manifest order)
+| Directive | Resolution (as built, bm55) |
+| --- | --- |
+| `[[body]]` | Exactly once, in `shell.hbs` only (anywhere else, or a count ≠ 1, fails). Replaced by the visible partials in **manifest `sections` key order** (`header` first), each inserted as authored, indented to the `[[body]]` column and separated by one blank line. Each partial carries its own `<section class="sec sec--{key} sec--half\|full">` wrapper; the generator adds none. A half-width section widens to `sec--full` only when its **layout pair partner** (the adjacent half section in the all-shown order) is hidden; a half section authored without a partner keeps `sec--half`. |
+| `[[if sections.<key>]] … [[/if]]` / `[[if columns.<key>]] … [[/if]]` | Keeps the body when the flag is `true`, otherwise drops it **entirely** (Styling rule 5). The key must be an `InvoiceSectionKey` / `InvoiceColumnKey`. **No `[[else]]` and no nesting**: an `[[if]]` inside an open `[[if]]` fails, as does an unclosed `[[if]]` or a stray `[[/if]]`. |
+| `[[num colCount]]` | `6 + showServicePeriod + showDiscountColumn + showProductId + showUdrCount`. The six fixed columns are `#, Description, Quantity, Unit price, Gross, Net amount`. (The spec's draft formula counted only two optional columns; the seeded v1 renders `colspan="10"` with all four shown.) |
+| `[[num subtotalSpan]]` | `colCount − 2 − showDiscountColumn`: the cells left of Gross (and Discount, when shown). The seeded v1 renders `7`. |
+| `[[num totalSpan]]` | `colCount − 3 − showDiscountColumn` (the spec formula over the corrected `colCount`). Layout v1 does not use it. |
+
+Any unknown directive, unknown key, or a violation of the rules above throws
+`TEMPLATE_GENERATION_FAILED` with `detail: { directive, file }`. A structure that
+hides a mandatory section is refused by the Zod schema (`MANDATORY_SECTION_HIDDEN`),
+and the generator re-asserts that rule. Output uses LF line endings, and
+directives are removed in place with no reflow.
+
+**Preview-only annotation.** `generate(…, { annotate: true })` is used by the
+live preview and never stored. It wraps each `{{expr}}` that sits in text
+content as `<span class="ph" data-ph="expr">{{expr}}</span>`. It leaves alone
+placeholders inside a tag (attributes), inside a raw-text element (`<style>`,
+`<script>`, `<title>`, `<textarea>`; this covers the CSS colour placeholders) or
+inside a comment, and every block or meta mustache (`{{#…}}`, `{{/…}}`,
+`{{else}}`, `{{!…}}`, `{{>…}}`).

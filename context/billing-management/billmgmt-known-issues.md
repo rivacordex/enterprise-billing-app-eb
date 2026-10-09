@@ -760,6 +760,72 @@ needs revisiting if the business wants the letterhead on reprints of
 pre-bm54 invoices. That would be a deliberate re-stamp decision, and the
 finalization guard (`0033`) forbids it today.
 
+**bm54 update (2026-10-09).** Bills posted from bm54 on carry all four stamps.
+Bills posted before bm54 are **not back-stamped**: `0033` refuses the
+`UPDATE`, so they keep `NULL` stamps for good and keep rendering as described
+above.
+
+## 19. 🟡 An activation during a run can give that run's accounts different template versions (bm54, by design)
+
+**Where:** `services/billing/invoice-template/resolve-template.ts`
+(`resolveVersionsForPosting`), `services/billing/post-run.ts` (`postAccount`).
+
+**Technical.** Each account posts in its own transaction (Inv #6), and each
+transaction resolves the current generated, profile and CSV versions without
+locking the catalog rows (bm54 D1). If an admin activates a new version while
+a run is posting, accounts posted before the activation are stamped with the
+old version and the rest with the new one. Each bill records exactly the
+versions it was posted under, and that record is what pinning promises
+(Inv #41/#42). A run-wide freeze would need a new `bill_run` column, which is
+out of scope.
+
+**ELI5.** If someone changes the invoice design while a batch of invoices is
+going out, some invoices in that batch use the old design and some use the
+new one. Each invoice remembers which design it used, so a reprint always
+matches the original.
+
+**Recommendation.** Accept for now. Activation pages arrive with bm58/bm61. If
+one design per run becomes a requirement, add a run-level version snapshot
+taken at `APPROVED → POSTING` and resolve from it in `postAccount`. That needs
+a migration and a separate unit.
+
+## 20. 🟠 Layout v1's `shell.hbs` has no usage-annex CSS, so anything generated from it renders the annex unstyled (found bm55, OPEN — blocks bm58)
+
+**Where:** `db/seeds/invoice-templates/INVTPL-STD-A4/v1/shell.hbs` (layout
+BTV00000001, seeded immutably by bm50) and the hand-written generated v1
+`db/seeds/invoice-templates/generated/INVOICE/v1/invoice.hbs` (BTV00000002).
+
+**Technical.** bm49 added the usage-annex CSS (`.annex`, `table.usage …`,
+about 25 lines) to the **hand-written generated** v1 only. The layout's
+`shell.hbs` was frozen without it, and its CSS comments also differ. The bm55
+generator builds its `<head>` from the layout shell. So
+`generate(layout v1, all-on)` differs from the stored v1 **only inside
+`<style>`**: the `<body>` renders byte-identical
+(`tests/services/billing/invoice-template/generate-parity.test.ts`; its
+whole-document case is an `it.fails` that records this gap). In practice:
+
+- **bm55 live preview** of the sample bill, or of an unposted bill, renders
+  the usage annex without its table styling. Posted-bill previews and every
+  real invoice render from the stored v1 and are unaffected.
+- **bm58 activation** would store a generated v2 whose annex is unstyled on
+  real PDFs.
+
+**Related.** The seeded generated v1 `structure.json` lists only the three
+optional sections, while the DB row and the generator's canonical
+`structure.json` list all nine. Nothing reads the v1 file (`loadGenerated`
+uses the row), and the download serves it exactly as stored.
+
+**ELI5.** The master design file is missing the styling for the usage
+table. The invoice in use today has that styling, because it was written by
+hand. Any new invoice design built from the master file would show the usage
+table plain.
+
+**Recommendation.** Before bm58 ships, seed **layout v2** (a new `v2/`
+directory and a new version row, Inv #44). Its `shell.hbs` should carry the
+annex CSS exactly as the hand-written v1 has it, and its `structure.json`
+convention should be settled with it. Then flip the parity test's `it.fails`
+to a normal `it` against v2. Do not edit v1, which is immutable.
+
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 
 The `ratecard` permission row is created by migration `0043_ratecard_permission.sql`

@@ -323,6 +323,20 @@
       "when": 1790848800000,
       "tag": "0046_invoice_template_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790935200000,
+      "tag": "0047_customer_bill_posted_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1791021600000,
+      "tag": "0048_customer_bill_template_stamp_idx",
+      "breakpoints": true
     }
   ]
 }

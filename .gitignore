@@ -106,3 +106,6 @@ workflow-management/dev/sftp/keys/*
 # per environment.
 /public/brand/*
 !/public/brand/logo.svg
+
+# Stray repo snapshot archive — never track (was committed by accident)
+/archive.tar

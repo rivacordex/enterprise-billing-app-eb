@@ -44,6 +44,8 @@ const ROUTE_MANIFEST = [
   "/billing/bill-runs/[runId]/approve",
   "/administration/accounts-settings",
   "/administration/accounts-settings/flows",
+  "/administration/invoice-settings",
+  "/administration/invoice-settings/invoice-template",
 ] as const;
 
 function collectPageFiles(dir: string): string[] {

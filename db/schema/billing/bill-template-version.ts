@@ -4,10 +4,8 @@ import { sql } from "drizzle-orm";
 import { billing } from "@/db/schema/billing/pg-schema";
 import { billFormat } from "@/db/schema/billing/bill-format";
 import { appuser } from "@/db/schema/identity";
-import type {
-  InvoiceTemplateStructure,
-  LayoutPageSetup,
-} from "@/types/billing";
+import type { LayoutPageSetup } from "@/types/billing";
+import type { InvoiceTemplateStructureInput } from "@/validation/billing/invoice-template-structure.schema";
 
 // bm50-spec §Design D1. PHYSICAL DDL OF RECORD:
 // db/migrations/0046_invoice_template_catalog.sql. Query typing only — not
@@ -37,7 +35,8 @@ export const billTemplateVersion = billing.table("bill_template_version", {
   isDefault: boolean("is_default").notNull().default(false),
   layoutCode: text("layout_code"),
   refLayoutVersionId: text("ref_layout_version_id"),
-  structure: jsonb("structure").$type<InvoiceTemplateStructure>(),
+  // bm55-spec §Design D2 — typed from the Zod schema (general §6.17).
+  structure: jsonb("structure").$type<InvoiceTemplateStructureInput>(),
   pageSetup: jsonb("page_setup").$type<LayoutPageSetup>(),
   blobRef: text("blob_ref"),
   checksum: text("checksum"),

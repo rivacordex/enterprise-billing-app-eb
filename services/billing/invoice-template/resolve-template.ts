@@ -4,6 +4,7 @@ import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-prof
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import {
   InvoiceRenderError,
+  type PostingVersionStamps,
   type RenderMode,
   type ResolvedTemplate,
   type TemplateKind,
@@ -20,6 +21,8 @@ import {
 //                             stamps at all, so they render with the default —
 //                             deterministic, and identical to what was ACTIVE
 //                             then (nothing is activatable before bm58).
+//   posting (bm54)          → `resolveVersionsForPosting`: the same "current"
+//                             as draft, returned as the four stamp values.
 //
 // "No template" cannot occur: the default rows are trigger-protected (bm50 D2).
 // If one is missing anyway (corrupted DB) this throws
@@ -74,6 +77,42 @@ async function versionById(
   return row;
 }
 
+// The one definition of "current" (bm54-spec §Design D1): shared by the draft
+// render and the posting stamp, so a pro-forma and the bill posted next can
+// never disagree on which versions are current.
+async function currentVersions(db: Database): Promise<{
+  generated: BillTemplateVersion;
+  csv: BillTemplateVersion;
+  profileVersion: number | null;
+}> {
+  const [generated, csv, profileVersion] = await Promise.all([
+    currentVersion(db, "generated"),
+    currentVersion(db, "csv"),
+    invoiceProfileRepository.findActiveVersion(db),
+  ]);
+  return { generated, csv, profileVersion };
+}
+
+// bm54-spec §Design D1 (Inv #41) — the versions a bill is posted under, read
+// inside `postAccount`'s money transaction and written by `stampPosted` in the
+// same UPDATE as `ref_inv_document_id`. DB rows only: no blob read, no compile
+// — posting must never fail or slow because a template is unreadable (a bad
+// template parks the render afterwards, Inv #40). The catalog rows are read
+// without a lock, so an activation mid-run can give accounts of one run
+// different versions; each bill records exactly what it was posted under.
+export async function resolveVersionsForPosting(
+  tx: Database,
+): Promise<PostingVersionStamps> {
+  const { generated, csv, profileVersion } = await currentVersions(tx);
+  return {
+    refBillFormatId: "INVOICE",
+    refBillTemplateVersionId: generated.billTemplateVersionId,
+    // G15 A — no ACTIVE profile ⇒ stamped NULL.
+    refInvoiceProfileVersion: profileVersion,
+    refCsvTemplateVersionId: csv.billTemplateVersionId,
+  };
+}
+
 export async function resolveTemplate(
   db: Database,
   mode: RenderMode,
@@ -83,11 +122,7 @@ export async function resolveTemplate(
   let profileVersion: number | null;
 
   if (mode.kind === "draft") {
-    [generated, csv, profileVersion] = await Promise.all([
-      currentVersion(db, "generated"),
-      currentVersion(db, "csv"),
-      invoiceProfileRepository.findActiveVersion(db),
-    ]);
+    ({ generated, csv, profileVersion } = await currentVersions(db));
   } else {
     const { bill } = mode;
     [generated, csv] = await Promise.all([

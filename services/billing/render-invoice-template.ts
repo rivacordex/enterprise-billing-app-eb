@@ -6,7 +6,10 @@ import {
 } from "@/services/billing/invoice-profile/read-profile";
 import { bind } from "@/services/billing/invoice-template/bind";
 import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
-import { loadGenerated } from "@/services/billing/invoice-template/load";
+import {
+  loadGenerated,
+  type LoadedGeneratedTemplate,
+} from "@/services/billing/invoice-template/load";
 import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
 import {
   getAppLocale,
@@ -19,6 +22,7 @@ import {
   InvoiceRenderError,
 } from "@/types/billing";
 import type {
+  InvoiceTemplateStructure,
   LayoutPageSetup,
   RenderMode,
   ResolvedTemplate,
@@ -41,6 +45,17 @@ export interface BuildInvoiceHtmlParams {
   // against the bound `billing.document` row (render-invoice.ts §6). Unused
   // on a draft.
   invoiceNo?: string;
+  // bm55-spec §Design D3 — the editor preview of an UNPOSTED bill renders the
+  // admin's unsaved structure: `load` builds the template in memory from the
+  // resolved layout (generated + compiled, never stored or memoized) in place
+  // of the stored generated version. Draft mode only — a posted bill always
+  // renders its stamped version (Inv #42).
+  override?: {
+    structure: InvoiceTemplateStructure;
+    load: (
+      resolved: ResolvedTemplate,
+    ) => Promise<Pick<LoadedGeneratedTemplate, "invoice" | "footer">>;
+  };
 }
 
 export interface BuildInvoiceHtmlResult {
@@ -68,8 +83,15 @@ export async function buildInvoiceHtml({
   banId,
   mode,
   invoiceNo,
+  override,
 }: BuildInvoiceHtmlParams): Promise<BuildInvoiceHtmlResult> {
   const isFinal = mode === "final";
+  // bm55-spec §Design D3 — `isDraft: !posted`: the editor preview of a
+  // posted bill shows it as issued (no watermark), like the final render.
+  const isDraft = mode === "draft";
+  if (override && !isDraft) {
+    throw new Error("buildInvoiceHtml: a template override is draft-only");
+  }
   const timezone = getAppTimezone();
 
   // D5 steps 1–3 — every DB read in ONE repeatable-read, read-only
@@ -94,7 +116,8 @@ export async function buildInvoiceHtml({
       // same value `loadGenerated` returns as `tpl.structure` (D2 step 7);
       // it is read here because the usage read happens in this snapshot.
       const includeUsage =
-        resolved.generated.structure?.sections.usageAnnex !== false;
+        (override?.structure ?? resolved.generated.structure)?.sections
+          .usageAnnex !== false;
 
       const raw = await invoiceRenderInputRepository.read(tx, {
         runId,
@@ -125,14 +148,14 @@ export async function buildInvoiceHtml({
   // compiled template (memoized per version) and the verified logo bytes.
   const [locale, tpl, profile] = await Promise.all([
     getAppLocale(),
-    loadGenerated(resolved.generated),
+    override ? override.load(resolved) : loadGenerated(resolved.generated),
     profileRead === null ? Promise.resolve(null) : inlineLogo(profileRead),
   ]);
   const pageSetup = parsePageSetup(resolved);
 
   // D5 step 5.
   const input = bind(raw, {
-    isDraft: !isFinal,
+    isDraft,
     locale,
     timezone,
     includeUsage,

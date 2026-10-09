@@ -796,6 +796,253 @@ DELIVERED" section.
     "pinned bill still renders" half lands in bm54.
   - **Next:** bm54 stamps `resolved` onto `customer_bill` at posting.
 
+## Invoice Template update — bm54 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite + Chromium (2026-10-09)
+
+- **bm54 — Posting-time version stamps (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm54-posting-version-stamps.md`. Boundary: the
+  posting transaction only (`post-run.ts`, `stampPosted`/`findForAccount`/
+  `lockBillForPosting`, `resolveVersionsForPosting`). No migration, no grant change,
+  no change to `charge_checksum`, no npm dependency.
+  - **Gate check:** G12 is recorded as decided and delivered (workflow rules §5,
+    closed by bm50 2026-10-08: CSV version on
+    `customer_bill.ref_csv_template_version_id`), so the "build may not start" gate
+    is met. G15 is decided (option A).
+  - **Delivered:**
+    - `resolve-template.ts`: the draft branch's "current" precedence is now one
+      private helper, `currentVersions` (non-default ACTIVE ?? default for
+      generated + CSV, ACTIVE profile ?? `null`). The new
+      `resolveVersionsForPosting(tx)` uses it and returns the four stamp values.
+      It reads DB rows only: no layout lookup, no blob read, no compile.
+      `PostingVersionStamps` is in `types/billing.ts`, because `db/**` may not
+      import `services/**`.
+    - `customer-bill.repository.ts`: `stampPosted`'s data gains the four stamps,
+      written in its one existing `UPDATE … AND ref_inv_document_id IS NULL`.
+      `lockBillForPosting` and `findForAccount` return the four stamp columns.
+      The `customer-bill.ts` schema comments now say "stamped at posting by the
+      app (bm54)".
+    - `post-run.ts`: `postAccount` calls `resolveVersionsForPosting(tx)` after
+      `lockBillForPosting` and the checksum, just before `stampPosted`, and
+      spreads the result into `stampPosted`'s data. Skipped and zero-total bills
+      resolve nothing. A catalog failure rolls the posting transaction back and
+      parks the account.
+  - **Deviations (recorded):**
+    1. **D3 wiring.** D3 says `renderAndStoreInvoice`/`retryRenderInvoice` call
+       `buildInvoiceHtml({ mode: { kind: 'final', bill: stamps } })`. Both call
+       `renderFinalInvoice`, and since bm53 its `"final"` mode already reads the
+       bill's stamps inside `buildInvoiceHtml`'s repeatable-read snapshot and
+       resolves `{ kind: 'final', bill: stamps }`. That path never reads the
+       current ACTIVE, which guardrail 46 proves end to end. Passing the stamps
+       in from `post-run.ts` would mean changing `render-invoice.ts` and
+       `render-invoice-template.ts`, which this unit's boundary keeps separate.
+       So the renderer is unchanged and `post-run.ts` gets a comment only.
+       `findForAccount` returns the stamps as specified, for bm55's consumers.
+    2. **Test names.** As in bm53, the two DB+blob suites are
+       `.integration.test.ts`: `tests/guardrails/invoice-version-pinning.integration.test.ts`
+       (spec: `invoice-version-pinning.test.ts`) and the extended
+       `invoice-checksum-tamper.integration.test.ts`. They drop schemas, so they
+       must run under the destructive-DB preflight.
+    3. **"Header text + template version in the footer".** The seeded v1 footer
+       does not print `template.version`. The fixture generated versions are
+       byte-copies of v1 with a `data-tpl="PIN-MARK-V<n>"` marker on the title
+       and "Template v{{template.version}}" in the footer, each with its own
+       `checksums.json` (`insertGeneratedTemplateFixture` in
+       `tests/db/helpers/invoice-render-fixtures.ts`). Guardrail 46 asserts the
+       marker, the profile company name and the footer version on
+       `buildInvoiceHtml`'s output, then renders the PDF through
+       `retryRenderInvoice`.
+    4. **Parked twin.** A real posting stores the twin's PDF, so the test parks
+       it afterwards: it removes the `bill_run_invoices` row (under
+       `session_replication_role = replica`, the e2e precedent) and the PDF blob.
+  - **Tests:**
+    - `post-run.service.test.ts`: the real `resolveVersionsForPosting` runs
+      over mocked catalog/profile repositories (34 tests, 6 new). Covered:
+      `stampPosted` receives the four values (defaults, and non-default ACTIVE
+      over default); G15 no profile → `null`; no blob call (spy on
+      `getObject`/`getInvoice`/`putInvoice`); the order lock → resolve → stamp
+      on the posting tx; skip/zero-total resolve nothing; a catalog failure
+      parks with no stamp.
+    - `resolve-template.test.ts` (20 tests, 5 new): the posting resolver's
+      precedence, its agreement with a draft resolve, no by-id/layout lookup,
+      and `TEMPLATE_VERSION_NOT_FOUND`.
+    - New `tests/db/customer-bill-stamps.integration.test.ts` (3/3), through the
+      real `postAccount`. A test-only `BEFORE UPDATE` audit trigger shows that
+      exactly one UPDATE took the latch from NULL and carried all four stamps
+      (no-profile → `NULL`; ACTIVE profile → its version). Three later stamp
+      attempts → `23001`, stamps unchanged.
+    - New guardrail 46 (4/4): post A + a twin under generated v2 + profile v1
+      (with a logo), then activate v3 + profile v2 by DB fixture. A's stamps,
+      stored PDF bytes (`getStoredInvoice`) and recomputed `charge_checksum`
+      are unchanged, and a reprint is `ALREADY_STORED`. The parked twin
+      re-renders with v2 + profile v1 and stores a `%PDF`. A new draft of B
+      shows v3 + profile v2.
+    - Guardrail 47 second half (3/3 in the file): C is pinned to a fixture v2
+      with a tampered `invoice.hbs`. With a cold memo, C parks with
+      `TEMPLATE_CHECKSUM_MISMATCH` and A (pinned to the default v1) stores its
+      PDF.
+    - **Mutation check:** with the stamp spread removed from `postAccount`, 4
+      tests fail across the stamps suite and guardrail 46. Restored afterwards.
+    - Run green on a throwaway Postgres (`enterprise-billing-app-db`, :5434,
+      sentinel + `DESTRUCTIVE_DB_OK=1`) + throwaway Azurite (:10010) + local
+      Playwright Chromium: the three suites above, and
+      `invoice-default-resolution` (g45), `invoice-settings-grants`,
+      `billing-e2e-happy-path`, `invoice-usage-annex`,
+      `invoice-template-catalog`, `invoice-profile`,
+      `customer-bill-line-checksum`, `invoice-template-seed-upload`. The last
+      one timed out at 5 s a few times while the full unit suite was running
+      in parallel. On its own it passed 3/3 on this tree and 2/2 on clean
+      HEAD, so that was CPU contention, not this change.
+    - `tsc` is clean, and ESLint + Prettier are clean on every changed file.
+      Full `npx vitest run --pool=threads --exclude ".claude/**"`: the only
+      failures are the **13 pre-existing tests in 5 files** recorded under bm53
+      (the `invoice_settings` permission-count ripple ×4 files, plus the
+      ratecard `.claude/worktrees` duplicate). Six more files only load with
+      `.env` exported, and they pass that way (6/6, 34 tests).
+      `billing-trial-bill-compute-boundary` (only `post-run.ts` calls
+      `stampPosted`) and `stored-invoice-route` are unchanged and green.
+  - **Docs closed in this change set:** architecture Inv #41 (built note), the
+    §3 `customer_bill` storage row (G12 settled; stamped from bm54) and the
+    ownership-shift delta ("the two reserved columns are now written by
+    `stampPosted`"); code-standards Part 2 data rule 4 (confirmed as built);
+    known-issues §18 (pre-bm54 bills are never back-stamped) and new §19 (a
+    mid-run activation gives accounts different versions); this tracker.
+  - **OPEN / not built here:** guardrails 49, 50 (standalone) and 54 are still
+    bm47 follow-ups, so the checklist's "guardrails 43–47, 49, 50, 54 green" is
+    only partly satisfiable. Every built guardrail in 43–47 is green: 44 and the
+    render-source boundary in the unit run, and 45, 46 and 47 on the throwaway
+    stack. There is no live `ci`-seed
+    posting in this environment (no workflow engine for tests). The checklist's
+    "posted on the `ci` seed" is shown instead by real `postAccount` runs on
+    fixture bills.
+  - **Next:** bm55 (posted-bill preview reads the stamps; "used by N invoices").
+
+## Invoice Template update — bm55 DELIVERED (code + tests + docs), unit suite RUN GREEN (2026-10-09)
+
+- **bm55 — Invoice Settings shell + Invoice template read page, generator and live
+  preview (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm55-invoice-settings-shell-template-read-preview.md`.
+  Boundary: the `administration/invoice-settings` pages, the files GET handler, the
+  generator (`generate.ts`), the READ-only preview action/service, the
+  `invoice-settings` components, the structure + search-params schemas, and the nav
+  entry deferred from bm50. No mutation (no save/activate — bm57/bm58), no migration,
+  no grant change, no npm dependency.
+  - **Delivered:**
+    - `validation/billing/invoice-template-structure.schema.ts`: the D2 schema
+      (strict, `MANDATORY_SECTION_HIDDEN` refinement) plus the preview action's
+      input schema. The Drizzle `structure` column is retyped from it.
+      `MANDATORY_SECTION_KEYS` is in `types/billing.ts`.
+      `invoice-settings-search-params.schema.ts` holds `?tab` / `?version`.
+    - `services/billing/invoice-template/generate.ts`: `generate(layout,
+      structure, { annotate })` and `layoutFilesFromVerified`. `load.ts` gains
+      `loadGeneratedFiles` (verified invoice.hbs, footer.hbs and
+      structure.json; not memoized).
+    - `services/billing/invoice-template/preview.ts` and
+      `actions/billing/invoice-settings/preview-invoice-template.action.ts`:
+      guard READ → Zod → `billrun_view` for any `{ billId }` (before any read)
+      → 30/60 s limiter → service. The sample source and an unposted bill
+      generate in memory. A posted bill renders its stamped version through
+      `buildInvoiceHtml({ mode: 'preview-posted' })`, so the structure is
+      ignored. Nothing is written.
+    - `services/billing/read/invoice-template-settings.ts` (page data, Generated
+      .hbs bytes, file download, recent posted bills).
+      `customer-bill.repository` gains `findPreviewTarget` and
+      `listRecentPosted` (LIMIT 20, newest INV first).
+    - Pages: the shell `layout.tsx` (guard READ + tabs), an index `page.tsx`
+      that redirects to `invoice-template` until bm56, and
+      `invoice-template/{page,loading,error}.tsx`. The GET handler is
+      `…/versions/[versionId]/files/[file]/route.ts`.
+    - Components: `InvoiceSettingsTabs`, `InvoiceStructureForm`,
+      `InvoicePreviewFrame` (`sandbox=""` + `srcDoc`), `GeneratedHbsViewer`,
+      `VersionHistoryTable` and `TemplateVersionStatusBadge`.
+    - Nav: `NAV_REGISTRY` "Invoice Settings" (READ) after System Configuration,
+      with the `FileText` icon. `invoice-template` is in the nav guard's
+      `UNLISTED_BY_DESIGN`, and both pages are in the route manifest.
+  - **Deviations (recorded):**
+    1. **Generator follows the seeded layout v1 as authored (owner decision,
+       2026-10-09).** Spec D1's sketch doesn't fit the immutable layout. The
+       layout's partials self-wrap in `<section class="sec sec--{key} …">`, and
+       it has no zones, no `pageTwoHeader` partial and no `row-2` markup. So
+       the generator inserts partials in manifest order, indented at
+       `[[body]]`. A half section widens only when its *layout pair partner* is
+       hidden, so payment stays `sec--half` as stored. `colCount` counts all
+       four optional columns (the spec formula gave 8; v1 renders 10), and
+       `subtotalSpan = colCount − 2 − showDiscountColumn`. The formulas are in
+       placeholder-catalog §C.
+    2. **Parity is `<body>`-only.** The generated and stored v1 render a
+       byte-identical `<body>` for `sample-data.json` (draft and issued) and a
+       multi-page fixture. The `<head>` `<style>` differs because layout v1's
+       shell has no bm49 usage-annex CSS. This is recorded as an `it.fails`
+       case and as **known-issues §20 (OPEN — needs a layout v2 before
+       bm58)**. Until then the sample and unposted-bill previews render the
+       annex unstyled.
+    3. **Error class.** `TEMPLATE_GENERATION_FAILED` and
+       `MANDATORY_SECTION_HIDDEN` are `INVOICE_ERROR_CODES` thrown as
+       `InvoiceRenderError`, not `AppError` (the bm51 rationale:
+       `lib/errors.ts` is a closed HTTP union). Recorded in code-standards TS
+       rule 7.
+    4. **`buildInvoiceHtml`** (`render-invoice-template.ts`, outside the
+       listed boundary) gains a draft-only `override` (structure + in-memory
+       `load`), so the unposted-bill preview reuses the one binder pipeline
+       instead of forking it. `preview-posted` now binds `isDraft: false`
+       (spec D3: `isDraft: !posted`); it had no caller before bm55.
+    5. **Extra files beyond the spec list:** the read service above;
+       `pinnedVersionNo` on the action's ok result, which drives the "as
+       issued" banner; and a `SEEDED_LAYOUT_ROW` plus the layout path mapping
+       in `tests/helpers/seeded-invoice-template.ts`.
+    6. **Annotate scope.** Placeholders inside `<style>`/raw-text elements are
+       not wrapped (wrapping would break the CSS colours). A posted-bill
+       preview is never annotated because its stored template is not
+       regenerated; outline still applies.
+    7. **Tabs in a layout** cannot see the path. With one tab it is always
+       current; bm56 must pass `active` when it adds Company profile.
+    8. The `FileText` nav icon (spec D6) is also GL Journal's.
+  - **Tests (all new suites green):**
+    - `generate.test.ts`, guardrail 48 (146): all 128 combinations compile
+      under knownHelpersOnly/strict and execute. Each has no `[[`/`]]`/CR,
+      no markup for hidden sections or columns (incl. the discount total),
+      colspans that equal the formulas, and a header cell count equal to
+      `colCount`. Also covered: pairing and widening on a synthetic layout,
+      Zod and generator mandatory rejection, every
+      `TEMPLATE_GENERATION_FAILED` case, annotate scope and escaping, LF
+      determinism, canonical structure.json, and the client-bundle boundary.
+    - `generate-parity.test.ts` (5 + 1 expected fail).
+    - `preview-invoice-template.action.test.ts` (14). It runs through the real
+      service, resolver, loaders and binder. Covered: READ allowed;
+      FORBIDDEN; a `{ billId }` source without `billrun_view` is FORBIDDEN
+      before any read; VALIDATION_ERROR ×4. A posted bill renders its stamped
+      v1 with the structure ignored, and the current ACTIVE is never
+      resolved. Also: unposted draft, NOT_FOUND, PREVIEW_FAILED with its
+      code, the 30/60 s limit, and zero `putObject`/`putInvoice`/DML.
+    - `tests/app/invoice-settings/files-route.test.ts` (14): 401 ×2, 403, 422
+      ×4, 404 for unknown/layout/DRAFT, exact stored bytes for all three
+      files plus headers, and a tampered blob → 500 with an empty body.
+    - Component tests (23) and `invoice-settings-authz-matrix.test.ts`
+      (guardrail 56 routes, 9). `nav-registry-guard` and `route-manifest`
+      are green.
+    - **Ripples fixed:** `tests/lib/nav-registry.test.ts` (the ADMIN map gains
+      `invoice_settings`) and `status-literal-allowlist.ts` (the
+      version-history row's `"RETIRED"`).
+    - `tsc` is clean, and ESLint + Prettier are clean on every changed file.
+      Full `npx vitest run --pool=threads --exclude ".claude/**"`: 3877
+      passed. The failures are the **13 pre-existing tests in 5 files**
+      recorded under bm53/bm54, plus two failures now fixed (the nav-registry
+      ADMIN map and the status-literal allowlist). Two more were load-only
+      effects that pass on their own: the `route-manifest` stale-reference
+      scan hit its 10 s timeout under parallel load, and the 6 env-only files
+      pass 6/6 (34 tests) with `.env` loaded.
+  - **Not run here:** no browser or `next build` run of the pages (the
+    client-bundle boundary is asserted by a source test, not a build). No
+    DB/Azurite run: bm55 adds no SQL beyond two `SELECT`s on
+    `customer_bill`, both mocked in the unit suites.
+  - **Docs closed in this change set:** code-standards TS rule 7, file
+    organization, the permission-map notes (index redirect target, the
+    billrun_view check as built, the authz matrix home) and guardrail 48 as
+    built; placeholder-catalog §C (the directive grammar, formulas and
+    annotate rule); ui-context §10b (preview styles confirmed); the
+    architecture boundary row (built note); known-issues §20; this tracker.
+  - **Next:** seed layout v2 with the annex CSS (known-issues §20) before
+    bm58; bm56 (Company profile, which reuses the shell, badge and history
+    table and switches the index redirect).
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
@@ -927,3 +1174,19 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
   decision (`billmgmt-known-issues.md` §17); capacity accounts stay
   `EXCLUDED` for a partial period until it is answered. Not an engineering
   deferral — never build a pro-ration method without this decision.
+
+- **DONE (bm55 review) — `listRecentPosted` index.** Migration `0047_customer_bill_posted_idx`
+  adds a partial btree on `customer_bill (ref_inv_document_id DESC) WHERE ref_inv_document_id IS NOT NULL`
+  (mirrored in `db/schema/billing/customer-bill.ts`). Query and partition scope unchanged.
+
+- **DONE (bm55 code-review fixes, 2026-10-09).** Dev compose `setup` now gets Azurite + the in-network blob
+  connection string (db:setup seeds invoice templates); `.gitattributes` pins `db/seeds/invoice-templates/**`
+  to LF (SHA-256 contract); `generate.ts` rejects a swallowed `[[body]]` and prototype-key `[[num …]]`;
+  `load.ts` fetches version files in parallel and maps a blob 404 to `TEMPLATE_VERSION_NOT_FOUND`;
+  migration `0048` indexes the two posting stamps and `listForKind` skips counts for layouts;
+  `isChecksumAlgorithm` and the `BTV` id regex de-duplicated; version-pinning test now deletes its stored PDFs.
+- **MOVED (2026-10-09):** the open owner-review items are tracked in `billmgmt-design-review.md`.
+- **DONE (2026-10-09) — review decisions.** `archive.tar` removed from git and ignored; migrations 0047/0048
+  carry a locking note (plain `CREATE INDEX`, run outside an active bill run on a large table — owner chose
+  "keep plain, document"). Deferred design items now live in `billmgmt-design-review.md` (DR-01 profile
+  validity gate → bm61, DR-02 CSV resolution, DR-03 preview `bind()`, DR-04 accepted unused exports).

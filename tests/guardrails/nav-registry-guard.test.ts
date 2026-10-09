@@ -33,6 +33,8 @@ const UNLISTED_BY_DESIGN: Record<string, string> = {
     "Child create route reached from Manage Customer; not a directory entry (§2.3).",
   "/administration/accounts-settings/flows":
     "Reached from the Accounts Settings parent (D7); readable at accounts_config:READ, so it needs no entry of its own.",
+  "/administration/invoice-settings/invoice-template":
+    "Reached via the Invoice Settings tabs (bm55 D6, the run-detail precedent); readable at invoice_settings:READ under the registered /administration/invoice-settings entry.",
 };
 
 function collectPageFiles(dir: string): string[] {

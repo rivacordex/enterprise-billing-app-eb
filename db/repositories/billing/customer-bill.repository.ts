@@ -1,4 +1,13 @@
-import { and, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import type { Database } from "@/db/client";
@@ -6,6 +15,7 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { customerBill } from "@/db/schema/billing/customer-bill";
+import type { PostedBillStamps, PostingVersionStamps } from "@/types/billing";
 
 // bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
 // `listForRun` backs the Customers & Bills tab read. The trial-bill write
@@ -314,17 +324,22 @@ export const customerBillRepository = {
     billRunId: string,
     billingAccountId: string,
     periodPartition: string,
-  ): Promise<{
-    customerBillId: string;
-    periodPartition: string;
-    subtotal: string;
-    taxTotal: string;
-    totalAmount: string;
-    refInvDocumentId: string | null;
-    attemptCount: number;
-    refFinancialAccountId: string;
-    currency: string;
-  } | null> {
+  ): Promise<
+    | ({
+        customerBillId: string;
+        periodPartition: string;
+        subtotal: string;
+        taxTotal: string;
+        totalAmount: string;
+        refInvDocumentId: string | null;
+        attemptCount: number;
+        refFinancialAccountId: string;
+        currency: string;
+        // bm54 — the bill's version stamps (NULL until posted / pre-bm54).
+        refBillFormatId: string | null;
+      } & PostedBillStamps)
+    | null
+  > {
     // Postgres requires `FOR UPDATE OF <unqualified name>`, but drizzle
     // schema-qualifies base tables (`"billing"."customer_bill"`), which
     // Postgres rejects. Aliasing the locked table emits the bare alias in the
@@ -345,6 +360,10 @@ export const customerBillRepository = {
         attemptCount: billRunAccount.attemptCount,
         refFinancialAccountId: billingAccount.refFinancialAccountId,
         currency: billingAccount.currency,
+        refBillFormatId: cb.refBillFormatId,
+        refBillTemplateVersionId: cb.refBillTemplateVersionId,
+        refInvoiceProfileVersion: cb.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: cb.refCsvTemplateVersionId,
       })
       .from(cb)
       .innerJoin(
@@ -398,6 +417,11 @@ export const customerBillRepository = {
   // partial UNIQUE index (`document_ref_customer_bill_id_unique`,
   // 0037_document_customer_bill_latch.sql) structurally refuses a second
   // posted INV for the same bill regardless of what this guard does.
+  //
+  // bm54-spec §Design D2 (Inv #41) — the four invoice-template version stamps
+  // ride in this SAME statement (not a second UPDATE, not a trigger). Once it
+  // commits, the finalization guard (0033) refuses every further UPDATE, so a
+  // stamp can never be added or corrected afterwards (guardrail 46).
   async stampPosted(
     tx: Database,
     customerBillId: string,
@@ -406,7 +430,7 @@ export const customerBillRepository = {
       refInvDocumentId: string;
       postedAttempt: number;
       chargeChecksum: string;
-    },
+    } & PostingVersionStamps,
   ): Promise<boolean> {
     const stamped = await tx
       .update(customerBill)
@@ -415,6 +439,10 @@ export const customerBillRepository = {
         postedAttempt: data.postedAttempt,
         chargeChecksum: data.chargeChecksum,
         category: "normal",
+        refBillFormatId: data.refBillFormatId,
+        refBillTemplateVersionId: data.refBillTemplateVersionId,
+        refInvoiceProfileVersion: data.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: data.refCsvTemplateVersionId,
       })
       .where(
         and(
@@ -439,21 +467,27 @@ export const customerBillRepository = {
     db: Database,
     billRunId: string,
     billingAccountId: string,
-  ): Promise<{
-    customerBillId: string;
-    periodPartition: string;
-    billingAccountId: string;
-    accountName: string;
-    currency: string;
-    category: string;
-    billingPeriodStart: string;
-    billingPeriodEnd: string;
-    subtotal: string;
-    taxTotal: string;
-    totalAmount: string;
-    paymentDueDate: string;
-    refInvDocumentId: string | null;
-  } | null> {
+  ): Promise<
+    | ({
+        customerBillId: string;
+        periodPartition: string;
+        billingAccountId: string;
+        accountName: string;
+        currency: string;
+        category: string;
+        billingPeriodStart: string;
+        billingPeriodEnd: string;
+        subtotal: string;
+        taxTotal: string;
+        totalAmount: string;
+        paymentDueDate: string;
+        refInvDocumentId: string | null;
+        // bm54-spec §Design D3 — the version stamps a posted bill renders from
+        // (NULL on a bill posted before bm54 → the default, bm53 D1).
+        refBillFormatId: string | null;
+      } & PostedBillStamps)
+    | null
+  > {
     const [row] = await db
       .select({
         customerBillId: customerBill.customerBillId,
@@ -469,6 +503,10 @@ export const customerBillRepository = {
         totalAmount: customerBill.totalAmount,
         paymentDueDate: customerBill.paymentDueDate,
         refInvDocumentId: customerBill.refInvDocumentId,
+        refBillFormatId: customerBill.refBillFormatId,
+        refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
+        refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,
       })
       .from(customerBill)
       .innerJoin(
@@ -483,6 +521,66 @@ export const customerBillRepository = {
       )
       .limit(1);
     return row ?? null;
+  },
+
+  // bm55-spec §Design D3 — the invoice-template preview's `{ billId }`
+  // source: which run/account the bill belongs to and whether it is posted
+  // (its stamps are read again by the binder in its own snapshot). `null` when
+  // no such bill exists.
+  async findPreviewTarget(
+    db: Database,
+    customerBillId: string,
+  ): Promise<{
+    customerBillId: string;
+    billRunId: string;
+    billingAccountId: string;
+    refInvDocumentId: string | null;
+    refBillTemplateVersionId: string | null;
+  } | null> {
+    const [row] = await db
+      .select({
+        customerBillId: customerBill.customerBillId,
+        billRunId: customerBill.refBillRunId,
+        billingAccountId: customerBill.refBillingAccountId,
+        refInvDocumentId: customerBill.refInvDocumentId,
+        refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
+      })
+      .from(customerBill)
+      .where(eq(customerBill.customerBillId, customerBillId))
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm55-spec §Design D4 — the preview source select's posted bills, newest
+  // first. `ref_inv_document_id` comes from the monotonic `document_inv_seq`,
+  // so ordering by it is posting order. LIMIT in SQL.
+  async listRecentPosted(
+    db: Database,
+    limit: number,
+  ): Promise<
+    {
+      customerBillId: string;
+      invoiceNumber: string;
+      billingAccountId: string;
+      accountName: string;
+    }[]
+  > {
+    const rows = await db
+      .select({
+        customerBillId: customerBill.customerBillId,
+        invoiceNumber: customerBill.refInvDocumentId,
+        billingAccountId: customerBill.refBillingAccountId,
+        accountName: billingAccount.name,
+      })
+      .from(customerBill)
+      .innerJoin(
+        billingAccount,
+        eq(customerBill.refBillingAccountId, billingAccount.billingAccountId),
+      )
+      .where(isNotNull(customerBill.refInvDocumentId))
+      .orderBy(desc(customerBill.refInvDocumentId))
+      .limit(limit);
+    return rows.map((r) => ({ ...r, invoiceNumber: r.invoiceNumber! }));
   },
 
   // bm05-spec §Visual — one row per trial bill, joined to the account name +
