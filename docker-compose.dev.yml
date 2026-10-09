@@ -57,6 +57,20 @@ services:
       - "${AZURITE_PORT:-10000}:10000"
     volumes:
       - azurite_data:/data
+    # `service_started` only means the process exists; `setup` seeds blobs
+    # immediately, so gate on the blob port actually accepting connections.
+    # Uses node (always present in the image) rather than assuming nc/curl.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').connect(10000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   db:
     build:
@@ -106,7 +120,7 @@ services:
       db:
         condition: service_healthy
       azurite:
-        condition: service_started
+        condition: service_healthy
     restart: "no"
 
   app:
