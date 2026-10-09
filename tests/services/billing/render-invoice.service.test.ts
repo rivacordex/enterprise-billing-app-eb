@@ -40,6 +40,7 @@ import {
   renderDraftInvoice,
   renderFinalInvoice,
 } from "@/services/billing/render-invoice";
+import type { ResolvedTemplate } from "@/types/billing";
 
 const mockLaunch = vi.mocked(chromium.launch);
 const mockBuildInvoiceHtml = vi.mocked(buildInvoiceHtml);
@@ -61,6 +62,9 @@ beforeEach(() => {
     html: "<html>stub</html>",
     footerHtml: "<div>footer</div>",
     pageSetup: PAGE_SETUP,
+    // bm53 D5 — the resolution rides along for bm54/bm62; this suite only
+    // exercises the Chromium orchestration, so its contents are irrelevant.
+    resolved: {} as ResolvedTemplate,
   });
 });
 

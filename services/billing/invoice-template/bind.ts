@@ -7,6 +7,7 @@ import {
   type ChargeSource,
   type InvoiceLine,
   type InvoiceLineGroup,
+  type InvoiceProfile,
   type InvoiceRenderInput,
   type InvoiceUsageRow,
   type InvoiceUsageSection,
@@ -22,13 +23,20 @@ export interface BindContext {
   // bm49-spec §Design D4 — when the template hides the Usage annex
   // (`structure.sections.usageAnnex === false`) the usage read is skipped and
   // the over-limit/reconcile checks never run. In bm49 the only template is
-  // the all-on default, so callers pass `true`; bm53 derives it from the
-  // resolved version's structure.
+  // the all-on default; bm53 derives it from the resolved version's
+  // `structure.sections.usageAnnex`.
   includeUsage: boolean;
   // The final render's requested invoice number (D1's "the binder takes the
   // number from billing.document and asserts it equals invoiceNo" — render-
   // invoice.ts §6). Unused on a draft bind.
   invoiceNo?: string;
+  // bm53-spec §Design D5 — the resolved layout code/version and generated
+  // version (`resolveTemplate`), bound as `template.*`.
+  template: InvoiceRenderInput["template"];
+  // bm53-spec §Design D3/D5 — the resolved company profile with its verified
+  // logo inlined, or `null` when none resolves (G15 A: issuer/payment
+  // blocks hidden).
+  profile: InvoiceProfile | null;
 }
 
 // D3 — fixed order; a group with no lines is omitted.
@@ -124,9 +132,9 @@ export function bind(
   }
 
   return {
-    template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: null },
-    company: null,
-    payment: null,
+    template: ctx.template,
+    company: ctx.profile?.company ?? null,
+    payment: ctx.profile?.payment ?? null,
     invoice: {
       number: ctx.isDraft ? null : (raw.document?.documentId ?? null),
       isDraft: ctx.isDraft,
@@ -137,6 +145,10 @@ export function bind(
       periodStart: raw.bill.billingPeriodStart,
       periodEnd: raw.bill.billingPeriodEnd,
       dueDate: raw.bill.paymentDueDate,
+      // D5 — "billing-account override ?? profile ?? null": the billing
+      // account carries no payment-terms column today, so there is no override
+      // to read; the profile's default applies.
+      paymentTermsDays: ctx.profile?.paymentTermsDays ?? null,
       currency: raw.bill.currency,
       billRunId: raw.run.billRunId,
       cycleName: raw.run.cycleName,

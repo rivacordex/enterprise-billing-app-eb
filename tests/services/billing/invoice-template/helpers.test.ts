@@ -11,7 +11,7 @@ function fixture(
   overrides: Partial<InvoiceRenderInput> = {},
 ): InvoiceRenderInput {
   return {
-    template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: null },
+    template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: 1 },
     company: null,
     payment: null,
     invoice: {
@@ -21,6 +21,7 @@ function fixture(
       periodStart: "2026-08-01",
       periodEnd: "2026-08-31",
       dueDate: "2026-09-15",
+      paymentTermsDays: null,
       currency: "MYR",
       billRunId: "BRN00000042",
       cycleName: "Enterprise Monthly",

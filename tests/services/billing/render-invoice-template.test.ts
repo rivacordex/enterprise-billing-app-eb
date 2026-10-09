@@ -1,14 +1,68 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// bm53-spec §Design D2 — the seeded default is loaded through the REAL
+// verified loader (`loadGenerated`). Only the blob transport is replaced: it
+// serves the committed `db/seeds/invoice-templates/**` bytes, so this suite
+// also proves the repo files verify against the migration's BTV00000002
+// checksum end to end (index digest → per-file digests → compile → probe).
+vi.mock(
+  "@/services/billing/blob-store",
+  async () =>
+    (await import("@/tests/helpers/seeded-invoice-template"))
+      .repoBlobStoreModule,
+);
 
 import { bind } from "@/services/billing/invoice-template/bind";
-import { loadDefaultTemplateFromRepo } from "@/services/billing/invoice-template/load-stopgap";
+import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
+import { loadGenerated } from "@/services/billing/invoice-template/load";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
+import type { InvoiceProfile } from "@/types/billing";
+import {
+  SEEDED_GENERATED_ROW as SEEDED_GENERATED,
+  SEEDED_TEMPLATE_STAMP as TEMPLATE,
+} from "@/tests/helpers/seeded-invoice-template";
 
-// bm47-spec §Design D1/D8, test plan row 3 ("rewritten, bm18/bm19 cases
-// moved"). DB-free: exercises the real seeded
-// `db/seeds/invoice-templates/generated/INVOICE/v1/*.hbs` through
-// `bind()` + the stopgap loader, over a hand-built `RawInvoiceRenderInput`
-// fixture — no database, no Playwright.
+// bm47-spec §Design D1/D8, test plan row 3; bm53-spec §Tests (extend). DB-free:
+// exercises the seeded `generated/INVOICE/v1/*.hbs` through `bind()` + the
+// verified loader, over a hand-built `RawInvoiceRenderInput` fixture — no
+// database, no Playwright.
+
+const LOGO_DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+
+// A fixture ACTIVE profile, already parsed + logo-inlined (the D3/D4 output).
+const PROFILE: InvoiceProfile = {
+  configVersion: 1,
+  company: {
+    name: "Digital Billing Sdn Bhd",
+    registrationNo: "202001000001",
+    tin: "C12345678901",
+    sstRegNo: "W10-1808-31000001",
+    addressLine1: "Level 10, Menara Billing",
+    addressLine2: null,
+    postcode: "50450",
+    city: "Kuala Lumpur",
+    stateCode: "14",
+    state: "Wilayah Persekutuan Kuala Lumpur",
+    countryCode: "MY",
+    country: "Malaysia",
+    phone: "+60 3-2000 0000",
+    email: "billing@digital-billing.example",
+    website: null,
+    brandColor: "#112233",
+    accentColor: "#445566",
+    logoUrl: LOGO_DATA_URI,
+  },
+  payment: {
+    bankName: "Maybank Berhad",
+    accountName: "Digital Billing Sdn Bhd",
+    accountNo: "5140-1234-5678",
+    swift: "MBBEMYKL",
+    jomPayBillerCode: "98765",
+    remittanceEmail: "ar@digital-billing.example",
+  },
+  paymentTermsDays: 30,
+  logoAssetVersionId: "INVASV00000001",
+};
 
 function rawInput(
   overrides: Partial<RawInvoiceRenderInput> = {},
@@ -89,19 +143,27 @@ function rawInput(
   };
 }
 
-async function renderDraft(overrides: Partial<RawInvoiceRenderInput> = {}) {
-  const { render } = await loadDefaultTemplateFromRepo();
+async function renderDraft(
+  overrides: Partial<RawInvoiceRenderInput> = {},
+  profile: InvoiceProfile | null = null,
+) {
+  const { invoice } = await loadGenerated(SEEDED_GENERATED);
   const input = bind(rawInput(overrides), {
     isDraft: true,
     locale: "en-MY",
     timezone: "UTC",
     includeUsage: true,
+    template: TEMPLATE,
+    profile,
   });
-  return render(input);
+  return executeInvoiceTemplate(invoice, input);
 }
 
-async function renderFinal(overrides: Partial<RawInvoiceRenderInput> = {}) {
-  const { render } = await loadDefaultTemplateFromRepo();
+async function renderFinal(
+  overrides: Partial<RawInvoiceRenderInput> = {},
+  profile: InvoiceProfile | null = null,
+) {
+  const { invoice } = await loadGenerated(SEEDED_GENERATED);
   const merged = rawInput({
     document: {
       documentId: "INV00000042",
@@ -115,8 +177,25 @@ async function renderFinal(overrides: Partial<RawInvoiceRenderInput> = {}) {
     timezone: "UTC",
     includeUsage: true,
     invoiceNo: "INV00000042",
+    template: TEMPLATE,
+    profile,
   });
-  return render(input);
+  return executeInvoiceTemplate(invoice, input);
+}
+
+async function renderFooter(profile: InvoiceProfile | null) {
+  const { footer } = await loadGenerated(SEEDED_GENERATED);
+  return executeInvoiceTemplate(
+    footer,
+    bind(rawInput(), {
+      isDraft: true,
+      locale: "en-MY",
+      timezone: "UTC",
+      includeUsage: true,
+      template: TEMPLATE,
+      profile,
+    }),
+  );
 }
 
 describe("the default generated template — draft", () => {
@@ -236,5 +315,58 @@ describe("the default generated template — final", () => {
     expect(html).toContain(
       "Amount due covers the current charges on this invoice only.",
     );
+  });
+});
+
+// bm53-spec §Tests (extend) — G15 option A: the issuer/payment blocks print
+// only from a resolved profile.
+describe("the default generated template — company profile (G15 A)", () => {
+  it("no ACTIVE profile: no issuer block, no logo, no payment block, no company in the footer", async () => {
+    const html = await renderFinal({}, null);
+    expect(html).not.toContain('class="issuer"');
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("sec--payment");
+    expect(await renderFooter(null)).not.toContain("Digital Billing");
+  });
+
+  it("a fixture ACTIVE profile: issuer block, inlined data: logo, bank block, brand colours", async () => {
+    const html = await renderFinal({}, PROFILE);
+    expect(html).toContain('class="issuer"');
+    // Auto-escaping encodes the base64 `=` padding as `&#x3D;`; the browser
+    // decodes attribute entities, so the `src` is the same data: URI.
+    expect(html).toContain(
+      `<img src="${LOGO_DATA_URI.replaceAll("=", "&#x3D;")}"`,
+    );
+    expect(html).not.toMatch(/<img src="http/);
+    expect(html).toContain("Digital Billing Sdn Bhd");
+    expect(html).toContain("sec--payment");
+    expect(html).toContain("Maybank Berhad");
+    expect(html).toContain("5140-1234-5678");
+    expect(html).toContain("SWIFT MBBEMYKL");
+    expect(html).toContain("JomPAY 98765");
+    expect(html).toContain("--inv-brand: #112233");
+    expect(html).toContain("--inv-accent: #445566");
+    expect(await renderFooter(PROFILE)).toContain("Digital Billing Sdn Bhd");
+  });
+
+  it("a profile without a logo still prints the issuer block, minus the image", async () => {
+    const html = await renderFinal(
+      {},
+      { ...PROFILE, company: { ...PROFILE.company, logoUrl: null } },
+    );
+    expect(html).toContain('class="issuer"');
+    expect(html).not.toContain("<img");
+  });
+
+  it("escapes a profile field carrying markup (guardrail 50)", async () => {
+    const html = await renderFinal(
+      {},
+      {
+        ...PROFILE,
+        company: { ...PROFILE.company, name: "<script>alert(1)</script>" },
+      },
+    );
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });
 });

@@ -15,7 +15,12 @@ import {
   type BilledUsageResult,
 } from "@/db/repositories/billing/rated-lines.repository";
 import { INVOICE_USAGE_ROW_LIMIT } from "@/types/billing";
-import type { ChargeSource, InvoiceAddress, LineType } from "@/types/billing";
+import type {
+  ChargeSource,
+  InvoiceAddress,
+  LineType,
+  PostedBillStamps,
+} from "@/types/billing";
 
 // bm47-spec §Implementation §3 — the binder's only repository (D1). Every
 // amount is selected `::text` (code-standards §2.3); no JS arithmetic on
@@ -343,6 +348,32 @@ async function readCustomer(
 }
 
 export const invoiceRenderInputRepository = {
+  // bm53-spec §Design D5 step 1 — the bill's three version stamps (all `null`
+  // until bm54 stamps them at posting), read in the binder's own repeatable-
+  // read transaction BEFORE `read()`: resolution needs them, and the resolved
+  // structure decides whether `read()` includes the usage section. `null` when
+  // no bill exists for the run/account.
+  async readBillStamps(
+    tx: Database,
+    { runId, banId }: { runId: string; banId: string },
+  ): Promise<PostedBillStamps | null> {
+    const [row] = await tx
+      .select({
+        refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
+        refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,
+      })
+      .from(customerBill)
+      .where(
+        and(
+          eq(customerBill.refBillRunId, runId),
+          eq(customerBill.refBillingAccountId, banId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
   // bm49-spec §Implementation §2 — `includeUsage` (D4) and `timezone` thread
   // through to the usage read. When `includeUsage` is false the annex section
   // is hidden, so the usage read AND the over-limit/reconcile checks are

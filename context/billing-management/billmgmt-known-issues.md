@@ -728,6 +728,38 @@ capacity billing. When it is resolved, it is a new build unit (a pro-ration
 method is explicitly out of scope for this phase) — not a fix folded into an
 existing unit.
 
+## 18. 🟡 Bills posted before bm54 render with the default template and no company profile (bm53, by design)
+
+**Where:** `services/billing/invoice-template/resolve-template.ts` (D1).
+
+**Technical.** A final render, a retry-render or a posted-bill preview reads
+only the bill's stamps (`ref_bill_template_version_id`,
+`ref_invoice_profile_version`, `ref_csv_template_version_id`), never the
+current ACTIVE versions (Inv #42). bm54 adds the stamping. Every bill posted
+before bm54 therefore has `NULL` stamps and resolves to the immutable default
+(generated BTV00000002, CSV BTV00000003) with **no profile**. Its PDF has no
+issuer, logo or bank block (G15 A). This holds even after an admin activates
+a profile, because a later activation must never change a posted invoice. The
+result is deterministic: nothing can be activated before bm58, so the default
+is exactly what was ACTIVE when those bills posted.
+
+**Related residual (accepted, Inv #45).** The compiled-template memo in
+`load.ts` is per replica. If a stored template is tampered with **after** a
+replica has verified and cached it, that replica keeps rendering the verified
+bytes. A cold replica (restart, new revision) re-verifies and parks the
+account with `TEMPLATE_CHECKSUM_MISMATCH`. The memo never holds unverified
+bytes.
+
+**ELI5.** Invoices posted before template versioning existed have no record
+of which template they used. They always reprint with the original built-in
+template and without the company letterhead, even if a letterhead is set up
+later. Reprinting an old invoice never changes what it looks like.
+
+**Recommendation.** Nothing to fix; this is the intended behaviour. It only
+needs revisiting if the business wants the letterhead on reprints of
+pre-bm54 invoices. That would be a deliberate re-stamp decision, and the
+finalization guard (`0033`) forbids it today.
+
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 
 The `ratecard` permission row is created by migration `0043_ratecard_permission.sql`

@@ -579,6 +579,13 @@ Remove-Item Env:\BOOTSTRAP_ADMIN_PASSWORD
 
 > Keep this list in step with the `db:setup` script in `package.json`. The demo
 > and sample seeds (`db:seed-demo`, `db:seed-sample`) are for local dev only.
+>
+> **One exception: `db/seeds/invoice-templates.ts` (bm53).** `db:setup` runs it
+> after `billing.ts`, but here it is left out of this loop on purpose. It
+> uploads the seeded invoice templates to the `invoice-templates` blob
+> container, and that container only exists once step 6e (bm52) has deployed.
+> Run it at the end of 6e ("Upload the seeded invoice templates"). It is
+> real configuration, not sample data, so it runs in every environment.
 
 ---
 
@@ -786,6 +793,27 @@ az deployment group create --resource-group $RG --name ebill-main-dev `
 az deployment group show -g $RG -n ebill-main-dev `
   --query properties.outputs.appFqdn.value -o tsv
 ```
+
+**Upload the seeded invoice templates (bm53).** Run this after `db:migrate`
+(step 5) and after the deploy above has created the `invoice-templates`
+container, and **before** releasing an app build that includes bm53. Until it
+runs, every invoice render parks the account (the template's blob is missing).
+It uses the same blob credential as the app, the
+`billrun-blob-connection-string` secret. Set it for this session only:
+
+```powershell
+$env:BILLRUN_BLOB_CONNECTION_STRING = az keyvault secret show --vault-name $KV_NAME `
+  --name billrun-blob-connection-string --query value -o tsv
+node --conditions=react-server --env-file=.env.azure.dev --import tsx db/seeds/invoice-templates.ts
+if ($LASTEXITCODE -ne 0) { throw "Invoice template seed failed" }
+Remove-Item Env:\BILLRUN_BLOB_CONNECTION_STRING
+```
+
+The seed checks every file against the SHA-256 in migration `0046` before it
+uploads anything. Uploads are write-once and it is safe to re-run. It exits
+non-zero in two cases. `SEED_CHECKSUM_DRIFT` means the deployed repo files do
+not match the migration. `SEED_BLOB_CONFLICT` means a stored blob differs from
+the repo; the seed never overwrites it, so investigate before going further.
 
 Access from your laptop via the VPN:
 - **Billing app**: `https://ebill-dev-app.<aca-default-domain>` (HTTPS, port 443)

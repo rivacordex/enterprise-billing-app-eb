@@ -126,15 +126,17 @@ function assertValidPath(path: string): void {
   }
 }
 
-// Azure answers an `if-none-match: *` upload that lost the write-once race with
-// HTTP 412 (the blob already exists). Duck-typed rather than importing
-// `RestError` so the check survives across `@azure/*` package internals.
+// An `if-none-match: *` upload that lost the write-once race. Put Blob answers
+// it with HTTP 409 `BlobAlreadyExists` (observed on Azurite in bm53's seed-upload
+// integration run; Azure documents the same for Put Blob), and a generic
+// conditional failure with 412 — both mean "the blob already exists". Duck-typed
+// rather than importing `RestError` so the check survives across `@azure/*`
+// package internals.
 function isBlobAlreadyExists(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const { statusCode, code } = err as { statusCode?: unknown; code?: unknown };
   return (
-    typeof err === "object" &&
-    err !== null &&
-    "statusCode" in err &&
-    (err as { statusCode?: unknown }).statusCode === 412
+    statusCode === 412 || (statusCode === 409 && code === "BlobAlreadyExists")
   );
 }
 
