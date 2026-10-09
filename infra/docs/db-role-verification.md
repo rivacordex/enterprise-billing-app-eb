@@ -393,11 +393,20 @@ workflow-management flow repo); `deploy_workflow_flows` pushes both to the
    whenever `enableBlobArtifacts = true`. The app must never rely on its
    `createIfNotExists` in prod. **Deploy this before any prod release that
    includes bm53.**
-   1. **Deploy the bicep, what-if first** (`az deployment group what-if …`). With
-      default parameters expect only `+ Create` (or `= NoChange` where
-      `createIfNotExists` already made `invoices` — an idempotent PUT, no data
-      moves) for the three containers, and **no** role-assignment or app env
-      change. After the deploy, confirm all three containers are present.
+   1. **Deploy the bicep, what-if first** (`az deployment group what-if …`).
+      `enableBlobArtifacts` defaults to `false` in `main.bicep` (only
+      `dev.bicepparam` sets it), so **set `enableBlobArtifacts = true` for the
+      target environment before the bm52 deploy** — with it off, the containers
+      are not declared and the what-if shows nothing for them. The what-if
+      **must** show `+ Create` or `= NoChange` (where `createIfNotExists`
+      already made `invoices` — an idempotent PUT, no data moves) for **all
+      three** containers; if any of the three is missing, stop — do not release
+      bm53. Under the default `appBlobAuth = connectionString` expect **no**
+      role assignment. If the flag was already `true` there is no app env change
+      either; if this deploy is what flips it on, the app also gains the
+      `BILLRUN_BLOB_CONNECTION_STRING` env + `billrun-blob-connection-string`
+      Key Vault secret ref, so that secret must already exist. After the
+      deploy, confirm all three containers are present.
    2. **If `appBlobAuth = managedIdentity`** (gate G16 — default
       `connectionString` is the interim): confirm the three role assignments —
       `Storage Blob Data Contributor` for the app's user-assigned identity, each
