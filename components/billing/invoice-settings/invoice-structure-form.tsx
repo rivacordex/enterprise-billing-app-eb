@@ -263,7 +263,7 @@ export function InvoiceStructureForm({
         return;
       }
       if (result.code === "DRAFT_CONFLICT") {
-        toast.warning("Another user changed the draft — reload to see it.", {
+        toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
           action: { label: "Reload", onClick: () => router.refresh() },
         });
       } else if (result.code === "MANDATORY_SECTION_HIDDEN") {

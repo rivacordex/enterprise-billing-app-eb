@@ -680,12 +680,16 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       'DROP CONSTRAINT "product_offering_price_component_start_unique"',
     );
     expect(laneKeySource).toContain(
-      'CREATE UNIQUE INDEX "product_offering_price_lane_start_unique" ON "product"."product_offering_price" USING btree ("product_offering_id", "component_type", "unit_of_measure", ("price_component" ->> \'priceType\'), "start_date_time") NULLS NOT DISTINCT',
+      'CREATE UNIQUE INDEX "product_offering_price_lane_start_unique" ON "product"."product_offering_price" USING btree ("product_offering_id", "component_type", "unit_of_measure", (CASE WHEN "component_type" = \'flat_fee\' THEN "price_component" ->> \'priceType\' END), "start_date_time") NULLS NOT DISTINCT',
     );
     expect(priceBlock).toContain(
       'uniqueIndex("product_offering_price_lane_start_unique")',
     );
-    expect(priceBlock).toContain("->> 'priceType'");
+    // The priceType term is flat_fee-only in both homes (non-flat-fee rows keep
+    // pm46's exact key).
+    expect(priceBlock).toContain(
+      "(CASE WHEN ${t.componentType} = 'flat_fee' THEN ${t.priceComponent} ->> 'priceType' END)",
+    );
     expect(priceBlock).not.toContain(
       'unique("product_offering_price_component_start_unique")',
     );

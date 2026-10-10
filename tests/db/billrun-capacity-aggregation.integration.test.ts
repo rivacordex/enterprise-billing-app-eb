@@ -347,9 +347,16 @@ describe.skipIf(!databaseUrl)(
             const here = path === "" ? key : `${path}.${key}`;
             // Verbatim catalog copy: not ours to reshape.
             if (here === "pricing.motivation.steps") continue;
-            if (typeof value === "number") {
-              if (!INTEGER_KEYS.has(key))
-                violations.push(`${here} is a JSON number`);
+            if (INTEGER_KEYS.has(key)) {
+              // v / udrCount / band must be JSON integers — never text, never
+              // a fraction.
+              if (typeof value !== "number" || !Number.isInteger(value)) {
+                violations.push(
+                  `${here}=${JSON.stringify(value)} is not a JSON integer`,
+                );
+              }
+            } else if (typeof value === "number") {
+              violations.push(`${here} is a JSON number`);
             } else if (typeof value === "string") {
               if (MONEY_KEYS.has(key) && !MONEY_RE.test(value)) {
                 violations.push(`${here}="${value}" is not 2dp money text`);

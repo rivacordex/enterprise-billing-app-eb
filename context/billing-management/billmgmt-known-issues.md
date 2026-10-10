@@ -885,6 +885,27 @@ product unit pm46a (gated by Khek 2026-10-10), which also changed the bill-run r
 retired `RECURRING_PRICE_UNSUPPORTED`. **Result (pm46a): full integration project 1165 passed / 0
 failed; full unit suite 4077 passed / 0 failed.** Every §21 item is closed.
 
+## 22. 🟠 Open items from the code review of efaff82..HEAD (2026-10-10; OPEN, to be fixed later)
+
+`/code-review xhigh` of `efaff82..HEAD` plus the uncommitted batch raised 15
+findings. Fixed in that batch: the plain-USAGE discount/net tamper gap, the
+NULL-dropping mismatch message, the case-sensitive blob-guard key, the blob
+guard for every integration suite (globalSetup), the stale flow README /
+template / `rp.py` / product rule-6 docs, the shared activation probe and its
+variants, the draft-conflict message constant and the harness's quadratic
+scan. Still open:
+
+| #    | Item | Effect | Owner / next step |
+| ---- | ---- | ------ | ----------------- |
+| 22a  | **`_bm45_volume` does not scope by offering** (`bill_run_processing.yml`, aggregation step 0h). It picks claimed rows by `unit` and `udr_type` only; `capacity_volume` (step 1) also joins `product_inventory` and requires `pi.product_offering_id = c.offering_id`, and the 0h comment claims "same scoping". Confirmed by reading the SQL; not yet reproduced on a database. | An account with a capacity offering and another offering with the same unit and udr_type gets the other offering's usage in the capacity appendix (volume and amount), so the appendix no longer sums to the capacity line's `rated_amount` and the rows count toward `CAPACITY_APPENDIX_OVER_LIMIT`; two such capacity offerings list each other's polygons. Predates this range (bm45). | A billing flow-fix unit with its own spec (bm42a pattern), with a DB test that reproduces it first. |
+| 22b  | **One-time flat fees are never billed and never reported.** | See `billmgmt-design-review.md` **DR-05** (decided: option a, report without failing). | DR-05's unit. |
+| 22c  | **A stored draft that fails the schema cannot be recovered from the UI** (`activate-template.ts` returns `VALIDATION_ERROR` → "The request was not valid. Reload and try again."; Save draft fails the strict schema too). | Only after a schema change or a hand edit of a stored draft; the user has no way out but a DB fix. | A bm58 follow-up: decide the recovery (discard-draft action, or a dedicated "stored draft is invalid" message with a reset). UX decision needed. |
+| 22d  | **Activate DRAFT_CONFLICT shows the message twice**: a toast with Reload and the dialog's inline alert. (The save path's duplicated literal was fixed: both now use `ACTIVATE_MESSAGES.DRAFT_CONFLICT`.) | Cosmetic; two identical messages at once. | Fold into 22c's follow-up (UX decision: give the dialog its own Reload and drop the toast, or the reverse). |
+| 22e  | **Three copies of the SQL scanner** in the test harness: `splitSqlStatements` and `bindPsqlVars` (`tests/db/helpers/extract-flow-sql.ts`) and the guardrail's `blankCommentsAndStrings` (no dollar-quote handling). | Teaching one about block comments, `E''` strings or quoted identifiers and missing another makes splitting, binding and the guardrail disagree. Test-only; no runtime effect. | A test-harness refactor: one tokenizer with an on-plain-text callback. Low priority. |
+
+The product-side altitude item (one SQL function for the price lane key) is
+tracked as `prodmgmt-issues-tracker.md` PM-ISS-004.
+
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 
 The `ratecard` permission row is created by migration `0043_ratecard_permission.sql`

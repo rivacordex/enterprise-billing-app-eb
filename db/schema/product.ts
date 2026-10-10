@@ -178,10 +178,11 @@ export const productOfferingPrice = product.table(
   (t) => [
     // The price lane key (pm46-spec D6/G-F, extended by pm46a): one lane per
     // (product_offering_id, component_type, unit_of_measure,
-    // price_component ->> 'priceType'). pm46a added the envelope priceType so
-    // a recurring and a one-time `flat_fee` (both NULL unit) are separate
-    // lanes; for every other component type priceType is a fixed literal, so
-    // their lanes are unchanged. SQL of record:
+    // CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType'
+    // END). pm46a added the envelope priceType so a recurring and a one-time
+    // `flat_fee` (both NULL unit) are separate lanes. The term is flat_fee-only
+    // because the DB pins priceType only for flat_fee; for every other type it
+    // is NULL, so their key and uniqueness are exactly pm46's. SQL of record:
     // 0049_product_price_lane_key.sql, which creates this as a unique INDEX
     // (a UNIQUE constraint cannot hold an expression) with `NULLS NOT
     // DISTINCT` — without it two identical recurring flat fees (NULL unit) at
@@ -203,7 +204,7 @@ export const productOfferingPrice = product.table(
       t.productOfferingId,
       t.componentType,
       t.unitOfMeasure,
-      sql`(${t.priceComponent} ->> 'priceType')`,
+      sql`(CASE WHEN ${t.componentType} = 'flat_fee' THEN ${t.priceComponent} ->> 'priceType' END)`,
       t.startDateTime,
     ),
     index("product_offering_price_offering_idx").on(t.productOfferingId),

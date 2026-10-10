@@ -416,7 +416,8 @@ describe.skipIf(!databaseUrl)(
     // rated_amount, so a line whose billed gross/net/discount moved while
     // rated_amount stayed put used to pass. Each billed column is now checked
     // against the invariant the bm43 spec states: gross = rated_amount and
-    // net = gross - discount.
+    // net = gross - discount, and (review fix) discount = 0.00, which is what
+    // aggregation always writes on a plain line.
     it.each([
       ["gross_amount only", "gross_amount = '100.00'", "T1"],
       ["net_amount only (gross intact)", "net_amount = '100.00'", "T2"],
@@ -425,6 +426,16 @@ describe.skipIf(!databaseUrl)(
         "discount_amount = '5.00'",
         "T3",
       ],
+      // Review fix: discount and net moved together keep net = gross -
+      // discount; a plain line's discount must be 0.00.
+      [
+        "discount_amount and net_amount together",
+        "discount_amount = '5.00', net_amount = '25.00'",
+        "T4",
+      ],
+      // Review fix: a NULL rated_amount must still produce a readable entry
+      // (every interpolated value is COALESCE'd), not a dropped NULL one.
+      ["rated_amount set to NULL", "rated_amount = NULL", "T5"],
     ])(
       "[CRITICAL] altering %s on a plain USAGE line is caught HARD " +
         "(bm42a D3: billed columns are checked against rated_amount)",
@@ -459,8 +470,8 @@ describe.skipIf(!databaseUrl)(
         expect(line!.netAmount).toBe("30.00");
         expect((await verify(runId, ban, 1)).stageStatus).toBe("DONE");
 
-        // rated_amount is deliberately LEFT INTACT, so the udr_rated replay
-        // alone cannot see the change.
+        // Except in T5, rated_amount is deliberately LEFT INTACT, so the
+        // udr_rated replay alone cannot see the change.
         await sql.unsafe(
           `UPDATE billing.customer_bill_line SET ${setClause} WHERE customer_bill_line_id = $1`,
           [line!.customerBillLineId],

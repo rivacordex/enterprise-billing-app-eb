@@ -127,6 +127,14 @@ Inv #38 applies: the flow SQL is tested from the extracted YAML; a live Kestra r
 
 ---
 
+### Review amendment (2026-10-10, after delivery) — the priceType term is flat_fee-only
+
+D1 chose a **uniform** `price_component ->> 'priceType'` term. Review found that this weakens uniqueness for the other component types: the database pins `priceType` only in `product_offering_price_flat_fee_check`, so a raw-SQL `usage_rate` (or capacity) row with an off-spec `priceType` could sit beside a valid one at the same unit and start, which pm46's constraint rejected. The term is now `CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType' END`: NULL for every other type, so their key and uniqueness are exactly pm46's. Applied to `0049` (edited in place: committed on `dev1` the same day, not yet applied to any kept database), the Drizzle mirror, the repository `lead()` window and order, and guardrail 13; a constraint test pins the non-flat-fee case. The bill-run resolver reads `flat_fee` rows only, where both forms are identical, so its SQL is unchanged.
+
+### Rollout order (code review, 2026-10-10)
+
+Apply `0049` and redeploy `bill_run_processing` (`deploy_workflow_flows`) in the **same** rollout. Between the two, the old flow's shared-lane `lead()` can meet a recurring and a one-time fee with the same start (newly allowed by `0049`); the tie makes its as-of pick, and so `RECURRING_PRICE_UNSUPPORTED` versus a recurring line, arbitrary and possibly different on rerun.
+
 ## Implementation
 
 1. Mark pm46a IN PROGRESS (completed tracker Outstanding, issues tracker).

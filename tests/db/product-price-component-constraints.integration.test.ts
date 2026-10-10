@@ -607,6 +607,27 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow("product_offering_price_lane_start_unique");
     });
 
+    // pm46a review: the priceType term is flat_fee-only. The DB does not pin
+    // priceType for other types, so a raw-SQL usage_rate with an off-spec
+    // priceType must still collide with a valid one (pm46's exact key).
+    it("rejects a second same-unit usage_rate at one start even when its envelope priceType differs (lane term is flat_fee-only)", async () => {
+      const offeringId = await createOffering("pm46a usage_rate priceType");
+      await insertComponent({
+        offeringId,
+        componentType: "usage_rate",
+        priceComponent: usageRateEnvelope(),
+        unitOfMeasure: "EA",
+      });
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "usage_rate",
+          priceComponent: usageRateEnvelope({ priceType: "recurring" }),
+          unitOfMeasure: "EA",
+        }),
+      ).rejects.toThrow("product_offering_price_lane_start_unique");
+    });
+
     it("accepts a usage_rate and a capacity_motivation on the same unit at the same start_date_time — different lanes", async () => {
       const offeringId = await createOffering("pm46 different lanes");
       await insertComponent({

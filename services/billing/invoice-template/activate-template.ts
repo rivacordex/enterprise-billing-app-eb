@@ -13,6 +13,7 @@ import {
 import {
   loadLayout,
   PROBE_RENDER_INPUT,
+  probeGeneratedTemplate,
 } from "@/services/billing/invoice-template/load";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import {
@@ -123,14 +124,29 @@ function testRenderFailed(message: string): InvoiceRenderError {
   });
 }
 
-// Step 5: compile both outputs fresh (never the memo) and execute them against
-// (a) the layout's verified sample bill as a draft, as issued, and with no
-// company or payment profile (the G15 path), and (b) the SAME typed
-// `PROBE_RENDER_INPUT` that `loadGenerated` executes when it first loads the
-// version. Both gates must agree: a template that passed activation but failed
-// the load probe would already be ACTIVE (and the previous version RETIRED)
-// while every render of it parked. Handlebars compiles lazily, so executing is
-// what surfaces an unknown helper or a strict-mode missing path.
+// The three shapes every base input is rendered in: as a draft, as issued, and
+// issued with no company or payment profile (the G15 path).
+function variantsOf(base: InvoiceRenderInput): InvoiceRenderInput[] {
+  const issued: InvoiceRenderInput = {
+    ...base,
+    isDraft: false,
+    invoice: { ...base.invoice, isDraft: false },
+  };
+  return [
+    { ...base, isDraft: true, invoice: { ...base.invoice, isDraft: true } },
+    issued,
+    { ...issued, company: null, payment: null },
+  ];
+}
+
+// Step 5: compile both outputs fresh (never the memo), run the load-time probe
+// itself (`probeGeneratedTemplate`, the exact gate `loadGenerated` runs — both
+// gates must agree: a template that passed activation but failed the load
+// probe would already be ACTIVE, and the previous version RETIRED, while every
+// render of it parked), then execute `variantsOf` both the typed
+// `PROBE_RENDER_INPUT` and the layout's verified sample bill. Handlebars
+// compiles lazily, so executing is what surfaces an unknown helper or a
+// strict-mode missing path.
 export function testRender(
   invoiceHbs: string,
   footerHbs: string,
@@ -139,25 +155,8 @@ export function testRender(
   const invoice = compileInvoiceTemplate(invoiceHbs);
   const footer = compileInvoiceTemplate(footerHbs);
 
-  const probe = PROBE_RENDER_INPUT;
-  const variants: InvoiceRenderInput[] = [
-    { ...probe, isDraft: true, invoice: { ...probe.invoice, isDraft: true } },
-    { ...probe, isDraft: false, invoice: { ...probe.invoice, isDraft: false } },
-    { ...probe, company: null, payment: null },
-    { ...sample, isDraft: true, invoice: { ...sample.invoice, isDraft: true } },
-    {
-      ...sample,
-      isDraft: false,
-      invoice: { ...sample.invoice, isDraft: false },
-    },
-    {
-      ...sample,
-      isDraft: false,
-      invoice: { ...sample.invoice, isDraft: false },
-      company: null,
-      payment: null,
-    },
-  ];
+  probeGeneratedTemplate(invoice, footer);
+  const variants = [...variantsOf(PROBE_RENDER_INPUT), ...variantsOf(sample)];
 
   for (const input of variants) {
     const html = executeInvoiceTemplate(invoice, input);

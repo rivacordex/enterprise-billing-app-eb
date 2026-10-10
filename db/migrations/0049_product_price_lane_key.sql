@@ -1,19 +1,23 @@
--- pm46a: the price lane key adds the envelope priceType, closing the gap pm46
--- flagged against its own rekey. Every flat_fee row has unit_of_measure NULL,
--- so under (offering, component_type, unit_of_measure) a recurring and a
--- one-time flat fee shared one lane: a later one-time fee superseded the
--- recurring one, and the two could not start at the same instant. The lane is
--- now (offering, component_type, unit_of_measure, price_component->>'priceType').
--- For every other component type the envelope priceType is a fixed literal per
--- type (pm47), so only flat_fee splits (recurring / oneTime).
+-- pm46a: the price lane key adds the envelope priceType for flat_fee, closing
+-- the gap pm46 flagged against its own rekey. Every flat_fee row has
+-- unit_of_measure NULL, so under (offering, component_type, unit_of_measure) a
+-- recurring and a one-time flat fee shared one lane: a later one-time fee
+-- superseded the recurring one, and the two could not start at the same
+-- instant. The lane is now (offering, component_type, unit_of_measure,
+-- CASE WHEN component_type = 'flat_fee' THEN price_component->>'priceType' END).
+-- The priceType term is flat_fee-only: the database pins priceType only for
+-- flat_fee (product_offering_price_flat_fee_check), so for every other
+-- component type the term is NULL and the key, and its uniqueness, are exactly
+-- the old (offering, component_type, unit_of_measure, start) one.
 --
 -- A UNIQUE constraint takes columns only, so the key becomes a unique INDEX.
 -- NULLS NOT DISTINCT is kept (G-F): without it two identical recurring flat
--- fees (NULL unit) at one start would both insert. The new key is strictly
--- finer than the old one, so existing rows cannot violate it; no backfill.
+-- fees (NULL unit) at one start would both insert, and the NULL priceType term
+-- of the other types would stop colliding. The new key is never coarser than
+-- the old one, so existing rows cannot violate it; no backfill.
 -- Forward-only: 0006_product.sql stays locked. No grant change.
 -- Locking: plain CREATE UNIQUE INDEX takes a SHARE lock on the (small) catalog
 -- price table for the build, blocking price writes but not reads.
 ALTER TABLE "product"."product_offering_price" DROP CONSTRAINT "product_offering_price_component_start_unique";
 --> statement-breakpoint
-CREATE UNIQUE INDEX "product_offering_price_lane_start_unique" ON "product"."product_offering_price" USING btree ("product_offering_id", "component_type", "unit_of_measure", ("price_component" ->> 'priceType'), "start_date_time") NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX "product_offering_price_lane_start_unique" ON "product"."product_offering_price" USING btree ("product_offering_id", "component_type", "unit_of_measure", (CASE WHEN "component_type" = 'flat_fee' THEN "price_component" ->> 'priceType' END), "start_date_time") NULLS NOT DISTINCT;

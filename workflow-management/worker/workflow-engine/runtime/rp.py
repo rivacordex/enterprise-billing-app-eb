@@ -349,8 +349,9 @@ price_windows AS (
                -- as-of chain is the single lane's dated history.
                --
                -- DELIBERATE DEVIATION (owner-confirmed 2026-10-04): this omits the
-               -- `unit_of_measure` key that db/schema/product.ts:186-189 says the
-               -- runtime readers MUST keep. Multi-unit `usage_rate` pricing is OUT
+               -- `unit_of_measure` key of the product price lane (the lane-key
+               -- comment above `product_offering_price_lane_start_unique` in
+               -- db/schema/product.ts), which effectivity readers otherwise keep. Multi-unit `usage_rate` pricing is OUT
                -- OF SCOPE this phase — an offering is assumed to carry a single
                -- usage_rate unit (single-price-card + singleSubInstPerCust;
                -- seed-discipline, same accepted-risk class as Inv #21). The DB DOES

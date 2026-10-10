@@ -64,11 +64,13 @@ describe("extract-flow-sql — bindPsqlVars", () => {
   });
 
   it("leaves :'var' inside a single-quoted string untouched, incl. the '' escape", () => {
+    // The token's own quotes are doubled, so `:''var''` sits wholly inside one
+    // valid literal ('it''s :''var'' here') and must survive verbatim.
     const { text, params } = bindPsqlVars(
-      "SELECT 'it''s :'var' here', :'ban'",
+      "SELECT 'it''s :''var'' here', :'ban'",
       { ban: "BAN-1" },
     );
-    expect(text).toBe("SELECT 'it''s :'var' here', $1");
+    expect(text).toBe("SELECT 'it''s :''var'' here', $1");
     expect(params).toEqual(["BAN-1"]);
   });
 

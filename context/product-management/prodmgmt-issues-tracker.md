@@ -6,6 +6,18 @@ Known, unresolved defects and debts in the Product Management module that are **
 
 ---
 
+## PM-ISS-004 — The price lane key expression is copied into four places
+
+**Status:** **OPEN.** **Owner:** a product follow-up unit (not scheduled). **Discovered:** 2026-10-10, `/code-review xhigh` of `efaff82..HEAD`. **Severity:** low — no current defect; a drift risk.
+
+**Symptom.** pm46a's lane key `(product_offering_id, component_type, unit_of_measure, CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType' END)` is written out by hand in `0049_product_price_lane_key.sql`, the Drizzle `uniqueIndex` in `db/schema/product.ts`, the repository's `lead()` window (`db/repositories/product-offering-price.ts`), and, in an equivalent flat-fee-only form, the bill-run recurring resolver. They are kept in step by comments and guardrail 13's exact-string match.
+
+**Risk.** The next lane change (e.g. a new component type that varies by `priceType`) must edit all four consistently; a reader that misses it misjudges supersession, the defect pm46a fixed.
+
+**Fix.** One IMMUTABLE SQL function (e.g. `product.price_lane_type(component_type, price_component)`), created by a forward migration, used by the index and every reader; guardrail 13 then asserts the function, not four copies.
+
+---
+
 ## PM-ISS-003 — Recurring and one-time flat fees share one lane, so a one-time fee supersedes the monthly fee
 
 **Status:** **RESOLVED (2026-10-10, pm46a).** See the Resolution note at the end of this entry. **Owner:** pm46a (`specs/pm46a-flat-fee-lane-key.md`). **Discovered:** flagged by pm46 itself ("Known gap, flagged for follow-up") and carried by pm49; surfaced as a real failure on 2026-10-10 when the full integration project ran (`billmgmt-known-issues.md` §21e). **Severity:** medium-to-high. A common offering shape (monthly fee + activation fee) reads and bills wrongly.

@@ -64,3 +64,28 @@ Source: `/code-review xhigh` of `7cfbe4d..HEAD`, 2026-10-09.
   (invoice-profile repository); `loadCsvMap` / `csvColumnMapSchema` (`load.ts`).
 - **Decision (owner, 2026-10-09):** keep — reserved for bm56 / bm62. Revisit if
   those units change shape.
+
+## DR-05 — One-time flat fees are never billed and never reported (DECIDED: option a, OPEN)
+
+Source: `/code-review xhigh` of `efaff82..HEAD` + uncommitted, 2026-10-10.
+
+- **Finding.** The recurring resolver (`_bm29_resolved` in
+  `bill_run_processing.yml`) reads only the recurring `flat_fee` lane, and no
+  step bills a `oneTime` flat fee. pm46a retired `RECURRING_PRICE_UNSUPPORTED`,
+  the one HARD failure that used to surface such a fee (when it was dated after
+  the recurring one and superseded it in the shared lane).
+- **Failure.** An offering with a 5,500 recurring fee and a 1,000 one-time
+  Activation Fee (the demo seed's shape) bills 5,500, posts and completes; the
+  1,000 is dropped with no stage finding, no exception and no Uncharged entry.
+  Not billing one-time fees predates pm46a (an earlier-dated one-time fee was
+  already dropped silently), but pm46a removed the only visible case.
+- **Decision (owner, 2026-10-10): option a** — keep billing recurring and usage
+  as now, and **report** each unbilled one-time fee without failing the
+  account: a non-blocking finding on the account (stage finding / exception
+  surface) naming the subscription, the price row and the amount, so an
+  operator sees it before approval. Rejected for now: (b) building one-time
+  billing (a separate unit, to be planned later); (c) accept and document only.
+- **Owner / next step.** A billing unit (number TBD in `specs/bm00-build-plan.md`)
+  with its own spec: where the finding is recorded (stage finding vs exception
+  surface), whether it is per run or per account, and that it never blocks
+  approval. Until then the gap stands; known-issues §22 points here.

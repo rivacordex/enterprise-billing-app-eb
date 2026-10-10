@@ -123,6 +123,21 @@ function stripExplicitTransactionBounds(sql: string): string {
 
 type SplitState = "normal" | "line_comment" | "single_quote" | "dollar_quote";
 
+// A dollar-quote tag at the current position: `$$` or `$tag$`.
+const DOLLAR_TAG_AT = /\$[A-Za-z0-9_]*\$/y;
+
+// Matches a sticky (`y`) regex exactly at `index`, without copying the rest
+// of the text (the scanners call this at every `$` and `:`, and the
+// aggregation heredoc is tens of KB with hundreds of `::` casts).
+function matchAt(
+  re: RegExp,
+  text: string,
+  index: number,
+): RegExpExecArray | null {
+  re.lastIndex = index;
+  return re.exec(text);
+}
+
 /**
  * Splits a block of SQL into its top-level `;`-terminated statements,
  * respecting line comments (`-- …`), single-quoted strings (incl. the SQL
@@ -155,7 +170,7 @@ export function splitSqlStatements(sqlText: string): string[] {
         continue;
       }
       if (ch === "$") {
-        const tagMatch = /^\$[A-Za-z0-9_]*\$/.exec(sqlText.slice(i));
+        const tagMatch = matchAt(DOLLAR_TAG_AT, sqlText, i);
         if (tagMatch) {
           dollarTag = tagMatch[0];
           state = "dollar_quote";
@@ -212,7 +227,7 @@ export function splitSqlStatements(sqlText: string): string[] {
 }
 
 // A psql variable reference at the current position: `:'name'`.
-const PSQL_VAR_AT = /^:'(\w+)'/;
+const PSQL_VAR_AT = /:'(\w+)'/y;
 
 /**
  * Rebinds a statement's psql `:'var'` tokens to numbered placeholders bound
@@ -255,7 +270,7 @@ export function bindPsqlVars(
         continue;
       }
       if (ch === ":") {
-        const varMatch = PSQL_VAR_AT.exec(sqlText.slice(i));
+        const varMatch = matchAt(PSQL_VAR_AT, sqlText, i);
         if (varMatch) {
           const name = varMatch[1]!;
           if (!(name in values)) {
@@ -276,7 +291,7 @@ export function bindPsqlVars(
         continue;
       }
       if (ch === "$") {
-        const tagMatch = /^\$[A-Za-z0-9_]*\$/.exec(sqlText.slice(i));
+        const tagMatch = matchAt(DOLLAR_TAG_AT, sqlText, i);
         if (tagMatch) {
           dollarTag = tagMatch[0];
           state = "dollar_quote";

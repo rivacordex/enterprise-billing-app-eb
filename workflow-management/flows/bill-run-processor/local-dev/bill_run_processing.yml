@@ -442,7 +442,9 @@ tasks:
                 --     (component_type = 'flat_fee' AND envelope priceType = 'recurring')
                 --     and partitions on the product lane key (offering, component_type,
                 --     unit_of_measure, price_component ->> 'priceType'), the same key as
-                --     product_offering_price_lane_start_unique. Before pm46a a 'oneTime'
+                --     product_offering_price_lane_start_unique (whose priceType term is
+                --     CASE'd to flat_fee only; this scan reads flat_fee rows only, so the
+                --     two are identical here). Before pm46a a 'oneTime'
                 --     and a 'recurring' flat_fee shared one lane, so a later one-time fee
                 --     superseded the recurring price and pm52/D3-D4 failed the account
                 --     HARD (RECURRING_PRICE_UNSUPPORTED) rather than bill a superseded
@@ -1547,16 +1549,24 @@ tasks:
                             -- non-capacity line (additional_info IS NULL, enforced above)
                             -- gross must equal rated_amount (bm43 spec) and net must equal
                             -- gross - discount (the identity capacity lines get below).
+                            -- Review fix: aggregation always writes discount 0.00 on a
+                            -- plain line, so require it too; otherwise discount and net
+                            -- moved together (5.00 / 25.00 on gross 30.00) still passed.
                             OR l.gross_amount IS DISTINCT FROM l.rated_amount
+                            OR l.discount_amount IS DISTINCT FROM 0
                             OR l.net_amount   IS DISTINCT FROM (l.gross_amount - l.discount_amount))
                   )
+                  -- Every interpolated value is COALESCE'd: a NULL (e.g. a NULL
+                  -- rated_amount, which the gross check above flags) would
+                  -- otherwise null the whole entry and string_agg would drop it.
                   SELECT count(*),
                          string_agg(
-                           customer_bill_line_id || ' (grouping ' || grouping_key
-                           || ': claimed rated ' || rated_amount
+                           customer_bill_line_id || ' (grouping ' || COALESCE(grouping_key, 'NULL')
+                           || ': claimed rated ' || COALESCE(rated_amount::text, 'NULL')
                            || '/count ' || COALESCE(udr_count::text, 'NULL')
-                           || ', billed gross ' || gross_amount || '/net ' || net_amount
-                           || '/discount ' || discount_amount
+                           || ', billed gross ' || COALESCE(gross_amount::text, 'NULL')
+                           || '/net ' || COALESCE(net_amount::text, 'NULL')
+                           || '/discount ' || COALESCE(discount_amount::text, 'NULL')
                            || ' vs replay ' || replay_sum || '/' || replay_count || ')', '; ')
                     INTO   v_mismatch, v_bad_lines
                   FROM   mismatched;

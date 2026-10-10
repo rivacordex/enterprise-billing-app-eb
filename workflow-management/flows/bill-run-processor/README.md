@@ -28,8 +28,10 @@ never a per-line upsert or bare DELETE.
 
 **Recurring aggregation is real (bm29).** In the SAME whole-account-replace
 transaction, each ACTIVE subscription's flat recurring price is resolved as-of the
-run period (`product.product_offering_price`, `price_type='recurring'`, via the
-`lead(start_date_time)` window), an `ordering.order_item_price_override` is
+run period (`product.product_offering_price`, the recurring `flat_fee` lane —
+`component_type = 'flat_fee'` and envelope `priceType = 'recurring'` — via the
+`lead(start_date_time)` window partitioned on the product lane key, pm52/pm46a), an
+`ordering.order_item_price_override` is
 `COALESCE`d over it, the recurring charge period is mapped onto the account's
 bill-cycle frequency, and the result × `product_inventory.quantity` becomes one
 `RECURRING` line per `(product_offering_id)` rolled across the account's subs.
@@ -37,10 +39,13 @@ Each line stores its **price snapshot** (`snapshot_*`); a rerun **reads the prio
 line's snapshot rather than re-resolving** (Inv #20/D19), so a backdated price
 insert never re-prices a reviewed period. `line_no` is one deterministic sequence
 over the shared `grouping_key` across BOTH sources; `subtotal = SUM(net_amount)`
-now spans both. A subscription with no as-of price, or a `tiered` price with no
-flat override, fails the account **HARD** (`RECURRING_PRICE_NOT_FOUND` /
-`_UNSUPPORTED`, D33/Inv #28) — the transaction rolls back, no bill is produced,
-every other account stays billable. The pricing reads use new SELECT grants
+now spans both. A subscription with no as-of price, or a price in a currency
+other than the account's, fails the account **HARD** (`RECURRING_PRICE_NOT_FOUND` /
+`RECURRING_CURRENCY_MISMATCH`, D33/Inv #28) — the transaction rolls back, no bill
+is produced, every other account stays billable. (`RECURRING_PRICE_UNSUPPORTED`,
+first for `tiered` prices and then for a one-time fee superseding the recurring
+one, was retired by pm46a once the product lane split on `priceType`. One-time
+fees are not billed by this flow.) The pricing reads use new SELECT grants
 (`product_offering_price`, `order_item_price_override`; USAGE on `ordering`).
 
 **Verification is real (bm30).** The detective control (Inv #3 corollary): the
