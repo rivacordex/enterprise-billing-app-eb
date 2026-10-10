@@ -172,6 +172,9 @@ export default async function InvoiceTemplatePage({
                 shown.billTemplateVersionId === current.billTemplateVersionId))
           }
           expectedDraftToken={draft?.token ?? null}
+          draftVersionId={draft?.billTemplateVersionId ?? null}
+          draftVersionNo={draft?.versionNo ?? null}
+          activeStructure={current.structure}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}
         />

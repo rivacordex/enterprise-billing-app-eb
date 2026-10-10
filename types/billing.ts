@@ -1160,3 +1160,17 @@ export interface TemplateDraftInfo {
   savedAt: Date;
   savedBy: string | null;
 }
+
+// bm58-spec §Design D2 — the activation result codes beyond the generic ones.
+// `CHANGE_NOTE_REQUIRED` (binding): the note is empty after trimming.
+// `ACTIVATION_BLOB_CONFLICT`: a different blob already sits at the content-
+// addressed target path, so nothing is activated (write-once, never overwritten).
+// The generator, loader and test-render failures keep their `InvoiceRenderError`
+// codes (`TEMPLATE_GENERATION_FAILED`, `TEMPLATE_CHECKSUM_MISMATCH`,
+// `TEMPLATE_COMPILE_FAILED`, `MANDATORY_SECTION_HIDDEN`) and are returned as-is.
+export const TEMPLATE_ACTIVATION_ERROR_CODES = [
+  "CHANGE_NOTE_REQUIRED",
+  "ACTIVATION_BLOB_CONFLICT",
+] as const;
+export type TemplateActivationErrorCode =
+  (typeof TEMPLATE_ACTIVATION_ERROR_CODES)[number];

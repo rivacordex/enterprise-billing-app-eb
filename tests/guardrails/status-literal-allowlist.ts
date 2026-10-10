@@ -136,4 +136,10 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
     reason:
       "billing invoice-settings (bm55): mutes a RETIRED invoice-template version row in Version history — its own TemplateVersionStatus, unrelated to product lifecycle.",
   },
+  {
+    file: "db/repositories/billing/bill-template-version.ts",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm58): `retireActive` writes the terminal RETIRED status when activation supersedes the previous invoice-template version — its own TemplateVersionStatus, unrelated to product lifecycle.",
+  },
 ];

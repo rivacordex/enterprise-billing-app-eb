@@ -229,6 +229,95 @@ export const billTemplateVersionRepository = {
     return rows[0]?.token ?? null;
   },
 
+  // bm58 D2 step 8 — re-read one DRAFT by id under a row lock, with its token,
+  // so the activation transaction decides on the state it will write over.
+  // `null` when the row is gone or no longer a DRAFT.
+  async findDraftForUpdate(
+    tx: Database,
+    id: string,
+  ): Promise<TemplateDraftRow | null> {
+    const [row] = await tx
+      .select({ version: billTemplateVersion, token: draftToken })
+      .from(billTemplateVersion)
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, id),
+          eq(billTemplateVersion.status, "DRAFT"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    return row ? { ...row.version, token: row.token } : null;
+  },
+
+  // bm58 D2 step 8 — retire the current NON-default ACTIVE of the kind, if any.
+  // MUST run before `promoteDraft`: `btv_one_active_uq` is checked per
+  // statement, so promoting first would violate it. The default row is never
+  // touched (it is excluded here, and the guard trigger would refuse anyway).
+  // Returns the retired row, or `null` when only the default was in use.
+  async retireActive(
+    tx: Database,
+    { kind }: { kind: TemplateKind },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        status: "RETIRED",
+        retiredDatetime: sql`now()`,
+        lastModifiedDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, kind),
+          eq(billTemplateVersion.status, "ACTIVE"),
+          eq(billTemplateVersion.isDefault, false),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // bm58 D2 step 8 — DRAFT → ACTIVE, stamping the stored files. Guarded by the
+  // draft's token as well as its status, so a draft edited since the caller
+  // read it is not promoted. `null` means the guard failed (the caller reports
+  // `DRAFT_CONFLICT` and rolls back). The guard trigger allows exactly these
+  // columns on this transition and refuses any change to the structure/layout.
+  async promoteDraft(
+    tx: Database,
+    input: {
+      id: string;
+      expectedToken: string;
+      blobRef: string;
+      checksum: string;
+      checksumAlgorithm: "sha256";
+      activatedBy: string;
+      changeNote: string;
+    },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        status: "ACTIVE",
+        blobRef: input.blobRef,
+        checksum: input.checksum,
+        checksumAlgorithm: input.checksumAlgorithm,
+        activatedBy: input.activatedBy,
+        activatedDatetime: sql`now()`,
+        changeNote: input.changeNote,
+        lastModifiedDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.status, "DRAFT"),
+          sql`${draftToken} = ${input.expectedToken}`,
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
   // bm57 D4 — who last saved the draft: the actor of the newest
   // `INVOICE_TEMPLATE_DRAFT_SAVED` audit row for it (the table keeps only the
   // creator, not the last modifier). A LEFT join, so a save by a since-deleted

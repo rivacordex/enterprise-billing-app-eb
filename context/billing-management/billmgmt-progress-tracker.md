@@ -1192,6 +1192,83 @@ DELIVERED" section.
   - **Next:** bm58 (activate the working draft; promotes it in place). Known-issues §20 (layout
     v2) still precedes bm58.
 
+## Invoice Template update — bm58 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-10)
+
+- **bm58 — Invoice template: activate (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm58-invoice-template-activate.md`. An
+  `invoice_settings : EDIT` user activates the saved working draft with a required change note.
+  The service generates `invoice.hbs`, `footer.hbs` and `structure.json`, test-renders them,
+  writes them write-once with SHA-256 checksums to a content-addressed directory, then in one
+  transaction retires the previous non-default ACTIVE, promotes the draft and audits. No
+  migration, no grant change, no npm dependency. Depends on bm57, bm54. **bm52 must be deployed
+  before this unit is released to prod.**
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_TEMPLATE_ACTIVATED` (Change).
+      `types/billing.ts`: `TEMPLATE_ACTIVATION_ERROR_CODES` (`CHANGE_NOTE_REQUIRED`,
+      `ACTIVATION_BLOB_CONFLICT`). `validation/billing/activate-version.schema.ts`: the template
+      input (`draftId`, `expectedDraftToken`, `changeNote` trimmed 1-500; an empty note carries
+      the binding message `CHANGE_NOTE_REQUIRED`).
+    - `db/repositories/billing/bill-template-version.ts`: `findDraftForUpdate`, `retireActive`
+      (the non-default ACTIVE only) and `promoteDraft` (token-guarded; `null` on a guard failure).
+    - `services/billing/invoice-template/activate-template.ts`: D2 steps 2-8. Steps 3-7 run
+      outside any DB transaction; step 8 takes the kind lock, re-reads the draft FOR UPDATE,
+      retires, promotes and audits. A guard failure inside it throws a private rollback error so
+      the retirement is never committed. `directory = generated/INVOICE/v{n}-{digest12}/`.
+    - `actions/billing/invoice-settings/activate-template.action.ts`: EDIT guard first, then
+      Zod, service, `revalidatePath('/administration/invoice-settings', 'layout')`.
+    - UI: `ActivateVersionDialog` (shared with bm61) and `structure-labels.ts` (the labels and
+      `describeStructureChanges` diff, shared with the editor form). `InvoiceStructureForm` has an
+      **Activate** button next to Save draft: "Activate v{n}" when a saved draft has no unsaved
+      edits, "Save draft first" while there are edits, disabled with no draft. History captions:
+      the non-default ACTIVE says "In use for new invoices" and the default says "Fallback" while
+      one is in use.
+  - **Owner decision (2026-10-10), a deviation from spec D4:** the spec put the Deep Petrol
+    accent on the dialog's confirm button and kept it enabled with an empty note. ui-context §7
+    says the opposite, and the owner chose ui-context §7: the page-level **Activate** trigger is
+    the one Deep Petrol button, and the dialog's confirm button is the standard primary (indigo)
+    button, **disabled until a change note is entered**. The server still enforces the note
+    (`CHANGE_NOTE_REQUIRED`), but the UI never shows that message for an empty note. The decision is
+    also recorded in the spec's D4.
+  - **Other deviations (recorded):**
+    1. **Dialog props.** The spec lists `title`, `summary`, `warning`, `onConfirm`; the dialog also
+       takes `open`, `onOpenChange` and `confirmLabel` because the trigger lives in the form.
+    2. **Error classes.** `TEMPLATE_CHECKSUM_MISMATCH`, `TEMPLATE_GENERATION_FAILED`,
+       `TEMPLATE_COMPILE_FAILED` and `MANDATORY_SECTION_HIDDEN` keep their `InvoiceRenderError`
+       codes and are returned as result codes. The two new codes are result codes, never thrown.
+    3. **Guardrail 46 now uses real activations.** The generated v2 and v3 are made by the real
+       save-draft and activate services. The versions differ in structure (v2 shows Notes, v3
+       hides it), so the render shows which version ran; the marker-based assertions
+       (`PIN-MARK-V2`, "Template v2" in the footer) are replaced by `sec--notes`. The company
+       profile is still a DB fixture until bm61.
+    4. **Status-literal allow-list.** `retireActive` writes the string `'RETIRED'`; it is added to
+       `tests/guardrails/status-literal-allowlist.ts` like the bm55 history-table entry.
+  - **Tests (all green):**
+    - `tests/db/activate-template.integration.test.ts` (11, Postgres + Azurite): success (ACTIVE,
+      content-addressed `blob_ref`, `loadGeneratedFiles` verifies the stored directory, no `[[`,
+      one audit row, the next draft preview resolves it); a second activation retires v2 and
+      leaves the default; **guardrail 53** (a failure injected after the blob write leaves the
+      previous ACTIVE, the draft a DRAFT, the four orphan blobs, no audit row, and an identical
+      retry succeeds); a stale token; an empty or blank note; a draft id that is not the working
+      draft; a tampered layout blob; a layout that fails the test render; a different blob at the
+      target path; and two concurrent activations (one wins, one `DRAFT_CONFLICT`).
+    - `activate-template.action.test.ts` (21), `activate-version-dialog.test.tsx` (9),
+      `structure-labels.test.ts` (3), the form's Activate states (+9), history captions (+2),
+      authz-matrix rows plus an order/audit/write-once check, and `audit-log-filters` (83 options).
+    - Guardrail 46 (`invoice-version-pinning.integration`) and the bm57 save-draft suite pass.
+    - Full integration project: 1102 passed, 48 failed, the same 48 as before (known-issues §21),
+      none touching bm58. Full unit suite: 12 failing, the known permission-count mismatch
+      (known-issues §21a). Two other tests (`customer-module-boundaries`, `ratecard-parse-csv`)
+      timed out once under full-suite load and pass when run alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the page and dialog; a real posting
+    after a real activation is covered only through guardrail 46.
+  - **Docs closed in this change set:** code-standards data rule 7 (the content-addressed
+    `v{n}-{digest12}` path) and TS rule 7 (`CHANGE_NOTE_REQUIRED`, `ACTIVATION_BLOB_CONFLICT`);
+    architecture storage row; ui-context §10b (Activate states); the bm58 spec's D4 note; this
+    tracker.
+  - **Next:** bm59 (profile edit mode and "Create a draft"). Known-issues §20 (layout v2 with the
+    annex CSS) is still open and should land before real activations reach production.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
