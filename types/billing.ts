@@ -331,6 +331,16 @@ export interface BillLineRow {
 // bm41-spec §Implementation §3 / billmgmt-code-standards.md §"TypeScript
 // conventions" — the versioned shape of `customer_bill_line.additional_info`.
 // Typing only here; bm42 is the writer and bm45 the invoice-appendix reader.
+//
+// bm42a — money-as-text contract: every monetary amount, rate and decimal
+// quantity inside this trace (`pricing.*`, `calc[*]`, `appendix[*]`) is a JSON
+// STRING at its canonical scale (money 2dp, quantities and rates 6dp, e.g.
+// "100000.00", "400.000000"), matching TS rule 3. Integers that are not money
+// (`v`, `calc[*].udrCount`, `calc[*].band`) stay numbers, and
+// `pricing.motivation.steps` is a verbatim copy of the catalog component.
+// `calc`/`pricing` stay `unknown`-typed: nothing in the app reads them (the
+// trace is database-only, TC26). The flow's verification reads them with
+// `->>` + a numeric cast.
 export interface CapacityCalcTrace {
   v: number;
   productInventoryId: string;

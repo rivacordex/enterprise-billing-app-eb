@@ -989,7 +989,11 @@ tasks:
                   SELECT offering_id, unit, above_quantity, next_above, step_rate, base_rate, band_qty,
                          round(band_qty * step_rate, 2)              AS band_charge,
                          round(band_qty * (base_rate - step_rate), 2) AS band_discount,
-                         (band_qty * (base_rate - step_rate))         AS band_discount_raw
+                         (band_qty * (base_rate - step_rate))         AS band_discount_raw,
+                         -- bm42a D1: a window function is legal in a SELECT list but not
+                         -- inside an aggregate's arguments, so the band number is computed
+                         -- here and read by capacity_band_json below.
+                         row_number() OVER (PARTITION BY offering_id, unit ORDER BY above_quantity) AS band_no
                   FROM   capacity_band_amounts
                 ),
                 capacity_band_rollup AS (
@@ -1004,14 +1008,14 @@ tasks:
                          jsonb_agg(
                            jsonb_build_object(
                              'op', 'motivation',
-                             'band', row_number() OVER (PARTITION BY offering_id, unit ORDER BY above_quantity),
-                             'from', above_quantity,
-                             'to', next_above,
-                             'quantity', band_qty,
-                             'baseRate', base_rate,
-                             'stepRate', step_rate,
-                             'charge', band_charge,
-                             'discount', band_discount
+                             'band', band_no,
+                             'from', above_quantity::numeric(20,6)::text,
+                             'to', next_above::numeric(20,6)::text,
+                             'quantity', band_qty::numeric(20,6)::text,
+                             'baseRate', base_rate::numeric(18,6)::text,
+                             'stepRate', step_rate::numeric(18,6)::text,
+                             'charge', band_charge::numeric(18,2)::text,
+                             'discount', band_discount::numeric(18,2)::text
                            ) ORDER BY above_quantity
                          ) AS bands_calc
                   FROM   capacity_band_charges
@@ -1054,8 +1058,8 @@ tasks:
                              'polygon', COALESCE(polygon_id, substring(udr_key from 'polygon_id=(.*)$')),
                              'state', state,
                              'district', district,
-                             'volume', volume,
-                             'amount', amount
+                             'volume', volume::numeric(20,6)::text,
+                             'amount', amount::numeric(18,2)::text
                            ) ORDER BY state NULLS LAST, district NULLS LAST,
                                       COALESCE(polygon_id, substring(udr_key from 'polygon_id=(.*)$'))
                          ) AS appendix
@@ -1110,31 +1114,31 @@ tasks:
                            'v', 1,
                            'productInventoryId', ct.product_inventory_id,
                            'pricing', jsonb_strip_nulls(jsonb_build_object(
-                             'usageRate', jsonb_build_object('priceId', ct.base_price_ref, 'ratePerUnit', ct.base_rate),
+                             'usageRate', jsonb_build_object('priceId', ct.base_price_ref, 'ratePerUnit', ct.base_rate::numeric(18,6)::text),
                              'commitment', CASE WHEN ct.target IS NOT NULL THEN
-                               jsonb_build_object('priceId', ct.commitment_price_ref, 'committedQuantity', ct.target) END,
+                               jsonb_build_object('priceId', ct.commitment_price_ref, 'committedQuantity', ct.target::numeric(20,6)::text) END,
                              'motivation', CASE WHEN ct.steps IS NOT NULL THEN
                                jsonb_build_object('priceId', ct.motivation_price_ref, 'steps', ct.steps) END
                            )),
                            'calc', jsonb_strip_nulls(
                              jsonb_build_array(
-                               jsonb_build_object('op', 'rated_sum', 'udrCount', ct.udr_count, 'quantity', ct.q, 'amount', ct.rated_amount)
+                               jsonb_build_object('op', 'rated_sum', 'udrCount', ct.udr_count, 'quantity', ct.q::numeric(20,6)::text, 'amount', ct.rated_amount::numeric(18,2)::text)
                              )
                              || CASE WHEN ct.target IS NOT NULL THEN
                                   jsonb_build_array(jsonb_build_object(
                                     'op', 'commitment',
-                                    'target', ct.target,
+                                    'target', ct.target::numeric(20,6)::text,
                                     'outcome', CASE WHEN ct.q >= ct.target THEN 'MET' ELSE 'SHORTFALL' END,
-                                    'shortfall', CASE WHEN ct.q < ct.target THEN (ct.target - ct.q) END,
-                                    'topUp', ct.top_up
+                                    'shortfall', CASE WHEN ct.q < ct.target THEN (ct.target - ct.q)::numeric(20,6)::text END,
+                                    'topUp', ct.top_up::numeric(18,2)::text
                                   ))
                                 ELSE '[]'::jsonb END
                              || ct.bands_calc
                              || jsonb_build_array(jsonb_build_object(
                                   'op', 'total',
-                                  'gross', (ct.rated_amount + ct.top_up),
-                                  'discount', ct.discount,
-                                  'net', (ct.rated_amount + ct.top_up - ct.discount)
+                                  'gross', (ct.rated_amount + ct.top_up)::numeric(18,2)::text,
+                                  'discount', ct.discount::numeric(18,2)::text,
+                                  'net', (ct.rated_amount + ct.top_up - ct.discount)::numeric(18,2)::text
                                 ))
                            ),
                            'summary', (
@@ -1534,6 +1538,7 @@ tasks:
                   mismatched AS (
                     SELECT l.customer_bill_line_id, l.grouping_key,
                            l.rated_amount, l.udr_count,
+                           l.gross_amount, l.net_amount, l.discount_amount,
                            COALESCE(r.replay_sum, '0.00')::numeric(18,2) AS replay_sum,
                            COALESCE(r.replay_count, 0)                   AS replay_count
                     FROM   billing.customer_bill_line l
@@ -1546,13 +1551,24 @@ tasks:
                       AND  l.source = 'USAGE' AND l.line_type = 'charge'
                       AND  l.additional_info IS NULL
                       AND  (COALESCE(r.replay_sum, '0.00')::numeric(18,2) IS DISTINCT FROM l.rated_amount
-                            OR COALESCE(r.replay_count, 0) IS DISTINCT FROM l.udr_count)
+                            OR COALESCE(r.replay_count, 0) IS DISTINCT FROM l.udr_count
+                            -- bm42a D3: bm43 moved this replay from gross_amount to
+                            -- rated_amount (right for capacity lines, which add a top-up) and
+                            -- called it behaviour-preserving, but a plain line whose billed
+                            -- gross/net moved while rated_amount stayed put then passed. For a
+                            -- non-capacity line (additional_info IS NULL, enforced above)
+                            -- gross must equal rated_amount (bm43 spec) and net must equal
+                            -- gross - discount (the identity capacity lines get below).
+                            OR l.gross_amount IS DISTINCT FROM l.rated_amount
+                            OR l.net_amount   IS DISTINCT FROM (l.gross_amount - l.discount_amount))
                   )
                   SELECT count(*),
                          string_agg(
                            customer_bill_line_id || ' (grouping ' || grouping_key
                            || ': claimed rated ' || rated_amount
                            || '/count ' || COALESCE(udr_count::text, 'NULL')
+                           || ', billed gross ' || gross_amount || '/net ' || net_amount
+                           || '/discount ' || discount_amount
                            || ' vs replay ' || replay_sum || '/' || replay_count || ')', '; ')
                     INTO   v_mismatch, v_bad_lines
                   FROM   mismatched;

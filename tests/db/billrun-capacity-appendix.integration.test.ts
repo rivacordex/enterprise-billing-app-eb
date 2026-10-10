@@ -428,8 +428,11 @@ describe.skipIf(!databaseUrl)(
         });
 
         // The card-missing polygon is surfaced, not dropped — state/district
-        // null (the render layer groups these as "Unmapped").
-        const unmapped = findAppendixRow(appendix, "POLY-UNMAPPED");
+        // null (the render layer groups these as "Unmapped"). Its id is
+        // recovered from the CANONICAL udr_key, which rating lower-cases
+        // (`polygon_id=poly-unmapped`; the original case is unrecoverable),
+        // whereas a mapped polygon carries the ratecard's own casing.
+        const unmapped = findAppendixRow(appendix, "poly-unmapped");
         expect(unmapped).toMatchObject({
           state: null,
           district: null,

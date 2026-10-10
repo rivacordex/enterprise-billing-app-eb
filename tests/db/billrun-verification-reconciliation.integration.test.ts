@@ -265,6 +265,8 @@ describe.skipIf(!databaseUrl)(
           lineNo: customerBillLine.lineNo,
           source: customerBillLine.source,
           grossAmount: customerBillLine.grossAmount,
+          ratedAmount: customerBillLine.ratedAmount,
+          netAmount: customerBillLine.netAmount,
           udrCount: customerBillLine.udrCount,
         })
         .from(customerBillLine)
@@ -405,6 +407,72 @@ describe.skipIf(!databaseUrl)(
         // operator can identify which BAN failed in a multi-account run.
         await expect(verify(runId, ban, 1)).rejects.toThrow(
           new RegExp(`account ${ban}`),
+        );
+      },
+      120_000,
+    );
+
+    // bm42a D3 — bm43 moved the plain-USAGE replay from gross_amount to
+    // rated_amount, so a line whose billed gross/net/discount moved while
+    // rated_amount stayed put used to pass. Each billed column is now checked
+    // against the invariant the bm43 spec states: gross = rated_amount and
+    // net = gross - discount.
+    it.each([
+      ["gross_amount only", "gross_amount = '100.00'", "T1"],
+      ["net_amount only (gross intact)", "net_amount = '100.00'", "T2"],
+      [
+        "discount_amount only (net != gross - discount)",
+        "discount_amount = '5.00'",
+        "T3",
+      ],
+    ])(
+      "[CRITICAL] altering %s on a plain USAGE line is caught HARD " +
+        "(bm42a D3: billed columns are checked against rated_amount)",
+      async (_label, setClause, tag) => {
+        const ban = await newAccount(`Tamper${tag}`);
+        const off = await newOffering(`Tamper ${tag} Offering`);
+        const runId = `BRN-BM30-${tag}`;
+        await newRun(runId);
+        await newInventory({
+          piId: `PRDINV-BM30-${tag}`,
+          ban,
+          offeringId: off,
+          quantity: 1,
+          orderItemId: `_bm30-oi-${tag}`,
+        });
+        for (let i = 0; i < 3; i += 1) {
+          await insertClaimedRow({
+            subRef: `PRDINV-BM30-${tag}`,
+            runId,
+            ban,
+            attempt: 1,
+          });
+        }
+
+        await aggregate(runId, ban, 1);
+        const bill = await readBill(runId, ban);
+        const [line] = await readLines(bill!.customerBillId);
+        expect(line!.source).toBe("USAGE");
+        // The untampered line satisfies the invariants.
+        expect(line!.grossAmount).toBe("30.00");
+        expect(line!.ratedAmount).toBe("30.00");
+        expect(line!.netAmount).toBe("30.00");
+        expect((await verify(runId, ban, 1)).stageStatus).toBe("DONE");
+
+        // rated_amount is deliberately LEFT INTACT, so the udr_rated replay
+        // alone cannot see the change.
+        await sql.unsafe(
+          `UPDATE billing.customer_bill_line SET ${setClause} WHERE customer_bill_line_id = $1`,
+          [line!.customerBillLineId],
+        );
+
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          /RECONCILIATION_MISMATCH/,
+        );
+        // The finding names the account and shows the billed columns, so an
+        // operator can see which one moved.
+        await expect(verify(runId, ban, 1)).rejects.toThrow(
+          new RegExp(`account ${ban}.*billed gross`, "s"),
         );
       },
       120_000,
