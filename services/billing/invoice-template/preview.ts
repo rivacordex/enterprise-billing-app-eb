@@ -11,13 +11,13 @@ import {
 } from "@/services/billing/invoice-template/generate";
 import { loadLayout } from "@/services/billing/invoice-template/load";
 import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
+import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import {
-  InvoiceRenderError,
   type InvoiceRenderInput,
   type InvoiceTemplateStructure,
   type ResolvedTemplate,
@@ -108,20 +108,6 @@ async function generateInMemory(
 
 function layoutLabel(resolved: ResolvedTemplate): string {
   return `${resolved.layout.layoutCode ?? "layout"} v${resolved.layout.versionNo}`;
-}
-
-function parseSampleData(layoutFiles: Map<string, Buffer>): InvoiceRenderInput {
-  const bytes = layoutFiles.get("sample-data.json");
-  try {
-    if (bytes === undefined) throw new Error("missing");
-    return JSON.parse(bytes.toString("utf-8")) as InvoiceRenderInput;
-  } catch {
-    throw new InvoiceRenderError(
-      "TEMPLATE_COMPILE_FAILED",
-      "the layout's sample-data.json is missing or not valid JSON",
-      { file: "sample-data.json" },
-    );
-  }
 }
 
 async function previewSample(

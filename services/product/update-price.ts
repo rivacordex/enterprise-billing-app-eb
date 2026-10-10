@@ -133,13 +133,13 @@ export async function updatePrice(
     if (err instanceof BackdatedStartTooFarError) {
       return { ok: false, code: "BACKDATED_START_TOO_FAR" };
     }
-    // The UNIQUE (offering, component_type, unit_of_measure, start_date_time)
-    // constraint (Inv. #2) keeps the derived-effectivity window well defined;
-    // a colliding edit surfaces as a typed result, not a raw database error
-    // (pm38-spec I4). Renamed with pm46's constraint rekey.
-    if (
-      isUniqueViolation(err, "product_offering_price_component_start_unique")
-    ) {
+    // The unique lane index (offering, component_type, unit_of_measure,
+    // envelope priceType, start_date_time) (Inv. #2) keeps the
+    // derived-effectivity window well defined; a colliding edit surfaces as a
+    // typed result, not a raw database error (pm38-spec I4). Renamed with
+    // pm46's rekey, then pm46a's lane index (a unique-index violation reports
+    // the index name in the same field).
+    if (isUniqueViolation(err, "product_offering_price_lane_start_unique")) {
       return { ok: false, code: "DUPLICATE_START" };
     }
     throw err; // anything else is a genuine, unexpected failure — fail loud

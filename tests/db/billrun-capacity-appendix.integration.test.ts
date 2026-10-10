@@ -244,6 +244,11 @@ describe.skipIf(!databaseUrl)(
       });
     }
 
+    // The product schema requires a capacity commitment > 0, so a scenario that
+    // is not about the floor uses the smallest valid target. It must stay well
+    // below the scenario's usage so the commitment floor is never engaged.
+    const MIN_COMMITMENT = 1;
+
     async function setupAccount(
       label: string,
       cardName: string,
@@ -423,8 +428,11 @@ describe.skipIf(!databaseUrl)(
         });
 
         // The card-missing polygon is surfaced, not dropped — state/district
-        // null (the render layer groups these as "Unmapped").
-        const unmapped = findAppendixRow(appendix, "POLY-UNMAPPED");
+        // null (the render layer groups these as "Unmapped"). Its id is
+        // recovered from the CANONICAL udr_key, which rating lower-cases
+        // (`polygon_id=poly-unmapped`; the original case is unrecoverable),
+        // whereas a mapped polygon carries the ratecard's own casing.
+        const unmapped = findAppendixRow(appendix, "poly-unmapped");
         expect(unmapped).toMatchObject({
           state: null,
           district: null,
@@ -449,7 +457,7 @@ describe.skipIf(!databaseUrl)(
         const { ban, runId, piId, usageRatePriceId } = await setupAccount(
           "RERUN",
           cardName,
-          0,
+          MIN_COMMITMENT, // usage is 50 EA, far above it: no floor top-up
         );
 
         const v1 = await insertRatecardVersion(cardName, 1, "ACTIVE", [
@@ -502,7 +510,7 @@ describe.skipIf(!databaseUrl)(
         const { ban, runId, piId, usageRatePriceId } = await setupAccount(
           "OVERLIMIT",
           cardName,
-          0,
+          MIN_COMMITMENT, // 10,001 rows of usage: no floor top-up
         );
 
         // Bulk-insert 10,001 distinct-polygon BILL_DRAFT rows in one

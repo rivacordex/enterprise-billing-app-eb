@@ -53,6 +53,59 @@ describe("extract-flow-sql — bindPsqlVars", () => {
     expect(text).toBe("SELECT $1::date");
   });
 
+  it("leaves :'var' inside a -- line comment untouched (the flow's own explanatory comments)", () => {
+    const sqlText =
+      "-- psql does not substitute :'var' inside a dollar-quoted body\nWHERE ban = :'ban'";
+    const { text, params } = bindPsqlVars(sqlText, { ban: "BAN-1" });
+    expect(text).toBe(
+      "-- psql does not substitute :'var' inside a dollar-quoted body\nWHERE ban = $1",
+    );
+    expect(params).toEqual(["BAN-1"]);
+  });
+
+  it("leaves :'var' inside a single-quoted string untouched, incl. the '' escape", () => {
+    // The token's own quotes are doubled, so `:''var''` sits wholly inside one
+    // valid literal ('it''s :''var'' here') and must survive verbatim.
+    const { text, params } = bindPsqlVars(
+      "SELECT 'it''s :''var'' here', :'ban'",
+      { ban: "BAN-1" },
+    );
+    expect(text).toBe("SELECT 'it''s :''var'' here', $1");
+    expect(params).toEqual(["BAN-1"]);
+  });
+
+  it("leaves :'var' inside a dollar-quoted body untouched (psql does not substitute there)", () => {
+    const { text, params } = bindPsqlVars(
+      "DO $$ BEGIN PERFORM :'var'; END $$; SELECT :'ban'",
+      { ban: "BAN-1" },
+    );
+    expect(text).toBe("DO $$ BEGIN PERFORM :'var'; END $$; SELECT $1");
+    expect(params).toEqual(["BAN-1"]);
+  });
+
+  it("resumes substitution after the comment ends at the newline", () => {
+    const { text, params } = bindPsqlVars("-- :'a'\n:'b' -- :'c'\n:'d'", {
+      b: "B",
+      d: "D",
+    });
+    expect(text).toBe("-- :'a'\n$1 -- :'c'\n$2");
+    expect(params).toEqual(["B", "D"]);
+  });
+
+  it("still throws for an unset variable that sits in plain SQL, even next to a comment", () => {
+    expect(() => bindPsqlVars("-- :'ok'\nWHERE x = :'missing'", {})).toThrow(
+      /:'missing' but no test value/,
+    );
+  });
+
+  it("does not treat a lone colon or a ::cast as a variable", () => {
+    const { text, params } = bindPsqlVars("SELECT a::int, b:c, :'ban'::text", {
+      ban: "BAN-1",
+    });
+    expect(text).toBe("SELECT a::int, b:c, $1::text");
+    expect(params).toEqual(["BAN-1"]);
+  });
+
   it("fails loudly when a heredoc reads an unset GUC/variable (no silent fallback)", () => {
     expect(() => bindPsqlVars("WHERE ban = :'ban'", {})).toThrow(
       /no test value was supplied/,

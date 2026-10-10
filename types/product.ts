@@ -310,7 +310,7 @@ export type PriceCard = {
   policy: string | null; // carried, semantics deferred (workflow §5.1)
   startDateTime: Date;
   createdAt: Date;
-  endDateTime: Date | null; // derived per (component_type, unit_of_measure) lane; null = open-ended (Inv. #3)
+  endDateTime: Date | null; // derived per (component_type, unit_of_measure, priceType) lane (pm46a); null = open-ended (Inv. #3)
   effectivityStatus: EffectivityStatus; // Design #10
 };
 

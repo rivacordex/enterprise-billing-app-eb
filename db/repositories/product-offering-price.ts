@@ -319,11 +319,14 @@ async function lockParent(
 export const productOfferingPriceRepository = {
   // Backs the prices panel (pm03-spec §3.4, §3.6), reshaped by pm49 D2/D3.
   // Reads `component_type` + `price_component` instead of the four dropped
-  // columns; the derived end (`LEAD` window) is now partitioned by
-  // `(product_offering_id, component_type, unit_of_measure)` — the same key
-  // as pm46's uniqueness constraint — so a newly added `capacity_motivation`
-  // never appears to supersede the `usage_rate` beside it (D3). Ordering
-  // follows the partition: `component_type`, then `unit_of_measure`, then
+  // columns; the derived end (`LEAD` window) is now partitioned by the price
+  // lane `(product_offering_id, component_type, unit_of_measure, CASE WHEN
+  // component_type = 'flat_fee' THEN price_component ->> 'priceType' END)` —
+  // the same key as the unique lane index (pm46, extended by pm46a) — so a
+  // newly added `capacity_motivation` never appears to supersede the
+  // `usage_rate` beside it (D3), and a one-time `flat_fee` never ends a
+  // recurring one (pm46a). Ordering follows the partition: `component_type`,
+  // then `unit_of_measure`, then the flat-fee priceType, then
   // `start_date_time`, then id. The envelope is parsed once here, at the read
   // boundary, with `persistablePricingComponentSchema` (D2) — a row that
   // fails to parse is a corruption and throws, rather than rendering a
@@ -332,6 +335,9 @@ export const productOfferingPriceRepository = {
     db: Database,
     productOfferingId: string,
   ): Promise<Array<Omit<PriceCard, "effectivityStatus">>> {
+    // The lane's priceType term — identical to the index expression in
+    // 0049_product_price_lane_key.sql (NULL for every non-flat_fee type).
+    const flatFeePriceType = sql`(CASE WHEN ${productOfferingPrice.componentType} = 'flat_fee' THEN ${productOfferingPrice.priceComponent} ->> 'priceType' END)`;
     const rows = await db
       .select({
         productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
@@ -350,7 +356,7 @@ export const productOfferingPriceRepository = {
         endDateTime: sql<
           Date | string | null
         >`lead(${productOfferingPrice.startDateTime}) over (
-          partition by ${productOfferingPrice.productOfferingId}, ${productOfferingPrice.componentType}, ${productOfferingPrice.unitOfMeasure}
+          partition by ${productOfferingPrice.productOfferingId}, ${productOfferingPrice.componentType}, ${productOfferingPrice.unitOfMeasure}, ${flatFeePriceType}
           order by ${productOfferingPrice.startDateTime}
         )`.as("end_date_time"),
       })
@@ -359,6 +365,7 @@ export const productOfferingPriceRepository = {
       .orderBy(
         asc(productOfferingPrice.componentType),
         asc(productOfferingPrice.unitOfMeasure),
+        asc(flatFeePriceType),
         asc(productOfferingPrice.startDateTime),
         asc(productOfferingPrice.productOfferingPriceId),
       );

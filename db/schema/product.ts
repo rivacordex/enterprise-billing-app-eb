@@ -176,17 +176,23 @@ export const productOfferingPrice = product.table(
       .default(sql`now()`),
   },
   (t) => [
-    // Rekeyed per pm46-spec D6/G-F. `NULLS NOT DISTINCT` because
-    // `unit_of_measure` is NULL on every `flat_fee` row and a plain UNIQUE
-    // treats two NULLs as distinct — without it, two `flat_fee` rows sharing a
-    // `start_date_time` would both insert and VI4 would silently not hold
-    // (precedent: 0013_gl_mapping_nulls_not_distinct.sql). A sentinel
-    // `unit_of_measure` string + a `COALESCE` expression index were
-    // considered and rejected (architecture §3.4/§7, corrected by this unit).
-    // The `lead()` derived-end window in the repository (pm49) and both
-    // runtime readers (pm51/pm52) MUST partition on this same
-    // (product_offering_id, component_type, unit_of_measure) key, or a
-    // `capacity_motivation` row could supersede the `usage_rate` beside it.
+    // The price lane key (pm46-spec D6/G-F, extended by pm46a): one lane per
+    // (product_offering_id, component_type, unit_of_measure,
+    // CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType'
+    // END). pm46a added the envelope priceType so a recurring and a one-time
+    // `flat_fee` (both NULL unit) are separate lanes. The term is flat_fee-only
+    // because the DB pins priceType only for flat_fee; for every other type it
+    // is NULL, so their key and uniqueness are exactly pm46's. SQL of record:
+    // 0049_product_price_lane_key.sql, which creates this as a unique INDEX
+    // (a UNIQUE constraint cannot hold an expression) with `NULLS NOT
+    // DISTINCT` — without it two identical recurring flat fees (NULL unit) at
+    // one start would both insert (precedent:
+    // 0013_gl_mapping_nulls_not_distinct.sql). drizzle-orm 0.45.2 has no
+    // `nullsNotDistinct()` on `uniqueIndex()`, so that clause lives in the SQL
+    // only; guardrail 13 asserts it there. A sentinel `unit_of_measure` string
+    // and a `COALESCE` expression index stay rejected (G-F). The `lead()`
+    // derived-end window in the repository (pm49) and the bill-run recurring
+    // resolver (pm52) MUST partition on this same key.
     // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
     // identifier cap (code-standards §"Constraint & index naming").
     foreignKey({
@@ -194,14 +200,13 @@ export const productOfferingPrice = product.table(
       foreignColumns: [productOffering.productOfferingId],
       name: "product_offering_price_product_offering_id_fk",
     }).onDelete("cascade"),
-    unique("product_offering_price_component_start_unique")
-      .on(
-        t.productOfferingId,
-        t.componentType,
-        t.unitOfMeasure,
-        t.startDateTime,
-      )
-      .nullsNotDistinct(),
+    uniqueIndex("product_offering_price_lane_start_unique").on(
+      t.productOfferingId,
+      t.componentType,
+      t.unitOfMeasure,
+      sql`(CASE WHEN ${t.componentType} = 'flat_fee' THEN ${t.priceComponent} ->> 'priceType' END)`,
+      t.startDateTime,
+    ),
     index("product_offering_price_offering_idx").on(t.productOfferingId),
     index("product_offering_price_component_type_idx").on(t.componentType),
     check(

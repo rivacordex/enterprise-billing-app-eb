@@ -222,18 +222,19 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
     expect(rpBlock).not.toMatch(/INSERT INTO/i);
   });
 
-  it("rm08's output-affecting config (rounding mode, subscriber ref column) lives in flow variables (D7/D3, architecture §3)", () => {
+  it("rm08's output-affecting config (rounding mode) lives in a flow variable; the subscriber ref column is a literal since rm21 (D7/D3, architecture §3)", () => {
     const vars = template.slice(
       template.indexOf("variables:"),
       template.indexOf("concurrency:"),
     );
     expect(vars).toMatch(/rounding_mode:\s*HALF_UP/);
-    expect(vars).toMatch(/subscriber_ref_column:/);
-    // The rp task passes both through.
+    // rm21 §6 retired the `subscriber_ref_column` flow variable: PRP stamps the
+    // real `product_inventory_id` onto each chunk row, so rp reads that column
+    // verbatim and the flow passes it as a literal (rp.py still requires the arg).
+    expect(vars).not.toMatch(/subscriber_ref_column:/);
+    // The rp task passes the rounding mode through and the literal column.
     expect(template).toMatch(/--rounding-mode "\{\{ vars\.rounding_mode \}\}"/);
-    expect(template).toMatch(
-      /--subscriber-ref-column "\{\{ vars\.subscriber_ref_column \}\}"/,
-    );
+    expect(template).toMatch(/--subscriber-ref-column product_inventory_id/);
     // Version stamp (D10/Inv #12): rp carries the flow revision; the engine
     // version comes from the container env (RATING_ENGINE_VERSION, not templated).
     expect(template).toMatch(/--flow-revision "\{\{ flow\.revision \}\}"/);

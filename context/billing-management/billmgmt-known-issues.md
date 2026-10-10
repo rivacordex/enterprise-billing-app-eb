@@ -789,7 +789,7 @@ one design per run becomes a requirement, add a run-level version snapshot
 taken at `APPROVED → POSTING` and resolve from it in `postAccount`. That needs
 a migration and a separate unit.
 
-## 20. 🟠 Layout v1's `shell.hbs` has no usage-annex CSS, so anything generated from it renders the annex unstyled (found bm55, OPEN — blocks bm58)
+## 20. 🟠 Layout v1's `shell.hbs` has no usage-annex CSS, so anything generated from it renders the annex unstyled (found bm55, OPEN — accepted for bm58, RELEASE GATE before production)
 
 **Where:** `db/seeds/invoice-templates/INVTPL-STD-A4/v1/shell.hbs` (layout
 BTV00000001, seeded immutably by bm50) and the hand-written generated v1
@@ -826,41 +826,85 @@ annex CSS exactly as the hand-written v1 has it, and its `structure.json`
 convention should be settled with it. Then flip the parity test's `it.fails`
 to a normal `it` against v2. Do not edit v1, which is immutable.
 
-## 21. 🔴 Failing tests found by the full runs after bm56 (2026-10-10, OPEN, not caused by bm56)
+**Decision (2026-10-10, bm58 review).** bm58 activation is now built and generates from layout
+v1, so the gap is live in code but not yet in production. Owner decision: **accept for now and
+track as a release gate**, with no bm58 code change and no activation guard. Seed layout v2 (as
+its own unit: a new `v2/` directory, migration, checksums, Inv #44) before any production
+activation; until then do not activate a template in production.
+
+## 21. 🔴 Failing tests found by the full runs after bm56 (2026-10-10; all fixed: 21c2 to 21c4 by bm42a, 21e by product unit pm46a)
 
 The full unit suite and the full integration project (against the throwaway
-`ebill-test` Postgres on port 5434) were run after bm56. **Unit: 3952 passed,
-12 failed, 1 expected fail. Integration: 1078 passed, 48 failed, 75 skipped, in
-13 of 123 files.** `invoice-profile.integration` and the invoice-settings
-grants/catalog suites passed. None of the failures touch the bm56 surface. The
-runs were **not repeated on the previous commit**, so "pre-existing" below is
-argued from the causes, not proven by a baseline run.
+`ebill-test` Postgres on port 5434) were run after bm56: **unit 12 failures,
+integration 48 failures in 13 files**. They were then triaged, and the original
+guesses in this entry were corrected. The honest result is that the failures are
+**two different kinds of problem**: tests or fixtures that had drifted from correct
+code (fixed), and **real defects in delivered code that the tests were right to
+flag** (open). The DB-backed suites had never been run in this environment, so the
+defects shipped unnoticed.
 
-| #   | Failing tests                                                                                                                                                                                                                                                                                                            | Cause (as far as inspected)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 21a | **Unit (12 tests, 4 files):** `tests/auth/resolver.test.ts`, `permission-matrix-editor.test.tsx`, `role-detail.test.tsx`, `roles-read.service.test.ts`. **Integration (3):** `roles-read.service.integration.test.ts`                                                                                                    | Each expects 15 permissions and receives 16. The 16th is `invoice_settings`, added by bm50. The fixtures and expected lists were never updated. **Inspected.**                                                                                                                                                                                                                                                                                                                                     |
-| 21b | **Integration (1):** `migration.integration.test.ts` ("nothing application-related lands in public")                                                                                                                                                                                                                     | It finds `_test_disposable_sentinel` in `public`. That is the table the destructive-DB preflight needs (`tests/helpers/disposable-database.ts`), so it fails on any database marked disposable. The test should ignore it. **Inspected.**                                                                                                                                                                                                                                                          |
-| 21c | **Integration (38 tests, 8 files):** `billrun-aggregation` (2), `billrun-capacity-aggregation` (9), `billrun-capacity-appendix` (3), `billrun-capacity-verification` (7), `billrun-recurring-aggregation` (7), `billrun-verification-reconciliation` (6), `billrun-volume-aggregation` (3), `billrun-phase3-journey` (1) | The `extract-flow-sql` harness raises `statement references :'var' but no test value was supplied for it` (seen in the recurring and volume suites; the other files fail the same way or in the same harness, not each read). The flow YAML has drifted from the harness's variable values. This is the same drift bm49 noted for `billrun-capacity-appendix`, and it matches the tracker's standing "capacity DB suites not re-run" note. `phase3-journey` may also be §4c. **Partly inspected.** |
-| 21d | **Integration (1):** `billrun-db-roles.integration.test.ts` (PC14)                                                                                                                                                                                                                                                       | The test updates `product.product_offering_price.amount`, a column PC14 removed (`column "amount" does not exist`). It was already recorded under bm50. **Inspected.**                                                                                                                                                                                                                                                                                                                             |
-| 21e | **Integration (4):** `ordering-read.integration.test.ts`                                                                                                                                                                                                                                                                 | Expected list/override/effective amounts do not match (`expected undefined to match object { listAmount: '5000.00', … }`). Likely the same PC14 price-shape change. **Not diagnosed.**                                                                                                                                                                                                                                                                                                             |
-| 21f | **Integration (1):** `tests/rating/rm08-rp-price-resolution-snapshot.integration.test.ts`                                                                                                                                                                                                                                | A static check expects `subscriber_ref_column:` in the rp flow's variables and the flow no longer has it. **Inspected.**                                                                                                                                                                                                                                                                                                                                                                           |
+### Fixed (tests or fixtures that had drifted; the code was right)
 
-**ELI5.** Most of these are tests that nobody updated after something else
-changed: a new permission was added (so a list is one longer), a column was
-removed, and a flow file moved on from the helper that tests it. The sentinel
-failure is the safety marker we add to the test database tripping a test that
-did not expect it. Nothing here comes from the Company profile change.
+| #   | Was                                                                                                  | Fix                                                                                                                                                         |
+| --- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 21a | 12 unit + 3 integration tests expected 15 permissions; `invoice_settings` (bm50) makes 16            | Added the missing entry and updated the counts in five test files.                                                                                          |
+| 21b | `migration.integration` found the destructive-DB preflight's marker table in `public`                | The test ignores `_test_disposable_sentinel`.                                                                                                               |
+| 21d | `billrun-db-roles` 17g updated `product_offering_price.amount`, which PC14 removed                   | It updates `name`, a column that exists, so Postgres reaches the privilege check the test is about.                                                         |
+| 21f | `rm08` expected the `subscriber_ref_column` flow variable, which rm21 §6 retired on purpose          | The static check now asserts the variable is gone and the literal `--subscriber-ref-column product_inventory_id` is passed. (A rating-domain test.)         |
+| 21c1 | The `extract-flow-sql` harness read `:'var'` **inside SQL comments** as a variable named `var` (38 tests failed before reaching the database) | `bindPsqlVars` now skips `--` comments, single-quoted strings and dollar-quoted bodies, as real psql does. Six new self-tests.                        |
+| 21c5 | Appendix helper built a capacity commitment of **0**, which the product schema now rejects (`> 0`), in the rerun-stability and 10,001-row over-limit tests | Both use `MIN_COMMITMENT = 1`. The tests were kept: removing them would drop the CRITICAL TC57 guard test and the D4 rerun-stability test. Usage is far above 1, so the floor is never engaged. |
+| 21c6 | A recurring-suite fixture defined a two-band motivation, which the flow refuses by design (`capacity_max_bands = 1`, TC52) | The fixture uses one band. Every assertion in that test (zero-usage floor, no discount) still holds.                                                  |
+| 21c7 | The appendix test looked up the card-missing polygon as `POLY-UNMAPPED`, but the flow recovers its id from the canonical `udr_key`, which rating lower-cases | The test looks it up as `poly-unmapped` (the original case is unrecoverable; mapped polygons carry the ratecard casing). Found when bm42a let the test reach that assertion. |
 
-**Recommendation.** (1) Update the permission fixtures and expected lists for
-`invoice_settings` (21a); a small, mechanical fix. (2) Make the `migration`
-test ignore `_test_disposable_sentinel` (21b). (3) Re-sync `extract-flow-sql`
-with the current flow variables, then re-run the capacity suites (21c); this
-is the work the tracker already lists for bm46 TC54. (4) Replace the removed
-`amount` column in the db-roles test (21d) and re-check `ordering-read` against
-the component price model (21e). (5) Point rm08's static check at where the
-subscriber reference column now lives (21f). Do each as its own small change;
-none belongs inside a feature unit. After they land, run both projects on a
-clean checkout so "pre-existing" is checked, not argued.
+### Real defects in delivered code (21c2 to 21c4 FIXED by bm42a; 21e FIXED by pm46a)
+
+| #    | Defect                                                                                                                                                                                                                       | Evidence and effect                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 21c2 | **FIXED (bm42a D1).** **CRITICAL.** `bill_run_processing.yml` line 1007 (the `capacity_band_json` CTE, bm42) calls `row_number() OVER (…)` **inside `jsonb_agg(…)`**. Postgres forbids a window function inside an aggregate (`aggregate function calls cannot contain window function calls`). | The aggregation statement can never execute, so as written **bill-run aggregation fails for every account**, not only capacity accounts. 31 tests fail on it. The second `jsonb_agg` (line 1052) is fine. Proposed fix: compute the band number in the `capacity_band_charges` CTE and have `jsonb_agg` read it; the output is identical. With that applied **temporarily and reverted**, the eight affected suites went from 34 failures to 3 (37 of 40 pass). |
+| 21c3 | **FIXED (bm42a D2, as text).** The flow writes the appendix rows' `volume` and `amount`, and the capacity `calc` total's `gross`/`discount`/`net`, as **JSON numbers**. The declared type (`InvoiceUsageAppendixRow`) and the tests say **strings**, and the module's rule is money as `string` end to end. | JSON numbers lose the trailing scale when parsed (`40000.00` becomes `40000`). 2 of the 3 remaining failures. This is a flow-side contract mismatch, not a stale test, so the tests were **not** loosened. Fix is in the flow (emit `::text`), with 21c2.                                                                                                                                                  |
+| 21c4 | **FIXED (bm42a D3).** bm43 changed the plain (non-capacity) USAGE replay from `gross_amount` to `rated_amount`, and its spec calls that "behaviour-preserving". It is not: a plain line whose `gross_amount`/`net_amount` were altered while `rated_amount` stayed intact is **no longer caught** by verification. | bm30's CRITICAL test ("a mis-aggregated USAGE line is caught HARD") now fails because verification returns `DONE`. A regression in tamper detection. Fix is a flow change: for non-capacity lines also require `gross_amount = rated_amount` (the invariant the bm43 spec states).                                                                                                                      |
+| 21e  | **FIXED by product unit pm46a (2026-10-10; `context/product-management/specs/pm46a-flat-fee-lane-key.md`, PM-ISS-003).** The lane key now includes `price_component ->> 'priceType'` (migration `0049`, unique index `product_offering_price_lane_start_unique`), the repository window and the bill-run resolver use it, and `RECURRING_PRICE_UNSUPPORTED` is retired. The 4 tests pass unchanged. Original finding: `ordering-read` (4 tests): a recurring and a one-time `flat_fee` share the lane `(component_type, unit_of_measure)`, so the later-starting one-time Activation Fee ends the recurring row and the order detail shows **no recurring line**. | **Not PC14, and not a test problem.** This is the gap pm46 flagged itself ("Known gap, flagged for follow-up… needs its own gate-C-authorized follow-up unit"). The correct lane key adds `price_component ->> 'priceType'`. It touches the product constraint, the repository's `lead()` window and the billing resolver, so it is cross-domain and gated. The same partition is used by the billing recurring resolver. |
+
+**Also seen, not failures:** `route-manifest`, `customer-module-boundaries` and
+`ratecard-parse-csv` time out under full-suite load and pass alone. Thirteen tests are
+skipped because they need `python3`, which this host lacks.
+
+**ELI5.** Most of the red tests were stale test code and are now fixed. But once the
+test helper stopped tripping over a comment, the tests reached the real SQL and found
+that a delivered flow statement is invalid (it can never run), that some amounts are
+written in the wrong form, and that one safety check was weakened. Those are bugs in
+the product, not in the tests.
+
+**Result (bm42a, 2026-10-10).** The three flow defects were fixed together in one flow-only unit
+(`bm42a`, spec `specs/bm42a-flow-aggregation-verification-fixes.md`): the band number is computed
+before the JSON aggregation (21c2), money and decimal quantities in the calc trace are JSON text
+at canonical scale (21c3), and ordinary USAGE lines are again checked for `gross = rated_amount`
+and `net = gross - discount` (21c4). Full integration project: **48 failures down to 4**, all in
+`ordering-read` (21e); full unit suite: **0 failures** (4077 passed). 21e was then fixed by the
+product unit pm46a (gated by Khek 2026-10-10), which also changed the bill-run recurring resolver and
+retired `RECURRING_PRICE_UNSUPPORTED`. **Result (pm46a): full integration project 1165 passed / 0
+failed; full unit suite 4077 passed / 0 failed.** Every §21 item is closed.
+
+## 22. 🟠 Open items from the code review of efaff82..HEAD (2026-10-10; OPEN, to be fixed later)
+
+`/code-review xhigh` of `efaff82..HEAD` plus the uncommitted batch raised 15
+findings. Fixed in that batch: the plain-USAGE discount/net tamper gap, the
+NULL-dropping mismatch message, the case-sensitive blob-guard key, the blob
+guard for every integration suite (globalSetup), the stale flow README /
+template / `rp.py` / product rule-6 docs, the shared activation probe and its
+variants, the draft-conflict message constant and the harness's quadratic
+scan. Still open:
+
+| #    | Item | Effect | Owner / next step |
+| ---- | ---- | ------ | ----------------- |
+| 22a  | **`_bm45_volume` does not scope by offering** (`bill_run_processing.yml`, aggregation step 0h). It picks claimed rows by `unit` and `udr_type` only; `capacity_volume` (step 1) also joins `product_inventory` and requires `pi.product_offering_id = c.offering_id`, and the 0h comment claims "same scoping". Confirmed by reading the SQL; not yet reproduced on a database. | An account with a capacity offering and another offering with the same unit and udr_type gets the other offering's usage in the capacity appendix (volume and amount), so the appendix no longer sums to the capacity line's `rated_amount` and the rows count toward `CAPACITY_APPENDIX_OVER_LIMIT`; two such capacity offerings list each other's polygons. Predates this range (bm45). | A billing flow-fix unit with its own spec (bm42a pattern), with a DB test that reproduces it first. |
+| 22b  | **One-time flat fees are never billed and never reported.** | See `billmgmt-design-review.md` **DR-05** (decided: option a, report without failing). | DR-05's unit. |
+| 22c  | **A stored draft that fails the schema cannot be recovered from the UI** (`activate-template.ts` returns `VALIDATION_ERROR` → "The request was not valid. Reload and try again."; Save draft fails the strict schema too). | Only after a schema change or a hand edit of a stored draft; the user has no way out but a DB fix. | A bm58 follow-up: decide the recovery (discard-draft action, or a dedicated "stored draft is invalid" message with a reset). UX decision needed. |
+| 22d  | **Activate DRAFT_CONFLICT shows the message twice**: a toast with Reload and the dialog's inline alert. (The save path's duplicated literal was fixed: both now use `ACTIVATE_MESSAGES.DRAFT_CONFLICT`.) | Cosmetic; two identical messages at once. | Fold into 22c's follow-up (UX decision: give the dialog its own Reload and drop the toast, or the reverse). |
+| 22e  | **Three copies of the SQL scanner** in the test harness: `splitSqlStatements` and `bindPsqlVars` (`tests/db/helpers/extract-flow-sql.ts`) and the guardrail's `blankCommentsAndStrings` (no dollar-quote handling). | Teaching one about block comments, `E''` strings or quoted identifiers and missing another makes splitting, binding and the guardrail disagree. Test-only; no runtime effect. | A test-harness refactor: one tokenizer with an on-plain-text callback. Low priority. |
+
+The product-side altitude item (one SQL function for the price lane key) is
+tracked as `prodmgmt-issues-tracker.md` PM-ISS-004.
 
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 

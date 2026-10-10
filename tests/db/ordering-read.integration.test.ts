@@ -242,13 +242,12 @@ describe.skipIf(!databaseUrl)(
       // successor in the same lane, flat_fee(oneTime) 1000, and a
       // capacity_motivation standing in for the old tiered usage price (the
       // new shape that is legitimately never an override target). The
-      // Activation Fee's start date moves one day later (2026-01-02): it
-      // shares `flat_fee` + `unit_of_measure NULL` with the recurring row,
-      // and the reshaped uniqueness constraint is NULLS-NOT-DISTINCT on
-      // (offering, component_type, unit_of_measure, start_date_time) — two
-      // same-lane rows can no longer share a start date (pm48's own fixture
-      // note). `NOW` (2026-08-10) is well past both dates either way, so no
-      // effectivity assertion below is affected.
+      // Activation Fee starts one day later (2026-01-02). That offset was
+      // forced while recurring and one-time flat fees shared a lane; it then
+      // made the one-time fee supersede the recurring row (billing
+      // known-issues §21e). Since pm46a the lane includes the envelope
+      // priceType, so the two never end each other and the offset is just
+      // fixture data. `NOW` (2026-08-10) is well past both dates.
       await db.insert(productOfferingPrice).values([
         {
           productOfferingId: offeringId,

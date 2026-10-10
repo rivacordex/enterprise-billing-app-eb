@@ -1260,6 +1260,38 @@ DELIVERED" section.
       (known-issues §21a). Two other tests (`customer-module-boundaries`, `ratecard-parse-csv`)
       timed out once under full-suite load and pass when run alone.
     - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Review fixes (2026-10-10, /code-review xhigh on 735bbce):**
+    - **Activation test-render now also runs the load-time probe.** Activation rendered only
+      against the layout's `sample-data.json`, but `loadGenerated` executes the typed
+      `PROBE_RENDER_INPUT` at first load. The two inputs differ (for example the sample has
+      `company.tradingName`, the probe does not), so a template could pass activation, become
+      ACTIVE, retire the previous version, then fail the load probe and park every render.
+      `testRender` now executes the probe in the same variants, so both gates agree. A unit
+      test proves a template the sample satisfies but the probe rejects is refused.
+    - **Activate conflict now offers Reload.** After `DRAFT_CONFLICT` the form kept its stale token
+      and every retry conflicted again. The form shows the same Warning toast with a **Reload**
+      action as the save flow; the refresh remounts it on the newer token.
+    - **Only the mandatory-section rule reports `MANDATORY_SECTION_HIDDEN`.** Any other failure of
+      the stored structure (an unknown key, a missing column key) is `VALIDATION_ERROR`.
+    - Success no longer calls a redundant `router.refresh()` (the action revalidates the layout and
+      the form remounts on the new token, as the save flow relies on).
+    - `parseSampleData` is one shared module (`sample-data.ts`), used by the preview and
+      activation. `sha256` uses `blobStore.digest`, the `!` is gone, and the returned render
+      codes come from one tuple, so the runtime guard and the result type cannot drift.
+    - `getInvoiceTemplatePageData` takes a required `{ canEdit }` options object with **no default**.
+      This reconciles the SonarQube finding (no object-literal default) with the review (a bare
+      positional boolean on a permission gate hides its meaning at the call site).
+    - Test safety: `assertTestBlobConnection` refuses to run the blob-deleting suites (activation
+      and guardrail 46) against anything but the throwaway Azurite (port 10001); the dev stack's
+      is 10000. Stale comments were corrected, and a stray backtick in code-standards data rule 7.
+    - **Left as is, for review:** (1) known-issues §20 (layout v1 has no usage-annex CSS): **owner
+      decision 2026-10-10, accept for now and track as a release gate**, no bm58 code change (see
+      the entry). (2) The four blob PUTs stay sequential (a few extra round trips, with
+      `checksums.json` last as the commit marker); parallelising was judged not worth the change.
+      (3) The Deep Petrol button class is copied from `trigger-run-dialog.tsx`; extracting a shared
+      button touches another module's component and is cosmetic, so it was only flagged.
+      (4) The canonical `checksums.json` form still exists in two places (`write-checksums.ts` and
+      the activation service); sharing it would mean refactoring a dev script, which is out of scope.
   - **Not run here:** no browser or `next build` run of the page and dialog; a real posting
     after a real activation is covered only through guardrail 46.
   - **Docs closed in this change set:** code-standards data rule 7 (the content-addressed
@@ -1269,7 +1301,67 @@ DELIVERED" section.
   - **Next:** bm59 (profile edit mode and "Create a draft"). Known-issues §20 (layout v2 with the
     annex CSS) is still open and should land before real activations reach production.
 
+## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
+
+- **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:
+  `context/billing-management/specs/bm42a-flow-aggregation-verification-fixes.md`. A follow-up to
+  delivered bm42/bm43 (named on the `pm56a` pattern). Flow only (`local-dev/bill_run_processing.yml`,
+  `aggregation` + `verification`): no migration, no grant, no app code, `template` file untouched.
+  Closes known-issues §21 21c2, 21c3 and 21c4. Owner decisions 2026-10-10: money in the trace is
+  **text** (Defect 2 option A); `steps` left verbatim; DB-free static guard included;
+  `CapacityCalcTrace` gets a doc comment only.
+  - **Delivered:**
+    - **D1 (CRITICAL).** The `capacity_band_json` CTE called `row_number() OVER (…)` inside
+      `jsonb_agg(…)`, which Postgres forbids, so the whole `aggregation` statement could never run:
+      bill-run aggregation failed for every account. The band number is now computed in
+      `capacity_band_charges` (a `SELECT` list) and `jsonb_agg` reads `band_no`. Output identical.
+    - **D2.** Every amount, rate and decimal quantity in `additional_info` (`pricing`, `calc`,
+      `appendix`) is a JSON **string** at canonical scale: money `numeric(18,2)`, quantities
+      `numeric(20,6)`, rates `numeric(18,6)`. `v`, `udrCount` and `band` stay integers; the
+      catalog `steps` copy is verbatim; `NULL::text` is still stripped (no `shortfall` when MET, no
+      `to` on the last band). Verification reads the trace with `->>` and numeric casts, so it is
+      unchanged, and `charge_checksum` never hashes `additional_info` (Inv #35). No app reader exists.
+    - **D3.** Ordinary (non-capacity) USAGE lines in `verification` must also satisfy
+      `gross_amount = rated_amount` and `net_amount = gross_amount - discount_amount` (bm43 moved the
+      replay to `rated_amount` and called it behaviour-preserving, but an altered gross/net passed).
+      The finding now also shows the billed gross/net/discount.
+  - **Deviation from the spec text (recorded):** the spec said "exact numeric text"; a catalog value
+    such as a commitment of `1000` would then serialise as `"1000"`, so the contract uses explicit
+    canonical-scale casts (`::numeric(p,s)::text`). The spec's D2 wording was updated to match.
+  - **Tests (all green):**
+    - The 34 failures behind the harness fix now pass: all eight billing-run suites (44 tests),
+      including the phase-3 full journey.
+    - New: three tamper cases (alter only gross, only net, only discount) in
+      `billrun-verification-reconciliation`; a trace-contract test in `billrun-capacity-aggregation`
+      (walks the whole trace over the SHORTFALL, MET and one-band cases: no JSON number except
+      `v`/`udrCount`/`band`, 2dp money, 6dp quantities, steps verbatim); and the DB-free guard
+      `tests/guardrails/billrun-flow-sql-window-in-aggregate.test.ts` (11 tests: a detector for a window
+      function inside an aggregate call, with self-tests, run over the validation, collection,
+      aggregation and verification SQL). Verified to **fail on the original flow** and pass on the fix.
+    - One assumption fixed in a test: the appendix suite looked up the card-missing polygon by its
+      original case; the flow recovers it from the lower-cased canonical `udr_key`.
+    - **Full integration project: 48 failures down to 4** (1151 passed), all `ordering-read` (the
+      product module's lane gap, known-issues §21e). **Full unit suite: 0 failures** (4077 passed).
+      `tsc`, ESLint and Prettier clean on every changed file.
+  - **Not run here (Inv #38):** a live-Kestra execution of the real flow on the `ci` and `capacity`
+    seeds. The DB suites run the extracted SQL; only a live run proves the deployed flow completes, and
+    the capacity-profile smoke harness (TC54) still does not exist. Redeploy via
+    `deploy_workflow_flows`; nothing was in flight (the flow could not aggregate before).
+  - **Docs closed in this change set:** known-issues §21 (21c2 to 21c4 fixed, 21c7 recorded, result
+    paragraph); code-standards (string-money trace contract); the bm42a spec (canonical scales);
+    `bm00-build-plan.md` lists bm42a; this tracker.
+  - **Next:** known-issues §21e (the product module's flat-fee lane gap, pm46) is owned by the
+    gated product unit pm46a, DELIVERED 2026-10-10 (see the Outstanding note below); the live-Kestra capacity journey (TC54) is still outstanding.
+
 ## Outstanding / Next (post-Phase 4)
+
+- **Resolved by bm42a and pm46a (2026-10-10):** the three billing-flow defects found by running the DB-backed suites (known-issues §21 21c2, 21c3, 21c4, bm42a) and 21e (`ordering-read`, the product module's flat-fee lane gap), fixed by product unit **pm46a** (`context/product-management/specs/pm46a-flat-fee-lane-key.md`). pm46a also changed this module's flow: `_bm29_resolved` reads the recurring `flat_fee` lane only (partitioned on the product lane key including `priceType`), and `RECURRING_PRICE_UNSUPPORTED` is retired (Inv #28 and code-standards 14b amended). Full integration project 1165 passed / 0 failed; unit 4077 / 0. **Rollout:** redeploy `bill_run_processing` with `deploy_workflow_flows`; still outstanding: a live-Kestra run (TC54 harness).
+
+- **Release gate before any production template activation (known-issues §20).** Layout v1's
+  `shell.hbs` has no usage-annex CSS, so a real activation (which generates from layout v1) would
+  print the usage annex unstyled on every new invoice, and the PDF is stored permanently. Seed
+  **layout v2** with the annex CSS as its own unit (new `v2/` directory, migration, checksums,
+  Inv #44) before activations reach production. Owner decision 2026-10-10: accepted for now.
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
   (`billrun-runtime-db-password`, `billrun-engine-url`/`-auth`, SFTP), flip

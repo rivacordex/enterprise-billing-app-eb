@@ -58,7 +58,11 @@ describe.skipIf(!databaseUrl)(
       ]);
 
       const publicTables = await sql<{ table_name: string }[]>`
-        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public'
+          -- the destructive-DB preflight's marker (tests/helpers/disposable-database.ts),
+          -- present on any database marked disposable, is not application data
+          AND table_name <> '_test_disposable_sentinel'
       `;
       expect(publicTables).toEqual([]);
     });

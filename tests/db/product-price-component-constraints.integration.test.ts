@@ -533,7 +533,7 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow("product_offering_price_capacity_motivation_check");
     });
 
-    it("rejects a second NULL-unit flat_fee on one offering at the same start_date_time (G-F)", async () => {
+    it("rejects a second NULL-unit oneTime flat_fee on one offering at the same start_date_time (G-F)", async () => {
       const offeringId = await createOffering("pm46 unique flat_fee");
       await insertComponent({
         offeringId,
@@ -546,7 +546,45 @@ describe.skipIf(!databaseUrl)(
           componentType: "flat_fee",
           priceComponent: flatFeeEnvelope({ params: { amount: "999" } }),
         }),
-      ).rejects.toThrow("product_offering_price_component_start_unique");
+      ).rejects.toThrow("product_offering_price_lane_start_unique");
+    });
+
+    // pm46a — the lane adds the envelope priceType, so recurring and one-time
+    // flat fees are separate lanes (NULLS NOT DISTINCT still holds within one).
+    const recurringFlatFee = (offeringId: string, amount: string) =>
+      insertComponent({
+        offeringId,
+        componentType: "flat_fee",
+        priceComponent: flatFeeEnvelope({
+          priceType: "recurring",
+          params: { amount },
+        }),
+        periodLength: 1,
+        periodType: "months",
+      });
+
+    it("rejects a second NULL-unit recurring flat_fee on one offering at the same start_date_time (pm46a)", async () => {
+      const offeringId = await createOffering("pm46a unique recurring");
+      await recurringFlatFee(offeringId, "100");
+      await expect(recurringFlatFee(offeringId, "200")).rejects.toThrow(
+        "product_offering_price_lane_start_unique",
+      );
+    });
+
+    it("accepts a recurring and a oneTime flat_fee on one offering at the same start_date_time — different lanes (pm46a)", async () => {
+      const offeringId = await createOffering("pm46a recurring + oneTime");
+      await recurringFlatFee(offeringId, "100");
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "flat_fee",
+          priceComponent: flatFeeEnvelope(),
+        }),
+      ).resolves.toBeDefined();
+      const rows = await sql<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM product.product_offering_price
+        WHERE product_offering_id = ${offeringId}`;
+      expect(rows[0]!.n).toBe(2);
     });
 
     it("rejects a second usage_rate with the same unit at the same start_date_time", async () => {
@@ -566,7 +604,28 @@ describe.skipIf(!databaseUrl)(
           }),
           unitOfMeasure: "EA",
         }),
-      ).rejects.toThrow("product_offering_price_component_start_unique");
+      ).rejects.toThrow("product_offering_price_lane_start_unique");
+    });
+
+    // pm46a review: the priceType term is flat_fee-only. The DB does not pin
+    // priceType for other types, so a raw-SQL usage_rate with an off-spec
+    // priceType must still collide with a valid one (pm46's exact key).
+    it("rejects a second same-unit usage_rate at one start even when its envelope priceType differs (lane term is flat_fee-only)", async () => {
+      const offeringId = await createOffering("pm46a usage_rate priceType");
+      await insertComponent({
+        offeringId,
+        componentType: "usage_rate",
+        priceComponent: usageRateEnvelope(),
+        unitOfMeasure: "EA",
+      });
+      await expect(
+        insertComponent({
+          offeringId,
+          componentType: "usage_rate",
+          priceComponent: usageRateEnvelope({ priceType: "recurring" }),
+          unitOfMeasure: "EA",
+        }),
+      ).rejects.toThrow("product_offering_price_lane_start_unique");
     });
 
     it("accepts a usage_rate and a capacity_motivation on the same unit at the same start_date_time — different lanes", async () => {

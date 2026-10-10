@@ -263,7 +263,7 @@ export function InvoiceStructureForm({
         return;
       }
       if (result.code === "DRAFT_CONFLICT") {
-        toast.warning("Another user changed the draft — reload to see it.", {
+        toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
           action: { label: "Reload", onClick: () => router.refresh() },
         });
       } else if (result.code === "MANDATORY_SECTION_HIDDEN") {
@@ -294,9 +294,19 @@ export function InvoiceStructureForm({
       changeNote,
     });
     if (result.ok) {
+      // No `router.refresh()`: the action revalidates the Invoice Settings layout
+      // and its response carries the fresh page, which remounts this form (its
+      // key includes the draft token), exactly as the save flow relies on.
       toast.success(`Template v${result.versionNo} activated`);
-      router.refresh();
       return { ok: true };
+    }
+    if (result.code === "DRAFT_CONFLICT") {
+      // The held token is stale, so every retry would conflict again. Offer the
+      // same Reload as a failed save; the refresh re-renders the page with the
+      // newer token, which remounts the form from the server's draft.
+      toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
+        action: { label: "Reload", onClick: () => router.refresh() },
+      });
     }
     return { ok: false, message: activateMessage(result) };
   }

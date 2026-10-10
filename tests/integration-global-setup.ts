@@ -1,5 +1,6 @@
 import postgres from "postgres";
 
+import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { isDisposableDatabase } from "@/tests/helpers/disposable-database";
 
 // bm40-spec (TC58) — the destructive-DB preflight. Wired as Vitest
@@ -58,5 +59,22 @@ export default async function setup(): Promise<void> {
     }
   } finally {
     await sql.end({ timeout: 5 });
+  }
+
+  // The blob-store counterpart, once for the whole project (code review): at
+  // least six suites delete blobs through BILLRUN_BLOB_CONNECTION_STRING, and a
+  // per-suite opt-in had reached only two. When the variable is set it must
+  // point at the throwaway Azurite; BILLRUN_BLOB_ACCOUNT_URL (a real account via
+  // managed identity) is never allowed. Unset, the blob suites skip themselves.
+  if (process.env.BILLRUN_BLOB_ACCOUNT_URL) {
+    throw new Error(
+      "BLOB PREFLIGHT REFUSED: BILLRUN_BLOB_ACCOUNT_URL is set. The integration " +
+        "suites delete blobs; they may only target the throwaway Azurite via " +
+        "BILLRUN_BLOB_CONNECTION_STRING (load .env.test).",
+    );
+  }
+  const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
+  if (blobConnection) {
+    assertTestBlobConnection(blobConnection);
   }
 }

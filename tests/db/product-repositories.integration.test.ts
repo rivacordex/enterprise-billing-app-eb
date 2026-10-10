@@ -722,6 +722,59 @@ describe.skipIf(!databaseUrl)(
         expect(future.effectivityStatus).toBe("future");
         expect(future.endDateTime).toBeNull();
       });
+
+      // pm46a — recurring and one-time flat fees (both NULL unit) are separate
+      // lanes: neither ever ends the other, in either order. Succession inside
+      // the recurring lane (the first test above) is unchanged.
+      it.each([
+        ["recurring first, one-time later", "2026-01-01", "2026-01-02"],
+        ["one-time first, recurring later", "2026-01-02", "2026-01-01"],
+        ["both at the same start", "2026-01-01", "2026-01-01"],
+      ])(
+        "a one-time flat_fee and a recurring flat_fee never end each other (%s)",
+        async (label, oneTimeStart, recurringStart) => {
+          const offeringId = await insertOffering({
+            name: `LANE ${label}`,
+            lifecycleStatus: "DRAFT",
+          });
+          await insertFlatPrice({
+            productOfferingId: offeringId,
+            priceType: "recurring",
+            startDateTime: new Date(`${recurringStart}T00:00:00Z`),
+            amount: "5000.00",
+            name: "Monthly Fee",
+          });
+          await insertFlatPrice({
+            productOfferingId: offeringId,
+            priceType: "once",
+            startDateTime: new Date(`${oneTimeStart}T00:00:00Z`),
+            amount: "1000.00",
+            name: "Activation Fee",
+          });
+
+          const priceRows =
+            await productOfferingPriceRepository.findByOfferingIdWithDerivedEnd(
+              db,
+              offeringId,
+            );
+          const monthly = priceRows.find((p) => p.name === "Monthly Fee")!;
+          const activation = priceRows.find(
+            (p) => p.name === "Activation Fee",
+          )!;
+          expect(monthly.endDateTime).toBeNull();
+          expect(activation.endDateTime).toBeNull();
+
+          // Through the page service: both listed, both current.
+          const detail = await getOfferingDetail(
+            offeringId,
+            new Date("2026-07-04T00:00:00Z"),
+          );
+          expect(detail?.prices).toHaveLength(2);
+          for (const price of detail!.prices) {
+            expect(price.effectivityStatus).toBe("current");
+          }
+        },
+      );
     });
 
     describe("0008 seeded config row", () => {

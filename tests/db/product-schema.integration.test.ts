@@ -96,9 +96,11 @@ describe.skipIf(!databaseUrl)(
       expect(id).toMatch(/^PRDOFR\d{8}$/);
     });
 
-    // pm56a: rekeyed to pm46's `product_offering_price_component_start_unique`
-    // (product_offering_id, component_type, unit_of_measure, start_date_time)
-    // with NULLS NOT DISTINCT — two NULL-unit flat_fee rows at one start collide.
+    // pm56a: rekeyed to pm46's uniqueness key; pm46a made it the unique lane
+    // index `product_offering_price_lane_start_unique` on (product_offering_id,
+    // component_type, unit_of_measure, price_component ->> 'priceType',
+    // start_date_time) with NULLS NOT DISTINCT — two NULL-unit recurring
+    // flat_fee rows at one start collide.
     const FLAT_FEE_RECURRING = JSON.stringify({
       "@type": "flat_fee",
       specVersion: 1,
@@ -110,7 +112,7 @@ describe.skipIf(!databaseUrl)(
       params: { amount: "10.00" },
     });
 
-    test("duplicate (product_offering_id, component_type, unit_of_measure, start_date_time) insert fails (Inv. #2, rekeyed)", async () => {
+    test("duplicate (product_offering_id, component_type, unit_of_measure, priceType, start_date_time) insert fails (Inv. #2, rekeyed by pm46a)", async () => {
       const offeringId = await insertOffering("Dup Test Offering");
       await sql`
         INSERT INTO product.product_offering_price
@@ -130,7 +132,7 @@ describe.skipIf(!databaseUrl)(
           VALUES (${offeringId}, 'Price B', 'flat_fee', ${FLAT_FEE_RECURRING}::jsonb,
                   1, 'months', 'MYR', '2026-01-01T00:00:00Z')
         `,
-      ).rejects.toThrow();
+      ).rejects.toThrow("product_offering_price_lane_start_unique");
     });
 
     test("a row whose component_type disagrees with its envelope @type is rejected (envelope_type_check)", async () => {

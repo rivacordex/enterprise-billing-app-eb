@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
@@ -12,7 +10,12 @@ import {
   generate,
   layoutFilesFromVerified,
 } from "@/services/billing/invoice-template/generate";
-import { loadLayout } from "@/services/billing/invoice-template/load";
+import {
+  loadLayout,
+  PROBE_RENDER_INPUT,
+  probeGeneratedTemplate,
+} from "@/services/billing/invoice-template/load";
+import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import {
   InvoiceRenderError,
   type InvoiceErrorCode,
@@ -44,17 +47,29 @@ import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-tem
 // never deleted inline (workflow rules §6.7), and the content-addressed path
 // makes an identical retry find identical bytes instead of colliding.
 
+// Render failures the caller can act on, returned as result codes; anything
+// else is a real fault and propagates. One tuple feeds both the runtime guard
+// and the result type, so they cannot drift.
+const RETURNED_RENDER_CODES = [
+  "TEMPLATE_CHECKSUM_MISMATCH",
+  "TEMPLATE_VERSION_NOT_FOUND",
+  "TEMPLATE_GENERATION_FAILED",
+  "TEMPLATE_COMPILE_FAILED",
+  "MANDATORY_SECTION_HIDDEN",
+] as const satisfies readonly InvoiceErrorCode[];
+type ReturnedRenderCode = (typeof RETURNED_RENDER_CODES)[number];
+
+function isReturnedRenderCode(
+  code: InvoiceErrorCode,
+): code is ReturnedRenderCode {
+  return (RETURNED_RENDER_CODES as readonly InvoiceErrorCode[]).includes(code);
+}
+
 export type ActivateTemplateErrorCode =
   | TemplateActivationErrorCode
   | TemplateDraftErrorCode
-  | "VALIDATION_ERROR"
-  | Extract<
-      InvoiceErrorCode,
-      | "TEMPLATE_CHECKSUM_MISMATCH"
-      | "TEMPLATE_VERSION_NOT_FOUND"
-      | "TEMPLATE_GENERATION_FAILED"
-      | "TEMPLATE_COMPILE_FAILED"
-    >;
+  | ReturnedRenderCode
+  | "VALIDATION_ERROR";
 
 export type ActivateTemplateResult =
   | {
@@ -68,15 +83,6 @@ export type ActivateTemplateResult =
   | { ok: false; code: ActivateTemplateErrorCode };
 
 const CONTAINER = "invoice-templates" as const;
-
-// Render failures the caller can act on; anything else is a real fault.
-const RETURNED_RENDER_CODES: ReadonlySet<InvoiceErrorCode> = new Set([
-  "TEMPLATE_CHECKSUM_MISMATCH",
-  "TEMPLATE_VERSION_NOT_FOUND",
-  "TEMPLATE_GENERATION_FAILED",
-  "TEMPLATE_COMPILE_FAILED",
-  "MANDATORY_SECTION_HIDDEN",
-]);
 
 const CONTENT_TYPES = {
   "invoice.hbs": "text/x-handlebars-template; charset=utf-8",
@@ -93,8 +99,9 @@ class ActivationRollback extends Error {
   }
 }
 
+// The blob store's one checksum function, not a second implementation.
 function sha256(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex");
+  return blobStore.digest(bytes, "sha256");
 }
 
 const byCodePoint = (a: string, b: string): number =>
@@ -103,26 +110,12 @@ const byCodePoint = (a: string, b: string): number =>
 // bm50 D3 canonical form: sorted keys, 2-space indent, LF, trailing newline.
 function buildChecksumIndex(files: ReadonlyMap<string, Buffer>): Buffer {
   const index = { algorithm: "sha256", files: {} as Record<string, string> };
-  for (const name of [...files.keys()].sort(byCodePoint)) {
-    index.files[name] = sha256(files.get(name)!);
+  for (const [name, bytes] of [...files].sort(([a], [b]) =>
+    byCodePoint(a, b),
+  )) {
+    index.files[name] = sha256(bytes);
   }
   return Buffer.from(`${JSON.stringify(index, null, 2)}\n`, "utf-8");
-}
-
-function parseSampleData(
-  layoutFiles: ReadonlyMap<string, Buffer>,
-): InvoiceRenderInput {
-  try {
-    const bytes = layoutFiles.get("sample-data.json");
-    if (bytes === undefined) throw new Error("missing");
-    return JSON.parse(bytes.toString("utf-8")) as InvoiceRenderInput;
-  } catch {
-    throw new InvoiceRenderError(
-      "TEMPLATE_COMPILE_FAILED",
-      "the layout's sample-data.json is missing or not valid JSON",
-      { file: "sample-data.json" },
-    );
-  }
 }
 
 function testRenderFailed(message: string): InvoiceRenderError {
@@ -131,11 +124,30 @@ function testRenderFailed(message: string): InvoiceRenderError {
   });
 }
 
-// Step 5: compile both outputs fresh (never the memo) and execute them against
-// the layout's verified sample bill as a draft, as issued, and with no company
-// or payment profile (the G15 path). Handlebars compiles lazily, so executing is
-// what surfaces an unknown helper or a strict-mode missing path.
-function testRender(
+// The three shapes every base input is rendered in: as a draft, as issued, and
+// issued with no company or payment profile (the G15 path).
+function variantsOf(base: InvoiceRenderInput): InvoiceRenderInput[] {
+  const issued: InvoiceRenderInput = {
+    ...base,
+    isDraft: false,
+    invoice: { ...base.invoice, isDraft: false },
+  };
+  return [
+    { ...base, isDraft: true, invoice: { ...base.invoice, isDraft: true } },
+    issued,
+    { ...issued, company: null, payment: null },
+  ];
+}
+
+// Step 5: compile both outputs fresh (never the memo), run the load-time probe
+// itself (`probeGeneratedTemplate`, the exact gate `loadGenerated` runs — both
+// gates must agree: a template that passed activation but failed the load
+// probe would already be ACTIVE, and the previous version RETIRED, while every
+// render of it parked), then execute `variantsOf` both the typed
+// `PROBE_RENDER_INPUT` and the layout's verified sample bill. Handlebars
+// compiles lazily, so executing is what surfaces an unknown helper or a
+// strict-mode missing path.
+export function testRender(
   invoiceHbs: string,
   footerHbs: string,
   sample: InvoiceRenderInput,
@@ -143,21 +155,8 @@ function testRender(
   const invoice = compileInvoiceTemplate(invoiceHbs);
   const footer = compileInvoiceTemplate(footerHbs);
 
-  const variants: InvoiceRenderInput[] = [
-    { ...sample, isDraft: true, invoice: { ...sample.invoice, isDraft: true } },
-    {
-      ...sample,
-      isDraft: false,
-      invoice: { ...sample.invoice, isDraft: false },
-    },
-    {
-      ...sample,
-      isDraft: false,
-      invoice: { ...sample.invoice, isDraft: false },
-      company: null,
-      payment: null,
-    },
-  ];
+  probeGeneratedTemplate(invoice, footer);
+  const variants = [...variantsOf(PROBE_RENDER_INPUT), ...variantsOf(sample)];
 
   for (const input of variants) {
     const html = executeInvoiceTemplate(invoice, input);
@@ -212,7 +211,16 @@ export async function activateTemplate(
   }
   const structure = invoiceTemplateStructureSchema.safeParse(draft.structure);
   if (!structure.success) {
-    return { ok: false, code: "MANDATORY_SECTION_HIDDEN" };
+    // Only the mandatory-section rule is "a required section is hidden"; any
+    // other schema failure (an unknown key, a missing column key, a wrong type)
+    // is an invalid stored structure and must not be reported as that.
+    const hidden = structure.error.issues.some(
+      (i) => i.message === "MANDATORY_SECTION_HIDDEN",
+    );
+    return {
+      ok: false,
+      code: hidden ? "MANDATORY_SECTION_HIDDEN" : "VALIDATION_ERROR",
+    };
   }
   if (draft.refLayoutVersionId === null) {
     return { ok: false, code: "TEMPLATE_VERSION_NOT_FOUND" };
@@ -256,9 +264,9 @@ export async function activateTemplate(
   } catch (error) {
     if (
       error instanceof InvoiceRenderError &&
-      RETURNED_RENDER_CODES.has(error.code)
+      isReturnedRenderCode(error.code)
     ) {
-      return { ok: false, code: error.code as ActivateTemplateErrorCode };
+      return { ok: false, code: error.code };
     }
     throw error;
   }

@@ -126,6 +126,11 @@ tasks:
         #     NEVER a bare DELETE against customer_bill_line (billrun_runtime holds
         #     no table DELETE on it — the guardrail asserts this).
         #   - Money is summed in SQL (numeric), never JS float.
+        # [pm46a, 2026-10-10 — this skeleton is NOT kept in step with the deployed
+        #   flow (local-dev/bill_run_processing.yml), which is authoritative.
+        #   Superseded below: the product lane now splits on the envelope priceType,
+        #   the recurring resolver reads the recurring flat_fee lane only, and
+        #   RECURRING_PRICE_UNSUPPORTED is RETIRED.]
         # REAL (bm29): AFTER the USAGE rollup, in the SAME whole-account-replace
         #   transaction, resolve each subscription's RECURRING charge and write one
         #   RECURRING line per (product_offering_id) (udr_type NULL), rolled ACROSS

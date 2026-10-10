@@ -337,6 +337,20 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
 const GENERATED_FILES = ["invoice.hbs", "footer.hbs"] as const;
 
 // D2 — the generated template for a render. Memo hit → no blob I/O.
+// The load-time probe: execute both compiled templates against the typed
+// `PROBE_RENDER_INPUT` (Handlebars compiles lazily, so executing is what
+// surfaces an unknown helper or a strict-mode missing path). Exported so that
+// activation's `testRender` runs this exact gate rather than a copy of it —
+// the two gates must agree, or a template could activate and then fail to
+// load.
+export function probeGeneratedTemplate(
+  invoice: HandlebarsTemplateDelegate<InvoiceRenderInput>,
+  footer: HandlebarsTemplateDelegate<InvoiceRenderInput>,
+): void {
+  executeInvoiceTemplate(invoice, PROBE_RENDER_INPUT);
+  executeInvoiceTemplate(footer, PROBE_RENDER_INPUT);
+}
+
 export async function loadGenerated(
   row: BillTemplateVersion,
 ): Promise<LoadedGeneratedTemplate> {
@@ -359,8 +373,7 @@ export async function loadGenerated(
   const footer = compileInvoiceTemplate(
     files.get("footer.hbs")!.toString("utf-8"),
   );
-  executeInvoiceTemplate(invoice, PROBE_RENDER_INPUT);
-  executeInvoiceTemplate(footer, PROBE_RENDER_INPUT);
+  probeGeneratedTemplate(invoice, footer);
 
   // D2 step 7 — `structure` comes from the DB row (the generator's source;
   // bm55 writes the same JSON to `structure.json` and tests the parity).

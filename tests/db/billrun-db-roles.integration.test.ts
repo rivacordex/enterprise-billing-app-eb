@@ -981,7 +981,7 @@ describe.skipIf(!databaseUrl)(
           billrunRuntime`INSERT INTO product.product_offering_price DEFAULT VALUES`,
         ).rejects.toThrow(/permission denied for table product_offering_price/);
         await expect(
-          billrunRuntime`UPDATE product.product_offering_price SET amount = amount WHERE false`,
+          billrunRuntime`UPDATE product.product_offering_price SET name = name WHERE false`,
         ).rejects.toThrow(/permission denied for table product_offering_price/);
         await expect(
           billrunRuntime`DELETE FROM product.product_offering_price WHERE false`,

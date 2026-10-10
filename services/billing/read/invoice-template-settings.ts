@@ -76,7 +76,7 @@ function isShowable(
 
 export async function getInvoiceTemplatePageData(
   versionId: string | undefined,
-  { canEdit }: { canEdit: boolean } = { canEdit: false },
+  { canEdit }: { canEdit: boolean },
 ): Promise<InvoiceTemplatePageData> {
   const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
     await Promise.all([

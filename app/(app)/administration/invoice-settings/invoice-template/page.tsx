@@ -32,7 +32,7 @@ import {
 // template page: a thin RSC (guard → parse → services → components). READ
 // views everything (form read-only, preview, Generated .hbs, history); EDIT
 // only makes the form editable — `canEdit` is a show/hide gate, never
-// enforcement. No Save / Activate in bm55 (bm57/bm58).
+// enforcement. Save draft (bm57) and Activate (bm58) are server actions that re-check EDIT.
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {

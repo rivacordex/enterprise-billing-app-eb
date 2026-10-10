@@ -95,6 +95,7 @@ Decomposition rules applied: one visible result per unit; one system boundary; d
 | 44   | `bm44` | Checksum re-anchor (`rated_amount`) + bill-line read model                | app (repository + read surface)       | 42, 43                                                               |
 | 45   | `bm45` | Invoice usage appendix — per-polygon by state/district                    | invoice render + aggregation snapshot | 42, 41                                                               |
 | 46   | `bm46` | Capacity ship gate — live-Kestra E2E + guardrail/audit sign-off           | cross-cutting (tests)                 | 40–45                                                                |
+| 42a  | `bm42a` | Flow fixes — aggregation SQL, trace money as text, plain-USAGE tamper check (follow-up to bm42/bm43; known-issues §21) | flow (`aggregation`, `verification`) | 42, 43, 45; bm40 harness fix `2a95617` |
 
 ### Unit 40 — Unit 0: flow rename + extracted-SQL harness + DB-test safety (`bm40`) — _live P0, ships first_
 

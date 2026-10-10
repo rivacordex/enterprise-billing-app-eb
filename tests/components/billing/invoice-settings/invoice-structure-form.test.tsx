@@ -251,7 +251,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
     );
   });
 
-  it("activates with the draft id, token and trimmed note, then toasts and refreshes", async () => {
+  it("activates with the draft id, token and trimmed note, then toasts without a redundant refresh", async () => {
     mockActivate.mockResolvedValue({
       ok: true,
       versionId: "BTV00000004",
@@ -276,7 +276,8 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       changeNote: "Show the usage annex",
     });
     expect(toast.success).toHaveBeenCalledWith("Template v2 activated");
-    expect(refresh).toHaveBeenCalledOnce();
+    // The action revalidates the layout and the form remounts on the new token.
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("shows the server's refusal inline in the dialog", async () => {
@@ -297,6 +298,54 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       "Another user changed the draft",
     );
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("offers a Reload on DRAFT_CONFLICT so a stale token is not retried forever", async () => {
+    mockActivate.mockResolvedValue({ ok: false, code: "DRAFT_CONFLICT" });
+    renderForm(DRAFT_PROPS);
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "note" },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Activate v2",
+        }),
+      );
+    });
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Another user changed the draft — reload to see it.",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "Reload" }),
+      }),
+    );
+    const options = vi.mocked(toast.warning).mock.calls[0]?.[1] as unknown as {
+      action: { onClick: () => void };
+    };
+    options.action.onClick();
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("does not offer a Reload for other refusals", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "TEMPLATE_COMPILE_FAILED",
+    });
+    renderForm(DRAFT_PROPS);
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "note" },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Activate v2",
+        }),
+      );
+    });
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("test render");
   });
 
   it("uses the draft created by its own save for the next activation", async () => {

@@ -123,6 +123,21 @@ function stripExplicitTransactionBounds(sql: string): string {
 
 type SplitState = "normal" | "line_comment" | "single_quote" | "dollar_quote";
 
+// A dollar-quote tag at the current position: `$$` or `$tag$`.
+const DOLLAR_TAG_AT = /\$[A-Za-z0-9_]*\$/y;
+
+// Matches a sticky (`y`) regex exactly at `index`, without copying the rest
+// of the text (the scanners call this at every `$` and `:`, and the
+// aggregation heredoc is tens of KB with hundreds of `::` casts).
+function matchAt(
+  re: RegExp,
+  text: string,
+  index: number,
+): RegExpExecArray | null {
+  re.lastIndex = index;
+  return re.exec(text);
+}
+
 /**
  * Splits a block of SQL into its top-level `;`-terminated statements,
  * respecting line comments (`-- …`), single-quoted strings (incl. the SQL
@@ -155,7 +170,7 @@ export function splitSqlStatements(sqlText: string): string[] {
         continue;
       }
       if (ch === "$") {
-        const tagMatch = /^\$[A-Za-z0-9_]*\$/.exec(sqlText.slice(i));
+        const tagMatch = matchAt(DOLLAR_TAG_AT, sqlText, i);
         if (tagMatch) {
           dollarTag = tagMatch[0];
           state = "dollar_quote";
@@ -211,7 +226,8 @@ export function splitSqlStatements(sqlText: string): string[] {
   return statements.map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
-const PSQL_VAR_RE = /:'(\w+)'/g;
+// A psql variable reference at the current position: `:'name'`.
+const PSQL_VAR_AT = /:'(\w+)'/y;
 
 /**
  * Rebinds a statement's psql `:'var'` tokens to numbered placeholders bound
@@ -223,26 +239,103 @@ const PSQL_VAR_RE = /:'(\w+)'/g;
  * so a GUC the caller forgot to supply a test value for is caught HERE,
  * before any query reaches the server.
  *
- * Unlike `splitSqlStatements`, this scans blind to quote/comment state (real
- * psql IS quote/comment-aware when deciding where `:'var'` substitution
- * applies). Safe today — none of the flow's heredocs puts a `:'knownVarName'`
- * sequence inside a string literal or a `--` comment — but a future heredoc
- * edit that does would need this binder taught the same state machine.
+ * Like real psql, substitution applies ONLY in plain SQL text. A `:'name'`
+ * inside a `-- …` line comment, a single-quoted string or a dollar-quoted body
+ * is left untouched: the flow's comments explaining that psql does not
+ * substitute `:'var'` inside a dollar-quoted body would otherwise be read as
+ * a reference to a variable called `var`. The scanner uses the same state
+ * machine as `splitSqlStatements` (block comments and quoted identifiers are
+ * not handled by either; none of the flow's heredocs uses them around a
+ * variable).
  */
 export function bindPsqlVars(
   sqlText: string,
   values: Readonly<Record<string, string>>,
 ): { text: string; params: string[] } {
   const params: string[] = [];
-  const text = sqlText.replace(PSQL_VAR_RE, (_match, name: string) => {
-    if (!(name in values)) {
-      throw new Error(
-        `extract-flow-sql: statement references :'${name}' but no test value was supplied for it`,
-      );
+  let text = "";
+  let state: SplitState = "normal";
+  let dollarTag = "";
+  let i = 0;
+  const n = sqlText.length;
+
+  while (i < n) {
+    const ch = sqlText[i]!;
+
+    if (state === "normal") {
+      if (ch === "-" && sqlText[i + 1] === "-") {
+        state = "line_comment";
+        text += "--";
+        i += 2;
+        continue;
+      }
+      if (ch === ":") {
+        const varMatch = matchAt(PSQL_VAR_AT, sqlText, i);
+        if (varMatch) {
+          const name = varMatch[1]!;
+          if (!(name in values)) {
+            throw new Error(
+              `extract-flow-sql: statement references :'${name}' but no test value was supplied for it`,
+            );
+          }
+          params.push(values[name]!);
+          text += `$${params.length}`;
+          i += varMatch[0].length;
+          continue;
+        }
+      }
+      if (ch === "'") {
+        state = "single_quote";
+        text += ch;
+        i += 1;
+        continue;
+      }
+      if (ch === "$") {
+        const tagMatch = matchAt(DOLLAR_TAG_AT, sqlText, i);
+        if (tagMatch) {
+          dollarTag = tagMatch[0];
+          state = "dollar_quote";
+          text += dollarTag;
+          i += dollarTag.length;
+          continue;
+        }
+      }
+      text += ch;
+      i += 1;
+      continue;
     }
-    params.push(values[name]!);
-    return `$${params.length}`;
-  });
+
+    if (state === "line_comment") {
+      text += ch;
+      if (ch === "\n") state = "normal";
+      i += 1;
+      continue;
+    }
+
+    if (state === "single_quote") {
+      text += ch;
+      if (ch === "'" && sqlText[i + 1] === "'") {
+        text += "'";
+        i += 2;
+        continue;
+      }
+      if (ch === "'") state = "normal";
+      i += 1;
+      continue;
+    }
+
+    // state === "dollar_quote"
+    if (sqlText.startsWith(dollarTag, i)) {
+      text += dollarTag;
+      i += dollarTag.length;
+      state = "normal";
+      dollarTag = "";
+      continue;
+    }
+    text += ch;
+    i += 1;
+  }
+
   return { text, params };
 }
 

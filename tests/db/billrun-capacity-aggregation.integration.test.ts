@@ -304,6 +304,152 @@ describe.skipIf(!databaseUrl)(
       180_000,
     );
 
+    // bm42a D2 — the trace's money contract: every amount, rate and decimal
+    // quantity is a JSON STRING at its canonical scale (money 2dp, quantities
+    // and rates 6dp); only the integers v / udrCount / band are numbers; the
+    // motivation `steps` are a verbatim copy of the catalog component.
+    it(
+      "[CRITICAL] the calc trace carries money as strings at canonical scale — " +
+        "no JSON number except v / udrCount / band (bm42a D2)",
+      async () => {
+        const MONEY_KEYS = new Set([
+          "amount",
+          "topUp",
+          "charge",
+          "discount",
+          "gross",
+          "net",
+        ]);
+        const SIX_DP_KEYS = new Set([
+          "quantity",
+          "target",
+          "shortfall",
+          "from",
+          "to",
+          "baseRate",
+          "stepRate",
+          "ratePerUnit",
+          "committedQuantity",
+          "volume",
+        ]);
+        const INTEGER_KEYS = new Set(["v", "udrCount", "band"]);
+        const MONEY_RE = /^-?\d+\.\d{2}$/;
+        const SIX_DP_RE = /^-?\d+\.\d{6}$/;
+
+        const violations: string[] = [];
+        const walk = (node: unknown, path: string): void => {
+          if (Array.isArray(node)) {
+            node.forEach((child, i) => walk(child, `${path}[${i}]`));
+            return;
+          }
+          if (node === null || typeof node !== "object") return;
+          for (const [key, value] of Object.entries(node)) {
+            const here = path === "" ? key : `${path}.${key}`;
+            // Verbatim catalog copy: not ours to reshape.
+            if (here === "pricing.motivation.steps") continue;
+            if (INTEGER_KEYS.has(key)) {
+              // v / udrCount / band must be JSON integers — never text, never
+              // a fraction.
+              if (typeof value !== "number" || !Number.isInteger(value)) {
+                violations.push(
+                  `${here}=${JSON.stringify(value)} is not a JSON integer`,
+                );
+              }
+            } else if (typeof value === "number") {
+              violations.push(`${here} is a JSON number`);
+            } else if (typeof value === "string") {
+              if (MONEY_KEYS.has(key) && !MONEY_RE.test(value)) {
+                violations.push(`${here}="${value}" is not 2dp money text`);
+              }
+              if (SIX_DP_KEYS.has(key) && !SIX_DP_RE.test(value)) {
+                violations.push(`${here}="${value}" is not 6dp decimal text`);
+              }
+            } else {
+              walk(value, here);
+            }
+          }
+        };
+
+        // 800 EA (SHORTFALL: top-up, no band), 1000 EA (MET: no shortfall key),
+        // 2000 EA (one motivation band: its last band has no `to`).
+        const cases = [
+          { label: "TraceShort", ea: 800 },
+          { label: "TraceMet", ea: 1000 },
+          { label: "TraceBand", ea: 2000 },
+        ];
+        const traces: Record<string, Record<string, unknown>> = {};
+        for (const c of cases) {
+          const { ban, usageRatePriceId, runId, piId } =
+            await setupSingleAccountCapacity(
+              c.label,
+              `Trace Offering ${c.label}`,
+              {
+                baseRate: "100",
+                committedQuantity: 1000,
+                steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
+                udrType: "RAN_USAGE",
+              },
+            );
+          await insertCapacityVolumeRow({
+            subRef: piId,
+            runId,
+            ban,
+            attempt: 1,
+            quantityEa: c.ea,
+            rate: "100.000000",
+            priceRef: usageRatePriceId,
+          });
+          await aggregate(runId, ban, 1);
+          const bill = await readBill(runId, ban);
+          const [line] = await readLines(bill!.customerBillId);
+          const info = line!.additionalInfo as unknown as Record<
+            string,
+            unknown
+          >;
+          expect(info).toBeTruthy();
+          walk(info, "");
+          traces[c.label] = info;
+        }
+        expect(violations).toEqual([]);
+
+        type Op = Record<string, unknown> & { op: string };
+        const calcOf = (label: string) => traces[label]!.calc as Op[];
+
+        // SHORTFALL: a 6dp shortfall and a 2dp top-up as text.
+        const shortfall = calcOf("TraceShort").find(
+          (o) => o.op === "commitment",
+        )!;
+        expect(shortfall.outcome).toBe("SHORTFALL");
+        expect(shortfall.shortfall).toBe("200.000000");
+        expect(shortfall.topUp).toBe("20000.00");
+        // MET: no shortfall key at all (NULL::text is stripped).
+        const met = calcOf("TraceMet").find((o) => o.op === "commitment")!;
+        expect(met.outcome).toBe("MET");
+        expect(met).not.toHaveProperty("shortfall");
+        // One band: a number index, string amounts, and no `to` on the last band.
+        const band = calcOf("TraceBand").find((o) => o.op === "motivation")!;
+        expect(band.band).toBe(1);
+        expect(band.from).toBe("1000.000000");
+        expect(band).not.toHaveProperty("to");
+        expect(band.quantity).toBe("1000.000000");
+        expect(band.discount).toBe("50000.00");
+        // pricing: committed quantity and base rate are text; steps are verbatim.
+        const pricing = traces.TraceBand!.pricing as {
+          usageRate: { ratePerUnit: string };
+          commitment: { committedQuantity: string };
+          motivation: {
+            steps: Array<{ aboveQuantity: number; ratePerUnit: string }>;
+          };
+        };
+        expect(pricing.usageRate.ratePerUnit).toBe("100.000000");
+        expect(pricing.commitment.committedQuantity).toBe("1000.000000");
+        expect(pricing.motivation.steps).toEqual([
+          { aboveQuantity: 1000, ratePerUnit: "50" },
+        ]);
+      },
+      180_000,
+    );
+
     it(
       "commitment-only (floor, discount 0) and motivation-only (topUp 0, discount " +
         "applied) offerings each bill correctly, independently (TC36)",

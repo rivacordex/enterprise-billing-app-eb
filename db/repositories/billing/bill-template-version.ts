@@ -10,8 +10,9 @@ import type { TemplateKind } from "@/types/billing";
 import type { InvoiceTemplateStructureInput } from "@/validation/billing/invoice-template-structure.schema";
 
 // bm50-spec §Design D9 — repository over `bill_template_version`. bm57 adds the
-// working-draft writes (`insertDraft`, `updateDraftStructure`); activation
-// arrives with bm58. The one format is `INVOICE`
+// working-draft writes (`insertDraft`, `updateDraftStructure`); bm58 adds the
+// activation writes (`findDraftForUpdate`, `retireActive`, `promoteDraft`). The
+// one format is `INVOICE`
 // (code-standards Part 2 TS rule 6), so every read is scoped to it.
 const INVOICE = "INVOICE";
 
