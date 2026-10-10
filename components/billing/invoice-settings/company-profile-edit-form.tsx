@@ -6,8 +6,8 @@
 // applies), so the form rejects exactly what the action rejects: formats are
 // checked on save, completeness only at activation (bm61). **Save draft**
 // writes the single working DRAFT version; it is never used on invoices.
-// Country is fixed to `MY` this phase; the logo is shown read-only (bm60
-// uploads it) and is never sent.
+// Country is fixed to `MY` this phase. The logo is never sent with the form:
+// bm60's `LogoUploadField` uploads it onto the stored draft on its own.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -24,6 +24,7 @@ import { toast } from "sonner";
 
 import { saveProfileDraftAction } from "@/actions/billing/invoice-settings/save-profile-draft.action";
 import { ColourSwatch } from "@/components/billing/invoice-settings/colour-swatch";
+import { LogoUploadField } from "@/components/billing/invoice-settings/logo-upload-field";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -118,12 +119,15 @@ export interface CompanyProfileEditFormProps {
   // The session-guarded logo URL, or `null` when the version has no logo.
   logoSrc: string | null;
   expectedDraftToken: string | null;
+  // bm60 D8 — offer "Use the current app logo" (no logo asset exists yet).
+  showLogoImport?: boolean;
 }
 
 export function CompanyProfileEditForm({
   fields,
   logoSrc,
   expectedDraftToken,
+  showLogoImport = false,
 }: CompanyProfileEditFormProps): React.JSX.Element {
   const router = useRouter();
   const [draftToken, setDraftToken] = useState(expectedDraftToken);
@@ -320,17 +324,15 @@ export function CompanyProfileEditForm({
           <FieldLabel>
             {INVOICE_PROFILE_FIELD_LABELS.logo_asset_version_id}
           </FieldLabel>
-          {logoSrc ? (
-            // eslint-disable-next-line @next/next/no-img-element -- the logo is served by the session-guarded GET route (bm56 D3); next/image would proxy it past the route's CSP/no-store headers.
-            <img
-              src={logoSrc}
-              alt="Company logo"
-              className="max-h-20 max-w-[240px] border border-[color:var(--border-subtle)] bg-white p-1"
-            />
-          ) : (
-            <span className="text-[color:var(--text-muted)]">—</span>
-          )}
-          <FieldDescription>Logo upload is not available yet.</FieldDescription>
+          {/* bm60 — the upload writes to the stored draft and re-renders the
+              page on the new token, so unsaved edits would be lost: the field
+              waits until they are saved. */}
+          <LogoUploadField
+            logoSrc={logoSrc}
+            draftToken={draftToken}
+            blockedReason={isDirty ? "Save your changes first." : null}
+            showImport={showLogoImport}
+          />
         </Field>
       </Group>
 

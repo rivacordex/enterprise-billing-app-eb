@@ -20,6 +20,8 @@ export interface CompanyProfileFormProps {
   logoAssetVersionId: string | null;
   // Edit mode: the working draft's token, or `null` when no draft exists yet.
   expectedDraftToken?: string | null;
+  // Edit mode, bm60 D8: offer "Use the current app logo".
+  showLogoImport?: boolean;
 }
 
 const MUTED = "text-[color:var(--text-muted)]";
@@ -84,6 +86,7 @@ export function CompanyProfileForm({
   fields,
   logoAssetVersionId,
   expectedDraftToken = null,
+  showLogoImport = false,
 }: CompanyProfileFormProps): React.JSX.Element {
   if (mode === "edit") {
     return (
@@ -95,6 +98,7 @@ export function CompanyProfileForm({
             : null
         }
         expectedDraftToken={expectedDraftToken}
+        showLogoImport={showLogoImport}
       />
     );
   }

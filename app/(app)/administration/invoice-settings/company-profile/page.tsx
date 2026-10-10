@@ -57,7 +57,7 @@ export default async function CompanyProfilePage({
     LEVELS.EDIT,
   );
 
-  const { shown, history, draft } = await getCompanyProfilePage({
+  const { shown, history, draft, hasLogoAsset } = await getCompanyProfilePage({
     version,
     canEdit,
   });
@@ -163,6 +163,7 @@ export default async function CompanyProfilePage({
             fields={shown.fields}
             logoAssetVersionId={shown.logoAssetVersionId}
             expectedDraftToken={draft?.token ?? null}
+            showLogoImport={!hasLogoAsset}
           />
         </>
       ) : (
@@ -186,6 +187,7 @@ export default async function CompanyProfilePage({
               fields={{}}
               logoAssetVersionId={null}
               expectedDraftToken={null}
+              showLogoImport={!hasLogoAsset}
             />
           ) : null}
         </>

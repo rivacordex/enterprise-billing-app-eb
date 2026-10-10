@@ -525,7 +525,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
   - Server-side checks, in this order:
     1. the actual byte length is 500 KB or less
     2. the magic bytes are PNG, JPEG or SVG and match the declared MIME type
-    3. the shorter side is at least 300 px (checked with `sharp`)
+    3. the shorter side is at least 300 px (pure PNG `IHDR` / JPEG `SOFn` / SVG root-attribute parsers; no image library — bm60)
     4. an SVG is rejected if it contains `<script`, `on*=` attributes, `<foreignObject` or an external `href`/`url(`. It is rejected, never repaired
   - A `bill_asset` / `bill_asset_version` row and a write-once blob in `invoice-assets`.
   - The draft profile's `logo_asset_version_id`.

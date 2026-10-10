@@ -282,6 +282,21 @@ fields under the empty-state alert, whose **Create a draft** action focuses the
 first field. While a draft exists, other versions are read-only with an "Edit
 draft v{n}" link.
 
+**Logo upload (bm60).** `LogoUploadField` sits in the Branding group as
+built: the dropzone (`--surface-sunken`, dashed `--border-strong`, the focus
+ring on `focus-within`) shows the stored logo through the GET route (never a
+`blob:` URL), a caption "PNG, JPEG or SVG, up to 500 KB, at least 300 px on
+the shorter side", and an outline **Choose file** button (the file input is
+visually hidden and the button is the keyboard path). It is disabled with
+"Save the draft first." when no draft exists, and with "Save your changes
+first." while the form has unsaved edits (an upload re-renders the form on the
+draft's new token). A rejection shows inline in Danger (`--color-danger-700`)
+with its reason ("The image is 200×900 px; the shorter side must be at least
+300 px.", "The SVG contains <script>, which is not allowed."). Success is a
+toast "Logo v{n} added to draft v{m}"; `DRAFT_CONFLICT` is the Warning toast
+with **Reload**. A ghost **Use the current app logo** button appears only
+while no logo asset exists (D8).
+
 **Activate (bm58).** The page-level **Activate v{n}** button is the one Deep Petrol
 button on the screen (§7). It is enabled only when a saved draft exists and the
 form has no unsaved edits; with edits it reads "Save draft first", and with no

@@ -18,6 +18,7 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   USER_ENABLED: "Additive",
   ROLE_CREATED: "Additive",
   ROLE_ASSIGNED: "Additive",
+  INVOICE_LOGO_UPLOADED: "Additive",
   ORGANIZATION_CREATED: "Additive",
   CUSTOMER_CREATED: "Additive",
   CONTACT_CREATED: "Additive",

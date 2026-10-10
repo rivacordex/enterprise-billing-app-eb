@@ -157,7 +157,7 @@ The general §5 list applies in full. Stop, explain why, and get confirmation be
 10. **`next.config.ts` `serverActions.bodySizeLimit` is not raised** for the logo upload.
 11. **The application branding logo is untouched:** `getBrandingLogo()` and `app`/`app_logo_path`.
 12. **The generic System Config page:** the only authorized change is excluding the `invoice.profile` group from its editable list.
-13. **No new dependency beyond Handlebars.** `sharp` is already installed. An SVG sanitizer library, an image library or any other addition is a stop-and-ask.
+13. **No new dependency beyond Handlebars.** `sharp` is **not** a usable dependency (only an optional transitive of `next`); logo dimensions come from pure parsers (bm60, guarded by `tests/guardrails/no-image-library.test.ts`). An SVG sanitizer library, an image library or any other addition is a stop-and-ask.
 14. **Rating module files** (schema, flow, `rating-db-roles.sql`) change only after X1 resolves to R9, and only under `ratemgmt-ai-workflow-rules.md`.
 15. **`workflow-management/**` gets no Part 2 change.** A Part 2 diff touching it is off-plan.
 

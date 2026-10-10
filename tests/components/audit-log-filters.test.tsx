@@ -44,6 +44,10 @@ describe("AuditLogFilters", () => {
       within(additive).getByText("ORGANIZATION_CREATED"),
     ).toBeInTheDocument();
     expect(within(additive).getByText("CUSTOMER_CREATED")).toBeInTheDocument();
+    // bm60 addition
+    expect(
+      within(additive).getByText("INVOICE_LOGO_UPLOADED"),
+    ).toBeInTheDocument();
     expect(within(additive).getByText("CONTACT_CREATED")).toBeInTheDocument();
     expect(
       within(additive).getByText("PRODUCT_OFFERING_CREATED"),
@@ -203,7 +207,7 @@ describe("AuditLogFilters", () => {
       within(change).getByText("INVOICE_PROFILE_DRAFT_SAVED"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(84); // "All events" + 83 (bm57 added INVOICE_TEMPLATE_DRAFT_SAVED, bm58 INVOICE_TEMPLATE_ACTIVATED, bm59 INVOICE_PROFILE_DRAFT_SAVED)
+    expect(within(select).getAllByRole("option")).toHaveLength(85); // "All events" + 84 (bm57 added INVOICE_TEMPLATE_DRAFT_SAVED, bm58 INVOICE_TEMPLATE_ACTIVATED, bm59 INVOICE_PROFILE_DRAFT_SAVED, bm60 INVOICE_LOGO_UPLOADED)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

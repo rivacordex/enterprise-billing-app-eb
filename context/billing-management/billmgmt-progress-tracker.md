@@ -1393,6 +1393,104 @@ DELIVERED" section.
     §10b (profile Save draft, Create a draft); this tracker.
   - **Next:** bm60 (logo upload onto the draft), bm61 (profile activation, writes `meta.*`).
 
+## Invoice Template update — bm60 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-10)
+
+- **bm60 — Company profile: logo upload + sanitization (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm60-company-profile-logo-upload.md`. An
+  `invoice_settings : EDIT` user uploads the invoice logo onto the working draft profile: checked
+  server-side in order (size ≤ 500 KB → magic bytes = declared MIME → shorter side ≥ 300 px via
+  pure PNG/JPEG/SVG parsers → SVG content policy, reject never repair), stored write-once at a
+  content-addressed path in `invoice-assets` as a new `bill_asset_version`, the draft pointed at
+  it, and one `INVOICE_LOGO_UPLOADED` audit row. No migration, no grant change, no new dependency
+  (no `sharp`). Depends on bm59, bm51; bm52 deployed before the prod release.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_LOGO_UPLOADED` (Additive).
+      `types/billing.ts`: `LOGO_UPLOAD_ERROR_CODES` (`LOGO_REJECTED`), `LogoRejectReason`
+      (`size | mime | dimensions | svg_content`), `LOGO_MIME_TYPES`, `LOGO_MAX_BYTES = 512000`,
+      `LOGO_MIN_SIDE_PX = 300`, `CompanyProfilePageModel.hasLogoAsset`.
+    - `services/billing/invoice-profile/image-dimensions.ts` (D2 check 2 + D3): `detectImageType`
+      (PNG/JPEG magic; SVG = strict UTF-8 whose root after BOM, `<?xml?>`, comments and a DOCTYPE is
+      `<svg`), `pngDimensions` (IHDR first chunk), `jpegDimensions` (bounded marker walk to the first
+      SOFn), `svgDimensions` (unitless/`px` width+height, else viewBox). Pure, bounds-checked, typed
+      results, no throw.
+    - `sanitize-logo.ts` (D4): `findSvgViolation` returns the earliest offending construct; nothing
+      is stripped.
+    - `upload-logo.ts`: `checkLogo` (the four checks in data rule 9 order), `uploadLogo` (D5/D6:
+      `ensureLogoAsset` in its own short transaction → `putObject('invoice-assets',
+      '{INVAST}/sha256-{digest12}/logo.{ext}', …, writeOnce + returnExisting + sha256)`, a digest
+      mismatch → `ACTIVATION_BLOB_CONFLICT` → one transaction: `insertVersion` → `setDraftLogo` →
+      audit), and `importAppLogo` (D8).
+    - Repositories: `billAssetRepository.findLogoAsset`, `ensureLogoAsset` (advisory lock
+      `billing.bill_asset:logo`), `insertVersion` (lock `billing.bill_asset_version:{INVAST}`,
+      `max + 1`, ACTIVE, sha256); `invoiceProfileRepository.setDraftLogo` (profile group lock, then
+      the token-guarded `updateDraftFields` on `logo_asset_version_id`).
+    - `actions/billing/invoice-settings/upload-logo.action.ts`: `uploadLogoAction(FormData)` and
+      `importAppLogoAction({ expectedDraftToken })`, one shared EDIT guard first, then Zod
+      (`validation/billing/logo-upload.schema.ts`; a declared type outside the three is
+      `LOGO_REJECTED: mime`), the service, and `revalidatePath` on success. `bodySizeLimit` unchanged.
+    - UI: `LogoUploadField` (D7) in the edit form's Branding group: dropzone + keyboard "Choose
+      file", client pre-check (fast feedback only), inline Danger reason, preview via the GET route,
+      Warning toast + Reload on a conflict, "Use the current app logo" while no logo asset exists.
+  - **Deviations / interpretations (recorded):**
+    1. **SVG detection skips a leading `<!DOCTYPE …>`.** D2 lists only BOM, whitespace, `<?xml?>`
+       and comments, but then a DOCTYPE'd SVG would be `mime`, and D4's `<!DOCTYPE` rule and the
+       guardrail-52 case could never fire. Skipping it in detection lets `svg_content` name it.
+    2. **An SVG width/height in another unit is refused even when a viewBox exists** (D3's "units
+       other than px/unitless → dimensions"). So the shipped `public/brand/logo.svg` (`918pt` ×
+       `612pt`, plus a DOCTYPE) is refused by the D8 import as `dimensions`; D8 anticipates such a
+       rejection.
+    3. **Fail fast before the blob write:** the service checks the draft token before
+       `ensureLogoAsset`/`putObject`, so a missing or stale draft leaves no orphan blob; the
+       transaction still re-checks under the lock. A failure there throws a private sentinel so the
+       version row rolls back, then maps to `DRAFT_CONFLICT`.
+    4. **The upload is disabled while the form has unsaved edits** ("Save your changes first.").
+       The upload bumps the draft token and the page remounts the form on it, which would drop the
+       unsaved edits.
+    5. **D8 import** lives in the same action file; the path is `getBrandingLogo().src` (default
+       `/brand/logo.svg`), re-checked to stay under `public/brand/`; a missing or unreadable file is
+       the new result code `APP_LOGO_UNAVAILABLE`.
+    6. Sizes display in KiB, so the 512,000-byte cap reads "500 KB" (the spec's figure).
+    7. Architecture Inv #48 said "stripped or rejected"; reworded to "rejected, never stripped" to
+       match D4 and data rule 9.
+    8. The no-image-library guardrail scans `services`, `actions`, `app`, `lib` and `components`
+       (the spec names the first three) and checks `package.json`.
+  - **Tests (all green):**
+    - `upload-logo.test.ts` (**guardrail 52**, 34): `size` (> 500 KB, 0 bytes; exactly 500 KB
+      passes), `dimensions` (< 300 px PNG, JPEG, SVG; mm units), `mime` (PNG declared SVG, SVG
+      declared PNG, GIF, text), `svg_content` (script, onload, onclick, foreignObject, iframe, embed,
+      object, external href, `xlink:href="http…"`, external `<image>`, `url(http…)`, `javascript:`,
+      `data:`, `@import`, `<style>` with `url(`, DOCTYPE + ENTITY), fragment-only references accepted,
+      check order (oversized SVG with a script → `size`; tiny SVG with a script → `dimensions`),
+      nothing written on any rejection; the stored path, call order and audit payload; draft and blob
+      conflicts.
+    - `image-dimensions.test.ts` (42): happy paths, truncated buffers, bogus IHDR, no SOF, DHT,
+      bad segment lengths, SVG `%`/`em`/`mm`/`pt`, missing/broken viewBox, quoted `>` in attributes.
+    - `tests/db/upload-logo.integration.test.ts` (6, Postgres + Azurite): no draft →
+      `DRAFT_CONFLICT`, nothing stored; a valid PNG → INVAST/INVASV rows, exact bytes at the
+      content-addressed path, digest verified, served by `getVerifiedLogo`, draft pointed, one audit
+      row; re-upload → version 2 over the same blob; stale token; a DB failure after the blob write
+      → orphan blob, no row, no audit, draft unchanged; a rejected file stores nothing.
+    - `upload-logo.action.test.ts` (10): READ → `FORBIDDEN` with nothing written; a 4.9 MB body →
+      `size`; a GIF → `mime`; bad FormData; the D8 import (READ refused, the shipped brand logo
+      refused, a path outside `/brand/` → `APP_LOGO_UNAVAILABLE`).
+    - `logo-upload-field.test.tsx` (13), `no-image-library.test.ts` (3), authz-matrix row + an
+      order/write-once check, `audit-log-filters` (85 options), `read-profile.test.ts`
+      (`hasLogoAsset`).
+    - Full integration project: **1185 passed, 0 failed** (125 files), 404 s, on a fresh cluster. A
+      first full run had 12 failures in `billrun-db-roles` and `rating/grants` (`role "app_runtime"
+      is not permitted to log in`): a pre-existing file-order hazard, now known-issues **22f**. Both
+      suites pass on a fresh cluster. Full unit suite: 4248 passed, 2 failed, both 10 s timeouts
+      under load (`route-manifest`, `ratecard-parse-csv`) that pass alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the upload field.
+  - **Docs closed in this change set:** bm00 (the remaining "checked with `sharp`" line; the
+    stack-additions row was already corrected); code-standards data rule 7 (asset path
+    `{INVAST}/sha256-{digest12}/logo.{ext}`), data rule 9 (pure parsers, the full SVG policy, the
+    reason order) and TS rule 7 (`LOGO_REJECTED` reasons and detail); architecture platform delta
+    (first upload, built) and Inv #48 wording; workflow rules §6.13 (`sharp` is not a dependency);
+    ui-context §10b (logo upload); known-issues 22f; this tracker.
+  - **Next:** bm61 (profile activation; requires the logo, writes `meta.*`).
+
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
 
 - **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:

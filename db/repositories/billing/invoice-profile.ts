@@ -18,7 +18,8 @@ import type { ConfigStatus } from "@/types/system-config";
 // sharing a `config_version` (all with the same `status`), `is_secret = false`
 // (code-standards Part 2 data rule 5). bm59 adds the working-draft writes
 // (`lockProfileGroup`, `nextProfileVersion`, `findDraftVersion`,
-// `insertDraftVersion`, `updateDraftFields`); activation arrives with bm61.
+// `insertDraftVersion`, `updateDraftFields`); bm60 adds `setDraftLogo`;
+// activation arrives with bm61.
 // Every read excludes secret rows, so a mis-flagged row can never reach a
 // rendered invoice.
 export const INVOICE_PROFILE_GROUP = INVOICE_PROFILE_CONFIG_GROUP;
@@ -302,6 +303,43 @@ export const invoiceProfileRepository = {
     if (updated.length === 0) return null;
     const draft = await this.findDraftVersion(tx);
     return draft?.token ?? null;
+  },
+
+  // bm60 D5 step 4 — point the working DRAFT's `logo_asset_version_id` row at
+  // a new logo version, guarded by the caller's draft token (the
+  // `updateDraftFields` statement). Returns the draft version, the previous
+  // logo id and the new token, or `null` when there is no draft or the token
+  // is stale (the caller reports `DRAFT_CONFLICT`).
+  async setDraftLogo(
+    tx: Database,
+    input: {
+      expectedDraftToken: string;
+      assetVersionId: string;
+      actor: string;
+    },
+  ): Promise<{
+    configVersion: number;
+    previousLogoAssetVersionId: string | null;
+    token: string;
+  } | null> {
+    await this.lockProfileGroup(tx);
+    const draft = await this.findDraftVersion(tx);
+    if (draft?.token !== input.expectedDraftToken) return null;
+    const previous =
+      (await this.readVersion(tx, draft.configVersion)).logo_asset_version_id ??
+      null;
+    const token = await this.updateDraftFields(tx, {
+      version: draft.configVersion,
+      changes: { logo_asset_version_id: input.assetVersionId },
+      actor: input.actor,
+      expectedToken: input.expectedDraftToken,
+    });
+    if (token === null) return null;
+    return {
+      configVersion: draft.configVersion,
+      previousLogoAssetVersionId: previous,
+      token,
+    };
   },
 
   // bm56 D1 — display names for the appuser ids stored on a version (`modified_by`,

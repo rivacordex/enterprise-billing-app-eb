@@ -1159,6 +1159,9 @@ export interface CompanyProfilePageModel {
   history: ProfileHistoryRow[];
   // bm59 — EDIT users only; always `null` for READ users.
   draft: ProfileDraftInfo | null;
+  // bm60 D8 — whether the logo asset exists (the "Use the current app logo"
+  // import is offered only before it does). Always `true` for READ users.
+  hasLogoAsset: boolean;
 }
 
 // bm59-spec §Design D1/D3 — each profile key's label: the form's field label
@@ -1225,3 +1228,33 @@ export const TEMPLATE_ACTIVATION_ERROR_CODES = [
 ] as const;
 export type TemplateActivationErrorCode =
   (typeof TEMPLATE_ACTIVATION_ERROR_CODES)[number];
+
+// bm60-spec §Design D2 — the logo upload's result codes beyond the generic
+// ones. `LOGO_REJECTED` (binding, code-standards TS rule 7) carries a `reason`
+// (the first failed check, in data rule 9 order) and a `detail`. A rejection
+// writes nothing and is not audited. Never thrown.
+export const LOGO_UPLOAD_ERROR_CODES = ["LOGO_REJECTED"] as const;
+export type LogoUploadErrorCode = (typeof LOGO_UPLOAD_ERROR_CODES)[number];
+
+export const LOGO_REJECT_REASONS = [
+  "size",
+  "mime",
+  "dimensions",
+  "svg_content",
+] as const;
+export type LogoRejectReason = (typeof LOGO_REJECT_REASONS)[number];
+
+// The three logo MIME types (`bill_asset_version.mime` CHECK, 0046).
+export const LOGO_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/svg+xml",
+] as const;
+export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
+
+// 500 KB on the actual byte length (`byte_size BETWEEN 1 AND 512000`, 0046).
+export const LOGO_MAX_BYTES = 512_000;
+// The shorter side of the logo, in px.
+export const LOGO_MIN_SIDE_PX = 300;
+
+export type LogoRejectDetail = Readonly<Record<string, string | number | null>>;

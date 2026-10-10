@@ -15,10 +15,11 @@ vi.mock("@/db/repositories/billing/invoice-profile", () => ({
   },
 }));
 vi.mock("@/db/repositories/billing/bill-asset", () => ({
-  billAssetRepository: { findVersionById: vi.fn() },
+  billAssetRepository: { findVersionById: vi.fn(), findLogoAsset: vi.fn() },
 }));
 vi.mock("@/services/billing/blob-store", () => ({ blobStore: {} }));
 
+import { billAssetRepository } from "@/db/repositories/billing/bill-asset";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import { getCompanyProfilePageModel } from "@/services/billing/invoice-profile/read-profile";
 
@@ -45,6 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   repo.resolveUserNames.mockResolvedValue(new Map([["user-1", "Alice"]]));
   repo.findDraftVersion.mockResolvedValue(null);
+  vi.mocked(billAssetRepository.findLogoAsset).mockResolvedValue(null);
   repo.readVersionRaw.mockImplementation(async (_db, version) => ({
     fields: {
       company_name: `Co v${version}`,
@@ -58,7 +60,12 @@ describe("getCompanyProfilePageModel", () => {
   it("returns shown: null and an empty history when no profile exists", async () => {
     repo.listVersions.mockResolvedValue([]);
     const model = await getCompanyProfilePageModel(DB, { canEdit: true });
-    expect(model).toEqual({ shown: null, history: [], draft: null });
+    expect(model).toEqual({
+      shown: null,
+      history: [],
+      draft: null,
+      hasLogoAsset: false,
+    });
     expect(repo.readVersionRaw).not.toHaveBeenCalled();
   });
 
@@ -158,7 +165,12 @@ describe("getCompanyProfilePageModel", () => {
       summary({ configVersion: 1, status: "DRAFT" }),
     ]);
     const model = await getCompanyProfilePageModel(DB, { canEdit: false });
-    expect(model).toEqual({ shown: null, history: [], draft: null });
+    expect(model).toEqual({
+      shown: null,
+      history: [],
+      draft: null,
+      hasLogoAsset: true,
+    });
   });
 
   it("renders an incomplete DRAFT as the unparsed field map (no schema parse)", async () => {

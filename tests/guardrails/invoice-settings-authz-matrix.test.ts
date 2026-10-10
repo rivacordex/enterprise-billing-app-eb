@@ -91,6 +91,12 @@ const MATRIX: MatrixRow[] = [
     level: "EDIT",
     kind: "action",
   },
+  {
+    surface: "upload logo / import app logo (mutations)",
+    file: "actions/billing/invoice-settings/upload-logo.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
 ];
 
 describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => {
@@ -263,6 +269,42 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toMatch(
       /key=\{`\$\{shown\.version\}:\$\{draft\?\.token \?\? "none"\}`\}/,
     );
+  });
+
+  it("upload-logo guards both actions on EDIT before parsing; the service checks, writes write-once, then audits in one transaction (bm60)", () => {
+    const src = read("actions/billing/invoice-settings/upload-logo.action.ts");
+    // One shared guard, awaited first by each exported action.
+    expect(src.match(/LEVELS\.EDIT/g)).toHaveLength(1);
+    for (const [fn, parse, service] of [
+      ["uploadLogoAction(", "logoUploadSchema.safeParse", "await uploadLogo("],
+      [
+        "importAppLogoAction(",
+        "importAppLogoSchema.safeParse",
+        "await importAppLogo(",
+      ],
+    ] as const) {
+      const body = src.slice(src.indexOf(`export async function ${fn}`));
+      const guard = body.indexOf("await guardEdit()");
+      expect(guard).toBeGreaterThan(-1);
+      expect(guard).toBeLessThan(body.indexOf(parse));
+      expect(body.indexOf(parse)).toBeLessThan(body.indexOf(service));
+      expect(body.indexOf(service)).toBeLessThan(
+        body.indexOf("revalidatePath("),
+      );
+    }
+    expect(src).not.toMatch(/insertAuditEvent|putObject/);
+    const svc = read("services/billing/invoice-profile/upload-logo.ts");
+    // The checks run before anything is written.
+    expect(svc.indexOf("checkLogo(input.bytes")).toBeLessThan(
+      svc.indexOf("blobStore.putObject("),
+    );
+    expect(svc).toMatch(/writeOnce:\s*true/);
+    expect(svc).not.toMatch(/deleteBlob|writeOnce:\s*false/);
+    // The blob write precedes the one transaction that records it.
+    expect(svc.indexOf("blobStore.putObject(")).toBeLessThan(
+      svc.indexOf("insertVersion("),
+    );
+    expect(svc.match(/eventType: "INVOICE_LOGO_UPLOADED"/g)).toHaveLength(1);
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {

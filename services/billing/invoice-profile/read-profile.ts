@@ -227,7 +227,12 @@ export async function getCompanyProfilePageModel(
         }
       : null;
 
-  if (!chosen) return { shown: null, history, draft };
+  // bm60 D8 — only EDIT users can import, so READ users skip the lookup.
+  const hasLogoAsset = canEdit
+    ? (await billAssetRepository.findLogoAsset(db)) !== null
+    : true;
+
+  if (!chosen) return { shown: null, history, draft, hasLogoAsset };
 
   const raw = await invoiceProfileRepository.readVersionRaw(
     db,
@@ -245,6 +250,7 @@ export async function getCompanyProfilePageModel(
     },
     history,
     draft,
+    hasLogoAsset,
   };
 }
 
