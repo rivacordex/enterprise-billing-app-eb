@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { billAssetVersionIdSchema } from "@/validation/billing/template-version-id.schema";
 import { DRAFT_TOKEN_RE } from "@/validation/billing/invoice-template-structure.schema";
+import { HEX_COLOUR_RE } from "@/types/billing";
 
 // bm53-spec §Design D3 — THE company-profile schema (code-standards Part 2 TS
 // rule 5), shared by the render-time read (bm53), the form and the save action
@@ -26,24 +27,35 @@ const SST_RE = /^[A-Z]\d{2}-\d{4}-\d{8}$/;
 const POSTCODE_RE = /^\d{5}$/;
 const STATE_CODE_RE = /^(0[1-9]|1[0-6])$/;
 const COUNTRY_CODE_RE = /^[A-Z]{2}$/;
-const COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
 const ACCOUNT_NO_RE = /^[0-9-]{6,30}$/;
 const SWIFT_RE = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
 const DIGITS_RE = /^\d+$/;
 
+// A missing key fails on type before any format check; give it the same
+// "Required" the form shows for a blank (not Zod’s raw type message).
+const REQUIRED = "Required";
 const COLOUR_MESSAGE = "Use a #RRGGBB colour, e.g. #2E45A9";
 const EMAIL_MESSAGE = "Enter a valid email address";
 
 function text(max: number): z.ZodString {
-  return z.string().min(1, "Required").max(max, `At most ${max} characters`);
+  return z
+    .string(REQUIRED)
+    .min(1, REQUIRED)
+    .max(max, `At most ${max} characters`);
 }
+
+// The `MY` default lives on `invoiceProfileSchema` only: under `.partial()` a
+// default would still fill an omitted key, so a draft save must not see it.
+const countryCodeSchema = z
+  .string(REQUIRED)
+  .regex(COUNTRY_CODE_RE, "Country is a 2-letter code");
 
 export const invoiceProfileFieldsSchema = z
   .object({
     company_name: text(150),
     registration_no: text(40),
     tin: z
-      .string()
+      .string(REQUIRED)
       .regex(TIN_RE, "TIN is 1–2 letters then 10–11 digits, e.g. C12345678901"),
     sst_reg_no: z
       .string()
@@ -51,27 +63,26 @@ export const invoiceProfileFieldsSchema = z
       .optional(),
     address_line1: text(120),
     address_line2: z.string().max(120, "At most 120 characters").optional(),
-    postcode: z.string().regex(POSTCODE_RE, "Postcode is 5 digits"),
+    postcode: z.string(REQUIRED).regex(POSTCODE_RE, "Postcode is 5 digits"),
     city: text(80),
-    state_code: z.string().regex(STATE_CODE_RE, "Choose a state (01–16)"),
-    country_code: z
-      .string()
-      .regex(COUNTRY_CODE_RE, "Country is a 2-letter code")
-      .default("MY"),
+    state_code: z
+      .string(REQUIRED)
+      .regex(STATE_CODE_RE, "Choose a state (01–16)"),
+    country_code: countryCodeSchema,
     phone: text(30),
     email: z.email(EMAIL_MESSAGE),
     website: z
       .url({ protocol: /^https$/, error: "Website must start with https://" })
       .optional(),
-    brand_color: z.string().regex(COLOUR_RE, COLOUR_MESSAGE),
-    accent_color: z.string().regex(COLOUR_RE, COLOUR_MESSAGE),
+    brand_color: z.string(REQUIRED).regex(HEX_COLOUR_RE, COLOUR_MESSAGE),
+    accent_color: z.string(REQUIRED).regex(HEX_COLOUR_RE, COLOUR_MESSAGE),
     bank_name: text(80),
     bank_account_name: text(120),
     bank_account_no: z
-      .string()
+      .string(REQUIRED)
       .regex(ACCOUNT_NO_RE, "Account no. is 6–30 digits or dashes"),
     swift: z
-      .string()
+      .string(REQUIRED)
       .regex(SWIFT_RE, "SWIFT is 8 or 11 characters, e.g. MBBEMYKL"),
     jompay_biller_code: z
       .string()
@@ -91,7 +102,10 @@ export const invoiceProfileFieldsSchema = z
 export const invoiceProfileDraftSchema = invoiceProfileFieldsSchema.partial();
 
 export const invoiceProfileSchema = invoiceProfileFieldsSchema
-  .extend({ logo_asset_version_id: billAssetVersionIdSchema.optional() })
+  .extend({
+    country_code: countryCodeSchema.default("MY"),
+    logo_asset_version_id: billAssetVersionIdSchema.optional(),
+  })
   .strict();
 
 export type InvoiceProfileInput = z.input<typeof invoiceProfileSchema>;
@@ -175,7 +189,7 @@ export const saveProfileDraftInputSchema = z
       normalizeInvoiceProfileDraftInput,
       invoiceProfileDraftSchema,
     ),
-    expectedDraftToken: z.string().regex(DRAFT_TOKEN_RE).nullable(),
+    expectedDraftToken: z.string(REQUIRED).regex(DRAFT_TOKEN_RE).nullable(),
   })
   .strict();
 

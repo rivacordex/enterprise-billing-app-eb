@@ -45,12 +45,12 @@ Let an `invoice_settings : EDIT` user edit the company profile and save it as th
 - **Payment**: bank name, account name, account no., SWIFT, JomPAY biller code (optional), remittance email.
 - **Branding**: brand colour, accent colour — mono `#RRGGBB` input + 20×20 swatch; a non-blocking **Warning** hint when white text on the colour is below 4.5:1 (ui-context §10b); logo field placeholder (bm60 fills it).
 - **Defaults**: payment terms (days, 0–120).
-- Buttons: **Save draft** (outline). Toast "Draft profile v{n} saved — not used on invoices"; `DRAFT_CONFLICT` → Warning toast + Reload.
+- Buttons: **Save draft** (outline). Toast "Draft profile v{n} saved — not used on invoices"; a save that changes nothing → Info toast "No changes — nothing was saved." (2026-10-11); `DRAFT_CONFLICT` → Warning toast + Reload.
 - Page `edit` tab, EDIT users: opens the DRAFT if one exists (banner as bm57), else the ACTIVE values in edit mode, else empty fields. The bm56 empty-state "Create a draft" action now renders (it focuses the form).
 
 ### D4 — Audit
 
-`INVOICE_PROFILE_DRAFT_SAVED` (Change): `targetEntity: 'SYSTEM_CONFIG'`, `targetId: 'invoice.profile:v{n}'`, `beforeData: { configVersion, fields } | null`, `afterData: { configVersion, fields }` — only changed keys in both maps on an update. Bank details are included (they are not secrets and the audit trail of a payment-detail change is the point, Inv #49 / G14 context).
+`INVOICE_PROFILE_DRAFT_SAVED` (Change): `targetEntity: 'SYSTEM_CONFIG'`, `targetId: 'invoice.profile:v{n}'`, `beforeData: { configVersion, fields } | null`, `afterData: { configVersion, fields }` — only changed keys in both maps on an update. An update with no changed key writes no row and no audit (owner decision 2026-10-11). Bank details are included (they are not secrets and the audit trail of a payment-detail change is the point, Inv #49 / G14 context).
 
 ## Implementation
 
@@ -83,6 +83,6 @@ Let an `invoice_settings : EDIT` user edit the company profile and save it as th
 - [ ] Invalid TIN, SST, postcode, SWIFT, email or colour values are rejected in the form and, when posted directly, by the server.
 - [ ] A READ user cannot save (server-side); concurrent edits give `DRAFT_CONFLICT`.
 - [ ] No notes/footer fields exist on the profile (G7).
-- [ ] Exactly one `INVOICE_PROFILE_DRAFT_SAVED` audit row per save.
+- [ ] Exactly one `INVOICE_PROFILE_DRAFT_SAVED` audit row per save that changes something. A save that changes no key of the existing draft writes nothing and no audit row, and the form says "No changes — nothing was saved." (owner decision 2026-10-11).
 - [ ] `npm run typecheck`, `npm run lint`, `npm test` green.
 - [ ] Docs, same change set: G7 recorded as decided in all three trackers (overview O3, architecture "Other open items", code-standards); code-standards TS rule 5 (draft vs activation schemas); progress tracker.

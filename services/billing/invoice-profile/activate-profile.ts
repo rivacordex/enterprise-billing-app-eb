@@ -3,9 +3,10 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billAssetRepository } from "@/db/repositories/billing/bill-asset";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import { paymentFieldsChanged } from "@/lib/invoice-profile-changes";
+import { DraftConflict } from "@/services/billing/invoice-profile/draft-conflict";
 import {
   inlineLogo,
-  readInvoiceProfile,
+  parseInvoiceProfile,
 } from "@/services/billing/invoice-profile/read-profile";
 import {
   INVOICE_PROFILE_CONFIG_GROUP,
@@ -25,9 +26,9 @@ import {
 // DRAFT company profile. Every check runs here (the disabled/hidden UI is UX
 // only), in the D2 order; the first failure refuses and nothing changes:
 //   2 change note → 3 draft + token → 4 logo set and its version ACTIVE →
-//   5 the FULL `invoiceProfileSchema` → 6 the logo blob verifies →
-//   D6 (G14 option C) four-eyes when payment fields change.
-// Then one transaction: group lock → re-check the draft under FOR UPDATE →
+//   5 the FULL `invoiceProfileSchema` → 6 the logo blob verifies.
+// One `invoice_settings : EDIT` user may activate their own draft, bank
+// changes included (G14 decided 2026-10-11: no four-eyes). Then one transaction: group lock → re-check the draft under FOR UPDATE →
 // retire the ACTIVE version (+ `meta.retired_at`) → promote the draft
 // (+ `meta.change_note/activated_by/activated_at`) → one
 // `INVOICE_PROFILE_ACTIVATED` audit row. Retirement first, so two versions are
@@ -43,13 +44,6 @@ export type ActivateProfileResult =
   | { ok: false; code: ProfileActivationErrorCode };
 
 const LOGO_KEY = "logo_asset_version_id";
-
-// Thrown inside the transaction to roll back when the draft moved on.
-class DraftConflict extends Error {
-  constructor() {
-    super("DRAFT_CONFLICT");
-  }
-}
 
 function isMissingBlob(error: unknown): boolean {
   const e = error as { statusCode?: unknown; code?: unknown } | undefined;
@@ -101,11 +95,14 @@ export async function activateProfile(
     return { ok: false, code: "VALIDATION_ERROR", fieldErrors };
   }
 
-  // D2.6 — the logo blob verifies against its checksum: the same read the
-  // render runs (`readInvoiceProfile` + `inlineLogo`), so an activated profile
-  // is renderable (DR-01 option A).
+  // D2.6 — the logo blob verifies against its checksum: the render's own
+  // parse + `inlineLogo`, over the rows and logo row already read above, so an
+  // activated profile is renderable (DR-01 option A).
   try {
-    await inlineLogo(await readInvoiceProfile(db, configVersion));
+    await inlineLogo({
+      profile: parseInvoiceProfile(configVersion, fields),
+      logo,
+    });
   } catch (error) {
     if (
       (error instanceof InvoiceRenderError &&
@@ -117,28 +114,20 @@ export async function activateProfile(
     throw error;
   }
 
-  // D6 (G14 option C) — four-eyes only when payment fields change.
+  // D5 — the ACTIVE fields, for the audit row's before-image and its
+  // `bankDetailsChanged` flag (no four-eyes: G14 decided 2026-10-11).
   const activeVersion = await invoiceProfileRepository.findActiveVersion(db);
   const activeFields =
     activeVersion === null
       ? null
       : await invoiceProfileRepository.readVersion(db, activeVersion);
   const bankDetailsChanged = paymentFieldsChanged(activeFields, fields);
-  if (bankDetailsChanged) {
-    const lastSaver = await invoiceProfileRepository.findLastSaver(
-      db,
-      configVersion,
-    );
-    if (lastSaver === actorId || logo.createdBy === actorId) {
-      return { ok: false, code: "PROFILE_FOUR_EYES_VIOLATION" };
-    }
-  }
 
   try {
     return await db.transaction(async (tx): Promise<ActivateProfileResult> => {
       await invoiceProfileRepository.lockProfileGroup(tx);
       // D3 — re-check D2.3 under FOR UPDATE of the draft rows. An unchanged
-      // token means the fields, logo and saver checked above still hold.
+      // token means the fields and logo checked above still hold.
       const token = await invoiceProfileRepository.findDraftTokenForUpdate(
         tx,
         configVersion,

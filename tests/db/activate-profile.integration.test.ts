@@ -20,13 +20,13 @@ import { png } from "@/tests/helpers/logo-fixtures";
 
 // bm61-spec §Tests — GUARDRAIL 51, ACTIVATION HALF, on a real database and a
 // real Azurite. Each refusal (no logo, empty note, an incomplete required
-// field, a stale token, a tampered logo blob, and — G14 option C — a bank
-// change activated by the draft's own editor or logo uploader) changes
-// nothing: the same rows, statuses and audit rows as before. Success promotes
-// the DRAFT, retires the previous ACTIVE, writes `meta.*` and exactly one
-// INVOICE_PROFILE_ACTIVATED row with `bankDetailsChanged`. A non-bank change
-// may be activated by its own editor. Also closes DR-01: an invalid draft can
-// never become ACTIVE, and the previous ACTIVE stays untouched.
+// field, a stale token, a tampered logo blob) changes nothing: the same rows,
+// statuses and audit rows as before. Success promotes the DRAFT, retires the
+// previous ACTIVE, writes `meta.*` and exactly one INVOICE_PROFILE_ACTIVATED
+// row with `bankDetailsChanged`. No four-eyes (G14 decided 2026-10-11): the
+// draft's own editor may activate it, bank changes included. Also closes
+// DR-01: an invalid draft can never become ACTIVE, and the previous ACTIVE
+// stays untouched.
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 
@@ -346,60 +346,15 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       );
     });
 
-    it("[G14 C] the first activation sets bank details: its editor is refused, its logo uploader is refused, a different EDIT user succeeds", async () => {
-      // Saved by EDITOR, logo by EDITOR → EDITOR may not activate.
+    it("the first activation sets bank details and may be done by the draft's own editor and logo uploader (G14: no four-eyes)", async () => {
       const { version, token } = await readyDraft(FULL, EDITOR, EDITOR);
-      await expectRefused(
-        () =>
-          activateProfile(
-            {
-              configVersion: version,
-              expectedDraftToken: token,
-              changeNote: "v1",
-            },
-            EDITOR,
-          ),
-        { ok: false, code: "PROFILE_FOUR_EYES_VIOLATION" },
-      );
-
-      // Last saved by APPROVER, but the logo is still EDITOR's... and the
-      // saver check alone also refuses APPROVER.
-      const again = await saveDraft({ ...FULL, city: "Ipoh" }, APPROVER);
-      await expectRefused(
-        () =>
-          activateProfile(
-            {
-              configVersion: version,
-              expectedDraftToken: again.token,
-              changeNote: "v1",
-            },
-            APPROVER,
-          ),
-        { ok: false, code: "PROFILE_FOUR_EYES_VIOLATION" },
-      );
-      // ...and EDITOR is refused as the logo uploader.
-      await expectRefused(
-        () =>
-          activateProfile(
-            {
-              configVersion: version,
-              expectedDraftToken: again.token,
-              changeNote: "v1",
-            },
-            EDITOR,
-          ),
-        { ok: false, code: "PROFILE_FOUR_EYES_VIOLATION" },
-      );
-
-      // Saved by EDITOR, logo by EDITOR, activated by APPROVER → succeeds.
-      const fixed = await saveDraft({ ...FULL, city: "Kuala Lumpur" }, EDITOR);
       const result = await activateProfile(
         {
           configVersion: version,
-          expectedDraftToken: fixed.token,
+          expectedDraftToken: token,
           changeNote: "First company profile",
         },
-        APPROVER,
+        EDITOR,
       );
       expect(result).toEqual({
         ok: true,
@@ -412,12 +367,12 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       );
       const meta = await metaOf(version);
       expect(meta["meta.change_note"]).toBe("First company profile");
-      expect(meta["meta.activated_by"]).toBe(APPROVER);
+      expect(meta["meta.activated_by"]).toBe(EDITOR);
       expect(Number.isNaN(Date.parse(meta["meta.activated_at"]!))).toBe(false);
       const audits = await activationAudits();
       expect(audits).toHaveLength(1);
       expect(audits[0]).toMatchObject({
-        actor_user_id: APPROVER,
+        actor_user_id: EDITOR,
         target_entity: "SYSTEM_CONFIG",
         target_id: `invoice.profile:v${version}`,
         before_data: { activeVersion: null, fields: null },
@@ -495,7 +450,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       ).toBe(EDITOR);
     });
 
-    it("[G14 C] a bank change against the ACTIVE version is refused for its editor and accepted from another EDIT user", async () => {
+    it("a bank change against the ACTIVE version may be activated by its own editor and is audited as bankDetailsChanged", async () => {
       const v1 = await readyDraft(FULL, EDITOR, EDITOR);
       expect(
         (
@@ -505,7 +460,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
               expectedDraftToken: v1.token,
               changeNote: "v1",
             },
-            APPROVER,
+            EDITOR,
           )
         ).ok,
       ).toBe(true);
@@ -514,32 +469,19 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         { ...FULL, bank_account_no: "9999-0000-1111" },
         EDITOR,
       );
-      await expectRefused(
-        () =>
-          activateProfile(
-            {
-              configVersion: v2.version,
-              expectedDraftToken: v2.token,
-              changeNote: "new bank",
-            },
-            EDITOR,
-          ),
-        { ok: false, code: "PROFILE_FOUR_EYES_VIOLATION" },
-      );
-      expect(await statusOf(v1.version)).toEqual(["ACTIVE"]);
-
       const ok = await activateProfile(
         {
           configVersion: v2.version,
           expectedDraftToken: v2.token,
           changeNote: "new bank",
         },
-        APPROVER,
+        EDITOR,
       );
       expect(ok).toMatchObject({ ok: true, retiredVersion: v1.version });
       const audits = await activationAudits();
-      expect(audits.at(-1)?.after_data).toMatchObject({
-        bankDetailsChanged: true,
+      expect(audits.at(-1)).toMatchObject({
+        actor_user_id: EDITOR,
+        after_data: { bankDetailsChanged: true },
       });
     });
 

@@ -32,8 +32,8 @@ import type { SaveProfileDraftInput } from "@/validation/billing/invoice-profile
 // bm58: the generated versions are now created by the REAL save-draft and
 // activate services (a real generated, test-rendered, checksum-indexed blob
 // write and a real retire + promote). bm61: the company profiles are now REAL
-// activations too (save draft → upload logo → activate by a second EDIT user,
-// G14 option C), so v1 is retired when v2 is promoted. After that:
+// activations too (save draft → upload logo → activate), so v1 is retired
+// when v2 is promoted. After that:
 //   * A's four stamps are unchanged (0033 froze them at posting);
 //   * A's stored PDF (`getStoredInvoice`, md5-verified) is byte-equal to before
 //     — a reprint is the stored bytes, never a re-render (Inv #43);
@@ -143,8 +143,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }
 
     // bm61 — a REAL profile activation: the working draft is saved and its
-    // logo uploaded by `actorId`; a second EDIT user activates it (the bank
-    // details change, so G14 option C requires four-eyes).
+    // logo uploaded by `actorId`; another EDIT user activates it (any EDIT
+    // user may, the editor included: no four-eyes, G14 decided 2026-10-11).
     async function activateProfileVersion(
       fields: Record<string, string>,
       logo: Buffer,

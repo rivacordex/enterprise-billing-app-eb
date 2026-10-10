@@ -23,7 +23,7 @@ vi.mock("@/actions/billing/invoice-settings/activate-profile.action", () => ({
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import { saveProfileDraftAction } from "@/actions/billing/invoice-settings/save-
 import {
   BANK_CHANGE_WARNING,
   CreateDraftButton,
+  NO_CHANGES_MESSAGE,
   PROFILE_FIRST_FIELD_ID,
 } from "@/components/billing/invoice-settings/company-profile-edit-form";
 import { CompanyProfileForm } from "@/components/billing/invoice-settings/company-profile-form";
@@ -233,7 +234,12 @@ describe("CompanyProfileForm (edit mode, bm59)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSave.mockResolvedValue({ ok: true, versionNo: 3, draftToken: TOKEN });
+    mockSave.mockResolvedValue({
+      ok: true,
+      versionNo: 3,
+      draftToken: TOKEN,
+      changed: true,
+    });
   });
 
   function renderEdit(
@@ -332,6 +338,22 @@ describe("CompanyProfileForm (edit mode, bm59)", () => {
         "Draft profile v3 saved — not used on invoices",
       ),
     );
+  });
+
+  it("a save that changed nothing says so instead of 'saved'", async () => {
+    mockSave.mockResolvedValue({
+      ok: true,
+      versionNo: 3,
+      draftToken: TOKEN,
+      changed: false,
+    });
+    renderEdit(FIELDS, TOKEN);
+    change("city", "Kuala Lumpur ");
+    save();
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(NO_CHANGES_MESSAGE),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("DRAFT_CONFLICT is a Warning toast with Reload", async () => {
@@ -534,17 +556,17 @@ describe("CompanyProfileForm activate (bm61)", () => {
     );
   });
 
-  it("shows the server's four-eyes refusal in the dialog", async () => {
+  it("shows the server's logo-checksum refusal in the dialog", async () => {
     mockActivate.mockResolvedValue({
       ok: false,
-      code: "PROFILE_FOUR_EYES_VIOLATION",
+      code: "ASSET_CHECKSUM_MISMATCH",
     });
-    renderDraft({ ...FIELDS, swift: "CIBBMYKL" });
+    renderDraft();
     openDialog();
     await confirmWithNote();
     expect(
       await screen.findByText(
-        "Activation must be done by a different user than the one who edited the draft.",
+        "The stored logo failed verification. Upload the logo again. Nothing was activated.",
       ),
     ).toBeInTheDocument();
   });

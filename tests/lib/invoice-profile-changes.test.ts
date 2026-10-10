@@ -5,8 +5,8 @@ import {
   paymentFieldsChanged,
 } from "@/lib/invoice-profile-changes";
 
-// bm61-spec §Design D4–D6 — the one definition of "bank details changed"
-// (the dialog's warning and G14 option C's four-eyes trigger) and the
+// bm61-spec §Design D4–D5 — the one definition of "bank details changed"
+// (the dialog's warning and the audit row's `bankDetailsChanged`) and the
 // dialog's `label: old → new` diff.
 
 const ACTIVE = {

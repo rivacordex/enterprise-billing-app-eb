@@ -18,9 +18,11 @@ import {
 // saves become one insert plus one `DRAFT_CONFLICT`) → re-parse (defense in
 // depth: services assume an authorized context, not a valid one) → insert the
 // full key set at `max + 1`, or update only the changed keys under the token →
-// exactly one `INVOICE_PROFILE_DRAFT_SAVED` audit row.
+// exactly one `INVOICE_PROFILE_DRAFT_SAVED` audit row. A save that changes no
+// key of the existing draft writes nothing and is not audited (`changed:
+// false`).
 export type SaveProfileDraftResult =
-  | { ok: true; versionNo: number; draftToken: string }
+  | { ok: true; versionNo: number; draftToken: string; changed: boolean }
   | { ok: false; code: "DRAFT_CONFLICT" | "VALIDATION_ERROR" };
 
 const UNIQUE_VIOLATION = "23505";
@@ -89,6 +91,16 @@ export async function saveProfileDraft(
             changes[key] = submitted[key] ?? null;
           }
         }
+        // Nothing differs after normalisation ("Acme " → "Acme"): no write
+        // and no audit row (owner decision 2026-10-11); the token is unchanged.
+        if (Object.keys(changes).length === 0) {
+          return {
+            ok: true,
+            versionNo: draft.configVersion,
+            draftToken: draft.token,
+            changed: false,
+          };
+        }
         const token = await invoiceProfileRepository.updateDraftFields(tx, {
           version: draft.configVersion,
           changes,
@@ -109,6 +121,7 @@ export async function saveProfileDraft(
           ok: true,
           versionNo: draft.configVersion,
           draftToken: token,
+          changed: true,
         };
       }
 
@@ -143,7 +156,7 @@ export async function saveProfileDraft(
         beforeData: null,
         afterData: { configVersion: version, fields },
       });
-      return { ok: true, versionNo: version, draftToken: token };
+      return { ok: true, versionNo: version, draftToken: token, changed: true };
     });
   } catch (error) {
     if (isProfileDraftRaceViolation(error)) {

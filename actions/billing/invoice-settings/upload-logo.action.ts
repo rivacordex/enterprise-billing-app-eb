@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 import {
   importAppLogo,
   uploadLogo,
@@ -77,7 +78,12 @@ export async function uploadLogoAction(
       { bytes, declaredMime: file.type, expectedDraftToken },
       guard.actorId,
     );
-  } catch {
+  } catch (error) {
+    logger.error("company profile logo upload failed", {
+      declaredMime: file.type,
+      byteSize: file.size,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, code: "SERVER_ERROR" };
   }
 
@@ -99,7 +105,10 @@ export async function importAppLogoAction(
   let result: Awaited<ReturnType<typeof importAppLogo>>;
   try {
     result = await importAppLogo(parsed.data.expectedDraftToken, guard.actorId);
-  } catch {
+  } catch (error) {
+    logger.error("company profile app-logo import failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, code: "SERVER_ERROR" };
   }
 

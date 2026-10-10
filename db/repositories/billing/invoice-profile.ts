@@ -20,7 +20,7 @@ import type { ConfigStatus } from "@/types/system-config";
 // (`lockProfileGroup`, `nextProfileVersion`, `findDraftVersion`,
 // `insertDraftVersion`, `updateDraftFields`); bm60 adds `setDraftLogo`; bm61
 // adds activation (`findDraftTokenForUpdate`, `retireActiveVersion`,
-// `promoteDraftVersion`, `writeMeta`, `findLastSaver`).
+// `promoteDraftVersion`, `writeMeta`).
 // Every read excludes secret rows, so a mis-flagged row can never reach a
 // rendered invoice.
 export const INVOICE_PROFILE_GROUP = INVOICE_PROFILE_CONFIG_GROUP;
@@ -274,14 +274,19 @@ export const invoiceProfileRepository = {
       expectedToken: string;
     },
   ): Promise<string | null> {
-    const entries = Object.entries(input.changes);
-    if (entries.length === 0) {
-      const draft = await this.findDraftVersion(tx);
-      return draft?.configVersion === input.version &&
-        draft.token === input.expectedToken
-        ? draft.token
-        : null;
+    // The token is checked first, so "no row matched" below can only mean a
+    // key missing from the stored draft, never a stale token. Every caller
+    // holds the group lock (`lockProfileGroup`), so the check stays true for
+    // the rest of the transaction; the UPDATE keeps its own guard as well.
+    const current = await this.findDraftVersion(tx);
+    if (
+      current?.configVersion !== input.version ||
+      current.token !== input.expectedToken
+    ) {
+      return null;
     }
+    const entries = Object.entries(input.changes);
+    if (entries.length === 0) return current.token;
     const values = sql.join(
       entries.map(([key, value]) => sql`(${key}::text, ${value}::text)`),
       sql`, `,
@@ -306,7 +311,27 @@ export const invoiceProfileRepository = {
             AND d.is_secret = false
         ) = ${input.expectedToken}
       RETURNING sc.config_key`);
-    if (updated.length === 0) return null;
+    // A key with no row in the stored draft (a draft that predates a field
+    // key, or a hand-inserted one) is inserted, so the change is never
+    // silently dropped while the audit records it.
+    const updatedKeys = new Set(
+      (updated as unknown as { config_key: string }[]).map((r) => r.config_key),
+    );
+    const missing = entries.filter(([key]) => !updatedKeys.has(key));
+    if (missing.length > 0) {
+      await tx.insert(systemConfig).values(
+        missing.map(([key, value]) => ({
+          configGroup: INVOICE_PROFILE_GROUP,
+          configVersion: input.version,
+          configKey: key,
+          configValue: value,
+          description: INVOICE_PROFILE_FIELD_LABELS[key] ?? null,
+          isSecret: false,
+          status: "DRAFT",
+          modifiedBy: input.actor,
+        })),
+      );
+    }
     const draft = await this.findDraftVersion(tx);
     return draft?.token ?? null;
   },
@@ -346,28 +371,6 @@ export const invoiceProfileRepository = {
       previousLogoAssetVersionId: previous,
       token,
     };
-  },
-
-  // bm61 D6 (G14 option C) — the user who last saved a version: the
-  // `modified_by` of its newest field row (`null` for an unknown version or a
-  // deleted user).
-  async findLastSaver(
-    db: Database,
-    configVersion: number,
-  ): Promise<string | null> {
-    const [row] = await db
-      .select({ modifiedBy: systemConfig.modifiedBy })
-      .from(systemConfig)
-      .where(
-        and(
-          inProfileGroup,
-          eq(systemConfig.configVersion, configVersion),
-          notMetaRow,
-        ),
-      )
-      .orderBy(desc(systemConfig.lastModifiedDatetime))
-      .limit(1);
-    return row?.modifiedBy ?? null;
   },
 
   // bm61 D3 — re-check the draft under `FOR UPDATE` of its rows: the token of

@@ -52,6 +52,23 @@ export const billAssetRepository = {
     return row ?? null;
   },
 
+  // bm60 D8 — whether a logo was ever stored: a `kind = 'logo'` asset with at
+  // least one version. An asset row alone is not enough: `ensureLogoAsset`
+  // commits before the blob write, so a failed first upload leaves an empty
+  // asset behind, and that must not hide the first-setup import.
+  async hasLogoVersion(db: Database): Promise<boolean> {
+    const [row] = await db
+      .select({ id: billAssetVersion.billAssetVersionId })
+      .from(billAssetVersion)
+      .innerJoin(
+        billAsset,
+        eq(billAssetVersion.refBillAssetId, billAsset.billAssetId),
+      )
+      .where(eq(billAsset.kind, LOGO_KIND))
+      .limit(1);
+    return row !== undefined;
+  },
+
   // bm60 D5 step 2 — the single logo asset, created on first upload. Run in a
   // short transaction of its own (before the blob write); the advisory lock
   // makes two concurrent first uploads share one asset (there is no unique

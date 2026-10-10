@@ -5,11 +5,12 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { isRedirectError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 import { saveProfileDraft } from "@/services/billing/invoice-profile/save-profile-draft";
 import { saveProfileDraftInputSchema } from "@/validation/billing/invoice-profile.schema";
 
 export type SaveProfileDraftActionResult =
-  | { ok: true; versionNo: number; draftToken: string }
+  | { ok: true; versionNo: number; draftToken: string; changed: boolean }
   | { ok: false; code: "FORBIDDEN" | "DRAFT_CONFLICT" | "SERVER_ERROR" }
   | {
       ok: false;
@@ -58,7 +59,10 @@ export async function saveProfileDraftAction(
   let result;
   try {
     result = await saveProfileDraft(parsed.data, actorId);
-  } catch {
+  } catch (error) {
+    logger.error("company profile draft save failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, code: "SERVER_ERROR" };
   }
 
@@ -68,6 +72,8 @@ export async function saveProfileDraftAction(
       : { ok: false, code: "VALIDATION_ERROR", fieldErrors: {} };
   }
 
-  revalidatePath("/administration/invoice-settings", "layout");
+  if (result.changed) {
+    revalidatePath("/administration/invoice-settings", "layout");
+  }
   return result;
 }

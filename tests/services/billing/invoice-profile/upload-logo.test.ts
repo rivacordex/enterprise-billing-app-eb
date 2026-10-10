@@ -37,6 +37,7 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billAssetRepository } from "@/db/repositories/billing/bill-asset";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import { blobStore } from "@/services/billing/blob-store";
+import { findSvgViolation } from "@/services/billing/invoice-profile/sanitize-logo";
 import {
   checkLogo,
   uploadLogo,
@@ -106,6 +107,19 @@ describe("guardrail 52 — logo rejections, each with its reason, nothing writte
     expect(r.detail).toHaveProperty("width");
     expect(r.detail).toHaveProperty("height");
   });
+
+  it.each([
+    ["PNG", png(0xffff_ffff, 400), "image/png"],
+    ["SVG", svg('width="3000000000" height="400"'), "image/svg+xml"],
+    ["SVG", svg(`width="${"9".repeat(400)}" height="400"`), "image/svg+xml"],
+  ])(
+    "a %s side beyond the int4 column → dimensions, not a failed insert",
+    async (_label, bytes, mime) => {
+      expect(await rejects(bytes, mime)).toMatchObject({
+        reason: "dimensions",
+      });
+    },
+  );
 
   it("SVG sizes in other units → dimensions", async () => {
     expect(
@@ -209,6 +223,69 @@ describe("guardrail 52 — logo rejections, each with its reason, nothing writte
       '<defs><linearGradient id="g"/></defs><use href="#g"/><use xlink:href=\'#g\'/><rect fill="url(#g)"/>',
     );
     expect(checkLogo(ok, "image/svg+xml")).toMatchObject({ ok: true });
+  });
+
+  it("accepts QUOTED or spaced fragment references (the quote is not the non-# character)", () => {
+    const ok = svg(
+      'width="400" height="400"',
+      `<rect fill="url('#g')"/><rect fill='url("#g")'/><rect fill="url( #g)"/><use href=" #g"/><use href= "#g"/>`,
+    );
+    expect(checkLogo(ok, "image/svg+xml")).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    `<rect fill="url('http://evil.example/p')"/>`,
+    `<rect fill="url( 'http://evil.example/p')"/>`,
+    `<use href=" http://evil.example/x.svg#a"/>`,
+  ])(
+    "still rejects a quoted or spaced external reference: %s",
+    async (body) => {
+      const r = await rejects(
+        svg('width="400" height="400"', body),
+        "image/svg+xml",
+      );
+      expect(r.reason).toBe("svg_content");
+    },
+  );
+
+  it.each<[string, string]>([
+    ["<script>", "<s:script>alert(1)</s:script>"],
+    ["<script>", "<svg:SCRIPT>alert(1)</svg:SCRIPT>"],
+    ["<foreignObject>", "<x:foreignObject><div/></x:foreignObject>"],
+    ["<iframe>", "<h:iframe/>"],
+    [
+      "<use> with an external reference",
+      '<s:use x:href="http://e.example/a"/>',
+    ],
+    ["<style> with url() or @import", "<s:style>.a{fill:url(#g)}</s:style>"],
+  ])("a namespace prefix does not hide %s", async (construct, body) => {
+    const r = await rejects(
+      svg('width="400" height="400"', body),
+      "image/svg+xml",
+    );
+    expect(r).toMatchObject({ reason: "svg_content", detail: { construct } });
+  });
+
+  it("accepts an unprefixed or prefixed safe element whose name only starts like a banned one", () => {
+    const ok = svg(
+      'width="400" height="400"',
+      "<scripts/><s:objects/><s:style>.a{fill:#000}</s:style>",
+    );
+    expect(checkLogo(ok, "image/svg+xml")).toMatchObject({ ok: true });
+  });
+
+  // The regexes this scanner replaced backtracked: inputs like these took
+  // ~100 s at the size cap and blocked the event loop for every user.
+  it.each([
+    ["repeated <use", "<use ".repeat(100_000)],
+    ["repeated <style>", "<style>".repeat(70_000)],
+    ["href= then spaces", `href=${" ".repeat(500_000)}#`],
+    ["url( then spaces", `url(${" ".repeat(500_000)}#`],
+    ["repeated on-attributes", " ona".repeat(125_000)],
+  ])("scans a ~500 KB crafted SVG (%s) in linear time", (_label, body) => {
+    const started = performance.now();
+    findSvgViolation(body);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it("check order: an oversized SVG with a script reports size", async () => {

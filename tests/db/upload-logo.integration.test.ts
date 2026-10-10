@@ -39,6 +39,7 @@ vi.mock("@/db/client", () => ({
   },
 }));
 
+import { billAssetRepository } from "@/db/repositories/billing/bill-asset";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import { getVerifiedLogo } from "@/services/billing/invoice-profile/read-profile";
 import { saveProfileDraft } from "@/services/billing/invoice-profile/save-profile-draft";
@@ -203,6 +204,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(await auditRows()).toHaveLength(0);
     });
 
+    it("an empty logo asset (a failed first upload) is not a stored logo: the import stays offered (bm60 D8)", async () => {
+      await db.transaction((tx) =>
+        billAssetRepository.ensureLogoAsset(tx, ACTOR),
+      );
+      expect(await billAssetRepository.findLogoAsset(db)).not.toBeNull();
+      expect(await billAssetRepository.hasLogoVersion(db)).toBe(false);
+    });
+
     it("a valid PNG → INVAST/INVASV rows, the exact bytes at the content-addressed path, the draft pointed at it, one audit row", async () => {
       const token = await newDraft();
       const bytes = png(400, 300);
@@ -266,6 +275,9 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           checksum: digest,
         },
       });
+      // The empty asset from the previous test was reused, and now holds a
+      // version: the first-setup import is no longer offered.
+      expect(await billAssetRepository.hasLogoVersion(db)).toBe(true);
     });
 
     it("re-uploading the same bytes adds a version over the same blob", async () => {

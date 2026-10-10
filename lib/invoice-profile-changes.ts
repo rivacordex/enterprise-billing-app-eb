@@ -4,8 +4,8 @@ import {
 } from "@/types/billing";
 
 // bm61-spec §Design D4–D6 — pure helpers shared by the activation service and
-// the activate dialog, so the warning the admin sees and the four-eyes rule
-// the server enforces use one definition of "bank details changed".
+// the activate dialog, so the warning the admin sees and the audit row's
+// `bankDetailsChanged` flag use one definition of "bank details changed".
 
 type FieldMap = Readonly<Record<string, string | null | undefined>>;
 
@@ -16,7 +16,7 @@ function value(map: FieldMap | null, key: string): string | null {
 
 // Whether any payment field differs from the ACTIVE version. With no ACTIVE
 // version every payment field is new, so the first activation counts as a bank
-// change: it sets the account customers pay into (G14 option C).
+// change: it sets the account customers pay into.
 export function paymentFieldsChanged(
   active: FieldMap | null,
   draft: FieldMap,

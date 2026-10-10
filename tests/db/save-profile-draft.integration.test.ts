@@ -21,8 +21,9 @@ import { INVOICE_PROFILE_FIELD_KEYS } from "@/validation/billing/invoice-profile
 // inserts every key at `max + 1` as DRAFT with `modified_by` (blanks NULL, the
 // ACTIVE logo carried over); a second save updates only the changed keys; a
 // stale token is DRAFT_CONFLICT with nothing written; two concurrent first
-// saves allocate one version; each save writes exactly one
-// INVOICE_PROFILE_DRAFT_SAVED row with the changed keys' before/after; the
+// saves allocate one version; each save that changes something writes exactly
+// one INVOICE_PROFILE_DRAFT_SAVED row with the changed keys' before/after (a
+// save that changes nothing writes no row and no audit); the
 // DRAFT is never resolved for rendering; and the generic System Config page
 // still hides the group. The service opens its own transaction on the
 // `@/db/client` singleton, so that singleton is replaced with one built on a
@@ -275,6 +276,61 @@ describe.skipIf(!databaseUrl)(
         "Putrajaya",
       );
       expect(await draftVersions()).toEqual([2]);
+    });
+
+    it("a save that matches the stored draft after normalisation writes nothing and is not audited", async () => {
+      const first = await saveProfileDraft(draftInput(), ACTOR);
+      if (!first.ok) throw new Error("first save failed");
+      const before = await versionRows(2);
+      const audits = (await auditRows()).length;
+
+      const again = await saveProfileDraft(
+        draftInput(
+          { company_name: "  Digital Billing Sdn Bhd  " },
+          first.draftToken,
+        ),
+        OTHER,
+      );
+      expect(again).toEqual({
+        ok: true,
+        versionNo: 2,
+        draftToken: first.draftToken,
+        changed: false,
+      });
+      expect(await versionRows(2)).toEqual(before);
+      expect(await auditRows()).toHaveLength(audits);
+    });
+
+    it("a change to a key with no row in the stored draft inserts that row (never dropped, never a false DRAFT_CONFLICT)", async () => {
+      const first = await saveProfileDraft(draftInput(), ACTOR);
+      if (!first.ok) throw new Error("first save failed");
+      // A draft that predates the key (or was hand-edited): drop its row.
+      await sql`
+        DELETE FROM core.system_config
+        WHERE config_group = 'invoice.profile' AND config_version = 2
+          AND config_key = 'sst_reg_no'`;
+      const [row] = await sql<{ token: string }[]>`
+        SELECT to_char(max(last_modified_datetime) AT TIME ZONE 'UTC',
+                       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS token
+        FROM core.system_config
+        WHERE config_group = 'invoice.profile' AND config_version = 2`;
+
+      // Only the missing key changes: before the fix, 0 rows updated → DRAFT_CONFLICT.
+      const second = await saveProfileDraft(
+        draftInput({ sst_reg_no: "W10-1808-31000001" }, row!.token),
+        OTHER,
+      );
+      expect(second).toMatchObject({ ok: true, versionNo: 2 });
+      const sst = (await versionRows(2)).find(
+        (r) => r.config_key === "sst_reg_no",
+      );
+      expect(sst).toMatchObject({
+        config_value: "W10-1808-31000001",
+        status: "DRAFT",
+        is_secret: false,
+        modified_by: OTHER,
+        description: INVOICE_PROFILE_FIELD_LABELS.sst_reg_no,
+      });
     });
 
     it("a stale token is DRAFT_CONFLICT and writes nothing", async () => {

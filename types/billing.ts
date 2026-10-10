@@ -1170,6 +1170,10 @@ export interface CompanyProfilePageModel {
 
 // bm59-spec §Design D1/D3 — each profile key's label: the form's field label
 // and the `description` stored on a draft's rows (bm53 D3 key table).
+// THE `#RRGGBB` profile colour format (placeholder-catalog §B), shared by the
+// profile schema, the colour swatch and the contrast hint.
+export const HEX_COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
+
 export const INVOICE_PROFILE_FIELD_LABELS: Readonly<Record<string, string>> = {
   company_name: "Legal name",
   registration_no: "SSM registration no.",
@@ -1233,24 +1237,23 @@ export const TEMPLATE_ACTIVATION_ERROR_CODES = [
 export type TemplateActivationErrorCode =
   (typeof TEMPLATE_ACTIVATION_ERROR_CODES)[number];
 
-// bm61-spec §Design D2/D6 — the company-profile activation result codes beyond
+// bm61-spec §Design D2 — the company-profile activation result codes beyond
 // the generic ones (all binding, code-standards TS rule 7; result codes, never
 // thrown). `PROFILE_LOGO_REQUIRED`: no logo, or its asset version is missing
-// or not ACTIVE. `PROFILE_FOUR_EYES_VIOLATION` (G14 option C): payment fields
-// change and the actor last saved the draft or uploaded its logo.
-// `ASSET_CHECKSUM_MISMATCH`: the logo blob fails its checksum (or is missing).
+// or not ACTIVE. `ASSET_CHECKSUM_MISMATCH`: the logo blob fails its checksum
+// (or is missing). No four-eyes code: G14 decided 2026-10-11, no second
+// signature on profile activation.
 export const PROFILE_ACTIVATION_ERROR_CODES = [
   "CHANGE_NOTE_REQUIRED",
   "DRAFT_CONFLICT",
   "PROFILE_LOGO_REQUIRED",
   "ASSET_CHECKSUM_MISMATCH",
-  "PROFILE_FOUR_EYES_VIOLATION",
 ] as const;
 export type ProfileActivationErrorCode =
   (typeof PROFILE_ACTIVATION_ERROR_CODES)[number];
 
-// bm61 D5/D6 — the payment fields: a change to any of them shows the bank
-// warning and (G14 option C) needs a second EDIT user to activate.
+// bm61 D5 — the payment fields: a change to any of them shows the bank
+// warning and is flagged `bankDetailsChanged` on the activation audit row.
 export const INVOICE_PROFILE_PAYMENT_KEYS = [
   "bank_name",
   "bank_account_name",

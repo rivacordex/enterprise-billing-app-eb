@@ -34,6 +34,7 @@ import {
   ActivateVersionDialog,
   type ActivateConfirmResult,
 } from "@/components/billing/invoice-settings/activate-version-dialog";
+import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 import { ColourSwatch } from "@/components/billing/invoice-settings/colour-swatch";
 import { LogoUploadField } from "@/components/billing/invoice-settings/logo-upload-field";
 import { Button } from "@/components/ui/button";
@@ -73,11 +74,13 @@ import {
 type ProfileFormValues = Record<InvoiceProfileFieldKey, string>;
 
 const FIXED_COUNTRY = "MY";
-const DRAFT_CONFLICT_MESSAGE =
-  "Another user changed the draft — reload to see it.";
 const SAVE_FAILED_MESSAGE = "The draft could not be saved. Please try again.";
 
 // bm61 D5 — the bank-change Warning callout, verbatim from the spec.
+// #11 (owner decision 2026-10-11) — a save whose values match the stored draft
+// once trimmed and normalised writes nothing.
+export const NO_CHANGES_MESSAGE = "No changes — nothing was saved.";
+
 export const BANK_CHANGE_WARNING =
   "Bank details change on every new invoice. Customers will be asked to pay into the new account from the next bill run.";
 
@@ -90,8 +93,6 @@ const ACTIVATE_MESSAGES: Record<
   PROFILE_LOGO_REQUIRED: "Upload a logo before activating the profile.",
   ASSET_CHECKSUM_MISMATCH:
     "The stored logo failed verification. Upload the logo again. Nothing was activated.",
-  PROFILE_FOUR_EYES_VIOLATION:
-    "Activation must be done by a different user than the one who edited the draft.",
   VALIDATION_ERROR:
     "The profile is incomplete or invalid. Complete the marked fields, save the draft, then activate.",
   FORBIDDEN: "You do not have permission to activate the profile.",
@@ -101,7 +102,9 @@ const ACTIVATE_MESSAGES: Record<
 // The "Create a draft" action on the empty state focuses this field.
 export const PROFILE_FIRST_FIELD_ID = "profile-company_name";
 
-const STATE_CODES = Object.keys(MYINVOIS_STATE_LABELS).sort();
+const STATE_CODES = Object.keys(MYINVOIS_STATE_LABELS).sort((a, b) =>
+  a.localeCompare(b),
+);
 const FIELD_KEY_SET: ReadonlySet<string> = new Set(INVOICE_PROFILE_FIELD_KEYS);
 
 // D2 — the form validates what the server validates: the same normalisation
@@ -196,10 +199,15 @@ export function CompanyProfileEditForm({
       });
       if (result.ok) {
         setDraftToken(result.draftToken);
+        setLogoError(null);
         reset(values);
-        toast.success(
-          `Draft profile v${result.versionNo} saved — not used on invoices`,
-        );
+        if (result.changed) {
+          toast.success(
+            `Draft profile v${result.versionNo} saved — not used on invoices`,
+          );
+        } else {
+          toast.info(NO_CHANGES_MESSAGE);
+        }
         return;
       }
       if (result.code === "DRAFT_CONFLICT") {
@@ -237,6 +245,7 @@ export function CompanyProfileEditForm({
   const bankChanged = paymentFieldsChanged(activeFields, fields);
 
   async function activate(changeNote: string): Promise<ActivateConfirmResult> {
+    setLogoError(null);
     if (draftVersion === null || draftToken === null) {
       return { ok: false, message: DRAFT_CONFLICT_MESSAGE };
     }

@@ -196,9 +196,29 @@ export async function getCompanyProfilePageModel(
       userIds.add(activator);
     }
   }
-  const names = await invoiceProfileRepository.resolveUserNames(db, [
-    ...userIds,
-  ]);
+  // The remaining reads are independent, so they run together. bm61 D5 — the
+  // ACTIVE field map feeds the activate dialog (EDIT users only); when the
+  // shown version IS the ACTIVE one, its raw read is reused.
+  const activeSummary = canEdit
+    ? visible.find((v) => v.status === "ACTIVE")
+    : undefined;
+  const readRaw = (v: { configVersion: number } | undefined) =>
+    v ? invoiceProfileRepository.readVersionRaw(db, v.configVersion) : null;
+  const activeRawRead = readRaw(activeSummary);
+  const [names, draftVersion, hasLogoAsset, activeRaw, raw] = await Promise.all(
+    [
+      invoiceProfileRepository.resolveUserNames(db, [...userIds]),
+      // bm59 D1 — the working draft and its token (EDIT users only).
+      draftSummary ? invoiceProfileRepository.findDraftVersion(db) : null,
+      // bm60 D8 — only EDIT users can import, so READ users skip the lookup.
+      canEdit ? billAssetRepository.hasLogoVersion(db) : true,
+      activeRawRead,
+      chosen && chosen.configVersion === activeSummary?.configVersion
+        ? activeRawRead
+        : readRaw(chosen),
+    ],
+  );
+  const activeFields = activeRaw?.fields ?? null;
 
   const history: ProfileHistoryRow[] = visible.map((v) => ({
     versionNo: v.configVersion,
@@ -211,10 +231,6 @@ export async function getCompanyProfilePageModel(
     usedByCount: v.usedByCount,
   }));
 
-  // bm59 D1 — the working draft and its token (EDIT users only).
-  const draftVersion = draftSummary
-    ? await invoiceProfileRepository.findDraftVersion(db)
-    : null;
   const draft =
     draftSummary && draftVersion?.configVersion === draftSummary.configVersion
       ? {
@@ -227,32 +243,10 @@ export async function getCompanyProfilePageModel(
         }
       : null;
 
-  // bm60 D8 — only EDIT users can import, so READ users skip the lookup.
-  const hasLogoAsset = canEdit
-    ? (await billAssetRepository.findLogoAsset(db)) !== null
-    : true;
-
-  // bm61 D5 — the ACTIVE field map for the activate dialog (EDIT users only).
-  const activeSummary = canEdit
-    ? visible.find((v) => v.status === "ACTIVE")
-    : undefined;
-  const activeFields = activeSummary
-    ? (
-        await invoiceProfileRepository.readVersionRaw(
-          db,
-          activeSummary.configVersion,
-        )
-      ).fields
-    : null;
-
-  if (!chosen) {
+  if (!chosen || !raw) {
     return { shown: null, history, draft, hasLogoAsset, activeFields };
   }
 
-  const raw = await invoiceProfileRepository.readVersionRaw(
-    db,
-    chosen.configVersion,
-  );
   const activator = raw.meta["meta.activated_by"];
   return {
     shown: {

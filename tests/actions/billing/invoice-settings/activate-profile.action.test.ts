@@ -2,10 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm61-spec §Tests: `activateProfileAction`. Guard first (EDIT); a READ user
 // is FORBIDDEN and the service never runs; an empty note is
-// CHANGE_NOTE_REQUIRED before the service; every service refusal — including
-// G14 option C's PROFILE_FOUR_EYES_VIOLATION on a crafted call — is passed
-// through without revalidating; success revalidates the layout. The four-eyes
-// rule itself is proven on a real database (activate-profile.integration).
+// CHANGE_NOTE_REQUIRED before the service; every service refusal is passed
+// through without revalidating; success revalidates the layout.
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/invoice-profile/activate-profile", () => ({
@@ -102,7 +100,6 @@ describe("activateProfileAction", () => {
   });
 
   it.each([
-    "PROFILE_FOUR_EYES_VIOLATION",
     "PROFILE_LOGO_REQUIRED",
     "ASSET_CHECKSUM_MISMATCH",
     "DRAFT_CONFLICT",

@@ -1449,7 +1449,7 @@ DELIVERED" section.
     5. **D8 import** lives in the same action file; the path is `getBrandingLogo().src` (default
        `/brand/logo.svg`), re-checked to stay under `public/brand/`; a missing or unreadable file is
        the new result code `APP_LOGO_UNAVAILABLE`.
-    6. Sizes display in KiB, so the 512,000-byte cap reads "500 KB" (the spec's figure).
+    6. Sizes are computed in KiB (bytes ÷ 1,024) but labelled "KB", so the 512,000-byte cap displays as "500 KB" (the spec's figure).
     7. Architecture Inv #48 said "stripped or rejected"; reworded to "rejected, never stripped" to
        match D4 and data rule 9.
     8. The no-image-library guardrail scans `services`, `actions`, `app`, `lib` and `components`
@@ -1578,6 +1578,66 @@ DELIVERED" section.
     (`PROFILE_FOUR_EYES_VIOLATION`), workflow rules §5; bm00 (G14 row, Unit 61, codes); the spec
     (banner removed, D6 = option C); design-review DR-01 removed (closed); ui-context §10b (profile
     Activate); this tracker.
+  - **Review fixes (2026-10-10, bm59–bm61):**
+    1. `findLastSaver` excludes the `logo_asset_version_id` row. A logo upload by user B used to
+       make B the "last saver", so the field editor A could activate their own bank change. New
+       integration case: A saves, B uploads → both refused.
+    2. The `MY` `country_code` default moved from the fields schema to `invoiceProfileSchema`, so a
+       draft save (`.partial()`) no longer fills an omitted `country_code`.
+    3. The form clears the inline `PROFILE_LOGO_REQUIRED` error when an activation starts and after
+       a successful save. The state codes now sort with `localeCompare`.
+    4. Docs: the code-standards §8 line that said four-eyes never applies to activation now matches
+       G14 C; workflow rules §5 moves G14 to the decided list.
+    5. Not changed: the SVG `on*` rule stays a whole-text match. It fails closed (a false positive
+       is a rejection, never a bypass), and a tag-aware regex would add bypass and backtracking
+       risk.
+  - **Code-review fixes, Moderate + cleanup (2026-10-10, bm59–bm61):**
+    1. Profile schema: a missing required key now says "Required" (`z.string("Required")`), not
+       Zod's raw "expected string, received undefined", so activation's field errors read well.
+    2. SVG policy: `url('#g')`, `url( #g)`, `href=" #a"` and `href= "#a"` are fragment
+       references and are accepted (the old lookahead could backtrack onto the quote or a space);
+       quoted/spaced external references are still rejected.
+    3. `updateDraftFields` checks the token first, then inserts any changed key with no row in the
+       stored draft (it was silently dropped, or a false `DRAFT_CONFLICT` when it was the only
+       change).
+    4. `hasLogoAsset` is now `billAssetRepository.hasLogoVersion` (a logo asset WITH a version): a
+       failed first upload leaves an empty `bill_asset` row that no longer hides the D8 import.
+    5. A logo side above int4 (`bill_asset_version.width/height`), or an infinite SVG size, is
+       `LOGO_REJECTED: dimensions`, not a failed insert after the blob write.
+    6. Cleanup: the save/upload/import actions log service failures (as activation does); the
+       page model runs its independent reads together and reuses the ACTIVE raw read; activation
+       verifies the logo with the rows already read (`parseInvoiceProfile` + `inlineLogo`); one
+       `DRAFT_CONFLICT_MESSAGE` (`draft-messages.ts`), one `HEX_COLOUR_RE` (`types/billing.ts`),
+       one `DraftConflict` (`draft-conflict.ts`).
+    7. Open, awaiting the owner: the app-logo import fallback when `app_logo_path` is blank, and
+       whether a no-op save writes an audit row; the four Serious findings (SVG regex
+       backtracking, four-eyes by field saver, namespaced SVG elements, carried-over logo
+       uploader). **Resolved 2026-10-11, below.**
+    - Tests: related unit suites 1,902 passed; profile/logo integration 46 passed (Postgres +
+      Azurite); `tsc`, ESLint and Prettier clean.
+  - **Code-review fixes, Serious + owner decisions (2026-10-11, bm60/bm61):**
+    1. **G14 re-decided by the owner: no four-eyes on profile activation** (supersedes option C).
+       Removed `PROFILE_FOUR_EYES_VIOLATION`, the service check, `findLastSaver`, the form message
+       and their tests; Serious #2 (saver vs field editor) and #4 (carried-over logo uploader) are
+       moot. Kept: the bank-change warning and `bankDetailsChanged` on the audit row (one
+       definition, `lib/invoice-profile-changes.ts`). Origin, for the record: the original plan
+       said four-eyes "does not apply" (code-standards §8); the architecture _Noted gap_ (bm47
+       docs, 2026-10-08) raised it as G14, decided C on 2026-10-10, reverted 2026-10-11. Docs:
+       overview, architecture, code-standards §8 + TS rule 7, workflow rules §5, ui-context,
+       bm00, bm61 D6.
+    2. **SVG scanner (Serious #1):** `sanitize-logo.ts` is a hand-written linear scanner (no
+       backtracking regexes). Crafted ~500 KB inputs scan in < 40 ms (the old regexes took ~100 s).
+       Same construct names and earliest-construct order; a differential fuzz of 300,000 random
+       documents against the old regexes showed no case the scanner accepts that they rejected.
+    3. **Namespaced elements (Serious #3):** elements match by local name too, so `<s:script>`,
+       `<svg:SCRIPT>`, `<x:foreignObject>`, `<s:use x:href=…>`, `<s:style>` are rejected.
+    4. **#10 (owner):** `public/brand/invoice-logo-default.svg` added as a placeholder (an exact
+       copy of `brand/logo.svg`); the D8 import falls back to it when no app logo is configured.
+    5. **#11 (owner):** a save that changes no key of the existing draft writes nothing and no
+       audit row; the result carries `changed: false` and the form shows the Info toast "No
+       changes — nothing was saved." (bm59 D4 + checklist, ui-context).
+    - Tests: related unit suites 1,937 passed; profile/logo integration 46 passed (Postgres +
+      Azurite); `tsc`, ESLint and Prettier clean.
   - **Next:** bm62 / bm63 per the build plan (bm63's journey activates profile v1 then v2).
 
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)

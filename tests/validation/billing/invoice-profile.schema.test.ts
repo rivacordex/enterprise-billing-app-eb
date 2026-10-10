@@ -66,6 +66,23 @@ describe("invoiceProfileSchema — a complete valid profile", () => {
     expect(r.success).toBe(true);
   });
 
+  it("a MISSING required key says 'Required', not Zod's raw type message", () => {
+    const r = parse({ city: null, tin: null, swift: null, brand_color: null });
+    expect(r.success).toBe(false);
+    const byPath = Object.fromEntries(
+      (r.success ? [] : r.error.issues).map((i) => [
+        i.path.join("."),
+        i.message,
+      ]),
+    );
+    expect(byPath).toEqual({
+      city: "Required",
+      tin: "Required",
+      swift: "Required",
+      brand_color: "Required",
+    });
+  });
+
   it("country_code defaults to MY", () => {
     const r = parse({ country_code: null });
     expect(r.success && r.data.country_code).toBe("MY");
@@ -177,6 +194,11 @@ describe("invoiceProfileDraftSchema — save validates formats, not completeness
     expect(draftIssuePaths(blanks)).toEqual([]);
   });
 
+  it("leaves an omitted country_code unset (the MY default is the full schema's)", () => {
+    const r = invoiceProfileDraftSchema.safeParse({});
+    expect(r.success && "country_code" in r.data).toBe(false);
+  });
+
   it("is .partial() over the same field set as the full schema (minus the logo)", () => {
     expect(Object.keys(invoiceProfileDraftSchema.shape).sort()).toEqual(
       [...INVOICE_PROFILE_FIELD_KEYS].sort(),
@@ -227,7 +249,6 @@ describe("invoiceProfileDraftSchema — save validates formats, not completeness
       brand_color: "#2E45A9",
       bank_account_no: "514012345678",
       payment_terms_days: 30,
-      country_code: "MY",
     });
   });
 

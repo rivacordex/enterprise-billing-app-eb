@@ -275,7 +275,9 @@ is below 4.5:1, a non-blocking Warning-family hint (`TriangleAlert`,
 formats show the schema's message under the field (the same text the server
 returns). The outline **Save draft** button sits right-aligned under the form,
 disabled while pristine or saving; success is a toast "Draft profile v{n}
-saved — not used on invoices", and `DRAFT_CONFLICT` is the Warning toast with
+saved — not used on invoices". A save that changes nothing once trimmed and
+normalised ("Acme " → "Acme") is an Info toast "No changes — nothing was
+saved." (no write, no audit). `DRAFT_CONFLICT` is the Warning toast with
 **Reload**. The page opens EDIT users on the working draft (the bm57 "Editing
 draft v{n} — saved … by …" Info line), else the ACTIVE values, else empty
 fields under the empty-state alert, whose **Create a draft** action focuses the
@@ -307,10 +309,9 @@ active profile." when none). When any payment field differs, including the first
 activation, the Warning callout reads "Bank details change on every new invoice.
 Customers will be asked to pay into the new account from the next bill run." A
 server refusal shows inline in Danger in the dialog. `PROFILE_LOGO_REQUIRED`
-also shows inline by the logo field, and Activate stays enabled. For G14 option
-C, the four-eyes refusal reads "Activation must be done by a different user than
-the one who edited the draft." Success is a toast "Company profile v{n}
-activated".
+also shows inline by the logo field, and Activate stays enabled. There is no
+four-eyes refusal (G14 decided 2026-10-11). Success is a toast "Company profile
+v{n} activated".
 
 **Activate (bm58).** The page-level **Activate v{n}** button is the one Deep Petrol
 button on the screen (§7). It is enabled only when a saved draft exists and the

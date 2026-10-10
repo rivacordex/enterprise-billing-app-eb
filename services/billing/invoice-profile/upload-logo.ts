@@ -11,6 +11,7 @@ import {
   detectImageType,
   imageDimensions,
 } from "@/services/billing/invoice-profile/image-dimensions";
+import { DraftConflict } from "@/services/billing/invoice-profile/draft-conflict";
 import { findSvgViolation } from "@/services/billing/invoice-profile/sanitize-logo";
 import { getBrandingLogo } from "@/services/system-config/app-config-read.service";
 import {
@@ -60,6 +61,8 @@ const EXTENSIONS: Record<LogoMimeType, "png" | "jpg" | "svg"> = {
   "image/svg+xml": "svg",
 };
 
+const INT4_MAX = 2_147_483_647;
+
 function reject(
   reason: LogoRejectReason,
   detail: LogoRejectDetail,
@@ -91,7 +94,12 @@ export function checkLogo(
   if (!dims.ok) {
     return reject(dims.reason, { message: dims.message });
   }
-  if (Math.min(dims.width, dims.height) < LOGO_MIN_SIDE_PX) {
+  if (
+    Math.min(dims.width, dims.height) < LOGO_MIN_SIDE_PX ||
+    // `bill_asset_version.width/height` are int4: a larger (or infinite SVG)
+    // size is rejected here, not as an insert failure after the blob write.
+    Math.max(dims.width, dims.height) > INT4_MAX
+  ) {
     return reject("dimensions", {
       width: dims.width,
       height: dims.height,
@@ -110,14 +118,6 @@ export function checkLogo(
     width: dims.width,
     height: dims.height,
   };
-}
-
-// Thrown inside the step-4 transaction to roll the version row back when the
-// draft pointer cannot be set; mapped to `DRAFT_CONFLICT`.
-class DraftConflict extends Error {
-  constructor() {
-    super("DRAFT_CONFLICT");
-  }
 }
 
 export async function uploadLogo(
@@ -233,7 +233,7 @@ export async function importAppLogo(
   actorId: string,
 ): Promise<UploadLogoResult | { ok: false; code: "APP_LOGO_UNAVAILABLE" }> {
   const branding = await getBrandingLogo();
-  const src = branding?.src ?? "/brand/logo.svg";
+  const src = branding?.src ?? "/brand/invoice-logo-default.svg";
   const brandDir = path.join(process.cwd(), "public", "brand");
   const file = path.resolve(path.join(process.cwd(), "public", src));
   const declaredMime = APP_LOGO_TYPES[path.extname(file).toLowerCase()];

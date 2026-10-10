@@ -313,7 +313,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(svc.match(/eventType: "INVOICE_LOGO_UPLOADED"/g)).toHaveLength(1);
   });
 
-  it("activate-profile guards on EDIT first, validates the note, then runs the service, then revalidates; four-eyes, writes and audit live in the service (bm61)", () => {
+  it("activate-profile guards on EDIT first, validates the note, then runs the service, then revalidates; writes and audit live in the service (bm61)", () => {
     const src = read(
       "actions/billing/invoice-settings/activate-profile.action.ts",
     );
@@ -325,15 +325,8 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(guard).toBeLessThan(parse);
     expect(parse).toBeLessThan(service);
     expect(service).toBeLessThan(revalidate);
-    expect(src).not.toMatch(/insertAuditEvent|PROFILE_FOUR_EYES_VIOLATION"/);
+    expect(src).not.toMatch(/insertAuditEvent/);
     const svc = read("services/billing/invoice-profile/activate-profile.ts");
-    // G14 option C is enforced in the service, before the transaction.
-    expect(svc.indexOf('code: "PROFILE_FOUR_EYES_VIOLATION"')).toBeGreaterThan(
-      -1,
-    );
-    expect(svc.indexOf('code: "PROFILE_FOUR_EYES_VIOLATION"')).toBeLessThan(
-      svc.indexOf("db.transaction("),
-    );
     expect(svc.match(/db\.transaction\(/g)).toHaveLength(1);
     // Retire BEFORE promote: two versions are never ACTIVE together.
     expect(svc.indexOf("retireActiveVersion(")).toBeLessThan(

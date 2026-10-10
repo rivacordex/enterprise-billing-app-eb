@@ -45,7 +45,12 @@ beforeEach(() => {
     userEmail: "a@example.com",
     permissionMap: { invoice_settings: "EDIT" },
   } as never);
-  mockService.mockResolvedValue({ ok: true, versionNo: 3, draftToken: TOKEN });
+  mockService.mockResolvedValue({
+    ok: true,
+    versionNo: 3,
+    draftToken: TOKEN,
+    changed: true,
+  });
 });
 
 describe("saveProfileDraftAction", () => {
@@ -138,7 +143,12 @@ describe("saveProfileDraftAction", () => {
       fields: { ...FIELDS, tin: " c12345678901 " },
       expectedDraftToken: TOKEN,
     });
-    expect(result).toEqual({ ok: true, versionNo: 3, draftToken: TOKEN });
+    expect(result).toEqual({
+      ok: true,
+      versionNo: 3,
+      draftToken: TOKEN,
+      changed: true,
+    });
     expect(mockService).toHaveBeenCalledWith(
       {
         fields: {
@@ -146,7 +156,6 @@ describe("saveProfileDraftAction", () => {
           tin: "C12345678901",
           brand_color: "#2E45A9",
           payment_terms_days: 30,
-          country_code: "MY",
         },
         expectedDraftToken: TOKEN,
       },
@@ -156,6 +165,22 @@ describe("saveProfileDraftAction", () => {
       "/administration/invoice-settings",
       "layout",
     );
+  });
+
+  it("a save that changed nothing passes through without revalidating", async () => {
+    mockService.mockResolvedValue({
+      ok: true,
+      versionNo: 3,
+      draftToken: TOKEN,
+      changed: false,
+    });
+    expect(
+      await saveProfileDraftAction({
+        fields: FIELDS,
+        expectedDraftToken: TOKEN,
+      }),
+    ).toMatchObject({ ok: true, changed: false });
+    expect(mockRevalidate).not.toHaveBeenCalled();
   });
 
   it("maps DRAFT_CONFLICT without revalidating", async () => {

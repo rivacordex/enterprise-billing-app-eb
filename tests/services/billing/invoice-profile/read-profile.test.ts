@@ -15,7 +15,7 @@ vi.mock("@/db/repositories/billing/invoice-profile", () => ({
   },
 }));
 vi.mock("@/db/repositories/billing/bill-asset", () => ({
-  billAssetRepository: { findVersionById: vi.fn(), findLogoAsset: vi.fn() },
+  billAssetRepository: { findVersionById: vi.fn(), hasLogoVersion: vi.fn() },
 }));
 vi.mock("@/services/billing/blob-store", () => ({ blobStore: {} }));
 
@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   repo.resolveUserNames.mockResolvedValue(new Map([["user-1", "Alice"]]));
   repo.findDraftVersion.mockResolvedValue(null);
-  vi.mocked(billAssetRepository.findLogoAsset).mockResolvedValue(null);
+  vi.mocked(billAssetRepository.hasLogoVersion).mockResolvedValue(false);
   repo.readVersionRaw.mockImplementation(async (_db, version) => ({
     fields: {
       company_name: `Co v${version}`,
@@ -159,6 +159,24 @@ describe("getCompanyProfilePageModel", () => {
     expect(repo.findDraftVersion).not.toHaveBeenCalled();
     expect(repo.readVersionRaw).toHaveBeenCalledTimes(1);
     expect(repo.readVersionRaw).toHaveBeenCalledWith(DB, 1);
+  });
+
+  it("EDIT user on the ACTIVE version: one raw read feeds both shown and activeFields", async () => {
+    repo.listVersions.mockResolvedValue([
+      summary({ configVersion: 1, status: "ACTIVE" }),
+    ]);
+    const model = await getCompanyProfilePageModel(DB, { canEdit: true });
+    expect(model.shown?.version).toBe(1);
+    expect(model.activeFields).toEqual(model.shown?.fields);
+    expect(repo.readVersionRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("hasLogoAsset follows a stored logo VERSION, not a bare asset row (bm60 D8)", async () => {
+    repo.listVersions.mockResolvedValue([]);
+    vi.mocked(billAssetRepository.hasLogoVersion).mockResolvedValue(true);
+    expect(
+      (await getCompanyProfilePageModel(DB, { canEdit: true })).hasLogoAsset,
+    ).toBe(true);
   });
 
   it("shows the DRAFT to EDIT users when nothing is ACTIVE", async () => {

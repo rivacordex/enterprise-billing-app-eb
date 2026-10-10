@@ -24,9 +24,9 @@ export type ActivateProfileActionResult =
 // working company-profile draft. A MUTATION, so the guard is
 // `invoice_settings : EDIT` and is the first statement (a READ user is refused
 // server-side; the hidden button is show/hide only). Order: guard → Zod (an
-// empty note is `CHANGE_NOTE_REQUIRED`) → service (checks D2.3–D2.6, the G14
-// option C four-eyes check, one transaction, one audit row) → revalidate the
-// Invoice Settings layout.
+// empty note is `CHANGE_NOTE_REQUIRED`) → service (checks D2.3–D2.6, one
+// transaction, one audit row) → revalidate the Invoice Settings layout. No
+// four-eyes (G14 decided 2026-10-11).
 export async function activateProfileAction(
   rawInput: unknown,
 ): Promise<ActivateProfileActionResult> {

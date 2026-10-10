@@ -17,6 +17,7 @@ import {
   uploadLogoAction,
   type UploadLogoActionResult,
 } from "@/actions/billing/invoice-settings/upload-logo.action";
+import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -28,8 +29,6 @@ import {
 } from "@/types/billing";
 
 const ACCEPT = LOGO_MIME_TYPES.join(",");
-const DRAFT_CONFLICT_MESSAGE =
-  "Another user changed the draft — reload to see it.";
 const FAILED_MESSAGE = "The logo could not be uploaded. Please try again.";
 
 function kb(bytes: number): string {
