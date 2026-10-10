@@ -266,7 +266,7 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 ## Open items to close before build specs
 
 - **O2** Checksum algorithm: SHA-256 for new template/asset objects (recommended) vs md5 as the invoice blob store uses.
-- **O3** Where notes & terms and the footer sentence live: fixed in the layout, or company-profile fields.
+- ~~**O3**~~ **Decided 2026-10-07 (G7):** notes & terms and the footer sentence are fixed layout text, not company-profile fields (bm59's profile form adds none).
 - **O4** Confirm fonts are fixed and embedded in the layout.
 - **O5** Missing database fields (customer SST no., PO reference, contract reference); their fragments stay hidden while blank.
 - **O10** Retention of retired versions (recommended: as long as any invoice references them).

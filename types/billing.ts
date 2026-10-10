@@ -1143,10 +1143,51 @@ export interface CompanyProfileShownVersion {
   logoAssetVersionId: string | null;
 }
 
+// bm59-spec §Design D1/D3 — the working DRAFT profile version an EDIT user
+// edits. `token` is `max(last_modified_datetime)` of the draft's rows at
+// microsecond precision (the bm57 token form); `savedBy` is the actor on the
+// most recently modified row.
+export interface ProfileDraftInfo {
+  version: number;
+  token: string;
+  savedAt: Date;
+  savedBy: string | null;
+}
+
 export interface CompanyProfilePageModel {
   shown: CompanyProfileShownVersion | null;
   history: ProfileHistoryRow[];
+  // bm59 — EDIT users only; always `null` for READ users.
+  draft: ProfileDraftInfo | null;
 }
+
+// bm59-spec §Design D1/D3 — each profile key's label: the form's field label
+// and the `description` stored on a draft's rows (bm53 D3 key table).
+export const INVOICE_PROFILE_FIELD_LABELS: Readonly<Record<string, string>> = {
+  company_name: "Legal name",
+  registration_no: "SSM registration no.",
+  tin: "TIN",
+  sst_reg_no: "SST registration no.",
+  address_line1: "Address line 1",
+  address_line2: "Address line 2",
+  postcode: "Postcode",
+  city: "City",
+  state_code: "State",
+  country_code: "Country",
+  phone: "Phone",
+  email: "Email",
+  website: "Website",
+  brand_color: "Brand colour",
+  accent_color: "Accent colour",
+  bank_name: "Bank name",
+  bank_account_name: "Account name",
+  bank_account_no: "Account no.",
+  swift: "SWIFT",
+  jompay_biller_code: "JomPAY biller code",
+  remittance_email: "Remittance email",
+  payment_terms_days: "Payment terms (days)",
+  logo_asset_version_id: "Logo",
+};
 
 // bm57-spec §Design D1/D2 — the save-draft result codes beyond the generic
 // action ones. `DRAFT_CONFLICT`: the shared working draft changed since the

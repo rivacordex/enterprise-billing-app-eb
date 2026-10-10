@@ -170,8 +170,8 @@ function metaDate(value: string | undefined): Date | null {
 
 // bm56 D1/D2 — the Company profile page's view-model. Shown version:
 // `?version=` when it names a stored version (a DRAFT only for EDIT users),
-// else the ACTIVE version, else the DRAFT (EDIT users), else `null` (the
-// empty state, G15 A). Nothing is cached.
+// else — bm59 D3 — the working DRAFT for EDIT users, else the ACTIVE version,
+// else `null` (the empty state, G15 A). Nothing is cached.
 export async function getCompanyProfilePageModel(
   db: Database,
   { version, canEdit }: { version?: number | undefined; canEdit: boolean },
@@ -184,10 +184,9 @@ export async function getCompanyProfilePageModel(
     version === undefined
       ? undefined
       : visible.find((v) => v.configVersion === version);
+  const draftSummary = visible.find((v) => v.status === "DRAFT");
   const chosen =
-    requested ??
-    visible.find((v) => v.status === "ACTIVE") ??
-    visible.find((v) => v.status === "DRAFT");
+    requested ?? draftSummary ?? visible.find((v) => v.status === "ACTIVE");
 
   const userIds = new Set<string>();
   for (const v of visible) {
@@ -212,7 +211,23 @@ export async function getCompanyProfilePageModel(
     usedByCount: v.usedByCount,
   }));
 
-  if (!chosen) return { shown: null, history };
+  // bm59 D1 — the working draft and its token (EDIT users only).
+  const draftVersion = draftSummary
+    ? await invoiceProfileRepository.findDraftVersion(db)
+    : null;
+  const draft =
+    draftSummary && draftVersion?.configVersion === draftSummary.configVersion
+      ? {
+          version: draftSummary.configVersion,
+          token: draftVersion.token,
+          savedAt: draftSummary.lastModifiedDatetime,
+          savedBy: draftSummary.modifiedBy
+            ? (names.get(draftSummary.modifiedBy) ?? draftSummary.modifiedBy)
+            : null,
+        }
+      : null;
+
+  if (!chosen) return { shown: null, history, draft };
 
   const raw = await invoiceProfileRepository.readVersionRaw(
     db,
@@ -229,6 +244,7 @@ export async function getCompanyProfilePageModel(
       logoAssetVersionId: raw.fields.logo_asset_version_id ?? null,
     },
     history,
+    draft,
   };
 }
 

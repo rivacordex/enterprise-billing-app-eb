@@ -2,11 +2,32 @@
 // inputs), colour swatches, the logo <img> pointing at the session-guarded GET
 // route, and "—" for blank optional fields. The history table's profile kind
 // is covered here too (no Layout column, no Default chip, numeric View link).
+// bm59-spec §Tests: EDIT mode — client-side rejection mirrors the server
+// (same messages from the same schema), the contrast hint, live swatches, the
+// SST hint, Save draft (pristine-disabled, token, toast, conflict + Reload,
+// server field errors) and the empty state's "Create a draft" focus.
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/actions/billing/invoice-settings/save-profile-draft.action", () => ({
+  saveProfileDraftAction: vi.fn(),
+}));
+const refresh = vi.hoisted(() => vi.fn());
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+import { toast } from "sonner";
+
+import { saveProfileDraftAction } from "@/actions/billing/invoice-settings/save-profile-draft.action";
+import {
+  CreateDraftButton,
+  PROFILE_FIRST_FIELD_ID,
+} from "@/components/billing/invoice-settings/company-profile-edit-form";
 import { CompanyProfileForm } from "@/components/billing/invoice-settings/company-profile-form";
+import { saveProfileDraftInputSchema } from "@/validation/billing/invoice-profile.schema";
 import { VersionHistoryTable } from "@/components/billing/invoice-settings/version-history-table";
 import type { ProfileHistoryRow } from "@/types/billing";
 
@@ -194,5 +215,201 @@ describe("VersionHistoryTable (kind=profile)", () => {
     expect(
       screen.getByText("No company profile versions yet."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("CompanyProfileForm (edit mode, bm59)", () => {
+  const mockSave = vi.mocked(saveProfileDraftAction);
+  const TOKEN = "2026-10-10T01:02:03.123456Z";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSave.mockResolvedValue({ ok: true, versionNo: 3, draftToken: TOKEN });
+  });
+
+  function renderEdit(
+    fields: Record<string, string | null> = FIELDS,
+    token: string | null = null,
+  ) {
+    return render(
+      <CompanyProfileForm
+        mode="edit"
+        fields={fields}
+        logoAssetVersionId="INVASV00000001"
+        expectedDraftToken={token}
+      />,
+    );
+  }
+
+  function input(key: string): HTMLInputElement {
+    return document.getElementById(`profile-${key}`) as HTMLInputElement;
+  }
+
+  function change(key: string, value: string): void {
+    fireEvent.change(input(key), { target: { value } });
+  }
+
+  function save(): void {
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  }
+
+  // The message the SERVER schema gives for this value — the form must show
+  // the same one (one schema, TS rule 5).
+  function serverMessage(key: string, value: string): string {
+    const r = saveProfileDraftInputSchema.safeParse({
+      fields: { [key]: value },
+      expectedDraftToken: null,
+    });
+    if (r.success) throw new Error(`${key}=${value} is valid on the server`);
+    return r.error.issues[0]!.message;
+  }
+
+  it("pre-fills inputs from the shown version, shows the country read-only, and disables Save while pristine", () => {
+    renderEdit();
+    expect(input("company_name").value).toBe("Digital Billing Sdn Bhd");
+    expect(input("tin").value).toBe("C1234567890");
+    expect(input("sst_reg_no").value).toBe("");
+    expect(screen.getByText("Malaysia")).toBeInTheDocument();
+    expect(input("country_code").tagName).toBe("P");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    // The logo is shown read-only; there is no logo input.
+    expect(
+      screen.getByRole("img", { name: "Company logo" }),
+    ).toBeInTheDocument();
+    expect(input("logo_asset_version_id")).toBeNull();
+  });
+
+  it.each<[string, string]>([
+    ["tin", "C123"],
+    ["sst_reg_no", "W101808-31000001"],
+    ["postcode", "5045"],
+    ["swift", "MBBEMYK"],
+    ["email", "not-an-email"],
+    ["brand_color", "red"],
+    ["website", "http://x.example"],
+    ["jompay_biller_code", "12A45"],
+    ["payment_terms_days", "121"],
+  ])(
+    "rejects an invalid %s (%s) client-side with the server's message, sending nothing",
+    async (key, value) => {
+      renderEdit();
+      change(key, value);
+      save();
+      expect(
+        await screen.findByText(serverMessage(key, value)),
+      ).toBeInTheDocument();
+      expect(input(key)).toHaveAttribute("aria-invalid", "true");
+      expect(mockSave).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts blanks and values the server normalises, and saves the raw values with the token", async () => {
+    renderEdit(FIELDS, TOKEN);
+    change("tin", " c12345678901 ");
+    change("company_name", "");
+    save();
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+    const payload = mockSave.mock.calls[0]![0] as {
+      fields: Record<string, string>;
+      expectedDraftToken: string | null;
+    };
+    expect(payload.expectedDraftToken).toBe(TOKEN);
+    expect(payload.fields.tin).toBe(" c12345678901 ");
+    expect(payload.fields.company_name).toBe("");
+    expect(payload.fields.country_code).toBe("MY");
+    expect(payload.fields).not.toHaveProperty("logo_asset_version_id");
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Draft profile v3 saved — not used on invoices",
+      ),
+    );
+  });
+
+  it("DRAFT_CONFLICT is a Warning toast with Reload", async () => {
+    mockSave.mockResolvedValue({ ok: false, code: "DRAFT_CONFLICT" });
+    renderEdit(FIELDS, TOKEN);
+    change("city", "Putrajaya");
+    save();
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1));
+    const [message, options] = vi.mocked(toast.warning).mock.calls[0]!;
+    expect(message).toBe("Another user changed the draft — reload to see it.");
+    const action = (
+      options as { action: { label: string; onClick: () => void } }
+    ).action;
+    expect(action.label).toBe("Reload");
+    action.onClick();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a server VALIDATION_ERROR onto the field", async () => {
+    mockSave.mockResolvedValue({
+      ok: false,
+      code: "VALIDATION_ERROR",
+      fieldErrors: { swift: ["SWIFT refused by the server"] },
+    });
+    renderEdit();
+    change("city", "Putrajaya");
+    save();
+    expect(
+      await screen.findByText("SWIFT refused by the server"),
+    ).toBeInTheDocument();
+    expect(input("swift")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("shows a Warning contrast hint when white text on the colour is below 4.5:1", async () => {
+    renderEdit();
+    const hint = () => document.getElementById("profile-brand_color-contrast");
+    // White on #2E45A9 is about 8.3:1, so no hint; the fixture's accent
+    // #1F9D57 is about 3.5:1 and already carries one.
+    expect(hint()).toBeNull();
+    expect(
+      document.getElementById("profile-accent_color-contrast"),
+    ).toHaveTextContent(/3\.5:1, below 4\.5:1/);
+    change("brand_color", "#FFD700");
+    await waitFor(() => expect(hint()).toHaveTextContent(/below 4\.5:1/));
+    expect(input("brand_color")).toHaveAttribute(
+      "aria-describedby",
+      "profile-brand_color-contrast",
+    );
+    // Non-blocking: the save still goes through.
+    save();
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps a 20x20 swatch in step with the colour input", async () => {
+    renderEdit();
+    expect(screen.getAllByTestId("colour-swatch")).toHaveLength(2);
+    change("accent_color", "#00FF00");
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId("colour-swatch")[1]?.querySelector("rect"),
+      ).toHaveAttribute("fill", "#00FF00"),
+    );
+    change("accent_color", "#00FF0");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("colour-swatch")).toHaveLength(1),
+    );
+  });
+
+  it("explains that a blank SST no. is hidden on the invoice", () => {
+    renderEdit();
+    const hint = screen.getByText("Hidden on the invoice when blank");
+    expect(input("sst_reg_no")).toHaveAttribute("aria-describedby", hint.id);
+  });
+
+  it("Create a draft focuses the form's first field", () => {
+    render(
+      <>
+        <CreateDraftButton />
+        <CompanyProfileForm
+          mode="edit"
+          fields={{}}
+          logoAssetVersionId={null}
+          expectedDraftToken={null}
+        />
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create a draft" }));
+    expect(document.activeElement?.id).toBe(PROFILE_FIRST_FIELD_ID);
   });
 });

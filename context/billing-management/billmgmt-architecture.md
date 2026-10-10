@@ -347,7 +347,7 @@ This update is the first to touch several platform rules. None changes a Platfor
 **Other open items with an architectural edge:**
 
 - **O2** — checksum algorithm (see above).
-- **O3** — notes & terms and the footer sentence: fixed layout text, or company-profile fields? Choosing profile fields adds fields and makes that text admin-editable.
+- ~~**O3**~~ — **decided 2026-10-07 (G7):** notes & terms and the footer sentence are fixed layout text; the company profile has **no** notes/footer fields (bm50 seeded them immutably; bm59's profile form adds none).
 - **O4** — fonts fixed and embedded in the layout, so rendering never fetches a font.
 - **O5** — customer SST no., PO and contract references do not exist in the schema; their fragments stay hidden while blank.
 - **O10** — retention of retired versions; Inv #44 assumes "as long as any invoice references them".

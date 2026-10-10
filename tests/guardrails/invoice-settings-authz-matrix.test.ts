@@ -85,6 +85,12 @@ const MATRIX: MatrixRow[] = [
     level: "EDIT",
     kind: "action",
   },
+  {
+    surface: "save company profile draft (a mutation)",
+    file: "actions/billing/invoice-settings/save-profile-draft.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
 ];
 
 describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => {
@@ -222,6 +228,41 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     // Write-once, never overwritten.
     expect(svc).toMatch(/writeOnce:\s*true/);
     expect(svc).not.toMatch(/deleteBlob|writeOnce:\s*false/);
+  });
+
+  it("save-profile-draft guards on EDIT first, then validates, then calls the service, then revalidates; its writes and audit live in the service (bm59)", () => {
+    const src = read(
+      "actions/billing/invoice-settings/save-profile-draft.action.ts",
+    );
+    const guard = src.indexOf("LEVELS.EDIT");
+    const parse = src.indexOf("saveProfileDraftInputSchema.safeParse");
+    const service = src.indexOf("await saveProfileDraft(");
+    const revalidate = src.indexOf("revalidatePath(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(parse).toBeLessThan(service);
+    expect(service).toBeLessThan(revalidate);
+    expect(src).not.toMatch(/insertAuditEvent|auditLogRepository/);
+    const svc = read("services/billing/invoice-profile/save-profile-draft.ts");
+    expect(svc).toContain("db.transaction(");
+    // One audit write per branch (update / insert), each in the transaction.
+    expect(svc.match(/eventType: "INVOICE_PROFILE_DRAFT_SAVED"/g)).toHaveLength(
+      2,
+    );
+    // No activation, no logo upload, no meta.* write (bm60 / bm61).
+    expect(svc).not.toMatch(/"ACTIVE"|"RETIRED"|putObject|"meta\./);
+  });
+
+  it("while a profile draft exists it is the only editable version, and the form reloads per draft token (bm59)", () => {
+    const src = read(
+      "app/(app)/administration/invoice-settings/company-profile/page.tsx",
+    );
+    expect(src).toMatch(
+      /canEdit && \(shownIsDraft \|\| \(!draft && shown\?\.status === "ACTIVE"\)\)/,
+    );
+    expect(src).toMatch(
+      /key=\{`\$\{shown\.version\}:\$\{draft\?\.token \?\? "none"\}`\}/,
+    );
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {

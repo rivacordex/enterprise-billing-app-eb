@@ -20,8 +20,8 @@ const INVOICE = "INVOICE";
 // `last_modified_datetime` rendered in SQL at full microsecond precision. A JS
 // `Date` truncates to milliseconds and would never match the stored value, so
 // the token is produced and compared as text in the database.
-const TOKEN_FORMAT = 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"';
-const draftToken = sql<string>`to_char(${billTemplateVersion.lastModifiedDatetime} AT TIME ZONE 'UTC', '${sql.raw(TOKEN_FORMAT)}')`;
+export const DRAFT_TOKEN_FORMAT = 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"';
+const draftToken = sql<string>`to_char(${billTemplateVersion.lastModifiedDatetime} AT TIME ZONE 'UTC', '${sql.raw(DRAFT_TOKEN_FORMAT)}')`;
 
 export interface TemplateDraftRow extends BillTemplateVersion {
   token: string;

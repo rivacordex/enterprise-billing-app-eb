@@ -1301,6 +1301,98 @@ DELIVERED" section.
   - **Next:** bm59 (profile edit mode and "Create a draft"). Known-issues §20 (layout v2 with the
     annex CSS) is still open and should land before real activations reach production.
 
+## Invoice Template update — bm59 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
+
+- **bm59 — Company profile: save draft (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm59-company-profile-save-draft.md`. An
+  `invoice_settings : EDIT` user edits the company profile and saves it as the single working
+  DRAFT version of `invoice.profile` (one row per field key), validated against the
+  placeholder-catalog formats in the form and on the server, audited as
+  `INVOICE_PROFILE_DRAFT_SAVED` in the same transaction. No activation, no logo upload (bm60), no
+  migration, no grant change, no npm dependency. Depends on bm56.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_PROFILE_DRAFT_SAVED` (Change).
+      `types/billing.ts`: `ProfileDraftInfo`, `CompanyProfilePageModel.draft`,
+      `INVOICE_PROFILE_FIELD_LABELS` (form labels and the rows' `description`).
+    - `validation/billing/invoice-profile.schema.ts` (D2): `invoiceProfileFieldsSchema`,
+      `invoiceProfileDraftSchema` (`.partial()`), `invoiceProfileSchema` (fields + logo), the
+      shared `normalizeInvoiceProfileDraftInput`, `INVOICE_PROFILE_FIELD_KEYS` and
+      `saveProfileDraftInputSchema` (fields + the bm57 token shape). Field-level messages
+      ("TIN is 1–2 letters then 10–11 digits…") so the form and the server show the same text.
+    - `db/repositories/billing/invoice-profile.ts` (D1): `lockProfileGroup` (advisory lock on
+      `core.system_config:invoice.profile`), `nextProfileVersion` (`max + 1` over the whole
+      group), `findDraftVersion` (version + token = `max(last_modified_datetime)` at microsecond
+      precision), `insertDraftVersion` (every key, blanks `NULL`, `is_secret = false`, label as
+      description) and `updateDraftFields` (one `UPDATE … FROM (VALUES …)` guarded by the token in
+      the same statement). `DRAFT_TOKEN_FORMAT` is now exported from the template repository and
+      shared.
+    - `services/billing/invoice-profile/save-profile-draft.ts`: one transaction — lock → re-parse
+      → insert at `max + 1` or update only the changed keys under the token → one audit row
+      (`targetEntity: 'SYSTEM_CONFIG'`, `targetId: 'invoice.profile:v{n}'`, changed keys only in
+      before/after on an update; bank details included). A `23505` on
+      `system_config_group_version_key_unique` maps to `DRAFT_CONFLICT`.
+    - `actions/billing/invoice-settings/save-profile-draft.action.ts`: EDIT guard → Zod (field
+      errors keyed by profile field) → service → `revalidatePath(…, 'layout')`.
+    - UI (D3): `CompanyProfileEditForm` (`'use client'`, RHF + `zodResolver(invoiceProfileDraftSchema)`
+      after the shared normaliser; `Field`/`Input`/`Select`), rendered by `CompanyProfileForm
+      mode="edit"`. State `Select` of the 16 codes, Country read-only `MY`, mono colour inputs with
+      a live swatch and the < 4.5:1 Warning hint (`lib/colour-contrast.ts`), SST hint, outline
+      **Save draft** (pristine-disabled), success toast, conflict toast with **Reload**, server
+      field errors mapped onto fields. `ColourSwatch` is shared by read and edit modes. The page
+      opens EDIT users on the DRAFT (bm57-style "Editing draft v{n}" line), else the ACTIVE values,
+      else empty fields under the empty-state alert, whose **Create a draft** button now renders
+      and focuses the first field. The form remounts per `{version}:{draft token}`.
+  - **Deviations / interpretations (recorded):**
+    1. **The ACTIVE logo is carried into a new draft.** D1 says a new draft stores "the submitted
+       values", but the form never sends `logo_asset_version_id`; storing `NULL` would silently
+       drop the ACTIVE logo from every new draft and force a re-upload before bm61 activation. The
+       first save copies the ACTIVE version's logo id (D1 "the copy is made only on first save").
+    2. **The group lock is taken before the draft lookup** (the bm57 deviation 2), so two
+       concurrent first saves are one insert and one `DRAFT_CONFLICT`; `nextProfileVersion` re-takes
+       it. The `23505` mapping stays as a backstop.
+    3. **While a draft exists it is the only editable version** (the bm57 owner decision applied
+       to the profile): a RETIRED or ACTIVE version opened with `?version=` is read-only with an
+       "Edit draft v{n}" link, and an explicit retired version is never editable.
+    4. **Shown version for EDIT users is now DRAFT ?? ACTIVE** (bm56 had ACTIVE ?? DRAFT), per D3.
+       READ users are unchanged.
+    5. **Normalisation is a function, not schema transforms**, so `invoiceProfileDraftSchema` stays
+       exactly `invoiceProfileFieldsSchema.partial()` and the render-time read keeps rejecting a
+       hand-edited lower-case TIN.
+    6. A save with no changed keys still writes one audit row (empty `fields` maps) and keeps the
+       token; the form disables Save while pristine, so only a crafted request reaches it.
+  - **Tests:**
+    - `tests/db/save-profile-draft.integration.test.ts` (11, throwaway Postgres): first save
+      inserts all 23 keys at v2 as DRAFT with `modified_by`, labels, `NULL` blanks and the ACTIVE
+      logo; the token is the rows' `max(last_modified_datetime)`; a second save updates only the
+      changed keys (by `last_modified` and `modified_by`); a stale token and both wrong
+      beliefs about the draft are `DRAFT_CONFLICT` with nothing written; two concurrent first saves
+      (looped 3x) allocate one version; one audit row per save with changed-key before/after; an
+      invalid value writes nothing; `findActiveVersion` never returns the DRAFT; the generic System
+      Config page still hides the group; the real `23505` shape is recognized.
+    - `invoice-profile.schema.test.ts` (+guardrail 51 format half): blanks accepted; invalid TIN,
+      SST, postcode, SWIFT, emails, website, colours, state code, JomPAY, account no., terms > 120
+      and over-length rejected; normalisation; `.strict()` rejects the logo and `meta.*`.
+    - `save-profile-draft.action.test.ts` (10): READ → `FORBIDDEN` with nothing written; invalid
+      values → `VALIDATION_ERROR` keyed by field; logo/`meta.*` refused; bad token; normalised
+      payload to the service; conflict and throw mapping; revalidation.
+    - `company-profile-form.test.tsx` (+17 edit mode): client-side rejection shows the **server
+      schema's own message** for nine formats with nothing sent; contrast hint; live swatches; SST
+      hint; save payload (raw values, token, no logo) and toast; conflict + Reload; server field
+      errors; Create a draft focus.
+    - `read-profile.test.ts` (DRAFT first for EDIT users, draft info), authz-matrix row + an
+      order/audit check + the page's editable/key rule, `audit-log-filters` (84 options).
+    - Full integration project: **1179 passed, 0 failed** (124 files, 75 skipped), 398 s. Full
+      unit suite: 4144 passed, 2 failed — both 10 s timeouts in repo-wide scans
+      (`route-manifest`, `pricing-component-guardrails`) while the integration run shared the
+      machine; both pass alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the edit form.
+  - **Docs closed in this change set:** G7/O3 recorded as decided in the overview open items,
+    architecture "Other open items" and code-standards TS rule 5 (the AI workflow rules already had
+    it); code-standards TS rule 5 (draft vs activation schemas, the shared normaliser); ui-context
+    §10b (profile Save draft, Create a draft); this tracker.
+  - **Next:** bm60 (logo upload onto the draft), bm61 (profile activation, writes `meta.*`).
+
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
 
 - **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:

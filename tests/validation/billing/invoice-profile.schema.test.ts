@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  INVOICE_PROFILE_FIELD_KEYS,
+  invoiceProfileDraftSchema,
   invoiceProfileSchema,
+  saveProfileDraftInputSchema,
   toInvoiceProfileInput,
 } from "@/validation/billing/invoice-profile.schema";
 
@@ -148,5 +151,111 @@ describe("invoiceProfileSchema — lengths and required keys", () => {
     expect(r.success ? [] : r.error.issues.map((i) => i.code)).toContain(
       "unrecognized_keys",
     );
+  });
+});
+
+// bm59-spec §Tests row 1 — guardrail 51, FORMAT half: the save-draft schema
+// accepts blanks (incomplete work) but every provided value must match its
+// catalog §B format, after the shared normalisation; `.strict()` still rejects
+// the logo (bm60 writes it) and `meta.*` (bm61) when posted from the form.
+function draftIssuePaths(fields: Record<string, unknown>): string[] {
+  const r = saveProfileDraftInputSchema.safeParse({
+    fields,
+    expectedDraftToken: null,
+  });
+  return r.success
+    ? []
+    : r.error.issues.map((i) => i.path.slice(1).join(".") || "fields");
+}
+
+describe("invoiceProfileDraftSchema — save validates formats, not completeness (bm59)", () => {
+  it("accepts an empty draft and a draft of blanks", () => {
+    expect(invoiceProfileDraftSchema.safeParse({}).success).toBe(true);
+    const blanks = Object.fromEntries(
+      INVOICE_PROFILE_FIELD_KEYS.map((k) => [k, "  "]),
+    );
+    expect(draftIssuePaths(blanks)).toEqual([]);
+  });
+
+  it("is .partial() over the same field set as the full schema (minus the logo)", () => {
+    expect(Object.keys(invoiceProfileDraftSchema.shape).sort()).toEqual(
+      [...INVOICE_PROFILE_FIELD_KEYS].sort(),
+    );
+    expect(Object.keys(invoiceProfileSchema.shape).sort()).toEqual(
+      [...INVOICE_PROFILE_FIELD_KEYS, "logo_asset_version_id"].sort(),
+    );
+  });
+
+  it.each<[string, string]>([
+    ["tin", "C123"],
+    ["sst_reg_no", "W101808-31000001"],
+    ["postcode", "5045"],
+    ["swift", "MBBEMYK"],
+    ["email", "not-an-email"],
+    ["remittance_email", "ar.b.example"],
+    ["website", "http://x.example"],
+    ["brand_color", "red"],
+    ["accent_color", "#GGGGGG"],
+    ["state_code", "17"],
+    ["jompay_biller_code", "12A45"],
+    ["bank_account_no", "ABC123456"],
+    ["payment_terms_days", "121"],
+    ["payment_terms_days", "thirty"],
+    ["company_name", "x".repeat(151)],
+  ])("rejects an invalid %s (%s)", (key, value) => {
+    expect(draftIssuePaths({ [key]: value })).toEqual([key]);
+  });
+
+  it("normalises before validating: trim, upper-case TIN/SST/SWIFT/colours, account-no. spaces, terms → int", () => {
+    const r = saveProfileDraftInputSchema.safeParse({
+      fields: {
+        tin: " c12345678901 ",
+        sst_reg_no: "w10-1808-31000001",
+        swift: "mbbemykl",
+        brand_color: "#2e45a9",
+        bank_account_no: "5140 1234 5678",
+        payment_terms_days: " 30 ",
+        city: "   ",
+      },
+      expectedDraftToken: null,
+    });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.fields).toEqual({
+      tin: "C12345678901",
+      sst_reg_no: "W10-1808-31000001",
+      swift: "MBBEMYKL",
+      brand_color: "#2E45A9",
+      bank_account_no: "514012345678",
+      payment_terms_days: 30,
+      country_code: "MY",
+    });
+  });
+
+  it.each([
+    ["logo_asset_version_id", "INVASV00000001"],
+    ["meta.change_note", "x"],
+    ["meta.activated_by", "user-1"],
+  ])(".strict() rejects %s posted from the form", (key, value) => {
+    expect(draftIssuePaths({ [key]: value })).toEqual(["fields"]);
+  });
+
+  it("rejects a malformed token and an unknown top-level key", () => {
+    expect(
+      saveProfileDraftInputSchema.safeParse({
+        fields: {},
+        expectedDraftToken: "2026-10-10",
+      }).success,
+    ).toBe(false);
+    expect(
+      saveProfileDraftInputSchema.safeParse({
+        fields: {},
+        expectedDraftToken: null,
+        version: 3,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("the full schema still requires what activation requires", () => {
+    expect(invoiceProfileSchema.safeParse({}).success).toBe(false);
   });
 });
