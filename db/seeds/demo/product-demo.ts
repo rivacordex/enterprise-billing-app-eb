@@ -257,16 +257,13 @@ const OFFERING_SEEDS: OfferingSeed[] = [
         params: { amount: "5500.00" },
       },
       {
-        // startDateTime deliberately offset from the recurring charge above
-        // (empirically forced, not in the D3 table's literal wording): pm46's
-        // rekeyed uniqueness constraint is `NULLS NOT DISTINCT` on
-        // (offering, component_type, unit_of_measure, start_date_time), and
-        // BOTH flat_fee variants share `unit_of_measure = NULL` — the old
-        // price_type ('recurring' vs 'once') is no longer part of the key, so
-        // two flat_fee rows on the same offering at the same start_date_time
-        // collide regardless of their envelope priceType (G-F; the same
-        // rejection pm46's own constraint suite asserts). One calendar day
-        // apart keeps both rows and both demo behaviours intact.
+        // startDateTime offset one day from the recurring charge above. pm48
+        // had to offset it: under pm46's lane key both flat_fee variants
+        // (unit_of_measure NULL) shared one lane, so they could not start at
+        // the same instant — and the later one-time row then superseded the
+        // recurring one. pm46a added the envelope priceType to the lane key,
+        // so the two are separate lanes and never end each other; the offset
+        // is kept unchanged (Khek, 2026-10-10) so reseeding moves no demo data.
         name: "Demo — Activation Fee",
         componentType: "flat_fee",
         priceType: "oneTime",

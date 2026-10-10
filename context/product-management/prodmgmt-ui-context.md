@@ -65,7 +65,7 @@ Two deliberate exclusions (same rules as User Management), applying to **both** 
 
 ## 4. Price Effectivity States
 
-A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure)` lane (the rekeyed uniqueness index, PC14) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, and each lane computes Current / Future-dated / Superseded independently:
+A price's end is derived from its successor's `start_date_time`; cards signal temporal state without new hues. **Pricing-components update:** succession now resolves per `(component_type, unit_of_measure, priceType)` lane (the rekeyed uniqueness index, PC14; the envelope `priceType` term added by pm46a) — a new `capacity_motivation` never supersedes the `usage_rate` beside it, a one-time `flat_fee` never supersedes a recurring one (or the reverse), and each lane computes Current / Future-dated / Superseded independently:
 
 | State        | Rule                        | Treatment                                                                                                                                                                                                                                                         |
 | ------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

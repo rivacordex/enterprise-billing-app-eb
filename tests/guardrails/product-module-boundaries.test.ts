@@ -653,18 +653,42 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(fnIndex).toBeLessThan(tableIndex);
     expect(migrationSource).toContain("LANGUAGE sql IMMUTABLE");
 
-    // 6. The uniqueness rekey — a UNIQUE constraint (not a unique index)
-    // carrying NULLS NOT DISTINCT — in both homes; the old index is gone.
+    // 6. The uniqueness rekey. 0006 (history, locked) still creates pm46's
+    // UNIQUE constraint carrying NULLS NOT DISTINCT; the old price_type index
+    // is gone. pm46a's forward migration 0049 then drops that constraint and
+    // creates the unique lane index on (offering, component_type,
+    // unit_of_measure, price_component ->> 'priceType', start_date_time), still
+    // NULLS NOT DISTINCT. The Drizzle mirror names only the lane index;
+    // drizzle-orm has no nullsNotDistinct() on uniqueIndex(), so that clause is
+    // asserted in the SQL of record only.
     expect(migrationSource).toContain(
       'ADD CONSTRAINT "product_offering_price_component_start_unique" UNIQUE NULLS NOT DISTINCT',
     );
     expect(migrationSource).not.toContain(
       "product_offering_price_type_start_unique",
     );
-    expect(priceBlock).toContain(
-      "product_offering_price_component_start_unique",
+    const laneKeySource = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        "db",
+        "migrations",
+        "0049_product_price_lane_key.sql",
+      ),
+      "utf8",
     );
-    expect(priceBlock).toContain(".nullsNotDistinct()");
+    expect(laneKeySource).toContain(
+      'DROP CONSTRAINT "product_offering_price_component_start_unique"',
+    );
+    expect(laneKeySource).toContain(
+      'CREATE UNIQUE INDEX "product_offering_price_lane_start_unique" ON "product"."product_offering_price" USING btree ("product_offering_id", "component_type", "unit_of_measure", ("price_component" ->> \'priceType\'), "start_date_time") NULLS NOT DISTINCT',
+    );
+    expect(priceBlock).toContain(
+      'uniqueIndex("product_offering_price_lane_start_unique")',
+    );
+    expect(priceBlock).toContain("->> 'priceType'");
+    expect(priceBlock).not.toContain(
+      'unique("product_offering_price_component_start_unique")',
+    );
     expect(priceBlock).not.toContain(
       "product_offering_price_type_start_unique",
     );

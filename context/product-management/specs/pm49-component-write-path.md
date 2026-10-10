@@ -30,6 +30,8 @@ The `lead()` window partitions by `(product_offering_id, component_type, unit_of
 
 **Known gap, carried from pm46 (not fixed here).** A `flat_fee` lane does not yet split on envelope `priceType`, so a `recurring` and a `oneTime` flat fee starting the same date fall into the same `(component_type='flat_fee', unit_of_measure=NULL)` lane and can appear to supersede one another though they are unrelated charges. The correct lane key adds `price_component ->> 'priceType'` for `flat_fee`; the UI's rendering key (`prodmgmt-ui-context.md` §4) must track whatever this partition ends up being. Closing it is a follow-up unit against the repository's `lead()` window and pm46's uniqueness constraint together, not a pm49 change.
 
+**Closed by pm46a (2026-10-10).** The lane key now includes `price_component ->> 'priceType'` (unique index `product_offering_price_lane_start_unique`, forward migration `0049`; `0006` was not edited). See `pm46a-flat-fee-lane-key.md`. The repository's `lead()` window partitions on it.
+
 Ordering changes with the partition: rows come back ordered by `component_type`, then `unit_of_measure`, then `start_date_time`, then id — deterministic, and grouped the way the panels render.
 
 ### D4. `validateOfferingComponents` — one file, one function, three codes, `tx` first

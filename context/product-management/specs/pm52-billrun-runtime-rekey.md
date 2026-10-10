@@ -47,6 +47,8 @@ The `[eff_from, eff_to)` as-of selection, the account pruning, the override `COA
 
 ### D3. Do **not** filter the window by the envelope `priceType` — the masking hazard survives the reshape
 
+**Superseded by pm46a (2026-10-10).** Once the product lane split on `priceType`, the masking hazard below no longer exists: `_bm29_resolved` now filters and partitions on the recurring lane, and D4's `RECURRING_PRICE_UNSUPPORTED` arm is retired. See `pm46a-flat-fee-lane-key.md` D6. This section is kept as the record of pm52's reasoning.
+
 The current comment is explicit: the window is deliberately **not** filtered to `pricing_model = 'flat'`, so a current `tiered` price is *seen* and fails D33 rather than being masked behind an older flat row. That reasoning transfers, and it transfers to a real case:
 
 **A `flat_fee` `oneTime` row and a `flat_fee` `recurring` row share one uniqueness lane.** Both are `component_type = 'flat_fee'` with `unit_of_measure` NULL, so pm46's `(offering, component_type, unit_of_measure, start_date_time)` key puts them in the same `lead()` partition. A `oneTime` `flat_fee` dated after a `recurring` one therefore **supersedes it in lane terms** — and a window filtered to `priceType = 'recurring'` would silently resolve the older, superseded recurring price and keep billing it. That is precisely the bug the old comment was written to prevent.

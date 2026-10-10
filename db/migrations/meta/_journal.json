@@ -337,6 +337,13 @@
       "when": 1791021600000,
       "tag": "0048_customer_bill_template_stamp_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1791108000000,
+      "tag": "0049_product_price_lane_key",
+      "breakpoints": true
     }
   ]
 }

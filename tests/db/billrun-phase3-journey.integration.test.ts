@@ -49,7 +49,7 @@ import type { POST as StageCompletePost } from "@/app/api/billrun/[runId]/stage/
 // review the lines + the exception surface → reject → re-rate/reprocess →
 // approve (four-eyes) → post (INV per account; a line-content `charge_checksum`)
 // → INVOICED → distribute (a forced failure → DISTRIBUTION_FAILED → rerun) →
-// COMPLETED. It also asserts the D33 tiered-price account SKIPPED and an
+// COMPLETED. It also asserts the D33 no-price account SKIPPED and an
 // unresolvable orphan surfaced on the exception surface.
 //
 // **Flow-doubled, not the real Kestra (the module's established phase-3
@@ -250,36 +250,6 @@ describe.skipIf(!databaseUrl)(
         VALUES
           (${offeringId}, 'BM35 Recurring', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
            1, 'months', ${CURRENCY}, ${startIso}::timestamptz)
-      `;
-    }
-
-    // pm52-spec D3/D4: a `oneTime` flat_fee dated after a `recurring` one shares
-    // its uniqueness lane (both flat_fee, unit_of_measure NULL) and supersedes
-    // it in the as-of window — the offering's CURRENT flat fee becomes a
-    // one-time charge, which the flat resolver cannot rate as recurring
-    // (RECURRING_PRICE_UNSUPPORTED). This is the structural successor of the
-    // old `pricing_model = 'tiered'` case this test used to exercise.
-    async function newOneTimePrice(
-      offeringId: string,
-      amount: string,
-      startIso: string,
-    ): Promise<void> {
-      const envelope = {
-        "@type": "flat_fee",
-        specVersion: 1,
-        plaSpecId: null,
-        priceType: "oneTime",
-        appliesAt: "billing",
-        basis: "flat",
-        boundTo: null,
-        params: { amount },
-      };
-      await sql`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, currency, start_date_time)
-        VALUES
-          (${offeringId}, 'BM35 One-time', 'flat_fee', ${JSON.stringify(persistablePricingComponentSchema.parse(envelope))}::jsonb,
-           ${CURRENCY}, ${startIso}::timestamptz)
       `;
     }
 
@@ -572,20 +542,26 @@ describe.skipIf(!databaseUrl)(
         await insertUnclaimedUsage(billedInventory);
         await insertUnclaimedUsage(billedInventory);
 
-        // The D33 account: a `oneTime` flat_fee dated after a `recurring` one on
-        // the same offering — seen, not masked, by the as-of window (pm52-spec
-        // D3) — so the flat resolver cannot rate the offering's current price as
-        // recurring → aggregation HARD-fails → PROCESSING_FAILED → SKIPPED at
-        // approve.
-        const banTiered = await newBillingAccount("Tiered");
-        const tieredOffering = await newOffering("BM35 Tiered Offering");
-        await newRecurringPrice(
-          tieredOffering,
-          "10.00",
-          "2026-01-01T00:00:00Z",
+        // The D33 account: its offering intends a recurring charge, but the only
+        // recurring price starts AFTER the run period, so nothing resolves as-of
+        // period_start → aggregation HARD-fails (RECURRING_PRICE_NOT_FOUND) →
+        // PROCESSING_FAILED → SKIPPED at approve. (Until pm46a this account used
+        // a one-time fee superseding the recurring one, RECURRING_PRICE_UNSUPPORTED;
+        // pm46a split the lane and retired that code.)
+        const banNoPrice = await newBillingAccount("NoPrice");
+        const noPriceOffering = await newOffering(
+          "BM35 Future-Priced Offering",
         );
-        await newOneTimePrice(tieredOffering, "500.00", "2026-02-01T00:00:00Z");
-        await newInventory("PRDINV-BM35-TIERED-0", banTiered, tieredOffering);
+        await newRecurringPrice(
+          noPriceOffering,
+          "10.00",
+          "2026-09-01T00:00:00Z", // after the run period
+        );
+        await newInventory(
+          "PRDINV-BM35-NOPRICE-0",
+          banNoPrice,
+          noPriceOffering,
+        );
 
         // An unresolvable orphan: an unclaimed live RATED usage row whose
         // subscriber ref matches no product_inventory (Inv #25) — it must survive
@@ -616,12 +592,12 @@ describe.skipIf(!databaseUrl)(
         const billedStatus = await processBilledAccount(runId, banBilled, 1);
         expect(billedStatus).toBe("PROCESSED");
 
-        // ---- Drive the D33 account: aggregation HARD-fails (unsupported). ---
+        // ---- Drive the D33 account: aggregation HARD-fails (not found). -----
         for (const stage of ["validation", "collection"]) {
           expect(
             (
               await stageSignal(runId, stage, {
-                ban_id: banTiered,
+                ban_id: banNoPrice,
                 attempt: 1,
                 status: "DONE",
               })
@@ -631,25 +607,24 @@ describe.skipIf(!databaseUrl)(
         await expect(
           runAggregation(sql, {
             runId,
-            ban: banTiered,
+            ban: banNoPrice,
             attempt: 1,
             periodStart: PERIOD_START,
             periodEnd: PERIOD_END,
             glEventAt: GL_EVENT_AT,
           }),
-        ).rejects.toThrow(/RECURRING_PRICE_UNSUPPORTED/);
-        const tieredFail = await stageSignal(runId, "aggregation", {
-          ban_id: banTiered,
+        ).rejects.toThrow(/RECURRING_PRICE_NOT_FOUND/);
+        const noPriceFail = await stageSignal(runId, "aggregation", {
+          ban_id: banNoPrice,
           attempt: 1,
           status: "FAILED",
           error_class: "HARD",
-          error_code: "RECURRING_PRICE_UNSUPPORTED",
-          error_detail:
-            "the offering's current flat fee is a one-time charge (D33)",
+          error_code: "RECURRING_PRICE_NOT_FOUND",
+          error_detail: "no as-of recurring price for the run period (D33)",
         });
-        expect(tieredFail.status).toBe(200);
+        expect(noPriceFail.status).toBe(200);
         expect(
-          (tieredFail.data as { data: { accountStatus: string } }).data
+          (noPriceFail.data as { data: { accountStatus: string } }).data
             .accountStatus,
         ).toBe("PROCESSING_FAILED");
 
@@ -735,15 +710,15 @@ describe.skipIf(!databaseUrl)(
         const approved = await approveRun(runId, approveActorId);
         expect(approved.ok).toBe(true);
         if (!approved.ok) return;
-        // The D33 tiered account is SKIPPED at approval (PROCESSING_FAILED).
+        // The D33 no-price account is SKIPPED at approval (PROCESSING_FAILED).
         expect(approved.value.skippedCount).toBe(1);
 
-        const skippedTiered = await billRunAccountRepository.findStatus(
+        const skippedNoPrice = await billRunAccountRepository.findStatus(
           db,
           runId,
-          banTiered,
+          banNoPrice,
         );
-        expect(skippedTiered?.status).toBe("SKIPPED");
+        expect(skippedNoPrice?.status).toBe("SKIPPED");
 
         // ---- Post: one INV for the sole billed account; a real content-derived
         // charge_checksum (bm31 — not the md5('') empty-bill sentinel). --------
@@ -762,7 +737,7 @@ describe.skipIf(!databaseUrl)(
           "d41d8cd98f00b204e9800998ecf8427e",
         );
 
-        // Exactly one posted INV for the billed account; the tiered account
+        // Exactly one posted INV for the billed account; the no-price account
         // consumed no invoice number.
         const billedDocs = await db
           .select()
@@ -774,11 +749,11 @@ describe.skipIf(!databaseUrl)(
             ),
           );
         expect(billedDocs).toHaveLength(1);
-        const tieredDocs = await db
+        const noPriceDocs = await db
           .select()
           .from(document)
-          .where(eq(document.refBillingAccountId, banTiered));
-        expect(tieredDocs).toHaveLength(0);
+          .where(eq(document.refBillingAccountId, banNoPrice));
+        expect(noPriceDocs).toHaveLength(0);
 
         // ---- posting stops at INVOICED, then triggerDistribution fires
         // (post-commit) → DISTRIBUTING (the bm20/bm21 tail, reused verbatim). --

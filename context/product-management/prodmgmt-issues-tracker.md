@@ -6,6 +6,18 @@ Known, unresolved defects and debts in the Product Management module that are **
 
 ---
 
+## PM-ISS-003 — Recurring and one-time flat fees share one lane, so a one-time fee supersedes the monthly fee
+
+**Status:** **RESOLVED (2026-10-10, pm46a).** See the Resolution note at the end of this entry. **Owner:** pm46a (`specs/pm46a-flat-fee-lane-key.md`). **Discovered:** flagged by pm46 itself ("Known gap, flagged for follow-up") and carried by pm49; surfaced as a real failure on 2026-10-10 when the full integration project ran (`billmgmt-known-issues.md` §21e). **Severity:** medium-to-high. A common offering shape (monthly fee + activation fee) reads and bills wrongly.
+
+**Symptom.** The lane `(product_offering_id, component_type, unit_of_measure)` puts every `flat_fee` (unit always NULL) in one lane, whatever its envelope `priceType`. A one-time fee dated after a recurring one ends it: the order detail shows no recurring line (4 failing `ordering-read` tests), the offering detail shows the monthly fee as Superseded, and the bill run fails the account HARD with `RECURRING_PRICE_UNSUPPORTED` unless a recurring override exists. The unique constraint on the same key also forbids the two fees starting on one date, which is why the demo seed and fixtures offset the Activation Fee by a day.
+
+**Fix.** pm46a: add `price_component ->> 'priceType'` to the lane key in a forward migration (unique index, `NULLS NOT DISTINCT`), the repository's `lead()` window and the bill-run recurring resolver.
+
+**Resolution (2026-10-10, pm46a).** `0049_product_price_lane_key.sql` drops `product_offering_price_component_start_unique` and creates `product_offering_price_lane_start_unique`; the repository window and the bill-run resolver partition on the same key, and `RECURRING_PRICE_UNSUPPORTED` is retired. The four `ordering-read` tests pass unchanged; new tests cover both orderings and the same start (repository and `getOfferingDetail`), the insert path's `DUPLICATE_START`, a one-time fee at the recurring fee's start, and the bill run billing the recurring price beside a later or same-start one-time fee. Full integration project 1165 passed / 0 failed; full unit suite 4077 passed / 0 failed.
+
+---
+
 ## PM-ISS-002 — Rate-card lookup-row immutability (Inv. #46) is not database-enforced
 
 **Status:** **OPEN.** **Owner:** pm57a (the schema unit) or a follow-up migration — **not** pm60. **Discovered:** 2026-09-27, building the pm60 card repository and confirming guardrail 37's database arm. **Severity:** low-to-medium — no runtime defect in the shipped Part-5 code (no consumer writes a lookup row outside the repository, and the repository exports no row-level lookup write), but the defense-in-depth the design assumes is absent.

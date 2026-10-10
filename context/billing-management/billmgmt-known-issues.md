@@ -832,7 +832,7 @@ track as a release gate**, with no bm58 code change and no activation guard. See
 its own unit: a new `v2/` directory, migration, checksums, Inv #44) before any production
 activation; until then do not activate a template in production.
 
-## 21. 🔴 Failing tests found by the full runs after bm56 (2026-10-10; all fixed except 21e, which belongs to the product module)
+## 21. 🔴 Failing tests found by the full runs after bm56 (2026-10-10; all fixed: 21c2 to 21c4 by bm42a, 21e by product unit pm46a)
 
 The full unit suite and the full integration project (against the throwaway
 `ebill-test` Postgres on port 5434) were run after bm56: **unit 12 failures,
@@ -856,14 +856,14 @@ defects shipped unnoticed.
 | 21c6 | A recurring-suite fixture defined a two-band motivation, which the flow refuses by design (`capacity_max_bands = 1`, TC52) | The fixture uses one band. Every assertion in that test (zero-usage floor, no discount) still holds.                                                  |
 | 21c7 | The appendix test looked up the card-missing polygon as `POLY-UNMAPPED`, but the flow recovers its id from the canonical `udr_key`, which rating lower-cases | The test looks it up as `poly-unmapped` (the original case is unrecoverable; mapped polygons carry the ratecard casing). Found when bm42a let the test reach that assertion. |
 
-### Real defects in delivered code (21c2 to 21c4 FIXED by bm42a; 21e OPEN)
+### Real defects in delivered code (21c2 to 21c4 FIXED by bm42a; 21e FIXED by pm46a)
 
 | #    | Defect                                                                                                                                                                                                                       | Evidence and effect                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 21c2 | **FIXED (bm42a D1).** **CRITICAL.** `bill_run_processing.yml` line 1007 (the `capacity_band_json` CTE, bm42) calls `row_number() OVER (…)` **inside `jsonb_agg(…)`**. Postgres forbids a window function inside an aggregate (`aggregate function calls cannot contain window function calls`). | The aggregation statement can never execute, so as written **bill-run aggregation fails for every account**, not only capacity accounts. 31 tests fail on it. The second `jsonb_agg` (line 1052) is fine. Proposed fix: compute the band number in the `capacity_band_charges` CTE and have `jsonb_agg` read it; the output is identical. With that applied **temporarily and reverted**, the eight affected suites went from 34 failures to 3 (37 of 40 pass). |
 | 21c3 | **FIXED (bm42a D2, as text).** The flow writes the appendix rows' `volume` and `amount`, and the capacity `calc` total's `gross`/`discount`/`net`, as **JSON numbers**. The declared type (`InvoiceUsageAppendixRow`) and the tests say **strings**, and the module's rule is money as `string` end to end. | JSON numbers lose the trailing scale when parsed (`40000.00` becomes `40000`). 2 of the 3 remaining failures. This is a flow-side contract mismatch, not a stale test, so the tests were **not** loosened. Fix is in the flow (emit `::text`), with 21c2.                                                                                                                                                  |
 | 21c4 | **FIXED (bm42a D3).** bm43 changed the plain (non-capacity) USAGE replay from `gross_amount` to `rated_amount`, and its spec calls that "behaviour-preserving". It is not: a plain line whose `gross_amount`/`net_amount` were altered while `rated_amount` stayed intact is **no longer caught** by verification. | bm30's CRITICAL test ("a mis-aggregated USAGE line is caught HARD") now fails because verification returns `DONE`. A regression in tamper detection. Fix is a flow change: for non-capacity lines also require `gross_amount = rated_amount` (the invariant the bm43 spec states).                                                                                                                      |
-| 21e  | **OPEN.** `ordering-read` (4 tests): a recurring and a one-time `flat_fee` share the lane `(component_type, unit_of_measure)`, so the later-starting one-time Activation Fee ends the recurring row and the order detail shows **no recurring line**. | **Not PC14, and not a test problem.** This is the gap pm46 flagged itself ("Known gap, flagged for follow-up… needs its own gate-C-authorized follow-up unit"). The correct lane key adds `price_component ->> 'priceType'`. It touches the product constraint, the repository's `lead()` window and the billing resolver, so it is cross-domain and gated. The same partition is used by the billing recurring resolver. |
+| 21e  | **FIXED by product unit pm46a (2026-10-10; `context/product-management/specs/pm46a-flat-fee-lane-key.md`, PM-ISS-003).** The lane key now includes `price_component ->> 'priceType'` (migration `0049`, unique index `product_offering_price_lane_start_unique`), the repository window and the bill-run resolver use it, and `RECURRING_PRICE_UNSUPPORTED` is retired. The 4 tests pass unchanged. Original finding: `ordering-read` (4 tests): a recurring and a one-time `flat_fee` share the lane `(component_type, unit_of_measure)`, so the later-starting one-time Activation Fee ends the recurring row and the order detail shows **no recurring line**. | **Not PC14, and not a test problem.** This is the gap pm46 flagged itself ("Known gap, flagged for follow-up… needs its own gate-C-authorized follow-up unit"). The correct lane key adds `price_component ->> 'priceType'`. It touches the product constraint, the repository's `lead()` window and the billing resolver, so it is cross-domain and gated. The same partition is used by the billing recurring resolver. |
 
 **Also seen, not failures:** `route-manifest`, `customer-module-boundaries` and
 `ratecard-parse-csv` time out under full-suite load and pass alone. Thirteen tests are
@@ -880,8 +880,10 @@ the product, not in the tests.
 before the JSON aggregation (21c2), money and decimal quantities in the calc trace are JSON text
 at canonical scale (21c3), and ordinary USAGE lines are again checked for `gross = rated_amount`
 and `net = gross - discount` (21c4). Full integration project: **48 failures down to 4**, all in
-`ordering-read` (21e); full unit suite: **0 failures** (4077 passed). 21e stays OPEN as a
-product-module follow-up (pm46's gap).
+`ordering-read` (21e); full unit suite: **0 failures** (4077 passed). 21e was then fixed by the
+product unit pm46a (gated by Khek 2026-10-10), which also changed the bill-run recurring resolver and
+retired `RECURRING_PRICE_UNSUPPORTED`. **Result (pm46a): full integration project 1165 passed / 0
+failed; full unit suite 4077 passed / 0 failed.** Every §21 item is closed.
 
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 

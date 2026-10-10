@@ -164,14 +164,13 @@ export async function insertPrice(
     if (err instanceof OfferingComponentViolationError) {
       return err.result;
     }
-    // A second component of the same type/unit at the same start on this
-    // offering hits the UNIQUE (offering, component_type, unit_of_measure,
-    // start_date_time) constraint (Inv. #2) — the same collision updatePrice
-    // translates, surfaced here as a typed result instead of a raw error
-    // (pm38 review symmetry fix). Renamed with pm46's constraint rekey.
-    if (
-      isUniqueViolation(err, "product_offering_price_component_start_unique")
-    ) {
+    // A second component in the same lane at the same start on this offering
+    // hits the unique lane index (offering, component_type, unit_of_measure,
+    // envelope priceType, start_date_time) (Inv. #2) — the same collision
+    // updatePrice translates, surfaced here as a typed result instead of a raw
+    // error (pm38 review symmetry fix). Renamed with pm46's rekey, then
+    // pm46a's lane index.
+    if (isUniqueViolation(err, "product_offering_price_lane_start_unique")) {
       return { ok: false, code: "DUPLICATE_START" };
     }
     throw err; // anything else is a genuine, unexpected failure — fail loud

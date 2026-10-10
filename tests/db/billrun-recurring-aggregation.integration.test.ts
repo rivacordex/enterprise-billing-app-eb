@@ -37,11 +37,13 @@ import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
 //   * a rerun after a BACKDATED product_offering_price insert reproduces the
 //     ORIGINAL amounts — the snapshot is read, never re-resolved (Inv #20/D19);
 //   * an order_item_price_override wins over the catalog amount;
-//   * a `oneTime` flat_fee dated after a `recurring` one on the same offering is
-//     SEEN, not masked — it fails the account HARD (RECURRING_PRICE_UNSUPPORTED,
-//     pm52-spec D3/D4) rather than silently billing the superseded recurring
-//     price, and a missing price fails HARD (RECURRING_PRICE_NOT_FOUND) — no
-//     bill produced, never zero-substituted (D33/Inv #28);
+//   * a `oneTime` flat_fee on the same offering, dated after or at the same
+//     start as a `recurring` one, never supersedes it — the recurring price is
+//     billed and the one-time fee writes no line (pm46a split the lane; this
+//     REVERSES pm52-spec D3/D4's HARD fail, and RECURRING_PRICE_UNSUPPORTED is
+//     retired); an offering with only a one-time fee writes no RECURRING line
+//     and does not fail; a missing price fails HARD (RECURRING_PRICE_NOT_FOUND)
+//     — no bill produced, never zero-substituted (D33/Inv #28);
 //   * a usage_rate + capacity_commitment + capacity_motivation on a billed
 //     offering are still INVISIBLE to THIS resolver's component_type =
 //     'flat_fee' filter — the RECURRING line is unaffected (pm52-spec D5).
@@ -191,10 +193,9 @@ describe.skipIf(!databaseUrl)(
     }
 
     // A flat_fee `oneTime` catalog price effective from `startIso` — no charge
-    // period, no unit (pm46 completeness CHECK). Used for the D3 masking-hazard
-    // case: dated after a `recurring` flat_fee on the same offering, it shares
-    // that row's uniqueness lane (both flat_fee, unit_of_measure NULL) and
-    // supersedes it in the as-of window.
+    // period, no unit (pm46 completeness CHECK). Since pm46a it is its own lane
+    // (envelope priceType 'oneTime'), so on the same offering as a `recurring`
+    // flat_fee it never supersedes that row in the as-of window.
     async function newOneTimePrice(
       offeringId: string,
       amount: string,
@@ -687,38 +688,94 @@ describe.skipIf(!databaseUrl)(
       expect(bill!.subtotal).toBe("5.00");
     }, 120_000);
 
+    it.each([
+      ["dated after it", "2026-03-01T00:00:00Z", "T0", "05"],
+      ["at the same start", "2026-01-01T00:00:00Z", "T1", "05B"],
+    ])(
+      "[CRITICAL] a oneTime flat_fee %s never supersedes the recurring price — " +
+        "the recurring 20.00 is billed and the one-time fee writes no line " +
+        "(pm46a lane split; reverses pm52-spec D3/D4)",
+      async (_label, oneTimeStart, suffix, runSuffix) => {
+        const ban = await newAccount(`OneTime${suffix}`);
+        const off = await newOffering(`One-Time ${suffix} Offering`);
+        const runId = `BRN-BM29-${runSuffix}`;
+        const recurringRef = await newRecurringPrice(
+          off,
+          "20.00",
+          "2026-01-01T00:00:00Z",
+        );
+        await newOneTimePrice(off, "500.00", oneTimeStart);
+        await newRun(runId);
+        await newInventory({
+          piId: `PRDINV-BM29-${suffix}`,
+          ban,
+          offeringId: off,
+          quantity: 1,
+          orderItemId: `_bm29-oi-${suffix}`,
+        });
+
+        await aggregate(runId, ban, 1);
+        const bill = await readBill(runId, ban);
+        expect(bill).toBeDefined();
+        const lines = await readLines(bill!.customerBillId);
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatchObject({
+          source: "RECURRING",
+          offeringId: off,
+          netAmount: "20.00",
+          snapshotPriceRef: recurringRef,
+        });
+        expect(bill!.subtotal).toBe("20.00");
+      },
+      120_000,
+    );
+
     it(
-      "[CRITICAL] a oneTime flat_fee dated after a recurring one is SEEN, not " +
-        "masked — the resolver fails HARD (RECURRING_PRICE_UNSUPPORTED) rather " +
-        "than silently billing the superseded recurring price " +
-        "(pm52-spec D3/D4); a missing price fails HARD (RECURRING_PRICE_NOT_FOUND) " +
+      "an offering with ONLY a oneTime flat_fee writes no RECURRING line and " +
+        "does not fail the account (it intends no recurring charge)",
+      async () => {
+        const ban = await newAccount("OneTimeOnly");
+        const recurringOff = await newOffering(
+          "Recurring Beside One-Time-Only",
+        );
+        const oneTimeOnlyOff = await newOffering("One-Time-Only Offering");
+        const runId = "BRN-BM29-05C";
+        await newRecurringPrice(recurringOff, "20.00", "2026-01-01T00:00:00Z");
+        await newOneTimePrice(oneTimeOnlyOff, "500.00", "2026-01-01T00:00:00Z");
+        await newRun(runId);
+        await newInventory({
+          piId: "PRDINV-BM29-T2",
+          ban,
+          offeringId: recurringOff,
+          quantity: 1,
+          orderItemId: "_bm29-oi-T2",
+        });
+        await newInventory({
+          piId: "PRDINV-BM29-T3",
+          ban,
+          offeringId: oneTimeOnlyOff,
+          quantity: 1,
+          orderItemId: "_bm29-oi-T3",
+        });
+
+        await aggregate(runId, ban, 1);
+        const bill = await readBill(runId, ban);
+        expect(bill).toBeDefined();
+        const lines = await readLines(bill!.customerBillId);
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatchObject({
+          source: "RECURRING",
+          offeringId: recurringOff,
+          netAmount: "20.00",
+        });
+      },
+      120_000,
+    );
+
+    it(
+      "[CRITICAL] a missing as-of price fails HARD (RECURRING_PRICE_NOT_FOUND) " +
         "(D33/Inv #28)",
       async () => {
-        // A oneTime flat_fee dated after a recurring one shares its uniqueness
-        // lane (both flat_fee, unit_of_measure NULL) and supersedes it in the
-        // as-of window — the offering's CURRENT flat fee is a one-time charge,
-        // not a recurring one, so the account fails loudly (D4 option A) rather
-        // than the resolver falling back to the older recurring price.
-        const oneTimeBan = await newAccount("OneTimeSupersedes");
-        const oneTimeOff = await newOffering("One-Time-Supersedes Offering");
-        const oneTimeRun = "BRN-BM29-05";
-        await newRecurringPrice(oneTimeOff, "20.00", "2026-01-01T00:00:00Z");
-        await newOneTimePrice(oneTimeOff, "500.00", "2026-03-01T00:00:00Z");
-        await newRun(oneTimeRun);
-        await newInventory({
-          piId: "PRDINV-BM29-T0",
-          ban: oneTimeBan,
-          offeringId: oneTimeOff,
-          quantity: 1,
-          orderItemId: "_bm29-oi-T0",
-        });
-        await expect(aggregate(oneTimeRun, oneTimeBan, 1)).rejects.toThrow(
-          /RECURRING_PRICE_UNSUPPORTED/,
-        );
-        // No bill produced — the transaction rolled back (never zero-substituted,
-        // and the 20.00 recurring price was NEVER silently billed).
-        expect(await readBill(oneTimeRun, oneTimeBan)).toBeUndefined();
-
         // No AS-OF price → NOT_FOUND. The offering INTENDS a recurring charge (it
         // has a recurring price) but that price is FUTURE-dated (starts after the
         // run period), so no price resolves as-of period_start — a broken/missing

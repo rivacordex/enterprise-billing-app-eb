@@ -729,10 +729,11 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow(/product_offering_price_component_type_check/);
     });
 
-    // -- updatePrice colliding onto an existing sibling's
-    // (component_type, unit_of_measure, start_date_time) surfaces the rekeyed
-    // UNIQUE (pm46) as the service's typed DUPLICATE_START. Two flat_fee rows
-    // (NULL unit, one lane) at different starts pass the cross-row validator —
+    // -- updatePrice colliding onto an existing sibling's lane
+    // (component_type, unit_of_measure, priceType) and start surfaces the
+    // unique lane index (pm46, pm46a) as the service's typed DUPLICATE_START.
+    // Two recurring flat_fee rows (NULL unit, one lane) at different starts
+    // pass the cross-row validator —
     // flat_fee is neither a modifier nor a base rate — so the collision is the
     // unique index, not a VI3–VI5 refusal.
 
@@ -760,6 +761,45 @@ describe.skipIf(!databaseUrl)(
         actorId,
       );
       expect(collided).toMatchObject({ ok: false, code: "DUPLICATE_START" });
+    });
+
+    // -- pm46a: the lane splits on the envelope priceType. insertPrice maps the
+    // unique lane index to DUPLICATE_START (no DB-level test covered the insert
+    // path's mapping before), and a one-time fee may share the recurring fee's
+    // exact start because it is a different lane.
+
+    it("insertPrice of a second recurring flat_fee at the same start is DUPLICATE_START (pm46a)", async () => {
+      const offeringId = await createOffering("pm46a insert duplicate start");
+      const first = await insertPrice(
+        offeringId,
+        flatFeeRecurringInput({ startDateTime: START, amount: "100.00" }),
+        actorId,
+      );
+      expect(first.ok).toBe(true);
+      const second = await insertPrice(
+        offeringId,
+        flatFeeRecurringInput({ startDateTime: START, amount: "200.00" }),
+        actorId,
+      );
+      expect(second).toMatchObject({ ok: false, code: "DUPLICATE_START" });
+    });
+
+    it("insertPrice of a one-time flat_fee at the recurring fee's exact start is accepted (pm46a)", async () => {
+      const offeringId = await createOffering(
+        "pm46a insert one-time same start",
+      );
+      const recurring = await insertPrice(
+        offeringId,
+        flatFeeRecurringInput({ startDateTime: START }),
+        actorId,
+      );
+      const oneTime = await insertPrice(
+        offeringId,
+        flatFeeOneTimeInput({ startDateTime: START }),
+        actorId,
+      );
+      expect(recurring.ok).toBe(true);
+      expect(oneTime.ok).toBe(true);
     });
 
     // -- §3.5 trigger backstop: a raw SQL UPDATE and a raw SQL DELETE of an

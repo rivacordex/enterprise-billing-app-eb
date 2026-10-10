@@ -271,11 +271,10 @@ describe.skipIf(!databaseUrl)(
       } else if (priceSet === "components-full") {
         // pm50-spec I4 — supports the usage/once override-resolution cases:
         // a flat_fee(recurring), a flat_fee(oneTime) and a usage_rate all on
-        // one version. The two flat_fee rows need distinct start dates (both
-        // carry `unit_of_measure = NULL`, and the reshaped uniqueness
-        // constraint is NULLS-NOT-DISTINCT on
-        // (offering, component_type, unit_of_measure, start_date_time) —
-        // pm48's own fixture note).
+        // one version. The two flat_fee rows were given distinct start dates
+        // when recurring and one-time shared a lane (pm48's fixture note);
+        // since pm46a they are separate lanes and could share one, so the
+        // offset is kept only as unchanged fixture data.
         await db.insert(productOfferingPrice).values([
           {
             productOfferingId: offeringId,

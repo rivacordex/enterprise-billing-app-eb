@@ -88,7 +88,7 @@ export async function getOrderDetail(
   // money as the list amount and the override layered on top (Inv. #16). Each
   // component maps to the override price-type axis via `toPricedComponent` — the
   // `capacity_*` modifiers map to nothing and are dropped (not order lines).
-  // Ordered by the catalog query's (component_type, unit_of_measure, start) key
+  // Ordered by the catalog query's (component_type, unit_of_measure, priceType, start) key
   // for a stable read.
   const prices: OrderPriceLine[] = priceRows
     .filter((row) => isEffectiveNow(row.startDateTime, row.endDateTime, now))

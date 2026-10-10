@@ -1350,12 +1350,12 @@ DELIVERED" section.
   - **Docs closed in this change set:** known-issues §21 (21c2 to 21c4 fixed, 21c7 recorded, result
     paragraph); code-standards (string-money trace contract); the bm42a spec (canonical scales);
     `bm00-build-plan.md` lists bm42a; this tracker.
-  - **Next:** known-issues §21e (the product module's flat-fee lane gap, pm46) needs its own gated
-    unit; the live-Kestra capacity journey (TC54) is still outstanding.
+  - **Next:** known-issues §21e (the product module's flat-fee lane gap, pm46) is owned by the
+    gated product unit pm46a, DELIVERED 2026-10-10 (see the Outstanding note below); the live-Kestra capacity journey (TC54) is still outstanding.
 
 ## Outstanding / Next (post-Phase 4)
 
-- **Resolved by bm42a (2026-10-10):** the three billing-flow defects found by running the DB-backed suites (known-issues §21 21c2, 21c3, 21c4). Still open from that analysis: 21e (`ordering-read`), the product module's flat-fee lane gap (pm46), which needs its own gated unit.
+- **Resolved by bm42a and pm46a (2026-10-10):** the three billing-flow defects found by running the DB-backed suites (known-issues §21 21c2, 21c3, 21c4, bm42a) and 21e (`ordering-read`, the product module's flat-fee lane gap), fixed by product unit **pm46a** (`context/product-management/specs/pm46a-flat-fee-lane-key.md`). pm46a also changed this module's flow: `_bm29_resolved` reads the recurring `flat_fee` lane only (partitioned on the product lane key including `priceType`), and `RECURRING_PRICE_UNSUPPORTED` is retired (Inv #28 and code-standards 14b amended). Full integration project 1165 passed / 0 failed; unit 4077 / 0. **Rollout:** redeploy `bill_run_processing` with `deploy_workflow_flows`; still outstanding: a live-Kestra run (TC54 harness).
 
 - **Release gate before any production template activation (known-issues §20).** Layout v1's
   `shell.hbs` has no usage-annex CSS, so a real activation (which generates from layout v1) would
