@@ -1301,6 +1301,345 @@ DELIVERED" section.
   - **Next:** bm59 (profile edit mode and "Create a draft"). Known-issues §20 (layout v2 with the
     annex CSS) is still open and should land before real activations reach production.
 
+## Invoice Template update — bm59 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
+
+- **bm59 — Company profile: save draft (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm59-company-profile-save-draft.md`. An
+  `invoice_settings : EDIT` user edits the company profile and saves it as the single working
+  DRAFT version of `invoice.profile` (one row per field key), validated against the
+  placeholder-catalog formats in the form and on the server, audited as
+  `INVOICE_PROFILE_DRAFT_SAVED` in the same transaction. No activation, no logo upload (bm60), no
+  migration, no grant change, no npm dependency. Depends on bm56.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_PROFILE_DRAFT_SAVED` (Change).
+      `types/billing.ts`: `ProfileDraftInfo`, `CompanyProfilePageModel.draft`,
+      `INVOICE_PROFILE_FIELD_LABELS` (form labels and the rows' `description`).
+    - `validation/billing/invoice-profile.schema.ts` (D2): `invoiceProfileFieldsSchema`,
+      `invoiceProfileDraftSchema` (`.partial()`), `invoiceProfileSchema` (fields + logo), the
+      shared `normalizeInvoiceProfileDraftInput`, `INVOICE_PROFILE_FIELD_KEYS` and
+      `saveProfileDraftInputSchema` (fields + the bm57 token shape). Field-level messages
+      ("TIN is 1–2 letters then 10–11 digits…") so the form and the server show the same text.
+    - `db/repositories/billing/invoice-profile.ts` (D1): `lockProfileGroup` (advisory lock on
+      `core.system_config:invoice.profile`), `nextProfileVersion` (`max + 1` over the whole
+      group), `findDraftVersion` (version + token = `max(last_modified_datetime)` at microsecond
+      precision), `insertDraftVersion` (every key, blanks `NULL`, `is_secret = false`, label as
+      description) and `updateDraftFields` (one `UPDATE … FROM (VALUES …)` guarded by the token in
+      the same statement). `DRAFT_TOKEN_FORMAT` is now exported from the template repository and
+      shared.
+    - `services/billing/invoice-profile/save-profile-draft.ts`: one transaction — lock → re-parse
+      → insert at `max + 1` or update only the changed keys under the token → one audit row
+      (`targetEntity: 'SYSTEM_CONFIG'`, `targetId: 'invoice.profile:v{n}'`, changed keys only in
+      before/after on an update; bank details included). A `23505` on
+      `system_config_group_version_key_unique` maps to `DRAFT_CONFLICT`.
+    - `actions/billing/invoice-settings/save-profile-draft.action.ts`: EDIT guard → Zod (field
+      errors keyed by profile field) → service → `revalidatePath(…, 'layout')`.
+    - UI (D3): `CompanyProfileEditForm` (`'use client'`, RHF + `zodResolver(invoiceProfileDraftSchema)`
+      after the shared normaliser; `Field`/`Input`/`Select`), rendered by `CompanyProfileForm
+      mode="edit"`. State `Select` of the 16 codes, Country read-only `MY`, mono colour inputs with
+      a live swatch and the < 4.5:1 Warning hint (`lib/colour-contrast.ts`), SST hint, outline
+      **Save draft** (pristine-disabled), success toast, conflict toast with **Reload**, server
+      field errors mapped onto fields. `ColourSwatch` is shared by read and edit modes. The page
+      opens EDIT users on the DRAFT (bm57-style "Editing draft v{n}" line), else the ACTIVE values,
+      else empty fields under the empty-state alert, whose **Create a draft** button now renders
+      and focuses the first field. The form remounts per `{version}:{draft token}`.
+  - **Deviations / interpretations (recorded):**
+    1. **The ACTIVE logo is carried into a new draft.** D1 says a new draft stores "the submitted
+       values", but the form never sends `logo_asset_version_id`; storing `NULL` would silently
+       drop the ACTIVE logo from every new draft and force a re-upload before bm61 activation. The
+       first save copies the ACTIVE version's logo id (D1 "the copy is made only on first save").
+    2. **The group lock is taken before the draft lookup** (the bm57 deviation 2), so two
+       concurrent first saves are one insert and one `DRAFT_CONFLICT`; `nextProfileVersion` re-takes
+       it. The `23505` mapping stays as a backstop.
+    3. **While a draft exists it is the only editable version** (the bm57 owner decision applied
+       to the profile): a RETIRED or ACTIVE version opened with `?version=` is read-only with an
+       "Edit draft v{n}" link, and an explicit retired version is never editable.
+    4. **Shown version for EDIT users is now DRAFT ?? ACTIVE** (bm56 had ACTIVE ?? DRAFT), per D3.
+       READ users are unchanged.
+    5. **Normalisation is a function, not schema transforms**, so `invoiceProfileDraftSchema` stays
+       exactly `invoiceProfileFieldsSchema.partial()` and the render-time read keeps rejecting a
+       hand-edited lower-case TIN.
+    6. A save with no changed keys still writes one audit row (empty `fields` maps) and keeps the
+       token; the form disables Save while pristine, so only a crafted request reaches it.
+  - **Tests:**
+    - `tests/db/save-profile-draft.integration.test.ts` (11, throwaway Postgres): first save
+      inserts all 23 keys at v2 as DRAFT with `modified_by`, labels, `NULL` blanks and the ACTIVE
+      logo; the token is the rows' `max(last_modified_datetime)`; a second save updates only the
+      changed keys (by `last_modified` and `modified_by`); a stale token and both wrong
+      beliefs about the draft are `DRAFT_CONFLICT` with nothing written; two concurrent first saves
+      (looped 3x) allocate one version; one audit row per save with changed-key before/after; an
+      invalid value writes nothing; `findActiveVersion` never returns the DRAFT; the generic System
+      Config page still hides the group; the real `23505` shape is recognized.
+    - `invoice-profile.schema.test.ts` (+guardrail 51 format half): blanks accepted; invalid TIN,
+      SST, postcode, SWIFT, emails, website, colours, state code, JomPAY, account no., terms > 120
+      and over-length rejected; normalisation; `.strict()` rejects the logo and `meta.*`.
+    - `save-profile-draft.action.test.ts` (10): READ → `FORBIDDEN` with nothing written; invalid
+      values → `VALIDATION_ERROR` keyed by field; logo/`meta.*` refused; bad token; normalised
+      payload to the service; conflict and throw mapping; revalidation.
+    - `company-profile-form.test.tsx` (+17 edit mode): client-side rejection shows the **server
+      schema's own message** for nine formats with nothing sent; contrast hint; live swatches; SST
+      hint; save payload (raw values, token, no logo) and toast; conflict + Reload; server field
+      errors; Create a draft focus.
+    - `read-profile.test.ts` (DRAFT first for EDIT users, draft info), authz-matrix row + an
+      order/audit check + the page's editable/key rule, `audit-log-filters` (84 options).
+    - Full integration project: **1179 passed, 0 failed** (124 files, 75 skipped), 398 s. Full
+      unit suite: 4144 passed, 2 failed — both 10 s timeouts in repo-wide scans
+      (`route-manifest`, `pricing-component-guardrails`) while the integration run shared the
+      machine; both pass alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the edit form.
+  - **Docs closed in this change set:** G7/O3 recorded as decided in the overview open items,
+    architecture "Other open items" and code-standards TS rule 5 (the AI workflow rules already had
+    it); code-standards TS rule 5 (draft vs activation schemas, the shared normaliser); ui-context
+    §10b (profile Save draft, Create a draft); this tracker.
+  - **Next:** bm60 (logo upload onto the draft), bm61 (profile activation, writes `meta.*`).
+
+## Invoice Template update — bm60 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-10)
+
+- **bm60 — Company profile: logo upload + sanitization (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm60-company-profile-logo-upload.md`. An
+  `invoice_settings : EDIT` user uploads the invoice logo onto the working draft profile: checked
+  server-side in order (size ≤ 500 KB → magic bytes = declared MIME → shorter side ≥ 300 px via
+  pure PNG/JPEG/SVG parsers → SVG content policy, reject never repair), stored write-once at a
+  content-addressed path in `invoice-assets` as a new `bill_asset_version`, the draft pointed at
+  it, and one `INVOICE_LOGO_UPLOADED` audit row. No migration, no grant change, no new dependency
+  (no `sharp`). Depends on bm59, bm51; bm52 deployed before the prod release.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_LOGO_UPLOADED` (Additive).
+      `types/billing.ts`: `LOGO_UPLOAD_ERROR_CODES` (`LOGO_REJECTED`), `LogoRejectReason`
+      (`size | mime | dimensions | svg_content`), `LOGO_MIME_TYPES`, `LOGO_MAX_BYTES = 512000`,
+      `LOGO_MIN_SIDE_PX = 300`, `CompanyProfilePageModel.hasLogoAsset`.
+    - `services/billing/invoice-profile/image-dimensions.ts` (D2 check 2 + D3): `detectImageType`
+      (PNG/JPEG magic; SVG = strict UTF-8 whose root after BOM, `<?xml?>`, comments and a DOCTYPE is
+      `<svg`), `pngDimensions` (IHDR first chunk), `jpegDimensions` (bounded marker walk to the first
+      SOFn), `svgDimensions` (unitless/`px` width+height, else viewBox). Pure, bounds-checked, typed
+      results, no throw.
+    - `sanitize-logo.ts` (D4): `findSvgViolation` returns the earliest offending construct; nothing
+      is stripped.
+    - `upload-logo.ts`: `checkLogo` (the four checks in data rule 9 order), `uploadLogo` (D5/D6:
+      `ensureLogoAsset` in its own short transaction → `putObject('invoice-assets',
+      '{INVAST}/sha256-{digest12}/logo.{ext}', …, writeOnce + returnExisting + sha256)`, a digest
+      mismatch → `ACTIVATION_BLOB_CONFLICT` → one transaction: `insertVersion` → `setDraftLogo` →
+      audit), and `importAppLogo` (D8).
+    - Repositories: `billAssetRepository.findLogoAsset`, `ensureLogoAsset` (advisory lock
+      `billing.bill_asset:logo`), `insertVersion` (lock `billing.bill_asset_version:{INVAST}`,
+      `max + 1`, ACTIVE, sha256); `invoiceProfileRepository.setDraftLogo` (profile group lock, then
+      the token-guarded `updateDraftFields` on `logo_asset_version_id`).
+    - `actions/billing/invoice-settings/upload-logo.action.ts`: `uploadLogoAction(FormData)` and
+      `importAppLogoAction({ expectedDraftToken })`, one shared EDIT guard first, then Zod
+      (`validation/billing/logo-upload.schema.ts`; a declared type outside the three is
+      `LOGO_REJECTED: mime`), the service, and `revalidatePath` on success. `bodySizeLimit` unchanged.
+    - UI: `LogoUploadField` (D7) in the edit form's Branding group: dropzone + keyboard "Choose
+      file", client pre-check (fast feedback only), inline Danger reason, preview via the GET route,
+      Warning toast + Reload on a conflict, "Use the current app logo" while no logo asset exists.
+  - **Deviations / interpretations (recorded):**
+    1. **SVG detection skips a leading `<!DOCTYPE …>`.** D2 lists only BOM, whitespace, `<?xml?>`
+       and comments, but then a DOCTYPE'd SVG would be `mime`, and D4's `<!DOCTYPE` rule and the
+       guardrail-52 case could never fire. Skipping it in detection lets `svg_content` name it.
+    2. **An SVG width/height in another unit is refused even when a viewBox exists** (D3's "units
+       other than px/unitless → dimensions"). So the shipped `public/brand/logo.svg` (`918pt` ×
+       `612pt`, plus a DOCTYPE) is refused by the D8 import as `dimensions`; D8 anticipates such a
+       rejection.
+    3. **Fail fast before the blob write:** the service checks the draft token before
+       `ensureLogoAsset`/`putObject`, so a missing or stale draft leaves no orphan blob; the
+       transaction still re-checks under the lock. A failure there throws a private sentinel so the
+       version row rolls back, then maps to `DRAFT_CONFLICT`.
+    4. **The upload is disabled while the form has unsaved edits** ("Save your changes first.").
+       The upload bumps the draft token and the page remounts the form on it, which would drop the
+       unsaved edits.
+    5. **D8 import** lives in the same action file; the path is `getBrandingLogo().src` (default
+       `/brand/logo.svg`), re-checked to stay under `public/brand/`; a missing or unreadable file is
+       the new result code `APP_LOGO_UNAVAILABLE`.
+    6. Sizes are computed in KiB (bytes ÷ 1,024) but labelled "KB", so the 512,000-byte cap displays as "500 KB" (the spec's figure).
+    7. Architecture Inv #48 said "stripped or rejected"; reworded to "rejected, never stripped" to
+       match D4 and data rule 9.
+    8. The no-image-library guardrail scans `services`, `actions`, `app`, `lib` and `components`
+       (the spec names the first three) and checks `package.json`.
+  - **Tests (all green):**
+    - `upload-logo.test.ts` (**guardrail 52**, 34): `size` (> 500 KB, 0 bytes; exactly 500 KB
+      passes), `dimensions` (< 300 px PNG, JPEG, SVG; mm units), `mime` (PNG declared SVG, SVG
+      declared PNG, GIF, text), `svg_content` (script, onload, onclick, foreignObject, iframe, embed,
+      object, external href, `xlink:href="http…"`, external `<image>`, `url(http…)`, `javascript:`,
+      `data:`, `@import`, `<style>` with `url(`, DOCTYPE + ENTITY), fragment-only references accepted,
+      check order (oversized SVG with a script → `size`; tiny SVG with a script → `dimensions`),
+      nothing written on any rejection; the stored path, call order and audit payload; draft and blob
+      conflicts.
+    - `image-dimensions.test.ts` (42): happy paths, truncated buffers, bogus IHDR, no SOF, DHT,
+      bad segment lengths, SVG `%`/`em`/`mm`/`pt`, missing/broken viewBox, quoted `>` in attributes.
+    - `tests/db/upload-logo.integration.test.ts` (6, Postgres + Azurite): no draft →
+      `DRAFT_CONFLICT`, nothing stored; a valid PNG → INVAST/INVASV rows, exact bytes at the
+      content-addressed path, digest verified, served by `getVerifiedLogo`, draft pointed, one audit
+      row; re-upload → version 2 over the same blob; stale token; a DB failure after the blob write
+      → orphan blob, no row, no audit, draft unchanged; a rejected file stores nothing.
+    - `upload-logo.action.test.ts` (10): READ → `FORBIDDEN` with nothing written; a 4.9 MB body →
+      `size`; a GIF → `mime`; bad FormData; the D8 import (READ refused, the shipped brand logo
+      refused, a path outside `/brand/` → `APP_LOGO_UNAVAILABLE`).
+    - `logo-upload-field.test.tsx` (13), `no-image-library.test.ts` (3), authz-matrix row + an
+      order/write-once check, `audit-log-filters` (85 options), `read-profile.test.ts`
+      (`hasLogoAsset`).
+    - Full integration project: **1185 passed, 0 failed** (125 files), 404 s, on a fresh cluster. A
+      first full run had 12 failures in `billrun-db-roles` and `rating/grants` (`role "app_runtime"
+      is not permitted to log in`): a pre-existing file-order hazard, now known-issues **22f**. Both
+      suites pass on a fresh cluster. Full unit suite: 4248 passed, 2 failed, both 10 s timeouts
+      under load (`route-manifest`, `ratecard-parse-csv`) that pass alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the upload field.
+  - **Docs closed in this change set:** bm00 (the remaining "checked with `sharp`" line; the
+    stack-additions row was already corrected); code-standards data rule 7 (asset path
+    `{INVAST}/sha256-{digest12}/logo.{ext}`), data rule 9 (pure parsers, the full SVG policy, the
+    reason order) and TS rule 7 (`LOGO_REJECTED` reasons and detail); architecture platform delta
+    (first upload, built) and Inv #48 wording; workflow rules §6.13 (`sharp` is not a dependency);
+    ui-context §10b (logo upload); known-issues 22f; this tracker.
+  - **Next:** bm61 (profile activation; requires the logo, writes `meta.*`).
+
+## Invoice Template update — bm61 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-10)
+
+- **bm61 — Company profile: activate (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm61-company-profile-activate.md`. An `invoice_settings : EDIT`
+  user activates the working draft profile with a required change note; refused without a logo,
+  without a note, with an incomplete or invalid profile, or with a logo that fails its checksum.
+  The DRAFT becomes ACTIVE and the previous version RETIRED in one audited transaction
+  (`INVOICE_PROFILE_ACTIVATED`). **G14 decided 2026-10-10 (owner): option C** — a second EDIT
+  user only when payment fields change (`PROFILE_FOUR_EYES_VIOLATION`). No migration, no grant
+  change. Depends on bm59, bm60, bm54.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_PROFILE_ACTIVATED` (Change).
+      `types/billing.ts`: `PROFILE_ACTIVATION_ERROR_CODES` (`CHANGE_NOTE_REQUIRED`,
+      `DRAFT_CONFLICT`, `PROFILE_LOGO_REQUIRED`, `ASSET_CHECKSUM_MISMATCH`,
+      `PROFILE_FOUR_EYES_VIOLATION`), `INVOICE_PROFILE_PAYMENT_KEYS`,
+      `CompanyProfilePageModel.activeFields`. `validation/billing/activate-version.schema.ts`:
+      `activateProfileInputSchema` (D1).
+    - `lib/invoice-profile-changes.ts`: `paymentFieldsChanged` (the one definition of a bank
+      change, used by the four-eyes check and the dialog's warning) and `describeProfileChanges`
+      (`label: old → new`).
+    - `db/repositories/billing/invoice-profile.ts`: `findDraftTokenForUpdate` (`FOR UPDATE` of the
+      draft rows), `retireActiveVersion` (every ACTIVE row of the group), `promoteDraftVersion`,
+      `writeMeta` (upsert of the `meta.*` rows with the version's status) and `findLastSaver`;
+      `listVersions` now ignores `meta.*` rows for "created by", so the history keeps naming the
+      editor, not the activator.
+    - `services/billing/invoice-profile/activate-profile.ts`: the D2 checks in order (note → draft
+      and token → logo set and ACTIVE → full `invoiceProfileSchema` with field errors → logo blob
+      verified through `readInvoiceProfile` + `inlineLogo`), then the G14 option C check, then one
+      transaction (group lock → token re-check under `FOR UPDATE` → retire + `meta.retired_at` →
+      promote + `meta.change_note/activated_by/activated_at` → one audit row with
+      `bankDetailsChanged`).
+    - `actions/billing/invoice-settings/activate-profile.action.ts`: EDIT guard → Zod (blank note →
+      `CHANGE_NOTE_REQUIRED`) → service → `revalidatePath`.
+    - UI: a Deep Petrol **Activate v{n}** on the working draft only ("Save draft first" while dirty)
+      opening `ActivateVersionDialog` with the field diff, the D5 bank warning and the server's
+      message; `PROFILE_LOGO_REQUIRED` also shows inline by the logo field (`LogoUploadField`
+      gains `externalError`).
+  - **Decisions / interpretations (recorded):**
+    1. **G14 = option C** (owner, 2026-10-10), recorded in the overview, architecture, code-standards
+       §8 and TS rule 7, workflow rules §5, bm00 and the spec (A/B removed).
+    2. **The first activation counts as a bank change.** With no ACTIVE version every payment
+       field is new (it sets the account customers pay into), so the first profile also needs a
+       second EDIT user. A single-admin installation cannot activate its first profile alone.
+    3. **The logo uploader counts even for a carried-over logo.** D6 compares the actor with the
+       draft's logo `created_by`; a draft that inherited the ACTIVE logo (bm59) inherits its
+       uploader, so a bank change by that uploader also needs a second user.
+    4. **Codes follow the bm61 spec's D2, not bm00's `INVOICE_PROFILE_INVALID`.** An invalid draft
+       is refused with `VALIDATION_ERROR` + field errors, a missing/non-ACTIVE logo asset with
+       `PROFILE_LOGO_REQUIRED`, a bad or missing logo blob with `ASSET_CHECKSUM_MISMATCH`. bm00 is
+       updated. This satisfies **DR-01 option A** (no invalid version can become ACTIVE), so DR-01
+       is removed from `billmgmt-design-review.md`.
+    5. **Retire every ACTIVE row of the group**, not only the newest version, so a hand-edited
+       second ACTIVE version cannot survive an activation; `meta.retired_at` is written on each.
+    6. A conflict shows both a Warning toast with Reload and the dialog's inline message, as bm58
+       does (known-issues 22d).
+  - **Tests (all green):**
+    - `tests/db/activate-profile.integration.test.ts` (**guardrail 51, activation half**, 9,
+      Postgres + Azurite): no logo, blank note, missing required fields (named), stale token and
+      wrong version, a tampered logo blob — each refused with nothing changed (rows, statuses,
+      audit count); G14 C: the first activation refused for its editor and for its logo uploader,
+      accepted from another EDIT user; success writes ACTIVE, `meta.*` and one audit row with
+      `bankDetailsChanged: true`; a second activation retires v1 (+ `meta.retired_at`), a non-bank
+      change is activated by its own editor (`bankDetailsChanged: false`), the history still names
+      the editor; a bank change refused for its editor then accepted from another user; an invalid
+      draft leaves the previous ACTIVE untouched (DR-01).
+    - Guardrail 46 (`invoice-version-pinning.integration`, 5): profile v1 and v2 are now **real**
+      activations (save draft → decodable logo upload → activate by a second user). Profile v1 is
+      RETIRED when v2 activates; A keeps profile v1, its PDF bytes and checksum; the parked twin
+      renders with v1; the next draft preview shows the v2 company, the v2 bank account and the v2
+      logo inlined; **the next posting (account C) stamps profile 2**.
+    - `activate-profile.action.test.ts` (13), `invoice-profile-changes.test.ts` (11),
+      `company-profile-form.test.tsx` (+8: Activate only on the draft, "Save draft first", the
+      diff, the bank warning only on a payment change or first activation, payload + toast, the
+      four-eyes message, `PROFILE_LOGO_REQUIRED` twice), `read-profile.test.ts` (`activeFields`),
+      authz-matrix row + an order check (four-eyes before the transaction, retire before promote,
+      one audit, no blob write), `audit-log-filters` (86 options), status-literal allow-list (+2
+      `RETIRED` entries, as bm58 did).
+    - Full integration project: **1195 passed, 0 failed** (126 files), 461 s. Full unit suite:
+      4281 passed; the 3 failures were the status-literal sweep (fixed above) and two 10 s timeouts
+      under load (`customer-module-boundaries`, `pricing-component-guardrails`) that pass alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the Activate button and dialog.
+  - **Docs closed in this change set:** G14 in the overview, architecture (Noted gap → decided),
+    code-standards §8 (the four-eyes line and the permission table) and TS rule 7
+    (`PROFILE_FOUR_EYES_VIOLATION`), workflow rules §5; bm00 (G14 row, Unit 61, codes); the spec
+    (banner removed, D6 = option C); design-review DR-01 removed (closed); ui-context §10b (profile
+    Activate); this tracker.
+  - **Review fixes (2026-10-10, bm59–bm61):**
+    1. `findLastSaver` excludes the `logo_asset_version_id` row. A logo upload by user B used to
+       make B the "last saver", so the field editor A could activate their own bank change. New
+       integration case: A saves, B uploads → both refused.
+    2. The `MY` `country_code` default moved from the fields schema to `invoiceProfileSchema`, so a
+       draft save (`.partial()`) no longer fills an omitted `country_code`.
+    3. The form clears the inline `PROFILE_LOGO_REQUIRED` error when an activation starts and after
+       a successful save. The state codes now sort with `localeCompare`.
+    4. Docs: the code-standards §8 line that said four-eyes never applies to activation now matches
+       G14 C; workflow rules §5 moves G14 to the decided list.
+    5. Not changed: the SVG `on*` rule stays a whole-text match. It fails closed (a false positive
+       is a rejection, never a bypass), and a tag-aware regex would add bypass and backtracking
+       risk.
+  - **Code-review fixes, Moderate + cleanup (2026-10-10, bm59–bm61):**
+    1. Profile schema: a missing required key now says "Required" (`z.string("Required")`), not
+       Zod's raw "expected string, received undefined", so activation's field errors read well.
+    2. SVG policy: `url('#g')`, `url( #g)`, `href=" #a"` and `href= "#a"` are fragment
+       references and are accepted (the old lookahead could backtrack onto the quote or a space);
+       quoted/spaced external references are still rejected.
+    3. `updateDraftFields` checks the token first, then inserts any changed key with no row in the
+       stored draft (it was silently dropped, or a false `DRAFT_CONFLICT` when it was the only
+       change).
+    4. `hasLogoAsset` is now `billAssetRepository.hasLogoVersion` (a logo asset WITH a version): a
+       failed first upload leaves an empty `bill_asset` row that no longer hides the D8 import.
+    5. A logo side above int4 (`bill_asset_version.width/height`), or an infinite SVG size, is
+       `LOGO_REJECTED: dimensions`, not a failed insert after the blob write.
+    6. Cleanup: the save/upload/import actions log service failures (as activation does); the
+       page model runs its independent reads together and reuses the ACTIVE raw read; activation
+       verifies the logo with the rows already read (`parseInvoiceProfile` + `inlineLogo`); one
+       `DRAFT_CONFLICT_MESSAGE` (`draft-messages.ts`), one `HEX_COLOUR_RE` (`types/billing.ts`),
+       one `DraftConflict` (`draft-conflict.ts`).
+    7. Open, awaiting the owner: the app-logo import fallback when `app_logo_path` is blank, and
+       whether a no-op save writes an audit row; the four Serious findings (SVG regex
+       backtracking, four-eyes by field saver, namespaced SVG elements, carried-over logo
+       uploader). **Resolved 2026-10-11, below.**
+    - Tests: related unit suites 1,902 passed; profile/logo integration 46 passed (Postgres +
+      Azurite); `tsc`, ESLint and Prettier clean.
+  - **Code-review fixes, Serious + owner decisions (2026-10-11, bm60/bm61):**
+    1. **G14 re-decided by the owner: no four-eyes on profile activation** (supersedes option C).
+       Removed `PROFILE_FOUR_EYES_VIOLATION`, the service check, `findLastSaver`, the form message
+       and their tests; Serious #2 (saver vs field editor) and #4 (carried-over logo uploader) are
+       moot. Kept: the bank-change warning and `bankDetailsChanged` on the audit row (one
+       definition, `lib/invoice-profile-changes.ts`). Origin, for the record: the original plan
+       said four-eyes "does not apply" (code-standards §8); the architecture _Noted gap_ (bm47
+       docs, 2026-10-08) raised it as G14, decided C on 2026-10-10, reverted 2026-10-11. Docs:
+       overview, architecture, code-standards §8 + TS rule 7, workflow rules §5, ui-context,
+       bm00, bm61 D6.
+    2. **SVG scanner (Serious #1):** `sanitize-logo.ts` is a hand-written linear scanner (no
+       backtracking regexes). Crafted ~500 KB inputs scan in < 40 ms (the old regexes took ~100 s).
+       Same construct names and earliest-construct order; a differential fuzz of 300,000 random
+       documents against the old regexes showed no case the scanner accepts that they rejected.
+    3. **Namespaced elements (Serious #3):** elements match by local name too, so `<s:script>`,
+       `<svg:SCRIPT>`, `<x:foreignObject>`, `<s:use x:href=…>`, `<s:style>` are rejected.
+    4. **#10 (owner):** `public/brand/invoice-logo-default.svg` added as a placeholder (an exact
+       copy of `brand/logo.svg`); the D8 import falls back to it when no app logo is configured.
+    5. **#11 (owner):** a save that changes no key of the existing draft writes nothing and no
+       audit row; the result carries `changed: false` and the form shows the Info toast "No
+       changes — nothing was saved." (bm59 D4 + checklist, ui-context).
+    - Tests: related unit suites 1,937 passed; profile/logo integration 46 passed (Postgres +
+      Azurite); `tsc`, ESLint and Prettier clean.
+  - **Next:** bm62 / bm63 per the build plan (bm63's journey activates profile v1 then v2).
+
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
 
 - **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:

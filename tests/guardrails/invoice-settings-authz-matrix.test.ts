@@ -85,6 +85,24 @@ const MATRIX: MatrixRow[] = [
     level: "EDIT",
     kind: "action",
   },
+  {
+    surface: "save company profile draft (a mutation)",
+    file: "actions/billing/invoice-settings/save-profile-draft.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
+    surface: "activate company profile (a mutation)",
+    file: "actions/billing/invoice-settings/activate-profile.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
+    surface: "upload logo / import app logo (mutations)",
+    file: "actions/billing/invoice-settings/upload-logo.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
 ];
 
 describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => {
@@ -222,6 +240,103 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     // Write-once, never overwritten.
     expect(svc).toMatch(/writeOnce:\s*true/);
     expect(svc).not.toMatch(/deleteBlob|writeOnce:\s*false/);
+  });
+
+  it("save-profile-draft guards on EDIT first, then validates, then calls the service, then revalidates; its writes and audit live in the service (bm59)", () => {
+    const src = read(
+      "actions/billing/invoice-settings/save-profile-draft.action.ts",
+    );
+    const guard = src.indexOf("LEVELS.EDIT");
+    const parse = src.indexOf("saveProfileDraftInputSchema.safeParse");
+    const service = src.indexOf("await saveProfileDraft(");
+    const revalidate = src.indexOf("revalidatePath(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(parse).toBeLessThan(service);
+    expect(service).toBeLessThan(revalidate);
+    expect(src).not.toMatch(/insertAuditEvent|auditLogRepository/);
+    const svc = read("services/billing/invoice-profile/save-profile-draft.ts");
+    expect(svc).toContain("db.transaction(");
+    // One audit write per branch (update / insert), each in the transaction.
+    expect(svc.match(/eventType: "INVOICE_PROFILE_DRAFT_SAVED"/g)).toHaveLength(
+      2,
+    );
+    // No activation, no logo upload, no meta.* write (bm60 / bm61).
+    expect(svc).not.toMatch(/"ACTIVE"|"RETIRED"|putObject|"meta\./);
+  });
+
+  it("while a profile draft exists it is the only editable version, and the form reloads per draft token (bm59)", () => {
+    const src = read(
+      "app/(app)/administration/invoice-settings/company-profile/page.tsx",
+    );
+    expect(src).toMatch(
+      /canEdit && \(shownIsDraft \|\| \(!draft && shown\?\.status === "ACTIVE"\)\)/,
+    );
+    expect(src).toMatch(
+      /key=\{`\$\{shown\.version\}:\$\{draft\?\.token \?\? "none"\}`\}/,
+    );
+  });
+
+  it("upload-logo guards both actions on EDIT before parsing; the service checks, writes write-once, then audits in one transaction (bm60)", () => {
+    const src = read("actions/billing/invoice-settings/upload-logo.action.ts");
+    // One shared guard, awaited first by each exported action.
+    expect(src.match(/LEVELS\.EDIT/g)).toHaveLength(1);
+    for (const [fn, parse, service] of [
+      ["uploadLogoAction(", "logoUploadSchema.safeParse", "await uploadLogo("],
+      [
+        "importAppLogoAction(",
+        "importAppLogoSchema.safeParse",
+        "await importAppLogo(",
+      ],
+    ] as const) {
+      const body = src.slice(src.indexOf(`export async function ${fn}`));
+      const guard = body.indexOf("await guardEdit()");
+      expect(guard).toBeGreaterThan(-1);
+      expect(guard).toBeLessThan(body.indexOf(parse));
+      expect(body.indexOf(parse)).toBeLessThan(body.indexOf(service));
+      expect(body.indexOf(service)).toBeLessThan(
+        body.indexOf("revalidatePath("),
+      );
+    }
+    expect(src).not.toMatch(/insertAuditEvent|putObject/);
+    const svc = read("services/billing/invoice-profile/upload-logo.ts");
+    // The checks run before anything is written.
+    expect(svc.indexOf("checkLogo(input.bytes")).toBeLessThan(
+      svc.indexOf("blobStore.putObject("),
+    );
+    expect(svc).toMatch(/writeOnce:\s*true/);
+    expect(svc).not.toMatch(/deleteBlob|writeOnce:\s*false/);
+    // The blob write precedes the one transaction that records it.
+    expect(svc.indexOf("blobStore.putObject(")).toBeLessThan(
+      svc.indexOf("insertVersion("),
+    );
+    expect(svc.match(/eventType: "INVOICE_LOGO_UPLOADED"/g)).toHaveLength(1);
+  });
+
+  it("activate-profile guards on EDIT first, validates the note, then runs the service, then revalidates; writes and audit live in the service (bm61)", () => {
+    const src = read(
+      "actions/billing/invoice-settings/activate-profile.action.ts",
+    );
+    const guard = src.indexOf("LEVELS.EDIT");
+    const parse = src.indexOf("activateProfileInputSchema.safeParse");
+    const service = src.indexOf("await activateProfile(");
+    const revalidate = src.indexOf("revalidatePath(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(parse).toBeLessThan(service);
+    expect(service).toBeLessThan(revalidate);
+    expect(src).not.toMatch(/insertAuditEvent/);
+    const svc = read("services/billing/invoice-profile/activate-profile.ts");
+    expect(svc.match(/db\.transaction\(/g)).toHaveLength(1);
+    // Retire BEFORE promote: two versions are never ACTIVE together.
+    expect(svc.indexOf("retireActiveVersion(")).toBeLessThan(
+      svc.indexOf("promoteDraftVersion("),
+    );
+    expect(svc.match(/eventType: "INVOICE_PROFILE_ACTIVATED"/g)).toHaveLength(
+      1,
+    );
+    // No blob is written by activation.
+    expect(svc).not.toMatch(/putObject|deleteBlob/);
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {

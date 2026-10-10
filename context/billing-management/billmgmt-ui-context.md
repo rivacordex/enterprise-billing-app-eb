@@ -232,7 +232,7 @@ One badge serves both template and company-profile versions (code-standards › 
 | Colour fields (`brandColor`, `accentColor`)               | Mono `#RRGGBB` input plus a 20×20 swatch (`--radius-xs`, `--border-default`). **Recommended:** a non-blocking **Warning** hint when white text on the brand colour is below 4.5:1 contrast        |
 | Bank details changed vs the ACTIVE version                | **Warning** family callout in `ActivateVersionDialog` ("Bank details change on every new invoice"). This addresses the single-signature gap in the architecture without adding a new hue      |
 | Read-only view (READ without EDIT)                        | Fields render as text, with no disabled-input grey wash. Save, Activate and Upload are not rendered                                                                                          |
-| Company profile empty state (no ACTIVE profile) | **Info** alert, no action for READ: "No company profile is active. Invoices are issued without the issuer and payment blocks until a profile is activated." EDIT users gain a "Create a draft" action in bm59 (not rendered earlier — a link to nothing would mislead) |
+| Company profile empty state (no ACTIVE profile) | **Info** alert, no action for READ: "No company profile is active. Invoices are issued without the issuer and payment blocks until a profile is activated." EDIT users get a "Create a draft" outline button (built in bm59) that focuses the empty edit form below the alert |
 | Preview loading, queued and error states                  | Reuse the §6c PDF skeleton and captions as they are                                                                                                                                           |
 
 **Confirmed as built (bm55).** The preview service appends one
@@ -263,6 +263,55 @@ form reads "Editing draft v{n} — saved {relative time} by {user}. Drafts are
 never used on invoices." READ users never see the draft on the edit tab. In
 Version history the DRAFT row shows the Draft badge, "—" for activated and
 retired, and no download.
+
+**Company profile Save draft (bm59).** EDIT users get the editable form
+(Company, Payment, Branding, Defaults; mono inputs for IDs, account no. and
+colours; State is a `Select` of the 16 MyInvois codes; Country is read-only
+`Malaysia (MY)`; the logo shows read-only until bm60). Optional fields are
+labelled "(optional)", and SST no. carries the hint "Hidden on the invoice
+when blank". Each colour field has the 20×20 swatch and, when white text on it
+is below 4.5:1, a non-blocking Warning-family hint (`TriangleAlert`,
+`--color-warning-700`) naming the ratio; it never blocks the save. Invalid
+formats show the schema's message under the field (the same text the server
+returns). The outline **Save draft** button sits right-aligned under the form,
+disabled while pristine or saving; success is a toast "Draft profile v{n}
+saved — not used on invoices". A save that changes nothing once trimmed and
+normalised ("Acme " → "Acme") is an Info toast "No changes — nothing was
+saved." (no write, no audit). `DRAFT_CONFLICT` is the Warning toast with
+**Reload**. The page opens EDIT users on the working draft (the bm57 "Editing
+draft v{n} — saved … by …" Info line), else the ACTIVE values, else empty
+fields under the empty-state alert, whose **Create a draft** action focuses the
+first field. While a draft exists, other versions are read-only with an "Edit
+draft v{n}" link.
+
+**Logo upload (bm60).** `LogoUploadField` sits in the Branding group as
+built: the dropzone (`--surface-sunken`, dashed `--border-strong`, the focus
+ring on `focus-within`) shows the stored logo through the GET route (never a
+`blob:` URL), a caption "PNG, JPEG or SVG, up to 500 KB, at least 300 px on
+the shorter side", and an outline **Choose file** button (the file input is
+visually hidden and the button is the keyboard path). It is disabled with
+"Save the draft first." when no draft exists, and with "Save your changes
+first." while the form has unsaved edits (an upload re-renders the form on the
+draft's new token). A rejection shows inline in Danger (`--color-danger-700`)
+with its reason ("The image is 200×900 px; the shorter side must be at least
+300 px.", "The SVG contains <script>, which is not allowed."). Success is a
+toast "Logo v{n} added to draft v{m}"; `DRAFT_CONFLICT` is the Warning toast
+with **Reload**. A ghost **Use the current app logo** button appears only
+while no logo asset exists (D8).
+
+**Company profile Activate (bm61).** On the working draft only, EDIT users get
+the Deep Petrol **Activate v{n}** button beside the outline Save draft (§7: the
+one Deep Petrol button). It reads "Save draft first" and is disabled while the
+form has unsaved edits. It opens the shared `ActivateVersionDialog`. Its
+summary lists every field that differs from the ACTIVE version as
+`label: old → new` (mono values, account numbers in full; "No change from the
+active profile." when none). When any payment field differs, including the first
+activation, the Warning callout reads "Bank details change on every new invoice.
+Customers will be asked to pay into the new account from the next bill run." A
+server refusal shows inline in Danger in the dialog. `PROFILE_LOGO_REQUIRED`
+also shows inline by the logo field, and Activate stays enabled. There is no
+four-eyes refusal (G14 decided 2026-10-11). Success is a toast "Company profile
+v{n} activated".
 
 **Activate (bm58).** The page-level **Activate v{n}** button is the one Deep Petrol
 button on the screen (§7). It is enabled only when a saved draft exists and the

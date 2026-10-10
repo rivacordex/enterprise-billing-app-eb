@@ -3,20 +3,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // bm56-spec §Tests — the Company profile page view-model: no profile → the
 // empty state; ACTIVE preferred; `?version` honoured; a DRAFT hidden from READ
 // users and shown to EDIT users; an incomplete DRAFT still renders (unparsed
-// view); `meta.*` split out and surfaced in the history.
+// view); `meta.*` split out and surfaced in the history. bm59 D3: EDIT users
+// open the working DRAFT (with its token) ahead of the ACTIVE version.
 
 vi.mock("@/db/repositories/billing/invoice-profile", () => ({
   invoiceProfileRepository: {
     listVersions: vi.fn(),
     readVersionRaw: vi.fn(),
     resolveUserNames: vi.fn(),
+    findDraftVersion: vi.fn(),
   },
 }));
 vi.mock("@/db/repositories/billing/bill-asset", () => ({
-  billAssetRepository: { findVersionById: vi.fn() },
+  billAssetRepository: { findVersionById: vi.fn(), hasLogoVersion: vi.fn() },
 }));
 vi.mock("@/services/billing/blob-store", () => ({ blobStore: {} }));
 
+import { billAssetRepository } from "@/db/repositories/billing/bill-asset";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import { getCompanyProfilePageModel } from "@/services/billing/invoice-profile/read-profile";
 
@@ -42,6 +45,8 @@ function summary(
 beforeEach(() => {
   vi.clearAllMocks();
   repo.resolveUserNames.mockResolvedValue(new Map([["user-1", "Alice"]]));
+  repo.findDraftVersion.mockResolvedValue(null);
+  vi.mocked(billAssetRepository.hasLogoVersion).mockResolvedValue(false);
   repo.readVersionRaw.mockImplementation(async (_db, version) => ({
     fields: {
       company_name: `Co v${version}`,
@@ -55,20 +60,64 @@ describe("getCompanyProfilePageModel", () => {
   it("returns shown: null and an empty history when no profile exists", async () => {
     repo.listVersions.mockResolvedValue([]);
     const model = await getCompanyProfilePageModel(DB, { canEdit: true });
-    expect(model).toEqual({ shown: null, history: [] });
+    expect(model).toEqual({
+      shown: null,
+      history: [],
+      draft: null,
+      hasLogoAsset: false,
+      activeFields: null,
+    });
     expect(repo.readVersionRaw).not.toHaveBeenCalled();
   });
 
-  it("prefers the ACTIVE version over a newer DRAFT", async () => {
+  it("opens the working DRAFT for EDIT users ahead of the ACTIVE version, with its token (bm59 D3)", async () => {
     repo.listVersions.mockResolvedValue([
-      summary({ configVersion: 3, status: "DRAFT" }),
+      summary({
+        configVersion: 3,
+        status: "DRAFT",
+        lastModifiedDatetime: new Date("2026-10-09T00:00:00Z"),
+      }),
       summary({ configVersion: 2, status: "ACTIVE" }),
       summary({ configVersion: 1, status: "RETIRED" }),
     ]);
-    const { shown } = await getCompanyProfilePageModel(DB, { canEdit: true });
+    repo.findDraftVersion.mockResolvedValue({
+      configVersion: 3,
+      token: "2026-10-09T00:00:00.000000Z",
+    });
+    const { shown, draft } = await getCompanyProfilePageModel(DB, {
+      canEdit: true,
+    });
+    expect(shown?.version).toBe(3);
+    expect(shown?.status).toBe("DRAFT");
+    expect(draft).toEqual({
+      version: 3,
+      token: "2026-10-09T00:00:00.000000Z",
+      savedAt: new Date("2026-10-09T00:00:00Z"),
+      savedBy: "Alice",
+    });
+  });
+
+  it("opens the ACTIVE version for EDIT users when no draft exists", async () => {
+    repo.listVersions.mockResolvedValue([
+      summary({ configVersion: 2, status: "ACTIVE" }),
+      summary({ configVersion: 1, status: "RETIRED" }),
+    ]);
+    const { shown, draft } = await getCompanyProfilePageModel(DB, {
+      canEdit: true,
+    });
     expect(shown?.version).toBe(2);
-    expect(shown?.status).toBe("ACTIVE");
     expect(shown?.logoAssetVersionId).toBe("INVASV00000001");
+    expect(draft).toBeNull();
+    // bm61 D5 — the ACTIVE field map the activate dialog diffs against.
+    const model = await getCompanyProfilePageModel(DB, { canEdit: true });
+    expect(model.activeFields).toEqual({
+      company_name: "Co v2",
+      logo_asset_version_id: "INVASV00000001",
+    });
+    expect(
+      (await getCompanyProfilePageModel(DB, { canEdit: false })).activeFields,
+    ).toBeNull();
+    expect(repo.findDraftVersion).not.toHaveBeenCalled();
   });
 
   it("honours ?version for any visible status", async () => {
@@ -106,8 +155,28 @@ describe("getCompanyProfilePageModel", () => {
     });
     expect(model.shown?.version).toBe(1);
     expect(model.history.map((h) => h.versionNo)).toEqual([1]);
+    expect(model.draft).toBeNull();
+    expect(repo.findDraftVersion).not.toHaveBeenCalled();
     expect(repo.readVersionRaw).toHaveBeenCalledTimes(1);
     expect(repo.readVersionRaw).toHaveBeenCalledWith(DB, 1);
+  });
+
+  it("EDIT user on the ACTIVE version: one raw read feeds both shown and activeFields", async () => {
+    repo.listVersions.mockResolvedValue([
+      summary({ configVersion: 1, status: "ACTIVE" }),
+    ]);
+    const model = await getCompanyProfilePageModel(DB, { canEdit: true });
+    expect(model.shown?.version).toBe(1);
+    expect(model.activeFields).toEqual(model.shown?.fields);
+    expect(repo.readVersionRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("hasLogoAsset follows a stored logo VERSION, not a bare asset row (bm60 D8)", async () => {
+    repo.listVersions.mockResolvedValue([]);
+    vi.mocked(billAssetRepository.hasLogoVersion).mockResolvedValue(true);
+    expect(
+      (await getCompanyProfilePageModel(DB, { canEdit: true })).hasLogoAsset,
+    ).toBe(true);
   });
 
   it("shows the DRAFT to EDIT users when nothing is ACTIVE", async () => {
@@ -124,7 +193,13 @@ describe("getCompanyProfilePageModel", () => {
       summary({ configVersion: 1, status: "DRAFT" }),
     ]);
     const model = await getCompanyProfilePageModel(DB, { canEdit: false });
-    expect(model).toEqual({ shown: null, history: [] });
+    expect(model).toEqual({
+      shown: null,
+      history: [],
+      draft: null,
+      hasLogoAsset: true,
+      activeFields: null,
+    });
   });
 
   it("renders an incomplete DRAFT as the unparsed field map (no schema parse)", async () => {

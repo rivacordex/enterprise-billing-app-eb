@@ -114,6 +114,7 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 4. Field formats are those in `invoice-template/placeholder-catalog.md` §B. If code-standards disagrees, the catalog wins.
 5. Usage-section geo source (X1 / C1 / overview _Overlap_): **R9** — rating persists the matched ratecard cell's `state`/`district` onto `rating.udr_rated` at INSERT (bm48, migration `0045`); Inv #36 is amended. The `udr_key` → ratecard-cell mapping (G13) reuses PRP's existing canonical cell match — no new mapping rule (decided 2026-10-08).
 6. Usage-section scope, row bound and over-limit behaviour (X2 / G2): **delivered by bm49** — the annex lists every billed `udr_rated` row for the account (all USAGE lines), grouped state → district, bounded to 10,000 rows/account; over the bound the bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks (INV stays posted). Part 2's multi-page tests use this 10,000-row bound (decided 2026-10-07, delivered 2026-10-08).
+7. Four-eyes on company-profile activation (G14; was the architecture _Noted gap_ versus code-standards): **no four-eyes** — one `invoice_settings : EDIT` signature, bank changes included (decided 2026-10-11 by the owner, superseding option C of 2026-10-10; the bm61 four-eyes code was removed).
 
 **OPEN. Stop and ask one precise question with the options. Never pick a default:**
 
@@ -122,7 +123,6 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 | `ONE_TIME` charge sourcing | C2 | §3.7 |
 | Embedded fonts | O4 | No external font fetch, ever |
 | Customer SST no., PO and contract references | O5 | Fragments stay hidden while blank. Add no columns |
-| Four-eyes on company-profile activation | Architecture _Noted gap_ versus code-standards ("does not apply") | **Conflict: stop and ask.** Do not build the activation action until it is decided |
 | Partial-period billing | O-TC7 | A **business** decision. Never build a method |
 
 **Decided and delivered (no longer open):** X3/C3 (`is_default` vs one-ACTIVE — the one-ACTIVE index excludes the default), X4 (same-file two-rewrites — carried by the bm47–bm49 binder), O2/C4/G6 (SHA-256 for template/asset blobs, md5 for invoice PDFs, algorithm recorded per row), O3/G7 (notes & footer are fixed layout text), O10/G10 (nothing deletes a version), G11 (role grants ADMIN/MANAGER EDIT, USER READ), G12 (CSV version on `customer_bill.ref_csv_template_version_id`) — all delivered by bm50 (2026-10-08). The seeded `invoice_settings` role grants are confirmed in the bm50 spec and applied by `db:seed-billing`.
@@ -157,7 +157,7 @@ The general §5 list applies in full. Stop, explain why, and get confirmation be
 10. **`next.config.ts` `serverActions.bodySizeLimit` is not raised** for the logo upload.
 11. **The application branding logo is untouched:** `getBrandingLogo()` and `app`/`app_logo_path`.
 12. **The generic System Config page:** the only authorized change is excluding the `invoice.profile` group from its editable list.
-13. **No new dependency beyond Handlebars.** `sharp` is already installed. An SVG sanitizer library, an image library or any other addition is a stop-and-ask.
+13. **No new dependency beyond Handlebars.** `sharp` is **not** a usable dependency (only an optional transitive of `next`); logo dimensions come from pure parsers (bm60, guarded by `tests/guardrails/no-image-library.test.ts`). An SVG sanitizer library, an image library or any other addition is a stop-and-ask.
 14. **Rating module files** (schema, flow, `rating-db-roles.sql`) change only after X1 resolves to R9, and only under `ratemgmt-ai-workflow-rules.md`.
 15. **`workflow-management/**` gets no Part 2 change.** A Part 2 diff touching it is off-plan.
 

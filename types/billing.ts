@@ -1143,10 +1143,62 @@ export interface CompanyProfileShownVersion {
   logoAssetVersionId: string | null;
 }
 
+// bm59-spec §Design D1/D3 — the working DRAFT profile version an EDIT user
+// edits. `token` is `max(last_modified_datetime)` of the draft's rows at
+// microsecond precision (the bm57 token form); `savedBy` is the actor on the
+// most recently modified row.
+export interface ProfileDraftInfo {
+  version: number;
+  token: string;
+  savedAt: Date;
+  savedBy: string | null;
+}
+
 export interface CompanyProfilePageModel {
   shown: CompanyProfileShownVersion | null;
   history: ProfileHistoryRow[];
+  // bm59 — EDIT users only; always `null` for READ users.
+  draft: ProfileDraftInfo | null;
+  // bm60 D8 — whether the logo asset exists (the "Use the current app logo"
+  // import is offered only before it does). Always `true` for READ users.
+  hasLogoAsset: boolean;
+  // bm61 D5 — the ACTIVE version's field map, for the activate dialog's diff
+  // and bank warning. EDIT users only; `null` for READ users or when no
+  // version is ACTIVE.
+  activeFields: InvoiceProfileView | null;
 }
+
+// bm59-spec §Design D1/D3 — each profile key's label: the form's field label
+// and the `description` stored on a draft's rows (bm53 D3 key table).
+// THE `#RRGGBB` profile colour format (placeholder-catalog §B), shared by the
+// profile schema, the colour swatch and the contrast hint.
+export const HEX_COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+export const INVOICE_PROFILE_FIELD_LABELS: Readonly<Record<string, string>> = {
+  company_name: "Legal name",
+  registration_no: "SSM registration no.",
+  tin: "TIN",
+  sst_reg_no: "SST registration no.",
+  address_line1: "Address line 1",
+  address_line2: "Address line 2",
+  postcode: "Postcode",
+  city: "City",
+  state_code: "State",
+  country_code: "Country",
+  phone: "Phone",
+  email: "Email",
+  website: "Website",
+  brand_color: "Brand colour",
+  accent_color: "Accent colour",
+  bank_name: "Bank name",
+  bank_account_name: "Account name",
+  bank_account_no: "Account no.",
+  swift: "SWIFT",
+  jompay_biller_code: "JomPAY biller code",
+  remittance_email: "Remittance email",
+  payment_terms_days: "Payment terms (days)",
+  logo_asset_version_id: "Logo",
+};
 
 // bm57-spec §Design D1/D2 — the save-draft result codes beyond the generic
 // action ones. `DRAFT_CONFLICT`: the shared working draft changed since the
@@ -1184,3 +1236,59 @@ export const TEMPLATE_ACTIVATION_ERROR_CODES = [
 ] as const;
 export type TemplateActivationErrorCode =
   (typeof TEMPLATE_ACTIVATION_ERROR_CODES)[number];
+
+// bm61-spec §Design D2 — the company-profile activation result codes beyond
+// the generic ones (all binding, code-standards TS rule 7; result codes, never
+// thrown). `PROFILE_LOGO_REQUIRED`: no logo, or its asset version is missing
+// or not ACTIVE. `ASSET_CHECKSUM_MISMATCH`: the logo blob fails its checksum
+// (or is missing). No four-eyes code: G14 decided 2026-10-11, no second
+// signature on profile activation.
+export const PROFILE_ACTIVATION_ERROR_CODES = [
+  "CHANGE_NOTE_REQUIRED",
+  "DRAFT_CONFLICT",
+  "PROFILE_LOGO_REQUIRED",
+  "ASSET_CHECKSUM_MISMATCH",
+] as const;
+export type ProfileActivationErrorCode =
+  (typeof PROFILE_ACTIVATION_ERROR_CODES)[number];
+
+// bm61 D5 — the payment fields: a change to any of them shows the bank
+// warning and is flagged `bankDetailsChanged` on the activation audit row.
+export const INVOICE_PROFILE_PAYMENT_KEYS = [
+  "bank_name",
+  "bank_account_name",
+  "bank_account_no",
+  "swift",
+  "jompay_biller_code",
+  "remittance_email",
+] as const;
+
+// bm60-spec §Design D2 — the logo upload's result codes beyond the generic
+// ones. `LOGO_REJECTED` (binding, code-standards TS rule 7) carries a `reason`
+// (the first failed check, in data rule 9 order) and a `detail`. A rejection
+// writes nothing and is not audited. Never thrown.
+export const LOGO_UPLOAD_ERROR_CODES = ["LOGO_REJECTED"] as const;
+export type LogoUploadErrorCode = (typeof LOGO_UPLOAD_ERROR_CODES)[number];
+
+export const LOGO_REJECT_REASONS = [
+  "size",
+  "mime",
+  "dimensions",
+  "svg_content",
+] as const;
+export type LogoRejectReason = (typeof LOGO_REJECT_REASONS)[number];
+
+// The three logo MIME types (`bill_asset_version.mime` CHECK, 0046).
+export const LOGO_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/svg+xml",
+] as const;
+export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
+
+// 500 KB on the actual byte length (`byte_size BETWEEN 1 AND 512000`, 0046).
+export const LOGO_MAX_BYTES = 512_000;
+// The shorter side of the logo, in px.
+export const LOGO_MIN_SIDE_PX = 300;
+
+export type LogoRejectDetail = Readonly<Record<string, string | number | null>>;

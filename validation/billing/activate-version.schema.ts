@@ -6,8 +6,8 @@ import { billTemplateVersionIdSchema } from "@/validation/billing/template-versi
 // bm58-spec §Design D1/D2 step 1 (Inv #49): the template activation input. The
 // change note is trimmed and must be 1-500 characters; an empty (or blank) note
 // carries the binding message `CHANGE_NOTE_REQUIRED` so the action can return
-// that code, while an over-long one is an ordinary validation error. bm61 adds
-// the company-profile variant beside this one.
+// that code, while an over-long one is an ordinary validation error. bm61's
+// company-profile variant sits below.
 export const CHANGE_NOTE_MAX_LENGTH = 500;
 
 export const changeNoteSchema = z
@@ -32,3 +32,15 @@ export const activateTemplateInputSchema = z
   .strict();
 
 export type ActivateTemplateInput = z.infer<typeof activateTemplateInputSchema>;
+
+// bm61-spec §Design D1 — the company-profile variant: the draft's
+// `config_version`, its token and the same required change note.
+export const activateProfileInputSchema = z
+  .object({
+    configVersion: z.number().int().positive(),
+    expectedDraftToken: z.string().regex(DRAFT_TOKEN_RE),
+    changeNote: changeNoteSchema,
+  })
+  .strict();
+
+export type ActivateProfileInput = z.infer<typeof activateProfileInputSchema>;
