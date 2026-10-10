@@ -19,7 +19,7 @@ _Revised 2026-10-07: Part 1 status re-verified against `enterprise-billing-app` 
 > | bm40–bm44 | **Committed** (`792d681` bm41 … `0bde815` bm44 + review fixes) |
 > | bm45 | **Committed** (`c77cb7d` + SonarQube fixes `eeb6450`, `266a5d8`) |
 > | bm46 | **Committed** (`60be173` + CodeRabbit fixes `501456f`) — Part 3 entry gate for Part 4 met |
-> | bm47–bm63 | **Specs written 2026-10-07**; no code. Each spec lists its open G-items; a unit's build waits until they are recorded as decided. bm61's G14 was decided 2026-10-10 (option C), then 2026-10-11 (no four-eyes) |
+> | bm47–bm63 | **Specs written 2026-10-07**; no code. Each spec lists its open G-items; a unit's build waits until they are recorded as decided. bm61's G14: **no four-eyes** (decided 2026-10-11, superseding option C of 2026-10-10) |
 >
 > The progress tracker's "bm40–bm46 planned, not delivered" line is stale; correct it with the next tracker touch (workflow rules §7.3). Latest applied migration: `0044_customer_bill_line_capacity.sql`.
 

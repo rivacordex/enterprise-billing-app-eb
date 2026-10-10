@@ -135,6 +135,33 @@ describe("svgDimensions", () => {
     });
   });
 
+  it.each([
+    ['width=" 400 px " height="\t300\t"', 400, 300],
+    ["width='400PX' height='300'", 400, 300],
+    ['data-x="1" 9width="400" height="300"', 400, 300],
+    ['a = b width="400" height="300"', 400, 300],
+  ])("reads spaced and edge-case attributes: %s", (attrs, width, height) => {
+    expect(svgDimensions(svg(attrs).toString("utf8"))).toEqual({
+      ok: true,
+      width,
+      height,
+    });
+  });
+
+  // The regexes this replaced backtracked on these (super-linear).
+  it.each([
+    ["a long attribute name with no =", `<svg ${"a".repeat(500_000)}>`],
+    [
+      "spaces then a stray unit",
+      `<svg width="1${" ".repeat(500_000)}x" height="1">`,
+    ],
+    ["spaces before no =", `<svg a${" ".repeat(500_000)}>`],
+  ])("parses a ~500 KB crafted root tag (%s) in linear time", (_l, text) => {
+    const started = performance.now();
+    svgDimensions(text);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it.each(["", 'viewBox="0 0 a b"', 'viewBox="0 0 300"', 'viewBox="0 0 0 0"'])(
     "rejects missing or unusable sizing (%s) as dimensions",
     (attrs) => {

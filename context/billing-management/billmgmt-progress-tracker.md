@@ -1638,6 +1638,11 @@ DELIVERED" section.
        changes — nothing was saved." (bm59 D4 + checklist, ui-context).
     - Tests: related unit suites 1,937 passed; profile/logo integration 46 passed (Postgres +
       Azurite); `tsc`, ESLint and Prettier clean.
+  - **Code-review fixes, batch 2 (2026-10-11):** SonarQube flagged super-linear regexes in
+    `image-dimensions.ts` (SVG root attributes, width/height length). Replaced by a linear
+    attribute scanner + `parseLength`; fuzzed identical to the old regexes (200k tags, 300k
+    lengths); crafted 500 KB root tags parse in < 30 ms. bm00 status line restates G14 as "no
+    four-eyes (2026-10-11, superseding option C)". Logo unit suites 197 passed.
   - **Next:** bm62 / bm63 per the build plan (bm63's journey activates profile v1 then v2).
 
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)

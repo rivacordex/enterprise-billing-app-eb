@@ -122,12 +122,61 @@ export function jpegDimensions(bytes: Buffer): DimensionsResult {
   return fail;
 }
 
-const ATTR_RE = /([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-const LENGTH_RE = /^\s*(\d+(?:\.\d+)?|\.\d+)\s*(px)?\s*$/i;
+// Scanned by hand, not by regex: an attribute or length regex backtracks
+// (super-linear) on a long name run with no `=`, or a long space run.
+const NAME_START = /[A-Za-z_:]/;
+const NAME_CHAR = /[-A-Za-z0-9_:.]/;
+const SPACE = /\s/;
+const NUMBER_RE = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
+
+function skipSpace(s: string, i: number): number {
+  while (i < s.length && SPACE.test(s[i]!)) i++;
+  return i;
+}
+
+// `name = "value"` / `name='value'` pairs, scanned left to right in one pass.
+// An unquoted or unterminated value is not an attribute; scanning resumes
+// after it, as a global regex match would.
+function parseAttributes(s: string): Map<string, string> {
+  const attrs = new Map<string, string>();
+  let i = 0;
+  while (i < s.length) {
+    if (!NAME_START.test(s[i]!)) {
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < s.length && NAME_CHAR.test(s[i]!)) i++;
+    const name = s.slice(start, i);
+    let j = skipSpace(s, i);
+    if (s[j] !== "=") continue;
+    j = skipSpace(s, j + 1);
+    const quote = s[j];
+    if (quote !== '"' && quote !== "'") {
+      i = j;
+      continue;
+    }
+    const close = s.indexOf(quote, j + 1);
+    if (close === -1) {
+      i = j + 1;
+      continue;
+    }
+    attrs.set(name.toLowerCase(), s.slice(j + 1, close));
+    i = close + 1;
+  }
+  return attrs;
+}
+
+// A plain number or `…px` (spaces allowed around the number and the unit);
+// `null` for any other unit.
+function parseLength(value: string): number | null {
+  let v = value.trim();
+  if (v.toLowerCase().endsWith("px")) v = v.slice(0, -2).trimEnd();
+  return NUMBER_RE.test(v) ? Number(v) : null;
+}
 
 // The root `<svg …>` start tag's attributes (quoted values may contain `>`).
 function rootAttributes(text: string, offset: number): Map<string, string> {
-  const attrs = new Map<string, string>();
   let end = offset;
   let quote: string | null = null;
   for (; end < text.length; end++) {
@@ -137,10 +186,7 @@ function rootAttributes(text: string, offset: number): Map<string, string> {
     } else if (c === '"' || c === "'") quote = c;
     else if (c === ">") break;
   }
-  for (const m of text.slice(offset + 4, end).matchAll(ATTR_RE)) {
-    attrs.set(m[1]!.toLowerCase(), m[2] ?? m[3] ?? "");
-  }
-  return attrs;
+  return parseAttributes(text.slice(offset + 4, end));
 }
 
 // SVG: `width`/`height` when both are plain numbers or `…px`; any other unit
@@ -154,16 +200,16 @@ export function svgDimensions(text: string): DimensionsResult {
   const w = attrs.get("width");
   const h = attrs.get("height");
   if (w !== undefined && h !== undefined) {
-    const wm = LENGTH_RE.exec(w);
-    const hm = LENGTH_RE.exec(h);
-    if (!wm || !hm) {
+    const width = parseLength(w);
+    const height = parseLength(h);
+    if (width === null || height === null) {
       return {
         ok: false,
         reason: "dimensions",
         message: "SVG width/height must be unitless or px",
       };
     }
-    return positive(Number(wm[1]), Number(hm[1]));
+    return positive(width, height);
   }
   const viewBox = attrs.get("viewbox");
   const parts =
