@@ -22,6 +22,10 @@ export interface CompanyProfileFormProps {
   expectedDraftToken?: string | null;
   // Edit mode, bm60 D8: offer "Use the current app logo".
   showLogoImport?: boolean;
+  // Edit mode, bm61: the working draft's version (the Activate button shows
+  // only when it is set) and the ACTIVE field map for the dialog's diff.
+  draftVersion?: number | null;
+  activeFields?: InvoiceProfileView | null;
 }
 
 const MUTED = "text-[color:var(--text-muted)]";
@@ -87,6 +91,8 @@ export function CompanyProfileForm({
   logoAssetVersionId,
   expectedDraftToken = null,
   showLogoImport = false,
+  draftVersion = null,
+  activeFields = null,
 }: CompanyProfileFormProps): React.JSX.Element {
   if (mode === "edit") {
     return (
@@ -99,6 +105,8 @@ export function CompanyProfileForm({
         }
         expectedDraftToken={expectedDraftToken}
         showLogoImport={showLogoImport}
+        draftVersion={draftVersion}
+        activeFields={activeFields}
       />
     );
   }

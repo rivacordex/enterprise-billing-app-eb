@@ -69,6 +69,10 @@ export interface LogoUploadFieldProps {
   blockedReason?: string | null;
   // D8 — offer "Use the current app logo" (no logo asset exists yet).
   showImport?: boolean;
+  // bm61 D5 — a message from outside the field (e.g. the activation's
+  // `PROFILE_LOGO_REQUIRED`), shown inline in Danger when the field has no
+  // error of its own.
+  externalError?: string | null;
 }
 
 export function LogoUploadField({
@@ -76,6 +80,7 @@ export function LogoUploadField({
   draftToken,
   blockedReason = null,
   showImport = false,
+  externalError = null,
 }: LogoUploadFieldProps): React.JSX.Element {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -229,12 +234,12 @@ export function LogoUploadField({
           <p className="text-body-sm text-muted-foreground">{disabledReason}</p>
         ) : null}
       </div>
-      {error ? (
+      {(error ?? externalError) ? (
         <p
           role="alert"
           className="text-body-sm text-[color:var(--color-danger-700)]"
         >
-          {error}
+          {error ?? externalError}
         </p>
       ) : null}
     </div>

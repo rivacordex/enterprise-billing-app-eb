@@ -19,7 +19,7 @@ _Revised 2026-10-07: Part 1 status re-verified against `enterprise-billing-app` 
 > | bm40–bm44 | **Committed** (`792d681` bm41 … `0bde815` bm44 + review fixes) |
 > | bm45 | **Committed** (`c77cb7d` + SonarQube fixes `eeb6450`, `266a5d8`) |
 > | bm46 | **Committed** (`60be173` + CodeRabbit fixes `501456f`) — Part 3 entry gate for Part 4 met |
-> | bm47–bm63 | **Specs written 2026-10-07**; no code. Each spec lists its open G-items; a unit's build waits until they are recorded as decided. bm61 is BLOCKED on G14 |
+> | bm47–bm63 | **Specs written 2026-10-07**; no code. Each spec lists its open G-items; a unit's build waits until they are recorded as decided. bm61's G14 was decided 2026-10-10 (option C) |
 >
 > The progress tracker's "bm40–bm46 planned, not delivered" line is stale; correct it with the next tracker touch (workflow rules §7.3). Latest applied migration: `0044_customer_bill_line_capacity.sql`.
 
@@ -228,7 +228,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 | G11 | Seeded `invoice_settings` role grants | code-standards §8 | 50 | ADMIN/MANAGER EDIT, USER READ (the `ratecard` precedent) |
 | G12 | Where the CSV template version column lives | architecture storage deltas vs code-standards | 50 | `customer_bill.ref_csv_template_version_id` (code-standards data rule 4) |
 | G13 | Mapping `udr_key` → `(mno_public_key, commercial_unit_public_key, polygon_id)` | overview rating follow-ups | 48 | Rating decides (`ratemgmt` §5.1) |
-| G14 | Four-eyes on company-profile activation | architecture _Noted gap_ vs code-standards ("does not apply") | 61 | **Stop and ask.** Unit 61 is not built until this is decided |
+| G14 | Four-eyes on company-profile activation | architecture _Noted gap_ vs code-standards ("does not apply") | 61 | **Decided 2026-10-10: option C** — a second EDIT user only when payment fields change (`PROFILE_FOUR_EYES_VIOLATION`) |
 | G15 | **New:** how invoices render before the first profile is activated. Option A: issuer and payment blocks hidden, `ref_invoice_profile_version` NULL. Option B: a seeded profile v1 | Not tracked yet. Add it to all three places | 47, 53, 54 | Recommended: option A. Today's invoice has no issuer block, so nothing regresses. A seeded profile would print placeholder legal and bank details on real invoices |
 | G16 | **New (bm52):** prod app blob auth — keep the Key Vault connection string, or switch to the app's user-assigned Managed Identity with container-scoped `Storage Blob Data Contributor` | Tracked (bm52): overview open items, architecture open items, code-standards C5 | 52 (prod release of 53, 58, 60) | Recommended: Managed Identity. bm52 builds it behind `appBlobAuth`, default `connectionString` |
 
@@ -250,7 +250,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 | 58 | `bm58` | Invoice template: activate | action + service + blob write | 57, 54 (52 before prod) |
 | 59 | `bm59` | Company profile: save draft | action + service | 56; G7 |
 | 60 | `bm60` | Company profile: logo upload + sanitization | action + service + blob write | 59, 51 (52 before prod) |
-| 61 | `bm61` | Company profile: activate | action + service | 59, 60, 54; **G14** |
+| 61 | `bm61` | Company profile: activate | action + service | 59, 60, 54; G14 (decided: C) |
 | 62 | `bm62` | Invoice CSV output | app service + GET route | 54, 53 |
 | 63 | `bm63` | Invoice Template ship gate | cross-cutting (tests + docs) | 47–62 |
 
@@ -534,22 +534,22 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 - **Visible result:** a valid logo shows in the dropzone preview. Each bad case is rejected with its own `LOGO_REJECTED` reason (guardrail 52).
 - **Depends on:** 59, 51; 52 before prod.
 
-### Unit 61 — Company profile: activate (`bm61`) — _waits on G14_
+### Unit 61 — Company profile: activate (`bm61`) — G14 decided 2026-10-10 (option C)
 
 - **Boundary:** `activate-profile.action.ts` + `services/billing/invoice-profile/activate-profile.ts`, reusing `ActivateVersionDialog`.
 - **Builds:**
   - server-side `PROFILE_LOGO_REQUIRED` and `CHANGE_NOTE_REQUIRED` checks
-  - a full validity gate before DRAFT → ACTIVE: the version must pass `readInvoiceProfile` (schema parse + logo asset row) and `inlineLogo` (logo blob checksum), else activation is refused with `INVOICE_PROFILE_INVALID`. Posting stamps the ACTIVE profile version without validating it (bm54 D1) and the stamp is permanent (guardrail 46), so an invalid ACTIVE version would leave every bill posted under it render-pending forever (design review DR-01)
+  - a full validity gate before DRAFT → ACTIVE: the version must pass `readInvoiceProfile` (schema parse + logo asset row) and `inlineLogo` (logo blob checksum), else activation is refused (as built in bm61, per its spec D2: `PROFILE_LOGO_REQUIRED` for a missing or non-ACTIVE logo asset, `VALIDATION_ERROR` with field errors for the full schema, `ASSET_CHECKSUM_MISMATCH` for the logo blob; DR-01 closed). Posting stamps the ACTIVE profile version without validating it (bm54 D1) and the stamp is permanent (guardrail 46), so an invalid ACTIVE version would leave every bill posted under it render-pending forever (design review DR-01)
   - DRAFT → ACTIVE, the previous version → RETIRED, and an `INVOICE_PROFILE_ACTIVATED` audit row
   - the "Bank details change on every new invoice" warning callout
-  - a second signature, if G14 requires one
+  - a second signature when payment fields change (G14 option C, decided 2026-10-10: `PROFILE_FOUR_EYES_VIOLATION`)
 - **Visible result:**
   - activating with a logo and a note makes the profile ACTIVE
   - the next draft preview shows the issuer block, logo and bank details
   - the next posting stamps the profile version
   - bills already posted don't change
   - activation without a logo or a note is refused (guardrail 51)
-- **Depends on:** 59, 60, 54. **G14 must be decided first.** Don't build this unit until it is.
+- **Depends on:** 59, 60, 54. G14 decided 2026-10-10 (option C).
 
 ### Unit 62 — Invoice CSV output (`bm62`)
 

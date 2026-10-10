@@ -122,7 +122,7 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 | `ONE_TIME` charge sourcing | C2 | §3.7 |
 | Embedded fonts | O4 | No external font fetch, ever |
 | Customer SST no., PO and contract references | O5 | Fragments stay hidden while blank. Add no columns |
-| Four-eyes on company-profile activation | Architecture _Noted gap_ versus code-standards ("does not apply") | **Conflict: stop and ask.** Do not build the activation action until it is decided |
+| Four-eyes on company-profile activation | ~~Architecture _Noted gap_ versus code-standards~~ | **Decided 2026-10-10 (G14 option C):** four-eyes only when payment fields change (`PROFILE_FOUR_EYES_VIOLATION`); built by bm61 |
 | Partial-period billing | O-TC7 | A **business** decision. Never build a method |
 
 **Decided and delivered (no longer open):** X3/C3 (`is_default` vs one-ACTIVE — the one-ACTIVE index excludes the default), X4 (same-file two-rewrites — carried by the bm47–bm49 binder), O2/C4/G6 (SHA-256 for template/asset blobs, md5 for invoice PDFs, algorithm recorded per row), O3/G7 (notes & footer are fixed layout text), O10/G10 (nothing deletes a version), G11 (role grants ADMIN/MANAGER EDIT, USER READ), G12 (CSV version on `customer_bill.ref_csv_template_version_id`) — all delivered by bm50 (2026-10-08). The seeded `invoice_settings` role grants are confirmed in the bm50 spec and applied by `db:seed-billing`.

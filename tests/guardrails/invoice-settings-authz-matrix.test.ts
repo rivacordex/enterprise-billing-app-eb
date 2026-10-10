@@ -92,6 +92,12 @@ const MATRIX: MatrixRow[] = [
     kind: "action",
   },
   {
+    surface: "activate company profile (a mutation)",
+    file: "actions/billing/invoice-settings/activate-profile.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
     surface: "upload logo / import app logo (mutations)",
     file: "actions/billing/invoice-settings/upload-logo.action.ts",
     level: "EDIT",
@@ -305,6 +311,39 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
       svc.indexOf("insertVersion("),
     );
     expect(svc.match(/eventType: "INVOICE_LOGO_UPLOADED"/g)).toHaveLength(1);
+  });
+
+  it("activate-profile guards on EDIT first, validates the note, then runs the service, then revalidates; four-eyes, writes and audit live in the service (bm61)", () => {
+    const src = read(
+      "actions/billing/invoice-settings/activate-profile.action.ts",
+    );
+    const guard = src.indexOf("LEVELS.EDIT");
+    const parse = src.indexOf("activateProfileInputSchema.safeParse");
+    const service = src.indexOf("await activateProfile(");
+    const revalidate = src.indexOf("revalidatePath(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(parse).toBeLessThan(service);
+    expect(service).toBeLessThan(revalidate);
+    expect(src).not.toMatch(/insertAuditEvent|PROFILE_FOUR_EYES_VIOLATION"/);
+    const svc = read("services/billing/invoice-profile/activate-profile.ts");
+    // G14 option C is enforced in the service, before the transaction.
+    expect(svc.indexOf('code: "PROFILE_FOUR_EYES_VIOLATION"')).toBeGreaterThan(
+      -1,
+    );
+    expect(svc.indexOf('code: "PROFILE_FOUR_EYES_VIOLATION"')).toBeLessThan(
+      svc.indexOf("db.transaction("),
+    );
+    expect(svc.match(/db\.transaction\(/g)).toHaveLength(1);
+    // Retire BEFORE promote: two versions are never ACTIVE together.
+    expect(svc.indexOf("retireActiveVersion(")).toBeLessThan(
+      svc.indexOf("promoteDraftVersion("),
+    );
+    expect(svc.match(/eventType: "INVOICE_PROFILE_ACTIVATED"/g)).toHaveLength(
+      1,
+    );
+    // No blob is written by activation.
+    expect(svc).not.toMatch(/putObject|deleteBlob/);
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {

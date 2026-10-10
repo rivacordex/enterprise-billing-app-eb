@@ -232,7 +232,22 @@ export async function getCompanyProfilePageModel(
     ? (await billAssetRepository.findLogoAsset(db)) !== null
     : true;
 
-  if (!chosen) return { shown: null, history, draft, hasLogoAsset };
+  // bm61 D5 — the ACTIVE field map for the activate dialog (EDIT users only).
+  const activeSummary = canEdit
+    ? visible.find((v) => v.status === "ACTIVE")
+    : undefined;
+  const activeFields = activeSummary
+    ? (
+        await invoiceProfileRepository.readVersionRaw(
+          db,
+          activeSummary.configVersion,
+        )
+      ).fields
+    : null;
+
+  if (!chosen) {
+    return { shown: null, history, draft, hasLogoAsset, activeFields };
+  }
 
   const raw = await invoiceProfileRepository.readVersionRaw(
     db,
@@ -251,6 +266,7 @@ export async function getCompanyProfilePageModel(
     history,
     draft,
     hasLogoAsset,
+    activeFields,
   };
 }
 

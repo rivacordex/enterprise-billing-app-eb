@@ -57,10 +57,11 @@ export default async function CompanyProfilePage({
     LEVELS.EDIT,
   );
 
-  const { shown, history, draft, hasLogoAsset } = await getCompanyProfilePage({
-    version,
-    canEdit,
-  });
+  const { shown, history, draft, hasLogoAsset, activeFields } =
+    await getCompanyProfilePage({
+      version,
+      canEdit,
+    });
   // bm59 D3 — EDIT users edit the working DRAFT, or (with no draft) the ACTIVE
   // values; while a draft exists it is the only editable version, so a save
   // can never silently replace it with another version's content (the bm57
@@ -164,6 +165,9 @@ export default async function CompanyProfilePage({
             logoAssetVersionId={shown.logoAssetVersionId}
             expectedDraftToken={draft?.token ?? null}
             showLogoImport={!hasLogoAsset}
+            // bm61: Activate is offered on the working draft only.
+            draftVersion={shownIsDraft && draft ? draft.version : null}
+            activeFields={activeFields}
           />
         </>
       ) : (

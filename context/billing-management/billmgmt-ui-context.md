@@ -297,6 +297,21 @@ toast "Logo v{n} added to draft v{m}"; `DRAFT_CONFLICT` is the Warning toast
 with **Reload**. A ghost **Use the current app logo** button appears only
 while no logo asset exists (D8).
 
+**Company profile Activate (bm61).** On the working draft only, EDIT users get
+the Deep Petrol **Activate v{n}** button beside the outline Save draft (§7: the
+one Deep Petrol button). It reads "Save draft first" and is disabled while the
+form has unsaved edits. It opens the shared `ActivateVersionDialog`. Its
+summary lists every field that differs from the ACTIVE version as
+`label: old → new` (mono values, account numbers in full; "No change from the
+active profile." when none). When any payment field differs, including the first
+activation, the Warning callout reads "Bank details change on every new invoice.
+Customers will be asked to pay into the new account from the next bill run." A
+server refusal shows inline in Danger in the dialog. `PROFILE_LOGO_REQUIRED`
+also shows inline by the logo field, and Activate stays enabled. For G14 option
+C, the four-eyes refusal reads "Activation must be done by a different user than
+the one who edited the draft." Success is a toast "Company profile v{n}
+activated".
+
 **Activate (bm58).** The page-level **Activate v{n}** button is the one Deep Petrol
 button on the screen (§7). It is enabled only when a saved draft exists and the
 form has no unsaved edits; with edits it reads "Save draft first", and with no

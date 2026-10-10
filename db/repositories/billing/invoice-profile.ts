@@ -18,8 +18,9 @@ import type { ConfigStatus } from "@/types/system-config";
 // sharing a `config_version` (all with the same `status`), `is_secret = false`
 // (code-standards Part 2 data rule 5). bm59 adds the working-draft writes
 // (`lockProfileGroup`, `nextProfileVersion`, `findDraftVersion`,
-// `insertDraftVersion`, `updateDraftFields`); bm60 adds `setDraftLogo`;
-// activation arrives with bm61.
+// `insertDraftVersion`, `updateDraftFields`); bm60 adds `setDraftLogo`; bm61
+// adds activation (`findDraftTokenForUpdate`, `retireActiveVersion`,
+// `promoteDraftVersion`, `writeMeta`, `findLastSaver`).
 // Every read excludes secret rows, so a mis-flagged row can never reach a
 // rendered invoice.
 export const INVOICE_PROFILE_GROUP = INVOICE_PROFILE_CONFIG_GROUP;
@@ -54,6 +55,9 @@ export interface InvoiceProfileRawVersion {
 function isMetaKey(key: string): boolean {
   return key.startsWith(INVOICE_PROFILE_META_PREFIX);
 }
+
+// A profile field row, not a reserved `meta.*` row (bm56 D2).
+const notMetaRow = sql`${systemConfig.configKey} NOT LIKE ${`${INVOICE_PROFILE_META_PREFIX}%`}`;
 
 const inProfileGroup = and(
   eq(systemConfig.configGroup, INVOICE_PROFILE_GROUP),
@@ -122,7 +126,9 @@ export const invoiceProfileRepository = {
   },
 
   // Version history for bm56, newest first. All rows of a version share a
-  // status; `modifiedBy` is the actor on the most recently modified row.
+  // status; `modifiedBy` is the actor on the most recently modified FIELD row
+  // (bm61: the `meta.*` rows an activation writes are excluded, so "created
+  // by" stays the editor, not the activator).
   async listVersions(db: Database): Promise<InvoiceProfileVersionSummary[]> {
     const rows = await db
       .select({
@@ -130,13 +136,13 @@ export const invoiceProfileRepository = {
         status: sql<string>`max(${systemConfig.status})`,
         modifiedBy: sql<
           string | null
-        >`(array_agg(${systemConfig.modifiedBy} ORDER BY ${systemConfig.lastModifiedDatetime} DESC))[1]`,
+        >`(array_agg(${systemConfig.modifiedBy} ORDER BY ${systemConfig.lastModifiedDatetime} DESC) FILTER (WHERE ${notMetaRow}))[1]`,
         createdDatetime:
           sql<Date>`min(${systemConfig.createdDatetime})`.mapWith(
             systemConfig.createdDatetime,
           ),
         lastModifiedDatetime:
-          sql<Date>`max(${systemConfig.lastModifiedDatetime})`.mapWith(
+          sql<Date>`COALESCE(max(${systemConfig.lastModifiedDatetime}) FILTER (WHERE ${notMetaRow}), max(${systemConfig.lastModifiedDatetime}))`.mapWith(
             systemConfig.lastModifiedDatetime,
           ),
       })
@@ -340,6 +346,131 @@ export const invoiceProfileRepository = {
       previousLogoAssetVersionId: previous,
       token,
     };
+  },
+
+  // bm61 D6 (G14 option C) — the user who last saved a version: the
+  // `modified_by` of its newest field row (`null` for an unknown version or a
+  // deleted user).
+  async findLastSaver(
+    db: Database,
+    configVersion: number,
+  ): Promise<string | null> {
+    const [row] = await db
+      .select({ modifiedBy: systemConfig.modifiedBy })
+      .from(systemConfig)
+      .where(
+        and(
+          inProfileGroup,
+          eq(systemConfig.configVersion, configVersion),
+          notMetaRow,
+        ),
+      )
+      .orderBy(desc(systemConfig.lastModifiedDatetime))
+      .limit(1);
+    return row?.modifiedBy ?? null;
+  },
+
+  // bm61 D3 — re-check the draft under `FOR UPDATE` of its rows: the token of
+  // `configVersion`'s DRAFT rows, or `null` when it is no longer a draft.
+  async findDraftTokenForUpdate(
+    tx: Database,
+    configVersion: number,
+  ): Promise<string | null> {
+    const rows = await tx
+      .select({ lastModified: systemConfig.lastModifiedDatetime })
+      .from(systemConfig)
+      .where(
+        and(
+          inProfileGroup,
+          eq(systemConfig.configVersion, configVersion),
+          eq(systemConfig.status, "DRAFT"),
+        ),
+      )
+      .for("update");
+    if (rows.length === 0) return null;
+    const draft = await this.findDraftVersion(tx);
+    return draft?.configVersion === configVersion ? draft.token : null;
+  },
+
+  // bm61 D3 step 1 — retire the ACTIVE version: every ACTIVE row of the group
+  // (`meta.*` included), so even a hand-edited second ACTIVE version cannot
+  // survive. Returns the retired versions, newest first (`[]` when none was
+  // ACTIVE). Status only: `modified_by`/`last_modified_datetime` keep the
+  // editor's.
+  async retireActiveVersion(tx: Database): Promise<number[]> {
+    const rows = await tx
+      .update(systemConfig)
+      .set({ status: "RETIRED" })
+      .where(
+        and(
+          eq(systemConfig.configGroup, INVOICE_PROFILE_GROUP),
+          eq(systemConfig.status, "ACTIVE"),
+        ),
+      )
+      .returning({ version: systemConfig.configVersion });
+    return [...new Set(rows.map((r) => r.version))].sort((a, b) => b - a);
+  },
+
+  // bm61 D3 step 2 — promote the draft's rows to ACTIVE. Returns the number of
+  // rows promoted (0 → the draft is gone; the caller rolls back).
+  async promoteDraftVersion(
+    tx: Database,
+    configVersion: number,
+  ): Promise<number> {
+    const rows = await tx
+      .update(systemConfig)
+      .set({ status: "ACTIVE" })
+      .where(
+        and(
+          eq(systemConfig.configGroup, INVOICE_PROFILE_GROUP),
+          eq(systemConfig.configVersion, configVersion),
+          eq(systemConfig.status, "DRAFT"),
+        ),
+      )
+      .returning({ id: systemConfig.configId });
+    return rows.length;
+  },
+
+  // bm61 D3 — write (insert or overwrite) a version's reserved `meta.*` rows
+  // (bm56 D2) with the version's status. Display convenience only; AUDIT_LOG
+  // stays authoritative.
+  async writeMeta(
+    tx: Database,
+    input: {
+      configVersion: number;
+      status: ConfigStatus;
+      values: Partial<Record<InvoiceProfileMetaKey, string>>;
+      actor: string;
+    },
+  ): Promise<void> {
+    const entries = Object.entries(input.values);
+    if (entries.length === 0) return;
+    await tx
+      .insert(systemConfig)
+      .values(
+        entries.map(([key, value]) => ({
+          configGroup: INVOICE_PROFILE_GROUP,
+          configVersion: input.configVersion,
+          configKey: key,
+          configValue: value,
+          isSecret: false,
+          status: input.status,
+          modifiedBy: input.actor,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [
+          systemConfig.configGroup,
+          systemConfig.configVersion,
+          systemConfig.configKey,
+        ],
+        set: {
+          configValue: sql`excluded.config_value`,
+          status: sql`excluded.status`,
+          modifiedBy: sql`excluded.modified_by`,
+          lastModifiedDatetime: sql`now()`,
+        },
+      });
   },
 
   // bm56 D1 — display names for the appuser ids stored on a version (`modified_by`,

@@ -6,12 +6,19 @@
 // (same messages from the same schema), the contrast hint, live swatches, the
 // SST hint, Save draft (pristine-disabled, token, toast, conflict + Reload,
 // server field errors) and the empty state's "Create a draft" focus.
+// bm61-spec §Tests: Activate — shown only on the working draft, "Save draft
+// first" while dirty; the dialog lists `label: old → new`; the bank warning
+// appears only when payment fields differ; the server's message is shown
+// (and PROFILE_LOGO_REQUIRED also inline by the logo field).
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/actions/billing/invoice-settings/save-profile-draft.action", () => ({
   saveProfileDraftAction: vi.fn(),
+}));
+vi.mock("@/actions/billing/invoice-settings/activate-profile.action", () => ({
+  activateProfileAction: vi.fn(),
 }));
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -21,8 +28,10 @@ vi.mock("sonner", () => ({
 
 import { toast } from "sonner";
 
+import { activateProfileAction } from "@/actions/billing/invoice-settings/activate-profile.action";
 import { saveProfileDraftAction } from "@/actions/billing/invoice-settings/save-profile-draft.action";
 import {
+  BANK_CHANGE_WARNING,
   CreateDraftButton,
   PROFILE_FIRST_FIELD_ID,
 } from "@/components/billing/invoice-settings/company-profile-edit-form";
@@ -411,5 +420,149 @@ describe("CompanyProfileForm (edit mode, bm59)", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Create a draft" }));
     expect(document.activeElement?.id).toBe(PROFILE_FIRST_FIELD_ID);
+  });
+});
+
+describe("CompanyProfileForm activate (bm61)", () => {
+  const mockActivate = vi.mocked(activateProfileAction);
+  const TOKEN = "2026-10-10T01:02:03.123456Z";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function renderDraft(
+    fields: Record<string, string | null> = FIELDS,
+    active: Record<string, string | null> | null = FIELDS,
+  ) {
+    return render(
+      <CompanyProfileForm
+        mode="edit"
+        fields={fields}
+        logoAssetVersionId="INVASV00000001"
+        expectedDraftToken={TOKEN}
+        draftVersion={4}
+        activeFields={active}
+      />,
+    );
+  }
+
+  function openDialog(): void {
+    fireEvent.click(screen.getByRole("button", { name: "Activate v4" }));
+  }
+
+  async function confirmWithNote(note = "Quarterly refresh"): Promise<void> {
+    fireEvent.change(await screen.findByLabelText("Change note (required)"), {
+      target: { value: note },
+    });
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      Array.from(dialog.querySelectorAll("button")).find(
+        (b) => b.textContent === "Activate v4",
+      )!,
+    );
+  }
+
+  it("is not offered without a working draft", () => {
+    render(
+      <CompanyProfileForm
+        mode="edit"
+        fields={FIELDS}
+        logoAssetVersionId={null}
+        expectedDraftToken={null}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^Activate/ })).toBeNull();
+  });
+
+  it('reads "Save draft first" and is disabled while the form has unsaved edits', () => {
+    renderDraft();
+    expect(screen.getByRole("button", { name: "Activate v4" })).toBeEnabled();
+    fireEvent.change(document.getElementById("profile-city")!, {
+      target: { value: "Ipoh" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Save draft first" }),
+    ).toBeDisabled();
+  });
+
+  it("lists label: old → new and shows no bank warning for a non-payment change", async () => {
+    renderDraft({ ...FIELDS, city: "Ipoh" });
+    openDialog();
+    const summary = await screen.findByTestId("activate-summary");
+    expect(summary).toHaveTextContent("City: Kuala Lumpur → Ipoh");
+    expect(screen.queryByText(BANK_CHANGE_WARNING)).toBeNull();
+  });
+
+  it("shows the bank warning only when a payment field differs, account numbers in full", async () => {
+    renderDraft({ ...FIELDS, bank_account_no: "9999-0000-1111" });
+    openDialog();
+    expect(await screen.findByTestId("activate-summary")).toHaveTextContent(
+      "Account no.: 5140-1234-5678 → 9999-0000-1111",
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(BANK_CHANGE_WARNING);
+  });
+
+  it("the first activation (no ACTIVE version) shows the bank warning", async () => {
+    renderDraft(FIELDS, null);
+    openDialog();
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      BANK_CHANGE_WARNING,
+    );
+  });
+
+  it("sends the draft version, token and note, and toasts success", async () => {
+    mockActivate.mockResolvedValue({
+      ok: true,
+      configVersion: 4,
+      retiredVersion: 3,
+    });
+    renderDraft();
+    openDialog();
+    await confirmWithNote();
+    await waitFor(() =>
+      expect(mockActivate).toHaveBeenCalledWith({
+        configVersion: 4,
+        expectedDraftToken: TOKEN,
+        changeNote: "Quarterly refresh",
+      }),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Company profile v4 activated",
+      ),
+    );
+  });
+
+  it("shows the server's four-eyes refusal in the dialog", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "PROFILE_FOUR_EYES_VIOLATION",
+    });
+    renderDraft({ ...FIELDS, swift: "CIBBMYKL" });
+    openDialog();
+    await confirmWithNote();
+    expect(
+      await screen.findByText(
+        "Activation must be done by a different user than the one who edited the draft.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("PROFILE_LOGO_REQUIRED shows in the dialog and inline by the logo field", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "PROFILE_LOGO_REQUIRED",
+    });
+    renderDraft();
+    openDialog();
+    await confirmWithNote();
+    const messages = await screen.findAllByText(
+      "Upload a logo before activating the profile.",
+    );
+    expect(messages).toHaveLength(2);
+    expect(
+      messages.some((m) => m.className.includes("--color-danger-700")),
+    ).toBe(true);
   });
 });

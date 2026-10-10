@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { BlobServiceClient } from "@azure/storage-blob";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
@@ -9,6 +7,9 @@ import { customerBillLineRepository } from "@/db/repositories/billing/customer-b
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
 import { blobStore } from "@/services/billing/blob-store";
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
+import { activateProfile } from "@/services/billing/invoice-profile/activate-profile";
+import { saveProfileDraft } from "@/services/billing/invoice-profile/save-profile-draft";
+import { uploadLogo } from "@/services/billing/invoice-profile/upload-logo";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { retryRenderInvoice } from "@/services/billing/post-run";
@@ -16,11 +17,13 @@ import { getStoredInvoice } from "@/services/billing/read/get-stored-invoice";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import { decodablePng } from "@/tests/helpers/logo-fixtures";
 import {
   setupInvoiceRenderFixtures,
   type InvoiceRenderFixtures,
 } from "@/tests/db/helpers/invoice-render-fixtures";
 import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import type { SaveProfileDraftInput } from "@/validation/billing/invoice-profile.schema";
 
 // Guardrail 46 (bm54-spec §Tests; code-standards Part 2 §9 item 46, Inv #41–
 // #43). Account A is posted through the REAL posting transaction under a
@@ -28,15 +31,18 @@ import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
 // generated v3 is made ACTIVE (retiring v2) and a profile v2 is made ACTIVE.
 // bm58: the generated versions are now created by the REAL save-draft and
 // activate services (a real generated, test-rendered, checksum-indexed blob
-// write and a real retire + promote); the company profile is still a DB
-// fixture until bm61. After that:
+// write and a real retire + promote). bm61: the company profiles are now REAL
+// activations too (save draft → upload logo → activate by a second EDIT user,
+// G14 option C), so v1 is retired when v2 is promoted. After that:
 //   * A's four stamps are unchanged (0033 froze them at posting);
 //   * A's stored PDF (`getStoredInvoice`, md5-verified) is byte-equal to before
 //     — a reprint is the stored bytes, never a re-render (Inv #43);
 //   * A's `charge_checksum` still recomputes from its lines;
 //   * a parked twin posted alongside A re-renders through `retryRenderInvoice`
 //     with v2 + profile v1 (its stamps), never the current ACTIVE (Inv #42);
-//   * a NEW draft preview of account B uses v3 + profile v2.
+//   * a NEW draft preview of account B uses v3 + profile v2 (its issuer block,
+//     bank details and the v2 logo inlined);
+//   * the NEXT posting (account C) stamps profile v2.
 //
 // The two real versions differ in structure (v2 shows Notes & terms, v3 hides
 // it), so the rendered HTML shows which version ran (`sec--notes`). `.integration.test.ts` (not the
@@ -48,12 +54,11 @@ const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 
 const RUN = "BRN-BM54-G46";
 const RUN_DRAFT = "BRN-BM54-G46-DRAFT";
-const SUFFIX = Date.now().toString(36);
-const LOGO_PATH = `it-bm54-${SUFFIX}/v1/logo.png`;
-const LOGO = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-  "base64",
-);
+const RUN_NEXT = "BRN-BM61-G46-NEXT";
+const APPROVER = "bm61-g46-approver";
+// Two decodable logos (the render inlines them; Chromium displays them).
+const LOGO_V1 = decodablePng(320, 320, 0x20);
+const LOGO_V2 = decodablePng(330, 330, 0xd0);
 
 function profileRows(companyName: string): Record<string, string> {
   return {
@@ -74,11 +79,11 @@ function profileRows(companyName: string): Record<string, string> {
     swift: "MBBEMYKL",
     remittance_email: "ar@digital-billing.example",
     payment_terms_days: "30",
-    logo_asset_version_id: "INVASV00000001",
   };
 }
 const COMPANY_V1 = "Pinned Profile One Sdn Bhd";
 const COMPANY_V2 = "Newer Profile Two Sdn Bhd";
+const ACCOUNT_V2 = "8888-7777-6666";
 
 interface Stamps {
   ref_bill_format_id: string | null;
@@ -137,12 +142,56 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       return { versionId: activated.versionId, versionNo: activated.versionNo };
     }
 
-    async function insertProfile(version: number, company: string) {
-      for (const [key, value] of Object.entries(profileRows(company))) {
-        await sql`
-          INSERT INTO core.system_config
-            (config_group, config_version, config_key, config_value, is_secret, status)
-          VALUES ('invoice.profile', ${version}, ${key}, ${value}, false, 'ACTIVE')`;
+    // bm61 — a REAL profile activation: the working draft is saved and its
+    // logo uploaded by `actorId`; a second EDIT user activates it (the bank
+    // details change, so G14 option C requires four-eyes).
+    async function activateProfileVersion(
+      fields: Record<string, string>,
+      logo: Buffer,
+      note: string,
+    ): Promise<{ version: number; logoId: string }> {
+      const saved = await saveProfileDraft(
+        {
+          fields,
+          expectedDraftToken: null,
+        } as unknown as SaveProfileDraftInput,
+        actorId,
+      );
+      if (!saved.ok)
+        throw new Error(`save profile draft failed: ${saved.code}`);
+      const uploaded = await uploadLogo(
+        {
+          bytes: logo,
+          declaredMime: "image/png",
+          expectedDraftToken: saved.draftToken,
+        },
+        actorId,
+      );
+      if (!uploaded.ok) {
+        throw new Error(`logo upload failed: ${JSON.stringify(uploaded)}`);
+      }
+      const activated = await activateProfile(
+        {
+          configVersion: saved.versionNo,
+          expectedDraftToken: uploaded.draftToken,
+          changeNote: note,
+        },
+        APPROVER,
+      );
+      if (!activated.ok) {
+        throw new Error(`profile activation failed: ${activated.code}`);
+      }
+      return {
+        version: activated.configVersion,
+        logoId: uploaded.assetVersionId,
+      };
+    }
+
+    async function clearLogoBlobs(): Promise<void> {
+      const assets = service!.getContainerClient("invoice-assets");
+      await assets.createIfNotExists();
+      for await (const b of assets.listBlobsFlat({ prefix: "INVAST" })) {
+        await assets.deleteBlob(b.name).catch(() => undefined);
       }
     }
 
@@ -166,22 +215,21 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       await seedInvoiceTemplates(fx.db);
       clearLoadedTemplateMemo();
 
-      // Profile v1 with a logo + generated v2, both ACTIVE.
-      const assets = service!.getContainerClient("invoice-assets");
-      await assets.createIfNotExists();
-      await assets.getBlockBlobClient(LOGO_PATH).uploadData(LOGO);
-      await sql`INSERT INTO billing.bill_asset (bill_asset_id, kind, name) VALUES ('INVAST00000001', 'logo', 'Company logo')`;
-      await sql`
-        INSERT INTO billing.bill_asset_version
-          (bill_asset_version_id, ref_bill_asset_id, version_no, mime, width, height, byte_size,
-           blob_ref, checksum, checksum_algorithm)
-        VALUES ('INVASV00000001', 'INVAST00000001', 1, 'image/png', 1, 1, ${LOGO.length},
-                ${`invoice-assets/${LOGO_PATH}`},
-                ${createHash("sha256").update(LOGO).digest("hex")}, 'sha256')`;
-      await insertProfile(1, COMPANY_V1);
+      // Profile v1 (a real activation, with a real logo) + generated v2.
+      // Asset ids restart per migrate, so clear an earlier run's logo blobs.
+      await clearLogoBlobs();
       const [actor] = await sql<{ user_id: string }[]>`
         SELECT user_id FROM core.appuser LIMIT 1`;
       actorId = actor!.user_id;
+      await sql`
+        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+        VALUES (${APPROVER}, 'G46 Approver', 'g46-approver@example.com', 'LOCAL', 'ACTIVE')`;
+      const profileV1 = await activateProfileVersion(
+        profileRows(COMPANY_V1),
+        LOGO_V1,
+        "pin test profile v1",
+      );
+      expect(profileV1.version).toBe(1);
       ({ versionId: v2Id } = await activateGenerated(true, "pin test v2"));
 
       // Post A and its twin through the real posting transaction. Both render
@@ -220,10 +268,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 300_000);
 
     afterAll(async () => {
-      await service
-        ?.getContainerClient("invoice-assets")
-        .deleteBlob(LOGO_PATH)
-        .catch(() => undefined);
+      if (service) await clearLogoBlobs();
       clearLoadedTemplateMemo();
       if (sql) {
         // `dropAll` resets `document_inv_seq`, so the next run re-posts
@@ -231,7 +276,9 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         // stored PDFs. Delete them (blob_refs read before the rows go).
         const stored = await sql<{ blob_ref: string }[]>`
           SELECT blob_ref FROM billing.bill_run_invoices
-          WHERE ref_bill_run_id IN (${RUN}, ${RUN_DRAFT})`.catch(() => []);
+          WHERE ref_bill_run_id IN (${RUN}, ${RUN_DRAFT}, ${RUN_NEXT})`.catch(
+          () => [],
+        );
         for (const { blob_ref } of stored) {
           const { container, path } = blobStore.parseBlobRef(blob_ref);
           await service
@@ -257,10 +304,20 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const stampsBefore = await readStamps(banA);
       const storedBefore = await getStoredInvoice(RUN, banA);
 
-      // bm58: a REAL activation retires v2 and promotes v3; the newer profile
-      // is still a DB fixture until bm61.
+      // bm58: a REAL activation retires v2 and promotes v3. bm61: a REAL
+      // profile activation retires profile v1 and promotes v2 (new name, new
+      // bank account, new logo).
       ({ versionId: v3Id } = await activateGenerated(false, "pin test v3"));
-      await insertProfile(2, COMPANY_V2);
+      const profileV2 = await activateProfileVersion(
+        { ...profileRows(COMPANY_V2), bank_account_no: ACCOUNT_V2 },
+        LOGO_V2,
+        "pin test profile v2",
+      );
+      expect(profileV2.version).toBe(2);
+      const [v1Status] = await sql<{ status: string }[]>`
+        SELECT DISTINCT status FROM core.system_config
+        WHERE config_group = 'invoice.profile' AND config_version = 1`;
+      expect(v1Status?.status).toBe("RETIRED");
       clearLoadedTemplateMemo();
 
       const stampsAfter = await readStamps(banA);
@@ -282,7 +339,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         stampsAfter.period_partition,
       );
       expect(recomputed).toBe(stampsAfter.charge_checksum);
-    });
+    }, 120_000);
 
     it("[CRITICAL] the parked twin re-renders with its stamps (v2 + profile v1), never the newly ACTIVE versions", async () => {
       const final = await buildInvoiceHtml({
@@ -307,7 +364,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(stored.pdf.subarray(0, 4).toString()).toBe("%PDF");
     }, 120_000);
 
-    it("a NEW draft preview of account B uses the newly ACTIVE v3 + profile v2", async () => {
+    it("a NEW draft preview of account B uses the newly ACTIVE v3 + profile v2: its issuer block, bank details and logo", async () => {
       const draft = await buildInvoiceHtml({
         runId: RUN_DRAFT,
         banId: banDraft,
@@ -317,6 +374,28 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(draft.resolved.profileVersion).toBe(2);
       expect(draft.html).not.toContain("sec--notes");
       expect(draft.html).toContain(COMPANY_V2);
+      expect(draft.html).toContain(ACCOUNT_V2);
+      expect(draft.html).not.toContain(COMPANY_V1);
+      // The v2 logo, inlined from its verified bytes. Handlebars escapes the
+      // `=` padding in the attribute value (`&#x3D;`).
+      const inlined = (logo: Buffer) =>
+        `data:image/png;base64,${logo.toString("base64").replaceAll("=", "&#x3D;")}`;
+      expect(draft.html).toContain(inlined(LOGO_V2));
+      expect(draft.html).not.toContain(inlined(LOGO_V1));
     });
+
+    it("the NEXT posting (account C) stamps profile v2", async () => {
+      await fx.newRun(RUN_NEXT);
+      const { banId: banNext } = await fx.postableBill({
+        label: "C",
+        runId: RUN_NEXT,
+      });
+      const result = await fx.post(RUN_NEXT, banNext);
+      expect(result.status).toBe("invoiced");
+      const [row] = await sql<{ ref_invoice_profile_version: number }[]>`
+        SELECT ref_invoice_profile_version FROM billing.customer_bill
+        WHERE ref_bill_run_id = ${RUN_NEXT} AND ref_billing_account_id = ${banNext}`;
+      expect(row?.ref_invoice_profile_version).toBe(2);
+    }, 120_000);
   },
 );

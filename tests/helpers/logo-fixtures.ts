@@ -1,6 +1,9 @@
+import zlib from "node:zlib";
+
 // bm60 — minimal, header-accurate PNG/JPEG/SVG byte builders for the logo
 // upload tests. Only the parts the pure parsers read are meaningful (the PNG
 // signature + IHDR, the JPEG markers up to SOF); the rest is filler.
+// `decodablePng` (bm61) is a complete image.
 
 export function png(width: number, height: number, padTo = 0): Buffer {
   const ihdr = Buffer.alloc(25);
@@ -18,6 +21,33 @@ export function png(width: number, height: number, padTo = 0): Buffer {
   return padTo > body.length
     ? Buffer.concat([body, Buffer.alloc(padTo - body.length)])
     : body;
+}
+
+// A complete, decodable PNG (greyscale, every pixel `shade`), for renders
+// that actually display the logo (Chromium in guardrail 46).
+export function decodablePng(width: number, height: number, shade = 0): Buffer {
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.writeUInt8(8, 8); // bit depth
+  ihdr.writeUInt8(0, 9); // greyscale
+  const row = Buffer.alloc(width + 1, shade);
+  row[0] = 0; // filter: none
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 export function jpeg(

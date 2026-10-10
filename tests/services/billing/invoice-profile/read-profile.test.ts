@@ -65,6 +65,7 @@ describe("getCompanyProfilePageModel", () => {
       history: [],
       draft: null,
       hasLogoAsset: false,
+      activeFields: null,
     });
     expect(repo.readVersionRaw).not.toHaveBeenCalled();
   });
@@ -107,6 +108,15 @@ describe("getCompanyProfilePageModel", () => {
     expect(shown?.version).toBe(2);
     expect(shown?.logoAssetVersionId).toBe("INVASV00000001");
     expect(draft).toBeNull();
+    // bm61 D5 — the ACTIVE field map the activate dialog diffs against.
+    const model = await getCompanyProfilePageModel(DB, { canEdit: true });
+    expect(model.activeFields).toEqual({
+      company_name: "Co v2",
+      logo_asset_version_id: "INVASV00000001",
+    });
+    expect(
+      (await getCompanyProfilePageModel(DB, { canEdit: false })).activeFields,
+    ).toBeNull();
     expect(repo.findDraftVersion).not.toHaveBeenCalled();
   });
 
@@ -170,6 +180,7 @@ describe("getCompanyProfilePageModel", () => {
       history: [],
       draft: null,
       hasLogoAsset: true,
+      activeFields: null,
     });
   });
 

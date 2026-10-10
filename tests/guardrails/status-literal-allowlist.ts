@@ -142,4 +142,16 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
     reason:
       "billing invoice-settings (bm58): `retireActive` writes the terminal RETIRED status when activation supersedes the previous invoice-template version — its own TemplateVersionStatus, unrelated to product lifecycle.",
   },
+  {
+    file: "db/repositories/billing/invoice-profile.ts",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm61): `retireActiveVersion` writes the terminal RETIRED system_config status when a company-profile activation supersedes the previous version — its own ConfigStatus, unrelated to product lifecycle.",
+  },
+  {
+    file: "services/billing/invoice-profile/activate-profile.ts",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm61): the retired company-profile version's `meta.retired_at` row is written with status RETIRED (its own ConfigStatus), unrelated to product lifecycle.",
+  },
 ];

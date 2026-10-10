@@ -8,6 +8,9 @@
 // writes the single working DRAFT version; it is never used on invoices.
 // Country is fixed to `MY` this phase. The logo is never sent with the form:
 // bm60's `LogoUploadField` uploads it onto the stored draft on its own.
+// bm61: **Activate v{n}** (the Deep Petrol page action, ui-context §7) opens
+// `ActivateVersionDialog` with the field diff against the ACTIVE version and,
+// when payment fields change, the bank warning; every check is the server's.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,7 +25,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  activateProfileAction,
+  type ActivateProfileActionResult,
+} from "@/actions/billing/invoice-settings/activate-profile.action";
 import { saveProfileDraftAction } from "@/actions/billing/invoice-settings/save-profile-draft.action";
+import {
+  ActivateVersionDialog,
+  type ActivateConfirmResult,
+} from "@/components/billing/invoice-settings/activate-version-dialog";
 import { ColourSwatch } from "@/components/billing/invoice-settings/colour-swatch";
 import { LogoUploadField } from "@/components/billing/invoice-settings/logo-upload-field";
 import { Button } from "@/components/ui/button";
@@ -41,6 +52,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MIN_TEXT_CONTRAST, whiteTextContrast } from "@/lib/colour-contrast";
+import {
+  describeProfileChanges,
+  paymentFieldsChanged,
+} from "@/lib/invoice-profile-changes";
 import { COUNTRY_LABELS, MYINVOIS_STATE_LABELS } from "@/lib/myinvois-states";
 import { cn } from "@/lib/utils";
 import {
@@ -61,6 +76,27 @@ const FIXED_COUNTRY = "MY";
 const DRAFT_CONFLICT_MESSAGE =
   "Another user changed the draft — reload to see it.";
 const SAVE_FAILED_MESSAGE = "The draft could not be saved. Please try again.";
+
+// bm61 D5 — the bank-change Warning callout, verbatim from the spec.
+export const BANK_CHANGE_WARNING =
+  "Bank details change on every new invoice. Customers will be asked to pay into the new account from the next bill run.";
+
+const ACTIVATE_MESSAGES: Record<
+  Extract<ActivateProfileActionResult, { ok: false }>["code"],
+  string
+> = {
+  CHANGE_NOTE_REQUIRED: "A change note is required.",
+  DRAFT_CONFLICT: DRAFT_CONFLICT_MESSAGE,
+  PROFILE_LOGO_REQUIRED: "Upload a logo before activating the profile.",
+  ASSET_CHECKSUM_MISMATCH:
+    "The stored logo failed verification. Upload the logo again. Nothing was activated.",
+  PROFILE_FOUR_EYES_VIOLATION:
+    "Activation must be done by a different user than the one who edited the draft.",
+  VALIDATION_ERROR:
+    "The profile is incomplete or invalid. Complete the marked fields, save the draft, then activate.",
+  FORBIDDEN: "You do not have permission to activate the profile.",
+  SERVER_ERROR: "The profile could not be activated. Please try again.",
+};
 
 // The "Create a draft" action on the empty state focuses this field.
 export const PROFILE_FIRST_FIELD_ID = "profile-company_name";
@@ -121,6 +157,10 @@ export interface CompanyProfileEditFormProps {
   expectedDraftToken: string | null;
   // bm60 D8 — offer "Use the current app logo" (no logo asset exists yet).
   showLogoImport?: boolean;
+  // bm61 — the working draft's version (Activate shows only when set) and the
+  // ACTIVE field map the dialog diffs against.
+  draftVersion?: number | null;
+  activeFields?: InvoiceProfileView | null;
 }
 
 export function CompanyProfileEditForm({
@@ -128,9 +168,14 @@ export function CompanyProfileEditForm({
   logoSrc,
   expectedDraftToken,
   showLogoImport = false,
+  draftVersion = null,
+  activeFields = null,
 }: CompanyProfileEditFormProps): React.JSX.Element {
   const router = useRouter();
   const [draftToken, setDraftToken] = useState(expectedDraftToken);
+  const [activateOpen, setActivateOpen] = useState(false);
+  // bm61 D5 — `PROFILE_LOGO_REQUIRED` also shows inline by the logo field.
+  const [logoError, setLogoError] = useState<string | null>(null);
   const {
     control,
     register,
@@ -184,6 +229,45 @@ export function CompanyProfileEditForm({
     } catch {
       toast.error(SAVE_FAILED_MESSAGE);
     }
+  }
+
+  // bm61 — activate the saved draft. The diff and warning describe the saved
+  // draft (`fields`); Activate is only enabled with no unsaved edits.
+  const changes = describeProfileChanges(activeFields, fields);
+  const bankChanged = paymentFieldsChanged(activeFields, fields);
+
+  async function activate(changeNote: string): Promise<ActivateConfirmResult> {
+    if (draftVersion === null || draftToken === null) {
+      return { ok: false, message: DRAFT_CONFLICT_MESSAGE };
+    }
+    const result = await activateProfileAction({
+      configVersion: draftVersion,
+      expectedDraftToken: draftToken,
+      changeNote,
+    });
+    if (result.ok) {
+      // The action revalidated the layout; the page re-renders on the new
+      // ACTIVE version and remounts this form.
+      toast.success(`Company profile v${result.configVersion} activated`);
+      return { ok: true };
+    }
+    if (result.code === "DRAFT_CONFLICT") {
+      toast.warning(DRAFT_CONFLICT_MESSAGE, {
+        action: { label: "Reload", onClick: () => router.refresh() },
+      });
+    } else if (result.code === "PROFILE_LOGO_REQUIRED") {
+      setLogoError(ACTIVATE_MESSAGES.PROFILE_LOGO_REQUIRED);
+    } else if (result.code === "VALIDATION_ERROR") {
+      for (const [key, messages] of Object.entries(result.fieldErrors)) {
+        if (FIELD_KEY_SET.has(key)) {
+          setError(key as InvoiceProfileFieldKey, {
+            type: "server",
+            message: messages[0] ?? "Required",
+          });
+        }
+      }
+    }
+    return { ok: false, message: ACTIVATE_MESSAGES[result.code] };
   }
 
   function textField(
@@ -332,6 +416,7 @@ export function CompanyProfileEditForm({
             draftToken={draftToken}
             blockedReason={isDirty ? "Save your changes first." : null}
             showImport={showLogoImport}
+            externalError={logoError}
           />
         </Field>
       </Group>
@@ -340,7 +425,7 @@ export function CompanyProfileEditForm({
         {textField("payment_terms_days", { mono: true, inputMode: "numeric" })}
       </Group>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button
           type="submit"
           variant="outline"
@@ -348,7 +433,44 @@ export function CompanyProfileEditForm({
         >
           {isSubmitting ? "Saving…" : "Save draft"}
         </Button>
+        {draftVersion !== null ? (
+          <button
+            type="button"
+            disabled={isDirty || isSubmitting}
+            title={isDirty ? "Save the draft before activating" : undefined}
+            onClick={() => setActivateOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--billrun-cta-bg)] px-4 py-2 text-body-sm font-semibold text-[color:var(--billrun-cta-text)] hover:bg-[color:var(--billrun-cta-bg-hover)] focus:outline-none focus-visible:[box-shadow:var(--focus-ring)] active:bg-[color:var(--billrun-cta-bg-active)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isDirty ? "Save draft first" : `Activate v${draftVersion}`}
+          </button>
+        ) : null}
       </div>
+
+      {draftVersion !== null ? (
+        <ActivateVersionDialog
+          open={activateOpen}
+          onOpenChange={setActivateOpen}
+          title={`Activate company profile v${draftVersion}`}
+          confirmLabel={`Activate v${draftVersion}`}
+          summary={
+            changes.length === 0 ? (
+              <p>No change from the active profile.</p>
+            ) : (
+              <ul className="space-y-1" aria-label="Changes">
+                {changes.map((c) => (
+                  <li key={c.key}>
+                    <span className="font-semibold">{c.label}:</span>{" "}
+                    <span className="font-mono text-mono">{c.from ?? "—"}</span>{" "}
+                    → <span className="font-mono text-mono">{c.to ?? "—"}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+          warning={bankChanged ? BANK_CHANGE_WARNING : undefined}
+          onConfirm={activate}
+        />
+      ) : null}
     </form>
   );
 }

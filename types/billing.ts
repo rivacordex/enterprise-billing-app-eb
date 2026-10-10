@@ -1162,6 +1162,10 @@ export interface CompanyProfilePageModel {
   // bm60 D8 — whether the logo asset exists (the "Use the current app logo"
   // import is offered only before it does). Always `true` for READ users.
   hasLogoAsset: boolean;
+  // bm61 D5 — the ACTIVE version's field map, for the activate dialog's diff
+  // and bank warning. EDIT users only; `null` for READ users or when no
+  // version is ACTIVE.
+  activeFields: InvoiceProfileView | null;
 }
 
 // bm59-spec §Design D1/D3 — each profile key's label: the form's field label
@@ -1228,6 +1232,33 @@ export const TEMPLATE_ACTIVATION_ERROR_CODES = [
 ] as const;
 export type TemplateActivationErrorCode =
   (typeof TEMPLATE_ACTIVATION_ERROR_CODES)[number];
+
+// bm61-spec §Design D2/D6 — the company-profile activation result codes beyond
+// the generic ones (all binding, code-standards TS rule 7; result codes, never
+// thrown). `PROFILE_LOGO_REQUIRED`: no logo, or its asset version is missing
+// or not ACTIVE. `PROFILE_FOUR_EYES_VIOLATION` (G14 option C): payment fields
+// change and the actor last saved the draft or uploaded its logo.
+// `ASSET_CHECKSUM_MISMATCH`: the logo blob fails its checksum (or is missing).
+export const PROFILE_ACTIVATION_ERROR_CODES = [
+  "CHANGE_NOTE_REQUIRED",
+  "DRAFT_CONFLICT",
+  "PROFILE_LOGO_REQUIRED",
+  "ASSET_CHECKSUM_MISMATCH",
+  "PROFILE_FOUR_EYES_VIOLATION",
+] as const;
+export type ProfileActivationErrorCode =
+  (typeof PROFILE_ACTIVATION_ERROR_CODES)[number];
+
+// bm61 D5/D6 — the payment fields: a change to any of them shows the bank
+// warning and (G14 option C) needs a second EDIT user to activate.
+export const INVOICE_PROFILE_PAYMENT_KEYS = [
+  "bank_name",
+  "bank_account_name",
+  "bank_account_no",
+  "swift",
+  "jompay_biller_code",
+  "remittance_email",
+] as const;
 
 // bm60-spec §Design D2 — the logo upload's result codes beyond the generic
 // ones. `LOGO_REJECTED` (binding, code-standards TS rule 7) carries a `reason`

@@ -1491,6 +1491,95 @@ DELIVERED" section.
     ui-context §10b (logo upload); known-issues 22f; this tracker.
   - **Next:** bm61 (profile activation; requires the logo, writes `meta.*`).
 
+## Invoice Template update — bm61 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-10)
+
+- **bm61 — Company profile: activate (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm61-company-profile-activate.md`. An `invoice_settings : EDIT`
+  user activates the working draft profile with a required change note; refused without a logo,
+  without a note, with an incomplete or invalid profile, or with a logo that fails its checksum.
+  The DRAFT becomes ACTIVE and the previous version RETIRED in one audited transaction
+  (`INVOICE_PROFILE_ACTIVATED`). **G14 decided 2026-10-10 (owner): option C** — a second EDIT
+  user only when payment fields change (`PROFILE_FOUR_EYES_VIOLATION`). No migration, no grant
+  change. Depends on bm59, bm60, bm54.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_PROFILE_ACTIVATED` (Change).
+      `types/billing.ts`: `PROFILE_ACTIVATION_ERROR_CODES` (`CHANGE_NOTE_REQUIRED`,
+      `DRAFT_CONFLICT`, `PROFILE_LOGO_REQUIRED`, `ASSET_CHECKSUM_MISMATCH`,
+      `PROFILE_FOUR_EYES_VIOLATION`), `INVOICE_PROFILE_PAYMENT_KEYS`,
+      `CompanyProfilePageModel.activeFields`. `validation/billing/activate-version.schema.ts`:
+      `activateProfileInputSchema` (D1).
+    - `lib/invoice-profile-changes.ts`: `paymentFieldsChanged` (the one definition of a bank
+      change, used by the four-eyes check and the dialog's warning) and `describeProfileChanges`
+      (`label: old → new`).
+    - `db/repositories/billing/invoice-profile.ts`: `findDraftTokenForUpdate` (`FOR UPDATE` of the
+      draft rows), `retireActiveVersion` (every ACTIVE row of the group), `promoteDraftVersion`,
+      `writeMeta` (upsert of the `meta.*` rows with the version's status) and `findLastSaver`;
+      `listVersions` now ignores `meta.*` rows for "created by", so the history keeps naming the
+      editor, not the activator.
+    - `services/billing/invoice-profile/activate-profile.ts`: the D2 checks in order (note → draft
+      and token → logo set and ACTIVE → full `invoiceProfileSchema` with field errors → logo blob
+      verified through `readInvoiceProfile` + `inlineLogo`), then the G14 option C check, then one
+      transaction (group lock → token re-check under `FOR UPDATE` → retire + `meta.retired_at` →
+      promote + `meta.change_note/activated_by/activated_at` → one audit row with
+      `bankDetailsChanged`).
+    - `actions/billing/invoice-settings/activate-profile.action.ts`: EDIT guard → Zod (blank note →
+      `CHANGE_NOTE_REQUIRED`) → service → `revalidatePath`.
+    - UI: a Deep Petrol **Activate v{n}** on the working draft only ("Save draft first" while dirty)
+      opening `ActivateVersionDialog` with the field diff, the D5 bank warning and the server's
+      message; `PROFILE_LOGO_REQUIRED` also shows inline by the logo field (`LogoUploadField`
+      gains `externalError`).
+  - **Decisions / interpretations (recorded):**
+    1. **G14 = option C** (owner, 2026-10-10), recorded in the overview, architecture, code-standards
+       §8 and TS rule 7, workflow rules §5, bm00 and the spec (A/B removed).
+    2. **The first activation counts as a bank change.** With no ACTIVE version every payment
+       field is new (it sets the account customers pay into), so the first profile also needs a
+       second EDIT user. A single-admin installation cannot activate its first profile alone.
+    3. **The logo uploader counts even for a carried-over logo.** D6 compares the actor with the
+       draft's logo `created_by`; a draft that inherited the ACTIVE logo (bm59) inherits its
+       uploader, so a bank change by that uploader also needs a second user.
+    4. **Codes follow the bm61 spec's D2, not bm00's `INVOICE_PROFILE_INVALID`.** An invalid draft
+       is refused with `VALIDATION_ERROR` + field errors, a missing/non-ACTIVE logo asset with
+       `PROFILE_LOGO_REQUIRED`, a bad or missing logo blob with `ASSET_CHECKSUM_MISMATCH`. bm00 is
+       updated. This satisfies **DR-01 option A** (no invalid version can become ACTIVE), so DR-01
+       is removed from `billmgmt-design-review.md`.
+    5. **Retire every ACTIVE row of the group**, not only the newest version, so a hand-edited
+       second ACTIVE version cannot survive an activation; `meta.retired_at` is written on each.
+    6. A conflict shows both a Warning toast with Reload and the dialog's inline message, as bm58
+       does (known-issues 22d).
+  - **Tests (all green):**
+    - `tests/db/activate-profile.integration.test.ts` (**guardrail 51, activation half**, 9,
+      Postgres + Azurite): no logo, blank note, missing required fields (named), stale token and
+      wrong version, a tampered logo blob — each refused with nothing changed (rows, statuses,
+      audit count); G14 C: the first activation refused for its editor and for its logo uploader,
+      accepted from another EDIT user; success writes ACTIVE, `meta.*` and one audit row with
+      `bankDetailsChanged: true`; a second activation retires v1 (+ `meta.retired_at`), a non-bank
+      change is activated by its own editor (`bankDetailsChanged: false`), the history still names
+      the editor; a bank change refused for its editor then accepted from another user; an invalid
+      draft leaves the previous ACTIVE untouched (DR-01).
+    - Guardrail 46 (`invoice-version-pinning.integration`, 5): profile v1 and v2 are now **real**
+      activations (save draft → decodable logo upload → activate by a second user). Profile v1 is
+      RETIRED when v2 activates; A keeps profile v1, its PDF bytes and checksum; the parked twin
+      renders with v1; the next draft preview shows the v2 company, the v2 bank account and the v2
+      logo inlined; **the next posting (account C) stamps profile 2**.
+    - `activate-profile.action.test.ts` (13), `invoice-profile-changes.test.ts` (11),
+      `company-profile-form.test.tsx` (+8: Activate only on the draft, "Save draft first", the
+      diff, the bank warning only on a payment change or first activation, payload + toast, the
+      four-eyes message, `PROFILE_LOGO_REQUIRED` twice), `read-profile.test.ts` (`activeFields`),
+      authz-matrix row + an order check (four-eyes before the transaction, retire before promote,
+      one audit, no blob write), `audit-log-filters` (86 options), status-literal allow-list (+2
+      `RETIRED` entries, as bm58 did).
+    - Full integration project: **1195 passed, 0 failed** (126 files), 461 s. Full unit suite:
+      4281 passed; the 3 failures were the status-literal sweep (fixed above) and two 10 s timeouts
+      under load (`customer-module-boundaries`, `pricing-component-guardrails`) that pass alone.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the Activate button and dialog.
+  - **Docs closed in this change set:** G14 in the overview, architecture (Noted gap → decided),
+    code-standards §8 (the four-eyes line and the permission table) and TS rule 7
+    (`PROFILE_FOUR_EYES_VIOLATION`), workflow rules §5; bm00 (G14 row, Unit 61, codes); the spec
+    (banner removed, D6 = option C); design-review DR-01 removed (closed); ui-context §10b (profile
+    Activate); this tracker.
+  - **Next:** bm62 / bm63 per the build plan (bm63's journey activates profile v1 then v2).
+
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
 
 - **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:
