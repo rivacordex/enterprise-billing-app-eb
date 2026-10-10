@@ -8,24 +8,27 @@ import type postgresjs from "postgres";
 import { customerBillLineRepository } from "@/db/repositories/billing/customer-bill-line.repository";
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
 import { blobStore } from "@/services/billing/blob-store";
+import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
+import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { retryRenderInvoice } from "@/services/billing/post-run";
 import { getStoredInvoice } from "@/services/billing/read/get-stored-invoice";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import {
-  GENERATED_FIXTURE_FILES,
-  insertGeneratedTemplateFixture,
   setupInvoiceRenderFixtures,
   type InvoiceRenderFixtures,
 } from "@/tests/db/helpers/invoice-render-fixtures";
+import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
 
 // Guardrail 46 (bm54-spec §Tests; code-standards Part 2 §9 item 46, Inv #41–
 // #43). Account A is posted through the REAL posting transaction under a
-// fixture generated v2 (ACTIVE row + uploaded, checksum-indexed blob) and a
-// fixture company profile v1 (with a logo). Then a newer generated v3 is made
-// ACTIVE (retiring v2) and a profile v2 is made ACTIVE — DB fixtures, because
-// the activation actions (bm58/bm61) are not built yet. After that:
+// generated v2 and a fixture company profile v1 (with a logo). Then a newer
+// generated v3 is made ACTIVE (retiring v2) and a profile v2 is made ACTIVE.
+// bm58: the generated versions are now created by the REAL save-draft and
+// activate services (a real generated, test-rendered, checksum-indexed blob
+// write and a real retire + promote); the company profile is still a DB
+// fixture until bm61. After that:
 //   * A's four stamps are unchanged (0033 froze them at posting);
 //   * A's stored PDF (`getStoredInvoice`, md5-verified) is byte-equal to before
 //     — a reprint is the stored bytes, never a re-render (Inv #43);
@@ -34,9 +37,8 @@ import {
 //     with v2 + profile v1 (its stamps), never the current ACTIVE (Inv #42);
 //   * a NEW draft preview of account B uses v3 + profile v2.
 //
-// The fixture versions are byte-copies of the seeded default v1 with a marker
-// on the title element and `template.version` printed in the footer, so the
-// rendered HTML shows which version ran. `.integration.test.ts` (not the
+// The two real versions differ in structure (v2 shows Notes & terms, v3 hides
+// it), so the rendered HTML shows which version ran (`sec--notes`). `.integration.test.ts` (not the
 // spec's `.test.ts`): it drops schemas, so it runs under the destructive-DB
 // preflight (bm50/bm53 precedent). Requires DATABASE_URL +
 // BILLRUN_BLOB_CONNECTION_STRING (Azurite) + Playwright Chromium.
@@ -95,21 +97,43 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     const service = blobConnection
       ? BlobServiceClient.fromConnectionString(blobConnection)
       : null;
-    const uploadedTemplateDirs: string[] = [];
     let banA = "";
+    let actorId = "";
+    let v2Id = "";
+    let v3Id = "";
     let banTwin = "";
     let banDraft = "";
 
-    async function insertGenerated(
-      id: string,
-      versionNo: number,
-    ): Promise<void> {
-      const { dir } = await insertGeneratedTemplateFixture(sql, {
-        id,
-        versionNo,
-        dirTag: `it-bm54-${SUFFIX}`,
-      });
-      uploadedTemplateDirs.push(dir);
+    // A real activation: save the working draft, then activate it.
+    async function activateGenerated(
+      notesShown: boolean,
+      note: string,
+    ): Promise<{ versionId: string; versionNo: number }> {
+      const structure = {
+        sections: {
+          ...Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
+          notes: notesShown,
+        },
+        columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+      } as Parameters<typeof saveTemplateDraft>[0]["structure"];
+      const saved = await saveTemplateDraft(
+        { structure, expectedDraftToken: null },
+        actorId,
+      );
+      if (!saved.ok) throw new Error(`save draft failed: ${saved.code}`);
+      const activated = await activateTemplate(
+        {
+          draftId: saved.versionId,
+          expectedDraftToken: saved.draftToken,
+          changeNote: note,
+        },
+        actorId,
+      );
+      if (!activated.ok) {
+        throw new Error(`activation failed: ${activated.code}`);
+      }
+      clearLoadedTemplateMemo();
+      return { versionId: activated.versionId, versionNo: activated.versionNo };
     }
 
     async function insertProfile(version: number, company: string) {
@@ -152,7 +176,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
                 ${`invoice-assets/${LOGO_PATH}`},
                 ${createHash("sha256").update(LOGO).digest("hex")}, 'sha256')`;
       await insertProfile(1, COMPANY_V1);
-      await insertGenerated("BTV00000010", 2);
+      const [actor] = await sql<{ user_id: string }[]>`
+        SELECT user_id FROM core.appuser LIMIT 1`;
+      actorId = actor!.user_id;
+      ({ versionId: v2Id } = await activateGenerated(true, "pin test v2"));
 
       // Post A and its twin through the real posting transaction. Both render
       // + store after commit (production path).
@@ -190,12 +217,6 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 300_000);
 
     afterAll(async () => {
-      const templates = service?.getContainerClient("invoice-templates");
-      for (const dir of uploadedTemplateDirs) {
-        for (const name of GENERATED_FIXTURE_FILES) {
-          await templates?.deleteBlob(`${dir}${name}`).catch(() => undefined);
-        }
-      }
       await service
         ?.getContainerClient("invoice-assets")
         .deleteBlob(LOGO_PATH)
@@ -223,7 +244,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("A is stamped with the versions current at posting: generated v2, profile v1, the default CSV", async () => {
       expect(await readStamps(banA)).toMatchObject({
         ref_bill_format_id: "INVOICE",
-        ref_bill_template_version_id: "BTV00000010",
+        ref_bill_template_version_id: v2Id,
         ref_invoice_profile_version: 1,
         ref_csv_template_version_id: "BTV00000003",
       });
@@ -233,13 +254,9 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const stampsBefore = await readStamps(banA);
       const storedBefore = await getStoredInvoice(RUN, banA);
 
-      // Activation by DB fixture (bm58/bm61 not built): retire v2, insert v3
-      // ACTIVE (the one-ACTIVE index allows only one), and a newer profile.
-      await sql`
-        UPDATE billing.bill_template_version
-        SET status = 'RETIRED', retired_datetime = now()
-        WHERE bill_template_version_id = 'BTV00000010'`;
-      await insertGenerated("BTV00000011", 3);
+      // bm58: a REAL activation retires v2 and promotes v3; the newer profile
+      // is still a DB fixture until bm61.
+      ({ versionId: v3Id } = await activateGenerated(false, "pin test v3"));
       await insertProfile(2, COMPANY_V2);
       clearLoadedTemplateMemo();
 
@@ -275,14 +292,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${banTwin}`
         )[0]!.ref_inv_document_id,
       });
-      expect(final.resolved.generated.billTemplateVersionId).toBe(
-        "BTV00000010",
-      );
+      expect(final.resolved.generated.billTemplateVersionId).toBe(v2Id);
       expect(final.resolved.profileVersion).toBe(1);
-      expect(final.html).toContain('data-tpl="PIN-MARK-V2"');
+      expect(final.html).toContain("sec--notes");
       expect(final.html).toContain(COMPANY_V1);
       expect(final.html).not.toContain(COMPANY_V2);
-      expect(final.footerHtml).toContain("Template v2");
 
       const retried = await retryRenderInvoice(RUN, banTwin);
       expect(retried).toMatchObject({ ok: true });
@@ -296,13 +310,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         banId: banDraft,
         mode: "draft",
       });
-      expect(draft.resolved.generated.billTemplateVersionId).toBe(
-        "BTV00000011",
-      );
+      expect(draft.resolved.generated.billTemplateVersionId).toBe(v3Id);
       expect(draft.resolved.profileVersion).toBe(2);
-      expect(draft.html).toContain('data-tpl="PIN-MARK-V3"');
+      expect(draft.html).not.toContain("sec--notes");
       expect(draft.html).toContain(COMPANY_V2);
-      expect(draft.footerHtml).toContain("Template v3");
     });
   },
 );

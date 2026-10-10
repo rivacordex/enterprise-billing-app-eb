@@ -17,6 +17,9 @@ vi.mock(
   "@/actions/billing/invoice-settings/save-template-draft.action",
   () => ({ saveTemplateDraftAction: vi.fn() }),
 );
+vi.mock("@/actions/billing/invoice-settings/activate-template.action", () => ({
+  activateTemplateAction: vi.fn(),
+}));
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("sonner", () => ({
@@ -24,6 +27,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { previewInvoiceTemplateAction } from "@/actions/billing/invoice-settings/preview-invoice-template.action";
+import { activateTemplateAction } from "@/actions/billing/invoice-settings/activate-template.action";
 import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
 import { toast } from "sonner";
 import { InvoiceStructureForm } from "@/components/billing/invoice-settings/invoice-structure-form";
@@ -34,6 +38,7 @@ import {
 
 const mockPreview = vi.mocked(previewInvoiceTemplateAction);
 const mockSave = vi.mocked(saveTemplateDraftAction);
+const mockActivate = vi.mocked(activateTemplateAction);
 const TOKEN = "2026-10-10T01:02:03.123456Z";
 
 const ALL_ON: InvoiceTemplateStructure = {
@@ -89,6 +94,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   mockPreview.mockReset();
   mockSave.mockReset();
+  mockActivate.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.warning).mockReset();
   vi.mocked(toast.error).mockReset();
@@ -179,10 +185,154 @@ describe("InvoiceStructureForm — EDIT user", () => {
       },
     });
   });
+});
 
-  it("has no Activate control (bm58)", () => {
+describe("InvoiceStructureForm — Activate (bm58)", () => {
+  const DRAFT_PROPS = {
+    expectedDraftToken: TOKEN,
+    draftVersionId: "BTV00000004",
+    draftVersionNo: 2,
+    activeStructure: {
+      ...ALL_ON,
+      sections: { ...ALL_ON.sections, usageAnnex: false },
+    },
+  } as const;
+
+  function togglePayment(): void {
+    fireEvent.click(
+      within(screen.getByTestId("section-payment")).getByRole("checkbox"),
+    );
+  }
+
+  it("is disabled with no saved draft and the form pristine", () => {
     renderForm();
-    expect(screen.queryByRole("button", { name: /activate/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+  });
+
+  it("is enabled as 'Activate v{n}' for a saved draft with no unsaved edits", () => {
+    renderForm(DRAFT_PROPS);
+    expect(screen.getByRole("button", { name: "Activate v2" })).toBeEnabled();
+  });
+
+  it("reads 'Save draft first' and is disabled while there are unsaved edits", () => {
+    renderForm(DRAFT_PROPS);
+    togglePayment();
+    expect(
+      screen.getByRole("button", { name: "Save draft first" }),
+    ).toBeDisabled();
+  });
+
+  it("uses the Deep Petrol accent on the trigger (ui-context §7)", () => {
+    renderForm(DRAFT_PROPS);
+    expect(
+      screen.getByRole("button", { name: "Activate v2" }).className,
+    ).toContain("billrun-cta-bg");
+  });
+
+  it("is not rendered for a READ user", () => {
+    renderForm({ ...DRAFT_PROPS, editable: false });
+    expect(screen.queryByRole("button", { name: /Activate/ })).toBeNull();
+  });
+
+  it("opens the dialog with the structure diff against the version in use", () => {
+    renderForm(DRAFT_PROPS);
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    expect(screen.getByText("Activate template v2")).toBeInTheDocument();
+    expect(screen.getByTestId("activate-summary")).toHaveTextContent(
+      "+ Usage annex shown",
+    );
+  });
+
+  it("says so when the structure is unchanged", () => {
+    renderForm({ ...DRAFT_PROPS, activeStructure: ALL_ON });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    expect(screen.getByTestId("activate-summary")).toHaveTextContent(
+      "No change in structure.",
+    );
+  });
+
+  it("activates with the draft id, token and trimmed note, then toasts and refreshes", async () => {
+    mockActivate.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000004",
+      versionNo: 2,
+      retiredVersionId: null,
+    });
+    renderForm(DRAFT_PROPS);
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "  Show the usage annex  " },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Activate v2",
+        }),
+      );
+    });
+    expect(mockActivate).toHaveBeenCalledWith({
+      draftId: "BTV00000004",
+      expectedDraftToken: TOKEN,
+      changeNote: "Show the usage annex",
+    });
+    expect(toast.success).toHaveBeenCalledWith("Template v2 activated");
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows the server's refusal inline in the dialog", async () => {
+    mockActivate.mockResolvedValue({ ok: false, code: "DRAFT_CONFLICT" });
+    renderForm(DRAFT_PROPS);
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "note" },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Activate v2",
+        }),
+      );
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Another user changed the draft",
+    );
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("uses the draft created by its own save for the next activation", async () => {
+    mockSave.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000009",
+      versionNo: 3,
+      draftToken: "2026-10-10T02:00:00.000001Z",
+    });
+    mockActivate.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000009",
+      versionNo: 3,
+      retiredVersionId: null,
+    });
+    renderForm();
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v3" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "n" },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Activate v3",
+        }),
+      );
+    });
+    expect(mockActivate).toHaveBeenCalledWith({
+      draftId: "BTV00000009",
+      expectedDraftToken: "2026-10-10T02:00:00.000001Z",
+      changeNote: "n",
+    });
   });
 });
 

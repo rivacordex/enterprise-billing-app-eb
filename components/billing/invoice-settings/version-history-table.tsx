@@ -51,6 +51,9 @@ interface NormalizedRow {
   usedByCount: number;
   viewParam: string;
   downloadHref: string | null;
+  // bm58 D5: "In use for new invoices" on the non-default ACTIVE version,
+  // "Fallback" on the default while a non-default version is in use.
+  caption: string | null;
 }
 
 const BASE_HEADERS = [
@@ -82,8 +85,12 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
       usedByCount: row.usedByCount,
       viewParam: String(row.versionNo),
       downloadHref: null,
+      caption: null,
     }));
   }
+  const nonDefaultInUse = props.rows.some(
+    (r) => r.status === "ACTIVE" && !r.isDefault,
+  );
   return props.rows.map((row) => ({
     key: row.billTemplateVersionId,
     versionNo: row.versionNo,
@@ -98,6 +105,12 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
     changeNote: row.changeNote,
     usedByCount: row.usedByCount,
     viewParam: row.billTemplateVersionId,
+    caption:
+      row.status === "ACTIVE" && !row.isDefault
+        ? "In use for new invoices"
+        : row.isDefault && nonDefaultInUse
+          ? "Fallback"
+          : null,
     downloadHref:
       row.status === "DRAFT"
         ? null
@@ -179,6 +192,11 @@ export function VersionHistoryTable(
                         status={row.status}
                         isDefault={row.isDefault}
                       />
+                      {row.caption ? (
+                        <p className="mt-1 text-caption text-muted-foreground">
+                          {row.caption}
+                        </p>
+                      ) : null}
                     </td>
                     {isProfile ? null : (
                       <td className="px-4 py-2 font-mono text-mono whitespace-nowrap">

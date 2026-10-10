@@ -262,7 +262,20 @@ row. When the page opens on the working draft, a neutral Info line above the
 form reads "Editing draft v{n} — saved {relative time} by {user}. Drafts are
 never used on invoices." READ users never see the draft on the edit tab. In
 Version history the DRAFT row shows the Draft badge, "—" for activated and
-retired, and no download. **Activate** arrives with bm58.
+retired, and no download.
+
+**Activate (bm58).** The page-level **Activate v{n}** button is the one Deep Petrol
+button on the screen (§7). It is enabled only when a saved draft exists and the
+form has no unsaved edits; with edits it reads "Save draft first", and with no
+draft it is disabled. It opens `ActivateVersionDialog`: a summary of what
+changes against the version in use (`+ Usage annex shown`, `− Discount column
+hidden`, or "No change in structure."), an optional Warning callout, and a
+required change-note field with a 500-character counter. The dialog's confirm
+button is the standard **primary (indigo)** button and stays **disabled until a
+note is entered** (owner decision 2026-10-10, following §7; the bm58 spec's
+wording for this button was overruled). A server refusal renders inline in
+Danger. Version history captions the non-default ACTIVE version "In use for new
+invoices" and the default "Fallback" while a non-default version is in use.
 
 ### 10c. Invoice document palette and typography (print — not app tokens)
 

@@ -73,7 +73,7 @@ export type PreviewInvoiceTemplateInput = z.infer<
 // believed no draft existed). The token is an ISO-8601 UTC string with
 // microsecond precision, produced by the database (`TOKEN_FORMAT` in the
 // repository); anything else is rejected before it reaches SQL.
-const DRAFT_TOKEN_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+export const DRAFT_TOKEN_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
 export const saveTemplateDraftInputSchema = z
   .object({

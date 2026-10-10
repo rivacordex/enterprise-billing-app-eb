@@ -213,6 +213,68 @@ describe("GeneratedHbsViewer", () => {
   });
 });
 
+describe("VersionHistoryTable: in-use captions (bm58 D5)", () => {
+  const base = {
+    layoutLabel: "INVTPL-STD-A4 v1",
+    createdBy: null,
+    createdAt: new Date("2026-10-10T00:00:00Z"),
+    activatedAt: new Date("2026-10-10T00:00:00Z"),
+    retiredAt: null,
+    changeNote: null,
+    usedByCount: 0,
+  };
+  const rows: TemplateVersionHistoryRow[] = [
+    {
+      ...base,
+      billTemplateVersionId: "BTV00000005",
+      versionNo: 3,
+      status: "ACTIVE",
+      isDefault: false,
+    },
+    {
+      ...base,
+      billTemplateVersionId: "BTV00000004",
+      versionNo: 2,
+      status: "RETIRED",
+      isDefault: false,
+    },
+    {
+      ...base,
+      billTemplateVersionId: "BTV00000002",
+      versionNo: 1,
+      status: "ACTIVE",
+      isDefault: true,
+    },
+  ];
+
+  it("labels the non-default ACTIVE 'In use' and the default 'Fallback' while it is in use", () => {
+    render(
+      <VersionHistoryTable
+        rows={rows}
+        shownVersionId="BTV00000005"
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+    expect(screen.getByText("In use for new invoices")).toBeInTheDocument();
+    expect(screen.getByText("Fallback")).toBeInTheDocument();
+    expect(screen.getAllByText("In use for new invoices")).toHaveLength(1);
+  });
+
+  it("does not call the default a fallback when it is the version in use", () => {
+    render(
+      <VersionHistoryTable
+        rows={[rows[2]!]}
+        shownVersionId="BTV00000002"
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+    expect(screen.queryByText("Fallback")).toBeNull();
+    expect(screen.queryByText("In use for new invoices")).toBeNull();
+  });
+});
+
 describe("VersionHistoryTable: DRAFT rows (bm57)", () => {
   const DRAFT: TemplateVersionHistoryRow = {
     billTemplateVersionId: "BTV00000004",

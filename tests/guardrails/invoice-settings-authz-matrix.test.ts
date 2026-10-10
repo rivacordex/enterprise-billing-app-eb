@@ -74,6 +74,12 @@ const MATRIX: MatrixRow[] = [
     alsoBillrunView: true,
   },
   {
+    surface: "activate template (a mutation)",
+    file: "actions/billing/invoice-settings/activate-template.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
     surface: "save template draft (a mutation)",
     file: "actions/billing/invoice-settings/save-template-draft.action.ts",
     level: "EDIT",
@@ -184,6 +190,38 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toContain("onGenerated && version === undefined ? current");
     // A READ user gets no View link on a DRAFT history row.
     expect(src).toContain("canViewDrafts={canEdit}");
+  });
+
+  it("activate-template guards on EDIT first, validates the note, then runs the service, then revalidates; its audit and writes live in the service (bm58)", () => {
+    const src = read(
+      "actions/billing/invoice-settings/activate-template.action.ts",
+    );
+    const guard = src.indexOf("LEVELS.EDIT");
+    const parse = src.indexOf("activateTemplateInputSchema.safeParse");
+    const service = src.indexOf("await activateTemplate(");
+    const revalidate = src.indexOf("revalidatePath(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(parse).toBeLessThan(service);
+    expect(service).toBeLessThan(revalidate);
+    expect(src).not.toMatch(/insertAuditEvent|putObject/);
+    const svc = read("services/billing/invoice-template/activate-template.ts");
+    // One audit write, inside the single step-8 transaction, after the promote.
+    expect(svc.match(/eventType: "INVOICE_TEMPLATE_ACTIVATED"/g)).toHaveLength(
+      1,
+    );
+    expect(svc.match(/db\.transaction\(/g)).toHaveLength(1);
+    // Retire BEFORE promote (btv_one_active_uq is checked per statement).
+    expect(svc.indexOf("retireActive(")).toBeLessThan(
+      svc.indexOf("promoteDraft("),
+    );
+    // The blob writes (step 7) come before the transaction (step 8).
+    expect(svc.indexOf("blobStore.putObject(")).toBeLessThan(
+      svc.indexOf("db.transaction("),
+    );
+    // Write-once, never overwritten.
+    expect(svc).toMatch(/writeOnce:\s*true/);
+    expect(svc).not.toMatch(/deleteBlob|writeOnce:\s*false/);
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {

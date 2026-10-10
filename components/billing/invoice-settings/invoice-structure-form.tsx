@@ -6,7 +6,10 @@
 // the live preview: any change → a 400 ms debounced call to
 // `previewInvoiceTemplateAction` (a READ that saves nothing). bm57 adds **Save
 // draft** (EDIT only): it saves the structure as the single working DRAFT with
-// an optimistic token (`DRAFT_CONFLICT` on a stale one). Activate is bm58.
+// an optimistic token (`DRAFT_CONFLICT` on a stale one). bm58 adds **Activate**
+// (EDIT only): enabled only when a saved draft exists and the form has no
+// unsaved changes (otherwise "Save draft first"), it opens the shared
+// `ActivateVersionDialog`, which asks for the required change note.
 //
 //   - mandatory sections: checked + disabled + `Lock` + "Required" in
 //     `--text-muted`; the label stays `--text-body`, so a locked-on section
@@ -23,8 +26,21 @@ import { useEffect, useRef, useState } from "react";
 import { Info, Lock } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  activateTemplateAction,
+  type ActivateTemplateActionResult,
+} from "@/actions/billing/invoice-settings/activate-template.action";
 import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
 import { previewInvoiceTemplateAction } from "@/actions/billing/invoice-settings/preview-invoice-template.action";
+import {
+  ActivateVersionDialog,
+  type ActivateConfirmResult,
+} from "@/components/billing/invoice-settings/activate-version-dialog";
+import {
+  COLUMN_LABELS,
+  SECTION_ROWS,
+  describeStructureChanges,
+} from "@/components/billing/invoice-settings/structure-labels";
 import {
   InvoicePreviewFrame,
   type PreviewError,
@@ -50,26 +66,6 @@ import {
   type RecentPostedBill,
 } from "@/types/billing";
 
-// Display order follows the layout (`INVTPL-STD-A4` manifest order).
-const SECTION_ROWS: { key: InvoiceSectionKey; label: string }[] = [
-  { key: "identification", label: "Invoice identification" },
-  { key: "billTo", label: "Bill-to" },
-  { key: "amountDue", label: "Amount due" },
-  { key: "chargeSummary", label: "Summary of charges" },
-  { key: "taxSummary", label: "Tax summary" },
-  { key: "chargeDetails", label: "Charge details" },
-  { key: "payment", label: "Payment information" },
-  { key: "usageAnnex", label: "Usage annex" },
-  { key: "notes", label: "Notes & terms" },
-];
-
-const COLUMN_LABELS: Record<InvoiceColumnKey, string> = {
-  showServicePeriod: "Service period",
-  showDiscountColumn: "Discount",
-  showProductId: "Product offering ID",
-  showUdrCount: "UDR type & count",
-};
-
 const SAMPLE = "sample";
 const DEBOUNCE_MS = 400;
 // ui-context §6c — past a normal render window the caption reads "Queued".
@@ -87,6 +83,32 @@ interface PreviewState {
   error: PreviewError | null;
 }
 
+const ACTIVATE_MESSAGES = {
+  CHANGE_NOTE_REQUIRED: "A change note is required.",
+  DRAFT_CONFLICT: "Another user changed the draft — reload to see it.",
+  MANDATORY_SECTION_HIDDEN:
+    "A required section is hidden in the draft, so it cannot be activated.",
+  TEMPLATE_CHECKSUM_MISMATCH:
+    "A stored layout file failed verification. Nothing was activated.",
+  TEMPLATE_VERSION_NOT_FOUND:
+    "The draft's layout could not be found. Nothing was activated.",
+  TEMPLATE_GENERATION_FAILED:
+    "The template could not be generated. Nothing was activated.",
+  TEMPLATE_COMPILE_FAILED:
+    "The generated template failed its test render. Nothing was activated.",
+  ACTIVATION_BLOB_CONFLICT:
+    "A different file already exists at the target path. Nothing was activated.",
+  FORBIDDEN: "You do not have permission to activate a template.",
+  VALIDATION_ERROR: "The request was not valid. Reload and try again.",
+  SERVER_ERROR: "The version could not be activated. Please try again.",
+} as const;
+
+function activateMessage(
+  result: Extract<ActivateTemplateActionResult, { ok: false }>,
+): string {
+  return ACTIVATE_MESSAGES[result.code];
+}
+
 export interface InvoiceStructureFormProps {
   initialStructure: InvoiceTemplateStructure;
   // false for a READ user or a version opened read-only from history.
@@ -96,6 +118,11 @@ export interface InvoiceStructureFormProps {
   // bm57: the working draft's concurrency token as the page loaded it, or
   // `null` when no draft exists. Sent back with every save.
   expectedDraftToken?: string | null;
+  // bm58: the working draft's id and version number (for Activate), and the
+  // structure currently in use for new invoices (for the dialog's diff).
+  draftVersionId?: string | null;
+  draftVersionNo?: number | null;
+  activeStructure?: InvoiceTemplateStructure | null;
 }
 
 function RequiredMark(): React.JSX.Element {
@@ -121,6 +148,9 @@ export function InvoiceStructureForm({
   recentBills,
   canPreviewBills,
   expectedDraftToken = null,
+  draftVersionId = null,
+  draftVersionNo = null,
+  activeStructure = null,
 }: InvoiceStructureFormProps): React.JSX.Element {
   const router = useRouter();
   const [structure, setStructure] = useState(initialStructure);
@@ -128,11 +158,25 @@ export function InvoiceStructureForm({
   // the live token, the in-flight flag and the server's per-row refusals.
   const [saved, setSaved] = useState(initialStructure);
   const [draftToken, setDraftToken] = useState(expectedDraftToken);
+  const [draftId, setDraftId] = useState(draftVersionId);
+  const [draftNo, setDraftNo] = useState(draftVersionNo);
+  const [activateOpen, setActivateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [hiddenErrors, setHiddenErrors] = useState<ReadonlySet<string>>(
     new Set(),
   );
   const pristine = JSON.stringify(structure) === JSON.stringify(saved);
+  // bm58 D1: activate only what the history already shows, i.e. a saved draft
+  // with no unsaved edits.
+  const canActivate = pristine && draftId !== null && !saving;
+  const activateLabel = !pristine
+    ? "Save draft first"
+    : draftNo !== null
+      ? `Activate v${draftNo}`
+      : "Activate";
+  const structureChanges = activeStructure
+    ? describeStructureChanges(activeStructure, saved)
+    : [];
   const [source, setSource] = useState<string>(SAMPLE);
   const [annotate, setAnnotate] = useState(false);
   const [outline, setOutline] = useState(false);
@@ -211,6 +255,8 @@ export function InvoiceStructureForm({
       if (result.ok) {
         setSaved(structure);
         setDraftToken(result.draftToken);
+        setDraftId(result.versionId);
+        setDraftNo(result.versionNo);
         toast.success(
           `Draft v${result.versionNo} saved — not used on invoices`,
         );
@@ -236,6 +282,23 @@ export function InvoiceStructureForm({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function activate(changeNote: string): Promise<ActivateConfirmResult> {
+    if (draftId === null || draftToken === null) {
+      return { ok: false, message: ACTIVATE_MESSAGES.DRAFT_CONFLICT };
+    }
+    const result = await activateTemplateAction({
+      draftId,
+      expectedDraftToken: draftToken,
+      changeNote,
+    });
+    if (result.ok) {
+      toast.success(`Template v${result.versionNo} activated`);
+      router.refresh();
+      return { ok: true };
+    }
+    return { ok: false, message: activateMessage(result) };
   }
 
   function toggleSection(key: InvoiceSectionKey, value: boolean): void {
@@ -411,7 +474,7 @@ export function InvoiceStructureForm({
         </fieldset>
 
         {editable ? (
-          <div className="flex justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               type="button"
               variant="outline"
@@ -420,9 +483,50 @@ export function InvoiceStructureForm({
             >
               {saving ? "Saving…" : "Save draft"}
             </Button>
+            <button
+              type="button"
+              disabled={!canActivate}
+              title={
+                canActivate
+                  ? undefined
+                  : pristine
+                    ? "Save a draft first"
+                    : "Save the draft before activating"
+              }
+              onClick={() => setActivateOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--billrun-cta-bg)] px-4 py-2 text-body-sm font-semibold text-[color:var(--billrun-cta-text)] hover:bg-[color:var(--billrun-cta-bg-hover)] focus:outline-none focus-visible:[box-shadow:var(--focus-ring)] active:bg-[color:var(--billrun-cta-bg-active)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activateLabel}
+            </button>
           </div>
         ) : null}
       </div>
+
+      {editable ? (
+        <ActivateVersionDialog
+          open={activateOpen}
+          onOpenChange={setActivateOpen}
+          title={`Activate template v${draftNo ?? ""}`}
+          confirmLabel={`Activate v${draftNo ?? ""}`}
+          summary={
+            structureChanges.length === 0 ? (
+              <p>No change in structure.</p>
+            ) : (
+              <ul className="space-y-1">
+                {structureChanges.map((c) => (
+                  <li key={c.text}>
+                    <span aria-hidden className="font-mono">
+                      {c.sign}
+                    </span>{" "}
+                    {c.text}
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+          onConfirm={activate}
+        />
+      ) : null}
 
       <div className="min-w-0 space-y-3">
         {preview.pinnedVersionNo !== null ? (
