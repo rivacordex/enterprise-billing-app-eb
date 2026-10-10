@@ -789,7 +789,7 @@ one design per run becomes a requirement, add a run-level version snapshot
 taken at `APPROVED → POSTING` and resolve from it in `postAccount`. That needs
 a migration and a separate unit.
 
-## 20. 🟠 Layout v1's `shell.hbs` has no usage-annex CSS, so anything generated from it renders the annex unstyled (found bm55, OPEN — blocks bm58)
+## 20. 🟠 Layout v1's `shell.hbs` has no usage-annex CSS, so anything generated from it renders the annex unstyled (found bm55, OPEN — accepted for bm58, RELEASE GATE before production)
 
 **Where:** `db/seeds/invoice-templates/INVTPL-STD-A4/v1/shell.hbs` (layout
 BTV00000001, seeded immutably by bm50) and the hand-written generated v1
@@ -825,6 +825,12 @@ directory and a new version row, Inv #44). Its `shell.hbs` should carry the
 annex CSS exactly as the hand-written v1 has it, and its `structure.json`
 convention should be settled with it. Then flip the parity test's `it.fails`
 to a normal `it` against v2. Do not edit v1, which is immutable.
+
+**Decision (2026-10-10, bm58 review).** bm58 activation is now built and generates from layout
+v1, so the gap is live in code but not yet in production. Owner decision: **accept for now and
+track as a release gate**, with no bm58 code change and no activation guard. Seed layout v2 (as
+its own unit: a new `v2/` directory, migration, checksums, Inv #44) before any production
+activation; until then do not activate a template in production.
 
 ## 21. 🔴 Failing tests found by the full runs after bm56 (2026-10-10, OPEN, not caused by bm56)
 

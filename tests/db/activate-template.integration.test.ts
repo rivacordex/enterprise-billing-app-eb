@@ -18,6 +18,7 @@ import postgres from "postgres";
 import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
+import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
 
@@ -43,7 +44,6 @@ vi.mock("@/db/client", () => ({
 
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
-import { blobStore } from "@/services/billing/blob-store";
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
 import {
   clearLoadedTemplateMemo,
@@ -152,6 +152,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
+      // The cleanup below deletes blobs, so guard the blob store like the DB.
+      assertTestBlobConnection(blobConnection as string);
       sql = postgres(databaseUrl as string, { max: 8, onnotice: () => {} });
       await dropAll();
       const drizzleDb = drizzle(sql, { schema });
@@ -416,6 +418,40 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         ).toHaveLength(0);
       },
     );
+
+    it("a stored structure that fails the schema for a reason other than a hidden section is VALIDATION_ERROR, not MANDATORY_SECTION_HIDDEN", async () => {
+      const draft = await ensureDraft();
+      const auditBefore = (await activatedAudit()).length;
+      // Corrupt the stored structure (an unknown key), as a bad hand edit or a
+      // future schema change could. The guard trigger allows editing a DRAFT's
+      // structure, and the token must move on with it.
+      await sql`
+        UPDATE billing.bill_template_version
+        SET structure = structure || '{"bogus": true}'::jsonb,
+            last_modified_datetime = now()
+        WHERE bill_template_version_id = ${draft.id}`;
+      const fresh = (await billTemplateVersionRepository.findDraft(db, {
+        kind: "generated",
+      }))!;
+
+      expect(
+        await activateTemplate(
+          {
+            draftId: draft.id,
+            expectedDraftToken: fresh.token,
+            changeNote: "x",
+          },
+          ACTOR,
+        ),
+      ).toEqual({ ok: false, code: "VALIDATION_ERROR" });
+      expect(await activatedAudit()).toHaveLength(auditBefore);
+      expect(
+        await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+      ).toHaveLength(0);
+
+      // Restore a valid structure for the tests that follow.
+      await ensureDraft(structure());
+    }, 120_000);
 
     it("an id that is not the working draft is DRAFT_CONFLICT", async () => {
       const draft = await ensureDraft();

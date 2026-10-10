@@ -14,6 +14,7 @@ import { saveTemplateDraft } from "@/services/billing/invoice-template/save-temp
 import { retryRenderInvoice } from "@/services/billing/post-run";
 import { getStoredInvoice } from "@/services/billing/read/get-stored-invoice";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
+import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import {
   setupInvoiceRenderFixtures,
@@ -157,6 +158,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
+      // The cleanup deletes stored invoice and logo blobs: throwaway Azurite only.
+      assertTestBlobConnection(blobConnection as string);
       sql = postgres(databaseUrl as string, { max: 5 });
       fx = await setupInvoiceRenderFixtures(sql, "BM54G46");
       await fx.seedPostingGl();
