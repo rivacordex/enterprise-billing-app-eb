@@ -191,7 +191,12 @@ describe("AuditLogFilters", () => {
       within(change).getByText("RATECARD_VERSION_ROLLED_BACK"),
     ).toBeInTheDocument();
 
-    expect(within(select).getAllByRole("option")).toHaveLength(81); // "All events" + 80 (pm64 added RATECARD_VERSION_ROLLED_BACK)
+    // bm57 addition
+    expect(
+      within(change).getByText("INVOICE_TEMPLATE_DRAFT_SAVED"),
+    ).toBeInTheDocument();
+
+    expect(within(select).getAllByRole("option")).toHaveLength(82); // "All events" + 81 (bm57 added INVOICE_TEMPLATE_DRAFT_SAVED)
   });
 
   it('renders a tombstoned actor option with a "(deleted)" suffix', () => {

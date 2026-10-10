@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/generated-hbs-viewer";
+import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
 import { InvoiceStructureForm } from "@/components/billing/invoice-settings/invoice-structure-form";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { VersionHistoryTable } from "@/components/billing/invoice-settings/version-history-table";
@@ -14,6 +15,7 @@ import {
   getInvoiceTemplatePageData,
   listRecentPostedBills,
 } from "@/services/billing/read/invoice-template-settings";
+import { formatRelativeTime } from "@/lib/formatters";
 import {
   getAppLocale,
   getAppTimezone,
@@ -67,16 +69,25 @@ export default async function InvoiceTemplatePage({
     LEVELS.READ,
   );
 
-  const data = await getInvoiceTemplatePageData(version);
-  const { shown, current } = data;
+  const data = await getInvoiceTemplatePageData(version, { canEdit });
+  const { current, draft } = data;
+  // The version opened by default is the working DRAFT for an EDIT user who
+  // has one (bm57 D4), else the current version. The Generated .hbs tab is the
+  // exception: a DRAFT has no files, so without an explicit `?version=` it
+  // keeps showing the current version's files (as it did before drafts).
+  const onGenerated = tab === "generated";
+  const defaultShown = onGenerated ? current : data.defaultShown;
+  const shown = onGenerated && version === undefined ? current : data.shown;
   const viewingOther =
-    shown.billTemplateVersionId !== current.billTemplateVersionId;
+    shown.billTemplateVersionId !== defaultShown.billTemplateVersionId;
+  const shownIsDraft = shown.status === "DRAFT";
   const versionQuery = viewingOther
     ? `&version=${shown.billTemplateVersionId}`
     : "";
 
   return (
     <div className="space-y-4">
+      <InvoiceSettingsTabs active="invoice-template" />
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-h2 font-semibold text-foreground">
           Invoice template{" "}
@@ -91,7 +102,8 @@ export default async function InvoiceTemplatePage({
             href="?tab=edit"
             className="text-body-sm font-medium text-[color:var(--action-primary-bg)] hover:underline"
           >
-            Back to the current version (v{current.versionNo})
+            Back to the {draft ? "working draft" : "current version"} (v
+            {defaultShown.versionNo})
           </Link>
         ) : null}
       </div>
@@ -116,12 +128,50 @@ export default async function InvoiceTemplatePage({
         ))}
       </nav>
 
+      {tab === "edit" && canEdit && draft && !shownIsDraft ? (
+        <p
+          role="status"
+          className="inline-flex flex-wrap items-center gap-2 rounded-sm bg-[color:var(--color-info-50)] px-3 py-2 text-body-sm text-[color:var(--color-info-700)]"
+        >
+          <Info size={14} aria-hidden />
+          This version is read-only while a working draft exists.
+          <Link href="?tab=edit" className="font-semibold underline">
+            Edit draft v{draft.versionNo}
+          </Link>
+        </p>
+      ) : null}
+
+      {tab === "edit" && shownIsDraft && draft ? (
+        <p
+          role="status"
+          className="inline-flex items-center gap-2 rounded-sm bg-[color:var(--color-info-50)] px-3 py-2 text-body-sm text-[color:var(--color-info-700)]"
+        >
+          <Info size={14} aria-hidden />
+          Editing draft v{draft.versionNo} — saved{" "}
+          {formatRelativeTime(draft.savedAt)}
+          {draft.savedBy ? ` by ${draft.savedBy}` : ""}. Drafts are never used
+          on invoices.
+        </p>
+      ) : null}
+
       {tab === "edit" ? (
         <InvoiceStructureForm
-          // A fresh form (and preview) per shown version.
-          key={shown.billTemplateVersionId}
+          // A fresh form (and preview) per shown version AND per draft token:
+          // after a save, or after "Reload" on a DRAFT_CONFLICT, the page
+          // re-renders with the newer token and the form must reload from it
+          // instead of keeping its stale local state.
+          key={`${shown.billTemplateVersionId}:${draft?.token ?? "none"}`}
           initialStructure={data.shownStructure}
-          editable={canEdit && !viewingOther}
+          // While a working draft exists it is the only editable version, so
+          // a save can never silently replace it with another version's
+          // content (the token below is the draft's).
+          editable={
+            canEdit &&
+            (shownIsDraft ||
+              (!draft &&
+                shown.billTemplateVersionId === current.billTemplateVersionId))
+          }
+          expectedDraftToken={draft?.token ?? null}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}
         />
@@ -131,6 +181,7 @@ export default async function InvoiceTemplatePage({
         <VersionHistoryTable
           rows={data.history}
           shownVersionId={shown.billTemplateVersionId}
+          canViewDrafts={canEdit}
           locale={await getAppLocale()}
           timezone={getAppTimezone()}
         />
@@ -142,6 +193,18 @@ export default async function InvoiceTemplatePage({
 async function renderGenerated(
   shown: Awaited<ReturnType<typeof getInvoiceTemplatePageData>>["shown"],
 ): Promise<React.JSX.Element> {
+  if (shown.status === "DRAFT") {
+    // A DRAFT has no generated files until it is activated (bm58).
+    return (
+      <Alert>
+        <Info aria-hidden />
+        <AlertDescription>
+          A draft has no generated files yet. They are written when it is
+          activated.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   const sources = await getGeneratedHbsSources(shown);
   if (!sources.ok) {
     // Inv #45 — unverified bytes are never shown.

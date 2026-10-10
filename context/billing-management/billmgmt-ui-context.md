@@ -232,6 +232,7 @@ One badge serves both template and company-profile versions (code-standards › 
 | Colour fields (`brandColor`, `accentColor`)               | Mono `#RRGGBB` input plus a 20×20 swatch (`--radius-xs`, `--border-default`). **Recommended:** a non-blocking **Warning** hint when white text on the brand colour is below 4.5:1 contrast        |
 | Bank details changed vs the ACTIVE version                | **Warning** family callout in `ActivateVersionDialog` ("Bank details change on every new invoice"). This addresses the single-signature gap in the architecture without adding a new hue      |
 | Read-only view (READ without EDIT)                        | Fields render as text, with no disabled-input grey wash. Save, Activate and Upload are not rendered                                                                                          |
+| Company profile empty state (no ACTIVE profile) | **Info** alert, no action for READ: "No company profile is active. Invoices are issued without the issuer and payment blocks until a profile is activated." EDIT users gain a "Create a draft" action in bm59 (not rendered earlier — a link to nothing would mislead) |
 | Preview loading, queued and error states                  | Reuse the §6c PDF skeleton and captions as they are                                                                                                                                           |
 
 **Confirmed as built (bm55).** The preview service appends one
@@ -250,7 +251,18 @@ regenerated, so only the outline applies to it, and the form shows a
 
 The read-only view renders "Shown"/"Hidden" as text, and mandatory sections
 keep their `Lock` "Required" mark. Neither Save nor Activate is rendered in
-bm55; they arrive with bm57/bm58.
+bm55.
+
+**Save draft (bm57).** An EDIT user sees an outline **Save draft** button
+right-aligned under the form. It is disabled while the structure equals the
+last saved one and while a save is in flight. Success is a toast "Draft v{n}
+saved — not used on invoices". `DRAFT_CONFLICT` is a Warning toast with a
+**Reload** action. A refused mandatory section shows Danger text under that
+row. When the page opens on the working draft, a neutral Info line above the
+form reads "Editing draft v{n} — saved {relative time} by {user}. Drafts are
+never used on invoices." READ users never see the draft on the edit tab. In
+Version history the DRAFT row shows the Draft badge, "—" for activated and
+retired, and no download. **Activate** arrives with bm58.
 
 ### 10c. Invoice document palette and typography (print — not app tokens)
 

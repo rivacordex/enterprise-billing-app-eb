@@ -1043,6 +1043,155 @@ DELIVERED" section.
     bm58; bm56 (Company profile, which reuses the shell, badge and history
     table and switches the index redirect).
 
+## Invoice Template update — bm56 DELIVERED (code + tests + docs), unit suites RUN GREEN (2026-10-10)
+
+- **bm56 — Company profile read page (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm56-company-profile-read-page.md`. A READ user sees the
+  ACTIVE company profile (or an Info empty state), its logo, and its version history;
+  `invoice.profile` is removed from the generic System Config page. No profile mutation, no
+  migration, no grant change, no npm dependency. Depends on bm55, bm53.
+  - **Delivered:**
+    - `types/billing.ts`: `INVOICE_PROFILE_CONFIG_GROUP`, `INVOICE_PROFILE_META_KEYS` (D2),
+      `ProfileHistoryRow`, `InvoiceProfileView`, `CompanyProfilePageModel`.
+    - `db/repositories/billing/invoice-profile.ts`: `readVersion` now returns field rows only
+      (`meta.*` split out so the strict schema never sees them); new `readVersionRaw`,
+      `findVersionStatus`, `resolveUserNames`; `listVersions` also returns each version's `meta`
+      and a used-by count (`count(*)` of `customer_bill.ref_invoice_profile_version`).
+    - `services/billing/invoice-profile/read-profile.ts`: `getCompanyProfilePageModel` (shown
+      version = `?version` ?? ACTIVE ?? DRAFT for EDIT users ?? `null`; a DRAFT is hidden from
+      READ users in the form and the history; the unparsed field map is returned) and
+      `getVerifiedLogo`. `services/billing/read/company-profile-settings.ts` binds `db` for the
+      page and route (app code may not import `db`).
+    - Pages: `company-profile/{page,loading,error}.tsx`; the logo GET handler
+      `company-profile/logo/[assetVersionId]/route.ts` (401, 403, 422, 404; digest check, 500
+      with no body on mismatch; stored MIME, inline, nosniff, sandbox CSP, no-store).
+    - Components: `CompanyProfileForm` (`mode: 'read' | 'edit'`, only read wired; colour
+      swatches are a 20x20 inline `<svg>` because inline `style` props are lint-banned) and
+      `VersionHistoryTable` generalized with `kind="profile"` (no Layout column, no Default chip,
+      no .hbs download, numeric `?version=`).
+    - Shell: `InvoiceSettingsTabs` lists Company profile first and now requires `active`; the
+      layout no longer renders the strip (it cannot see the path) — each page does. The index
+      redirects to `company-profile`.
+    - System Config (D4): `findAllNonSecret` excludes the group; `updateConfigValue` returns
+      `GROUP_NOT_EDITABLE` (no write, no audit); the action union and edit dialog copy gain it.
+  - **Deviations (recorded):** (1) the spec calls `VersionHistoryTable` "kind-agnostic", but
+    bm55 built it template-specific, so it was generalized here with a `kind` prop instead of
+    forking a second table. (2) The tab strip moved from the layout into the pages (bm55
+    deviation 7 anticipated this). (3) `listVersions` ran two extra queries (all `meta.*` rows,
+    per-version bill counts) rather than a joined aggregate. (4) "Created by" shows the
+    appuser name of the most recently modified row, falling back to the id.
+  - **Tests (all new suites green):** `read-profile.test.ts` (9), `logo-route.test.ts` (11),
+    `company-profile-form.test.tsx` (10, incl. the profile history table),
+    `system-config-exclusion.test.ts` (3, incl. the built WHERE clause), authz-matrix rows for the
+    page and the logo route, nav-registry-guard (`UNLISTED_BY_DESIGN`), route manifest, and the
+    updated tabs test. `tests/guardrails` + `tests/actions` (607 tests in 80 files) stay green.
+    `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** `tests/db/invoice-profile.integration.test.ts` (the repository's `meta`
+    split, `listVersions` used-by count, `resolveUserNames`) needs the disposable Postgres and
+    was not re-run; no browser or `next build` run of the new page.
+  - **Docs closed in this change set:** code-standards data rule 5 (the `meta.*` keys), the
+    file-organization tree, the permission-map notes (logo route, index redirect target,
+    `GROUP_NOT_EDITABLE`); ui-context §10b (empty-state copy); this tracker.
+  - **Next:** bm57 (Invoice template save draft), bm59 (profile edit mode + "Create a draft"),
+    bm60 (logo upload), bm61 (activation writes `meta.*`). Known-issues §20 (layout v2) still
+    precedes bm58.
+
+## Invoice Template update — bm57 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
+
+- **bm57 — Invoice template: save draft (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm57-invoice-template-save-draft.md`. An
+  `invoice_settings : EDIT` user saves the section/column choices as the single working
+  DRAFT generated version. The server refuses READ users and any structure that hides a
+  mandatory section, and every save writes one `INVOICE_TEMPLATE_DRAFT_SAVED` audit row in
+  the same transaction. No activation, no blob write, no migration, no grant change, no npm
+  dependency. Depends on bm55.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_TEMPLATE_DRAFT_SAVED` (Change).
+      `types/billing.ts`: `TEMPLATE_DRAFT_ERROR_CODES` (`DRAFT_CONFLICT`,
+      `MANDATORY_SECTION_HIDDEN`) and `TemplateDraftInfo`.
+    - `db/repositories/billing/bill-template-version.ts`: `findDraft`, `insertDraft`,
+      `updateDraftStructure` (returns the new token, or `null` on a conflict) and
+      `findLatestDraftSaver` (newest audit actor for the draft).
+    - `services/billing/invoice-template/save-template-draft.ts`: one transaction. The
+      per-kind advisory lock comes first, then a re-parse, then insert or token-guarded
+      update, then the audit row. A `23505` from `btv_one_draft_uq`/`btv_version_uq` maps to
+      `DRAFT_CONFLICT`.
+    - `actions/billing/invoice-settings/save-template-draft.action.ts`: EDIT guard first,
+      then Zod (`MANDATORY_SECTION_HIDDEN` with the offending paths, otherwise
+      `VALIDATION_ERROR`), the service, then `revalidatePath('/administration/invoice-settings',
+      'layout')`. `validation/billing/invoice-template-structure.schema.ts` gains
+      `saveTemplateDraftInputSchema`.
+    - UI: `InvoiceStructureForm` has an outline **Save draft** (EDIT only, disabled while
+      pristine or saving, keeps the live token between saves, Warning toast with Reload on a
+      conflict, inline Danger text under a refused row). The page opens an EDIT user on the
+      working DRAFT with the "Editing draft vN" banner and the draft token. The Generated
+      .hbs tab shows an Info line for a DRAFT (it has no files). READ users never get the
+      draft on the edit tab, and `?version=<draft>` falls back to the current version.
+      `getInvoiceTemplatePageData(version, { canEdit })` returns `defaultShown` and `draft`.
+  - **Deviations (recorded):**
+    1. **The token is text, not a `Date`.** The spec says the draft's
+       `last_modified_datetime` ISO string, but a JS `Date` truncates Postgres microseconds
+       to milliseconds, so the stored value could never match. The token is produced and
+       compared in SQL as `YYYY-MM-DDTHH24:MI:SS.USZ`, and the schema validates that shape.
+    2. **The advisory lock is taken before the draft lookup**, so two concurrent first saves
+       become one insert and one `DRAFT_CONFLICT` rather than a unique violation. The
+       `23505` mapping stays as a backstop.
+    3. **"Saved by {user}" comes from the audit log.** The table keeps only `created_by`, so
+       the banner reads the newest `INVOICE_TEMPLATE_DRAFT_SAVED` actor.
+    4. **The authz-matrix "no surface enforces EDIT" test** now covers the READ rows only; the
+       save action is the first EDIT row.
+    5. `DRAFT_CONFLICT` is a result code, not a thrown `InvoiceRenderError`, so it lives in
+       `TEMPLATE_DRAFT_ERROR_CODES` (code-standards TS rule 7 updated first).
+  - **Tests (all green):**
+    - `save-template-draft.action.test.ts` (11): the EDIT guard, a READ user refused with
+      nothing written, a hidden mandatory section posted directly, unknown keys and a bad
+      token, success revalidating the layout, conflict and error mapping.
+    - `tests/db/save-template-draft.integration.test.ts` (10, on the throwaway Postgres): the
+      first save inserts DRAFT v2 with a structure and no files; a second save updates the
+      same row; a stale token, a wrong belief about the draft's existence, and two concurrent
+      first saves (looped 3x) give exactly one winner and one `DRAFT_CONFLICT`; one audit row
+      per success with before/after; a hidden mandatory section writes nothing; the DRAFT is
+      never resolved by `resolveTemplate`/`resolveVersionsForPosting`; the history lists it.
+    - `invoice-structure-form.test.tsx` extended (+8), `invoice-template-settings.test.ts`
+      (6, the draft/READ-user page data), authz-matrix rows plus an order/audit check,
+      `audit-log-filters.test.tsx` (82 options; the new type is in the Change group), and the
+      existing `audit-log` category-map test.
+    - Full unit suite: 3994 tests, 12 failing, all the 15-vs-16 permission-count mismatch
+      recorded in known-issues §21a. Full integration project: 1088 passed, 48 failed,
+      the same 48 as before (known-issues §21), none touching bm57.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Review fixes (2026-10-10, /code-review xhigh + CodeRabbit):**
+    - **Reload after a conflict now reloads.** The form copied the draft token and structure
+      into `useState` once, so `router.refresh()` left it stale and every later save
+      conflicted again. The form `key` is now `{versionId}:{draft token}`, so a newer token
+      (own save, or Reload) remounts it from the server data.
+    - **A working draft can no longer be overwritten by accident (owner decision).** While a
+      draft exists it is the only editable version; other versions open read-only with a note
+      linking to the draft. Previously Save from the current version replaced the draft with
+      that version's content under the draft's token.
+    - **Generated .hbs tab** defaults to the current version again (a DRAFT has no files); an
+      explicit `?version=<draft>` still shows the "no generated files yet" note.
+    - **History:** a READ user gets no View link on a DRAFT row (it fell back silently).
+    - `findLatestDraftSaver` is a LEFT join: a save by a since-deleted user reports "a deleted
+      user" instead of an older saver. `lockKind` is now an explicit repository method taken
+      before the draft lookup; `nextVersionNo` runs only on the insert branch. Only a 23505 on
+      `btv_one_draft_uq`/`btv_version_uq` maps to `DRAFT_CONFLICT`; any other unique violation
+      is a server error (real postgres.js error shape asserted on a real database).
+    - bm56 follow-ups: `listVersions` filters `meta.%` in SQL; the logo checksum check is one
+      `fetchVerifiedLogoBytes` helper shared by `inlineLogo` and `getVerifiedLogo`; the
+      exclusion test pins the bound parameters instead of Drizzle's formatting; the code-standards
+      logo-route pattern reads `^INVASV\d{8}$`. `invoice-profile.integration` was re-run green
+      after the refactor.
+    - **Left as is, for review:** "saved by" still comes from the audit log (a
+      `last_modified_by` column would need a migration, out of bm57's scope), and the lookup
+      stays in the billing repository (moving it to `audit.repository.ts` touches a platform-owned file).
+  - **Not run here:** no browser or `next build` run of the page and form.
+  - **Docs closed in this change set:** code-standards data rule 3 (one working draft per
+    kind, the optimistic token) and TS rule 7 (`DRAFT_CONFLICT`); ui-context §10b (Save draft
+    states); known-issues §21 (the failing tests found after bm56); this tracker.
+  - **Next:** bm58 (activate the working draft; promotes it in place). Known-issues §20 (layout
+    v2) still precedes bm58.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

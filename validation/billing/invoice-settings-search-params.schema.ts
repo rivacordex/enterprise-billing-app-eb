@@ -17,3 +17,19 @@ export const invoiceTemplateSearchParamsSchema = z.object({
 export type InvoiceTemplateSearchParams = z.infer<
   typeof invoiceTemplateSearchParamsSchema
 >;
+
+// bm56-spec §Design D1 — the Company profile page's view state. `version` is
+// the profile's integer `config_version` (not a BTV id). Parsed, never
+// trusted: an unknown `?tab=` falls back to `edit`, a malformed `?version=`
+// is dropped.
+export const COMPANY_PROFILE_TABS = ["edit", "history"] as const;
+export type CompanyProfileTab = (typeof COMPANY_PROFILE_TABS)[number];
+
+export const companyProfileSearchParamsSchema = z.object({
+  tab: z.enum(COMPANY_PROFILE_TABS).catch("edit"),
+  version: z.coerce.number().int().positive().optional().catch(undefined),
+});
+
+export type CompanyProfileSearchParams = z.infer<
+  typeof companyProfileSearchParamsSchema
+>;

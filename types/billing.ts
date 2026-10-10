@@ -1084,3 +1084,79 @@ export class BlobStoreError extends Error {
     this.detail = detail;
   }
 }
+
+// bm56-spec §Design D2/D4 — the company profile's `core.system_config` group
+// (defined once; the generic System Config exclusion and the profile
+// repository both import it) and the reserved per-version metadata keys that
+// ride alongside a version's field keys (bm59/bm61 write them; the strict
+// profile schema excludes them).
+export const INVOICE_PROFILE_CONFIG_GROUP = "invoice.profile";
+
+export const INVOICE_PROFILE_META_KEYS = [
+  "meta.change_note",
+  "meta.activated_by",
+  "meta.activated_at",
+  "meta.retired_at",
+] as const;
+export type InvoiceProfileMetaKey = (typeof INVOICE_PROFILE_META_KEYS)[number];
+
+export const INVOICE_PROFILE_META_PREFIX = "meta.";
+
+// One row of the company profile's version history (bm56 D1). `createdBy` is
+// the stored appuser id of the version's most recently modified row (names are
+// not resolved — the template history precedent). Dates come from the `meta.*`
+// keys (ISO-8601 UTC), `null` while unset or unparseable.
+export interface ProfileHistoryRow {
+  versionNo: number;
+  status: TemplateVersionStatus;
+  createdBy: string | null;
+  createdAt: Date;
+  activatedAt: Date | null;
+  retiredAt: Date | null;
+  changeNote: string | null;
+  usedByCount: number;
+}
+
+// bm56-spec §Design D2 — the company-profile page view-model. `fields` is the
+// UNPARSED string map rendered as text: a DRAFT may be incomplete and must
+// still show, so the strict `invoiceProfileSchema` parse is not applied here.
+export type InvoiceProfileView = Readonly<Record<string, string | null>>;
+
+export interface CompanyProfileShownVersion {
+  version: number;
+  status: TemplateVersionStatus;
+  fields: InvoiceProfileView;
+  meta: Partial<Record<InvoiceProfileMetaKey, string>>;
+  // Display name for `meta.activated_by` (the raw id when it cannot be
+  // resolved); `null` when the version was never activated.
+  activatedByName: string | null;
+  logoAssetVersionId: string | null;
+}
+
+export interface CompanyProfilePageModel {
+  shown: CompanyProfileShownVersion | null;
+  history: ProfileHistoryRow[];
+}
+
+// bm57-spec §Design D1/D2 — the save-draft result codes beyond the generic
+// action ones. `DRAFT_CONFLICT`: the shared working draft changed since the
+// form loaded it (optimistic token mismatch) — never last-writer-wins.
+// `MANDATORY_SECTION_HIDDEN` is the structure schema's binding issue code.
+export const TEMPLATE_DRAFT_ERROR_CODES = [
+  "DRAFT_CONFLICT",
+  "MANDATORY_SECTION_HIDDEN",
+] as const;
+export type TemplateDraftErrorCode =
+  (typeof TEMPLATE_DRAFT_ERROR_CODES)[number];
+
+// bm57-spec §Design D4 — the working DRAFT the Invoice template page opens for
+// EDIT users. `token` is the draft's `last_modified_datetime` as a
+// microsecond-precision ISO string (a JS `Date` would truncate to ms and never
+// match the stored value); `savedBy` is the latest save's actor name.
+export interface TemplateDraftInfo {
+  billTemplateVersionId: string;
+  versionNo: number;
+  token: string;
+  savedAt: Date;
+  savedBy: string | null;
+}

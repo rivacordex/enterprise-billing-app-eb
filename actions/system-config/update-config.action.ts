@@ -17,6 +17,7 @@ export type UpdateConfigActionResult =
     }
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "SECRET_ROW" }
+  | { ok: false; code: "GROUP_NOT_EDITABLE" }
   | { ok: false; code: "VALUE_TOO_LONG"; limit: number }
   | { ok: false; code: "FORBIDDEN" }
   | { ok: false; code: "SERVER_ERROR" };

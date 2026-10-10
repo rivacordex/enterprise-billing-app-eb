@@ -9,6 +9,11 @@ import Link from "next/link";
 
 export const INVOICE_SETTINGS_TABS = [
   {
+    key: "company-profile",
+    label: "Company profile",
+    href: "/administration/invoice-settings/company-profile",
+  },
+  {
     key: "invoice-template",
     label: "Invoice template",
     href: "/administration/invoice-settings/invoice-template",
@@ -19,11 +24,11 @@ export type InvoiceSettingsTabKey =
   (typeof INVOICE_SETTINGS_TABS)[number]["key"];
 
 export interface InvoiceSettingsTabsProps {
-  active?: InvoiceSettingsTabKey;
+  active: InvoiceSettingsTabKey;
 }
 
 export function InvoiceSettingsTabs({
-  active = INVOICE_SETTINGS_TABS[0].key,
+  active,
 }: InvoiceSettingsTabsProps): React.JSX.Element {
   return (
     <nav

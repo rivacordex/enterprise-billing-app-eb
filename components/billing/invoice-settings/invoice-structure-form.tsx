@@ -4,8 +4,9 @@
 // Styling rule 7, ui-context §10b — `InvoiceStructureForm`, the template
 // editor's interaction leaf. It holds the admin's UNSAVED structure and drives
 // the live preview: any change → a 400 ms debounced call to
-// `previewInvoiceTemplateAction` (a READ that saves nothing). bm55 has no Save
-// or Activate (bm57/bm58).
+// `previewInvoiceTemplateAction` (a READ that saves nothing). bm57 adds **Save
+// draft** (EDIT only): it saves the structure as the single working DRAFT with
+// an optimistic token (`DRAFT_CONFLICT` on a stale one). Activate is bm58.
 //
 //   - mandatory sections: checked + disabled + `Lock` + "Required" in
 //     `--text-muted`; the label stays `--text-body`, so a locked-on section
@@ -17,15 +18,19 @@
 //   - the source select offers the layout's sample bill and, only for a
 //     `billrun_view` holder, the most recent posted bills.
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Info, Lock } from "lucide-react";
+import { toast } from "sonner";
 
+import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
 import { previewInvoiceTemplateAction } from "@/actions/billing/invoice-settings/preview-invoice-template.action";
 import {
   InvoicePreviewFrame,
   type PreviewError,
   type PreviewStatus,
 } from "@/components/billing/invoice-settings/invoice-preview-frame";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
@@ -88,6 +93,9 @@ export interface InvoiceStructureFormProps {
   editable: boolean;
   recentBills: RecentPostedBill[];
   canPreviewBills: boolean;
+  // bm57: the working draft's concurrency token as the page loaded it, or
+  // `null` when no draft exists. Sent back with every save.
+  expectedDraftToken?: string | null;
 }
 
 function RequiredMark(): React.JSX.Element {
@@ -112,8 +120,19 @@ export function InvoiceStructureForm({
   editable,
   recentBills,
   canPreviewBills,
+  expectedDraftToken = null,
 }: InvoiceStructureFormProps): React.JSX.Element {
+  const router = useRouter();
   const [structure, setStructure] = useState(initialStructure);
+  // bm57: the last-saved structure (pristine = unchanged since load or save),
+  // the live token, the in-flight flag and the server's per-row refusals.
+  const [saved, setSaved] = useState(initialStructure);
+  const [draftToken, setDraftToken] = useState(expectedDraftToken);
+  const [saving, setSaving] = useState(false);
+  const [hiddenErrors, setHiddenErrors] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const pristine = JSON.stringify(structure) === JSON.stringify(saved);
   const [source, setSource] = useState<string>(SAMPLE);
   const [annotate, setAnnotate] = useState(false);
   const [outline, setOutline] = useState(false);
@@ -181,6 +200,44 @@ export function InvoiceStructureForm({
     return () => clearTimeout(debounce);
   }, [structure, source, annotate, outline, retryToken]);
 
+  async function saveDraft(): Promise<void> {
+    setSaving(true);
+    setHiddenErrors(new Set());
+    try {
+      const result = await saveTemplateDraftAction({
+        structure,
+        expectedDraftToken: draftToken,
+      });
+      if (result.ok) {
+        setSaved(structure);
+        setDraftToken(result.draftToken);
+        toast.success(
+          `Draft v${result.versionNo} saved — not used on invoices`,
+        );
+        return;
+      }
+      if (result.code === "DRAFT_CONFLICT") {
+        toast.warning("Another user changed the draft — reload to see it.", {
+          action: { label: "Reload", onClick: () => router.refresh() },
+        });
+      } else if (result.code === "MANDATORY_SECTION_HIDDEN") {
+        setHiddenErrors(
+          new Set(
+            Object.keys(result.fieldErrors).map((p) => p.split(".").pop()!),
+          ),
+        );
+      } else if (result.code === "FORBIDDEN") {
+        toast.error("You do not have permission to save the draft.");
+      } else {
+        toast.error("The draft could not be saved. Please try again.");
+      }
+    } catch {
+      toast.error("The draft could not be saved. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function toggleSection(key: InvoiceSectionKey, value: boolean): void {
     markLoading();
     setStructure((s) => ({ ...s, sections: { ...s.sections, [key]: value } }));
@@ -204,7 +261,7 @@ export function InvoiceStructureForm({
             return (
               <div
                 key={key}
-                className="flex items-center justify-between gap-3"
+                className="flex flex-wrap items-center justify-between gap-3"
                 data-testid={id}
               >
                 {editable ? (
@@ -233,6 +290,14 @@ export function InvoiceStructureForm({
                 ) : editable ? null : (
                   <ReadOnlyValue shown={structure.sections[key]} />
                 )}
+                {hiddenErrors.has(key) ? (
+                  <p
+                    role="alert"
+                    className="w-full text-caption text-[color:var(--color-danger-700)]"
+                  >
+                    This section is required and cannot be hidden.
+                  </p>
+                ) : null}
               </div>
             );
           })}
@@ -344,6 +409,19 @@ export function InvoiceStructureForm({
             />
           </div>
         </fieldset>
+
+        {editable ? (
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pristine || saving}
+              onClick={() => void saveDraft()}
+            >
+              {saving ? "Saving…" : "Save draft"}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="min-w-0 space-y-3">

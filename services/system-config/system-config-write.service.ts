@@ -5,12 +5,16 @@ import {
   CONFIG_VALUE_MAX_LENGTH,
   configValueLength,
 } from "@/lib/config-limits";
+import { INVOICE_PROFILE_CONFIG_GROUP } from "@/types/billing";
 import type { UpdateConfigInput } from "@/validation/update-config.schema";
 
 export type UpdateConfigResult =
   | { ok: true }
   | { ok: false; code: "NOT_FOUND" }
   | { ok: false; code: "SECRET_ROW" }
+  // bm56 D4: the company profile (`invoice.profile`) is edited only through its
+  // validated Invoice Settings screen — the server-side half of hiding it here.
+  | { ok: false; code: "GROUP_NOT_EDITABLE" }
   // D12: a per-key length limit enforced here (the first place the group+key
   // are known — the Zod schema only has `configId`). Carries the limit so the
   // dialog can name it in the field error.
@@ -35,6 +39,11 @@ export async function updateConfigValue(
     const row = await systemConfigRepository.findById(tx, input.configId);
     if (!row) {
       outcome = { ok: false, code: "NOT_FOUND" };
+      return;
+    }
+
+    if (row.configGroup === INVOICE_PROFILE_CONFIG_GROUP) {
+      outcome = { ok: false, code: "GROUP_NOT_EDITABLE" };
       return;
     }
 

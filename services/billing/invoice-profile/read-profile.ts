@@ -11,7 +11,9 @@ import {
 import {
   InvoiceRenderError,
   isChecksumAlgorithm,
+  type CompanyProfilePageModel,
   type InvoiceProfile,
+  type ProfileHistoryRow,
 } from "@/types/billing";
 
 // bm53-spec §Design D3/D4 — the company-profile read. Nothing here is cached
@@ -110,16 +112,12 @@ export async function readInvoiceProfile(
   return { profile, logo };
 }
 
-// D4 — blob-only half: fetch the logo bytes, verify them against the row's
-// checksum (code-standards General rule 8 — no byte is used unverified), and
-// inline them as a `data:` URI so the render makes zero network requests. A
-// profile without a logo keeps `logoUrl: null` (the header hides it; no throw).
-export async function inlineLogo({
-  profile,
-  logo,
-}: ReadInvoiceProfileResult): Promise<InvoiceProfile> {
-  if (!logo) return profile;
-
+// Fetch a logo's bytes and verify them against the row's checksum
+// (code-standards General rule 8 — no byte is used unverified; Inv #45). A
+// mismatch, or a checksum algorithm the store does not know, throws
+// `ASSET_CHECKSUM_MISMATCH`. Shared by the render path (`inlineLogo`) and the
+// GET handler (`getVerifiedLogo`).
+async function fetchVerifiedLogoBytes(logo: BillAssetVersion): Promise<Buffer> {
   const { container, path } = blobStore.parseBlobRef(logo.blobRef);
   const bytes = await blobStore.getObject(container, path);
   if (
@@ -132,6 +130,19 @@ export async function inlineLogo({
       { assetVersionId: logo.billAssetVersionId },
     );
   }
+  return bytes;
+}
+
+// D4 — blob-only half: fetch the verified logo bytes and
+// inline them as a `data:` URI so the render makes zero network requests. A
+// profile without a logo keeps `logoUrl: null` (the header hides it; no throw).
+export async function inlineLogo({
+  profile,
+  logo,
+}: ReadInvoiceProfileResult): Promise<InvoiceProfile> {
+  if (!logo) return profile;
+
+  const bytes = await fetchVerifiedLogoBytes(logo);
   return {
     ...profile,
     company: {
@@ -148,4 +159,94 @@ export async function getInvoiceProfile(
   configVersion: number,
 ): Promise<InvoiceProfile> {
   return inlineLogo(await readInvoiceProfile(db, configVersion));
+}
+
+// bm56 D2 — parse a `meta.*` ISO-8601 value; unset or unparseable → `null`.
+function metaDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// bm56 D1/D2 — the Company profile page's view-model. Shown version:
+// `?version=` when it names a stored version (a DRAFT only for EDIT users),
+// else the ACTIVE version, else the DRAFT (EDIT users), else `null` (the
+// empty state, G15 A). Nothing is cached.
+export async function getCompanyProfilePageModel(
+  db: Database,
+  { version, canEdit }: { version?: number | undefined; canEdit: boolean },
+): Promise<CompanyProfilePageModel> {
+  const all = await invoiceProfileRepository.listVersions(db);
+  // A DRAFT is invisible to READ users, in the history as well as the form.
+  const visible = canEdit ? all : all.filter((v) => v.status !== "DRAFT");
+
+  const requested =
+    version === undefined
+      ? undefined
+      : visible.find((v) => v.configVersion === version);
+  const chosen =
+    requested ??
+    visible.find((v) => v.status === "ACTIVE") ??
+    visible.find((v) => v.status === "DRAFT");
+
+  const userIds = new Set<string>();
+  for (const v of visible) {
+    if (v.modifiedBy) userIds.add(v.modifiedBy);
+    const activator = v.meta["meta.activated_by"];
+    if (chosen?.configVersion === v.configVersion && activator) {
+      userIds.add(activator);
+    }
+  }
+  const names = await invoiceProfileRepository.resolveUserNames(db, [
+    ...userIds,
+  ]);
+
+  const history: ProfileHistoryRow[] = visible.map((v) => ({
+    versionNo: v.configVersion,
+    status: v.status,
+    createdBy: v.modifiedBy ? (names.get(v.modifiedBy) ?? v.modifiedBy) : null,
+    createdAt: v.createdDatetime,
+    activatedAt: metaDate(v.meta["meta.activated_at"]),
+    retiredAt: metaDate(v.meta["meta.retired_at"]),
+    changeNote: v.meta["meta.change_note"] ?? null,
+    usedByCount: v.usedByCount,
+  }));
+
+  if (!chosen) return { shown: null, history };
+
+  const raw = await invoiceProfileRepository.readVersionRaw(
+    db,
+    chosen.configVersion,
+  );
+  const activator = raw.meta["meta.activated_by"];
+  return {
+    shown: {
+      version: chosen.configVersion,
+      status: chosen.status,
+      fields: raw.fields,
+      meta: raw.meta,
+      activatedByName: activator ? (names.get(activator) ?? activator) : null,
+      logoAssetVersionId: raw.fields.logo_asset_version_id ?? null,
+    },
+    history,
+  };
+}
+
+export interface VerifiedLogo {
+  bytes: Buffer;
+  mime: string;
+}
+
+// bm56 D3 — the logo bytes for the GET handler: the asset-version row, the
+// blob, and a digest check against the row\'s checksum before one byte is
+// returned (Inv #45). Unknown id → `null` (404). A mismatch throws
+// `ASSET_CHECKSUM_MISMATCH` and serves nothing.
+export async function getVerifiedLogo(
+  db: Database,
+  assetVersionId: string,
+): Promise<VerifiedLogo | null> {
+  const logo = await billAssetRepository.findVersionById(db, assetVersionId);
+  if (!logo) return null;
+
+  return { bytes: await fetchVerifiedLogoBytes(logo), mime: logo.mime };
 }
