@@ -244,6 +244,11 @@ describe.skipIf(!databaseUrl)(
       });
     }
 
+    // The product schema requires a capacity commitment > 0, so a scenario that
+    // is not about the floor uses the smallest valid target. It must stay well
+    // below the scenario's usage so the commitment floor is never engaged.
+    const MIN_COMMITMENT = 1;
+
     async function setupAccount(
       label: string,
       cardName: string,
@@ -449,7 +454,7 @@ describe.skipIf(!databaseUrl)(
         const { ban, runId, piId, usageRatePriceId } = await setupAccount(
           "RERUN",
           cardName,
-          0,
+          MIN_COMMITMENT, // usage is 50 EA, far above it: no floor top-up
         );
 
         const v1 = await insertRatecardVersion(cardName, 1, "ACTIVE", [
@@ -502,7 +507,7 @@ describe.skipIf(!databaseUrl)(
         const { ban, runId, piId, usageRatePriceId } = await setupAccount(
           "OVERLIMIT",
           cardName,
-          0,
+          MIN_COMMITMENT, // 10,001 rows of usage: no floor top-up
         );
 
         // Bulk-insert 10,001 distinct-polygon BILL_DRAFT rows in one

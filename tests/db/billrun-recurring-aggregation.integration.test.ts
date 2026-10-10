@@ -292,10 +292,9 @@ describe.skipIf(!databaseUrl)(
         basis: "quantity",
         boundTo: { unitOfMeasure },
         params: {
-          steps: [
-            { aboveQuantity: 1000, ratePerUnit: "50" },
-            { aboveQuantity: 2000, ratePerUnit: "25" },
-          ],
+          // One band: production runs with capacity_max_bands = 1 (TC52), and a
+          // second band is refused CAPACITY_MULTI_STEP_UNSUPPORTED by design.
+          steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
         },
       };
       await sql`

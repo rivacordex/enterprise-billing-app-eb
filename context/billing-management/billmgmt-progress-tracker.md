@@ -1303,6 +1303,8 @@ DELIVERED" section.
 
 ## Outstanding / Next (post-Phase 4)
 
+- **Three real defects in the billing flow found by running the DB-backed suites (known-issues §21: 21c2, 21c3, 21c4).** (1) `bill_run_processing.yml` line 1007 puts `row_number() OVER` inside `jsonb_agg`, so the aggregation statement cannot run at all (CRITICAL, bm42). (2) Appendix rows and the capacity `calc` total are written as JSON numbers, not strings. (3) bm43's `rated_amount` swap dropped detection of an altered `gross_amount` on plain USAGE lines. Fix as one small unit with its own spec (workflow rules §2.5), then re-run the eight billing-run suites. Separately, 21e (`ordering-read`) is pm46's documented flat-fee lane gap, a product-module follow-up.
+
 - **Release gate before any production template activation (known-issues §20).** Layout v1's
   `shell.hbs` has no usage-annex CSS, so a real activation (which generates from layout v1) would
   print the usage annex unstyled on every new invoice, and the PDF is stored permanently. Seed

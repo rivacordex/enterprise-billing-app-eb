@@ -50,6 +50,7 @@ describe("resolveEffectivePermissions", () => {
       billrun_operate: null,
       billrun_approve: null,
       ratecard: null,
+      invoice_settings: null,
     });
     expect(findGrantsByRoleIds).not.toHaveBeenCalled();
   });
@@ -78,6 +79,7 @@ describe("resolveEffectivePermissions", () => {
       billrun_operate: null,
       billrun_approve: null,
       ratecard: null,
+      invoice_settings: null,
     });
   });
 
@@ -108,6 +110,7 @@ describe("resolveEffectivePermissions", () => {
       billrun_operate: null,
       billrun_approve: null,
       ratecard: null,
+      invoice_settings: null,
     });
   });
 
@@ -157,6 +160,7 @@ describe("resolveEffectivePermissions", () => {
       billrun_operate: null,
       billrun_approve: null,
       ratecard: null,
+      invoice_settings: null,
     });
   });
 

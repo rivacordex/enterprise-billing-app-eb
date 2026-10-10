@@ -95,6 +95,7 @@ describe("getAllRolesWithMappings", () => {
       { permissionName: "billrun_operate", assignedLevel: null },
       { permissionName: "billrun_approve", assignedLevel: null },
       { permissionName: "ratecard", assignedLevel: null },
+      { permissionName: "invoice_settings", assignedLevel: null },
     ]);
     const manager = result.find((r) => r.roleId === "role-manager")!;
     expect(manager.mappings.every((m) => m.assignedLevel === null)).toBe(true);
@@ -107,7 +108,7 @@ describe("getAllRolesWithMappings", () => {
     );
 
     const [role] = await getAllRolesWithMappings();
-    expect(role!.mappings).toHaveLength(15);
+    expect(role!.mappings).toHaveLength(16);
   });
 
   it("mappings are always ordered users, roles, system_config, audit_log, products, customers, accounts_*", async () => {
@@ -136,6 +137,7 @@ describe("getAllRolesWithMappings", () => {
       "billrun_operate",
       "billrun_approve",
       "ratecard",
+      "invoice_settings",
     ]);
   });
 });
@@ -183,6 +185,7 @@ describe("getRoleWithMappings", () => {
       { permissionName: "billrun_operate", assignedLevel: null },
       { permissionName: "billrun_approve", assignedLevel: null },
       { permissionName: "ratecard", assignedLevel: null },
+      { permissionName: "invoice_settings", assignedLevel: null },
     ]);
   });
 });
