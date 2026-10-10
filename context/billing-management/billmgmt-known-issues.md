@@ -904,7 +904,7 @@ scan. Still open:
 | 22e  | **Three copies of the SQL scanner** in the test harness: `splitSqlStatements` and `bindPsqlVars` (`tests/db/helpers/extract-flow-sql.ts`) and the guardrail's `blankCommentsAndStrings` (no dollar-quote handling). | Teaching one about block comments, `E''` strings or quoted identifiers and missing another makes splitting, binding and the guardrail disagree. Test-only; no runtime effect. | A test-harness refactor: one tokenizer with an on-plain-text callback. Low priority. |
 
 The product-side altitude item (one SQL function for the price lane key) is
-tracked as `prodmgmt-issues-tracker.md` PM-ISS-004.
+tracked as `prodmgmt-issues-tracker.md` PM-ISS-004 (RESOLVED 2026-10-10 by product guardrail 41).
 
 ## `ratecard` role grants are never seeded (observed bm50, not fixed)
 

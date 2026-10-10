@@ -8,13 +8,15 @@ Known, unresolved defects and debts in the Product Management module that are **
 
 ## PM-ISS-004 — The price lane key expression is copied into four places
 
-**Status:** **OPEN.** **Owner:** a product follow-up unit (not scheduled). **Discovered:** 2026-10-10, `/code-review xhigh` of `efaff82..HEAD`. **Severity:** low — no current defect; a drift risk.
+**Status:** **RESOLVED (2026-10-10, option B — guardrail 41).** See the Resolution note at the end of this entry. **Discovered:** 2026-10-10, `/code-review xhigh` of `efaff82..HEAD`. **Severity:** low — no current defect; a drift risk.
 
 **Symptom.** pm46a's lane key `(product_offering_id, component_type, unit_of_measure, CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType' END)` is written out by hand in `0049_product_price_lane_key.sql`, the Drizzle `uniqueIndex` in `db/schema/product.ts`, the repository's `lead()` window (`db/repositories/product-offering-price.ts`), and, in an equivalent flat-fee-only form, the bill-run recurring resolver. They are kept in step by comments and guardrail 13's exact-string match.
 
 **Risk.** The next lane change (e.g. a new component type that varies by `priceType`) must edit all four consistently; a reader that misses it misjudges supersession, the defect pm46a fixed.
 
-**Fix.** One IMMUTABLE SQL function (e.g. `product.price_lane_type(component_type, price_component)`), created by a forward migration, used by the index and every reader; guardrail 13 then asserts the function, not four copies.
+**Options considered.** (A) One IMMUTABLE SQL function (e.g. `product.price_lane_type(component_type, price_component)`) used by the index and every reader. Rejected for now (Khek, 2026-10-10): changing the function later still needs a migration plus a `REINDEX` (an index built on an IMMUTABLE function is not recomputed when the body changes), `billrun_runtime` would need EXECUTE on a `product` function, it is cross-domain and gated again, and rating's deliberately narrower key (rm20) could not use it. Worth revisiting if a new component type ever varies by `priceType`. (B) A guardrail that keeps the copies honest — **chosen**. (C) Leave open.
+
+**Resolution (2026-10-10, option B).** Product **guardrail 41**, `tests/guardrails/price-lane-key-consistency.test.ts` (DB-free): (1) the three definition sites (`0049`, the Drizzle mirror, the repository's lane-term constant) spell the term identically; (2) every `PARTITION BY … component_type …` window under `db/`, `services/`, `lib/`, `app/` and `workflow-management/` (comments blanked) must partition on the lane key, or on a form proven equal for the component types it scans (raw `priceType` on a flat_fee-only scan; no term on a scan without flat_fee), or be a listed exception (rating's `rp.py`, rm20); (3) the inventory of such windows is pinned (repository 1, bill-run flow 3, `rp.py` 1), so a new reader must be reviewed. The real code was verified, then three deliberate breaks were each caught at the right line: the repository window losing its term, the flow's recurring window losing its `priceType`, and a capacity window starting to scan `flat_fee`.
 
 ---
 
