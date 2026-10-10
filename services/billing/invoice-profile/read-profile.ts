@@ -112,16 +112,12 @@ export async function readInvoiceProfile(
   return { profile, logo };
 }
 
-// D4 — blob-only half: fetch the logo bytes, verify them against the row's
-// checksum (code-standards General rule 8 — no byte is used unverified), and
-// inline them as a `data:` URI so the render makes zero network requests. A
-// profile without a logo keeps `logoUrl: null` (the header hides it; no throw).
-export async function inlineLogo({
-  profile,
-  logo,
-}: ReadInvoiceProfileResult): Promise<InvoiceProfile> {
-  if (!logo) return profile;
-
+// Fetch a logo's bytes and verify them against the row's checksum
+// (code-standards General rule 8 — no byte is used unverified; Inv #45). A
+// mismatch, or a checksum algorithm the store does not know, throws
+// `ASSET_CHECKSUM_MISMATCH`. Shared by the render path (`inlineLogo`) and the
+// GET handler (`getVerifiedLogo`).
+async function fetchVerifiedLogoBytes(logo: BillAssetVersion): Promise<Buffer> {
   const { container, path } = blobStore.parseBlobRef(logo.blobRef);
   const bytes = await blobStore.getObject(container, path);
   if (
@@ -134,6 +130,19 @@ export async function inlineLogo({
       { assetVersionId: logo.billAssetVersionId },
     );
   }
+  return bytes;
+}
+
+// D4 — blob-only half: fetch the verified logo bytes and
+// inline them as a `data:` URI so the render makes zero network requests. A
+// profile without a logo keeps `logoUrl: null` (the header hides it; no throw).
+export async function inlineLogo({
+  profile,
+  logo,
+}: ReadInvoiceProfileResult): Promise<InvoiceProfile> {
+  if (!logo) return profile;
+
+  const bytes = await fetchVerifiedLogoBytes(logo);
   return {
     ...profile,
     company: {
@@ -239,17 +248,5 @@ export async function getVerifiedLogo(
   const logo = await billAssetRepository.findVersionById(db, assetVersionId);
   if (!logo) return null;
 
-  const { container, path } = blobStore.parseBlobRef(logo.blobRef);
-  const bytes = await blobStore.getObject(container, path);
-  if (
-    !isChecksumAlgorithm(logo.checksumAlgorithm) ||
-    blobStore.digest(bytes, logo.checksumAlgorithm) !== logo.checksum
-  ) {
-    throw new InvoiceRenderError(
-      "ASSET_CHECKSUM_MISMATCH",
-      `logo ${logo.billAssetVersionId} does not match its recorded checksum`,
-      { assetVersionId: logo.billAssetVersionId },
-    );
-  }
-  return { bytes, mime: logo.mime };
+  return { bytes: await fetchVerifiedLogoBytes(logo), mime: logo.mime };
 }

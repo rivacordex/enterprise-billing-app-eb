@@ -26,6 +26,9 @@ export const INVOICE_TEMPLATE_FILES_BASE =
 // version number and carry no Default chip (profiles have no default, G15 A).
 export type VersionHistoryTableProps = {
   shownVersionId: string;
+  // Drafts open only for editors; for everyone else a DRAFT row has no View
+  // link (it would silently fall back to the current version).
+  canViewDrafts?: boolean;
   locale: string;
   timezone: string;
 } & (
@@ -113,7 +116,7 @@ function usedByLabel(count: number): string {
 export function VersionHistoryTable(
   props: VersionHistoryTableProps,
 ): React.JSX.Element {
-  const { shownVersionId, locale, timezone } = props;
+  const { shownVersionId, locale, timezone, canViewDrafts = true } = props;
   const isProfile = props.kind === "profile";
   const rows = normalize(props);
   const headers = isProfile
@@ -205,13 +208,15 @@ export function VersionHistoryTable(
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-3 whitespace-nowrap">
-                        <Link
-                          href={`?tab=edit&version=${row.viewParam}`}
-                          className={LINK}
-                        >
-                          <Eye size={14} aria-hidden />
-                          View
-                        </Link>
+                        {row.status === "DRAFT" && !canViewDrafts ? null : (
+                          <Link
+                            href={`?tab=edit&version=${row.viewParam}`}
+                            className={LINK}
+                          >
+                            <Eye size={14} aria-hidden />
+                            View
+                          </Link>
+                        )}
                         {row.downloadHref ? (
                           <a href={row.downloadHref} download className={LINK}>
                             <Download size={14} aria-hidden />

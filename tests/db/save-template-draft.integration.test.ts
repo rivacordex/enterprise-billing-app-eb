@@ -33,7 +33,10 @@ vi.mock("@/db/client", () => ({
   },
 }));
 
-import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
+import {
+  isDraftRaceViolation,
+  saveTemplateDraft,
+} from "@/services/billing/invoice-template/save-template-draft";
 import {
   resolveTemplate,
   resolveVersionsForPosting,
@@ -332,6 +335,67 @@ describe.skipIf(!databaseUrl)(
         await billTemplateVersionRepository.findActive(db, {
           kind: "generated",
         }),
+      ).toBeNull();
+    });
+
+    it("a real btv_one_draft_uq violation is recognised as a draft race (postgres.js error shape)", async () => {
+      await saveTemplateDraft(
+        { structure: structure(), expectedDraftToken: null },
+        ACTOR,
+      );
+      const err = await sql`
+        INSERT INTO billing.bill_template_version
+          (ref_bill_format_id, kind, version_no, status, ref_layout_version_id, structure)
+        VALUES ('INVOICE', 'generated', 99, 'DRAFT', 'BTV00000001', ${JSON.stringify(structure())}::jsonb)`.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).not.toBeNull();
+      expect(isDraftRaceViolation(err)).toBe(true);
+    });
+
+    it('reports the latest saver, and "a deleted user" when that user was removed, never an older saver', async () => {
+      const OTHER = "bm57-other";
+      await sql`
+        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+        VALUES (${OTHER}, 'Second Saver', 'second-saver@example.com', 'LOCAL', 'ACTIVE')
+        ON CONFLICT DO NOTHING`;
+      const first = await saveTemplateDraft(
+        { structure: structure(), expectedDraftToken: null },
+        ACTOR,
+      );
+      if (!first.ok) throw new Error("expected ok");
+      const second = await saveTemplateDraft(
+        {
+          structure: structure({ payment: false }),
+          expectedDraftToken: first.draftToken,
+        },
+        OTHER,
+      );
+      if (!second.ok) throw new Error("expected ok");
+
+      expect(
+        await billTemplateVersionRepository.findLatestDraftSaver(
+          db,
+          first.versionId,
+        ),
+      ).toBe("Second Saver");
+
+      await sql`DELETE FROM core.appuser WHERE user_id = ${OTHER}`;
+      expect(
+        await billTemplateVersionRepository.findLatestDraftSaver(
+          db,
+          first.versionId,
+        ),
+      ).toBe("a deleted user");
+    });
+
+    it("findLatestDraftSaver is null when the draft has no audit row", async () => {
+      expect(
+        await billTemplateVersionRepository.findLatestDraftSaver(
+          db,
+          "BTV00009999",
+        ),
       ).toBeNull();
     });
 

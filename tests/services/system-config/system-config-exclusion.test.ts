@@ -114,8 +114,14 @@ describe("findAllNonSecret: invoice.profile exclusion", () => {
     );
     await original.systemConfigRepository.findAllNonSecret(fakeDb as never);
 
-    expect(captured?.sql).toMatch(/"config_group" <> \$/);
-    expect(captured?.sql).toMatch(/"is_secret" = \$/);
-    expect(captured?.params).toContain(INVOICE_PROFILE_CONFIG_GROUP);
+    // Each predicate is present, and the parameters are exactly the secret
+    // flag and the profile group. Predicate order and Drizzle's identifier
+    // qualification are deliberately not pinned.
+    expect(captured?.sql).toMatch(/"is_secret" = \$\d/);
+    expect(captured?.sql).toMatch(/"config_group" <> \$\d/);
+    expect(captured?.params).toHaveLength(2);
+    expect(captured?.params).toEqual(
+      expect.arrayContaining([false, INVOICE_PROFILE_CONFIG_GROUP]),
+    );
   });
 });

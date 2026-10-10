@@ -213,6 +213,53 @@ describe("GeneratedHbsViewer", () => {
   });
 });
 
+describe("VersionHistoryTable: DRAFT rows (bm57)", () => {
+  const DRAFT: TemplateVersionHistoryRow = {
+    billTemplateVersionId: "BTV00000004",
+    versionNo: 2,
+    status: "DRAFT",
+    isDefault: false,
+    layoutLabel: "INVTPL-STD-A4 v1",
+    createdBy: "u1",
+    createdAt: new Date("2026-10-10T00:00:00Z"),
+    activatedAt: null,
+    retiredAt: null,
+    changeNote: null,
+    usedByCount: 0,
+  };
+
+  it("shows a View link for a DRAFT to editors, and no download", () => {
+    render(
+      <VersionHistoryTable
+        rows={[DRAFT]}
+        shownVersionId="BTV00000004"
+        canViewDrafts
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+    expect(screen.getByRole("link", { name: /View/ })).toHaveAttribute(
+      "href",
+      "?tab=edit&version=BTV00000004",
+    );
+    expect(screen.queryByText(/Download/)).toBeNull();
+  });
+
+  it("hides the View link for a DRAFT from a READ user (it would silently fall back)", () => {
+    render(
+      <VersionHistoryTable
+        rows={[DRAFT]}
+        shownVersionId="BTV00000002"
+        canViewDrafts={false}
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /View/ })).toBeNull();
+  });
+});
+
 describe("InvoiceSettingsTabs", () => {
   it("lists Company profile first, then Invoice template, marking the active tab", () => {
     render(<InvoiceSettingsTabs active="invoice-template" />);

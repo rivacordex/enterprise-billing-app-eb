@@ -168,6 +168,24 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(svc).not.toMatch(/ACTIVE.*status|activate/i);
   });
 
+  it("while a working draft exists the draft is the only editable version, and the form reloads per draft token (bm57)", () => {
+    const src = read(
+      "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
+    );
+    // Another version is editable only when there is no draft to overwrite.
+    expect(src).toMatch(
+      /editable=\{\s*canEdit &&\s*\(shownIsDraft \|\|\s*\(!draft &&/,
+    );
+    // A new token (own save, or Reload after DRAFT_CONFLICT) remounts the form.
+    expect(src).toMatch(
+      /key=\{`\$\{shown\.billTemplateVersionId\}:\$\{draft\?\.token \?\? "none"\}`\}/,
+    );
+    // The Generated .hbs tab defaults to the current version, not the file-less draft.
+    expect(src).toContain("onGenerated && version === undefined ? current");
+    // A READ user gets no View link on a DRAFT history row.
+    expect(src).toContain("canViewDrafts={canEdit}");
+  });
+
   it("the page offers posted bills only to billrun_view holders", () => {
     const src = read(
       "app/(app)/administration/invoice-settings/invoice-template/page.tsx",

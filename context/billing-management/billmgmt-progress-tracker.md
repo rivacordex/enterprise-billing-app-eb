@@ -1160,6 +1160,31 @@ DELIVERED" section.
       recorded in known-issues §21a. Full integration project: 1088 passed, 48 failed,
       the same 48 as before (known-issues §21), none touching bm57.
     - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Review fixes (2026-10-10, /code-review xhigh + CodeRabbit):**
+    - **Reload after a conflict now reloads.** The form copied the draft token and structure
+      into `useState` once, so `router.refresh()` left it stale and every later save
+      conflicted again. The form `key` is now `{versionId}:{draft token}`, so a newer token
+      (own save, or Reload) remounts it from the server data.
+    - **A working draft can no longer be overwritten by accident (owner decision).** While a
+      draft exists it is the only editable version; other versions open read-only with a note
+      linking to the draft. Previously Save from the current version replaced the draft with
+      that version's content under the draft's token.
+    - **Generated .hbs tab** defaults to the current version again (a DRAFT has no files); an
+      explicit `?version=<draft>` still shows the "no generated files yet" note.
+    - **History:** a READ user gets no View link on a DRAFT row (it fell back silently).
+    - `findLatestDraftSaver` is a LEFT join: a save by a since-deleted user reports "a deleted
+      user" instead of an older saver. `lockKind` is now an explicit repository method taken
+      before the draft lookup; `nextVersionNo` runs only on the insert branch. Only a 23505 on
+      `btv_one_draft_uq`/`btv_version_uq` maps to `DRAFT_CONFLICT`; any other unique violation
+      is a server error (real postgres.js error shape asserted on a real database).
+    - bm56 follow-ups: `listVersions` filters `meta.%` in SQL; the logo checksum check is one
+      `fetchVerifiedLogoBytes` helper shared by `inlineLogo` and `getVerifiedLogo`; the
+      exclusion test pins the bound parameters instead of Drizzle's formatting; the code-standards
+      logo-route pattern reads `^INVASV\d{8}$`. `invoice-profile.integration` was re-run green
+      after the refactor.
+    - **Left as is, for review:** "saved by" still comes from the audit log (a
+      `last_modified_by` column would need a migration, out of bm57's scope), and the lookup
+      stays in the billing repository (moving it to `audit.repository.ts` touches a platform-owned file).
   - **Not run here:** no browser or `next build` run of the page and form.
   - **Docs closed in this change set:** code-standards data rule 3 (one working draft per
     kind, the optimistic token) and TS rule 7 (`DRAFT_CONFLICT`); ui-context §10b (Save draft

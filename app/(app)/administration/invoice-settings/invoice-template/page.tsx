@@ -70,9 +70,14 @@ export default async function InvoiceTemplatePage({
   );
 
   const data = await getInvoiceTemplatePageData(version, { canEdit });
-  const { shown, current, defaultShown, draft } = data;
+  const { current, draft } = data;
   // The version opened by default is the working DRAFT for an EDIT user who
-  // has one (bm57 D4), else the current version.
+  // has one (bm57 D4), else the current version. The Generated .hbs tab is the
+  // exception: a DRAFT has no files, so without an explicit `?version=` it
+  // keeps showing the current version's files (as it did before drafts).
+  const onGenerated = tab === "generated";
+  const defaultShown = onGenerated ? current : data.defaultShown;
+  const shown = onGenerated && version === undefined ? current : data.shown;
   const viewingOther =
     shown.billTemplateVersionId !== defaultShown.billTemplateVersionId;
   const shownIsDraft = shown.status === "DRAFT";
@@ -123,6 +128,19 @@ export default async function InvoiceTemplatePage({
         ))}
       </nav>
 
+      {tab === "edit" && canEdit && draft && !shownIsDraft ? (
+        <p
+          role="status"
+          className="inline-flex flex-wrap items-center gap-2 rounded-sm bg-[color:var(--color-info-50)] px-3 py-2 text-body-sm text-[color:var(--color-info-700)]"
+        >
+          <Info size={14} aria-hidden />
+          This version is read-only while a working draft exists.
+          <Link href="?tab=edit" className="font-semibold underline">
+            Edit draft v{draft.versionNo}
+          </Link>
+        </p>
+      ) : null}
+
       {tab === "edit" && shownIsDraft && draft ? (
         <p
           role="status"
@@ -138,13 +156,20 @@ export default async function InvoiceTemplatePage({
 
       {tab === "edit" ? (
         <InvoiceStructureForm
-          // A fresh form (and preview) per shown version.
-          key={shown.billTemplateVersionId}
+          // A fresh form (and preview) per shown version AND per draft token:
+          // after a save, or after "Reload" on a DRAFT_CONFLICT, the page
+          // re-renders with the newer token and the form must reload from it
+          // instead of keeping its stale local state.
+          key={`${shown.billTemplateVersionId}:${draft?.token ?? "none"}`}
           initialStructure={data.shownStructure}
+          // While a working draft exists it is the only editable version, so
+          // a save can never silently replace it with another version's
+          // content (the token below is the draft's).
           editable={
             canEdit &&
             (shownIsDraft ||
-              shown.billTemplateVersionId === current.billTemplateVersionId)
+              (!draft &&
+                shown.billTemplateVersionId === current.billTemplateVersionId))
           }
           expectedDraftToken={draft?.token ?? null}
           canPreviewBills={canPreviewBills}
@@ -156,6 +181,7 @@ export default async function InvoiceTemplatePage({
         <VersionHistoryTable
           rows={data.history}
           shownVersionId={shown.billTemplateVersionId}
+          canViewDrafts={canEdit}
           locale={await getAppLocale()}
           timezone={getAppTimezone()}
         />

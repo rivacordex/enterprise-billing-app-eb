@@ -114,16 +114,28 @@ export const billTemplateVersionRepository = {
     return rows.map((r) => ({ ...r.version, usedByCount: r.usedByCount }));
   },
 
-  // `max(version_no) + 1` for the kind, serialized by an advisory xact lock
-  // (not `FOR UPDATE` on bill_format — `app_runtime` has only SELECT there).
-  // `btv_version_uq` is the backstop against a lost race.
+  // Serialise writers of one kind's versions for the rest of the transaction
+  // (an advisory xact lock, not `FOR UPDATE` on bill_format — `app_runtime`
+  // has only SELECT there). Re-entrant within a transaction, so callers that
+  // also call `nextVersionNo` simply re-take it. bm57 takes it BEFORE looking
+  // up the working draft, so two concurrent first saves become one insert and
+  // one conflict rather than a unique violation.
+  async lockKind(
+    tx: Database,
+    { kind }: { kind: TemplateKind },
+  ): Promise<void> {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`billing.bill_template_version:${INVOICE}:${kind}`}))`,
+    );
+  },
+
+  // `max(version_no) + 1` for the kind, under the kind lock. `btv_version_uq`
+  // is the backstop against a lost race.
   async nextVersionNo(
     tx: Database,
     { kind }: { kind: TemplateKind },
   ): Promise<number> {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`billing.bill_template_version:${INVOICE}:${kind}`}))`,
-    );
+    await this.lockKind(tx, { kind });
     const [row] = await tx
       .select({
         maxNo: sql<number>`COALESCE(max(${billTemplateVersion.versionNo}), 0)::int`,
@@ -219,7 +231,10 @@ export const billTemplateVersionRepository = {
 
   // bm57 D4 — who last saved the draft: the actor of the newest
   // `INVOICE_TEMPLATE_DRAFT_SAVED` audit row for it (the table keeps only the
-  // creator, not the last modifier).
+  // creator, not the last modifier). A LEFT join, so a save by a since-deleted
+  // user (`actor_user_id` is SET NULL) still counts as the newest save and is
+  // reported as "a deleted user" instead of being skipped for an older saver.
+  // `null` only when no audit row exists at all.
   async findLatestDraftSaver(
     db: Database,
     versionId: string,
@@ -227,7 +242,7 @@ export const billTemplateVersionRepository = {
     const [row] = await db
       .select({ name: appuser.userName })
       .from(auditLog)
-      .innerJoin(appuser, sql`${appuser.id} = ${auditLog.actorUserId}`)
+      .leftJoin(appuser, sql`${appuser.id} = ${auditLog.actorUserId}`)
       .where(
         and(
           eq(auditLog.eventType, "INVOICE_TEMPLATE_DRAFT_SAVED"),
@@ -236,6 +251,6 @@ export const billTemplateVersionRepository = {
       )
       .orderBy(desc(auditLog.createdDatetime))
       .limit(1);
-    return row?.name ?? null;
+    return row ? (row.name ?? "a deleted user") : null;
   },
 };

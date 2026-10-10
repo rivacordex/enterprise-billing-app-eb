@@ -29,13 +29,27 @@ export type SaveTemplateDraftResult =
   | { ok: false; code: TemplateDraftErrorCode | "VALIDATION_ERROR" };
 
 const UNIQUE_VIOLATION = "23505";
+// Only a lost race on the draft itself is a conflict. A 23505 from anywhere
+// else in the transaction (the audit insert, say) is a real fault and must
+// surface as a server error, not as "another user changed the draft".
+const DRAFT_RACE_CONSTRAINTS = new Set(["btv_one_draft_uq", "btv_version_uq"]);
 
-function isUniqueViolation(error: unknown): boolean {
-  // postgres.js surfaces SQLSTATE on `code`; drizzle may wrap it in `cause`.
-  const code =
-    (error as { code?: string } | undefined)?.code ??
-    (error as { cause?: { code?: string } } | undefined)?.cause?.code;
-  return code === UNIQUE_VIOLATION;
+interface PgErrorFields {
+  code?: string;
+  constraint_name?: string;
+}
+
+export function isDraftRaceViolation(error: unknown): boolean {
+  // postgres.js puts SQLSTATE and the constraint on the error; drizzle may wrap
+  // it in `cause`.
+  const e = error as (PgErrorFields & { cause?: PgErrorFields }) | undefined;
+  const code = e?.code ?? e?.cause?.code;
+  const constraint = e?.constraint_name ?? e?.cause?.constraint_name;
+  return (
+    code === UNIQUE_VIOLATION &&
+    constraint !== undefined &&
+    DRAFT_RACE_CONSTRAINTS.has(constraint)
+  );
 }
 
 export async function saveTemplateDraft(
@@ -57,11 +71,8 @@ export async function saveTemplateDraft(
   try {
     return await db.transaction(
       async (tx): Promise<SaveTemplateDraftResult> => {
-        // Takes the per-kind advisory lock; the number is used only on insert.
-        const nextVersionNo = await billTemplateVersionRepository.nextVersionNo(
-          tx,
-          { kind: "generated" },
-        );
+        // Serialise draft writers first (see `lockKind`).
+        await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
         const draft = await billTemplateVersionRepository.findDraft(tx, {
           kind: "generated",
         });
@@ -122,6 +133,10 @@ export async function saveTemplateDraft(
           );
         }
 
+        const nextVersionNo = await billTemplateVersionRepository.nextVersionNo(
+          tx,
+          { kind: "generated" },
+        );
         const created = await billTemplateVersionRepository.insertDraft(tx, {
           versionNo: nextVersionNo,
           refLayoutVersionId: current.refLayoutVersionId,
@@ -150,7 +165,8 @@ export async function saveTemplateDraft(
     );
   } catch (error) {
     // The backstop for a lost race (`btv_one_draft_uq` / `btv_version_uq`).
-    if (isUniqueViolation(error)) return { ok: false, code: "DRAFT_CONFLICT" };
+    if (isDraftRaceViolation(error))
+      return { ok: false, code: "DRAFT_CONFLICT" };
     throw error;
   }
 }

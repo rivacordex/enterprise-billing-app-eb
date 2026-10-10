@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, like, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
@@ -137,10 +137,17 @@ export const invoiceProfileRepository = {
         value: systemConfig.configValue,
       })
       .from(systemConfig)
-      .where(and(inProfileGroup, isNotNull(systemConfig.configValue)));
+      .where(
+        and(
+          inProfileGroup,
+          like(systemConfig.configKey, `${INVOICE_PROFILE_META_PREFIX}%`),
+          isNotNull(systemConfig.configValue),
+        ),
+      );
     const metaByVersion = new Map<number, InvoiceProfileRawVersion["meta"]>();
+    // The query already restricts to non-null `meta.*` rows, so no re-check.
     for (const { version, key, value } of metaRows) {
-      if (!isMetaKey(key) || value === null) continue;
+      if (value === null) continue; // narrows the type; never true at runtime
       const bucket = metaByVersion.get(version) ?? {};
       bucket[key as InvoiceProfileMetaKey] = value;
       metaByVersion.set(version, bucket);
