@@ -251,7 +251,18 @@ regenerated, so only the outline applies to it, and the form shows a
 
 The read-only view renders "Shown"/"Hidden" as text, and mandatory sections
 keep their `Lock` "Required" mark. Neither Save nor Activate is rendered in
-bm55; they arrive with bm57/bm58.
+bm55.
+
+**Save draft (bm57).** An EDIT user sees an outline **Save draft** button
+right-aligned under the form. It is disabled while the structure equals the
+last saved one and while a save is in flight. Success is a toast "Draft v{n}
+saved — not used on invoices". `DRAFT_CONFLICT` is a Warning toast with a
+**Reload** action. A refused mandatory section shows Danger text under that
+row. When the page opens on the working draft, a neutral Info line above the
+form reads "Editing draft v{n} — saved {relative time} by {user}. Drafts are
+never used on invoices." READ users never see the draft on the edit tab. In
+Version history the DRAFT row shows the Draft badge, "—" for activated and
+retired, and no download. **Activate** arrives with bm58.
 
 ### 10c. Invoice document palette and typography (print — not app tokens)
 

@@ -2,7 +2,9 @@
 // locked with "Required"; a READ user sees text, not inputs, and can still
 // preview; a toggle drives a debounced preview call carrying the unsaved
 // structure; the bill source list is offered only to a billrun_view holder;
-// a posted bill shows the "as issued" banner.
+// a posted bill shows the "as issued" banner. bm57: Save draft is EDIT-only,
+// disabled while pristine or saving, sends the unsaved structure with the
+// concurrency token, and reports success, a conflict and a refused structure.
 
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,8 +13,19 @@ vi.mock(
   "@/actions/billing/invoice-settings/preview-invoice-template.action",
   () => ({ previewInvoiceTemplateAction: vi.fn() }),
 );
+vi.mock(
+  "@/actions/billing/invoice-settings/save-template-draft.action",
+  () => ({ saveTemplateDraftAction: vi.fn() }),
+);
+const refresh = vi.hoisted(() => vi.fn());
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
 
 import { previewInvoiceTemplateAction } from "@/actions/billing/invoice-settings/preview-invoice-template.action";
+import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
+import { toast } from "sonner";
 import { InvoiceStructureForm } from "@/components/billing/invoice-settings/invoice-structure-form";
 import {
   MANDATORY_SECTION_KEYS,
@@ -20,6 +33,8 @@ import {
 } from "@/types/billing";
 
 const mockPreview = vi.mocked(previewInvoiceTemplateAction);
+const mockSave = vi.mocked(saveTemplateDraftAction);
+const TOKEN = "2026-10-10T01:02:03.123456Z";
 
 const ALL_ON: InvoiceTemplateStructure = {
   sections: {
@@ -73,6 +88,11 @@ async function flushDebounce(): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers();
   mockPreview.mockReset();
+  mockSave.mockReset();
+  vi.mocked(toast.success).mockReset();
+  vi.mocked(toast.warning).mockReset();
+  vi.mocked(toast.error).mockReset();
+  refresh.mockReset();
   mockPreview.mockResolvedValue({
     ok: true,
     html: "<html><body>preview</body></html>",
@@ -160,10 +180,136 @@ describe("InvoiceStructureForm — EDIT user", () => {
     });
   });
 
-  it("has no Save or Activate control (bm57/bm58)", () => {
+  it("has no Activate control (bm58)", () => {
     renderForm();
-    expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /activate/i })).toBeNull();
+  });
+});
+
+describe("InvoiceStructureForm — Save draft (bm57)", () => {
+  function togglePayment(): void {
+    fireEvent.click(
+      within(screen.getByTestId("section-payment")).getByRole("checkbox"),
+    );
+  }
+
+  it("renders Save draft for an EDIT user, disabled while pristine", () => {
+    renderForm();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  });
+
+  it("enables Save draft once the structure changes, and disables it again when reverted", () => {
+    renderForm();
+    togglePayment();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    togglePayment();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  });
+
+  it("does not render Save draft for a READ user", () => {
+    renderForm({ editable: false });
+    expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
+  });
+
+  it("sends the unsaved structure with the token, then toasts and goes pristine", async () => {
+    mockSave.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000004",
+      versionNo: 2,
+      draftToken: "2026-10-10T02:00:00.000001Z",
+    });
+    renderForm({ expectedDraftToken: TOKEN });
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(mockSave).toHaveBeenCalledWith({
+      structure: {
+        ...ALL_ON,
+        sections: { ...ALL_ON.sections, payment: false },
+      },
+      expectedDraftToken: TOKEN,
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Draft v2 saved — not used on invoices",
+    );
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  });
+
+  it("uses the token returned by the last save for the next one", async () => {
+    mockSave.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000004",
+      versionNo: 2,
+      draftToken: "2026-10-10T02:00:00.000001Z",
+    });
+    renderForm();
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(mockSave.mock.calls[0]?.[0]).toMatchObject({
+      expectedDraftToken: null,
+    });
+    expect(mockSave.mock.calls[1]?.[0]).toMatchObject({
+      expectedDraftToken: "2026-10-10T02:00:00.000001Z",
+    });
+  });
+
+  it("shows a Warning toast with Reload on DRAFT_CONFLICT and stays dirty", async () => {
+    mockSave.mockResolvedValue({ ok: false, code: "DRAFT_CONFLICT" });
+    renderForm({ expectedDraftToken: TOKEN });
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Another user changed the draft — reload to see it.",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "Reload" }),
+      }),
+    );
+    const options = vi.mocked(toast.warning).mock.calls[0]?.[1] as unknown as {
+      action: { onClick: () => void };
+    };
+    options.action.onClick();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  });
+
+  it("shows inline danger text under the offending row on MANDATORY_SECTION_HIDDEN", async () => {
+    mockSave.mockResolvedValue({
+      ok: false,
+      code: "MANDATORY_SECTION_HIDDEN",
+      fieldErrors: {
+        "structure.sections.billTo": ["MANDATORY_SECTION_HIDDEN"],
+      },
+    });
+    renderForm();
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(
+      within(screen.getByTestId("section-billTo")).getByRole("alert"),
+    ).toHaveTextContent("required");
+    expect(
+      within(screen.getByTestId("section-payment")).queryByRole("alert"),
+    ).toBeNull();
+  });
+
+  it("shows an error toast when the server refuses with FORBIDDEN", async () => {
+    mockSave.mockResolvedValue({ ok: false, code: "FORBIDDEN" });
+    renderForm();
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(toast.error).toHaveBeenCalled();
   });
 });
 

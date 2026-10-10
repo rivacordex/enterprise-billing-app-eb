@@ -1096,6 +1096,77 @@ DELIVERED" section.
     bm60 (logo upload), bm61 (activation writes `meta.*`). Known-issues §20 (layout v2) still
     precedes bm58.
 
+## Invoice Template update — bm57 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
+
+- **bm57 — Invoice template: save draft (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm57-invoice-template-save-draft.md`. An
+  `invoice_settings : EDIT` user saves the section/column choices as the single working
+  DRAFT generated version. The server refuses READ users and any structure that hides a
+  mandatory section, and every save writes one `INVOICE_TEMPLATE_DRAFT_SAVED` audit row in
+  the same transaction. No activation, no blob write, no migration, no grant change, no npm
+  dependency. Depends on bm55.
+  - **Delivered:**
+    - `types/audit.ts` + `types/audit-log.ts`: `INVOICE_TEMPLATE_DRAFT_SAVED` (Change).
+      `types/billing.ts`: `TEMPLATE_DRAFT_ERROR_CODES` (`DRAFT_CONFLICT`,
+      `MANDATORY_SECTION_HIDDEN`) and `TemplateDraftInfo`.
+    - `db/repositories/billing/bill-template-version.ts`: `findDraft`, `insertDraft`,
+      `updateDraftStructure` (returns the new token, or `null` on a conflict) and
+      `findLatestDraftSaver` (newest audit actor for the draft).
+    - `services/billing/invoice-template/save-template-draft.ts`: one transaction. The
+      per-kind advisory lock comes first, then a re-parse, then insert or token-guarded
+      update, then the audit row. A `23505` from `btv_one_draft_uq`/`btv_version_uq` maps to
+      `DRAFT_CONFLICT`.
+    - `actions/billing/invoice-settings/save-template-draft.action.ts`: EDIT guard first,
+      then Zod (`MANDATORY_SECTION_HIDDEN` with the offending paths, otherwise
+      `VALIDATION_ERROR`), the service, then `revalidatePath('/administration/invoice-settings',
+      'layout')`. `validation/billing/invoice-template-structure.schema.ts` gains
+      `saveTemplateDraftInputSchema`.
+    - UI: `InvoiceStructureForm` has an outline **Save draft** (EDIT only, disabled while
+      pristine or saving, keeps the live token between saves, Warning toast with Reload on a
+      conflict, inline Danger text under a refused row). The page opens an EDIT user on the
+      working DRAFT with the "Editing draft vN" banner and the draft token. The Generated
+      .hbs tab shows an Info line for a DRAFT (it has no files). READ users never get the
+      draft on the edit tab, and `?version=<draft>` falls back to the current version.
+      `getInvoiceTemplatePageData(version, { canEdit })` returns `defaultShown` and `draft`.
+  - **Deviations (recorded):**
+    1. **The token is text, not a `Date`.** The spec says the draft's
+       `last_modified_datetime` ISO string, but a JS `Date` truncates Postgres microseconds
+       to milliseconds, so the stored value could never match. The token is produced and
+       compared in SQL as `YYYY-MM-DDTHH24:MI:SS.USZ`, and the schema validates that shape.
+    2. **The advisory lock is taken before the draft lookup**, so two concurrent first saves
+       become one insert and one `DRAFT_CONFLICT` rather than a unique violation. The
+       `23505` mapping stays as a backstop.
+    3. **"Saved by {user}" comes from the audit log.** The table keeps only `created_by`, so
+       the banner reads the newest `INVOICE_TEMPLATE_DRAFT_SAVED` actor.
+    4. **The authz-matrix "no surface enforces EDIT" test** now covers the READ rows only; the
+       save action is the first EDIT row.
+    5. `DRAFT_CONFLICT` is a result code, not a thrown `InvoiceRenderError`, so it lives in
+       `TEMPLATE_DRAFT_ERROR_CODES` (code-standards TS rule 7 updated first).
+  - **Tests (all green):**
+    - `save-template-draft.action.test.ts` (11): the EDIT guard, a READ user refused with
+      nothing written, a hidden mandatory section posted directly, unknown keys and a bad
+      token, success revalidating the layout, conflict and error mapping.
+    - `tests/db/save-template-draft.integration.test.ts` (10, on the throwaway Postgres): the
+      first save inserts DRAFT v2 with a structure and no files; a second save updates the
+      same row; a stale token, a wrong belief about the draft's existence, and two concurrent
+      first saves (looped 3x) give exactly one winner and one `DRAFT_CONFLICT`; one audit row
+      per success with before/after; a hidden mandatory section writes nothing; the DRAFT is
+      never resolved by `resolveTemplate`/`resolveVersionsForPosting`; the history lists it.
+    - `invoice-structure-form.test.tsx` extended (+8), `invoice-template-settings.test.ts`
+      (6, the draft/READ-user page data), authz-matrix rows plus an order/audit check,
+      `audit-log-filters.test.tsx` (82 options; the new type is in the Change group), and the
+      existing `audit-log` category-map test.
+    - Full unit suite: 3994 tests, 12 failing, all the 15-vs-16 permission-count mismatch
+      recorded in known-issues §21a. Full integration project: 1088 passed, 48 failed,
+      the same 48 as before (known-issues §21), none touching bm57.
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the page and form.
+  - **Docs closed in this change set:** code-standards data rule 3 (one working draft per
+    kind, the optimistic token) and TS rule 7 (`DRAFT_CONFLICT`); ui-context §10b (Save draft
+    states); known-issues §21 (the failing tests found after bm56); this tracker.
+  - **Next:** bm58 (activate the working draft; promotes it in place). Known-issues §20 (layout
+    v2) still precedes bm58.
+
 ## Outstanding / Next (post-Phase 4)
 
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets

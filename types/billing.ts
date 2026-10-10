@@ -1137,3 +1137,26 @@ export interface CompanyProfilePageModel {
   shown: CompanyProfileShownVersion | null;
   history: ProfileHistoryRow[];
 }
+
+// bm57-spec §Design D1/D2 — the save-draft result codes beyond the generic
+// action ones. `DRAFT_CONFLICT`: the shared working draft changed since the
+// form loaded it (optimistic token mismatch) — never last-writer-wins.
+// `MANDATORY_SECTION_HIDDEN` is the structure schema's binding issue code.
+export const TEMPLATE_DRAFT_ERROR_CODES = [
+  "DRAFT_CONFLICT",
+  "MANDATORY_SECTION_HIDDEN",
+] as const;
+export type TemplateDraftErrorCode =
+  (typeof TEMPLATE_DRAFT_ERROR_CODES)[number];
+
+// bm57-spec §Design D4 — the working DRAFT the Invoice template page opens for
+// EDIT users. `token` is the draft's `last_modified_datetime` as a
+// microsecond-precision ISO string (a JS `Date` would truncate to ms and never
+// match the stored value); `savedBy` is the latest save's actor name.
+export interface TemplateDraftInfo {
+  billTemplateVersionId: string;
+  versionNo: number;
+  token: string;
+  savedAt: Date;
+  savedBy: string | null;
+}

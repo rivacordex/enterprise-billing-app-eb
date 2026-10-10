@@ -11,6 +11,7 @@ import {
   type InvoiceErrorCode,
   type InvoiceTemplateStructure,
   type RecentPostedBill,
+  type TemplateDraftInfo,
   type TemplateVersionHistoryRow,
   type TemplateVersionStatus,
 } from "@/types/billing";
@@ -29,6 +30,12 @@ export interface InvoiceTemplatePageData {
   // The version the page shows: `?version=` when it names a stored generated
   // version, else `current`.
   shown: BillTemplateVersion;
+  // bm57 D4: the version the page opens on when no `?version=` names one: the
+  // working DRAFT for an EDIT user who has one, else `current`.
+  defaultShown: BillTemplateVersion;
+  // bm57 D4: the working DRAFT, only ever loaded for EDIT users (READ users
+  // never see it on the edit tab; it is still listed in `history`).
+  draft: TemplateDraftInfo | null;
   shownStructure: InvoiceTemplateStructure;
   history: TemplateVersionHistoryRow[];
 }
@@ -54,18 +61,24 @@ function toHistoryRow(
   };
 }
 
-// A version the page may show: a stored (non-DRAFT) generated version. A
-// DRAFT becomes viewable to EDIT users once bm57 creates one.
+// A version the page may show: a stored (non-DRAFT) generated version, or the
+// working DRAFT for an EDIT user (bm57 D4).
 function isShowable(
   row: BillTemplateVersion | null,
+  canEdit: boolean,
 ): row is BillTemplateVersion {
-  return row !== null && row.kind === "generated" && row.status !== "DRAFT";
+  return (
+    row !== null &&
+    row.kind === "generated" &&
+    (row.status !== "DRAFT" || canEdit)
+  );
 }
 
 export async function getInvoiceTemplatePageData(
   versionId: string | undefined,
+  { canEdit }: { canEdit: boolean } = { canEdit: false },
 ): Promise<InvoiceTemplatePageData> {
-  const [active, fallback, selected, generatedRows, layoutRows] =
+  const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
     await Promise.all([
       billTemplateVersionRepository.findActive(db, { kind: "generated" }),
       billTemplateVersionRepository.findDefault(db, { kind: "generated" }),
@@ -77,6 +90,9 @@ export async function getInvoiceTemplatePageData(
         kind: "layout",
         withUsage: false,
       }),
+      canEdit
+        ? billTemplateVersionRepository.findDraft(db, { kind: "generated" })
+        : Promise.resolve(null),
     ]);
 
   const current = active ?? fallback;
@@ -90,7 +106,20 @@ export async function getInvoiceTemplatePageData(
     );
   }
 
-  const shown = isShowable(selected) ? selected : current;
+  const defaultShown = draftRow ?? current;
+  const shown = isShowable(selected, canEdit) ? selected : defaultShown;
+  const draft: TemplateDraftInfo | null = draftRow
+    ? {
+        billTemplateVersionId: draftRow.billTemplateVersionId,
+        versionNo: draftRow.versionNo,
+        token: draftRow.token,
+        savedAt: draftRow.lastModifiedDatetime,
+        savedBy: await billTemplateVersionRepository.findLatestDraftSaver(
+          db,
+          draftRow.billTemplateVersionId,
+        ),
+      }
+    : null;
   const layoutLabels = new Map(
     layoutRows.map((l) => [
       l.billTemplateVersionId,
@@ -101,6 +130,8 @@ export async function getInvoiceTemplatePageData(
   return {
     current,
     shown,
+    defaultShown,
+    draft,
     // CHECK `btv_generated_has_layout` guarantees a generated row's structure.
     shownStructure: shown.structure!,
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
@@ -140,7 +171,7 @@ export async function getGeneratedVersionFile(
   file: GeneratedVersionFile,
 ): Promise<{ bytes: Buffer; versionNo: number } | null> {
   const row = await billTemplateVersionRepository.findById(db, versionId);
-  if (!isShowable(row)) return null;
+  if (!isShowable(row, false)) return null;
   const files = await loadGeneratedFiles(row);
   return { bytes: files[file], versionNo: row.versionNo };
 }

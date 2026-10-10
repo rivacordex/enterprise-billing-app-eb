@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
@@ -15,6 +15,7 @@ import {
   getInvoiceTemplatePageData,
   listRecentPostedBills,
 } from "@/services/billing/read/invoice-template-settings";
+import { formatRelativeTime } from "@/lib/formatters";
 import {
   getAppLocale,
   getAppTimezone,
@@ -68,10 +69,13 @@ export default async function InvoiceTemplatePage({
     LEVELS.READ,
   );
 
-  const data = await getInvoiceTemplatePageData(version);
-  const { shown, current } = data;
+  const data = await getInvoiceTemplatePageData(version, { canEdit });
+  const { shown, current, defaultShown, draft } = data;
+  // The version opened by default is the working DRAFT for an EDIT user who
+  // has one (bm57 D4), else the current version.
   const viewingOther =
-    shown.billTemplateVersionId !== current.billTemplateVersionId;
+    shown.billTemplateVersionId !== defaultShown.billTemplateVersionId;
+  const shownIsDraft = shown.status === "DRAFT";
   const versionQuery = viewingOther
     ? `&version=${shown.billTemplateVersionId}`
     : "";
@@ -93,7 +97,8 @@ export default async function InvoiceTemplatePage({
             href="?tab=edit"
             className="text-body-sm font-medium text-[color:var(--action-primary-bg)] hover:underline"
           >
-            Back to the current version (v{current.versionNo})
+            Back to the {draft ? "working draft" : "current version"} (v
+            {defaultShown.versionNo})
           </Link>
         ) : null}
       </div>
@@ -118,12 +123,30 @@ export default async function InvoiceTemplatePage({
         ))}
       </nav>
 
+      {tab === "edit" && shownIsDraft && draft ? (
+        <p
+          role="status"
+          className="inline-flex items-center gap-2 rounded-sm bg-[color:var(--color-info-50)] px-3 py-2 text-body-sm text-[color:var(--color-info-700)]"
+        >
+          <Info size={14} aria-hidden />
+          Editing draft v{draft.versionNo} — saved{" "}
+          {formatRelativeTime(draft.savedAt)}
+          {draft.savedBy ? ` by ${draft.savedBy}` : ""}. Drafts are never used
+          on invoices.
+        </p>
+      ) : null}
+
       {tab === "edit" ? (
         <InvoiceStructureForm
           // A fresh form (and preview) per shown version.
           key={shown.billTemplateVersionId}
           initialStructure={data.shownStructure}
-          editable={canEdit && !viewingOther}
+          editable={
+            canEdit &&
+            (shownIsDraft ||
+              shown.billTemplateVersionId === current.billTemplateVersionId)
+          }
+          expectedDraftToken={draft?.token ?? null}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}
         />
@@ -144,6 +167,18 @@ export default async function InvoiceTemplatePage({
 async function renderGenerated(
   shown: Awaited<ReturnType<typeof getInvoiceTemplatePageData>>["shown"],
 ): Promise<React.JSX.Element> {
+  if (shown.status === "DRAFT") {
+    // A DRAFT has no generated files until it is activated (bm58).
+    return (
+      <Alert>
+        <Info aria-hidden />
+        <AlertDescription>
+          A draft has no generated files yet. They are written when it is
+          activated.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   const sources = await getGeneratedHbsSources(shown);
   if (!sources.ok) {
     // Inv #45 — unverified bytes are never shown.

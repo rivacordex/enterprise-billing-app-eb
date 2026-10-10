@@ -73,6 +73,12 @@ const MATRIX: MatrixRow[] = [
     kind: "action",
     alsoBillrunView: true,
   },
+  {
+    surface: "save template draft (a mutation)",
+    file: "actions/billing/invoice-settings/save-template-draft.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
 ];
 
 describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => {
@@ -100,8 +106,8 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     },
   );
 
-  it("no bm55 surface enforces EDIT — EDIT is only a hasLevel show/hide gate", () => {
-    for (const { file } of MATRIX) {
+  it("no read surface enforces EDIT — EDIT is only a hasLevel show/hide gate", () => {
+    for (const { file } of MATRIX.filter((r) => r.level === "READ")) {
       const src = read(file);
       expect(src).not.toMatch(/requirePermission\([^)]*LEVELS\.EDIT/);
       expect(src).not.toContain("LEVELS.DELETE");
@@ -133,6 +139,33 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(service).not.toContain("putObject");
     expect(service).not.toMatch(/\.(insert|update|delete)\(/);
     expect(service).not.toMatch(/insertAuditEvent|auditLogRepository/);
+  });
+
+  it("save-template-draft guards on EDIT first, then validates, then calls the service, then revalidates", () => {
+    const src = read(
+      "actions/billing/invoice-settings/save-template-draft.action.ts",
+    );
+    const guard = src.indexOf("LEVELS.EDIT");
+    const parse = src.indexOf("saveTemplateDraftInputSchema.safeParse");
+    const service = src.indexOf("await saveTemplateDraft(");
+    const revalidate = src.indexOf("revalidatePath(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(parse);
+    expect(parse).toBeLessThan(service);
+    expect(service).toBeLessThan(revalidate);
+    // Audit lives in the service transaction, never in the action.
+    expect(src).not.toMatch(/insertAuditEvent|auditLogRepository/);
+    const svc = read(
+      "services/billing/invoice-template/save-template-draft.ts",
+    );
+    expect(svc).toContain("db.transaction(");
+    // One audit write per branch (update / insert), each in the transaction.
+    expect(
+      svc.match(/eventType: "INVOICE_TEMPLATE_DRAFT_SAVED"/g),
+    ).toHaveLength(2);
+    // No blob write, no activation: a DRAFT has no files (bm57).
+    expect(svc).not.toContain("putObject");
+    expect(svc).not.toMatch(/ACTIVE.*status|activate/i);
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {

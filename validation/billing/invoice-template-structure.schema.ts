@@ -67,3 +67,21 @@ export const previewInvoiceTemplateInputSchema = z
 export type PreviewInvoiceTemplateInput = z.infer<
   typeof previewInvoiceTemplateInputSchema
 >;
+
+// bm57-spec §Design D2 — the save-draft action's input. `expectedDraftToken` is
+// the working draft's concurrency token as the form last saw it (`null` when it
+// believed no draft existed). The token is an ISO-8601 UTC string with
+// microsecond precision, produced by the database (`TOKEN_FORMAT` in the
+// repository); anything else is rejected before it reaches SQL.
+const DRAFT_TOKEN_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+export const saveTemplateDraftInputSchema = z
+  .object({
+    structure: invoiceTemplateStructureSchema,
+    expectedDraftToken: z.string().regex(DRAFT_TOKEN_RE).nullable(),
+  })
+  .strict();
+
+export type SaveTemplateDraftInput = z.infer<
+  typeof saveTemplateDraftInputSchema
+>;
