@@ -71,4 +71,34 @@ describe("golden render per layout version (criterion 12)", () => {
       );
     },
   );
+
+  // The live preview renders the sample (which carries an invoice number)
+  // as a draft: its <title> must say pro-forma, never "Tax invoice".
+  it.each(LAYOUT_VERSIONS)(
+    "$layout $version titles a draft pro-forma even when it carries a number",
+    ({ layout, version, generated }) => {
+      const sample = parseSampleData(
+        new Map([
+          [
+            "sample-data.json",
+            readFileSync(join(SEEDS, layout, version, "sample-data.json")),
+          ],
+        ]),
+      );
+      const tpl = compileInvoiceTemplate(
+        readFileSync(join(SEEDS, generated, "invoice.hbs"), "utf8"),
+      );
+      const title = (isDraft: boolean) =>
+        /<title>([^<]*)<\/title>/.exec(
+          executeInvoiceTemplate(tpl, {
+            ...sample,
+            isDraft,
+            invoice: { ...sample.invoice, isDraft },
+          }),
+        )?.[1];
+      expect(sample.invoice.number).not.toBeNull();
+      expect(title(true)).toBe("Pro-forma invoice");
+      expect(title(false)).toBe(`Tax invoice ${sample.invoice.number}`);
+    },
+  );
 });

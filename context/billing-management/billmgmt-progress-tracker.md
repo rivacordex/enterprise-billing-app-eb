@@ -1887,6 +1887,9 @@ DELIVERED" section.
     regenerated, `generate.test.ts`'s `<html>` assertion updated. v1 is final from this commit.
     **Environments that already ran `0046` must be reset** (known-issues §23k/§23l). Unit 1208
     template tests, integration 1214, admin e2e 5/5 — all green on a fresh stack.
+    Follow-up review fix: the `<title>` checks `isDraft` first, so a draft that carries a number
+    (the editor's sample preview) is "Pro-forma invoice"; v1 digests re-pinned again in `0046`
+    and the helper; regression test in `invoice-golden.test.ts`. Same reset as above (§23l).
     - Not changed (cleanup, recorded for later): sharing `buildInvoiceHtml`'s orchestration and
       the route auth preamble, and the `lib/csv.ts` wire-format overlap.
   - **Next:** the cloud cutover adds the `appBlobAuth` flip (G16); the layout v2 unit (annex CSS,

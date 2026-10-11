@@ -220,7 +220,7 @@ VALUES
    'INVTPL-STD-A4',
    '{"format":"A4","orientation":"portrait","margin":{"top":"13mm","bottom":"16mm","left":"14mm","right":"14mm"},"displayHeaderFooter":true,"printBackground":true}'::jsonb,
    'invoice-templates/layouts/INVTPL-STD-A4/v1/',
-   'debc3f13622ed5228ae1b498cc7b7b81a5c3294d2f89e999a453e48dcc7ce11d', 'sha256',
+   '3fdf50c11f54eb41fc18f334c54a84275ce5847b32dc0fa37356b0b6d703ecc6', 'sha256',
    'Seeded default layout INVTPL-STD-A4 v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"
@@ -231,7 +231,7 @@ VALUES
    'BTV00000001',
    '{"sections":{"billTo":true,"identification":true,"amountDue":true,"chargeSummary":true,"taxSummary":true,"payment":true,"chargeDetails":true,"usageAnnex":true,"notes":true},"columns":{"showServicePeriod":true,"showDiscountColumn":true,"showProductId":true,"showUdrCount":true}}'::jsonb,
    'invoice-templates/generated/INVOICE/v1/',
-   '1203d6f49e1470d07bed8992bea8f99edc793c3d92e556c05ec2dedde92f6794', 'sha256',
+   '361d449e2600c67552ad0922783f5b339352917ca22b9311f8c5dd4a2bfc7d3b', 'sha256',
    'Seeded default generated template v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"

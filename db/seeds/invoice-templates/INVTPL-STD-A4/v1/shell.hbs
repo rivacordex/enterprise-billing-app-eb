@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>{{#if invoice.number}}Tax invoice {{invoice.number}}{{else}}Pro-forma invoice{{/if}}</title>
+<title>{{#if isDraft}}Pro-forma invoice{{else}}{{#if invoice.number}}Tax invoice {{invoice.number}}{{else}}Pro-forma invoice{{/if}}{{/if}}</title>
 <style>
   /*
    * bm47-spec §Design D7 / ui-context §10c. IBM Plex Sans 400/600 + IBM Plex
