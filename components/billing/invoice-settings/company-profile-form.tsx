@@ -1,11 +1,12 @@
 // bm56-spec §Design D1, ui-context §10b ("Read-only view") — the company
-// profile form. bm56 wires READ MODE ONLY: four groups of plain text (no
-// disabled-input grey wash), blank optional fields as "—", colour swatches and
-// the logo preview served by the session-guarded GET route. The `mode` prop
-// exists so bm59 adds the editable rendering without reshaping the component;
-// until then `'edit'` renders the same read view (nothing is writable here).
-// A SERVER component — no state, no handlers.
+// profile form. READ MODE: four groups of plain text (no disabled-input grey
+// wash), blank optional fields as "—", colour swatches and the logo preview
+// served by the session-guarded GET route. A SERVER component — no state, no
+// handlers. bm59: `mode: 'edit'` renders `CompanyProfileEditForm` (a client
+// component, React Hook Form + the shared draft schema) for EDIT users.
 
+import { ColourSwatch } from "@/components/billing/invoice-settings/colour-swatch";
+import { CompanyProfileEditForm } from "@/components/billing/invoice-settings/company-profile-edit-form";
 import { MYINVOIS_STATE_LABELS, COUNTRY_LABELS } from "@/lib/myinvois-states";
 import { cn } from "@/lib/utils";
 import type { InvoiceProfileView } from "@/types/billing";
@@ -17,9 +18,16 @@ export interface CompanyProfileFormProps {
   mode?: "read" | "edit";
   fields: InvoiceProfileView;
   logoAssetVersionId: string | null;
+  // Edit mode: the working draft's token, or `null` when no draft exists yet.
+  expectedDraftToken?: string | null;
+  // Edit mode, bm60 D8: offer "Use the current app logo".
+  showLogoImport?: boolean;
+  // Edit mode, bm61: the working draft's version (the Activate button shows
+  // only when it is set) and the ACTIVE field map for the dialog's diff.
+  draftVersion?: number | null;
+  activeFields?: InvoiceProfileView | null;
 }
 
-const COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
 const MUTED = "text-[color:var(--text-muted)]";
 
 function Blank(): React.JSX.Element {
@@ -71,27 +79,38 @@ function Colour({ value }: { value: string | null }): React.JSX.Element {
   if (!value) return <Blank />;
   return (
     <span className="inline-flex items-center gap-2">
-      {COLOUR_RE.test(value) ? (
-        <svg
-          aria-hidden
-          data-testid="colour-swatch"
-          width={20}
-          height={20}
-          viewBox="0 0 20 20"
-          className="shrink-0 rounded-xs border border-[color:var(--border-default)]"
-        >
-          <rect width={20} height={20} fill={value} />
-        </svg>
-      ) : null}
+      <ColourSwatch value={value} />
       {value}
     </span>
   );
 }
 
 export function CompanyProfileForm({
+  mode = "read",
   fields,
   logoAssetVersionId,
+  expectedDraftToken = null,
+  showLogoImport = false,
+  draftVersion = null,
+  activeFields = null,
 }: CompanyProfileFormProps): React.JSX.Element {
+  if (mode === "edit") {
+    return (
+      <CompanyProfileEditForm
+        fields={fields}
+        logoSrc={
+          logoAssetVersionId
+            ? `${COMPANY_PROFILE_LOGO_BASE}/${logoAssetVersionId}`
+            : null
+        }
+        expectedDraftToken={expectedDraftToken}
+        showLogoImport={showLogoImport}
+        draftVersion={draftVersion}
+        activeFields={activeFields}
+      />
+    );
+  }
+
   const text = (key: string): React.ReactNode => {
     const value = fields[key];
     return value ? value : <Blank />;

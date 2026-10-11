@@ -7,28 +7,6 @@ when work starts, and delete them here when done.
 
 Source: `/code-review xhigh` of `7cfbe4d..HEAD`, 2026-10-09.
 
-## DR-01 — Invalid ACTIVE profile stamps permanently (DECIDED: option A, build in bm61)
-
-- **Finding.** `resolveVersionsForPosting` (`services/billing/invoice-template/resolve-template.ts`)
-  stamps the ACTIVE `invoice.profile` version onto the bill without validating
-  it, and the finalization guard (0033) makes the stamp immutable.
-- **Failure.** If the ACTIVE profile version is invalid (blank required key,
-  unknown logo asset, unreadable logo blob), every bill posted under it renders
-  with `INVOICE_PROFILE_INVALID`. `retryRenderInvoice` resolves the same stamp
-  and fails again, so the accounts stay render-pending and block distribution.
-- **Why not fixed at posting.** bm54 D1: posting reads DB rows only and must
-  never fail or slow because of a template (a bad template parks the *render*,
-  Inv #40).
-- **Decision (owner, 2026-10-09): option A** — make it impossible for an invalid
-  version to become ACTIVE. Activation (bm61) must run the full validity gate
-  (`readInvoiceProfile` + `inlineLogo`) and refuse with `INVOICE_PROFILE_INVALID`.
-  Recorded in `specs/bm00-build-plan.md` Unit 61. Rejected: B (validate at
-  posting — breaks the posting rule), C (restamp path — conflicts with Inv #41).
-- **Open until:** bm61 ships (blocked on G14). Until then no profile is
-  activatable from the app, so the gap is only reachable via hand-edited rows.
-- **Add with bm61:** a guardrail/test that activating an invalid version is
-  refused and leaves the previous ACTIVE version untouched.
-
 ## DR-02 — CSV template version resolved on every render and posting
 
 - **Finding.** `resolveTemplate` and `currentVersions` always resolve the CSV

@@ -170,8 +170,8 @@ function metaDate(value: string | undefined): Date | null {
 
 // bm56 D1/D2 — the Company profile page's view-model. Shown version:
 // `?version=` when it names a stored version (a DRAFT only for EDIT users),
-// else the ACTIVE version, else the DRAFT (EDIT users), else `null` (the
-// empty state, G15 A). Nothing is cached.
+// else — bm59 D3 — the working DRAFT for EDIT users, else the ACTIVE version,
+// else `null` (the empty state, G15 A). Nothing is cached.
 export async function getCompanyProfilePageModel(
   db: Database,
   { version, canEdit }: { version?: number | undefined; canEdit: boolean },
@@ -184,10 +184,9 @@ export async function getCompanyProfilePageModel(
     version === undefined
       ? undefined
       : visible.find((v) => v.configVersion === version);
+  const draftSummary = visible.find((v) => v.status === "DRAFT");
   const chosen =
-    requested ??
-    visible.find((v) => v.status === "ACTIVE") ??
-    visible.find((v) => v.status === "DRAFT");
+    requested ?? draftSummary ?? visible.find((v) => v.status === "ACTIVE");
 
   const userIds = new Set<string>();
   for (const v of visible) {
@@ -197,9 +196,29 @@ export async function getCompanyProfilePageModel(
       userIds.add(activator);
     }
   }
-  const names = await invoiceProfileRepository.resolveUserNames(db, [
-    ...userIds,
-  ]);
+  // The remaining reads are independent, so they run together. bm61 D5 — the
+  // ACTIVE field map feeds the activate dialog (EDIT users only); when the
+  // shown version IS the ACTIVE one, its raw read is reused.
+  const activeSummary = canEdit
+    ? visible.find((v) => v.status === "ACTIVE")
+    : undefined;
+  const readRaw = (v: { configVersion: number } | undefined) =>
+    v ? invoiceProfileRepository.readVersionRaw(db, v.configVersion) : null;
+  const activeRawRead = readRaw(activeSummary);
+  const [names, draftVersion, hasLogoAsset, activeRaw, raw] = await Promise.all(
+    [
+      invoiceProfileRepository.resolveUserNames(db, [...userIds]),
+      // bm59 D1 — the working draft and its token (EDIT users only).
+      draftSummary ? invoiceProfileRepository.findDraftVersion(db) : null,
+      // bm60 D8 — only EDIT users can import, so READ users skip the lookup.
+      canEdit ? billAssetRepository.hasLogoVersion(db) : true,
+      activeRawRead,
+      chosen && chosen.configVersion === activeSummary?.configVersion
+        ? activeRawRead
+        : readRaw(chosen),
+    ],
+  );
+  const activeFields = activeRaw?.fields ?? null;
 
   const history: ProfileHistoryRow[] = visible.map((v) => ({
     versionNo: v.configVersion,
@@ -212,12 +231,22 @@ export async function getCompanyProfilePageModel(
     usedByCount: v.usedByCount,
   }));
 
-  if (!chosen) return { shown: null, history };
+  const draft =
+    draftSummary && draftVersion?.configVersion === draftSummary.configVersion
+      ? {
+          version: draftSummary.configVersion,
+          token: draftVersion.token,
+          savedAt: draftSummary.lastModifiedDatetime,
+          savedBy: draftSummary.modifiedBy
+            ? (names.get(draftSummary.modifiedBy) ?? draftSummary.modifiedBy)
+            : null,
+        }
+      : null;
 
-  const raw = await invoiceProfileRepository.readVersionRaw(
-    db,
-    chosen.configVersion,
-  );
+  if (!chosen || !raw) {
+    return { shown: null, history, draft, hasLogoAsset, activeFields };
+  }
+
   const activator = raw.meta["meta.activated_by"];
   return {
     shown: {
@@ -229,6 +258,9 @@ export async function getCompanyProfilePageModel(
       logoAssetVersionId: raw.fields.logo_asset_version_id ?? null,
     },
     history,
+    draft,
+    hasLogoAsset,
+    activeFields,
   };
 }
 

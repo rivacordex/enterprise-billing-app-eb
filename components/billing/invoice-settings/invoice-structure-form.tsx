@@ -46,6 +46,7 @@ import {
   type PreviewError,
   type PreviewStatus,
 } from "@/components/billing/invoice-settings/invoice-preview-frame";
+import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -85,7 +86,7 @@ interface PreviewState {
 
 const ACTIVATE_MESSAGES = {
   CHANGE_NOTE_REQUIRED: "A change note is required.",
-  DRAFT_CONFLICT: "Another user changed the draft — reload to see it.",
+  DRAFT_CONFLICT: DRAFT_CONFLICT_MESSAGE,
   MANDATORY_SECTION_HIDDEN:
     "A required section is hidden in the draft, so it cannot be activated.",
   TEMPLATE_CHECKSUM_MISMATCH:
