@@ -1,0 +1,9 @@
+{{!-- bm63 — a deliberately bad layout file: tests/guardrails/invoice-layout-lint.test.ts must flag every construct below. --}}
+<img src="https://cdn.example.com/logo.png">
+<div style="background: url(http://cdn.example.com/bg.png)"></div>
+<link rel="stylesheet" href="x.css">
+<style>@import "x.css";</style>
+<script>alert(1)</script>
+{{{customer.name}}}
+{{> header}}
+{{lookup customer "name"}}

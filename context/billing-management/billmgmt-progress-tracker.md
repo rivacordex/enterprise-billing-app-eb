@@ -9,8 +9,13 @@ to `billmgmt-completed-tracker.md`. Full history:
 `git log -- context/billing-management/billmgmt-progress-tracker.md`; per-unit detail:
 `context/billing-management/specs/bm*.md`; defect detail: `billmgmt-known-issues.md`._
 
-## Current state (2026-10-07)
+## Current state (2026-10-11)
 
+- **Invoice Template update (bm47–bm63) delivered and signed off (2026-10-11).** The bm63 ship
+  gate proved overview success criteria 1–12 on a fresh database (the journey) and in the browser
+  (the admin e2e); every G-item is decided (G5, G8, G9, G16 by the owner on 2026-10-11). Part 2 is
+  folded into `billmgmt-project-overview.md`. Before production: the layout v2 unit (annex CSS +
+  real fonts) and the `appBlobAuth` flip at the cloud cutover.
 - **Phases 1–4 (bm01–bm39) delivered.** Phase 1 (bm01–bm13) control plane; Phase 2
   (bm14–bm21) two-writer boundary, rendering, posting-on-real-charges, distribution;
   Phase 3 (bm22–bm35) real compute plane; Phase 4 (bm36–bm39) processor signal-back,
@@ -211,7 +216,7 @@ DELIVERED" section.
   Postgres in this environment; (3) the 5 vitest failures above are
   unconfirmed. See "Outstanding / Next" below.
 
-## Invoice Template update — bm47 INCOMPLETE: core binder committed, gates + guardrails OPEN (2026-10-08)
+## Invoice Template update — bm47 DELIVERED (`dc19685`; gates decided and follow-ups closed or carried at the bm63 ship gate, 2026-10-11)
 
 - **bm47 — Invoice binder on `customer_bill_line` + reconciliation (Handlebars layout
   `INVTPL-STD-A4` v1).** Part 4 of `bm00-build-plan.md`. Scoped on explicit user
@@ -439,7 +444,7 @@ DELIVERED" section.
     ("Unassigned region", source = `udr_rated`, itemised rows); `placeholder-catalog.md`
     `usage.*` shape; this tracker.
 
-## Invoice Template update — bm50 IN PROGRESS (started 2026-10-08)
+## Invoice Template update — bm50 DELIVERED (`ab736a3`, 2026-10-08)
 
 - **bm50 — Invoice template catalog schema, seed rows, permission row and grants
   (Invoice Template update, Part 4).** Schema + grants + seed only (lands before any
@@ -1723,6 +1728,133 @@ DELIVERED" section.
     tracker.
   - **Next:** bm63 (Invoice Template ship gate).
 
+## Invoice Template update — bm63 DELIVERED: ship gate signed off, RUN GREEN on a fresh throwaway Postgres + Azurite + Chromium (2026-10-11)
+
+- **bm63 — Invoice Template ship gate (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm63-invoice-template-ship-gate.md`. Cross-cutting tests,
+  docs and the tracker; nothing new is built. Audits and signs off bm47–bm62.
+  - **Gate check:** every G-item is decided. **Owner decisions 2026-10-11:** G5 no `ONE_TIME` in
+    v1; G8 IBM Plex embedded (layout v1 keeps its placeholder `@font-face` sources, layout v2 ships
+    the real fonts); G9 customer SST/PO/contract fragments hidden, no columns; G16 the app's
+    Managed Identity for blob (the `appBlobAuth` flip is a cloud-cutover ops step). G14 (no
+    four-eyes) was decided earlier the same day. Recorded in the overview, architecture,
+    code-standards (C2, C5, Styling 2), workflow rules §5 and bm00.
+  - **Delivered units and commits (bm47–bm63):**
+
+    | Unit | What | Commits |
+    | --- | --- | --- |
+    | bm47 | Binder on `customer_bill_line` + reconciliation, layout v1 | `dc19685`, `481ab2b`, `625753e` |
+    | bm48 | Rating writes `state`/`district` onto `udr_rated` | `b4d28e4`, `a563ace`, `4dd905e` |
+    | bm49 | Usage annex state → district from `udr_rated` | `f9fb724` |
+    | bm50 | Template catalog schema, seed, permission, grants | `ab736a3`, `e41c488` |
+    | bm51 | Generalized write-once blob store | `0c68a06`, `6ab17aa` (+ `a7e48ac` Prettier) |
+    | bm52 | Prod blob containers (bicep) | `7cfbe4d`, `82defcc` |
+    | bm53 | Resolution, verified load, seed upload | `3caddc5`, `82defcc`, `286a159` |
+    | bm54 | Posting stamps | `805377a`, `87ca6a9` |
+    | bm55 | Template editor read page + live preview | `c692666`, `87ca6a9`, `286a159` |
+    | bm56 | Company profile read page | `98dc3ac`, `477fd0d` |
+    | bm57 | Template save draft | `0f17cc2`, `477fd0d` |
+    | bm58 | Template activate | `735bbce`, `efaff82` |
+    | bm59 | Profile save draft | `765e662`, `8d5d252` |
+    | bm60 | Logo upload + sanitization | `da4cf9b`, `8d5d252`, `567ede9`, `0bd4a9c` |
+    | bm61 | Profile activate (G14: no four-eyes) | `68c0b81`, `8d5d252`, `567ede9`, `0bd4a9c` |
+    | bm62 | Invoice CSV output | `75fd10d` |
+    | bm63 | Ship gate | this change set (uncommitted) |
+
+  - **D1 — journey (`tests/e2e/invoice-template-journey.integration.test.ts`, 8 steps):** a fresh
+    database through the real `db:migrate`, role bootstraps and `db:setup` scripts (child
+    processes with the test environment only; the shared `tests/e2e/helpers/fresh-database.ts`),
+    then the `_SAMPLE_` `ci` seed processed app-side with the flow's own extracted SQL (a new
+    `runCollection` runner beside `runAggregation`/`runVerification`), stage signals through the
+    real M2M route, approved by a second user and posted: 4 accounts invoiced, every one rendered
+    from the default with no issuer/payment block, `Σ net_amount = subtotal`, every line listed,
+    "Unassigned region" present. Then template v2 + profile v1 through the **server actions**
+    (real `requirePermission`, only the session faked), the next run stamped v2 / profile 1;
+    template v3 + profile v2: the step-3 bill's stamps and stored PDF unchanged, reprint through
+    the stored-invoice route byte-identical, `charge_checksum` recomputes, a new draft uses v3 +
+    profile v2; a one-byte tamper of v3's `invoice.hbs` parks the new account
+    (`TEMPLATE_CHECKSUM_MISMATCH`, on the posting-progress exception surface) while the v2-pinned
+    twin re-renders, then the v2 logo tamper parks it with `ASSET_CHECKSUM_MISMATCH`; the CSV sums
+    to the subtotal; 10,000 usage rows render ≥ 3 PDF pages (final and draft) with the
+    page footer, `thead`/line-group rules and the fixed watermark, and 10,001 park
+    (`INVOICE_USAGE_OVER_LIMIT`); exactly one audit row per save, upload and activation (2 each).
+    Runs 2–4 post through the real `postAccount` on bm53/bm54 fixture bills (`reset: false`
+    option added to `setupInvoiceRenderFixtures`), because the `ci` seed has one due period.
+  - **D2 — admin e2e (`tests/e2e/invoice-settings-admin.e2e.integration.test.ts`, 5 scenarios):**
+    the installed `playwright` library (no `@playwright/test`) against `next start` on a free port,
+    which the test starts after building the fresh database and stops in `afterAll`; headless,
+    one context per persona, every non-server request aborted. Personas: no `invoice_settings`
+    (nav hidden, both pages → `/no-access`); READ without `billrun_view` (read-only pages, preview
+    works, sample only); READ with `billrun_view` (a posted bill offered; a customer named
+    `<script>alert(1)</script>` shows as literal text in the sandboxed preview, no dialog); EDIT
+    template (mandatory locked, hiding Discount removes the column from the preview, save →
+    activate v2, then v3 retires v2 in history, the Generated `.hbs` has no `[[`, no notes
+    section and no Discount header); EDIT profile (six invalid formats rejected inline with the
+    catalog messages; > 500 KB, < 300 px, PNG-as-SVG and SVG `<script>` logos rejected;
+    activation without a logo refused; with a logo it activates and shows the bank warning).
+    `npm run test:e2e:invoice-settings` = `next build` + this file (a `package.json` scripts
+    change only). Sign-in posts the login page's own CSRF token from inside the page, because
+    the client auth base URL is inlined at build time.
+  - **D3 — sweep, gaps closed in their owning areas** (each a separate defect-fix commit when
+    committed):
+    1. **Activate dialog unreachable on a 720 px screen (bm58/bm61, real defect).** A first
+       profile activation lists every field, so the dialog outgrew the viewport and Activate sat
+       below the fold with no scroll. `activate-version-dialog.tsx`: `DialogContent` now scrolls
+       (`max-h-[calc(100dvh-2rem)] overflow-y-auto`). Found by the admin e2e.
+    2. **Layout lint (bm47 follow-up, Styling rule 3):** `tests/guardrails/invoice-layout-lint.test.ts`
+       + the bad fixture `tests/fixtures/invoice-layout-bad/bad.hbs`. Handlebars-AST checks
+       (only the nine helpers + block built-ins, no partials, no triple-stash) plus the text bans;
+       CSS/HTML/Handlebars comments are skipped (the seeded shell's comment names the rule).
+    3. **Golden render (bm47 follow-up, criterion 12):** `tests/services/billing/invoice-golden.test.ts`
+       writes/compares `tests/fixtures/invoice-golden/INVTPL-STD-A4-v1{,.footer}.html` (sample
+       data through the seeded default, font data stripped, whitespace normalised); a test pins
+       one golden per seeded layout version. The golden directory is in `.prettierignore`.
+    4. **Guardrail 56 upgrade path (bm50 gap):** `invoice-settings-grants.integration.test.ts`
+       recreates a pre-bm50 grant state (DELETE/INSERT/UPDATE for `app_runtime`, ALL for
+       `billrun_runtime`, the reserved stamp columns) and re-runs the real bootstrap: revoked to
+       the same least-privilege result.
+    5. Guardrails 43 (on the `ci` seed) and 54 (≥ 3 pages) are shown by journey steps 2 and 7.
+    6. Confirmed unchanged: route inventory (three `app/api/billrun` POST handlers), the authz
+       matrix (five routes, the CSV route, six actions), ZAP (whole host) and Semgrep (whole repo)
+       scopes cover the new routes per the §8 inventory, every binding name in code-standards
+       Part 2 exists in code.
+  - **D4 — success-criteria evidence:**
+
+    | # | Criterion | Evidence (green) |
+    | --- | --- | --- |
+    | 1 | `ci` invoices list every line; `Σ net = subtotal` | journey step 2; `bind.test.ts` |
+    | 2 | Fresh DB: one format, defaults ACTIVE, rendered with no admin activity | journey steps 1–2; guardrail 45; `invoice-template-catalog.integration` |
+    | 3 | Profile validation, logo rules, activation needs logo + note | admin e2e (profile); `activate-profile.integration` (51); `upload-logo.test.ts` (52); action test (`CHANGE_NOTE_REQUIRED`) |
+    | 4 | Editor locks, Discount hide, n+1 ACTIVE / n RETIRED, clean `.hbs` | admin e2e (template); `generate.test.ts` (48); `activate-template.integration` (53) |
+    | 5 | Pinning across v3 + profile v2 | journey step 4; guardrail 46 |
+    | 6 | Tamper parks, others render, no legacy | journey step 5; guardrails 47, 44 |
+    | 7 | ≥ 3 pages, footer, header repeat, groups whole, watermark | journey step 7 (structural: page count + footer spans + CSS) |
+    | 8 | Usage annex by state → district | journey step 2; `invoice-usage-annex.integration` |
+    | 9 | CSV rows and sum | journey step 6; guardrail 55 |
+    | 10 | Reprint bytes + `charge_checksum` | journey step 4; guardrail 46 |
+    | 11 | No access / read-only / audit / escaping | admin e2e; journey step 8; guardrail 56 (matrix + grants) |
+    | 12 | Golden, binder tests, typecheck/lint/vitest/e2e, docs synced | `invoice-golden.test.ts`, layout lint, the runs below, D6 |
+
+  - **Interpretations (recorded):**
+    1. **Fixture runs for steps 3–7.** The `ci` seed has one due period, so later runs post fixture
+       bills through the real `postAccount` (the guardrail 46 precedent).
+    2. **"An empty note shows the server message" is not reachable in the browser.** Confirm stays
+       disabled for an empty or whitespace note and React ignores clicks on a disabled button; the
+       e2e asserts the disabled state and the server's `CHANGE_NOTE_REQUIRED` is the action test's.
+    3. **"Page X of Y on every page" is proven structurally** (no PDF text parser dependency).
+    4. Known-issues §23 lists the residuals carried past the gate.
+  - **Runs (all green):** full unit suite **4378 passed, 0 failed** (396 files); the journey 8/8
+    and the admin e2e 5/5 on the throwaway stack; full integration project **1219 passed, 0 failed** (129 files, 75 skipped, 513 s, incl. the journey, the admin e2e and the grants upgrade case);
+    `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **D6 — docs folded in this change set:** project overview (new delivered section with
+    criteria 1–12 + evidence and the decisions); update overview (Part 2 replaced by a pointer,
+    status row delivered); architecture (Part 2 deltas delivered, conflicts and open items closed,
+    Inv #39–#50 delivered note, artifact-storage row with G16); code-standards (C1–C5 closed, Part
+    2 citations to Inv #, companion line); workflow rules §5 (no Part 2 open rows); bm00 (Part 4
+    delivered); placeholder catalog (final roots, CSV roots); known-issues §23; this tracker.
+  - **Next:** the cloud cutover adds the `appBlobAuth` flip (G16); the layout v2 unit (annex CSS,
+    known-issues §20, plus the real IBM Plex fonts, G8) before any production template activation.
+
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
 
 - **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:
@@ -1785,6 +1917,9 @@ DELIVERED" section.
   **layout v2** with the annex CSS as its own unit (new `v2/` directory, migration, checksums,
   Inv #44) before activations reach production. Owner decision 2026-10-10: accepted for now.
 
+- **Cloud cutover adds the G16 flip (decided 2026-10-11):** set `appBlobAuth` to the app's
+  Managed Identity (container-scoped `Storage Blob Data Contributor` on `invoices`,
+  `invoice-templates`, `invoice-assets`) and drop the app's connection-string secret. No code change.
 - **Cloud cutover (gated ops step)** — provision out-of-band Key Vault secrets
   (`billrun-runtime-db-password`, `billrun-engine-url`/`-auth`, SFTP), flip
   `deployWorkflowEngine` → deploy engine → `deployRatingFlows` →

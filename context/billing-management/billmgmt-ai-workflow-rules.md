@@ -120,10 +120,9 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 
 | Topic | Where it is tracked (same issue, three IDs) | Interim rule |
 | --- | --- | --- |
-| `ONE_TIME` charge sourcing | C2 | §3.7 |
-| Embedded fonts | O4 | No external font fetch, ever |
-| Customer SST no., PO and contract references | O5 | Fragments stay hidden while blank. Add no columns |
 | Partial-period billing | O-TC7 | A **business** decision. Never build a method |
+
+**Decided 2026-10-11 (owner, no longer open):** C2/G5 (no `ONE_TIME` in v1; the §3.7 rule stands until a sourcing spec), O4/G8 (IBM Plex embedded; no external font fetch, ever; layout v1 has placeholder sources, layout v2 ships the real fonts), O5/G9 (customer SST no., PO and contract fragments stay hidden while blank; add no columns), C5/G16 (Managed Identity; the `appBlobAuth` flip is a cloud-cutover ops step).
 
 **Decided and delivered (no longer open):** X3/C3 (`is_default` vs one-ACTIVE — the one-ACTIVE index excludes the default), X4 (same-file two-rewrites — carried by the bm47–bm49 binder), O2/C4/G6 (SHA-256 for template/asset blobs, md5 for invoice PDFs, algorithm recorded per row), O3/G7 (notes & footer are fixed layout text), O10/G10 (nothing deletes a version), G11 (role grants ADMIN/MANAGER EDIT, USER READ), G12 (CSV version on `customer_bill.ref_csv_template_version_id`) — all delivered by bm50 (2026-10-08). The seeded `invoice_settings` role grants are confirmed in the bm50 spec and applied by `db:seed-billing`.
 

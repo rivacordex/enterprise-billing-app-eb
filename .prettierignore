@@ -20,3 +20,8 @@ package-lock.json
 # render (Inv #44/#45). Prettier reflowing any JSON/manifest/sample/csv-map
 # here would silently break those digests — exclude the entire tree.
 db/seeds/invoice-templates/
+
+# Golden-render snapshots (bm47/bm63, criterion 12) are written verbatim by
+# vitest's toMatchFileSnapshot and compared byte for byte; a Prettier reflow
+# would fail the snapshot.
+tests/fixtures/invoice-golden/

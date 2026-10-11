@@ -926,3 +926,22 @@ the invoice-template unit.
 (ADMIN/MANAGER EDIT, USER READ, per its own `0043` header intent) to the
 appropriate seed's `grant()` calls, idempotently, the same way bm50 did for
 `invoice_settings`.
+
+## 23. 🟡 Invoice Template update — residuals carried past the ship gate (bm63, 2026-10-11)
+
+The bm63 ship gate signed off bm47–bm62 (overview success criteria 1–12 shown by
+`tests/e2e/invoice-template-journey.integration.test.ts` and
+`tests/e2e/invoice-settings-admin.e2e.integration.test.ts`). These residuals
+stay, each accepted or owned elsewhere:
+
+| #   | Residual | Effect | Owner / next step |
+| --- | -------- | ------ | ----------------- |
+| 23a | **Bills posted before bm54 are unstamped** (§18). | They render with the immutable default and no company profile. | By design (Inv #42). |
+| 23b | **A mid-run activation splits a run's versions** (§19). | Each bill records what it was posted under. | By design. |
+| 23c | **`ratecard` role grants are never seeded** (section above). | The Rate Card page needs a hand-assigned grant. | Rate-card follow-up. |
+| 23d | **Orphan template/logo blobs are tolerated.** A failed activation or upload transaction leaves its write-once, content-addressed blob behind (code-standards Part 2 General rule 10, data rule 7). | Storage only: an identical retry reuses it; nothing references it. | By design; no retention job in v1 (G10). |
+| 23e | **Layout v1 ships placeholder `@font-face` sources** (G8 decided: IBM Plex embedded). | Rendered invoices fall back to a system font; no font is ever fetched. | The layout v2 unit (with §20's annex CSS). |
+| 23f | **"Page X of Y" on every page is proven structurally.** The journey asserts ≥ 3 PDF pages, `displayHeaderFooter` and the footer's `pageNumber`/`totalPages` spans (Chromium fills them per page); it does not extract text from each PDF page (no PDF parser dependency). | None known. | Accepted at bm63. |
+| 23g | **The server's empty-change-note message is not reachable from the UI.** The activate dialog keeps Confirm disabled for an empty or whitespace note (React ignores clicks on a disabled button), so `CHANGE_NOTE_REQUIRED` is proven at the action layer. | None: the client and server rules agree. | Accepted at bm63. |
+| 23h | **bm47 test follow-ups not built:** the PDF-text-layer half of guardrail 50 (escaping is proven in the HTML and in the browser preview), a dedicated handlebars build-boundary lint rule (the `components`→`services` deny already blocks it), `tests/db/invoice-render-input.integration.test.ts` (its reads run inside the journey and the usage-annex suite), and the `billrun-capacity-appendix` premise update. | Coverage gaps only. | A test-only follow-up. |
+| 23i | **The e2e server inherits `.env` for keys the test does not set.** `next start` loads `.env` for unset keys (process values win). The test passes every store/secret key explicitly; on a machine with no `.env` nothing is inherited. | Local-only. | Accepted. |
