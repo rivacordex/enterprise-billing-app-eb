@@ -121,6 +121,31 @@ describe("guardrail 52 — logo rejections, each with its reason, nothing writte
     },
   );
 
+  // Owner decision 2026-10-11 — no side above 2,000 px: a 500 KB file can
+  // declare a huge image (a decompression bomb) the renderer must draw.
+  it.each([
+    ["PNG", png(2001, 400), "image/png"],
+    ["JPEG", jpeg(400, 2001), "image/jpeg"],
+    ["SVG", svg('width="2000.6" height="400"'), "image/svg+xml"],
+    ["SVG viewBox", svg('viewBox="0 0 20000 20000"'), "image/svg+xml"],
+  ])(
+    "a %s side above 2,000 px → dimensions (with the limit)",
+    async (_label, bytes, mime) => {
+      expect(await rejects(bytes, mime)).toMatchObject({
+        reason: "dimensions",
+        detail: { maxSidePx: 2000 },
+      });
+    },
+  );
+
+  it.each([
+    ["PNG", png(2000, 300), "image/png"],
+    ["JPEG", jpeg(300, 2000), "image/jpeg"],
+    ["SVG", svg('width="2000" height="2000"'), "image/svg+xml"],
+  ])("a %s of exactly 2,000 px is accepted", (_label, bytes, mime) => {
+    expect(checkLogo(bytes, mime)).toMatchObject({ ok: true });
+  });
+
   it("SVG sizes in other units → dimensions", async () => {
     expect(
       await rejects(svg('width="80mm" height="80mm"'), "image/svg+xml"),

@@ -16,6 +16,7 @@ import { findSvgViolation } from "@/services/billing/invoice-profile/sanitize-lo
 import { getBrandingLogo } from "@/services/system-config/app-config-read.service";
 import {
   LOGO_MAX_BYTES,
+  LOGO_MAX_SIDE_PX,
   LOGO_MIME_TYPES,
   LOGO_MIN_SIDE_PX,
   type LogoMimeType,
@@ -61,8 +62,6 @@ const EXTENSIONS: Record<LogoMimeType, "png" | "jpg" | "svg"> = {
   "image/svg+xml": "svg",
 };
 
-const INT4_MAX = 2_147_483_647;
-
 function reject(
   reason: LogoRejectReason,
   detail: LogoRejectDetail,
@@ -89,21 +88,22 @@ export function checkLogo(
   if (!isLogoMimeType(declaredMime) || detected !== declaredMime) {
     return reject("mime", { declared: declaredMime, detected });
   }
-  // 3 — dimensions; the shorter side ≥ 300 px.
+  // 3 — dimensions; the shorter side ≥ 300 px, the longer side ≤ 2,000 px.
   const dims = imageDimensions(detected, bytes);
   if (!dims.ok) {
     return reject(dims.reason, { message: dims.message });
   }
   if (
     Math.min(dims.width, dims.height) < LOGO_MIN_SIDE_PX ||
-    // `bill_asset_version.width/height` are int4: a larger (or infinite SVG)
-    // size is rejected here, not as an insert failure after the blob write.
-    Math.max(dims.width, dims.height) > INT4_MAX
+    // Also keeps `bill_asset_version.width/height` (int4) in range, and
+    // rejects an infinite SVG size.
+    !(Math.max(dims.width, dims.height) <= LOGO_MAX_SIDE_PX)
   ) {
     return reject("dimensions", {
       width: dims.width,
       height: dims.height,
       minSidePx: LOGO_MIN_SIDE_PX,
+      maxSidePx: LOGO_MAX_SIDE_PX,
     });
   }
   // 4 — the SVG content policy (reject, never repair).

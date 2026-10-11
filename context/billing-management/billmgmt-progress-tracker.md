@@ -1643,6 +1643,11 @@ DELIVERED" section.
     attribute scanner + `parseLength`; fuzzed identical to the old regexes (200k tags, 300k
     lengths); crafted 500 KB root tags parse in < 30 ms. bm00 status line restates G14 as "no
     four-eyes (2026-10-11, superseding option C)". Logo unit suites 197 passed.
+  - **Logo size cap (2026-10-11, owner):** no logo side above `LOGO_MAX_SIDE_PX = 2000`
+    (`dimensions`, detail `maxSidePx`) — a decompression-bomb guard for the Chromium invoice
+    render; it replaces the int4-only bound. Upload field caption and message updated; bm60 D3,
+    code-standards data rule 9, ui-context. A stricter root-tag / `400 px` check was tried and
+    dropped (beyond spec, no service benefit). Billing unit suites 1,328 passed.
   - **Next:** bm62 / bm63 per the build plan (bm63's journey activates profile v1 then v2).
 
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)

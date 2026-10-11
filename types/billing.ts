@@ -1290,5 +1290,9 @@ export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
 export const LOGO_MAX_BYTES = 512_000;
 // The shorter side of the logo, in px.
 export const LOGO_MIN_SIDE_PX = 300;
+// The longer side of the logo, in px (owner decision 2026-10-11): a small
+// file can declare a huge image (a decompression bomb) that the invoice
+// renderer would have to draw in full.
+export const LOGO_MAX_SIDE_PX = 2_000;
 
 export type LogoRejectDetail = Readonly<Record<string, string | number | null>>;

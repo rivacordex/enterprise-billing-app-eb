@@ -125,6 +125,11 @@ describe("LogoUploadField", () => {
       /200×900 px; the shorter side must be at least 300 px/,
     ],
     [
+      "dimensions",
+      { width: 2400, height: 900 },
+      /2400×900 px; each side must be at most 2,000 px/,
+    ],
+    [
       "svg_content",
       { construct: "<script>" },
       /contains <script>, which is not allowed/,

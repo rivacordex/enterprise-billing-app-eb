@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import {
   LOGO_MAX_BYTES,
   LOGO_MIME_TYPES,
+  LOGO_MAX_SIDE_PX,
   LOGO_MIN_SIDE_PX,
   type LogoRejectDetail,
   type LogoRejectReason,
@@ -30,6 +31,9 @@ import {
 
 const ACCEPT = LOGO_MIME_TYPES.join(",");
 const FAILED_MESSAGE = "The logo could not be uploaded. Please try again.";
+
+// "2,000" (fixed `en-US` grouping, so server and client render the same).
+const PX = new Intl.NumberFormat("en-US");
 
 function kb(bytes: number): string {
   return `${Math.ceil(bytes / 1024)} KB`;
@@ -52,7 +56,9 @@ export function logoRejectMessage(
     case "dimensions":
       return typeof detail.width === "number" &&
         typeof detail.height === "number"
-        ? `The image is ${detail.width}×${detail.height} px; the shorter side must be at least ${LOGO_MIN_SIDE_PX} px.`
+        ? Math.max(detail.width, detail.height) > LOGO_MAX_SIDE_PX
+          ? `The image is ${detail.width}×${detail.height} px; each side must be at most ${PX.format(LOGO_MAX_SIDE_PX)} px.`
+          : `The image is ${detail.width}×${detail.height} px; the shorter side must be at least ${LOGO_MIN_SIDE_PX} px.`
         : `${String(detail.message ?? "The image size could not be read")}.`;
     case "svg_content":
       return `The SVG contains ${String(detail.construct)}, which is not allowed.`;
@@ -186,7 +192,8 @@ export function LogoUploadField({
         )}
         <p className="text-body-sm text-muted-foreground">
           PNG, JPEG or SVG, up to 500 KB, at least {LOGO_MIN_SIDE_PX} px on the
-          shorter side. Drop a file here or choose one.
+          shorter side and at most {PX.format(LOGO_MAX_SIDE_PX)} px on either
+          side. Drop a file here or choose one.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
