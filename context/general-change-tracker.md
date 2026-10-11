@@ -4,6 +4,13 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE (2026-10-11) — Route Handlers honour `force_password_change` (cross-domain; from the billing bm62/bm63 code review, owner-approved).**
+  `auth/resolver.ts` `findActiveUserById` now refuses a user who must still set a new password, the
+  same gate `getActiveUser` applies to pages and actions. Affects six Route Handlers: five billing
+  (draft/stored invoice, invoice CSV, invoice-settings logo and `.hbs` files) and the Accounts
+  `api/accounts/gl-journal-export`. Recorded in `usrmgmt-completed-tracker.md` and the billing tracker.
+  Test: `tests/auth/resolver.test.ts`.
+
 - **DONE (code-complete, verified) — Postgres 63-byte identifier fix for Drizzle-derived FK/PK names**
   (no spec; triggered by a wall of `42622` truncation NOTICEs during DB provisioning).
   Root cause: Drizzle's *implicit* naming — an inline `.references()` derives

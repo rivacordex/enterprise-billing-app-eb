@@ -6,9 +6,12 @@ import type postgresjs from "postgres";
 
 // bm63-spec §Design D1/D2 — a FRESH database built by the repo's own setup
 // scripts, shared by the ship-gate journey and the admin browser e2e. Every
-// script runs as a child process with the TEST environment only (never
-// `--env-file=.env`), so it can never reach the dev database. Callers assert
-// the throwaway Postgres/Azurite first (`assertTestDatabaseUrl`,
+// script runs as a child process without `--env-file=.env`. The app scripts
+// connect through DATABASE_URL (sentinel-checked by the integration global
+// setup); the role bootstraps and partman setups connect through
+// BOOTSTRAP_DATABASE_URL as a superuser, so `runScript` refuses to start
+// unless that URL names the same database (host, port, name) as DATABASE_URL.
+// Callers also assert the throwaway Postgres/Azurite (`assertTestDatabaseUrl`,
 // `assertTestBlobConnection`).
 
 export const REPO_ROOT = join(__dirname, "../../..");
@@ -35,10 +38,37 @@ export const SETUP_SCRIPTS = [
   "db/seeds/rating-event-catalog.ts",
 ] as const;
 
+function databaseIdentity(url: string): string {
+  const parsed = new URL(url);
+  const host = parsed.hostname === "localhost" ? "127.0.0.1" : parsed.hostname;
+  return `${host}:${parsed.port || "5432"}${parsed.pathname}`;
+}
+
+// The bootstrap scripts never read DATABASE_URL. A BOOTSTRAP_DATABASE_URL
+// inherited from the shell (e.g. the dev one) would run them against another
+// database as a superuser, so it must be the disposable database itself.
+export function assertBootstrapTargetsTestDatabase(): void {
+  const app = process.env.DATABASE_URL;
+  const bootstrap = process.env.BOOTSTRAP_DATABASE_URL;
+  if (!app || !bootstrap) {
+    throw new Error(
+      "DATABASE_URL and BOOTSTRAP_DATABASE_URL are both required.",
+    );
+  }
+  if (databaseIdentity(app) !== databaseIdentity(bootstrap)) {
+    throw new Error(
+      "Refusing to run the setup scripts: BOOTSTRAP_DATABASE_URL " +
+        `(${databaseIdentity(bootstrap)}) is not the disposable DATABASE_URL ` +
+        `(${databaseIdentity(app)}). Load .env.test and unset any exported dev value.`,
+    );
+  }
+}
+
 export function runScript(
   script: string,
   env: Record<string, string> = {},
 ): void {
+  assertBootstrapTargetsTestDatabase();
   const result = spawnSync(
     process.execPath,
     ["--conditions=react-server", "--import", "tsx", script],

@@ -9,7 +9,9 @@ import {
   purgeInvoiceBlobs,
   runScript,
 } from "@/tests/e2e/helpers/fresh-database";
+import { DEFAULT_BILL_CYCLE_NAME } from "@/db/seeds/accounts/seed-bill-cycles";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
+import { parseInvoiceCsv } from "@/tests/helpers/parse-csv";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { decodablePng } from "@/tests/helpers/logo-fixtures";
 import {
@@ -469,9 +471,13 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           scheduled_run_date: string;
         }[]
       >`
-        SELECT bill_run_id, period_start::text, period_end::text,
-               scheduled_run_date::text
-        FROM billing.bill_run WHERE status = 'SCHEDULED'`;
+        SELECT r.bill_run_id, r.period_start::text, r.period_end::text,
+               r.scheduled_run_date::text
+        FROM billing.bill_run r
+        JOIN billing.bill_cycle c ON c.bill_cycle_id = r.ref_bill_cycle_id
+        WHERE r.status = 'SCHEDULED' AND c.name = ${DEFAULT_BILL_CYCLE_NAME}`;
+      // The `ci` seed's cycle only: the render fixtures' own active cycle also
+      // materializes a (empty) SCHEDULED run.
       expect(run).toBeDefined();
       ciRunId = run!.bill_run_id;
       const triggered = await svc.triggerRun(
@@ -664,42 +670,53 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         SELECT blob_ref FROM billing.bill_template_version
         WHERE bill_template_version_id = ${v3Id}`;
       const hbsRef = `${v3!.blob_ref.replace(/\/?$/, "/")}invoice.hbs`;
+      // Every tamper is undone in a `finally`: step 7 posts under v3 + the
+      // profile-v2 logo, so a failure here must not leave them corrupted.
       const originalHbs = await tamper(hbsRef);
-      svc.clearLoadedTemplateMemo();
+      try {
+        svc.clearLoadedTemplateMemo();
 
-      await fx.newRun(RUN_V3);
-      ({ banId: banC } = await fx.postableBill({ label: "C", runId: RUN_V3 }));
-      expect((await fx.post(RUN_V3, banC)).status).toBe("invoiced");
-      expect(await stamps(RUN_V3, banC)).toMatchObject({
-        ref_bill_template_version_id: v3Id,
-        ref_invoice_profile_version: 2,
-      });
-      // Parked: posted, no stored PDF, on the exception surface.
-      expect(await storedRow(RUN_V3, banC)).toBeUndefined();
-      const progress = await svc.getPostingProgress(RUN_V3);
-      expect(
-        progress!.rows.find((r) => r.billingAccountId === banC),
-      ).toMatchObject({ status: "invoiced", hasStoredInvoice: false });
-      expect(await svc.retryRenderInvoice(RUN_V3, banC)).toEqual({
-        ok: false,
-        code: "RENDER_FAILED",
-        detail: "TEMPLATE_CHECKSUM_MISMATCH",
-      });
+        await fx.newRun(RUN_V3);
+        ({ banId: banC } = await fx.postableBill({
+          label: "C",
+          runId: RUN_V3,
+        }));
+        expect((await fx.post(RUN_V3, banC)).status).toBe("invoiced");
+        expect(await stamps(RUN_V3, banC)).toMatchObject({
+          ref_bill_template_version_id: v3Id,
+          ref_invoice_profile_version: 2,
+        });
+        // Parked: posted, no stored PDF, on the exception surface.
+        expect(await storedRow(RUN_V3, banC)).toBeUndefined();
+        const progress = await svc.getPostingProgress(RUN_V3);
+        expect(
+          progress!.rows.find((r) => r.billingAccountId === banC),
+        ).toMatchObject({ status: "invoiced", hasStoredInvoice: false });
+        expect(await svc.retryRenderInvoice(RUN_V3, banC)).toEqual({
+          ok: false,
+          code: "RENDER_FAILED",
+          detail: "TEMPLATE_CHECKSUM_MISMATCH",
+        });
 
-      // The twin is pinned to v2 + profile v1: it still renders.
-      const twin = await svc.retryRenderInvoice(RUN_V2, banTwin);
-      expect(twin.ok).toBe(true);
+        // The twin is pinned to v2 + profile v1: it still renders.
+        const twin = await svc.retryRenderInvoice(RUN_V2, banTwin);
+        expect(twin.ok).toBe(true);
+      } finally {
+        await blobClient(hbsRef).uploadData(originalHbs);
+        svc.clearLoadedTemplateMemo();
+      }
 
-      // Restore the template; tamper the profile-v2 logo instead.
-      await blobClient(hbsRef).uploadData(originalHbs);
-      svc.clearLoadedTemplateMemo();
+      // The template is restored; tamper the profile-v2 logo instead.
       const originalLogo = await tamper(profileV2LogoRef);
-      expect(await svc.retryRenderInvoice(RUN_V3, banC)).toEqual({
-        ok: false,
-        code: "RENDER_FAILED",
-        detail: "ASSET_CHECKSUM_MISMATCH",
-      });
-      await blobClient(profileV2LogoRef).uploadData(originalLogo);
+      try {
+        expect(await svc.retryRenderInvoice(RUN_V3, banC)).toEqual({
+          ok: false,
+          code: "RENDER_FAILED",
+          detail: "ASSET_CHECKSUM_MISMATCH",
+        });
+      } finally {
+        await blobClient(profileV2LogoRef).uploadData(originalLogo);
+      }
       // Both restored: C renders.
       expect((await svc.retryRenderInvoice(RUN_V3, banC)).ok).toBe(true);
     }, 300_000);
@@ -710,11 +727,8 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         runId: RUN_V2,
         banId: banA,
       });
-      const [header, ...rows] = csv
-        .slice(1)
-        .trimEnd()
-        .split("\r\n")
-        .map((r) => r.split(","));
+      // RFC 4180 (quoted commas in names/descriptions), never a raw split.
+      const [header, ...rows] = parseInvoiceCsv(csv);
       const [lines] = await sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM billing.customer_bill_line
         WHERE ref_customer_bill_id = ${s.customer_bill_id}`;

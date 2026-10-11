@@ -62,7 +62,8 @@ export interface BuildInvoiceHtmlResult {
   html: string;
   footerHtml: string;
   pageSetup: LayoutPageSetup;
-  // D5 step 7 — consumed by bm54 (the posting stamps) and bm62 (the CSV map).
+  // D5 step 7 — the versions this render resolved (posting resolves its own
+  // stamps with `resolveVersionsForPosting`; the CSV path resolves separately).
   resolved: ResolvedTemplate;
 }
 

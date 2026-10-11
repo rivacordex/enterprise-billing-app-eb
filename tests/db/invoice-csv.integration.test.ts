@@ -9,6 +9,7 @@ import { blobStore } from "@/services/billing/blob-store";
 import { getPostedInvoiceCsv } from "@/services/billing/invoice-template/invoice-csv";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
+import { parseInvoiceCsv } from "@/tests/helpers/parse-csv";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import {
   FIXTURE_PARTITION,
@@ -91,46 +92,6 @@ const MULTI_LINES: LineSpec[] = [
     description: 'Dark fibre "core" lease',
   },
 ];
-
-// RFC 4180 parse of the downloaded file (BOM + CRLF records, quoted fields
-// with doubled quotes, embedded newlines). Returns the records as cells.
-function parseCsv(csv: string): string[][] {
-  expect(csv.charCodeAt(0)).toBe(0xfeff);
-  const text = csv.slice(1);
-  const records: string[][] = [];
-  let record: string[] = [];
-  let cell = "";
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quoted) {
-      if (ch === '"' && text[i + 1] === '"') {
-        cell += '"';
-        i++;
-      } else if (ch === '"') {
-        quoted = false;
-      } else {
-        cell += ch;
-      }
-    } else if (ch === '"') {
-      quoted = true;
-    } else if (ch === ",") {
-      record.push(cell);
-      cell = "";
-    } else if (ch === "\r" && text[i + 1] === "\n") {
-      record.push(cell);
-      records.push(record);
-      record = [];
-      cell = "";
-      i++;
-    } else {
-      cell += ch;
-    }
-  }
-  expect(cell).toBe("");
-  expect(record).toEqual([]);
-  return records;
-}
 
 describe.skipIf(!databaseUrl || !blobConnection)(
   "guardrail 55 — the invoice CSV's net_amount column sums exactly to customer_bill.subtotal",
@@ -382,7 +343,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           runId: RUN,
           banId: bill.ref_billing_account_id,
         });
-        const [header, ...rows] = parseCsv(csv);
+        const [header, ...rows] = parseInvoiceCsv(csv);
         expect(rows).toHaveLength(bill.line_count);
 
         const netCol = header!.indexOf("net_amount");
@@ -405,7 +366,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         banId: banMulti,
       });
       expect(invoiceNumber).toBe("INV00062002");
-      const [header, ...rows] = parseCsv(csv);
+      const [header, ...rows] = parseInvoiceCsv(csv);
       const col = (h: string) => header!.indexOf(h);
       expect(rows.map((r) => r[col("line_no")])).toEqual(["1", "2", "3", "4"]);
       expect(rows.map((r) => r[col("net_amount")])).toEqual([
@@ -428,14 +389,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         runId: RUN,
         banId: banNullStamp,
       });
-      const [header] = parseCsv(csv);
+      const [header] = parseInvoiceCsv(csv);
       expect(header).toHaveLength(26);
       expect(header![0]).toBe("invoice_number");
     });
 
     it("a bill stamped with a fixture CSV v2 uses v2's columns", async () => {
       const { csv } = await getPostedInvoiceCsv({ runId: RUN, banId: banV2 });
-      const [header, ...rows] = parseCsv(csv);
+      const [header, ...rows] = parseInvoiceCsv(csv);
       expect(header).toEqual(V2_COLUMNS.map((c) => c.header));
       expect(rows).toEqual([
         ["INV00062003", "1", "1234.50"],

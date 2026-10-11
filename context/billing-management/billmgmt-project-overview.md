@@ -316,7 +316,7 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 #### Output formats
 
 - PDF (legal copy, stored write-once) and HTML (preview, email body) from the generated `.hbs`; admin structure options apply.
-- CSV from the bill's stamped, checksum-verified column map (`GET …/stored-invoice/[banId]/csv`, `billrun_view` READ, bm62): one row per line item, formula-safe cells, and the `net_amount` column sums exactly to the bill.
+- CSV from the bill's stamped, checksum-verified column map (`GET …/stored-invoice/[banId]/csv`, `billrun_view` READ, bm62): one row per line item, formula-safe cells, and the `net_amount` column sums exactly to the bill. The customer's name and TIN are read live, so a CSV downloaded after a customer rename shows the new values (accepted, known-issues §23j).
 
 #### Security, access and audit
 

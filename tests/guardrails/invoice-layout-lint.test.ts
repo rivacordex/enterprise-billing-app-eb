@@ -19,9 +19,22 @@ const BAD_FIXTURE = join(
   "tests/fixtures/invoice-layout-bad/bad.hbs",
 );
 
+// An external fetch is any URL-bearing attribute or CSS `url()` that points
+// at `http(s):` or a protocol-relative `//`, in any element (img, source,
+// video poster, SVG image, form action …), plus the elements that load or
+// re-base content by themselves.
+const EXTERNAL_URL = String.raw`\s*["']?\s*(?:https?:|\/\/)`;
 const BANNED_TEXT: readonly [RegExp, string][] = [
-  [/<img\s[^>]*src\s*=\s*["']?https?:/i, "<img src=http"],
-  [/url\(\s*["']?https?:/i, "url(http"],
+  [
+    new RegExp(
+      String.raw`(?:^|[\s/"'])(?:src|srcset|href|xlink:href|data|poster|action|formaction|background)\s*=` +
+        String.raw`\s*["']?[^"'>]*?(?:https?:|\/\/)`,
+      "i",
+    ),
+    "external url attribute",
+  ],
+  [new RegExp(String.raw`url\(` + EXTERNAL_URL, "i"), "url(http"],
+  [/<(?:iframe|object|embed|base)[\s/>]/i, "<iframe|object|embed|base"],
   [/<script/i, "<script"],
   [/\{\{\{/, "{{{"],
   [/<link[\s>]/i, "<link"],
@@ -57,12 +70,17 @@ function astViolations(source: string): string[] {
       n.type === "BlockStatement" ||
       n.type === "SubExpression"
     ) {
-      const path = n.path as { original?: string; type: string };
+      const path = n.path as {
+        original?: unknown;
+        value?: unknown;
+        type: string;
+      };
       const params = (n.params as unknown[]) ?? [];
       const isCall =
         n.type === "BlockStatement" || params.length > 0 || Boolean(n.hash);
-      if (isCall && path.type === "PathExpression") {
-        const name = path.original ?? "";
+      // A helper can be named by a path or by a literal (`{{"lookup" x}}`).
+      if (isCall) {
+        const name = String(path.original ?? path.value ?? "");
         if (!ALLOWED_HELPERS.has(name)) found.push(`helper:${name}`);
       }
       if (n.type === "MustacheStatement" && n.escaped === false) {
@@ -79,12 +97,19 @@ function astViolations(source: string): string[] {
 
 // Comments (CSS, HTML, Handlebars) are documentation, not markup: the seeded
 // shell's CSS comment names `@import` and `<link>` to state the rule itself.
+// CSS comments are stripped only inside <style> blocks: a `/* … */` pair
+// spanning markup (e.g. in two attribute values) must not hide what sits
+// between them.
 function stripComments(source: string): string {
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/\{\{!--[\s\S]*?--\}\}/g, "")
-    .replace(/\{\{![\s\S]*?\}\}/g, "");
+    .replace(/\{\{![\s\S]*?\}\}/g, "")
+    .replace(
+      /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+      (_m, open, css, close) =>
+        `${open}${String(css).replace(/\/\*[\s\S]*?\*\//g, "")}${close}`,
+    );
 }
 
 export function lintInvoiceTemplate(source: string): string[] {
@@ -121,8 +146,9 @@ describe("invoice layout lint (Styling rule 3)", () => {
     const hits = lintInvoiceTemplate(readFileSync(BAD_FIXTURE, "utf8"));
     expect(hits).toEqual(
       expect.arrayContaining([
-        "<img src=http",
+        "external url attribute",
         "url(http",
+        "<iframe|object|embed|base",
         "<script",
         "{{{",
         "<link",
@@ -133,6 +159,35 @@ describe("invoice layout lint (Styling rule 3)", () => {
         "helper:lookup",
       ]),
     );
+  });
+
+  // Each of these fetched an external URL (or ran a script) in a real
+  // Chromium `setContent` probe during the bm62/bm63 review; each must fail.
+  it.each([
+    ['<img srcset="https://x.example/a.png 1x">'],
+    ["<img/src=https://x.example/a.png>"],
+    ['<img src="//x.example/a.png">'],
+    ['<iframe src="about:blank"></iframe>'],
+    ['<object data="https://x.example/o"></object>'],
+    ['<embed src="https://x.example/e">'],
+    [
+      '<video poster="https://x.example/p.png"><source src="https://x.example/v.mp4"></video>',
+    ],
+    ['<svg><image href="https://x.example/i.png"/></svg>'],
+    ['<base href="https://x.example/"><img src="a.png">'],
+    ['<div style="background: url(//x.example/b.png)"></div>'],
+    ['<div title="/*"></div><script>alert(1)</script><div title="*/"></div>'],
+    ['{{"lookup" customer "name"}}'],
+  ])("rejects %s", (snippet) => {
+    expect(lintInvoiceTemplate(snippet)).not.toEqual([]);
+  });
+
+  it("still allows data: URIs, fragment references and template placeholders", () => {
+    expect(
+      lintInvoiceTemplate(
+        '<img src="{{company.logoUrl}}"><img src="data:image/png;base64,AA=="><svg><use href="#a"/></svg>',
+      ),
+    ).toEqual([]);
   });
 
   it("allows only the nine registered helpers", () => {

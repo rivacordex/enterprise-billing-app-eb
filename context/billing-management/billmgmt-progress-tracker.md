@@ -1677,8 +1677,11 @@ DELIVERED" section.
       through `csvField`. BOM + CRLF come from lookup tables keyed by `map.encoding` /
       `map.lineEnding`; anything else is `TEMPLATE_COMPILE_FAILED`.
     - D3: the emitted cells of the `line.netAmount` column are compared, as a sorted string
-      multiset, with the lines' `netAmount` strings; a mismatch is `INVOICE_RECONCILIATION_FAILED`
-      (`detail: 'csv'`). A map with no `line.netAmount` column is `TEMPLATE_COMPILE_FAILED`.
+      multiset (explicit code-unit comparator), with the lines' `netAmount` strings; a mismatch is a
+      CSV-code defect, a plain error the route logs as 500 (review fix 2026-10-11; it was
+      `INVOICE_RECONCILIATION_FAILED`, which the route answered as the bill's 409). The pipeline also
+      checks one CSV row per `customer_bill_line` (`rows.length === raw.lines.length`). A map with no
+      `line.netAmount` column is `TEMPLATE_COMPILE_FAILED`.
     - `load.ts`: `csvColumnMapSchema` paths must be dotted identifiers rooted in `CSV_PATH_ROOTS`
       (the `InvoiceRenderInput` keys + `line`), so an unknown root fails at load.
     - `invoiceRenderInputRepository.readBillStamps` also returns `refInvDocumentId` (the posted
@@ -1759,7 +1762,7 @@ DELIVERED" section.
     | bm60 | Logo upload + sanitization | `da4cf9b`, `8d5d252`, `567ede9`, `0bd4a9c` |
     | bm61 | Profile activate (G14: no four-eyes) | `68c0b81`, `8d5d252`, `567ede9`, `0bd4a9c` |
     | bm62 | Invoice CSV output | `75fd10d` |
-    | bm63 | Ship gate | this change set (uncommitted) |
+    | bm63 | Ship gate | `3ec1bae` (+ the review fixes below) |
 
   - **D1 — journey (`tests/e2e/invoice-template-journey.integration.test.ts`, 8 steps):** a fresh
     database through the real `db:migrate`, role bootstraps and `db:setup` scripts (child
@@ -1795,8 +1798,8 @@ DELIVERED" section.
     `npm run test:e2e:invoice-settings` = `next build` + this file (a `package.json` scripts
     change only). Sign-in posts the login page's own CSRF token from inside the page, because
     the client auth base URL is inlined at build time.
-  - **D3 — sweep, gaps closed in their owning areas** (each a separate defect-fix commit when
-    committed):
+  - **D3 — sweep, gaps closed in their owning areas** (the spec asks for a separate defect-fix
+    commit each; at the owner's request they shipped inside the ship-gate commit `3ec1bae`):
     1. **Activate dialog unreachable on a 720 px screen (bm58/bm61, real defect).** A first
        profile activation lists every field, so the dialog outgrew the viewport and Activate sat
        below the fold with no scroll. `activate-version-dialog.tsx`: `DialogContent` now scrolls
@@ -1852,6 +1855,32 @@ DELIVERED" section.
     Inv #39–#50 delivered note, artifact-storage row with G16); code-standards (C1–C5 closed, Part
     2 citations to Inv #, companion line); workflow rules §5 (no Part 2 open rows); bm00 (Part 4
     delivered); placeholder catalog (final roots, CSV roots); known-issues §23; this tracker.
+  - **Code-review fixes (2026-10-11, `/code-review max` of bm62–bm63 + the Sonar change):**
+    1. **CSV customer identity read live — accepted by the owner** (known-issues §23j); the "frozen
+       data" wording in `invoice-csv.ts` and the project overview corrected.
+    2. **Forced password change on Route Handlers (cross-domain, owner-approved):**
+       `auth/resolver.ts` `findActiveUserById` refuses a user owing a password change, closing the
+       gap on the five billing routes and the Accounts GL-export route (usrmgmt tracker, general
+       change tracker).
+    3. **Download CSV reports failures:** the modal fetches the route and shows the 401/403/404/
+       409/429/500 reason (`describeInvoiceCsvError`), then downloads (`lib/download.ts`).
+    4. **e2e safety:** `runScript` refuses unless `BOOTSTRAP_DATABASE_URL` names the same database
+       as `DATABASE_URL`; the e2e server is spawned with `__NEXT_PROCESSED_ENV=true` (no `.env*`
+       inherited, known-issues §23i closed); the admin e2e is opt-in (`npm run
+       test:e2e:invoice-settings`, which builds first, or `RUN_INVOICE_SETTINGS_E2E=1`).
+    5. **Layout lint hardened:** any URL-bearing attribute or CSS `url()` to `http(s):`/`//`, and
+       `<iframe|object|embed|base>`, fail; CSS comments are stripped only inside `<style>`; literal
+       helper names are allow-listed too; 12 probe cases added.
+    6. **CSV self-check:** a reformatted net cell is a plain error (logged 500, not the bill's
+       409); a real one-row-per-line check (`rows.length === raw.lines.length`); the Sonar S2871
+       sort now uses an explicit code-unit comparator (the earlier count-map rewrite reverted).
+    7. **Journey robustness:** the `ci` run is picked by its cycle (`DEFAULT_BILL_CYCLE_NAME`); step 6
+       parses the CSV with the shared RFC 4180 helper (`tests/helpers/parse-csv.ts`); step 5 restores
+       both tampered blobs in `finally`.
+    8. **Docs drift:** architecture header (Part 2 delivered), workflow rules companion list,
+       `render-invoice-template.ts` comment, this tracker (bm63 commit, D3 commit note).
+    - Not changed (cleanup, recorded for later): sharing `buildInvoiceHtml`'s orchestration and
+      the route auth preamble, and the `lib/csv.ts` wire-format overlap.
   - **Next:** the cloud cutover adds the `appBlobAuth` flip (G16); the layout v2 unit (annex CSS,
     known-issues §20, plus the real IBM Plex fonts, G8) before any production template activation.
 

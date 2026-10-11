@@ -4,10 +4,10 @@ Read `context/ai-workflow-rules.md` first and obey it in full. This supplement c
 
 **Companion docs (authoritative; do not restate or contradict them):**
 
-- `billmgmt-update-overview.md`: the functional scope, in/out of scope and success criteria for Part 1 and Part 2. It is the overview for in-flight work. `billmgmt-project-overview.md` describes delivered phases 1–4 (bm01–bm39) only.
-- `billmgmt-architecture.md`: **50 Module Invariants (§6)**. #15 is a retired tombstone, #29–#38 belong to Part 1 and #39–#50 to Part 2. It also holds the dated Part 1 and Part 2 delta sections and the **open cross-update conflicts X1–X4**.
-- `billmgmt-code-standards.md`: §1–§9 and its two dated delta sections. Part 1 guardrails are §9 items **36–42**. Part 2 guardrails are items **43–56**, and conflicts **C1–C4** are listed there.
-- `specs/bm00-build-plan.md`: the authority on unit numbering, unit boundaries and build order. Part 1 is **bm40–bm46**. Part 2 has no units yet.
+- `billmgmt-update-overview.md`: the functional scope, in/out of scope and success criteria for Part 1; Part 2 there is a pointer. `billmgmt-project-overview.md` describes the delivered phases 1–4 (bm01–bm39), Target Capacity, and the Invoice Template update (Part 2, delivered bm47–bm63, folded 2026-10-11, with its success criteria 1–12).
+- `billmgmt-architecture.md`: **50 Module Invariants (§6)**. #15 is a retired tombstone, #29–#38 belong to Part 1 and #39–#50 to Part 2. It also holds the dated Part 1 and Part 2 delta sections and the cross-update conflicts **X1–X4, all resolved**.
+- `billmgmt-code-standards.md`: §1–§9 and its two dated delta sections. Part 1 guardrails are §9 items **36–42**. Part 2 guardrails are items **43–56**, and conflicts **C1–C4** (all resolved) are listed there.
+- `specs/bm00-build-plan.md`: the authority on unit numbering, unit boundaries and build order. Part 1 is **bm40–bm46**. Part 2 is **bm47–bm63** (delivered).
 - Design authority: for Part 1, `_updatemodule-billing-billrun-target-capacity-plan.md` (TC1–TC58, open set O-TC*). For Part 2, `_updatemodule-billing-invoice-template-merged-plan.md`, where **§15 (R1–R11) overrides §§1–14**. Also `invoice-template/placeholder-catalog.md` (placeholder roots and field formats).
 - `context/rating-management/ratemgmt-ai-workflow-rules.md`: **binding on you** for any rating-side change (§3.5).
 

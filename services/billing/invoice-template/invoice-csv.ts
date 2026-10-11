@@ -19,9 +19,12 @@ import {
   type InvoiceRenderInput,
 } from "@/types/billing";
 
-// bm62-spec — the invoice CSV of a POSTED bill, generated on request from its
-// frozen data and its stamped, checksum-verified CSV column map. Nothing is
-// stored and nothing is audited (a read, General rule 9).
+// bm62-spec — the invoice CSV of a POSTED bill, generated on request from the
+// bill's posted rows and its stamped, checksum-verified CSV column map. Nothing
+// is stored and nothing is audited (a read, General rule 9). The charge lines
+// and amounts are frozen at posting; the customer's name and identity are read
+// live, as the PDF render reads them, so a CSV downloaded after a customer
+// rename shows the new name (known-issues §23j, accepted 2026-10-11).
 
 // D2 — the only encodings / line endings a map may name. The map is versioned
 // data, so anything else is a template defect (`TEMPLATE_COMPILE_FAILED`).
@@ -106,20 +109,21 @@ export function buildInvoiceCsv(
     out.push(cells.join(","));
   }
 
-  // D3 — the emitted net cells are exactly the lines' stored strings: nothing
-  // dropped, duplicated or reformatted. A string multiset compare, never JS
-  // arithmetic (General rule 11); a mismatch fails, it is never adjusted.
-  const expected = rows.map((l) => l.netAmount).sort();
+  // D3 — the emitted net cells are exactly the lines' stored strings, none
+  // reformatted. A string multiset compare, never JS arithmetic (General rule
+  // 11); a mismatch fails, it is never adjusted. A mismatch here is a defect
+  // in the CSV code (resolver or escaping), not in the bill, so it is a plain
+  // error: the route logs it and answers 500, never the bill's 409.
+  const byCodeUnit = (a: string, b: string): number => {
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
+  };
+  const expected = rows.map((l) => l.netAmount).sort(byCodeUnit);
   for (const cells of cellsByColumn) {
-    const actual = [...cells].sort();
-    if (
-      actual.length !== expected.length ||
-      actual.some((cell, i) => cell !== expected[i])
-    ) {
-      throw new InvoiceRenderError(
-        "INVOICE_RECONCILIATION_FAILED",
-        `csv map ${map.templateId} v${map.version}: net_amount cells do not equal the bill's line amounts`,
-        { detail: "csv", templateId: map.templateId, version: map.version },
+    const actual = [...cells].sort(byCodeUnit);
+    if (actual.some((cell, i) => cell !== expected[i])) {
+      throw new Error(
+        `csv map ${map.templateId} v${map.version}: emitted net_amount cells differ from the lines' stored amounts`,
       );
     }
   }
@@ -202,6 +206,14 @@ export async function getPostedInvoiceCsv({
   const rows = input.lineGroups
     .flatMap((g) => g.lines)
     .sort((a, b) => a.lineNo - b.lineNo);
+  // One row per `customer_bill_line` (guardrail 55): the bound groups must
+  // carry every line the bill has. A line the binder did not group (e.g. a
+  // charge source missing from its group order) is a code defect → 500.
+  if (rows.length !== raw.lines.length) {
+    throw new Error(
+      `customer_bill ${raw.bill.customerBillId}: ${raw.lines.length} lines but ${rows.length} bound for the CSV`,
+    );
+  }
 
   return {
     // A posted bind always carries its `billing.document` number.

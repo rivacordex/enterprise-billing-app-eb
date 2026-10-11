@@ -294,14 +294,17 @@ describe("buildInvoiceCsv (D2/D3)", () => {
     );
   });
 
-  it("fails reconciliation when a net amount would be reformatted, never adjusting it", () => {
+  it("fails (a CSV-code defect, not the bill's 409) when a net amount would be reformatted, never adjusting it", () => {
     // A non-decimal net string would be escaped, so the emitted cell no
     // longer equals the stored amount.
+    expect(() =>
+      buildInvoiceCsv(MINI_MAP, input(), [line(1, { netAmount: "+5.00" })]),
+    ).toThrow(/emitted net_amount cells differ/);
     expect(
       codeOf(() =>
         buildInvoiceCsv(MINI_MAP, input(), [line(1, { netAmount: "+5.00" })]),
       ),
-    ).toBe("INVOICE_RECONCILIATION_FAILED");
+    ).toBe("untyped");
   });
 
   it("carries no per-line tax column in the seeded v1 map (Inv #50)", () => {
@@ -367,7 +370,10 @@ describe("getPostedInvoiceCsv (D1)", () => {
     profileVersion: 4,
     csv: CSV_ROW,
   };
-  const RAW = { bill: {} } as unknown as RawInvoiceRenderInput;
+  const RAW = {
+    bill: {},
+    lines: [{}, {}, {}],
+  } as unknown as RawInvoiceRenderInput;
   const PROFILE = { configVersion: 4 } as unknown as InvoiceProfile;
 
   beforeEach(() => {
@@ -470,6 +476,16 @@ describe("getPostedInvoiceCsv (D1)", () => {
       RAW,
       expect.objectContaining({ profile: null }),
     );
+  });
+
+  it("fails (500, not 409) when the bound groups drop a bill line", async () => {
+    mockRead.mockResolvedValue({
+      bill: { customerBillId: "CBL1" },
+      lines: [{}, {}, {}, {}],
+    } as unknown as RawInvoiceRenderInput);
+    await expect(
+      getPostedInvoiceCsv({ runId: "BRN00000001", banId: "BAN00000001" }),
+    ).rejects.toThrow(/4 lines but 3 bound/);
   });
 
   it("propagates the binder's reconciliation failure (no file)", async () => {
