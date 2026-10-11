@@ -232,8 +232,39 @@ describe("StoredInvoiceModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
 
-    const download = await screen.findByRole("link", { name: /download/i });
+    const download = await screen.findByRole("link", { name: /^download$/i });
     expect(download.getAttribute("href")).toBe("blob:mock-url");
+  });
+
+  // bm62-spec §Design D5 — a secondary Download CSV link next to the PDF
+  // actions, pointing at the CSV route; only once a stored invoice exists.
+  it("offers a Download CSV link to the CSV route once the stored invoice is retrieved", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      storedResponse({
+        "X-Invoice-Number": "INV00000001",
+        "X-Blob-Ref": "invoices/2026-07/INV00000001.pdf",
+        "X-Checksum": "abc123",
+      }) as never,
+    );
+    renderStoredModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
+
+    const csv = await screen.findByRole("link", { name: /download csv/i });
+    expect(csv.getAttribute("href")).toBe(
+      "/billing/bill-runs/BRN00000001/stored-invoice/BAN00000001/csv",
+    );
+    expect(csv.hasAttribute("download")).toBe(true);
+  });
+
+  it("offers no Download CSV link before a stored invoice is retrieved", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 404 } as never);
+    renderStoredModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
+
+    await screen.findByText(/no stored invoice found/i);
+    expect(screen.queryByRole("link", { name: /download csv/i })).toBeNull();
   });
 
   it("shows a not-found reason for a 404 (no stored invoice yet)", async () => {

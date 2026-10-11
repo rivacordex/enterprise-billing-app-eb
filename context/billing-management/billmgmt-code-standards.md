@@ -774,10 +774,10 @@ services/billing/invoice-template/
   helpers.ts            # the nine registered helpers (wrap formatCurrency/formatCalendarDate)
   generate.ts           # [[if]]/[[num]]/[[body]] directive resolution → .hbs (bm55)
   preview.ts            # live preview: in-memory generate (sample / unposted) or stamped (posted) → HTML (bm55)
+  invoice-csv.ts        # posted bill → stamped CSV map → CSV (getPostedInvoiceCsv; pure buildInvoiceCsv) (bm62)
   activate-template.ts  save-template-draft.ts
 services/billing/read/
   invoice-template-settings.ts  # page data, Generated .hbs bytes, file download, recent posted bills (bm55)
-  invoice-csv.ts        # fixed column map → CSV
 services/billing/invoice-profile/
   activate-profile.ts  save-profile-draft.ts  upload-logo.ts  sanitize-logo.ts
 db/schema/billing/
@@ -813,7 +813,7 @@ db/seeds/invoice-templates/INVTPL-STD-A4/v1/
 | Invoice template — live preview | same page | `InvoicePreviewFrame` → `preview-invoice-template.action.ts` | `actions/billing/invoice-settings/preview-invoice-template.action.ts` | `invoice_settings` : **READ** (read-only render, persists nothing) |
 | Invoice template — save draft, activate | same page | `InvoiceStructureForm`, `ActivateVersionDialog` | `actions/billing/invoice-settings/{save-template-draft,activate-template}.action.ts` | `invoice_settings` : **EDIT** |
 | `.hbs` / `structure.json` download | `GET /administration/invoice-settings/invoice-template/versions/[versionId]/files/[file]` | `route.ts` → `blobStore.getObject` (checksum-verified) | `…/invoice-template/versions/[versionId]/files/[file]/` | `invoice_settings` : **READ** |
-| Invoice CSV download (posted bill) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` | `route.ts` → `buildInvoiceCsv` | `app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/csv/` | `billrun_view` : **READ** |
+| Invoice CSV download (posted bill) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` | `route.ts` → `getPostedInvoiceCsv` → `buildInvoiceCsv`; linked as **Download CSV** from `StoredInvoiceModal` | `app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/csv/` | `billrun_view` : **READ** (confirmed, bm62: not `invoice_settings`; nothing stored or audited) |
 | Draft PRO-FORMA preview (existing row) | `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` | unchanged route; now renders through the binder with the current ACTIVE versions | unchanged | `billrun_view` : **READ** (unchanged) |
 | Stored final invoice (existing row) | `GET /billing/bill-runs/[runId]/stored-invoice/[banId]` | unchanged; serves stored bytes (reprint, D8) | unchanged | `billrun_view` : **READ** (unchanged) |
 | Retry render (existing row) | `/billing/bill-runs/[runId]` (posting-progress view) | `RenderPendingRow` → `retry-render-invoice.action.ts`; now also the surface for a parked render (General rule 3) | unchanged | `billrun_approve` : **EDIT** (unchanged) |
@@ -840,7 +840,7 @@ db/seeds/invoice-templates/INVTPL-STD-A4/v1/
 52. **Logo upload.** Each of these is rejected: >500 KB, <300 px, PNG bytes declared as SVG, SVG with `<script>`, `onload=`, `<foreignObject>` or an external `href`. The logo GET handler returns the CSP `sandbox` and `nosniff` headers.
 53. **Activation atomicity.** A forced DB failure after the blob write leaves the previous version ACTIVE and no new ACTIVE row. A success creates version n+1 ACTIVE and n RETIRED, with one `INVOICE_TEMPLATE_ACTIVATED` audit row.
 54. **Multi-page render.** A 3+ page fixture shows "Page X of Y" on every page, repeats `<thead>`, keeps each line group on one page, and the `position:fixed` watermark is not clipped (structural snapshot, not pixels).
-55. **CSV.** There is one row per `customer_bill_line`, and the `net_amount` column sums exactly to `customer_bill.subtotal` (compared as strings after SQL sum, never float).
+55. **CSV.** There is one row per `customer_bill_line`, and the `net_amount` column sums exactly to `customer_bill.subtotal` (compared as strings after SQL sum, never float). **Built (bm62):** `tests/db/invoice-csv.integration.test.ts` downloads every posted bill's CSV, loads its `net_amount` column into a temp table and compares `SUM(net_amount::numeric)::text` with `subtotal::text`; it also covers a CSV v2 stamp, a NULL (pre-bm54) stamp, a tampered map, an unposted and an unbalanced bill.
 56. **Authz + grants.** The route × level matrix covers the five new routes and six actions (`invoice_settings` READ cannot save/activate/upload; no permission cannot open either page). The preview of a posted bill also requires `billrun_view`. `app_runtime` has no `DELETE` on the new tables, and `billrun_runtime` has no grant on them (asserted over `information_schema`).
 
 Golden-render snapshots per layout version run in CI. The bm18/bm19 tests are rewritten against the binder, not kept on the legacy builders.

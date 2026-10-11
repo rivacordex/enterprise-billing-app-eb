@@ -551,7 +551,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
   - activation without a logo or a note is refused (guardrail 51)
 - **Depends on:** 59, 60, 54. G14 decided 2026-10-11 (no four-eyes).
 
-### Unit 62 — Invoice CSV output (`bm62`)
+### Unit 62 — Invoice CSV output (`bm62`) — delivered 2026-10-11
 
 - **Boundary:** `services/billing/invoice-template/invoice-csv.ts` + `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` (`billrun_view` READ).
 - **Builds:**

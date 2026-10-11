@@ -13,7 +13,7 @@
 // mockup's "Preview PRO-FORMA →".
 
 import { useEffect, useRef, useState } from "react";
-import { Download, FileCheck, FileText } from "lucide-react";
+import { Download, FileCheck, FileSpreadsheet, FileText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -471,15 +471,29 @@ export function StoredInvoiceModal({
         </div>
 
         {state === "ready" && pdfUrl && (
-          <Button asChild variant="default">
-            <a
-              href={pdfUrl}
-              download={`${invoiceNumber ?? billingAccountId}.pdf`}
-            >
-              <Download aria-hidden="true" />
-              Download
-            </a>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="default">
+              <a
+                href={pdfUrl}
+                download={`${invoiceNumber ?? billingAccountId}.pdf`}
+              >
+                <Download aria-hidden="true" />
+                Download
+              </a>
+            </Button>
+            {/* bm62-spec §Design D5 — posted bills only, so it sits with the
+                stored invoice and never on the draft preview. The route sets
+                the attachment filename. */}
+            <Button asChild variant="outline">
+              <a
+                href={`/billing/bill-runs/${billRunId}/stored-invoice/${billingAccountId}/csv`}
+                download
+              >
+                <FileSpreadsheet aria-hidden="true" />
+                Download CSV
+              </a>
+            </Button>
+          </div>
         )}
       </DialogContent>
     </Dialog>

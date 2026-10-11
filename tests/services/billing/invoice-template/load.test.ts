@@ -366,4 +366,28 @@ describe("loadLayout / loadCsvMap", () => {
     expect(map.rowSource).toBe("lines");
     expect(map.columns.length).toBeGreaterThan(0);
   });
+
+  it("loadCsvMap rejects a verified map whose path names an unknown root (bm62 D2)", async () => {
+    const dir = "system/csv/v9/";
+    const checksum = storeVersion(dir, {
+      "invoice.csv.columns.json": JSON.stringify({
+        templateId: "INVTPL-CSV-TEST",
+        version: 9,
+        rowSource: "lines",
+        encoding: "utf-8-bom",
+        lineEnding: "CRLF",
+        columns: [
+          { header: "net_amount", path: "line.netAmount" },
+          { header: "secret", path: "process.env" },
+        ],
+      }),
+    });
+    const result = await codeAndFile(
+      loadCsvMap(generatedRow(dir, checksum, { kind: "csv", structure: null })),
+    );
+    expect(result).toEqual({
+      code: "TEMPLATE_COMPILE_FAILED",
+      file: "invoice.csv.columns.json",
+    });
+  });
 });

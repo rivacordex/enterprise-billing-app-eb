@@ -352,16 +352,18 @@ export const invoiceRenderInputRepository = {
   // until bm54 stamps them at posting), read in the binder's own repeatable-
   // read transaction BEFORE `read()`: resolution needs them, and the resolved
   // structure decides whether `read()` includes the usage section. `null` when
-  // no bill exists for the run/account.
+  // no bill exists for the run/account. bm62 D1 — `refInvDocumentId` tells the
+  // CSV download whether the bill is posted (unposted → 404).
   async readBillStamps(
     tx: Database,
     { runId, banId }: { runId: string; banId: string },
-  ): Promise<PostedBillStamps | null> {
+  ): Promise<(PostedBillStamps & { refInvDocumentId: string | null }) | null> {
     const [row] = await tx
       .select({
         refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
         refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
         refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,
+        refInvDocumentId: customerBill.refInvDocumentId,
       })
       .from(customerBill)
       .where(

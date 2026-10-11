@@ -1650,6 +1650,79 @@ DELIVERED" section.
     dropped (beyond spec, no service benefit). Billing unit suites 1,328 passed.
   - **Next:** bm62 / bm63 per the build plan (bm63's journey activates profile v1 then v2).
 
+## Invoice Template update — bm62 DELIVERED (code + tests + docs), RUN GREEN on throwaway Postgres + Azurite (2026-10-11)
+
+- **bm62 — Invoice CSV output (Invoice Template update, Part 4).** Spec:
+  `context/billing-management/specs/bm62-invoice-csv-output.md`. A `billrun_view : READ` user
+  downloads a posted bill's invoice as CSV from its stamped, checksum-verified CSV column map:
+  `services/billing/invoice-template/invoice-csv.ts` (`buildInvoiceCsv` + path resolver),
+  `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv`, and a **Download CSV** link in
+  `invoice-preview-modal.tsx`. No migration, no grant change, no blob write, no audit. Gate check:
+  G12 recorded as decided and delivered (bm50). Depends on bm53 (`loadCsvMap`) and bm54 (the stamp).
+  - **Delivered:**
+    - `services/billing/invoice-template/invoice-csv.ts`: `getPostedInvoiceCsv` (D1: one
+      repeatable-read, read-only snapshot → bill must carry `ref_inv_document_id` else
+      `FinalInvoiceNotFoundError` → `resolveTemplate({ kind: 'final' })` → raw read with
+      `includeUsage: false` → the stamped profile parsed without inlining the logo; then
+      `loadCsvMap` + `bind(isDraft: false)` outside the transaction; rows sorted by `line_no`);
+      `buildInvoiceCsv` (pure, D2/D3) and `resolveCsvPath` (own-property dotted lookup; unknown,
+      `null` or non-scalar → empty cell).
+    - Formula safety reuses the bm02 helper **`lib/csv.ts` `csvField`** (no second escaper): a
+      plain decimal (`^-?\d+(\.\d+)?$`) is emitted as-is, every other cell (headers included) goes
+      through `csvField`. BOM + CRLF come from lookup tables keyed by `map.encoding` /
+      `map.lineEnding`; anything else is `TEMPLATE_COMPILE_FAILED`.
+    - D3: the emitted cells of the `line.netAmount` column are compared, as a sorted string
+      multiset, with the lines' `netAmount` strings; a mismatch is `INVOICE_RECONCILIATION_FAILED`
+      (`detail: 'csv'`). A map with no `line.netAmount` column is `TEMPLATE_COMPILE_FAILED`.
+    - `load.ts`: `csvColumnMapSchema` paths must be dotted identifiers rooted in `CSV_PATH_ROOTS`
+      (the `InvoiceRenderInput` keys + `line`), so an unknown root fails at load.
+    - `invoiceRenderInputRepository.readBillStamps` also returns `refInvDocumentId` (the posted
+      check); the two test mocks of it updated.
+    - Route (D4): session → `BILLRUN_VIEW : READ` → ID schemas (**422** on a bad shape, unlike the
+      sibling routes' 404, per the spec) → rate limit (the stored-invoice route has none, so the
+      draft limiter's 10 / 60 s, key `invoice-csv:${userId}`) → 200 `text/csv; charset=utf-8`,
+      `attachment; filename="{INV}.csv"`, `nosniff`, `no-store`. 404 unknown/unposted, 409
+      `INVOICE_RECONCILIATION_FAILED`, any other error (checksum mismatch included) logged and
+      answered 500 with no body.
+    - UI (D5): `StoredInvoiceModal` shows an outline **Download CSV** link next to the PDF
+      Download once the stored invoice is retrieved; the draft preview has none.
+  - **Interpretations (recorded):**
+    1. "On the `ci` seed" is met with the bm53 posted-bill fixtures (`setupInvoiceRenderFixtures`),
+       as guardrail 46 does: this environment has no workflow engine to produce a `ci` run's bills.
+    2. Rows are sorted by `line_no` after the `flatMap`, so the Inv #21 order holds even if the
+       source groups' line numbers interleave.
+    3. **DR-02 (design review) left open.** `resolveTemplate` still resolves every kind; bm62 uses
+       it as the spec's D1 says. The split resolution remains an owner decision.
+  - **Tests (all green):**
+    - `tests/services/billing/invoice-template/invoice-csv.test.ts` (22): header order, one row per
+      line in order, raw amounts (`-12.50` not prefixed, `1234.50` not grouped), `=HYPERLINK(...)`
+      prefixed, RFC 4180 quoting, BOM + CRLF bytes, null cells empty, unknown path empty, bad
+      encoding/line ending, no net column, reformatted net → reconciliation, no tax column, resolver
+      prototype safety, map-shape rejection (unknown roots, non-identifier segments), and the D1
+      orchestration (unposted → not found before resolving, stamps → map, `includeUsage: false`,
+      null profile, `line_no` order).
+    - `tests/db/invoice-csv.integration.test.ts` (**guardrail 55**, 7, Postgres + Azurite): every
+      posted bill → row count = line count and `SUM(net_amount::numeric)::text` from a temp table =
+      `subtotal::text`; a multi-line bill (discount, `0.01`, `-12.50`, `99999.99`, a formula and a
+      quoted description); a NULL stamp → default v1 map; a fixture CSV v2 stamp → v2 columns; a
+      tampered map → `TEMPLATE_CHECKSUM_MISMATCH`; unposted/unknown → not found; unbalanced →
+      `INVOICE_RECONCILIATION_FAILED`.
+    - `tests/app/api/invoice-csv-route.test.ts` (9): 401 ×2, 403, 422, 404, 409, 500 (no body,
+      logged), 429, 200 headers + BOM bytes.
+    - Appended: authz matrix (the CSV route checks `BILLRUN_VIEW : READ` before any parse; route and
+      service store/audit nothing), route inventory (still three `app/api/billrun` POST handlers; the
+      CSV route lives under `app/(app)`), `load.test.ts` (unknown root rejected at load),
+      `invoice-preview-modal.test.tsx` (+2: the link and its absence before retrieval).
+    - Full integration project: **1205 passed, 0 failed** (127 files, 75 skipped), 490 s. Full unit
+      suite: **4359 passed, 0 failed** (394 files).
+    - `tsc` clean; ESLint and Prettier clean on every changed file.
+  - **Not run here:** no browser or `next build` run of the Download CSV link.
+  - **Docs closed in this change set:** code-standards permission map (CSV row confirmed,
+    `billrun_view : READ`), file-org (`invoice-csv.ts` moved under `invoice-template/`, as the spec
+    says) and guardrail 55 (built); overview success criterion 9 (evidenced); bm00 Unit 62; this
+    tracker.
+  - **Next:** bm63 (Invoice Template ship gate).
+
 ## Target Capacity Pricing follow-up — bm42a DELIVERED (flow + tests + docs), RUN GREEN on throwaway Postgres (2026-10-10)
 
 - **bm42a — Flow fixes: aggregation SQL, trace money as text, plain-USAGE tamper check.** Spec:

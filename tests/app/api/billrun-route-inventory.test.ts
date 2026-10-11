@@ -40,6 +40,30 @@ function collectRouteFiles(dir: string): string[] {
 }
 
 describe("app/api/billrun/** route inventory (bm13 ship gate, revised bm20)", () => {
+  // bm62 — the invoice CSV download is a session-guarded GET under the
+  // authenticated `app/(app)` segment (Next.js rule 7), not an M2M handler.
+  it("keeps the bm62 invoice CSV route under app/(app), never app/api", () => {
+    const csvRoute = path.join(
+      REPO_ROOT,
+      "app",
+      "(app)",
+      "billing",
+      "bill-runs",
+      "[runId]",
+      "stored-invoice",
+      "[banId]",
+      "csv",
+      "route.ts",
+    );
+    expect(fs.existsSync(csvRoute)).toBe(true);
+    expect(fs.readFileSync(csvRoute, "utf8")).toMatch(
+      /export async function GET\(/,
+    );
+    expect(
+      collectRouteFiles(BILLRUN_API_DIR).some((f) => f.includes("csv")),
+    ).toBe(false);
+  });
+
   it("has exactly the three documented M2M Route Handlers, no more, no fewer", () => {
     const found = collectRouteFiles(BILLRUN_API_DIR).sort();
     expect(found).toEqual([...EXPECTED_HANDLERS].sort());

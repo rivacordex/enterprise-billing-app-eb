@@ -69,6 +69,7 @@ const NULL_STAMPS = {
   refBillTemplateVersionId: null,
   refInvoiceProfileVersion: null,
   refCsvTemplateVersionId: null,
+  refInvDocumentId: null,
 };
 
 const LAYOUT = {
@@ -220,6 +221,7 @@ describe("buildInvoiceHtml — resolution mode (D1)", () => {
       refBillTemplateVersionId: "BTV00000009",
       refInvoiceProfileVersion: 2,
       refCsvTemplateVersionId: "BTV00000003",
+      refInvDocumentId: "INV00000001",
     };
     mockStamps.mockResolvedValue(stamps);
     await buildInvoiceHtml({
