@@ -97,19 +97,50 @@ function astViolations(source: string): string[] {
 
 // Comments (CSS, HTML, Handlebars) are documentation, not markup: the seeded
 // shell's CSS comment names `@import` and `<link>` to state the rule itself.
-// CSS comments are stripped only inside <style> blocks: a `/* … */` pair
-// spanning markup (e.g. in two attribute values) must not hide what sits
-// between them.
+// Handlebars comments go first (Handlebars removes them before any HTML is
+// produced). HTML comments and `<style>` blocks are recognised only where
+// they begin in text content, never inside a tag's attribute value, so a
+// `<!--`/`-->` or `<style>`/`/*` pair split across two attribute values
+// cannot hide the markup between them. CSS comments are stripped only inside
+// a real `<style>` block.
 function stripComments(source: string): string {
-  return source
-    .replace(/<!--[\s\S]*?-->/g, "")
+  const text = source
     .replace(/\{\{!--[\s\S]*?--\}\}/g, "")
-    .replace(/\{\{![\s\S]*?\}\}/g, "")
-    .replace(
-      /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
-      (_m, open, css, close) =>
-        `${open}${String(css).replace(/\/\*[\s\S]*?\*\//g, "")}${close}`,
-    );
+    .replace(/\{\{![\s\S]*?\}\}/g, "");
+  let out = "";
+  let i = 0;
+  let inTag = false;
+  let quote: string | null = null;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (inTag) {
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === ">") {
+        inTag = false;
+      }
+      out += ch;
+      i += 1;
+    } else if (text.startsWith("<!--", i)) {
+      const end = text.indexOf("-->", i + 4);
+      i = end === -1 ? text.length : end + 3;
+    } else if (/^<style\b[^>]*>/i.test(text.slice(i, i + 200))) {
+      const open = /^<style\b[^>]*>/i.exec(text.slice(i))![0];
+      const close = text.toLowerCase().indexOf("</style>", i + open.length);
+      const cssEnd = close === -1 ? text.length : close;
+      out +=
+        open +
+        text.slice(i + open.length, cssEnd).replace(/\/\*[\s\S]*?\*\//g, "");
+      i = cssEnd;
+    } else {
+      if (ch === "<") inTag = true;
+      out += ch;
+      i += 1;
+    }
+  }
+  return out;
 }
 
 export function lintInvoiceTemplate(source: string): string[] {
@@ -178,8 +209,38 @@ describe("invoice layout lint (Styling rule 3)", () => {
     ['<div style="background: url(//x.example/b.png)"></div>'],
     ['<div title="/*"></div><script>alert(1)</script><div title="*/"></div>'],
     ['{{"lookup" customer "name"}}'],
+    [
+      '<div title="<!--"></div><script>alert(1)</script><div title="-->"></div>',
+    ],
+    [
+      '<div title="<style>/*"></div><script>alert(1)</script><div title="*/</style>"></div>',
+    ],
   ])("rejects %s", (snippet) => {
     expect(lintInvoiceTemplate(snippet)).not.toEqual([]);
+  });
+
+  // A comment opener inside an attribute value is not a comment: the script
+  // between the two attributes must stay visible to the `<script` ban.
+  it.each([
+    [
+      '<div title="<!--"></div><script>alert(1)</script><div title="-->"></div>',
+    ],
+    [
+      '<div title="<style>/*"></div><script>alert(1)</script><div title="*/</style>"></div>',
+    ],
+  ])(
+    "keeps the script hidden by an attribute-value comment opener: %s",
+    (snippet) => {
+      expect(lintInvoiceTemplate(snippet)).toContain("<script");
+    },
+  );
+
+  it("still strips real HTML comments and CSS comments in a <style> block", () => {
+    expect(
+      lintInvoiceTemplate(
+        "<!-- <script>x</script> --><style>/* @import url(http://x) */ .a{}</style>",
+      ),
+    ).toEqual([]);
   });
 
   it("still allows data: URIs, fragment references and template placeholders", () => {

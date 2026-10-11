@@ -132,7 +132,7 @@ describe("generate — guardrail 48 (all 128 structure combinations)", () => {
       const invoice = compileInvoiceTemplate(invoiceHbs);
       const footer = compileInvoiceTemplate(footerHbs);
       expect(executeInvoiceTemplate(invoice, PROBE_RENDER_INPUT)).toContain(
-        "<html>",
+        '<html lang="en">',
       );
       executeInvoiceTemplate(footer, PROBE_RENDER_INPUT);
 

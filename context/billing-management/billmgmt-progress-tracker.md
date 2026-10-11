@@ -1879,6 +1879,14 @@ DELIVERED" section.
        both tampered blobs in `finally`.
     8. **Docs drift:** architecture header (Part 2 delivered), workflow rules companion list,
        `render-invoice-template.ts` comment, this tracker (bm63 commit, D3 commit note).
+  - **SonarCloud accessibility fix to layout v1 (2026-10-11, owner decision A, PR #156):** `lang="en"`,
+    a `<title>`, and visually hidden `<thead>` headers on the two summary tables, in layout v1
+    (`shell.hbs`, `chargeSummary`/`taxSummary` partials) and generated v1, so generator parity holds;
+    both `checksums.json` regenerated (`write-checksums.ts`), the digests updated in **migration
+    `0046` (edited in place)** and `tests/helpers/seeded-invoice-template.ts`, the golden fixture
+    regenerated, `generate.test.ts`'s `<html>` assertion updated. v1 is final from this commit.
+    **Environments that already ran `0046` must be reset** (known-issues §23k/§23l). Unit 1208
+    template tests, integration 1214, admin e2e 5/5 — all green on a fresh stack.
     - Not changed (cleanup, recorded for later): sharing `buildInvoiceHtml`'s orchestration and
       the route auth preamble, and the `lib/csv.ts` wire-format overlap.
   - **Next:** the cloud cutover adds the `appBlobAuth` flip (G16); the layout v2 unit (annex CSS,

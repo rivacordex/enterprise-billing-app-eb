@@ -1,6 +1,7 @@
 <section class="sec sec--chargeSummary sec--full">
   <p class="section-heading">Summary of charges</p>
   <table>
+    <thead class="vh"><tr><th scope="col">Charge</th><th scope="col">Amount</th></tr></thead>
     <tbody>
       {{#each chargeSummary}}
       <tr><td>{{this.name}}</td><td class="num">{{money this.amount}}</td></tr>
