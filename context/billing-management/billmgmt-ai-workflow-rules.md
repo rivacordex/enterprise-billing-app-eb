@@ -4,10 +4,10 @@ Read `context/ai-workflow-rules.md` first and obey it in full. This supplement c
 
 **Companion docs (authoritative; do not restate or contradict them):**
 
-- `billmgmt-update-overview.md`: the functional scope, in/out of scope and success criteria for Part 1 and Part 2. It is the overview for in-flight work. `billmgmt-project-overview.md` describes delivered phases 1–4 (bm01–bm39) only.
-- `billmgmt-architecture.md`: **50 Module Invariants (§6)**. #15 is a retired tombstone, #29–#38 belong to Part 1 and #39–#50 to Part 2. It also holds the dated Part 1 and Part 2 delta sections and the **open cross-update conflicts X1–X4**.
-- `billmgmt-code-standards.md`: §1–§9 and its two dated delta sections. Part 1 guardrails are §9 items **36–42**. Part 2 guardrails are items **43–56**, and conflicts **C1–C4** are listed there.
-- `specs/bm00-build-plan.md`: the authority on unit numbering, unit boundaries and build order. Part 1 is **bm40–bm46**. Part 2 has no units yet.
+- `billmgmt-update-overview.md`: the functional scope, in/out of scope and success criteria for Part 1; Part 2 there is a pointer. `billmgmt-project-overview.md` describes the delivered phases 1–4 (bm01–bm39), Target Capacity, and the Invoice Template update (Part 2, delivered bm47–bm63, folded 2026-10-11, with its success criteria 1–12).
+- `billmgmt-architecture.md`: **50 Module Invariants (§6)**. #15 is a retired tombstone, #29–#38 belong to Part 1 and #39–#50 to Part 2. It also holds the dated Part 1 and Part 2 delta sections and the cross-update conflicts **X1–X4, all resolved**.
+- `billmgmt-code-standards.md`: §1–§9 and its two dated delta sections. Part 1 guardrails are §9 items **36–42**. Part 2 guardrails are items **43–56**, and conflicts **C1–C4** (all resolved) are listed there.
+- `specs/bm00-build-plan.md`: the authority on unit numbering, unit boundaries and build order. Part 1 is **bm40–bm46**. Part 2 is **bm47–bm63** (delivered).
 - Design authority: for Part 1, `_updatemodule-billing-billrun-target-capacity-plan.md` (TC1–TC58, open set O-TC*). For Part 2, `_updatemodule-billing-invoice-template-merged-plan.md`, where **§15 (R1–R11) overrides §§1–14**. Also `invoice-template/placeholder-catalog.md` (placeholder roots and field formats).
 - `context/rating-management/ratemgmt-ai-workflow-rules.md`: **binding on you** for any rating-side change (§3.5).
 
@@ -120,10 +120,9 @@ Apply the general §4. Never guess on money, the render source, a stamp, or a pe
 
 | Topic | Where it is tracked (same issue, three IDs) | Interim rule |
 | --- | --- | --- |
-| `ONE_TIME` charge sourcing | C2 | §3.7 |
-| Embedded fonts | O4 | No external font fetch, ever |
-| Customer SST no., PO and contract references | O5 | Fragments stay hidden while blank. Add no columns |
 | Partial-period billing | O-TC7 | A **business** decision. Never build a method |
+
+**Decided 2026-10-11 (owner, no longer open):** C2/G5 (no `ONE_TIME` in v1; the §3.7 rule stands until a sourcing spec), O4/G8 (IBM Plex embedded; no external font fetch, ever; layout v1 has placeholder sources, layout v2 ships the real fonts), O5/G9 (customer SST no., PO and contract fragments stay hidden while blank; add no columns), C5/G16 (Managed Identity; the `appBlobAuth` flip is a cloud-cutover ops step).
 
 **Decided and delivered (no longer open):** X3/C3 (`is_default` vs one-ACTIVE — the one-ACTIVE index excludes the default), X4 (same-file two-rewrites — carried by the bm47–bm49 binder), O2/C4/G6 (SHA-256 for template/asset blobs, md5 for invoice PDFs, algorithm recorded per row), O3/G7 (notes & footer are fixed layout text), O10/G10 (nothing deletes a version), G11 (role grants ADMIN/MANAGER EDIT, USER READ), G12 (CSV version on `customer_bill.ref_csv_template_version_id`) — all delivered by bm50 (2026-10-08). The seeded `invoice_settings` role grants are confirmed in the bm50 spec and applied by `db:seed-billing`.
 

@@ -357,6 +357,25 @@ async function runHeredocStatements(
 // import path (bm40-spec §Implementation §2).
 // ---------------------------------------------------------------------------
 
+// bm63-spec §Design D1 — the flow's REAL Collection claim (correlation through
+// `inventory.product_inventory`, RATED → BILL_DRAFT), so a journey on the
+// `_SAMPLE_` `ci` seed claims exactly what the deployed flow would. Returns
+// nothing; read the claimed rows back if the count matters.
+export async function runCollection(
+  sql: postgresjs.Sql,
+  { runId, ban, attempt }: { runId: string; ban: string; attempt: number },
+): Promise<void> {
+  const heredoc = stripExplicitTransactionBounds(
+    extractStageHeredoc("collection"),
+  );
+  const values: Record<string, string> = {
+    run: runId,
+    ban,
+    attempt: String(attempt),
+  };
+  await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
+}
+
 export interface AggregateParams {
   runId: string;
   ban: string;

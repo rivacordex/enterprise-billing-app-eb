@@ -12,15 +12,19 @@ function emptyMap(): EffectivePermissionMap {
   ) as EffectivePermissionMap;
 }
 
-// Fetches the appuser row and confirms it is ACTIVE and not time-locked. Used
-// by Route Handlers that cannot call requirePermission (which redirects).
-// Returns null for missing, inactive, suspended, or currently-locked users.
+// Fetches the appuser row and confirms it is ACTIVE, not time-locked, and not
+// owing a forced password change. Used by Route Handlers that cannot call
+// requirePermission (which redirects). Returns null for missing, inactive,
+// suspended or currently-locked users, and for a user who must still set a
+// new password — the same gate `getActiveUser` applies to every page and
+// action (auth/guard.ts), so a temporary credential reaches no data route.
 export async function findActiveUserById(
   userId: string,
 ): Promise<AppUser | null> {
   const user = await findUserById(db, userId);
   if (!user || user.status !== "ACTIVE") return null;
   if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+  if (user.forcePasswordChange) return null;
   return user;
 }
 

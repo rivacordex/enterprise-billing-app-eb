@@ -1,6 +1,6 @@
 # Bill Run — Build Plan (Units, in build order)
 
-Decomposition of the Billing Management (Bill Run) module into build units. Sources of truth: `billmgmt-project-overview.md` (delivered phases 1–4), `billmgmt-update-overview.md` (in-flight Part 1 Target Capacity + Part 2 Invoice Template), `billmgmt-architecture.md` (Module Invariants §6, #1–#50 — #15 is a retired tombstone; dated delta sections; open conflicts X1–X4), `billmgmt-code-standards.md` (file tree §7, permission map §8, guardrail tests §9 items 1–56, conflicts C1–C4), `billmgmt-ai-workflow-rules.md` (unit discipline, mandatory splits, load-bearing order), `billmgmt-ui-context.md` (tokens, §10 Invoice Settings). Stack per `context/architecture.md` §1 and `billmgmt-architecture.md` §1 + the dated stack deltas. **Per-unit detail lives in `specs/bm*.md`; full current state in `billmgmt-progress-tracker.md`.**
+Decomposition of the Billing Management (Bill Run) module into build units. Sources of truth: `billmgmt-project-overview.md` (delivered phases 1–4, Target Capacity, and the Invoice Template update — Part 2 delivered bm47–bm63 and folded in 2026-10-11), `billmgmt-update-overview.md` (Part 1 Target Capacity; Part 2 is a pointer to the fold), `billmgmt-architecture.md` (Module Invariants §6, #1–#50 — #15 is a retired tombstone; dated delta sections; conflicts X1–X4 all resolved), `billmgmt-code-standards.md` (file tree §7, permission map §8, guardrail tests §9 items 1–56, conflicts C1–C4 all resolved), `billmgmt-ai-workflow-rules.md` (unit discipline, mandatory splits, load-bearing order), `billmgmt-ui-context.md` (tokens, §10 Invoice Settings). Stack per `context/architecture.md` §1 and `billmgmt-architecture.md` §1 + the dated stack deltas. **Per-unit detail lives in `specs/bm*.md`; full current state in `billmgmt-progress-tracker.md`.**
 
 _Revised 2026-10-07: Part 1 status re-verified against `enterprise-billing-app` `dev1`; **Part 4 — Invoice Template (Units 47–63)** added._
 
@@ -10,7 +10,7 @@ _Revised 2026-10-07: Part 1 status re-verified against `enterprise-billing-app` 
 
 > ## Status — Phases 1–4 (bm01–bm39) DELIVERED
 >
-> Phase 1 (bm01–bm13) control plane; Phase 2 (bm14–bm21) two-writer boundary + rendering + posting + distribution; Phase 3 (bm22–bm35) real compute plane; Phase 4 (bm36–bm39) processor signal-back + the self-driving `SCHEDULED → COMPLETED` lifecycle + production deployable/wired. **Do not rebuild.** Taxation stays the ratified `0.00` interim (`total = subtotal`). The production **cloud cutover** is a later gated ops step — bm38 landed it deployable + wired; **Phase 4 added no new schema or migrations** (flow YAML + bicep + Key Vault secrets + a smoke test). The **Target Capacity Pricing update** (Units 40–46, `bm40`–`bm46`) is **in delivery** — see **Part 3** below. The **Invoice Template update** (Units 47–63, `bm47`–`bm63`) has **specs written (2026-10-07), not built** — see **Part 4** below.
+> Phase 1 (bm01–bm13) control plane; Phase 2 (bm14–bm21) two-writer boundary + rendering + posting + distribution; Phase 3 (bm22–bm35) real compute plane; Phase 4 (bm36–bm39) processor signal-back + the self-driving `SCHEDULED → COMPLETED` lifecycle + production deployable/wired. **Do not rebuild.** Taxation stays the ratified `0.00` interim (`total = subtotal`). The production **cloud cutover** is a later gated ops step — bm38 landed it deployable + wired; **Phase 4 added no new schema or migrations** (flow YAML + bicep + Key Vault secrets + a smoke test). The **Target Capacity Pricing update** (Units 40–46, `bm40`–`bm46`) is **in delivery** — see **Part 3** below. The **Invoice Template update** (Units 47–63, `bm47`–`bm63`) is **delivered** — the bm63 ship gate signed it off on 2026-10-11 — see **Part 4** below.
 >
 > **Verified state, 2026-10-07 (`enterprise-billing-app` `dev1`):**
 >
@@ -19,7 +19,7 @@ _Revised 2026-10-07: Part 1 status re-verified against `enterprise-billing-app` 
 > | bm40–bm44 | **Committed** (`792d681` bm41 … `0bde815` bm44 + review fixes) |
 > | bm45 | **Committed** (`c77cb7d` + SonarQube fixes `eeb6450`, `266a5d8`) |
 > | bm46 | **Committed** (`60be173` + CodeRabbit fixes `501456f`) — Part 3 entry gate for Part 4 met |
-> | bm47–bm63 | **Specs written 2026-10-07**; no code. Each spec lists its open G-items; a unit's build waits until they are recorded as decided. bm61's G14: **no four-eyes** (decided 2026-10-11, superseding option C of 2026-10-10) |
+> | bm47–bm63 | **Delivered** (`dc19685` bm47 … `75fd10d` bm62; bm63 ship gate signed off 2026-10-11). Every G-item is decided (G5/G8/G9/G16 on 2026-10-11; G14 no four-eyes). Commits per unit: `billmgmt-progress-tracker.md` |
 >
 > The progress tracker's "bm40–bm46 planned, not delivered" line is stale; correct it with the next tracker touch (workflow rules §7.3). Latest applied migration: `0044_customer_bill_line_capacity.sql`.
 
@@ -167,7 +167,7 @@ Decomposition rules applied: one visible result per unit; one system boundary; d
 
 ---
 
-# Part 4 — Invoice Template update (specs written, Units 47–63)
+# Part 4 — Invoice Template update (delivered, Units 47–63; ship gate bm63 2026-10-11)
 
 > **2026-10-07 — specs `bm47`–`bm63` written.** Decided: **G1 = R9**, **G2** (all USAGE rows, 10,000/account, over-limit parks with `INVOICE_USAGE_OVER_LIMIT`), **G3** (index excludes the default), **G7** (fixed layout text), **G15 = option A**. Kept **open** at the owner's request, with the interim rule from the table below cited in each spec: G4, G5, G6, G8, G9, G10, G11, G12, G13. Still open and blocking: **G14** (bm61 BLOCKED). **New: G16** (prod app blob auth: Key Vault connection string vs a container-scoped Managed Identity; see bm52). The decided items still need recording in the overview, architecture and code-standards trackers (workflow rules §7.2).
 >
@@ -219,18 +219,18 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 | G2 | Usage-section scope, row limit and what happens over the limit | X2 | 47 (multi-page fixture), 49 | Multi-page tests use Part 1's limit of 10,000 rows |
 | G3 | `is_default` vs one-ACTIVE | X3 = C3 | 50 | C3: the partial unique index excludes the default. Resolution order is pinned → non-default ACTIVE → default |
 | G4 | Same file, two rewrites | X4 | 47 | **Resolved by this plan:** Part 4 starts after bm46, and 47 carries the bm45 appendix into the layout |
-| G5 | `ONE_TIME` charge sourcing | C2 | 47 | The binder groups by the existing `USAGE`/`RECURRING`/`OCC` union. No `ONE_TIME` member |
+| G5 | `ONE_TIME` charge sourcing | C2 | 47 | **Decided 2026-10-11:** the binder groups by the existing `USAGE`/`RECURRING`/`OCC` union. No `ONE_TIME` member in v1 |
 | G6 | Checksum algorithm for templates and assets | O2 = C4 | 50, 53 | SHA-256 for new blobs, md5 for invoice PDFs. The algorithm is recorded with each checksum |
 | G7 | Notes & terms and the footer sentence: fixed layout text, or profile fields? | O3 | 47 (layout v1), 59 | **Must be decided before 50 seeds layout v1,** because seeded layouts are immutable |
-| G8 | Embedded fonts | O4 | 47 | IBM Plex Sans and Mono, embedded (ui-context §10c) |
-| G9 | Customer SST no., PO reference and contract reference | O5 | 47 | Hidden while blank. No columns added |
+| G8 | Embedded fonts | O4 | 47 | **Decided 2026-10-11:** IBM Plex Sans and Mono, embedded (ui-context §10c). Layout v1 has placeholder sources; layout v2 ships the real woff2 |
+| G9 | Customer SST no., PO reference and contract reference | O5 | 47 | **Decided 2026-10-11:** hidden while blank. No columns added |
 | G10 | Retention of retired versions | O10 | 50 | Nothing deletes a version |
 | G11 | Seeded `invoice_settings` role grants | code-standards §8 | 50 | ADMIN/MANAGER EDIT, USER READ (the `ratecard` precedent) |
 | G12 | Where the CSV template version column lives | architecture storage deltas vs code-standards | 50 | `customer_bill.ref_csv_template_version_id` (code-standards data rule 4) |
 | G13 | Mapping `udr_key` → `(mno_public_key, commercial_unit_public_key, polygon_id)` | overview rating follow-ups | 48 | Rating decides (`ratemgmt` §5.1) |
 | G14 | Four-eyes on company-profile activation | architecture _Noted gap_ vs code-standards ("does not apply") | 61 | **Decided 2026-10-11: no four-eyes** — one EDIT signature, bank changes included (supersedes option C of 2026-10-10) |
 | G15 | **New:** how invoices render before the first profile is activated. Option A: issuer and payment blocks hidden, `ref_invoice_profile_version` NULL. Option B: a seeded profile v1 | Not tracked yet. Add it to all three places | 47, 53, 54 | Recommended: option A. Today's invoice has no issuer block, so nothing regresses. A seeded profile would print placeholder legal and bank details on real invoices |
-| G16 | **New (bm52):** prod app blob auth — keep the Key Vault connection string, or switch to the app's user-assigned Managed Identity with container-scoped `Storage Blob Data Contributor` | Tracked (bm52): overview open items, architecture open items, code-standards C5 | 52 (prod release of 53, 58, 60) | Recommended: Managed Identity. bm52 builds it behind `appBlobAuth`, default `connectionString` |
+| G16 | **New (bm52):** prod app blob auth — keep the Key Vault connection string, or switch to the app's user-assigned Managed Identity with container-scoped `Storage Blob Data Contributor` | Tracked (bm52): overview open items, architecture open items, code-standards C5 | 52 (prod release of 53, 58, 60) | **Decided 2026-10-11: Managed Identity.** bm52 builds it behind `appBlobAuth` (default `connectionString`); the flip is a cutover ops step |
 
 ## Unit table
 
@@ -551,7 +551,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
   - activation without a logo or a note is refused (guardrail 51)
 - **Depends on:** 59, 60, 54. G14 decided 2026-10-11 (no four-eyes).
 
-### Unit 62 — Invoice CSV output (`bm62`)
+### Unit 62 — Invoice CSV output (`bm62`) — delivered 2026-10-11
 
 - **Boundary:** `services/billing/invoice-template/invoice-csv.ts` + `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` (`billrun_view` READ).
 - **Builds:**
@@ -562,7 +562,7 @@ This part breaks the Invoice Template update (`billmgmt-update-overview.md` Part
 - **Visible result:** a posted bill's CSV downloads with one row per line. Its `net_amount` column adds up exactly to `customer_bill.subtotal`, compared as strings after an SQL sum (guardrail 55).
 - **Depends on:** 54, 53.
 
-### Unit 63 — Invoice Template ship gate (`bm63`)
+### Unit 63 — Invoice Template ship gate (`bm63`) — delivered 2026-10-11
 
 - **Boundary:** cross-cutting: tests, docs and the tracker. **Nothing new is built** (the bm13/bm21/bm35/bm39/bm46 discipline).
 - **Builds:**

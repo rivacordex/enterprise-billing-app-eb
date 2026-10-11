@@ -10,8 +10,9 @@ import { PERMISSION_NAMES } from "@/types/rbac";
 // `ratecard-authz-matrix.test.ts` precedent): a server component / action /
 // route handler can't be run under the App Router in vitest, so each surface's
 // guard call is asserted. The behavioural proofs live in each surface's own
-// test (the preview action and the files route). bm56–bm62 APPEND their rows
-// (company profile, logo, save draft, activate, CSV) to `MATRIX` below.
+// test (the preview action and the files route). bm56–bm61 APPEND their rows
+// (company profile, logo, save draft, activate) to `MATRIX` below; bm62's CSV
+// route is a billrun_view surface, so it has its own case.
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
 function read(relativePath: string): string {
@@ -349,6 +350,34 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toContain(
       "recentBills={canPreviewBills ? await listRecentPostedBills() : []}",
     );
+  });
+
+  // bm62 — the invoice CSV is bill data, not a setting: it is gated on
+  // billrun_view : READ (the permission-map row), never invoice_settings.
+  it("the invoice CSV route requires billrun_view : READ, checked before any parse; it stores and audits nothing (bm62)", () => {
+    const src = read(
+      "app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/csv/route.ts",
+    );
+    expect(src).toMatch(
+      /meetsLevel\(\s*permissionMap\[PERMISSIONS\.BILLRUN_VIEW\],\s*LEVELS\.READ\s*\)/,
+    );
+    expect(src).not.toContain("PERMISSIONS.INVOICE_SETTINGS");
+    expect(src).not.toMatch(/PERMISSIONS\.BILLRUN_(OPERATE|APPROVE)/);
+    // 401 before 403 before any ID parse or read.
+    expect(src.indexOf("status: 401")).toBeLessThan(src.indexOf("status: 403"));
+    expect(src.indexOf("status: 403")).toBeLessThan(
+      src.indexOf("billRunIdSchema.safeParse"),
+    );
+    expect(src.indexOf("billRunIdSchema.safeParse")).toBeLessThan(
+      src.indexOf("await getPostedInvoiceCsv("),
+    );
+
+    const svc = read("services/billing/invoice-template/invoice-csv.ts");
+    for (const file of [src, svc]) {
+      expect(file).not.toMatch(
+        /insertAuditEvent|auditLogRepository|putObject|putInvoice|putReport|revalidatePath/,
+      );
+    }
   });
 
   it("`invoice_settings` is a distinct PERMISSION_NAMES member, separate from billrun_* and system_config", () => {

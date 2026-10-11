@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // this DB-free unit suite).
 vi.mock("@/db/client", () => ({ db: {} }));
 
+vi.mock("@/db/repositories/appuser.repository", () => ({
+  findUserById: vi.fn(),
+}));
+
 vi.mock("@/db/repositories/role-assign.repository", () => ({
   roleAssignRepository: { findRoleIdsByUserId: vi.fn() },
 }));
@@ -14,7 +18,11 @@ vi.mock("@/db/repositories/role-permission-assign.repository", () => ({
   rolePermissionAssignRepository: { findGrantsByRoleIds: vi.fn() },
 }));
 
-import { resolveEffectivePermissions } from "@/auth/resolver";
+import {
+  findActiveUserById,
+  resolveEffectivePermissions,
+} from "@/auth/resolver";
+import { findUserById } from "@/db/repositories/appuser.repository";
 import { roleAssignRepository } from "@/db/repositories/role-assign.repository";
 import { rolePermissionAssignRepository } from "@/db/repositories/role-permission-assign.repository";
 
@@ -171,5 +179,34 @@ describe("resolveEffectivePermissions", () => {
     await resolveEffectivePermissions("user-1");
 
     expect(findRoleIdsByUserId).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Route Handlers can't redirect, so this is their whole principal gate: it
+// must refuse exactly what `getActiveUser` refuses for pages and actions.
+describe("findActiveUserById", () => {
+  const mockFindUser = vi.mocked(findUserById);
+  const user = (overrides: Record<string, unknown> = {}) =>
+    ({
+      id: "u1",
+      status: "ACTIVE",
+      lockedUntil: null,
+      forcePasswordChange: false,
+      ...overrides,
+    }) as never;
+
+  it("returns an ACTIVE, unlocked user with no pending password change", async () => {
+    mockFindUser.mockResolvedValue(user());
+    expect(await findActiveUserById("u1")).toMatchObject({ id: "u1" });
+  });
+
+  it.each([
+    ["missing", null],
+    ["inactive", user({ status: "SUSPENDED" })],
+    ["locked", user({ lockedUntil: new Date(Date.now() + 60_000) })],
+    ["owing a forced password change", user({ forcePasswordChange: true })],
+  ])("refuses a %s user", async (_label, row) => {
+    mockFindUser.mockResolvedValue(row);
+    expect(await findActiveUserById("u1")).toBeNull();
   });
 });

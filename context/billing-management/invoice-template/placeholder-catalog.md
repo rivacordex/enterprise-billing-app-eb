@@ -15,6 +15,14 @@ Every optional key is present with `null`, never `undefined` (Handlebars
 
 ## A. Placeholder roots
 
+**Final for v1 (bm63 ship gate, 2026-10-11).** These thirteen roots are exactly
+the keys of `InvoiceRenderInput`: `template`, `company`, `payment`, `invoice`,
+`customer`, `totals`, `taxes`, `chargeSummary`, `lineGroups`, `usage`, `isDraft`,
+`locale`, `timezone`. The CSV column map (bm62) may address these roots plus
+`line` (the current `customer_bill_line`), and `csvColumnMapSchema`
+(`services/billing/invoice-template/load.ts`, `CSV_PATH_ROOTS`) rejects any other
+root at load. A new root is a spec change to this file and the type together.
+
 | Root | Shape | Notes |
 | --- | --- | --- |
 | `template.*` | `{ layoutCode, layoutVersion, version }` | From bm53: the **resolved** layout's `layout_code`/`version_no` and the resolved generated version's `version_no` (never `null`). Resolution is pinned → non-default ACTIVE → default (Inv #42); a posted bill with `NULL` stamps (pre-bm54) resolves the default. |

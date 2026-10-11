@@ -160,9 +160,13 @@ export interface InvoiceRenderFixtures {
   dropAll(): Promise<void>;
 }
 
+// `reset: false` (bm63) builds the fixtures on a database another step has
+// already set up (the ship-gate journey runs the real `db:setup`): no schema
+// drop, no migrate.
 export async function setupInvoiceRenderFixtures(
   sql: postgresjs.Sql,
   labelPrefix: string,
+  { reset = true }: { reset?: boolean } = {},
 ): Promise<InvoiceRenderFixtures> {
   const db = drizzle(sql, { schema });
   let actorId = "";
@@ -177,11 +181,13 @@ export async function setupInvoiceRenderFixtures(
     labelPrefix,
   });
 
-  await fx.dropAll(sql);
-  await migrate(db, {
-    migrationsFolder: "./db/migrations",
-    migrationsSchema: "drizzle",
-  });
+  if (reset) {
+    await fx.dropAll(sql);
+    await migrate(db, {
+      migrationsFolder: "./db/migrations",
+      migrationsSchema: "drizzle",
+    });
+  }
 
   const [actor] = await db
     .insert(appuser)

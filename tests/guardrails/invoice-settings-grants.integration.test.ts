@@ -58,16 +58,9 @@ describe.skipIf(!databaseUrl)(
       }
     }
 
-    beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 5 });
-      await dropAll();
-      await migrate(drizzle(sql, { schema }), {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-      // Real bootstrap, in provisioning order (kestra skipped — a separate DB,
-      // irrelevant to these grants).
+    // Real bootstrap, in provisioning order (kestra skipped — a separate DB,
+    // irrelevant to these grants).
+    async function bootstrap(): Promise<void> {
       for (const file of [
         "db/bootstrap/bootstrap-db-roles.sql",
         "db/bootstrap/rating-db-roles.sql",
@@ -77,6 +70,17 @@ describe.skipIf(!databaseUrl)(
           await sql.unsafe(stmt);
         }
       }
+    }
+
+    beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
+      sql = postgres(databaseUrl as string, { max: 5 });
+      await dropAll();
+      await migrate(drizzle(sql, { schema }), {
+        migrationsFolder: "./db/migrations",
+        migrationsSchema: "drizzle",
+      });
+      await bootstrap();
     }, 180_000);
 
     afterAll(async () => {
@@ -131,6 +135,55 @@ describe.skipIf(!databaseUrl)(
     });
 
     it("billrun_runtime: no INSERT/UPDATE on the four customer_bill stamp columns", async () => {
+      for (const c of STAMP_COLUMNS) {
+        const privs = await columnPrivs("billrun_runtime", c);
+        expect(privs).not.toContain("INSERT");
+        expect(privs).not.toContain("UPDATE");
+      }
+    });
+
+    // bm63-spec §Design D3 — the upgrade (revoke) path. A database bootstrapped
+    // before bm50 carries what the older grant files and the app_migrate
+    // default privileges handed out: DELETE (and INSERT/UPDATE on bill_format)
+    // for app_runtime, and billrun_runtime's INSERT/UPDATE on the two reserved
+    // customer_bill stamp columns. Recreate that state, re-run the real
+    // bootstrap, and the same least-privilege result must hold.
+    it("an upgraded (pre-bm50) bootstrap is revoked down to the same grants", async () => {
+      await sql.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+        "billing"."bill_format", "billing"."bill_template_version",
+        "billing"."bill_asset", "billing"."bill_asset_version" TO app_runtime`);
+      await sql.unsafe(`GRANT ALL ON TABLE
+        "billing"."bill_format", "billing"."bill_template_version",
+        "billing"."bill_asset", "billing"."bill_asset_version" TO billrun_runtime`);
+      await sql.unsafe(`GRANT INSERT ("ref_bill_format_id","ref_bill_template_version_id"),
+        UPDATE ("ref_bill_format_id","ref_bill_template_version_id")
+        ON TABLE "billing"."customer_bill" TO billrun_runtime`);
+      expect(await tablePrivs("app_runtime", "bill_format")).toContain(
+        "DELETE",
+      );
+      expect(
+        await columnPrivs("billrun_runtime", "ref_bill_format_id"),
+      ).toContain("UPDATE");
+
+      await bootstrap();
+
+      expect(await tablePrivs("app_runtime", "bill_format")).toEqual([
+        "SELECT",
+      ]);
+      for (const t of [
+        "bill_template_version",
+        "bill_asset",
+        "bill_asset_version",
+      ]) {
+        expect(await tablePrivs("app_runtime", t)).toEqual([
+          "INSERT",
+          "SELECT",
+          "UPDATE",
+        ]);
+      }
+      for (const t of CATALOG_TABLES) {
+        expect(await tablePrivs("billrun_runtime", t)).toEqual([]);
+      }
       for (const c of STAMP_COLUMNS) {
         const privs = await columnPrivs("billrun_runtime", c);
         expect(privs).not.toContain("INSERT");

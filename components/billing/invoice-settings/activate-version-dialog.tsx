@@ -89,7 +89,10 @@ export function ActivateVersionDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      {/* bm63 — a first profile activation lists every field in the
+          summary, which outgrows a 720 px viewport; the content scrolls so
+          the change note and Activate stay reachable. */}
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>

@@ -19,6 +19,7 @@
     "check:rating-rename-gate": "node --import tsx db/checks/check-rating-rename-gate.ts",
     "test": "vitest run && vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
+    "test:e2e:invoice-settings": "next build && vitest run --config vitest.integration.config.ts tests/e2e/invoice-settings-admin.e2e.integration.test.ts",
     "db:generate": "drizzle-kit generate",
     "pgledger:transform": "node --import tsx db/pgledger/transform.ts",
     "db:migrate": "node --conditions=react-server --env-file=.env --import tsx db/migrate.ts",
