@@ -21,6 +21,13 @@ export const onboardCustomerAccountsSchema = z
     faCreditLimit: creditLimitSchema.optional(),
     banCreditLimit: creditLimitSchema.optional(),
     paymentDueDaysOverride: z.number().int().positive().optional(),
+    // cm18 — invoice template for the new BAN. v1 always sends null
+    // ("follow the active template"); see assertBindableTemplate.
+    billTemplateVersionId: z
+      .string()
+      .regex(/^BTV\d{8}$/, "Invalid template version ID")
+      .nullable()
+      .optional(),
     statusReason: z.string().trim().min(1).max(500),
   })
   .merge(optimisticLockSchema);

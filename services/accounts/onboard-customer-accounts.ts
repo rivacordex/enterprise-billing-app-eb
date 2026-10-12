@@ -6,6 +6,7 @@ import { financialAccountRepository } from "@/db/repositories/accounts/financial
 import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { partyRoleRepository } from "@/db/repositories/party-role";
+import { assertBindableTemplate } from "@/services/accounts/assert-bindable-template";
 import type { OnboardCustomerAccountsInput } from "@/validation/accounts/onboard-customer-accounts.schema";
 
 export type OnboardCustomerAccountsResult =
@@ -21,12 +22,13 @@ export type OnboardCustomerAccountsResult =
   | { ok: false; code: "PARTY_ROLE_NOT_FOUND" }
   | { ok: false; code: "INVALID_TRANSITION" }
   | { ok: false; code: "CONFLICT" }
-  | { ok: false; code: "CYCLE_RETIRED" };
+  | { ok: false; code: "CYCLE_RETIRED" }
+  | { ok: false; code: "TEMPLATE_NOT_BINDABLE" };
 
 // ac04-spec §2.2 + §3.1 — single atomic transaction owned by this service:
 //   1. compareAndUpdateStatus → INITIALIZED → VALIDATED (cm10 seam)
 //   2a. inserts billing.financial_account (FIN…)
-//   2b. inserts billing.billing_account (BAN…)
+//   2b. inserts billing.billing_account (BAN…, ref_bill_template_version_id = NULL in v1)
 //   2c. pgledger_create_account ×3
 //   2d. inserts three ledger_binding rows
 //   3. writes ACCOUNTS_ONBOARDED audit event
@@ -54,6 +56,11 @@ export async function onboardCustomerAccounts(
     if (!cycle || cycle.state !== "active") {
       return { ok: false, code: "CYCLE_RETIRED" };
     }
+
+    // cm18 — validate the template binding before any write (Inv. #18).
+    const templateId = input.billTemplateVersionId ?? null;
+    const bindable = await assertBindableTemplate(tx, templateId);
+    if (!bindable.ok) return { ok: false, code: bindable.code };
 
     // Step 1 — status change (optimistic lock; null = stale → CONFLICT).
     const after = await partyRoleRepository.compareAndUpdateStatus(
@@ -88,6 +95,7 @@ export async function onboardCustomerAccounts(
       creditLimitAmount: input.banCreditLimit ?? null,
       refBillCycleId: input.billCycleId,
       paymentDueDaysOverride: input.paymentDueDaysOverride ?? null,
+      refBillTemplateVersionId: templateId,
       lastEditedBy: actorId,
     });
 
@@ -144,6 +152,7 @@ export async function onboardCustomerAccounts(
         billingAccountId: ban.billingAccountId,
         partyRoleId: input.partyRoleId,
         ledgerAccountNames: [ucName, depName, recName],
+        refBillTemplateVersionId: templateId,
       },
     });
 

@@ -14,6 +14,7 @@ import { appuser } from "@/db/schema/identity";
 import { partyRole } from "@/db/schema/customer";
 import { billing } from "@/db/schema/billing/pg-schema";
 import { billCycle } from "@/db/schema/billing/catalogs";
+import { billTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import type { AccountContactList } from "@/validation/accounts/contact.schema";
 
 export const financialAccountSeq = billing.sequence("financial_account_seq", {
@@ -108,6 +109,11 @@ export const billingAccount = billing.table(
     // document time by the term-resolution service, not here.
     paymentDueDaysOverride: integer("payment_due_days_override"),
     defaultPaymentMethodRef: text("default_payment_method_ref"),
+    // cm17 — per-BAN invoice template reference (binding plan D9/D10).
+    // NULL = follow the current ACTIVE template, else the default. v1 writes
+    // NULL only (cm18/cm21, D13); posting never reads it (custmgmt Inv. #18).
+    // DDL of record: db/migrations/0050_billing_account_template_ref.sql.
+    refBillTemplateVersionId: text("ref_bill_template_version_id"),
     lastModified: timestamp("last_modified", {
       withTimezone: true,
       precision: 3,
@@ -127,6 +133,11 @@ export const billingAccount = billing.table(
       foreignColumns: [financialAccount.financialAccountId],
       name: "billing_account_ref_financial_account_id_fk",
     }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.refBillTemplateVersionId],
+      foreignColumns: [billTemplateVersion.billTemplateVersionId],
+      name: "billing_account_ref_bill_template_version_id_fk",
+    }),
     check(
       "billing_account_state_check",
       sql`state IN ('active','suspended','closed')`,

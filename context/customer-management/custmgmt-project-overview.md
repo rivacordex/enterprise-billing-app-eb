@@ -32,30 +32,35 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 ## Features
 
 ### Search and viewing
+
 - Search-only landing page (empty start) on both View and Manage; case-insensitive partial match on `organization.name` and `organization.trading_name`.
 - Result limit read from `system_config` (`CUSTOMER_SEARCH_RESULT_LIMIT`, default 5) with match-count hint.
 - Read-only detail page with three sections: Party – Organization, Role – Customer (including read-only account reference and JSONB specification), Customer – Contact Details.
 - Inconsistency warning banner when statuses conflict (e.g. ACTIVE customer on a SUSPENDED organization) — warn only, no cascade.
 
 ### Customer lifecycle
+
 - Server-enforced transition maps: Organization (REGISTERED → ACTIVE; ACTIVE ↔ INACTIVE/SUSPENDED; any → DISSOLVED/MERGED terminal) and Customer (INITIALIZED → VALIDATED → ACTIVE ↔ SUSPENDED; any → CLOSED terminal). No skipping VALIDATED.
 - Mandatory `status_reason` on every transition; UI dropdowns offer only valid next states.
 - Soft delete only: "delete" = CLOSED (customer) / DISSOLVED (org). CLOSED is terminal; a returning customer gets a new `party_role` under the same organization, with at most one non-closed customer role per organization (partial unique index).
 - New customers always start REGISTERED / INITIALIZED.
 
 ### Contacts and preferred logic
+
 - Flattened `contact_medium`: one row per contact person with inline phone, email, and address columns (max one of each per contact).
 - Exactly one preferred contact per customer via the `party_role.contact_medium` pointer (nullable, composite deferrable FK to `(id, ref_party_role)`); first contact auto-preferred; deleting the preferred contact is blocked until another is made preferred.
 - Exactly one preferred method per contact via `preferred_contact_method` ∈ {PHONE, EMAIL, ADDRESS}; must name a populated method; first method filled is auto-preferred; clearing the preferred method is blocked while another is populated.
 - Contact rows may be hard-deleted (audited) — the only physical deletes in the module.
 
 ### Data integrity and audit
+
 - Nullable-unique constraint on `registration_number`; similar-name warning (non-blocking) at creation.
 - Specification JSONB validated as well-formed JSON; `CUST_TYPE` / `CUST_KEY` / `PARTY_TYPE` are free custom values (accepted risk: no uniqueness or immutability enforcement on `CUST_KEY`).
 - Customer-level optimistic locking on `party_role.last_modified_datetime`; `last_modified_by` (FK → appuser) on `organization`, `party_role`, and `contact_medium`.
 - All mutations written to the existing pg_partman audit schema with actor, timestamp, entity, and before/after values.
 
 ### Access control
+
 - Existing RBAC reused: new `customers` permission rows; USER = View Customer only; MANAGER = View + Manage.
 - USER sees Manage Customer greyed out (visible but locked); server actions enforce permissions independently of navigation.
 

@@ -20,21 +20,29 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 -->
  
 
-## Billing Module Update Context
+## Customer Management Update Context — Invoice Template Binding (cm17–cm22)
+
+Current phase: Customer Management Phase 2, the Invoice Template Binding update (cm17–cm22, in progress).
+The Billing Invoice Template update (bm47–bm63) is complete and signed off at the bm63 ship gate.
 
 Read the following files in order before implementing
-or making any architectural decision related to the Billing (Bill Run) Module:
+or making any architectural decision related to the Customer Management Module:
 
-1. `context/billing-management/billmgmt-update-overview.md` — current update's definition, goals, features, and scope
-2. `context/billing-management/billmgmt-project-overview.md` — product spec: overview, core user flow, in/out of scope, success criteria
-3. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and Module Invariants
-4. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
-5. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
-6. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-7. `context/billing-management/billmgmt-known-issues.md` — known/deferred defects and interim mitigations
-8. `context/billing-management/billmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
+1. `context/customer-management/custmgmt-update-overview.md` — current update's definition, goals, features, and scope
+2. `context/customer-management/custmgmt-project-overview.md` — product spec: overview, core user flow, in/out of scope, success criteria
+3. `context/customer-management/custmgmt-architecture.md` — system structure, boundaries, storage model, and Module Invariants (§7 update deltas)
+4. `context/customer-management/custmgmt-ui-context.md` — theme, colors, typography, and component conventions
+5. `context/customer-management/custmgmt-code-standards.md` — implementation rules and conventions
+6. `context/customer-management/custmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach (§9 binding-update rules)
+7. `context/customer-management/custmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
+8. `context/customer-management/specs/cm00-build-plan.md` — unit list in build order; per-unit specs in `context/customer-management/specs/cm*.md`
 
-Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
+Update `context/customer-management/custmgmt-progress-tracker.md` after each meaningful implementation change.
+
+Read these Billing and Accounting docs as read-only references; do not edit them in this update (`custmgmt-ai-workflow-rules.md` §9):
+1. `context/billing-management/billmgmt-architecture.md` — Inv. #41–#44 (template stamping at posting, resolution order, append-only versions)
+2. `context/accounting-management/acctmgmt-architecture.md` — `billing_account` ownership and onboarding
+3. `context/billing-management/billmgmt-known-issues.md` — §13 (DB-gated tests rewrite role passwords; use a disposable Postgres), §21 (baseline test failures are reported, never fixed inside a feature unit)
 
 Read also the general context document to support the changes as referenced by the context files above:
 1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  

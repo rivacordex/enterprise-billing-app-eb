@@ -79,10 +79,29 @@ describe("billing.billing_account", () => {
         "ref_bill_cycle_id",
         "payment_due_days_override",
         "default_payment_method_ref",
+        "ref_bill_template_version_id",
         "last_modified",
         "last_edited_by",
       ].sort(),
     );
+  });
+
+  it("ref_bill_template_version_id is nullable with a named FK (cm17)", () => {
+    expect(
+      getTableColumns(billingAccount).refBillTemplateVersionId.notNull,
+    ).toBe(false);
+    const fk = getTableConfig(billingAccount).foreignKeys.find(
+      (f) => f.getName() === "billing_account_ref_bill_template_version_id_fk",
+    );
+    expect(fk).toBeDefined();
+    const ref = fk!.reference();
+    expect(ref.columns.map((c) => c.name)).toEqual([
+      "ref_bill_template_version_id",
+    ]);
+    expect(getTableConfig(ref.foreignTable).name).toBe("bill_template_version");
+    expect(ref.foreignColumns.map((c) => c.name)).toEqual([
+      "bill_template_version_id",
+    ]);
   });
 
   it("has no stored balance column (Module Inv. #2, structural)", () => {
