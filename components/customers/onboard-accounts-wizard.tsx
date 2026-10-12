@@ -14,7 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -161,6 +166,7 @@ export function OnboardAccountsWizard({
         form.paymentDueDaysOverride.trim() !== ""
           ? parseInt(form.paymentDueDaysOverride.trim(), 10)
           : undefined,
+      billTemplateVersionId: null,
       statusReason,
       lastModifiedDatetime,
     });
@@ -201,6 +207,11 @@ export function OnboardAccountsWizard({
       case "PARTY_ROLE_NOT_FOUND":
         setSubmitError(
           "Customer record not found. Please reload the page and try again.",
+        );
+        break;
+      case "TEMPLATE_NOT_BINDABLE":
+        setSubmitError(
+          "This invoice template cannot be assigned. Please reload and try again.",
         );
         break;
       case "VALIDATION_ERROR": {
@@ -297,6 +308,20 @@ export function OnboardAccountsWizard({
                 readOnly
                 className="bg-muted/50 text-muted-foreground"
               />
+            </Field>
+
+            {/* Invoice template — read-only in v1 (cm18, O1) */}
+            <Field>
+              <FieldLabel>Invoice template</FieldLabel>
+              <Input
+                value="Follow active template"
+                readOnly
+                className="bg-muted/50 text-muted-foreground"
+              />
+              <FieldDescription>
+                Invoices use the active template. Per-customer templates are not
+                available yet.
+              </FieldDescription>
             </Field>
 
             {/* Bill Cycle */}

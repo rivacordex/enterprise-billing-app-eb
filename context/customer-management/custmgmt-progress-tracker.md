@@ -19,11 +19,13 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   Posting ignores the reference (D4, Inv. #18).
 - **cm17 IN PROGRESS** — code, unit tests and docs done; the DB-gated integration suite
   has not been run yet (needs a disposable Postgres).
+- **cm18 IN PROGRESS** (started 2026-10-12) — code, unit/component tests done; DB-gated
+  suite not yet run (disposable Postgres), ac04 spec change awaiting approval.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
-| cm17 | Billing Account template reference column                   | DB       | In progress | —      |
-| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | Not started | —      |
+| cm17 | Billing Account template reference column                   | DB       | In progress | c0b2f97 |
+| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | —      |
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | Not started | —      |
 | cm20 | View Customer: Accounts tab                                 | APP      | Not started | —      |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
@@ -69,12 +71,50 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     Postgres (fresh-migrate path), and confirm `0050` applies on a database already at
     `0049`. Then commit and record the hash above.
 
+## Invoice Template Binding update — cm18 IN PROGRESS (started 2026-10-12)
+
+- **cm18 — Onboarding wizard "Invoice template" field.** Boundary: APP. Spec:
+  `context/customer-management/specs/cm18-onboarding-invoice-template-field.md`.
+  Authorized by D2, D11, D13, D15, Inv. #18. Depends on cm17.
+  - **Delivered:**
+    - `services/accounts/assert-bindable-template.ts` (new): v1 rule only, `null` → ok,
+      any string → `TEMPLATE_NOT_BINDABLE`; takes `tx` for the Phase 3 signature, no
+      DB call.
+    - `validation/accounts/onboard-customer-accounts.schema.ts`: optional nullable
+      `billTemplateVersionId` (`/^BTVd{8}$/`).
+    - `services/accounts/onboard-customer-accounts.ts`: validator runs inside the
+      transaction after the cycle check, before `compareAndUpdateStatus`; BAN insert and
+      `ACCOUNTS_ONBOARDED.afterData` carry `refBillTemplateVersionId` (always `null`).
+      New result code `TEMPLATE_NOT_BINDABLE`; also added to the action result type.
+      Guards unchanged.
+    - `components/customers/onboard-accounts-wizard.tsx`: read-only "Invoice template —
+      Follow active template" field after Currency (same styling) with
+      `FieldDescription` help text (O1); submits `billTemplateVersionId: null`;
+      `TEMPLATE_NOT_BINDABLE` case in the result switch.
+    - Tests: `tests/services/assert-bindable-template.test.ts`,
+      `tests/validation/onboard-customer-accounts.schema.test.ts`,
+      `tests/components/onboard-accounts-wizard.test.tsx` (all new);
+      `tests/services/onboard-customer-accounts.service.test.ts` (+4 cases);
+      `tests/accounts/onboard-customer-accounts-template.integration.test.ts` (new,
+      DB-gated, v07 fresh-migrate setup, drop list incl. `partman`).
+  - **Deviations:** none.
+  - **Verification:** `tsc`, ESLint, Prettier clean. 4 unit/component files green (29
+    tests) under `--pool=threads` (forks pool times out on this machine). No change to
+    `services/billing/**`, `workflow-management/**`, `getWizardOptions`,
+    `customer-role-form.tsx` or the customer section components. The only
+    `refBillTemplateVersionId` hit under `services/billing/**` is bm54's
+    `customer_bill` stamp in `resolve-template.ts`, not the `billing_account` column.
+    `custmgmt-architecture.md` §7.2/§7.4 checked: still accurate.
+  - **OPEN, blocking cm18 sign-off:** (1) run the new integration test and the V7 test
+    on a disposable Postgres; (2) the `ac04` onboarding spec change (new input field,
+    result code, `afterData` key) is drafted and needs approval before editing (§9.7
+    item 6). Then commit and record the hash above.
+
 ## Outstanding / Next
 
-- **cm17:** finish the DB-gated run above, commit.
-- **cm18 next:** onboarding wizard "Invoice template" field — introduces
-  `assertBindableTemplate(tx, id | null)` (accepts `null` only, D13) as the column's
-  first writer.
+- **cm17:** committed (`c0b2f97`); finish the DB-gated run above.
+- **cm18:** DB-gated run + ac04 spec approval above, then commit.
+- **cm19 next** (may proceed alongside; depends only on cm05).
 
 ## Key decisions (durable)
 

@@ -27,7 +27,8 @@ export type OnboardCustomerAccountsActionResult =
   | { ok: false; code: "PARTY_ROLE_NOT_FOUND" }
   | { ok: false; code: "INVALID_TRANSITION" }
   | { ok: false; code: "CONFLICT" }
-  | { ok: false; code: "CYCLE_RETIRED" };
+  | { ok: false; code: "CYCLE_RETIRED" }
+  | { ok: false; code: "TEMPLATE_NOT_BINDABLE" };
 
 // ac04-spec §2.6 + §3.3 — dual permission check: accounts_transactions:EDIT
 // (creating money accounts) AND customers:EDIT (the VALIDATED transition).

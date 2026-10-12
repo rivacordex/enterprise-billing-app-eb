@@ -396,3 +396,62 @@ describe("onboardCustomerAccounts", () => {
     );
   });
 });
+
+// ── cm18 — invoice template binding (Inv. #18, D13) ───────────────────────
+describe("onboardCustomerAccounts — invoice template binding (cm18)", () => {
+  it("BAN insert carries refBillTemplateVersionId: null when the field is omitted", async () => {
+    setupHappyPath();
+
+    await onboardCustomerAccounts(buildInput(), "actor-1");
+
+    expect(mockBanInsert).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({ refBillTemplateVersionId: null }),
+    );
+  });
+
+  it("BAN insert carries refBillTemplateVersionId: null when the field is null", async () => {
+    setupHappyPath();
+
+    await onboardCustomerAccounts(
+      buildInput({ billTemplateVersionId: null }),
+      "actor-1",
+    );
+
+    expect(mockBanInsert).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({ refBillTemplateVersionId: null }),
+    );
+  });
+
+  it("ACCOUNTS_ONBOARDED afterData includes refBillTemplateVersionId: null", async () => {
+    setupHappyPath();
+
+    await onboardCustomerAccounts(buildInput(), "actor-1");
+
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "ACCOUNTS_ONBOARDED",
+        afterData: expect.objectContaining({ refBillTemplateVersionId: null }),
+      }),
+    );
+  });
+
+  it("TEMPLATE_NOT_BINDABLE for a non-null id, before any write", async () => {
+    setupHappyPath();
+
+    const result = await onboardCustomerAccounts(
+      buildInput({ billTemplateVersionId: "BTV00000002" }),
+      "actor-1",
+    );
+
+    expect(result).toEqual({ ok: false, code: "TEMPLATE_NOT_BINDABLE" });
+    expect(mockCompareAndUpdateStatus).not.toHaveBeenCalled();
+    expect(mockFaInsert).not.toHaveBeenCalled();
+    expect(mockBanInsert).not.toHaveBeenCalled();
+    expect(mockCreateAccount).not.toHaveBeenCalled();
+    expect(mockBindingInsert).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+});
