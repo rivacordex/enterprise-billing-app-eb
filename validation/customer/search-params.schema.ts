@@ -16,4 +16,6 @@ export type CustomerDetailTab = (typeof CUSTOMER_DETAIL_TABS)[number];
 
 export const customerDetailSearchParamsSchema = z.object({
   tab: z.enum(CUSTOMER_DETAIL_TABS).catch("profile"),
+  // cm20 — Accounts tab document page; lenient like `tab`.
+  page: z.coerce.number().int().min(1).max(9999).catch(1),
 });

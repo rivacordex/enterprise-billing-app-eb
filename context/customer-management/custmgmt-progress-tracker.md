@@ -25,13 +25,16 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   Still open: its own DB-gated suite (disposable Postgres) and the ac04 spec approval.
 - **cm19 IN PROGRESS** (started 2026-10-12) — code, tests and docs done, all green;
   awaiting review and commit.
+- **cm20 IN PROGRESS** (started 2026-10-12) — code, tests and docs done; unit and
+  DB-gated suites green. Awaiting review and commit (one recorded deviation: the
+  loader placement, below).
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
 | cm17 | Billing Account template reference column                   | DB       | Done        | c0b2f97 |
 | cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | —      |
-| cm20 | View Customer: Accounts tab                                 | APP      | Not started | —      |
+| cm20 | View Customer: Accounts tab                                 | APP      | In progress | —      |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
 | cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
 
@@ -165,12 +168,89 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   - **OPEN:** review, then commit and record the hash above. No DB-gated work in this
     unit.
 
+## Invoice Template Binding update — cm20 IN PROGRESS (started 2026-10-12)
+
+- **cm20 — View Customer: Accounts tab.** Boundary: APP. Spec:
+  `context/customer-management/specs/cm20-view-customer-accounts-tab.md`. Authorized
+  by binding plan §7.2, D6, D7, D8, D11, D14, D16; Inv. #11, #12, #13, #15, #18.
+  Depends on cm19 (tab shell) and cm17 (column).
+  - **Delivered:**
+    - `types/accounts.ts`: `CustomerAccountsSummary` (not-onboarded / onboarded).
+    - `db/repositories/accounts/ledger.repository.ts`:
+      `receivablesByFinancialAccount` (per-BAN receivables, one grouped statement;
+      unbound BANs absent → caller defaults `"0.00"`).
+    - `services/accounts/resolve-ban-template-label.ts` (new):
+      `resolveCurrentTemplateLabel` (`findActive ?? findDefault`, kind `generated`, layout
+      code + `vN`) and `banTemplateLabel` (`NULL` → "Follows active template
+      (currently: …), as of now"; non-`NULL` → "Template reference not supported yet").
+      It never calls `resolveTemplate` or `resolveVersionsForPosting`.
+    - `services/accounts/get-customer-accounts-summary.ts` (new):
+      `getCustomerAccountsSummary(partyRoleId, page)`. FA by party-role key;
+      `getFinancialAccountDetail`, BAN rows, the grouped receivables read and one
+      `listTransactionDocuments` page per FA, run in parallel; one cycle read per
+      distinct cycle; `resolveTerm` for the term; `logger.warn` on a non-`NULL` template
+      ref. `resolveDocumentsPageSize`: missing / non-numeric / `< 1` → 20, capped at 100.
+    - `db/seeds/customer.ts`: idempotent `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` = `20`
+      (group `customer`).
+    - `components/customers/` (new): `customer-accounts-tab.tsx`,
+      `accounts-locked-card.tsx`, `accounts-not-onboarded-card.tsx`,
+      `financial-account-summary-card.tsx`, `billing-account-card.tsx` (template label
+      per ui-context §9.4), `ban-state-chip.tsx`, `customer-documents-table.tsx`
+      (read-only; rows link to `/accounts/transactions?party=…&fa=…&doc=…`;
+      Previous/Next keep `tab=accounts`), `accounts-tab-skeleton.tsx`.
+    - `validation/customer/search-params.schema.ts`: lenient `page`
+      (`.min(1).max(9999).catch(1)`).
+    - `app/(app)/customers/view/[id]/page.tsx`: `canViewAccounts` from the guard's
+      `permissionMap`. On `tab=accounts` it renders either `AccountsLockedCard` (no query)
+      or `<Suspense fallback={<AccountsTabSkeleton />}>` around an in-page async loader.
+    - Tests: `tests/services/get-customer-accounts-summary.test.ts`,
+      `tests/services/resolve-ban-template-label.test.ts`,
+      `tests/components/customer-accounts-tab.test.tsx` (all new);
+      `tests/app/customers-view-detail-page.test.tsx` (+4 cases; async server
+      components resolved in-tree before render);
+      `tests/validation/customer-search-params.schema.test.ts` (expects `page: 1`, plus
+      page cases); `tests/accounts/get-customer-accounts-summary.integration.test.ts`
+      (new, DB-gated).
+    - Docs (§3.9): `custmgmt-architecture.md` Inv. #15 + §7 storage row and
+      `custmgmt-update-overview.md` Accounts-tab feature now describe the real balance
+      source. `custmgmt-code-standards.md` §4 item 5 (components), §6 item 10 (config
+      key), §7 tree and §8 (Accounts tab sub-gate). `cm00-build-plan.md` cm20 "Builds"
+      already named the seed, so no change was needed. The binding plan (D16, §7.2) is
+      not in the repo, so its wording was not edited.
+  - **Deviation (spec §3.6/§3.7):** `CustomerAccountsTab` cannot call the service as
+    specified, because the ESLint `boundaries` rule forbids `components/**` →
+    `services/**`. The async fetch is a non-exported `CustomerAccountsTabLoader` in
+    `page.tsx`. `CustomerAccountsTab` stays in `components/customers/` as a
+    presentational component taking `summary`. The page renders the locked card
+    directly, so the component has no `canViewAccounts` prop. Behaviour is unchanged:
+    the permission is checked once, the fetch happens only on `tab=accounts` under
+    Suspense, and the service is never called when locked.
+  - **Verification:** `tsc`, ESLint, Prettier clean. Unit, component and page files
+    green, run one file at a time under `--pool=threads --maxWorkers=1`: summary 16,
+    label 4, accounts tab 9, schema 11, tabs 4, page 26. The DB-gated suite passed 5/5
+    on a throwaway `enterprise-billing-app-db` container (port 15433, marked
+    disposable, not the dev stack), then the container was stopped. Import grep over
+    the new files: no `actions/**`, `post-document`, `reversal-dialog`,
+    Accounts `documents-table`, `resolveTemplate` or `resolveVersionsForPosting`.
+    Guardrails green: `customer-module-boundaries`, `verification-audit`,
+    `status-literal-sweep`, `invoice-render-source-boundary`, `route-manifest`,
+    `nav-registry-guard`.
+  - **Baseline failure, reported and not fixed (billmgmt known-issues §21):**
+    `tests/accounts/grep-gates.test.ts`, 2 cases. cm18's `TEMPLATE_NOT_BINDABLE` is
+    missing from the Accounts code-standards §9 Result-code catalog (51 codes). Fixing it
+    means an Accounts doc edit, which belongs with the pending ac04/cm18 approval
+    (§9.7 item 6).
+  - **OPEN:** review, then commit and record the hash above. The seed itself was not
+    run (the service falls back to 20 when the key is absent).
+
 ## Outstanding / Next
 
 - **cm17:** signed off (`c0b2f97` + review follow-up `187d8cb`).
 - **cm18:** DB-gated run + ac04 spec approval above.
 - **cm19:** review + commit.
-- **cm20 next** (fills the Accounts tab; depends on cm19).
+- **cm20:** review + commit. The `grep-gates` Result-code failure (cm18's
+  `TEMPLATE_NOT_BINDABLE`) is resolved with the ac04/cm18 Accounts doc approval.
+- **cm21 next** (Manage Customer Billing account panel; depends on cm20).
 
 ## Key decisions (durable)
 

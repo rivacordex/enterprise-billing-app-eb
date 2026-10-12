@@ -259,6 +259,37 @@ export type TransactionDocumentDetail = {
   reversedByDocumentId: string | null;
 };
 
+// cm20 — the Accounts tab read model (components depend on types/** only).
+// Produced by services/accounts/get-customer-accounts-summary.ts.
+export type CustomerAccountsSummary =
+  | { kind: "notOnboarded" }
+  | {
+      kind: "onboarded";
+      financialAccounts: Array<{
+        financialAccountId: string;
+        state: string;
+        currency: string;
+        receivableBalance: string;
+        unappliedCashBalance: string;
+        depositBalance: string;
+        bans: Array<{
+          billingAccountId: string;
+          name: string;
+          state: "active" | "suspended" | "closed";
+          billCycleName: string;
+          paymentTermDays: number;
+          receivableBalance: string;
+          templateLabel: string;
+        }>;
+        documents: {
+          rows: TransactionDocumentRow[];
+          total: number;
+          page: number;
+          pageSize: number;
+        };
+      }>;
+    };
+
 export type {
   FinancialAccount,
   FinancialAccountInsert,

@@ -5,24 +5,45 @@ import {
   customerDetailSearchParamsSchema,
 } from "@/validation/customer/search-params.schema";
 
-// cm19-spec §3.4.
+// cm19-spec §3.4; cm20-spec §3.7 adds the lenient `page`.
 describe("customerDetailSearchParamsSchema", () => {
   it.each(CUSTOMER_DETAIL_TABS)("parses the valid tab %s", (tab) => {
-    expect(customerDetailSearchParamsSchema.parse({ tab })).toEqual({ tab });
+    expect(customerDetailSearchParamsSchema.parse({ tab })).toEqual({
+      tab,
+      page: 1,
+    });
   });
 
   it("falls back to profile for an unknown tab", () => {
     expect(customerDetailSearchParamsSchema.parse({ tab: "bogus" })).toEqual({
       tab: "profile",
+      page: 1,
     });
   });
 
   it("falls back to profile when tab is undefined", () => {
     expect(customerDetailSearchParamsSchema.parse({ tab: undefined })).toEqual({
       tab: "profile",
+      page: 1,
     });
     expect(customerDetailSearchParamsSchema.parse({})).toEqual({
       tab: "profile",
+      page: 1,
     });
   });
+
+  it("parses a numeric page", () => {
+    expect(
+      customerDetailSearchParamsSchema.parse({ tab: "accounts", page: "3" }),
+    ).toEqual({ tab: "accounts", page: 3 });
+  });
+
+  it.each(["0", "-1", "abc", "1.5", "10000"])(
+    "falls back to page 1 for %s",
+    (page) => {
+      expect(
+        customerDetailSearchParamsSchema.parse({ tab: "accounts", page }).page,
+      ).toBe(1);
+    },
+  );
 });

@@ -1,9 +1,13 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SearchX } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { AccountsLockedCard } from "@/components/customers/accounts-locked-card";
+import { AccountsTabSkeleton } from "@/components/customers/accounts-tab-skeleton";
+import { CustomerAccountsTab } from "@/components/customers/customer-accounts-tab";
 import { OrganizationSection } from "@/components/customers/organization-section";
 import { CustomerRoleSection } from "@/components/customers/customer-role-section";
 import { ContactDetailsSection } from "@/components/customers/contact-details-section";
@@ -13,12 +17,14 @@ import {
   isStatusInconsistent,
 } from "@/components/customers/inconsistency-banner";
 import { firstValue } from "@/lib/search-params";
+import { getCustomerAccountsSummary } from "@/services/accounts/get-customer-accounts-summary";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import { partyRoleIdSchema } from "@/validation/customer/party-role.schema";
+import { meetsLevel } from "@/types/permissions";
 import { customerDetailSearchParamsSchema } from "@/validation/customer/search-params.schema";
 
 export const dynamic = "force-dynamic";
@@ -42,14 +48,47 @@ function CustomerNotFound(): React.JSX.Element {
   );
 }
 
+// cm20 (custmgmt Inv. #15, D16) — streams the Accounts tab under Suspense.
+// Rendered only for ?tab=accounts and only when the viewer holds
+// accounts_view : READ, so Profile/Contacts and locked viewers run no account
+// query. Lives here, not in components/**, because components may not import
+// services/** (boundaries rule); CustomerAccountsTab stays presentational.
+async function CustomerAccountsTabLoader({
+  partyRoleId,
+  page,
+  locale,
+  timezone,
+}: {
+  partyRoleId: string;
+  page: number;
+  locale: string;
+  timezone: string;
+}): Promise<React.JSX.Element> {
+  const summary = await getCustomerAccountsSummary(partyRoleId, page);
+  return (
+    <CustomerAccountsTab
+      partyRoleId={partyRoleId}
+      summary={summary}
+      locale={locale}
+      timezone={timezone}
+    />
+  );
+}
+
 export default async function CustomerDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{
+    tab?: string | string[];
+    page?: string | string[];
+  }>;
 }): Promise<React.JSX.Element> {
-  await requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.READ);
+  const { permissionMap } = await requirePermission(
+    PERMISSIONS.CUSTOMERS,
+    LEVELS.READ,
+  );
 
   const { id } = await params;
   const idResult = partyRoleIdSchema.safeParse(id);
@@ -62,10 +101,18 @@ export default async function CustomerDetailPage({
     return <CustomerNotFound />;
   }
 
-  // cm19 (custmgmt Inv. #14) — the active tab lives in the URL.
-  const { tab } = customerDetailSearchParamsSchema.parse({
-    tab: firstValue((await searchParams).tab),
+  // cm19 (custmgmt Inv. #14) — the active tab lives in the URL; cm20 adds
+  // the Accounts tab document page.
+  const rawSearchParams = await searchParams;
+  const { tab, page } = customerDetailSearchParamsSchema.parse({
+    tab: firstValue(rawSearchParams.tab),
+    page: firstValue(rawSearchParams.page),
   });
+  // cm20 (custmgmt Inv. #12) — the Accounts tab sub-gate, checked once here.
+  const canViewAccounts = meetsLevel(
+    permissionMap[PERMISSIONS.ACCOUNTS_VIEW],
+    LEVELS.READ,
+  );
 
   const [locale, timezone] = await Promise.all([
     getAppLocale(),
@@ -113,8 +160,22 @@ export default async function CustomerDetailPage({
       {tab === "contacts" && (
         <ContactDetailsSection contacts={detail.contacts} />
       )}
-      {/* Filled in cm20. */}
-      {tab === "accounts" && <div aria-label="Accounts" />}
+      {tab === "accounts" && (
+        <div aria-label="Accounts">
+          {canViewAccounts ? (
+            <Suspense fallback={<AccountsTabSkeleton />}>
+              <CustomerAccountsTabLoader
+                partyRoleId={detail.customerRole.partyRoleId}
+                page={page}
+                locale={locale}
+                timezone={timezone}
+              />
+            </Suspense>
+          ) : (
+            <AccountsLockedCard />
+          )}
+        </div>
+      )}
     </main>
   );
 }

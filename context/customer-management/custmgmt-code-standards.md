@@ -77,6 +77,7 @@
 3. **`InconsistencyBanner` is the one component for the cross-status warning** (e.g. ACTIVE customer on a SUSPENDED organization) — warn-only styling (e.g. `border-amber-500`-equivalent semantic token), never a blocking/destructive treatment, since the platform doesn't cascade the mismatch.
 4. **`SpecificationEditor` is the one component for editing `party_role_specification`** — a raw JSON textarea/editor with client-side JSON.parse feedback mirroring the server's well-formedness-only check (§1.8, §2.3); do not build a structured key/value form for it.
 5. **Three-section detail layout is a responsive stack:** Party – Organization, Role – Customer, Customer – Contact Details, in that order top-to-bottom on narrow viewports, optionally side-by-side on `lg:` and up (general §4.10) — order is fixed, do not reorder per page. Since cm19 the View Customer detail page splits them across URL-driven tabs (`?tab=profile|contacts|accounts`, default and fallback `profile`): **Profile** = Organization + Customer Role (in that order), **Contacts** = Contact Details, **Accounts** = billing accounts (cm20). `CustomerDetailTabs` is the one tab strip — a server component of plain `<Link>`s styled like `components/billing/run-detail-tabs.tsx` (ui-context §9.1); the `InconsistencyBanner` sits above it on every tab.
+   The Accounts tab (cm20) is read-only and built from `AccountsLockedCard`, `AccountsNotOnboardedCard`, `FinancialAccountSummaryCard`, `BillingAccountCard` (with `BanStateChip` and the template label), `CustomerDocumentsTable` and `AccountsTabSkeleton`, composed by the presentational `CustomerAccountsTab`. Money uses the Accounts module's `AmountCell` and document state its `DocStateBadge`; the Accounts `documents-table.tsx` is never reused (it imports the reversal mutation path). The summary is fetched by an async loader in the page itself, not in `components/**` (components may not import `services/**`).
 6. **The results table on both search pages reuses the platform table primitives** (general §4.2, product-module precedent) — one `CustomerResultsTable` component shared by View and Manage, not forked per page.
 
 ---
@@ -99,7 +100,7 @@
 7. **`contact_medium` rows are the module's only physical deletes**, and a delete is blocked at the service layer while the row is the pointed-at preferred contact (module inv. #1, #4) — the delete repository function must not be callable without that check having passed.
 8. **`party_role_specification` is validated for well-formed JSON only, on every write including seeds** (§1.8, module inv. #7) — the documented exemption under general §6.17; do not "fix" it by adding shape validation without a design review.
 9. **`party_role.last_modified_datetime` is the optimistic-lock column** for the whole customer (org + role + contacts) — any mutation in the customer's scope reads-compares-bumps this one field in its transaction, even a contact-only edit (module inv. #6).
-10. **`CUSTOMER_SEARCH_RESULT_LIMIT` lives in `core.SYSTEM_CONFIG`**, `config_group = 'customer'`, default `5` — the search service reads it per request; never hard-code the limit in a component or service.
+10. **`CUSTOMER_SEARCH_RESULT_LIMIT` lives in `core.SYSTEM_CONFIG`**, `config_group = 'customer'`, default `5` — the search service reads it per request; never hard-code the limit in a component or service. `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` (same group, default `20`, capped at `100`, cm20) sizes the Accounts tab document list; both are seeded by `db/seeds/customer.ts` and fall back to their defaults when missing or invalid.
 11. **Status changes persist `status_reason` on the row itself, in addition to the atomic `AUDIT_LOG` entry** (module inv. #2, general §1.7) — the reason is queryable directly off `organization`/`party_role`, not only recoverable by reading audit history.
 12. **`last_modified_by` (FK → `core.APPUSER`) is required on `organization`, `party_role`, and `contact_medium`** — every repository write sets it from the resolved principal, never left null on an update.
 
@@ -128,6 +129,14 @@ components/customers/
   customer-role-section.tsx        # CustomerRoleSection (read-only)
   contact-details-section.tsx      # ContactDetailsSection (read-only)
   customer-detail-tabs.tsx         # CustomerDetailTabs (View detail tab strip, cm19)
+  customer-accounts-tab.tsx        # CustomerAccountsTab (Accounts tab body, cm20)
+  accounts-locked-card.tsx         # AccountsLockedCard (no accounts_view : READ)
+  accounts-not-onboarded-card.tsx  # AccountsNotOnboardedCard
+  accounts-tab-skeleton.tsx        # AccountsTabSkeleton (Suspense fallback)
+  financial-account-summary-card.tsx # FinancialAccountSummaryCard
+  billing-account-card.tsx         # BillingAccountCard (+ template label)
+  ban-state-chip.tsx               # BanStateChip
+  customer-documents-table.tsx     # CustomerDocumentsTable (read-only, deep-links)
   organization-form.tsx            # OrganizationForm
   customer-role-form.tsx           # CustomerRoleForm
   contact-manager-panel.tsx        # ContactManagerPanel
@@ -172,7 +181,10 @@ validation/customer/
   transitions.ts                # ORGANIZATION_TRANSITIONS / CUSTOMER_TRANSITIONS maps
   specification.schema.ts       # JSON well-formedness only
   update-party-role-specification.schema.ts
-  search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19)
+  search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19), ?page= (cm20)
+services/accounts/              # Accounts-side reads owned here for the Accounts tab (cm20)
+  get-customer-accounts-summary.ts  # getCustomerAccountsSummary(partyRoleId, page)
+  resolve-ban-template-label.ts     # "Follows active template (currently: … vN), as of now"
 tests/…                         # mirrors source; incl. authz-matrix entries for both routes
 ```
 
@@ -201,6 +213,7 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 - Component names are the binding convention; create them exactly so the page ↔ route ↔ component ↔ permission chain stays traceable (general §9).
 - A USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav; the page guard and every `actions/customer/*` Server Action independently reject a USER (defense in depth, architecture §4) even if the nav check is bypassed.
 - Deep links (`/customers/view/[id]`, `/customers/manage/[id]`) pass through the same guard as the search pages — the route param grants nothing.
+- **Accounts tab sub-gate (cm20, Inv. #12):** on `/customers/view/[id]?tab=accounts` the page additionally checks `accounts_view : READ` once, from the `permissionMap` `requirePermission` returns. Without it the tab renders `AccountsLockedCard` and `getCustomerAccountsSummary` is never called; the page-level permission stays `customers : READ`.
 
 ---
 

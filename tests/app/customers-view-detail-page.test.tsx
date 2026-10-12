@@ -1,3 +1,4 @@
+import { cloneElement, isValidElement, type ReactNode } from "react";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,10 @@ vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/customer/get-customer-detail", () => ({
   getCustomerDetail: vi.fn(),
 }));
+// cm20 — the Accounts tab read service is mocked; its own tests cover it.
+vi.mock("@/services/accounts/get-customer-accounts-summary", () => ({
+  getCustomerAccountsSummary: vi.fn(),
+}));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppTimezone: vi.fn().mockReturnValue("UTC"),
   getAppLocale: vi.fn().mockResolvedValue("en-US"),
@@ -18,11 +23,13 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
 import CustomerDetailPage from "@/app/(app)/customers/view/[id]/page";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { getCustomerAccountsSummary } from "@/services/accounts/get-customer-accounts-summary";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import type { CustomerDetail } from "@/types/customer";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockGetCustomerDetail = vi.mocked(getCustomerDetail);
+const mockGetAccountsSummary = vi.mocked(getCustomerAccountsSummary);
 
 function redirectError(target: string): Error & { digest: string } {
   const error = new Error("NEXT_REDIRECT") as Error & { digest: string };
@@ -66,7 +73,7 @@ const TABS_NAV = { name: "Customer detail tabs" } as const;
 
 function renderPage(
   id: string,
-  query: { tab?: string | string[] } = {},
+  query: { tab?: string | string[]; page?: string | string[] } = {},
 ): ReturnType<typeof CustomerDetailPage> {
   return CustomerDetailPage({
     params: Promise.resolve({ id }),
@@ -80,9 +87,39 @@ function tabLink(name: string): HTMLElement {
   });
 }
 
+// cm20 — RTL cannot render an async Server Component, so the page tree is
+// walked first and every async function component is awaited in place (the
+// Suspense boundary itself is kept). Sync components are left to React.
+async function resolveAsync(node: ReactNode): Promise<ReactNode> {
+  if (Array.isArray(node)) return Promise.all(node.map(resolveAsync));
+  if (!isValidElement<{ children?: ReactNode }>(node)) return node;
+  const { type, props } = node;
+  if (typeof type === "function" && type.constructor.name === "AsyncFunction") {
+    return resolveAsync(
+      await (type as (p: unknown) => Promise<ReactNode>)(props),
+    );
+  }
+  if (props.children === undefined) return node;
+  return cloneElement(node, { children: await resolveAsync(props.children) });
+}
+
+function permissionMapWith(accountsView: "READ" | null) {
+  return {
+    users: null,
+    roles: null,
+    system_config: null,
+    audit_log: null,
+    products: null,
+    customers: "READ",
+    accounts_view: accountsView,
+  } as never;
+}
+
 beforeEach(() => {
   mockRequirePermission.mockReset();
   mockGetCustomerDetail.mockReset();
+  mockGetAccountsSummary.mockReset();
+  mockGetAccountsSummary.mockResolvedValue({ kind: "notOnboarded" });
   mockRequirePermission.mockResolvedValue({
     userId: "admin-1",
     userEmail: "admin@example.com",
@@ -220,4 +257,65 @@ describe("CustomerDetailPage", () => {
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
     },
   );
+
+  describe("cm20 Accounts tab", () => {
+    it("?tab=accounts without accounts_view: locked card, summary service not called", async () => {
+      mockGetCustomerDetail.mockResolvedValue(FIXTURE);
+
+      render(
+        (await resolveAsync(
+          await renderPage("PTRL00000001", { tab: "accounts" }),
+        )) as React.JSX.Element,
+      );
+
+      expect(screen.getByText("Requires accounts access")).toBeInTheDocument();
+      expect(mockGetAccountsSummary).not.toHaveBeenCalled();
+    });
+
+    it("?tab=accounts with accounts_view: service called with (partyRoleId, page)", async () => {
+      mockRequirePermission.mockResolvedValue({
+        userId: "admin-1",
+        userEmail: "admin@example.com",
+        permissionMap: permissionMapWith("READ"),
+      });
+      mockGetCustomerDetail.mockResolvedValue(FIXTURE);
+
+      render(
+        (await resolveAsync(
+          await renderPage("PTRL00000001", { tab: "accounts", page: "2" }),
+        )) as React.JSX.Element,
+      );
+
+      expect(mockGetAccountsSummary).toHaveBeenCalledTimes(1);
+      expect(mockGetAccountsSummary).toHaveBeenCalledWith("PTRL00000001", 2);
+      expect(
+        screen.getByText(
+          "Accounts are created when the customer is validated.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Requires accounts access"),
+      ).not.toBeInTheDocument();
+    });
+
+    it.each(["profile", "contacts"])(
+      "?tab=%s never calls the summary service, even with accounts_view",
+      async (tab) => {
+        mockRequirePermission.mockResolvedValue({
+          userId: "admin-1",
+          userEmail: "admin@example.com",
+          permissionMap: permissionMapWith("READ"),
+        });
+        mockGetCustomerDetail.mockResolvedValue(FIXTURE);
+
+        render(
+          (await resolveAsync(
+            await renderPage("PTRL00000001", { tab }),
+          )) as React.JSX.Element,
+        );
+
+        expect(mockGetAccountsSummary).not.toHaveBeenCalled();
+      },
+    );
+  });
 });

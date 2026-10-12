@@ -84,7 +84,7 @@ The Enterprise Billing App is a telco billing system for Revenue Operations. It 
 
 ### Accounts tab
 
-- One read service, `getCustomerAccountsSummary(partyRoleId)`, composes the Financial Account (`financialAccountRepository.findByPartyRoleIds`), its BANs (`billingAccountRepository.findByFinancialAccountId`), balances from `billing.account_view` in one query, and the tied-template label.
+- One read service, `getCustomerAccountsSummary(partyRoleId)`, composes the Financial Account (`financialAccountRepository.findByPartyRoleIds`), its BANs (`billingAccountRepository.findByFinancialAccountId`), FA balances via `getFinancialAccountDetail`, per-BAN receivables in one grouped `pgledger_accounts_view` read, and the tied-template label.
 - Document list: `listTransactionDocuments(financialAccountId, null, params, pageSize)`. Page size is a `system_config` key following the existing search-limit convention.
 - Account data loads in an async child component rendered only when `tab=accounts`, inside a Suspense boundary, so other tabs run no ledger or document queries.
 - Read-only: no posting, reversal or transaction actions. The tab imports no write or posting module.
