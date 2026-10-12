@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { getWizardOptionsAction } from "@/actions/accounts/get-wizard-options";
 import type { WizardOptions } from "@/types/accounts";
@@ -113,6 +113,8 @@ export function OnboardAccountsWizard({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successValue, setSuccessValue] =
     useState<OnboardAccountsWizardSuccessValue | null>(null);
+  const templateInputId = useId();
+  const templateDescriptionId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -312,13 +314,17 @@ export function OnboardAccountsWizard({
 
             {/* Invoice template — read-only in v1 (cm18, O1) */}
             <Field>
-              <FieldLabel>Invoice template</FieldLabel>
+              <FieldLabel htmlFor={templateInputId}>
+                Invoice template
+              </FieldLabel>
               <Input
+                id={templateInputId}
+                aria-describedby={templateDescriptionId}
                 value="Follow active template"
                 readOnly
                 className="bg-muted/50 text-muted-foreground"
               />
-              <FieldDescription>
+              <FieldDescription id={templateDescriptionId}>
                 Invoices use the active template. Per-customer templates are not
                 available yet.
               </FieldDescription>

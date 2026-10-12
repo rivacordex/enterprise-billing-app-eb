@@ -101,7 +101,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
       any string → `TEMPLATE_NOT_BINDABLE`; takes `tx` for the Phase 3 signature, no
       DB call.
     - `validation/accounts/onboard-customer-accounts.schema.ts`: optional nullable
-      `billTemplateVersionId` (`/^BTVd{8}$/`).
+      `billTemplateVersionId` (`/^BTV\d{8}$/`).
     - `services/accounts/onboard-customer-accounts.ts`: validator runs inside the
       transaction after the cycle check, before `compareAndUpdateStatus`; BAN insert and
       `ACCOUNTS_ONBOARDED.afterData` carry `refBillTemplateVersionId` (always `null`).
