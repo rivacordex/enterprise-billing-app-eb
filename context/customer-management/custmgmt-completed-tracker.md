@@ -6,24 +6,24 @@ Update this file after every meaningful implementation change.
 
 All 16 units implemented and committed. Module is ship-gate-verified (cm16) at the DB/test level; SAST/DAST and live-browser sign-off are CI/manual steps outside this tooling.
 
-| Unit | Name                                                                     | Commit    |
-| ---- | ------------------------------------------------------------------------- | --------- |
-| cm01 | DB foundation (`customer` schema, migration, seed, permission registry)   | `4426342` |
-| cm02 | Validation schemas + read repositories + read services                    | `3347d04` |
-| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)       | `47c0f68` |
-| cm04 | View search page                                                           | `d37c875` |
-| cm05 | View detail page                                                           | `b1d0d8a` |
-| cm06 | Manage search page                                                         | `53f9a62` |
-| cm07 | Create customer                                                            | `9665074` |
-| cm08 | Edit page + update organization                                           | `ff2dbc4` |
-| cm09 | Transition organization status                                            | `9aae48c` |
-| cm10 | Transition customer status                                                | `00a865a` |
-| cm11 | Add contact                                                                | `0d80df8` |
-| cm12 | Update contact                                                            | `12240ce` (with cm11) |
-| cm13 | Delete contact                                                            | `a8e22ff` |
-| cm14 | Set preferred contact                                                     | `2e505cb` |
-| cm15 | Set preferred contact method                                              | `b349cf7` |
-| cm16 | Authz guardrail sweep (ship gate)                                         | `8d80e6c` |
+| Unit | Name                                                                    | Commit                |
+| ---- | ----------------------------------------------------------------------- | --------------------- |
+| cm01 | DB foundation (`customer` schema, migration, seed, permission registry) | `4426342`             |
+| cm02 | Validation schemas + read repositories + read services                  | `3347d04`             |
+| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | `47c0f68`             |
+| cm04 | View search page                                                        | `d37c875`             |
+| cm05 | View detail page                                                        | `b1d0d8a`             |
+| cm06 | Manage search page                                                      | `53f9a62`             |
+| cm07 | Create customer                                                         | `9665074`             |
+| cm08 | Edit page + update organization                                         | `ff2dbc4`             |
+| cm09 | Transition organization status                                          | `9aae48c`             |
+| cm10 | Transition customer status                                              | `00a865a`             |
+| cm11 | Add contact                                                             | `0d80df8`             |
+| cm12 | Update contact                                                          | `12240ce` (with cm11) |
+| cm13 | Delete contact                                                          | `a8e22ff`             |
+| cm14 | Set preferred contact                                                   | `2e505cb`             |
+| cm15 | Set preferred contact method                                            | `b349cf7`             |
+| cm16 | Authz guardrail sweep (ship gate)                                       | `8d80e6c`             |
 
 **Docs completed:** `custmgmt-project-overview.md`, `custmgmt-architecture.md`, `custmgmt-code-standards.md`, `custmgmt-ai-workflow-rules.md`, `custmgmt-ui-context.md`, `specs/cm00-build-plan.md`, all 16 unit specs (`cm01`–`cm16`).
 
@@ -84,21 +84,21 @@ All 16 units implemented and committed. Module is ship-gate-verified (cm16) at t
 
 ## Per-unit specs
 
-| Unit | Spec file       | Summary                                                                                                                                                                                                                                                              |
-| ---- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit | Spec file       | Summary                                                                                                                                                                                                                                                   |
+| ---- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | cm01 | `specs/cm01.md` | DB foundation: `customer` schema (3 tables, 3 sequences, all constraints), migration `0009_customer.sql`, seed (`customers` permission + `CUSTOMER_SEARCH_RESULT_LIMIT`), permission registry wiring, `types/customer.ts` domain unions, guardrail tests. |
-| cm02 | `specs/cm02.md` | Validation schemas (transitions, specification, organization, party-role, contact-medium) + three finder-only repositories + `services/customer` (`searchCustomers`, `getCustomerDetail`) + read-model types. No `app/**`, `actions/customer/`, or UI. |
-| cm03 | `specs/cm03.md` | "Customer" `NAV_SECTIONS` entry (View/Manage) + new `AdminNav` locked/greyed-item capability for a permission the viewer lacks. |
-| cm04 | `specs/cm04.md` | `app/(app)/customers/view/page.tsx`: READ guard, `q`-only search, `CustomerSearchPanel` + `CustomerResultsTable`, `OrganizationStatusBadge`/`CustomerStatusBadge`. |
-| cm05 | `specs/cm05.md` | `app/(app)/customers/view/[id]/page.tsx`: three read-only sections (organization/role/contacts), `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner`, authoritative `isStatusInconsistent` rule. |
-| cm06 | `specs/cm06.md` | `app/(app)/customers/manage/page.tsx`: EDIT guard, reuses `cm04`'s search panel/table, "Add new customer" CTA → `cm07`. |
-| cm07 | `specs/cm07.md` | First mutation unit: create-customer action/service/repository shape, two-step similar-name confirm, registration-number uniqueness DB check, `SpecificationEditor`. |
-| cm08 | `specs/cm08.md` | Edit-page container + first optimistic-lock implementation (`compareAndBumpLock`), reused through `cm15`. |
-| cm09 | `specs/cm09.md` | `StatusTransitionControl` (reused by `cm10`); `transition-organization-status` action/service. |
-| cm10 | `specs/cm10.md` | Reuses `StatusTransitionControl` for the customer entity; `CustomerRoleForm`; folds in `update-party-role-specification`; `compareAndUpdateStatus`/`compareAndUpdateSpecification`. |
-| cm11 | `specs/cm11.md` | First contact mutation: `contact-mutations.ts`, `ContactManagerPanel`, first-contact-auto-preferred + phone>email>address priority rules. |
-| cm12 | `specs/cm12.md` | `resolveUpdatedPreferredMethod` — preferred-method preservation/clearing rules on contact update. |
-| cm13 | `specs/cm13.md` | The module's one physical delete (contact), with a convention + structural-test-enforced precondition. |
-| cm14 | `specs/cm14.md` | Explicit set-preferred-contact reassignment; escape hatch for `cm13`'s delete-blocked case. |
-| cm15 | `specs/cm15.md` | Explicit set-preferred-contact-method reassignment among currently-populated methods. |
-| cm16 | `specs/cm16.md` | Ship gate: authz-matrix route × role matrix, Server-Action USER-denial loop, chained core-flow E2E, module-boundary + audit-completeness guardrail sweeps. |
+| cm02 | `specs/cm02.md` | Validation schemas (transitions, specification, organization, party-role, contact-medium) + three finder-only repositories + `services/customer` (`searchCustomers`, `getCustomerDetail`) + read-model types. No `app/**`, `actions/customer/`, or UI.    |
+| cm03 | `specs/cm03.md` | "Customer" `NAV_SECTIONS` entry (View/Manage) + new `AdminNav` locked/greyed-item capability for a permission the viewer lacks.                                                                                                                           |
+| cm04 | `specs/cm04.md` | `app/(app)/customers/view/page.tsx`: READ guard, `q`-only search, `CustomerSearchPanel` + `CustomerResultsTable`, `OrganizationStatusBadge`/`CustomerStatusBadge`.                                                                                        |
+| cm05 | `specs/cm05.md` | `app/(app)/customers/view/[id]/page.tsx`: three read-only sections (organization/role/contacts), `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner`, authoritative `isStatusInconsistent` rule.                                           |
+| cm06 | `specs/cm06.md` | `app/(app)/customers/manage/page.tsx`: EDIT guard, reuses `cm04`'s search panel/table, "Add new customer" CTA → `cm07`.                                                                                                                                   |
+| cm07 | `specs/cm07.md` | First mutation unit: create-customer action/service/repository shape, two-step similar-name confirm, registration-number uniqueness DB check, `SpecificationEditor`.                                                                                      |
+| cm08 | `specs/cm08.md` | Edit-page container + first optimistic-lock implementation (`compareAndBumpLock`), reused through `cm15`.                                                                                                                                                 |
+| cm09 | `specs/cm09.md` | `StatusTransitionControl` (reused by `cm10`); `transition-organization-status` action/service.                                                                                                                                                            |
+| cm10 | `specs/cm10.md` | Reuses `StatusTransitionControl` for the customer entity; `CustomerRoleForm`; folds in `update-party-role-specification`; `compareAndUpdateStatus`/`compareAndUpdateSpecification`.                                                                       |
+| cm11 | `specs/cm11.md` | First contact mutation: `contact-mutations.ts`, `ContactManagerPanel`, first-contact-auto-preferred + phone>email>address priority rules.                                                                                                                 |
+| cm12 | `specs/cm12.md` | `resolveUpdatedPreferredMethod` — preferred-method preservation/clearing rules on contact update.                                                                                                                                                         |
+| cm13 | `specs/cm13.md` | The module's one physical delete (contact), with a convention + structural-test-enforced precondition.                                                                                                                                                    |
+| cm14 | `specs/cm14.md` | Explicit set-preferred-contact reassignment; escape hatch for `cm13`'s delete-blocked case.                                                                                                                                                               |
+| cm15 | `specs/cm15.md` | Explicit set-preferred-contact-method reassignment among currently-populated methods.                                                                                                                                                                     |
+| cm16 | `specs/cm16.md` | Ship gate: authz-matrix route × role matrix, Server-Action USER-denial loop, chained core-flow E2E, module-boundary + audit-completeness guardrail sweeps.                                                                                                |

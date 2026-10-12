@@ -2,7 +2,7 @@
 
 > **PLANNED** — module-specific delta to `../code-standards.md` (the overarching standards). This file contains **only** Customer Management specifics; everything else (TypeScript, Next.js, styling, API, data, file organization, CI gates) is inherited unchanged and is not restated here. If a rule seems missing, it lives in the general file.
 
-**Companion docs:** `custmgmt-project-overview.md` (product spec) and `custmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture *Invariants*, the **Invariants win** and the conflict is a bug to fix here.
+**Companion docs:** `custmgmt-project-overview.md` (product spec) and `custmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
 
 ---
 
@@ -31,14 +31,17 @@
    - `PreferredContactMethod`: `'PHONE' | 'EMAIL' | 'ADDRESS'`
 2. **Transition maps are typed, single-source `Record`s** in `validation/customer/transitions.ts`:
    ```ts
-   export const ORGANIZATION_TRANSITIONS: Record<OrganizationStatus, readonly OrganizationStatus[]> = {
-     REGISTERED: ['ACTIVE', 'DISSOLVED'],
-     ACTIVE: ['INACTIVE', 'SUSPENDED', 'DISSOLVED', 'MERGED'],
-     INACTIVE: ['ACTIVE', 'SUSPENDED', 'DISSOLVED', 'MERGED'],
-     SUSPENDED: ['ACTIVE', 'INACTIVE', 'DISSOLVED', 'MERGED'],
+   export const ORGANIZATION_TRANSITIONS: Record<
+     OrganizationStatus,
+     readonly OrganizationStatus[]
+   > = {
+     REGISTERED: ["ACTIVE", "DISSOLVED"],
+     ACTIVE: ["INACTIVE", "SUSPENDED", "DISSOLVED", "MERGED"],
+     INACTIVE: ["ACTIVE", "SUSPENDED", "DISSOLVED", "MERGED"],
+     SUSPENDED: ["ACTIVE", "INACTIVE", "DISSOLVED", "MERGED"],
      DISSOLVED: [],
      MERGED: [],
-   } as const
+   } as const;
    ```
    Both the Server Action's validation and the dropdown's available-options query read this same object — never a duplicated literal list (§1.4).
 3. **`party_role_specification` is typed `Record<string, unknown>`, not a Zod object schema.** The validator (`validation/customer/specification.schema.ts`) only checks `JSON.parse` succeeds; do not add a `PartyRoleSpecification` interface with named keys — the shape is intentionally unenforced (§1.8).
@@ -183,13 +186,13 @@ tests/…                         # mirrors source; incl. authz-matrix entries f
 
 Authoritative for v1; mirrors architecture §4. New pages are appended before they ship — a page with no row here is a bug, not "public" (general §1.11).
 
-| Page | Route | Top-level component | Folder | Permission : level |
-|---|---|---|---|---|
-| View Customer — search | `/customers/view` | `ViewCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable` | `app/(app)/customers/view/` | `customers` : **READ** |
-| View Customer — detail | `/customers/view/[id]` | `CustomerDetailPage` → `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` | `app/(app)/customers/view/[id]/` | `customers` : **READ** |
-| Manage Customer — search | `/customers/manage` | `ManageCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable` | `app/(app)/customers/manage/` | `customers` : **EDIT** |
-| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel` | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
-| Manage Customer — add new | `/customers/manage/new` | `NewCustomerPage` → `NewCustomerForm` | `app/(app)/customers/manage/new/` | `customers` : **EDIT** |
+| Page                                                                             | Route                    | Top-level component                                                                          | Folder                             | Permission : level     |
+| -------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------- |
+| View Customer — search                                                           | `/customers/view`        | `ViewCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable`                     | `app/(app)/customers/view/`        | `customers` : **READ** |
+| View Customer — detail                                                           | `/customers/view/[id]`   | `CustomerDetailPage` → `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` | `app/(app)/customers/view/[id]/`   | `customers` : **READ** |
+| Manage Customer — search                                                         | `/customers/manage`      | `ManageCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable`                   | `app/(app)/customers/manage/`      | `customers` : **EDIT** |
+| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel`           | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
+| Manage Customer — add new                                                        | `/customers/manage/new`  | `NewCustomerPage` → `NewCustomerForm`                                                        | `app/(app)/customers/manage/new/`  | `customers` : **EDIT** |
 
 **Notes**
 
@@ -201,7 +204,7 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 
 ## 9. Module Guardrail Tests (CI gate §10.4)
 
-The general test-suite gate includes this module's guardrail tests from *Success Criteria*, all of which must exist before ship:
+The general test-suite gate includes this module's guardrail tests from _Success Criteria_, all of which must exist before ship:
 
 1. **Authz matrix** — every route in §8 × every role/level combination, including USER on `/customers/manage/**` → no-access, and direct Server Action calls (bypassing the nav) also rejected for USER.
 2. **Full core flow** — search → create → add contact (auto-preferred) → add phone/email/address (auto-preferred method) → INITIALIZED → VALIDATED → ACTIVE, REGISTERED → ACTIVE → visible in View Customer, end to end without errors.
