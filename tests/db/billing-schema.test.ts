@@ -90,9 +90,18 @@ describe("billing.billing_account", () => {
     expect(
       getTableColumns(billingAccount).refBillTemplateVersionId.notNull,
     ).toBe(false);
-    expect(
-      getTableConfig(billingAccount).foreignKeys.map((fk) => fk.getName()),
-    ).toContain("billing_account_ref_bill_template_version_id_fk");
+    const fk = getTableConfig(billingAccount).foreignKeys.find(
+      (f) => f.getName() === "billing_account_ref_bill_template_version_id_fk",
+    );
+    expect(fk).toBeDefined();
+    const ref = fk!.reference();
+    expect(ref.columns.map((c) => c.name)).toEqual([
+      "ref_bill_template_version_id",
+    ]);
+    expect(getTableConfig(ref.foreignTable).name).toBe("bill_template_version");
+    expect(ref.foreignColumns.map((c) => c.name)).toEqual([
+      "bill_template_version_id",
+    ]);
   });
 
   it("has no stored balance column (Module Inv. #2, structural)", () => {

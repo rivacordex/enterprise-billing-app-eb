@@ -17,21 +17,23 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   only: a per-BAN invoice template reference (v1 `NULL` = follow the active template),
   captured at onboarding, reset on Manage Customer, shown on a tabbed View Customer.
   Posting ignores the reference (D4, Inv. #18).
-- **cm17 IN PROGRESS** — code, unit tests and docs done; the DB-gated integration suite
-  has not been run yet (needs a disposable Postgres).
-- **cm18 IN PROGRESS** (started 2026-10-12) — code, unit/component tests done; DB-gated
-  suite not yet run (disposable Postgres), ac04 spec change awaiting approval.
+- **cm17 SIGNED OFF** (2026-10-12) — DB-gated suite green on a disposable Postgres
+  (6/6) and the `0049` → `0050` upgrade confirmed; code-review fixes landed in a cm17
+  follow-up commit.
+- **cm18 IN PROGRESS** — committed (`12e9c03`, SonarQube fixes `832597c`). It was
+  written before cm17 passed §9.8 (§9.2 deviation, now resolved by cm17's sign-off).
+  Still open: its own DB-gated suite (disposable Postgres) and the ac04 spec approval.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
-| cm17 | Billing Account template reference column                   | DB       | In progress | c0b2f97 |
-| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | —      |
+| cm17 | Billing Account template reference column                   | DB       | Done        | c0b2f97 |
+| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | Not started | —      |
 | cm20 | View Customer: Accounts tab                                 | APP      | Not started | —      |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
 | cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
 
-## Invoice Template Binding update — cm17 IN PROGRESS (started 2026-10-12)
+## Invoice Template Binding update — cm17 SIGNED OFF (2026-10-12)
 
 - **cm17 — Billing Account template reference column (Invoice Template Binding update,
   Phase 2).** Boundary: DB. Spec:
@@ -67,9 +69,27 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     tests), no service code changed. `custmgmt-architecture.md` §7.3 checked: still
     accurate. No file under `services/billing/**`, `workflow-management/**` or
     `db/bootstrap/**` touched.
-  - **OPEN, blocking cm17 sign-off:** run the integration suite on a disposable
-    Postgres (fresh-migrate path), and confirm `0050` applies on a database already at
-    `0049`. Then commit and record the hash above.
+  - **Sign-off (2026-10-12):** the integration suite ran on a disposable Postgres and
+    `0050` applied on a database already at `0049` (see the review below). The fixes
+    landed in a cm17 follow-up commit after `c0b2f97`.
+  - **Code review of `c0b2f97` (2026-10-12), fixes committed as the cm17 follow-up:**
+    - The integration suite now migrates to the last entry before `0050`, inserts a BAN,
+      then applies `0050`. It covers the upgrade path and checks that the pre-existing BAN
+      reads `NULL`. The FK case also checks the owning table and column and `NO ACTION`
+      (`confdeltype`/`confupdtype` = `a`), not only the target table. `afterAll` is guarded
+      and has a 60 s timeout. The unit FK case asserts the columns and the target table,
+      not only the name.
+    - Ran green (6/6) on a throwaway Postgres container (`enterprise-billing-app-db`
+      image, marked disposable, not the dev stack). A manual 0049 → 0050 upgrade also
+      passed. `tsc` is clean, and `billing-schema.test.ts` is green.
+    - Restored `context/billing-management/invoice-template/placeholder-catalog.md`,
+      which `c0b2f97` deleted while it is still cited as authoritative by
+      `billmgmt-ai-workflow-rules.md`, `billmgmt-code-standards.md`, `types/billing.ts`
+      and `validation/billing/invoice-profile.schema.ts`. Billing docs are read-only in
+      this update (§9.6 item 7).
+    - Raised, not changed: no draft of the `acctmgmt-architecture.md` `billing_account`
+      row change has been recorded yet (§9.7 item 6). The billing tracker compaction
+      that shipped inside `c0b2f97` sits outside cm17's planned files.
 
 ## Invoice Template Binding update — cm18 IN PROGRESS (started 2026-10-12)
 
@@ -112,8 +132,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 
 ## Outstanding / Next
 
-- **cm17:** committed (`c0b2f97`); finish the DB-gated run above.
-- **cm18:** DB-gated run + ac04 spec approval above, then commit.
+- **cm17:** signed off (`c0b2f97` + review follow-up).
+- **cm18:** DB-gated run + ac04 spec approval above.
 - **cm19 next** (may proceed alongside; depends only on cm05).
 
 ## Key decisions (durable)
