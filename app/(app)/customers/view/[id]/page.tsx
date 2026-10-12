@@ -7,16 +7,19 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { OrganizationSection } from "@/components/customers/organization-section";
 import { CustomerRoleSection } from "@/components/customers/customer-role-section";
 import { ContactDetailsSection } from "@/components/customers/contact-details-section";
+import { CustomerDetailTabs } from "@/components/customers/customer-detail-tabs";
 import {
   InconsistencyBanner,
   isStatusInconsistent,
 } from "@/components/customers/inconsistency-banner";
+import { firstValue } from "@/lib/search-params";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
 import { partyRoleIdSchema } from "@/validation/customer/party-role.schema";
+import { customerDetailSearchParamsSchema } from "@/validation/customer/search-params.schema";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +44,10 @@ function CustomerNotFound(): React.JSX.Element {
 
 export default async function CustomerDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string | string[] }>;
 }): Promise<React.JSX.Element> {
   await requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.READ);
 
@@ -56,6 +61,11 @@ export default async function CustomerDetailPage({
   if (detail === null) {
     return <CustomerNotFound />;
   }
+
+  // cm19 (custmgmt Inv. #14) — the active tab lives in the URL.
+  const { tab } = customerDetailSearchParamsSchema.parse({
+    tab: firstValue((await searchParams).tab),
+  });
 
   const [locale, timezone] = await Promise.all([
     getAppLocale(),
@@ -84,19 +94,27 @@ export default async function CustomerDetailPage({
         />
       )}
 
-      <div className="space-y-6">
-        <OrganizationSection
-          organization={detail.organization}
-          locale={locale}
-          timezone={timezone}
-        />
-        <CustomerRoleSection
-          customerRole={detail.customerRole}
-          locale={locale}
-          timezone={timezone}
-        />
+      <CustomerDetailTabs activeTab={tab} />
+
+      {tab === "profile" && (
+        <div className="space-y-6">
+          <OrganizationSection
+            organization={detail.organization}
+            locale={locale}
+            timezone={timezone}
+          />
+          <CustomerRoleSection
+            customerRole={detail.customerRole}
+            locale={locale}
+            timezone={timezone}
+          />
+        </div>
+      )}
+      {tab === "contacts" && (
         <ContactDetailsSection contacts={detail.contacts} />
-      </div>
+      )}
+      {/* Filled in cm20. */}
+      {tab === "accounts" && <div aria-label="Accounts" />}
     </main>
   );
 }

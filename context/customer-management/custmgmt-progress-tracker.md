@@ -23,12 +23,14 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 - **cm18 IN PROGRESS** — committed (`12e9c03`, SonarQube fixes `832597c`). It was
   written before cm17 passed §9.8 (§9.2 deviation, now resolved by cm17's sign-off).
   Still open: its own DB-gated suite (disposable Postgres) and the ac04 spec approval.
+- **cm19 IN PROGRESS** (started 2026-10-12) — code, tests and docs done, all green;
+  awaiting review and commit.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
 | cm17 | Billing Account template reference column                   | DB       | Done        | c0b2f97 |
 | cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
-| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | Not started | —      |
+| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | —      |
 | cm20 | View Customer: Accounts tab                                 | APP      | Not started | —      |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
 | cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
@@ -71,7 +73,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     `db/bootstrap/**` touched.
   - **Sign-off (2026-10-12):** the integration suite ran on a disposable Postgres and
     `0050` applied on a database already at `0049` (see the review below). The fixes
-    landed in a cm17 follow-up commit after `c0b2f97`.
+    landed in `187d8cb` after `c0b2f97`.
   - **Code review of `c0b2f97` (2026-10-12), fixes committed as the cm17 follow-up:**
     - The integration suite now migrates to the last entry before `0050`, inserts a BAN,
       then applies `0050`. It covers the upgrade path and checks that the pre-existing BAN
@@ -130,11 +132,45 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     result code, `afterData` key) is drafted and needs approval before editing (§9.7
     item 6). Then commit and record the hash above.
 
+## Invoice Template Binding update — cm19 IN PROGRESS (started 2026-10-12)
+
+- **cm19 — View Customer tab shell (Profile · Contacts · Accounts).** Boundary: APP.
+  Spec: `context/customer-management/specs/cm19-view-customer-tab-shell.md`. Authorized
+  by binding plan §7.1, D5, Inv. #14. Depends on cm05 only.
+  - **Delivered:**
+    - `validation/customer/search-params.schema.ts`: `CUSTOMER_DETAIL_TABS`,
+      `CustomerDetailTab`, `customerDetailSearchParamsSchema` (lenient,
+      `.catch("profile")`).
+    - `components/customers/customer-detail-tabs.tsx` (new): server component,
+      `<nav aria-label="Customer detail tabs">` of plain `<Link href="?tab=…">` with
+      `aria-current="page"`, classes copied from `run-detail-tabs.tsx`.
+    - `app/(app)/customers/view/[id]/page.tsx`: takes `searchParams`, parses `tab` via
+      `firstValue` after the not-found check; header → banner → tab strip → active
+      panel. Profile = Organization + Customer Role; Contacts = Contact Details;
+      Accounts = empty `<div aria-label="Accounts" />` (cm20 fills it).
+    - Tests: `tests/app/customers-view-detail-page.test.tsx` (rewritten: guard,
+      no-access, malformed/unknown id without strip, default/contacts/accounts,
+      bogus + array fallback, banner above strip on all three tabs / absent for
+      ordinary pair); `tests/components/customer-detail-tabs.test.tsx` and
+      `tests/validation/customer-search-params.schema.test.ts` (new).
+    - Docs: `custmgmt-code-standards.md` §4 item 5 + §7 tree (`CustomerDetailTabs`,
+      `search-params.schema.ts`); `custmgmt-project-overview.md` core flow step 10 +
+      *Features*; `cm05.md` superseded-layout note.
+  - **Deviations:** none. Section components, `CustomerNotFound`, `metadata.title`,
+    `getCustomerDetail`, the nav registry and `components/ui/**` are unchanged; no
+    `"use client"` added.
+  - **Verification:** `tsc`, ESLint, Prettier clean. 3 cm19 test files (+1 matched by
+    the filter) green, 31 tests, under `--pool=threads --maxWorkers=1` (the default
+    worker count timed out at startup while `tsc` was running in parallel).
+  - **OPEN:** review, then commit and record the hash above. No DB-gated work in this
+    unit.
+
 ## Outstanding / Next
 
-- **cm17:** signed off (`c0b2f97` + review follow-up).
+- **cm17:** signed off (`c0b2f97` + review follow-up `187d8cb`).
 - **cm18:** DB-gated run + ac04 spec approval above.
-- **cm19 next** (may proceed alongside; depends only on cm05).
+- **cm19:** review + commit.
+- **cm20 next** (fills the Accounts tab; depends on cm19).
 
 ## Key decisions (durable)
 

@@ -76,7 +76,7 @@
 2. **`StatusTransitionControl` is the one component that renders a status dropdown.** It takes the current status + entity kind (`organization` | `customer`) and derives its options from the transition map (§2.2, §3.3); no page builds its own `<select>` of statuses.
 3. **`InconsistencyBanner` is the one component for the cross-status warning** (e.g. ACTIVE customer on a SUSPENDED organization) — warn-only styling (e.g. `border-amber-500`-equivalent semantic token), never a blocking/destructive treatment, since the platform doesn't cascade the mismatch.
 4. **`SpecificationEditor` is the one component for editing `party_role_specification`** — a raw JSON textarea/editor with client-side JSON.parse feedback mirroring the server's well-formedness-only check (§1.8, §2.3); do not build a structured key/value form for it.
-5. **Three-section detail layout is a responsive stack:** Party – Organization, Role – Customer, Customer – Contact Details, in that order top-to-bottom on narrow viewports, optionally side-by-side on `lg:` and up (general §4.10) — order is fixed, do not reorder per page.
+5. **Three-section detail layout is a responsive stack:** Party – Organization, Role – Customer, Customer – Contact Details, in that order top-to-bottom on narrow viewports, optionally side-by-side on `lg:` and up (general §4.10) — order is fixed, do not reorder per page. Since cm19 the View Customer detail page splits them across URL-driven tabs (`?tab=profile|contacts|accounts`, default and fallback `profile`): **Profile** = Organization + Customer Role (in that order), **Contacts** = Contact Details, **Accounts** = billing accounts (cm20). `CustomerDetailTabs` is the one tab strip — a server component of plain `<Link>`s styled like `components/billing/run-detail-tabs.tsx` (ui-context §9.1); the `InconsistencyBanner` sits above it on every tab.
 6. **The results table on both search pages reuses the platform table primitives** (general §4.2, product-module precedent) — one `CustomerResultsTable` component shared by View and Manage, not forked per page.
 
 ---
@@ -112,7 +112,7 @@ Placement per general §7; the module's concrete tree:
 ```
 app/(app)/customers/view/
   page.tsx                    # ViewCustomerSearchPage — guard READ, search, results
-  [id]/page.tsx                # CustomerDetailPage — org / role / contacts sections
+  [id]/page.tsx                # CustomerDetailPage — ?tab= profile / contacts / accounts
   loading.tsx
   error.tsx
 app/(app)/customers/manage/
@@ -127,6 +127,7 @@ components/customers/
   organization-section.tsx         # OrganizationSection (read-only)
   customer-role-section.tsx        # CustomerRoleSection (read-only)
   contact-details-section.tsx      # ContactDetailsSection (read-only)
+  customer-detail-tabs.tsx         # CustomerDetailTabs (View detail tab strip, cm19)
   organization-form.tsx            # OrganizationForm
   customer-role-form.tsx           # CustomerRoleForm
   contact-manager-panel.tsx        # ContactManagerPanel
@@ -171,6 +172,7 @@ validation/customer/
   transitions.ts                # ORGANIZATION_TRANSITIONS / CUSTOMER_TRANSITIONS maps
   specification.schema.ts       # JSON well-formedness only
   update-party-role-specification.schema.ts
+  search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19)
 tests/…                         # mirrors source; incl. authz-matrix entries for both routes
 ```
 
