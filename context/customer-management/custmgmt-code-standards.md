@@ -118,7 +118,7 @@ app/(app)/customers/view/
   error.tsx
 app/(app)/customers/manage/
   page.tsx                    # ManageCustomerSearchPage — guard EDIT, search, results
-  [id]/page.tsx                # CustomerEditPage — org form, role/status, contacts
+  [id]/page.tsx                # CustomerEditPage — org form, role/status, contacts, billing accounts (cm21)
   new/page.tsx                 # NewCustomerPage — create flow
   loading.tsx
   error.tsx
@@ -140,6 +140,7 @@ components/customers/
   organization-form.tsx            # OrganizationForm
   customer-role-form.tsx           # CustomerRoleForm
   contact-manager-panel.tsx        # ContactManagerPanel
+  billing-account-panel.tsx        # BillingAccountPanel (Manage: BANs + template reset, cm21)
   new-customer-form.tsx            # NewCustomerForm
   organization-status-badge.tsx    # OrganizationStatusBadge
   customer-status-badge.tsx        # CustomerStatusBadge
@@ -182,9 +183,15 @@ validation/customer/
   specification.schema.ts       # JSON well-formedness only
   update-party-role-specification.schema.ts
   search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19), ?page= (cm20)
-services/accounts/              # Accounts-side reads owned here for the Accounts tab (cm20)
+services/accounts/              # Accounts-side services owned here (Accounts tab cm20, BAN panel cm21)
   get-customer-accounts-summary.ts  # getCustomerAccountsSummary(partyRoleId, page)
   resolve-ban-template-label.ts     # "Follows active template (currently: … vN), as of now"
+  list-customer-billing-accounts.ts # listCustomerBillingAccounts(partyRoleId) — Manage panel read (cm21)
+  set-billing-account-template.ts   # setBillingAccountTemplate — CAS reset on the BAN lock (cm21)
+actions/accounts/
+  set-billing-account-template.ts   # dual permission: customers + accounts_transactions : EDIT (cm21)
+validation/accounts/
+  set-billing-account-template.schema.ts # partyRoleId, billingAccountId, BTV id | null, lastModified (cm21)
 tests/…                         # mirrors source; incl. authz-matrix entries for both routes
 ```
 
@@ -205,7 +212,7 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 | View Customer — search                                                           | `/customers/view`        | `ViewCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable`                     | `app/(app)/customers/view/`        | `customers` : **READ** |
 | View Customer — detail                                                           | `/customers/view/[id]`   | `CustomerDetailPage` → `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` | `app/(app)/customers/view/[id]/`   | `customers` : **READ** |
 | Manage Customer — search                                                         | `/customers/manage`      | `ManageCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable`                   | `app/(app)/customers/manage/`      | `customers` : **EDIT** |
-| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel`           | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
+| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel`, `BillingAccountPanel` | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
 | Manage Customer — add new                                                        | `/customers/manage/new`  | `NewCustomerPage` → `NewCustomerForm`                                                        | `app/(app)/customers/manage/new/`  | `customers` : **EDIT** |
 
 **Notes**
@@ -214,6 +221,7 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 - A USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav; the page guard and every `actions/customer/*` Server Action independently reject a USER (defense in depth, architecture §4) even if the nav check is bypassed.
 - Deep links (`/customers/view/[id]`, `/customers/manage/[id]`) pass through the same guard as the search pages — the route param grants nothing.
 - **Accounts tab sub-gate (cm20, Inv. #12):** on `/customers/view/[id]?tab=accounts` the page additionally checks `accounts_view : READ` once, from the `permissionMap` `requirePermission` returns. Without it the tab renders `AccountsLockedCard` and `getCustomerAccountsSummary` is never called; the page-level permission stays `customers : READ`.
+- **Billing account template reset (cm21, Inv. #16/#17):** `actions/accounts/set-billing-account-template.ts` requires `customers : EDIT` (via `requirePermission`) **and** `accounts_transactions : EDIT` (via `meetsLevel` on the returned `permissionMap`), else `FORBIDDEN`. `/customers/manage/[id]` derives `canEditAccounts` from the same map to grey the panel's reset button (UX only); the page guard stays `customers : EDIT`. The reset locks the BAN's own `last_modified`, never `party_role.last_modified_datetime`.
 
 ---
 

@@ -16,13 +16,16 @@ import { stripComments } from "@/tests/helpers/strip-code-comments";
 // dynamic `import("…")` and `require("…")` — with `@/` and relative
 // specifiers normalised to a repo path before matching.
 //
-// The one sanctioned Accounts action use is the onboarding wizard (ac04 /
-// cm18), which calls the onboarding action and its options read. cm21 adds
-// its reset action here when it lands.
+// The sanctioned Accounts action uses are the onboarding wizard (ac04 /
+// cm18), which calls the onboarding action and its options read, and the
+// Manage Customer Billing account panel's template reset (cm21).
 const ALLOWED_ACCOUNTS_ACTIONS: Record<string, string[]> = {
   "components/customers/onboard-accounts-wizard.tsx": [
     "actions/accounts/get-wizard-options",
     "actions/accounts/onboard-customer-accounts",
+  ],
+  "components/customers/billing-account-panel.tsx": [
+    "actions/accounts/set-billing-account-template",
   ],
 };
 

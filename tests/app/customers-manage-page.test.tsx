@@ -15,11 +15,42 @@ vi.mock("@/components/customers/customer-search-panel", () => ({
 vi.mock("@/components/customers/customer-results-table", () => ({
   CustomerResultsTable: vi.fn(() => null),
 }));
+vi.mock("@/services/customer/get-customer-detail", () => ({
+  getCustomerDetail: vi.fn(),
+}));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppLocale: vi.fn(),
+  getAppTimezone: vi.fn(),
+}));
+vi.mock("@/services/accounts/list-customer-billing-accounts", () => ({
+  listCustomerBillingAccounts: vi.fn(),
+}));
+vi.mock("@/components/customers/organization-form", () => ({
+  OrganizationForm: vi.fn(() => null),
+}));
+vi.mock("@/components/customers/customer-role-form", () => ({
+  CustomerRoleForm: vi.fn(() => null),
+}));
+vi.mock("@/components/customers/contact-manager-panel", () => ({
+  ContactManagerPanel: vi.fn(() => null),
+}));
+vi.mock("@/components/customers/billing-account-panel", () => ({
+  BillingAccountPanel: vi.fn(() => null),
+}));
 
+import CustomerEditPage from "@/app/(app)/customers/manage/[id]/page";
 import ManageCustomerSearchPage from "@/app/(app)/customers/manage/page";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { BillingAccountPanel } from "@/components/customers/billing-account-panel";
+import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import { CustomerResultsTable } from "@/components/customers/customer-results-table";
+import { listCustomerBillingAccounts } from "@/services/accounts/list-customer-billing-accounts";
+import { getCustomerDetail } from "@/services/customer/get-customer-detail";
+import {
+  getAppLocale,
+  getAppTimezone,
+} from "@/services/system-config/app-config-read.service";
 import { searchCustomers } from "@/services/customer/search-customers";
 
 const mockRequirePermission = vi.mocked(requirePermission);
@@ -210,5 +241,127 @@ describe("ManageCustomerSearchPage", () => {
 
     const cta = findElementByType(result, Link);
     expect(cta?.props.href).toBe("/customers/manage/new");
+  });
+});
+
+// cm21-spec §3.8 — the Manage Customer edit page renders the Billing account
+// panel last, after the contact manager, with canEditAccounts derived from
+// the guard's permissionMap (accounts_transactions:EDIT). Guard unchanged.
+describe("CustomerEditPage — Billing account panel (cm21)", () => {
+  const mockGetCustomerDetail = vi.mocked(getCustomerDetail);
+  const mockListBillingAccounts = vi.mocked(listCustomerBillingAccounts);
+  const LOCK = new Date("2026-01-01T00:00:00.000Z");
+  const ACCOUNTS = {
+    onboarded: true as const,
+    bans: [
+      {
+        billingAccountId: "BAN000001",
+        name: "Primary",
+        state: "active" as const,
+        lastModified: LOCK,
+        refBillTemplateVersionId: null,
+        templateLabel:
+          "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
+      },
+    ],
+  };
+
+  function grant(accountsTransactions: "READ" | "EDIT" | null) {
+    mockRequirePermission.mockResolvedValue({
+      userId: "admin-1",
+      userEmail: "admin@example.com",
+      permissionMap: {
+        customers: "EDIT",
+        accounts_transactions: accountsTransactions,
+      } as never,
+    });
+  }
+
+  function detail(status = "VALIDATED") {
+    return {
+      organization: { name: "Acme" },
+      customerRole: {
+        partyRoleId: "PTRL00000001",
+        status,
+        lastModifiedDatetime: LOCK,
+      },
+      contacts: [],
+    } as never;
+  }
+
+  async function renderPage() {
+    return CustomerEditPage({
+      params: Promise.resolve({ id: "PTRL00000001" }),
+    });
+  }
+
+  beforeEach(() => {
+    grant("EDIT");
+    mockGetCustomerDetail.mockReset();
+    mockGetCustomerDetail.mockResolvedValue(detail());
+    mockListBillingAccounts.mockReset();
+    mockListBillingAccounts.mockResolvedValue(ACCOUNTS);
+    vi.mocked(getAppLocale).mockResolvedValue("en-MY");
+    vi.mocked(getAppTimezone).mockResolvedValue("Asia/Kuala_Lumpur");
+  });
+
+  it("keeps the customers:EDIT guard", async () => {
+    await renderPage();
+
+    expect(mockRequirePermission).toHaveBeenCalledWith(
+      PERMISSIONS.CUSTOMERS,
+      LEVELS.EDIT,
+    );
+  });
+
+  it("renders the panel as the last section, after the contact manager", async () => {
+    const result = (await renderPage()) as unknown as ReactElementLike;
+
+    const children = (result.props.children as unknown[]).filter(
+      isReactElementLike,
+    );
+    const types = children.map((c) => c.type);
+    expect(types.indexOf(BillingAccountPanel)).toBe(
+      types.indexOf(ContactManagerPanel) + 1,
+    );
+    expect(types.at(-1)).toBe(BillingAccountPanel);
+
+    const panel = findElementByType(result, BillingAccountPanel);
+    expect(panel?.props.partyRoleId).toBe("PTRL00000001");
+    expect(panel?.props.accounts).toBe(ACCOUNTS);
+    expect(mockListBillingAccounts).toHaveBeenCalledWith("PTRL00000001");
+  });
+
+  it.each([
+    ["EDIT", true],
+    ["READ", false],
+    [null, false],
+  ] as const)(
+    "accounts_transactions:%s → canEditAccounts %s",
+    async (level, expected) => {
+      grant(level);
+
+      const panel = findElementByType(await renderPage(), BillingAccountPanel);
+
+      expect(panel?.props.canEditAccounts).toBe(expected);
+    },
+  );
+
+  it("passes the not-onboarded read through for an INITIALIZED customer", async () => {
+    mockGetCustomerDetail.mockResolvedValue(detail("INITIALIZED"));
+    mockListBillingAccounts.mockResolvedValue({ onboarded: false });
+
+    const panel = findElementByType(await renderPage(), BillingAccountPanel);
+
+    expect(panel?.props.accounts).toEqual({ onboarded: false });
+  });
+
+  it("a missing customer renders not-found and loads no billing accounts", async () => {
+    mockGetCustomerDetail.mockResolvedValue(null);
+
+    const result = await renderPage();
+
+    expect(findElementByType(result, BillingAccountPanel)).toBeUndefined();
+    expect(mockListBillingAccounts).not.toHaveBeenCalled();
   });
 });

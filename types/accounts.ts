@@ -291,6 +291,21 @@ export type CustomerAccountsSummary =
       }>;
     };
 
+// cm21-spec §3.5 — one row of the Manage Customer Billing account panel.
+// `lastModified` is the BAN's CAS token for the template reset (Inv. #17).
+export interface CustomerBillingAccountRow {
+  billingAccountId: string;
+  name: string;
+  state: AccountState;
+  lastModified: Date;
+  refBillTemplateVersionId: string | null;
+  templateLabel: string;
+}
+
+export type CustomerBillingAccounts =
+  | { onboarded: false }
+  | { onboarded: true; bans: CustomerBillingAccountRow[] };
+
 export type {
   FinancialAccount,
   FinancialAccountInsert,

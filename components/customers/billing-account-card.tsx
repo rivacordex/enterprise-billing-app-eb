@@ -24,8 +24,9 @@ const FOLLOWS_LABEL =
   /^Follows active template \(currently: (.+) (v\d+)\), as of now$/;
 
 // §9.4 typography: "vN" in mono, "as of now" muted caption. The rendered text
-// stays identical to the service's label.
-function TemplateLabel({ label }: { label: string }): React.JSX.Element {
+// stays identical to the service's label. Shared with the Manage Customer
+// Billing account panel (cm21).
+export function TemplateLabel({ label }: { label: string }): React.JSX.Element {
   const match = FOLLOWS_LABEL.exec(label);
   return (
     <p className="flex items-start gap-1.5 text-body-sm text-[color:var(--text-body)]">

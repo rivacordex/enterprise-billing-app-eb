@@ -4,14 +4,17 @@ import { SearchX } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { BillingAccountPanel } from "@/components/customers/billing-account-panel";
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import { CustomerRoleForm } from "@/components/customers/customer-role-form";
 import { OrganizationForm } from "@/components/customers/organization-form";
+import { listCustomerBillingAccounts } from "@/services/accounts/list-customer-billing-accounts";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
+import { meetsLevel } from "@/types/permissions";
 import { partyRoleIdSchema } from "@/validation/customer/party-role.schema";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +46,10 @@ export default async function CustomerEditPage({
 }: {
   params: Promise<{ id: string }>;
 }): Promise<React.JSX.Element> {
-  await requirePermission(PERMISSIONS.CUSTOMERS, LEVELS.EDIT);
+  const { permissionMap } = await requirePermission(
+    PERMISSIONS.CUSTOMERS,
+    LEVELS.EDIT,
+  );
 
   const { id } = await params;
   const idResult = partyRoleIdSchema.safeParse(id);
@@ -55,9 +61,17 @@ export default async function CustomerEditPage({
     return <CustomerNotFound />;
   }
 
-  const [locale, timezone] = await Promise.all([
+  // cm21 (Inv. #16) — UX-only gate for the reset control; the action
+  // re-checks both permissions.
+  const canEditAccounts = meetsLevel(
+    permissionMap[PERMISSIONS.ACCOUNTS_TRANSACTIONS],
+    LEVELS.EDIT,
+  );
+
+  const [locale, timezone, billingAccounts] = await Promise.all([
     getAppLocale(),
     getAppTimezone(),
+    listCustomerBillingAccounts(detail.customerRole.partyRoleId),
   ]);
 
   return (
@@ -87,6 +101,12 @@ export default async function CustomerEditPage({
         partyRoleId={detail.customerRole.partyRoleId}
         contacts={detail.contacts}
         lastModifiedDatetime={detail.customerRole.lastModifiedDatetime}
+      />
+
+      <BillingAccountPanel
+        partyRoleId={detail.customerRole.partyRoleId}
+        accounts={billingAccounts}
+        canEditAccounts={canEditAccounts}
       />
     </main>
   );

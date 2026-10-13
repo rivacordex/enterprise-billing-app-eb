@@ -236,3 +236,30 @@ describe("dual-permission onboarding action (ac04-spec §2.6/§3.3)", () => {
     expect(src).toContain('{ ok: false, code: "FORBIDDEN" }');
   });
 });
+
+// cm21-spec §2/§3.6 (custmgmt Inv. #16) — the Manage Customer template reset
+// follows the same dual-permission rule: customers:EDIT via requirePermission,
+// then accounts_transactions:EDIT via meetsLevel, else FORBIDDEN.
+describe("dual-permission billing-account template reset action (cm21-spec §2)", () => {
+  const src = read("actions/accounts/set-billing-account-template.ts");
+
+  it("requires PERMISSIONS.CUSTOMERS:EDIT via requirePermission (the primary guard)", () => {
+    expect(src).toContain("requirePermission");
+    expect(src).toContain("PERMISSIONS.CUSTOMERS");
+  });
+
+  it("additionally requires PERMISSIONS.ACCOUNTS_TRANSACTIONS:EDIT via meetsLevel", () => {
+    expect(src).toContain("meetsLevel");
+    expect(src).toContain("PERMISSIONS.ACCOUNTS_TRANSACTIONS");
+  });
+
+  it("both permissions are checked at EDIT — neither is satisfied by a lower level", () => {
+    const editOccurrences = src.match(/LEVELS\.EDIT/g) ?? [];
+    expect(editOccurrences.length).toBeGreaterThanOrEqual(2);
+    expect(src).not.toContain("LEVELS.READ");
+  });
+
+  it("returns FORBIDDEN when either check fails", () => {
+    expect(src).toContain('{ ok: false, code: "FORBIDDEN" }');
+  });
+});

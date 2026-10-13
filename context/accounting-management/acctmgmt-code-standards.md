@@ -172,7 +172,7 @@ MANAGER-vs-USER approval routing is **not** a permission level — both hold `ac
 
 ## 9. Result Error Code Catalog — as-built
 
-Reconciled against shipped code 2026-08-06, updated 2026-08-24 (bm09 added `BILL_RUN_IN_PROGRESS`; the bm11 review added `INV_NOT_REVERSIBLE` — INV documents are not reversible). This is the **complete** set of `{ ok: false, code }` strings returned by `services/accounts/**` and `actions/accounts/**` — **51 codes**, verified by diffing this table against every `code:` literal in those trees (zero undocumented, zero invented). It supersedes the seven-code list previously inlined in §2.4, which had fallen substantially behind the implementation.
+Reconciled against shipped code 2026-08-06, updated 2026-08-24 (bm09 added `BILL_RUN_IN_PROGRESS`; the bm11 review added `INV_NOT_REVERSIBLE` — INV documents are not reversible) and 2026-10-13 (custmgmt cm18 added `TEMPLATE_NOT_BINDABLE`; cm21 added `BAN_NOT_FOUND` and `BAN_CLOSED`). This is the **complete** set of `{ ok: false, code }` strings returned by `services/accounts/**` and `actions/accounts/**` — **54 codes**, verified by diffing this table against every `code:` literal in those trees (zero undocumented, zero invented). It supersedes the seven-code list previously inlined in §2.4, which had fallen substantially behind the implementation.
 
 ### 9.1 Two error systems, deliberately separate
 
@@ -223,6 +223,7 @@ Both are returned by services' callers, never by `services/accounts/**` itself (
 | `FINANCIAL_ACCOUNT_NOT_FOUND` | 12 services | FA id absent or not readable |
 | `BILLING_ACCOUNT_NOT_FOUND` | 9 services | BAN absent, or not under the given FA |
 | `PARTY_ROLE_NOT_FOUND` | `onboard-customer-accounts` | Customer party role absent |
+| `BAN_NOT_FOUND` | `set-billing-account-template` | BAN absent, or not owned by the given party role (no cross-customer reset; custmgmt cm21) |
 | `SETTLED_DOCUMENT_NOT_FOUND` | `allocate-payment` | Allocation target document missing |
 | `ALLOCATION_LINE_NOT_FOUND` | `refund-payment` | Referenced allocation line missing |
 | `CYCLE_NOT_FOUND` | `bill-cycle` | Bill cycle id absent |
@@ -258,6 +259,8 @@ Both are returned by services' callers, never by `services/accounts/**` itself (
 | `ALREADY_RETIRED` | `bill-cycle`, `gl-account`, `gl-mapping`, `reason-code` | Catalog row already retired |
 | `ORPHAN_BLOCK` | `gl-account`, `gl-mapping` | Retirement would orphan dependent rows |
 | `NON_POSTABLE_TARGET` | `gl-mapping` | Mapping points at a non-postable GL node |
+| `BAN_CLOSED` | `set-billing-account-template` | Template reset attempted on a closed BAN (custmgmt cm21) |
+| `TEMPLATE_NOT_BINDABLE` | `assert-bindable-template`, via `onboard-customer-accounts` and `set-billing-account-template` | Non-`NULL` invoice template reference; v1 accepts `NULL` only (custmgmt cm18/cm21, Inv. #18) |
 | `IMMUTABLE_FIELD` | `reason-code` | Attempt to edit a write-once field |
 | `DUPLICATE_CODE` | `reason-code` | Reason code already exists |
 | `DUPLICATE_GL_CODE` | `gl-account` | GL code already exists |
