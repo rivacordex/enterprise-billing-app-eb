@@ -34,7 +34,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   audited, CAS-guarded template reset.
 - **cm22 IN PROGRESS** (started 2026-10-13) — ship gate implemented and green
   (guardrails, journey, posting re-run, full unit + integration runs, docs). Open:
-  commit and the plan §11 matrix check, then status → Delivered. ac04 + ac23 doc
+  the plan §11 matrix check (committed `e46ee32`), then status → Delivered. ac04 + ac23 doc
   edits approved and applied 2026-10-13.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
@@ -44,7 +44,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | 6d243f9 |
 | cm20 | View Customer: Accounts tab                                 | APP      | In progress | e44f2c7 |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | In progress | e2677bf |
-| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | In progress | —      |
+| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | In progress | e46ee32 |
 
 ## Invoice Template Binding update — cm17 SIGNED OFF (2026-10-12)
 
@@ -397,7 +397,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
       (cm18) and by `setBillingAccountTemplate` (cm21, CAS on the BAN's own
       `last_modified`, audited `BILLING_ACCOUNT_TEMPLATE_CHANGED`); posting never reads
       it.
-  - **OPEN:** code review.
+  - **Code review fixes committed** as `a329ff4` (2026-10-13).
+  - **OPEN:** sign-off with the update.
 
 ## Invoice Template Binding update — cm22 IN PROGRESS (started 2026-10-13)
 
@@ -475,7 +476,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     `billTemplateVersionId` in §3.2; `ac23-guardrail-and-authz-sweep.md` §2.2 addendum
     for the dual-permission `set-billing-account-template` action. This also closes
     cm18's ac04 item.
-  - **OPEN:** commit; confirm the binding plan §11 matrix (plan not in the repo);
+  - **Committed** as `e46ee32` (cm21 review fixes separately as `a329ff4`).
+  - **OPEN:** confirm the binding plan §11 matrix (plan not in the repo);
     then move `custmgmt-update-overview.md` to Delivered.
 
 ## Outstanding / Next
@@ -487,10 +489,10 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   Result-code failure was fixed in cm21 (Accounts §9 catalog, user-approved).
 - **cm18:** the DB-gated item (1) passed during the cm21 run (2026-10-13); the ac04
   spec change was approved and applied 2026-10-13 (cm22).
-- **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Accounts `billing_account` row applied (user-approved). Open:
-  code review.
+- **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Accounts `billing_account` row applied (user-approved). Code review fixes committed (`a329ff4`).
 - **cm22 IN PROGRESS** (started 2026-10-13, ship gate): all suites green; open are
-  the commit, the plan §11 matrix check and the status move to Delivered.
+  committed (`e46ee32`); open are the plan §11 matrix check and the status move
+  to Delivered.
 
 ## Key decisions (durable)
 
