@@ -118,6 +118,59 @@ describe("BillingAccountPanel (cm21)", () => {
     expect(screen.queryByRole("button", { name: RESET })).toBeNull();
   });
 
+  it("a failed Accounts read (accounts: null) → the unavailable card and no BAN rows", () => {
+    render(
+      <BillingAccountPanel
+        partyRoleId="PTRL00000001"
+        accounts={null}
+        canEditAccounts
+      />,
+    );
+
+    expect(
+      screen.getByText(/Account details could not be loaded/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("listitem")).toBeNull();
+  });
+
+  it("while one reset is in flight, every other row's reset is disabled too", async () => {
+    let settle!: (value: { ok: false; code: "CONFLICT" }) => void;
+    mockAction.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    render(
+      <BillingAccountPanel
+        partyRoleId="PTRL00000001"
+        accounts={{
+          onboarded: true,
+          bans: [
+            row({ refBillTemplateVersionId: "BTV00000002" }),
+            row({
+              billingAccountId: "BAN000002",
+              refBillTemplateVersionId: "BTV00000002",
+            }),
+          ],
+        }}
+        canEditAccounts
+      />,
+    );
+    const first = within(
+      screen.getByRole("listitem", { name: "Billing account BAN000001" }),
+    ).getByRole("button", { name: RESET });
+    const second = within(
+      screen.getByRole("listitem", { name: "Billing account BAN000002" }),
+    ).getByRole("button", { name: RESET });
+
+    await userEvent.click(first);
+
+    expect(second).toBeDisabled();
+    settle({ ok: false, code: "CONFLICT" });
+    await waitFor(() => expect(second).toBeEnabled());
+    expect(mockAction).toHaveBeenCalledTimes(1);
+  });
+
   it("a click sends billTemplateVersionId: null with the row's lastModified and refreshes on success", async () => {
     mockAction.mockResolvedValue({
       ok: true,

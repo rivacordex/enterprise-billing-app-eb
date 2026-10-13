@@ -15,6 +15,7 @@ import { setBillingAccountTemplateAction } from "@/actions/accounts/set-billing-
 import type { SetBillingAccountTemplateActionResult } from "@/actions/accounts/set-billing-account-template";
 import { EDIT_DISABLED_TITLE } from "@/components/accounts/edit-access";
 import { AccountsNotOnboardedCard } from "@/components/customers/accounts-not-onboarded-card";
+import { AccountsUnavailableCard } from "@/components/customers/accounts-unavailable-card";
 import { BanStateChip } from "@/components/customers/ban-state-chip";
 import { TemplateLabel } from "@/components/customers/billing-account-card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,7 +27,9 @@ import type {
 
 export interface BillingAccountPanelProps {
   partyRoleId: string;
-  accounts: CustomerBillingAccounts;
+  // `null` = the Accounts read failed; the panel shows AccountsUnavailableCard
+  // and the rest of the Manage Customer page stays usable.
+  accounts: CustomerBillingAccounts | null;
   canEditAccounts: boolean;
 }
 
@@ -63,15 +66,20 @@ function BillingAccountRow({
   ban,
   canEditAccounts,
   pending,
+  busy,
   onReset,
 }: {
   ban: CustomerBillingAccountRow;
   canEditAccounts: boolean;
+  // `pending`: this row's reset is in flight (spinner). `busy`: any row's
+  // reset is in flight — one at a time, so a settling reset can't clear the
+  // pending state of another still in flight and re-enable its button.
   pending: boolean;
+  busy: boolean;
   onReset: (ban: CustomerBillingAccountRow) => void;
 }): React.JSX.Element {
   const caption = disabledCaption(ban);
-  const enabled = canEditAccounts && caption === null && !pending;
+  const enabled = canEditAccounts && caption === null && !busy;
   return (
     <li
       aria-label={`Billing account ${ban.billingAccountId}`}
@@ -127,6 +135,7 @@ export function BillingAccountPanel({
   const [, startTransition] = useTransition();
 
   function handleReset(ban: CustomerBillingAccountRow): void {
+    if (pendingId !== null) return;
     setMessage(null);
     setPendingId(ban.billingAccountId);
     startTransition(async () => {
@@ -164,7 +173,9 @@ export function BillingAccountPanel({
         </Alert>
       )}
 
-      {accounts.onboarded ? (
+      {accounts === null ? (
+        <AccountsUnavailableCard />
+      ) : accounts.onboarded ? (
         <ul className="flex flex-col gap-3">
           {accounts.bans.map((ban) => (
             <BillingAccountRow
@@ -172,6 +183,7 @@ export function BillingAccountPanel({
               ban={ban}
               canEditAccounts={canEditAccounts}
               pending={pendingId === ban.billingAccountId}
+              busy={pendingId !== null}
               onReset={handleReset}
             />
           ))}

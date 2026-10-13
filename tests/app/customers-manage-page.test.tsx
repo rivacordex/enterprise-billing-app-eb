@@ -25,6 +25,10 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
 vi.mock("@/services/accounts/list-customer-billing-accounts", () => ({
   listCustomerBillingAccounts: vi.fn(),
 }));
+vi.mock("@/lib/logger", () => ({
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  reportError: vi.fn(),
+}));
 vi.mock("@/components/customers/organization-form", () => ({
   OrganizationForm: vi.fn(() => null),
 }));
@@ -45,6 +49,7 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { BillingAccountPanel } from "@/components/customers/billing-account-panel";
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import { CustomerResultsTable } from "@/components/customers/customer-results-table";
+import { reportError } from "@/lib/logger";
 import { listCustomerBillingAccounts } from "@/services/accounts/list-customer-billing-accounts";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
@@ -354,6 +359,18 @@ describe("CustomerEditPage — Billing account panel (cm21)", () => {
     const panel = findElementByType(await renderPage(), BillingAccountPanel);
 
     expect(panel?.props.accounts).toEqual({ onboarded: false });
+  });
+
+  it("a failed billing-account read degrades to the panel's unavailable state, not the error page", async () => {
+    vi.mocked(reportError).mockClear();
+    mockListBillingAccounts.mockRejectedValue(new Error("billing schema down"));
+
+    const result = await renderPage();
+
+    const panel = findElementByType(result, BillingAccountPanel);
+    expect(panel?.props.accounts).toBeNull();
+    expect(findElementByType(result, ContactManagerPanel)).toBeDefined();
+    expect(vi.mocked(reportError)).toHaveBeenCalledTimes(1);
   });
 
   it("a missing customer renders not-found and loads no billing accounts", async () => {

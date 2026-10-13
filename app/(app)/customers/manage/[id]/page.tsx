@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import { SearchX } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
@@ -8,12 +9,14 @@ import { BillingAccountPanel } from "@/components/customers/billing-account-pane
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import { CustomerRoleForm } from "@/components/customers/customer-role-form";
 import { OrganizationForm } from "@/components/customers/organization-form";
+import { reportError } from "@/lib/logger";
 import { listCustomerBillingAccounts } from "@/services/accounts/list-customer-billing-accounts";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
+import type { CustomerBillingAccounts } from "@/types/accounts";
 import { meetsLevel } from "@/types/permissions";
 import { partyRoleIdSchema } from "@/validation/customer/party-role.schema";
 
@@ -39,6 +42,22 @@ function CustomerNotFound(): React.JSX.Element {
       </Link>
     </div>
   );
+}
+
+// cm21 — the Billing account panel's read. A failed Accounts read degrades to
+// AccountsUnavailableCard inside the panel (null) instead of replacing the
+// whole Manage Customer page — org, role and contact editing included — with
+// customers/manage/error.tsx (the cm20 CustomerAccountsTabLoader precedent).
+async function loadBillingAccounts(
+  partyRoleId: string,
+): Promise<CustomerBillingAccounts | null> {
+  try {
+    return await listCustomerBillingAccounts(partyRoleId);
+  } catch (error) {
+    unstable_rethrow(error);
+    reportError(error, { scope: "customer-billing-accounts", partyRoleId });
+    return null;
+  }
 }
 
 export default async function CustomerEditPage({
@@ -71,7 +90,7 @@ export default async function CustomerEditPage({
   const [locale, timezone, billingAccounts] = await Promise.all([
     getAppLocale(),
     getAppTimezone(),
-    listCustomerBillingAccounts(detail.customerRole.partyRoleId),
+    loadBillingAccounts(detail.customerRole.partyRoleId),
   ]);
 
   return (

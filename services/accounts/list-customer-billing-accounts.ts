@@ -7,6 +7,7 @@
 import { db } from "@/db/client";
 import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { financialAccountRepository } from "@/db/repositories/accounts/financial-account.repository";
+import { logger } from "@/lib/logger";
 import {
   banTemplateLabel,
   resolveCurrentTemplateLabel,
@@ -38,16 +39,27 @@ export async function listCustomerBillingAccounts(
     bans: bansPerFa
       .flat()
       .sort((a, b) => a.billingAccountId.localeCompare(b.billingAccountId))
-      .map((ban) => ({
-        billingAccountId: ban.billingAccountId,
-        name: ban.name,
-        state: ban.state as AccountState,
-        lastModified: ban.lastModified,
-        refBillTemplateVersionId: ban.refBillTemplateVersionId,
-        templateLabel: banTemplateLabel(
-          ban.refBillTemplateVersionId,
-          currentLabel,
-        ),
-      })),
+      .map((ban) => {
+        if (ban.refBillTemplateVersionId !== null) {
+          // Unreachable in v1 (cm18/cm21 reject it); never resolved here —
+          // banTemplateLabel's contract leaves the warning to the caller,
+          // same as getCustomerAccountsSummary.
+          logger.warn("Unsupported BAN invoice template reference.", {
+            billingAccountId: ban.billingAccountId,
+            refBillTemplateVersionId: ban.refBillTemplateVersionId,
+          });
+        }
+        return {
+          billingAccountId: ban.billingAccountId,
+          name: ban.name,
+          state: ban.state as AccountState,
+          lastModified: ban.lastModified,
+          refBillTemplateVersionId: ban.refBillTemplateVersionId,
+          templateLabel: banTemplateLabel(
+            ban.refBillTemplateVersionId,
+            currentLabel,
+          ),
+        };
+      }),
   };
 }
