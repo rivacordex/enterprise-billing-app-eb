@@ -31,6 +31,8 @@ Extends `route-level-transactions.test.ts` rather than replacing it. The page's 
 
 **SC14** is the READ row: a read-only holder can trace a document from the table into the drawer with no write affordance rendered anywhere.
 
+**Addendum (custmgmt cm21, Invoice Template Binding update, approved 2026-10-13).** One further dual-permission action spans two modules, like onboarding (ac04 §2.6): `actions/accounts/set-billing-account-template.ts` requires **both** `customers : EDIT` (via `requirePermission`) **and** `accounts_transactions : EDIT` (via `meetsLevel` on the returned `permissionMap`); missing either returns `FORBIDDEN`, even with the Manage Customer UI bypassed. Its matrix lives in `tests/accounts/route-level-matrix.test.ts` (dual-permission block). The Manage Customer Billing account panel greys its reset button without `accounts_transactions : EDIT` (UX only; the action is the gate).
+
 ### 2.3 Static gates to add to `grep-gates.test.ts`
 
 Each maps to an invariant and scans the source tree, so a *future* violating file fails the suite:

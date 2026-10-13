@@ -31,6 +31,8 @@ Q2 is explicit: "Status change + FA/BAN creation + ledger accounts + bindings co
 2d. Insert three `ledger_binding` rows mapping each owner+role to its `pgla_…` id.
 3. Audit: `ACCOUNTS_ONBOARDED` (+ the customer-status audit cm10 already writes).
 
+**Amendment (custmgmt cm18, Invoice Template Binding update, approved 2026-10-13).** Inside the transaction, `assertBindableTemplate(tx, billTemplateVersionId)` (`services/accounts/assert-bindable-template.ts`) runs after the cycle-state check and before `compareAndUpdateStatus`; v1 accepts `null` only, any other value returns `TEMPLATE_NOT_BINDABLE` before any write. Step 2b inserts the BAN with `ref_bill_template_version_id = NULL` (follow the active template), and `ACCOUNTS_ONBOARDED.afterData` carries `refBillTemplateVersionId: null`. Posting never reads the column (custmgmt Inv. #18).
+
 ### 2.3 The wizard (Q2/Q12/Q13/Q14)
 
 Fields, pre-filled from ac03's seeded config, rendered in the Customer VALIDATED step:
@@ -39,6 +41,7 @@ Fields, pre-filled from ac03's seeded config, rendered in the Customer VALIDATED
 - **FA credit limit** and **BAN credit limit** — numeric; pre-filled from `ACCOUNTS_DEFAULT_CREDIT_LIMIT` if set, else blank (the resolved-in-ac03 "manual per-customer, pre-filled from optional default" decision).
 - **Payment-terms override** (Q14) — optional integer net-days on the BAN (`payment_due_days_override`); blank = use cycle default. Captured beside credit limit per Q14; **resolved term = coalesce(override, cycle.payment_due_days)** is computed at read time by a shared `resolveTerm()` helper (defined here, reused by the overdue derivation in ac05) — the override is *stored*, the resolution is *derived* (Inv. #13).
 - **rating_type** — `postpaid` only (Q23); not offered as a choice.
+- **Invoice template** (custmgmt cm18, approved 2026-10-13) — read-only "Follow active template" after Currency, with help text "Invoices use the active template. Per-customer templates are not available yet." The wizard always submits `billTemplateVersionId: null`; there is no template picker in v1.
 
 Confirmation shows the created ledger account names (plan §3 F1 — "making the underlay visible builds operator trust").
 
@@ -63,7 +66,7 @@ The onboarding action checks **both** `accounts_transactions : EDIT` (creating m
 
 ### 2.7 Structural decisions
 
-- **`onboardCustomerAccounts(tx, input, actorId)` returns `Result`** (code-standards §2.4) for expected business outcomes — `CYCLE_RETIRED` (picked cycle no longer active). `CONFLICT` (stale party-role lock), `INVALID_TRANSITION` (not on the VALIDATED edge), and `PARTY_ROLE_NOT_FOUND` are surfaced by the **action** (not the service), since the action owns the pre-checks and the status-change step. Uncaught repository, ledger, and audit infrastructure failures may throw; these propagate out of the caller's `db.transaction` and roll back all writes. The wizard maps each result code to a field/banner.
+- **`onboardCustomerAccounts(tx, input, actorId)` returns `Result`** (code-standards §2.4) for expected business outcomes — `CYCLE_RETIRED` (picked cycle no longer active). `CONFLICT` (stale party-role lock), `INVALID_TRANSITION` (not on the VALIDATED edge), and `PARTY_ROLE_NOT_FOUND` are surfaced by the **action** (not the service), since the action owns the pre-checks and the status-change step. Uncaught repository, ledger, and audit infrastructure failures may throw; these propagate out of the caller's `db.transaction` and roll back all writes. The wizard maps each result code to a field/banner. **`TEMPLATE_NOT_BINDABLE`** (custmgmt cm18, approved 2026-10-13) is returned by the service when `billTemplateVersionId` is non-`NULL`; nothing is written.
 - **No auto-BAN-count**: the wizard creates exactly one BAN (the "Master Billing Account"); adding more BANs later is out of this unit (a future "Add Billing Account" flow — plan F1; not in ac00's list, so deferred).
 - **`resolveTerm()` lives in `services/accounts/term-resolution.ts`** (architecture §2 names it) — created here, the single source for `coalesce(override, cycle default)`, reused by every read-time overdue derivation (ac05+) and the future Invoicing stamping (Inv. #13). Pure function, unit-tested here (V10's resolution half is testable now — ac15 owns the full V10).
 
@@ -75,7 +78,7 @@ The onboarding action checks **both** `accounts_transactions : EDIT` (creating m
 `onboardCustomerAccounts(tx, { partyRoleId, currency, billCycleId, faCreditLimit, banCreditLimit, paymentDueDaysOverride }, actorId): Promise<Result<{ financialAccountId, billingAccountId, ledgerAccountNames }, 'CYCLE_RETIRED' | …>>`. Validates the cycle is `active` (else `CYCLE_RETIRED`), performs §2.2 steps 2a–2d using the ac02 repositories + `ledger.repository`, returns the created ids/names. Takes `tx`; opens no connection. `services/accounts/term-resolution.ts` `resolveTerm(override, cycleDefault)` (§2.7).
 
 ### 3.2 `validation/accounts/onboard-customer-accounts.schema.ts` (new)
-Zod: `partyRoleId` (PTRL pattern), `billCycleId` (BCY pattern), `currency` (fixed `MYR` literal for now), `faCreditLimit`/`banCreditLimit` (money strings — validated via the money schema; note `money.ts` arrives in ac07, so this unit validates format with a decimal-string regex and defers arithmetic), `paymentDueDaysOverride` (positive int, optional). Merged with cm10's `optimisticLockSchema` (the party-role `last_modified`).
+Zod: `partyRoleId` (PTRL pattern), `billCycleId` (BCY pattern), `currency` (fixed `MYR` literal for now), `faCreditLimit`/`banCreditLimit` (money strings — validated via the money schema; note `money.ts` arrives in ac07, so this unit validates format with a decimal-string regex and defers arithmetic), `paymentDueDaysOverride` (positive int, optional), `billTemplateVersionId` (optional, nullable, `/^BTV\d{8}$/`; custmgmt cm18 — the service still refuses any non-`NULL` value). Merged with cm10's `optimisticLockSchema` (the party-role `last_modified`).
 
 ### 3.3 Action — `actions/accounts/onboard-customer-accounts.ts` (new)
 Dual permission check (§2.6). Opens the single `db.transaction`: cm10 `compareAndUpdateStatus(VALIDATED)` → `onboardCustomerAccounts(tx, …)` → audit. Maps `Result` codes to the wizard. This is the seam cm10's VALIDATED path calls (§"Note" (a) — reconcile whether it *extends* cm10's transition action or is a distinct action the wizard calls; prefer distinct, so cm10's plain non-VALIDATED transitions are untouched).

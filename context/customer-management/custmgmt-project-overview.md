@@ -29,6 +29,12 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 9. Save. The server compares the loaded `last_modified_datetime`; if another user changed the customer meanwhile, the save is rejected with a reload prompt. On success, audit rows record actor, timestamp, and before/after values.
 10. Any USER can now open **View Customer**, search for the customer, and see the three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details (on the Profile and Contacts tabs since cm19).
 
+Billing accounts follow-on (Invoice Template Binding update, cm17–cm22):
+
+11. While the customer is INITIALIZED, a user holding `customers : EDIT` and `accounts_transactions : EDIT` onboards it from Manage Customer through the onboarding wizard. The wizard shows a read-only **Invoice template — Follow active template** field after Currency; submitting moves the customer to VALIDATED and creates the Financial Account and its Billing Account (BAN) with no template reference (follow the active template).
+12. On **View Customer**, the **Accounts** tab (`?tab=accounts`, needs `accounts_view : READ`) shows the Financial Account summary, each BAN with state, bill cycle, payment term, live receivable and its template label ("Follows active template (currently: <name> vN), as of now"), and a paginated read-only document list that links into the Accounts module.
+13. On **Manage Customer**, the **Billing account** panel lists each BAN with its template label. A user who also holds `accounts_transactions : EDIT` can **Reset to follow active template**; otherwise the panel is read-only.
+
 ## Features
 
 ### Search and viewing
@@ -37,6 +43,14 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 - Result limit read from `system_config` (`CUSTOMER_SEARCH_RESULT_LIMIT`, default 5) with match-count hint.
 - Read-only detail page with three sections: Party – Organization, Role – Customer (including read-only account reference and JSONB specification), Customer – Contact Details. Since the Invoice Template Binding update (cm19) they sit on URL-driven tabs (`?tab=`): **Profile** (Organization + Customer Role, the default), **Contacts** (Contact Details) and **Accounts** (billing accounts, cm20); the inconsistency banner shows above the tabs on every tab.
 - Inconsistency warning banner when statuses conflict (e.g. ACTIVE customer on a SUSPENDED organization) — warn only, no cascade.
+
+### Billing accounts and invoice template (Invoice Template Binding update, built 2026-10-13)
+
+- **Tabs (cm19):** View Customer detail is a server-rendered tab strip — Profile (default), Contacts, Accounts — driven by `?tab=`; an unknown value falls back to Profile.
+- **Accounts tab (cm20):** read-only. Four states: locked (no `accounts_view : READ`; nothing is fetched), not onboarded, onboarded with no documents, and the normal view (Financial Account summary, one card per BAN with state chip, bill cycle, resolved payment term, live receivable and template label, and a paginated document list per Financial Account). Document ids link to the Accounts Transactions page when the viewer holds `accounts_transactions : READ`. Data loads only on this tab, under Suspense; a failed read stays inside the tab.
+- **Onboarding field (cm18):** the onboarding wizard shows a read-only "Invoice template — Follow active template" field with help text; the BAN is created with no template reference.
+- **Billing account panel (cm21):** Manage Customer lists every BAN with its template label and a **Reset to follow active template** button, enabled only with `accounts_transactions : EDIT`. The reset is audited (`BILLING_ACCOUNT_TEMPLATE_CHANGED`), locks the BAN rather than the customer, and writes nothing when the BAN already follows the active template.
+- **Plumbing only:** in this release a BAN can only follow the active template, and posting does not read the BAN's reference. Choosing a specific template is Phase 3.
 
 ### Customer lifecycle
 
