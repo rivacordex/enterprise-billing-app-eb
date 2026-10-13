@@ -267,7 +267,7 @@ export type CustomerAccountsSummary =
       kind: "onboarded";
       financialAccounts: Array<{
         financialAccountId: string;
-        state: string;
+        state: AccountState;
         currency: string;
         receivableBalance: string;
         unappliedCashBalance: string;
@@ -275,7 +275,8 @@ export type CustomerAccountsSummary =
         bans: Array<{
           billingAccountId: string;
           name: string;
-          state: "active" | "suspended" | "closed";
+          state: AccountState;
+          currency: string;
           billCycleName: string;
           paymentTermDays: number;
           receivableBalance: string;

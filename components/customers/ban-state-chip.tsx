@@ -1,4 +1,5 @@
-// cm20 (custmgmt-ui-context §9.2) — Billing Account state pill, mapped per
+// cm20 (custmgmt-ui-context §9.2) — Financial / Billing Account state pill
+// (both use the same account states), mapped per
 // acctmgmt-ui-context §2 (account active → success, suspended → warning,
 // closed → neutral). No shared account-state badge exists to reuse.
 

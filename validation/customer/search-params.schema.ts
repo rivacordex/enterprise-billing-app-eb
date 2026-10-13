@@ -18,4 +18,12 @@ export const customerDetailSearchParamsSchema = z.object({
   tab: z.enum(CUSTOMER_DETAIL_TABS).catch("profile"),
   // cm20 — Accounts tab document page; lenient like `tab`.
   page: z.coerce.number().int().min(1).max(9999).catch(1),
+  // The Financial Account `page` applies to. Absent → every FA's list uses
+  // `page` (single-FA deep links); the pagination links always set it so one
+  // FA's Previous/Next never moves another FA's list.
+  fa: z
+    .string()
+    .regex(/^FIN\d+$/)
+    .nullable()
+    .catch(null),
 });

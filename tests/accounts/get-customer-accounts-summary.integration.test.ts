@@ -212,5 +212,14 @@ describe.skipIf(!databaseUrl)(
         new Set([...p1.rows, ...p2.rows].map((r) => r.documentId)).size,
       ).toBe(3);
     });
+
+    it("an out-of-range page is clamped to the last page", async () => {
+      const result = await getCustomerAccountsSummary(partyRoleId, 9);
+      if (result.kind !== "onboarded") throw new Error("expected onboarded");
+      const docs = result.financialAccounts[0]!.documents;
+
+      expect(docs).toMatchObject({ total: 3, page: 2, pageSize: 2 });
+      expect(docs.rows).toHaveLength(1);
+    });
   },
 );

@@ -8,6 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // they render safely under vitest without mocking (cm05-spec §3.8).
 // cm19-spec §3.4 — rewritten for the Profile · Contacts · Accounts tab shell.
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
+vi.mock("@/lib/logger", () => ({
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  reportError: vi.fn(),
+}));
 vi.mock("@/services/customer/get-customer-detail", () => ({
   getCustomerDetail: vi.fn(),
 }));
@@ -23,7 +27,9 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
 import CustomerDetailPage from "@/app/(app)/customers/view/[id]/page";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { reportError } from "@/lib/logger";
 import { getCustomerAccountsSummary } from "@/services/accounts/get-customer-accounts-summary";
+import type { CustomerAccountsSummary } from "@/types/accounts";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import type { CustomerDetail } from "@/types/customer";
 import { CUSTOMER_DETAIL_TABS } from "@/validation/customer/search-params.schema";
@@ -72,9 +78,54 @@ const CONFLICTING: CustomerDetail = {
 
 const TABS_NAV = { name: "Customer detail tabs" } as const;
 
+const ONBOARDED_SUMMARY: CustomerAccountsSummary = {
+  kind: "onboarded",
+  financialAccounts: [
+    {
+      financialAccountId: "FIN00000001",
+      state: "active",
+      currency: "MYR",
+      receivableBalance: "10.00",
+      unappliedCashBalance: "0.00",
+      depositBalance: "0.00",
+      bans: [],
+      documents: {
+        rows: [
+          {
+            documentId: "DBN00000001",
+            docType: "DBN",
+            state: "posted",
+            refFinancialAccountId: "FIN00000001",
+            refBillingAccountId: "BAN00000001",
+            reasonCode: "LATE_FEE",
+            currency: "MYR",
+            totalAmount: "10.00",
+            createdBy: "u1",
+            approvedBy: null,
+            eventAt: new Date("2026-10-01T10:00:00.000Z"),
+            lastModified: new Date("2026-10-01T10:00:00.000Z"),
+            unreversedLineCount: 1,
+            totalLineCount: 1,
+            partiallyReversed: false,
+            reversible: true,
+            actionLabel: "Debit Note — LATE_FEE",
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      },
+    },
+  ],
+};
+
 function renderPage(
   id: string,
-  query: { tab?: string | string[]; page?: string | string[] } = {},
+  query: {
+    tab?: string | string[];
+    page?: string | string[];
+    fa?: string | string[];
+  } = {},
 ): ReturnType<typeof CustomerDetailPage> {
   return CustomerDetailPage({
     params: Promise.resolve({ id }),
@@ -104,7 +155,10 @@ async function resolveAsync(node: ReactNode): Promise<ReactNode> {
   return cloneElement(node, { children: await resolveAsync(props.children) });
 }
 
-function permissionMapWith(accountsView: "READ" | null) {
+function permissionMapWith(
+  accountsView: "READ" | null,
+  accountsTransactions: "READ" | null = null,
+) {
   return {
     users: null,
     roles: null,
@@ -113,6 +167,7 @@ function permissionMapWith(accountsView: "READ" | null) {
     products: null,
     customers: "READ",
     accounts_view: accountsView,
+    accounts_transactions: accountsTransactions,
   } as never;
 }
 
@@ -291,7 +346,11 @@ describe("CustomerDetailPage", () => {
       );
 
       expect(mockGetAccountsSummary).toHaveBeenCalledTimes(1);
-      expect(mockGetAccountsSummary).toHaveBeenCalledWith("PTRL00000001", 2);
+      expect(mockGetAccountsSummary).toHaveBeenCalledWith(
+        "PTRL00000001",
+        2,
+        null,
+      );
       expect(
         screen.getByText(
           "Accounts are created when the customer is validated.",
@@ -301,6 +360,86 @@ describe("CustomerDetailPage", () => {
         screen.queryByText("Requires accounts access"),
       ).not.toBeInTheDocument();
     });
+
+    it("?fa= scopes the page to that Financial Account", async () => {
+      mockRequirePermission.mockResolvedValue({
+        userId: "admin-1",
+        userEmail: "admin@example.com",
+        permissionMap: permissionMapWith("READ"),
+      });
+      mockGetCustomerDetail.mockResolvedValue(FIXTURE);
+
+      await resolveAsync(
+        await renderPage("PTRL00000001", {
+          tab: "accounts",
+          page: "3",
+          fa: "FIN00000002",
+        }),
+      );
+
+      expect(mockGetAccountsSummary).toHaveBeenCalledWith(
+        "PTRL00000001",
+        3,
+        "FIN00000002",
+      );
+    });
+
+    it("a failed summary read stays inside the tab: header and tab strip still render", async () => {
+      mockRequirePermission.mockResolvedValue({
+        userId: "admin-1",
+        userEmail: "admin@example.com",
+        permissionMap: permissionMapWith("READ"),
+      });
+      mockGetCustomerDetail.mockResolvedValue(FIXTURE);
+      mockGetAccountsSummary.mockRejectedValue(
+        new Error("financial account FIN00000001 not found"),
+      );
+
+      render(
+        (await resolveAsync(
+          await renderPage("PTRL00000001", { tab: "accounts" }),
+        )) as React.JSX.Element,
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Account details could not be loaded.",
+      );
+      expect(vi.mocked(reportError)).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("navigation", TABS_NAV)).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          level: 1,
+          name: FIXTURE.organization.name,
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it.each([
+      ["without", null, false],
+      ["with", "READ", true],
+    ] as const)(
+      "%s accounts_transactions : READ, document ids link into Transactions: %s",
+      async (_label, accountsTransactions, linked) => {
+        mockRequirePermission.mockResolvedValue({
+          userId: "admin-1",
+          userEmail: "admin@example.com",
+          permissionMap: permissionMapWith("READ", accountsTransactions),
+        });
+        mockGetCustomerDetail.mockResolvedValue(FIXTURE);
+        mockGetAccountsSummary.mockResolvedValue(ONBOARDED_SUMMARY);
+
+        render(
+          (await resolveAsync(
+            await renderPage("PTRL00000001", { tab: "accounts" }),
+          )) as React.JSX.Element,
+        );
+
+        expect(screen.getByText("DBN00000001")).toBeInTheDocument();
+        expect(
+          screen.queryByRole("link", { name: "DBN00000001" }) !== null,
+        ).toBe(linked);
+      },
+    );
 
     it.each(["profile", "contacts"])(
       "?tab=%s never calls the summary service, even with accounts_view",

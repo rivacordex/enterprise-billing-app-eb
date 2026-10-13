@@ -83,6 +83,7 @@ function ban(overrides: Partial<BillingAccount>): BillingAccount {
     billingAccountId: "BAN00000001",
     name: "Master Billing Account",
     state: "active",
+    currency: "MYR",
     refBillCycleId: "BCY00000001",
     paymentDueDaysOverride: null,
     refBillTemplateVersionId: null,
@@ -131,6 +132,8 @@ describe("getCustomerAccountsSummary", () => {
   });
 
   it("FA + BAN + docs → the full shape", async () => {
+    mockListDocs.mockResolvedValue({ rows: [DOC], total: 21 });
+
     const result = await getCustomerAccountsSummary("PTRL00000001", 2);
 
     expect(result).toEqual({
@@ -148,6 +151,7 @@ describe("getCustomerAccountsSummary", () => {
               billingAccountId: "BAN00000001",
               name: "Master Billing Account",
               state: "active",
+              currency: "MYR",
               billCycleName: "Monthly – Day 1",
               paymentTermDays: 30,
               receivableBalance: "500.00",
@@ -155,7 +159,7 @@ describe("getCustomerAccountsSummary", () => {
                 "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
             },
           ],
-          documents: { rows: [DOC], total: 1, page: 2, pageSize: 20 },
+          documents: { rows: [DOC], total: 21, page: 2, pageSize: 20 },
         },
       ],
     });
@@ -173,6 +177,92 @@ describe("getCustomerAccountsSummary", () => {
       20,
     );
     expect(mockCurrentLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it("an out-of-range page is clamped to the last page", async () => {
+    mockListDocs.mockResolvedValue({ rows: [DOC], total: 45 });
+
+    const result = await getCustomerAccountsSummary("PTRL00000001", 50);
+
+    if (result.kind !== "onboarded") throw new Error("expected onboarded");
+    expect(result.financialAccounts[0]!.documents.page).toBe(3);
+    expect(mockListDocs.mock.calls.map((c) => c[2].page)).toEqual([50, 3]);
+  });
+
+  it("an in-range page is read once", async () => {
+    mockListDocs.mockResolvedValue({ rows: [DOC], total: 45 });
+
+    await getCustomerAccountsSummary("PTRL00000001", 3);
+
+    expect(mockListDocs).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no documents the page settles on 1", async () => {
+    mockListDocs.mockResolvedValue({ rows: [], total: 0 });
+
+    const result = await getCustomerAccountsSummary("PTRL00000001", 4);
+
+    if (result.kind !== "onboarded") throw new Error("expected onboarded");
+    expect(result.financialAccounts[0]!.documents.page).toBe(1);
+  });
+
+  it("page applies only to the named FA; other FAs stay on page 1", async () => {
+    mockFindFas.mockResolvedValue([
+      FA,
+      { ...FA, financialAccountId: "FIN00000002" } as FinancialAccount,
+    ]);
+    mockListDocs.mockResolvedValue({ rows: [DOC], total: 100 });
+
+    const result = await getCustomerAccountsSummary(
+      "PTRL00000001",
+      3,
+      "FIN00000002",
+    );
+
+    if (result.kind !== "onboarded") throw new Error("expected onboarded");
+    expect(
+      result.financialAccounts.map((fa) => [
+        fa.financialAccountId,
+        fa.documents.page,
+      ]),
+    ).toEqual([
+      ["FIN00000001", 1],
+      ["FIN00000002", 3],
+    ]);
+  });
+
+  it("the FA receivable is the sum of its BAN receivables (one snapshot)", async () => {
+    mockFindBans.mockResolvedValue([
+      ban({ billingAccountId: "BAN00000001" }),
+      ban({ billingAccountId: "BAN00000002" }),
+      ban({ billingAccountId: "BAN00000003" }),
+    ]);
+    mockReceivables.mockResolvedValue(
+      new Map([
+        ["BAN00000001", "500.00"],
+        ["BAN00000002", "-250.50"],
+      ]),
+    );
+    mockFaDetail.mockResolvedValue({
+      receivableBalance: "999.99",
+      unappliedCashBalance: "10.00",
+      depositBalance: "0.00",
+    } as Awaited<ReturnType<typeof getFinancialAccountDetail>>);
+
+    const result = await getCustomerAccountsSummary("PTRL00000001", 1);
+
+    if (result.kind !== "onboarded") throw new Error("expected onboarded");
+    expect(result.financialAccounts[0]!.receivableBalance).toBe("249.50");
+  });
+
+  it("each BAN carries its own currency, not the FA's", async () => {
+    mockFindBans.mockResolvedValue([ban({ currency: "USD" })]);
+
+    const result = await getCustomerAccountsSummary("PTRL00000001", 1);
+
+    if (result.kind !== "onboarded") throw new Error("expected onboarded");
+    expect(result.financialAccounts[0]!.currency).toBe("MYR");
+    expect(result.financialAccounts[0]!.bans[0]!.currency).toBe("USD");
   });
 
   it("a BAN with no binding gets receivable '0.00'", async () => {

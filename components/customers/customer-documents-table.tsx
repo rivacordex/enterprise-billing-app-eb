@@ -18,6 +18,9 @@ export interface CustomerDocumentsTableProps {
   total: number;
   page: number;
   pageSize: number;
+  // false when the viewer lacks accounts_transactions : READ: the
+  // Transactions page would bounce them to /no-access, so render plain ids.
+  linkDocuments: boolean;
   locale: string;
   timezone: string;
 }
@@ -35,6 +38,17 @@ function documentHref(
   return `/accounts/transactions?${params.toString()}`;
 }
 
+// Pagination is scoped to one FA (`fa`) so a customer with several FAs can
+// page each list independently.
+function pageHref(financialAccountId: string, page: number): string {
+  const params = new URLSearchParams({
+    tab: "accounts",
+    fa: financialAccountId,
+    page: String(page),
+  });
+  return `?${params.toString()}`;
+}
+
 const PAGE_LINK =
   "rounded-sm border border-border px-3 py-1 text-body-sm text-[color:var(--text-link)] hover:text-[color:var(--text-link-hover)]";
 
@@ -45,6 +59,7 @@ export function CustomerDocumentsTable({
   total,
   page,
   pageSize,
+  linkDocuments,
   locale,
   timezone,
 }: CustomerDocumentsTableProps): React.JSX.Element {
@@ -79,16 +94,22 @@ export function CustomerDocumentsTable({
                 className="border-b border-border last:border-b-0"
               >
                 <td className="px-3 py-2">
-                  <Link
-                    href={documentHref(
-                      partyRoleId,
-                      financialAccountId,
-                      row.documentId,
-                    )}
-                    className="font-mono text-mono text-[color:var(--text-link)] hover:text-[color:var(--text-link-hover)] hover:underline"
-                  >
-                    {row.documentId}
-                  </Link>
+                  {linkDocuments ? (
+                    <Link
+                      href={documentHref(
+                        partyRoleId,
+                        financialAccountId,
+                        row.documentId,
+                      )}
+                      className="font-mono text-mono text-[color:var(--text-link)] hover:text-[color:var(--text-link-hover)] hover:underline"
+                    >
+                      {row.documentId}
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-mono text-foreground">
+                      {row.documentId}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-foreground">{row.actionLabel}</td>
                 <td className="px-3 py-2">
@@ -114,16 +135,22 @@ export function CustomerDocumentsTable({
 
       {(hasPrevious || hasNext) && (
         <nav
-          aria-label="Documents pagination"
+          aria-label={`Documents pagination for ${financialAccountId}`}
           className="flex items-center justify-end gap-2"
         >
           {hasPrevious && (
-            <Link href={`?tab=accounts&page=${page - 1}`} className={PAGE_LINK}>
+            <Link
+              href={pageHref(financialAccountId, page - 1)}
+              className={PAGE_LINK}
+            >
               Previous
             </Link>
           )}
           {hasNext && (
-            <Link href={`?tab=accounts&page=${page + 1}`} className={PAGE_LINK}>
+            <Link
+              href={pageHref(financialAccountId, page + 1)}
+              className={PAGE_LINK}
+            >
               Next
             </Link>
           )}

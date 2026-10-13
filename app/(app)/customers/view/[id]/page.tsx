@@ -1,12 +1,14 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import { SearchX } from "lucide-react";
 
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { AccountsLockedCard } from "@/components/customers/accounts-locked-card";
 import { AccountsTabSkeleton } from "@/components/customers/accounts-tab-skeleton";
+import { AccountsUnavailableCard } from "@/components/customers/accounts-unavailable-card";
 import { CustomerAccountsTab } from "@/components/customers/customer-accounts-tab";
 import { OrganizationSection } from "@/components/customers/organization-section";
 import { CustomerRoleSection } from "@/components/customers/customer-role-section";
@@ -16,6 +18,7 @@ import {
   InconsistencyBanner,
   isStatusInconsistent,
 } from "@/components/customers/inconsistency-banner";
+import { reportError } from "@/lib/logger";
 import { firstValue } from "@/lib/search-params";
 import { getCustomerAccountsSummary } from "@/services/accounts/get-customer-accounts-summary";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
@@ -53,22 +56,40 @@ function CustomerNotFound(): React.JSX.Element {
 // accounts_view : READ, so Profile/Contacts and locked viewers run no account
 // query. Lives here, not in components/**, because components may not import
 // services/** (boundaries rule); CustomerAccountsTab stays presentational.
+// A failed read degrades to AccountsUnavailableCard inside the tab instead of
+// replacing the whole page with customers/view/error.tsx.
 async function CustomerAccountsTabLoader({
   partyRoleId,
   page,
+  pageFinancialAccountId,
+  canOpenDocuments,
   locale,
   timezone,
 }: {
   partyRoleId: string;
   page: number;
+  pageFinancialAccountId: string | null;
+  canOpenDocuments: boolean;
   locale: string;
   timezone: string;
 }): Promise<React.JSX.Element> {
-  const summary = await getCustomerAccountsSummary(partyRoleId, page);
+  let summary;
+  try {
+    summary = await getCustomerAccountsSummary(
+      partyRoleId,
+      page,
+      pageFinancialAccountId,
+    );
+  } catch (error) {
+    unstable_rethrow(error);
+    reportError(error, { scope: "customer-accounts-summary", partyRoleId });
+    return <AccountsUnavailableCard />;
+  }
   return (
     <CustomerAccountsTab
       partyRoleId={partyRoleId}
       summary={summary}
+      canOpenDocuments={canOpenDocuments}
       locale={locale}
       timezone={timezone}
     />
@@ -83,6 +104,7 @@ export default async function CustomerDetailPage({
   searchParams: Promise<{
     tab?: string | string[];
     page?: string | string[];
+    fa?: string | string[];
   }>;
 }): Promise<React.JSX.Element> {
   const { permissionMap } = await requirePermission(
@@ -104,13 +126,20 @@ export default async function CustomerDetailPage({
   // cm19 (custmgmt Inv. #14) — the active tab lives in the URL; cm20 adds
   // the Accounts tab document page.
   const rawSearchParams = await searchParams;
-  const { tab, page } = customerDetailSearchParamsSchema.parse({
+  const { tab, page, fa } = customerDetailSearchParamsSchema.parse({
     tab: firstValue(rawSearchParams.tab),
     page: firstValue(rawSearchParams.page),
+    fa: firstValue(rawSearchParams.fa) ?? null,
   });
   // cm20 (custmgmt Inv. #12) — the Accounts tab sub-gate, checked once here.
   const canViewAccounts = meetsLevel(
     permissionMap[PERMISSIONS.ACCOUNTS_VIEW],
+    LEVELS.READ,
+  );
+  // Document rows deep-link into /accounts/transactions, which is guarded by
+  // accounts_transactions : READ; without it the rows render plain ids.
+  const canOpenDocuments = meetsLevel(
+    permissionMap[PERMISSIONS.ACCOUNTS_TRANSACTIONS],
     LEVELS.READ,
   );
 
@@ -165,10 +194,17 @@ export default async function CustomerDetailPage({
         // a generic element, so a labelled div exposes no name at all.
         <section aria-label="Accounts">
           {canViewAccounts ? (
-            <Suspense fallback={<AccountsTabSkeleton />}>
+            // Keyed by the page so Previous/Next re-suspends and shows the
+            // skeleton instead of leaving stale rows with no feedback.
+            <Suspense
+              key={`${fa ?? ""}:${page}`}
+              fallback={<AccountsTabSkeleton />}
+            >
               <CustomerAccountsTabLoader
                 partyRoleId={detail.customerRole.partyRoleId}
                 page={page}
+                pageFinancialAccountId={fa}
+                canOpenDocuments={canOpenDocuments}
                 locale={locale}
                 timezone={timezone}
               />

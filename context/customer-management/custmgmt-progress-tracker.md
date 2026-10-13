@@ -24,17 +24,17 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   written before cm17 passed §9.8 (§9.2 deviation, now resolved by cm17's sign-off).
   Still open: its own DB-gated suite (disposable Postgres) and the ac04 spec approval.
 - **cm19 IN PROGRESS** (started 2026-10-12) — committed (`6d243f9`); code-review
-  fixes (tab focus ring, Accounts panel landmark, test oracles) pending commit.
-- **cm20 IN PROGRESS** (started 2026-10-12) — code, tests and docs done; unit and
-  DB-gated suites green. Awaiting review and commit (one recorded deviation: the
-  loader placement, below).
+  fixes committed (`1e2b91e`).
+- **cm20 IN PROGRESS** (started 2026-10-12) — committed (`e44f2c7`); code-review
+  fixes done, unit and DB-gated suites green, pending commit. Deviations: the loader
+  placement and the review's `fa` page scope (both below).
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
 | cm17 | Billing Account template reference column                   | DB       | Done        | c0b2f97 |
 | cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | 6d243f9 |
-| cm20 | View Customer: Accounts tab                                 | APP      | In progress | —      |
+| cm20 | View Customer: Accounts tab                                 | APP      | In progress | e44f2c7 |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
 | cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
 
@@ -252,15 +252,66 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     missing from the Accounts code-standards §9 Result-code catalog (51 codes). Fixing it
     means an Accounts doc edit, which belongs with the pending ac04/cm18 approval
     (§9.7 item 6).
-  - **OPEN:** review, then commit and record the hash above. The seed itself was not
-    run (the service falls back to 20 when the key is absent).
+  - **Code review of `e44f2c7` (2026-10-13), fixes pending commit:**
+    - **Document links vs. permission.** Rows link to `/accounts/transactions`, which
+      is guarded by `accounts_transactions : READ`. The page now checks that too
+      (`canOpenDocuments`) and passes it down; without it, document ids render as
+      plain text instead of links to `/no-access`.
+    - **Failure stays in the tab.** `CustomerAccountsTabLoader` catches a failed
+      summary read (`unstable_rethrow` first, then `reportError`) and renders the new
+      `AccountsUnavailableCard` (`role="alert"`). The header, tab strip and other
+      tabs survive, rather than `customers/view/error.tsx` replacing the page.
+    - **Out-of-range page clamped.** The service re-reads at the last page when the
+      requested page is past the end, and returns the effective page. That costs a
+      second document read only in that case.
+    - **Per-FA paging (deviation from spec §3.4 `?tab=accounts&page=N`).** New
+      lenient `fa` search param (`/^FINd+$/`, else `null`). `page` applies only to
+      the named FA, and the other FAs show page 1. With no `fa`, `page` applies to
+      every FA, so the spec's `?tab=accounts&page=N` links still work. Pagination
+      links now carry `fa`; each nav is labelled `Documents pagination for <FIN>`.
+    - **BAN currency.** The summary carries each BAN's own `currency`, and the BAN card
+      formats its receivable with it, not with the FA's.
+    - **One snapshot for receivables.** The FA receivable is now
+      `money.sum` of the per-BAN values the cards show, so the total always equals the
+      sum of the cards. `getFinancialAccountDetail` still supplies unapplied cash and
+      deposits.
+    - **FA state shown.** The FA card has the account-state chip (reused
+      `BanStateChip`) and mutes when closed. FA and BAN `state` are typed
+      `AccountState`.
+    - **Pending feedback.** The Suspense boundary is keyed by `fa:page`, so
+      Previous/Next shows the skeleton.
+    - **Inv. #11 guardrail.** New `tests/guardrails/customer-accounts-read-boundary.test.ts`
+      scans `app/(app)/customers/**` and `components/customers/**` for static,
+      side-effect, dynamic and `require` imports, after normalising `@/` and relative
+      paths. It forbids `post-document`, pgledger, the ledger repository, the Accounts
+      reversal UI, `actions/billing/**`, the posting resolver, and `actions/accounts/**`
+      except an allowlist: the onboarding wizard's two ac04/cm18 actions. cm21 adds its
+      reset action there. A self-test proves the extractor handles each import form.
+    - **Tests.** Service (+6: clamp, in-range single read, empty → page 1, per-FA
+      page, summed receivable, BAN currency), accounts tab (plain ids without the
+      permission, FA chip/mute, BAN currency, `fa`-scoped links), page (`fa` passed
+      through, failure stays in the tab, links follow `accounts_transactions`),
+      schema (`fa` parse/fallback), integration (+1: page 9 → clamped to 2).
+    - **Verification.** `tsc`, ESLint and Prettier are clean. The 6 affected unit,
+      component and guardrail files are green under `--pool=threads --maxWorkers=1`.
+      The DB-gated summary suite passed 6/6 on a throwaway
+      `enterprise-billing-app-db` container (port 55433, marked disposable, not the
+      dev stack), which was then removed.
+    - **Raised, not changed:** the template-label format (Open questions); and
+      cleanup items left for later: a shared positive-int config parser (4 copies),
+      one shared account-state chip with the Accounts Overview, a structured template
+      label instead of the card's regex split, unused reads in
+      `getFinancialAccountDetail` / serial `findActive`→`findDefault`, and the
+      redundant BAN re-sort.
+  - **OPEN:** commit the review fixes. The seed itself was not run (the service falls
+    back to 20 when the key is absent).
 
 ## Outstanding / Next
 
 - **cm17:** signed off (`c0b2f97` + review follow-up `187d8cb`).
 - **cm18:** DB-gated run + ac04 spec approval above.
-- **cm19:** committed (`6d243f9`); commit the code-review fixes.
-- **cm20:** review + commit. The `grep-gates` Result-code failure (cm18's
+- **cm19:** committed (`6d243f9`, review fixes `1e2b91e`).
+- **cm20:** committed (`e44f2c7`); commit the code-review fixes. The `grep-gates` Result-code failure (cm18's
   `TEMPLATE_NOT_BINDABLE`) is resolved with the ac04/cm18 Accounts doc approval.
 - **cm21 next** (Manage Customer Billing account panel; depends on cm20).
 
@@ -282,4 +333,10 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 
 ## Open questions
 
-- None yet.
+- **cm20 template label format (spec issue, raised by the `e44f2c7` review).** The
+  label joins the *layout* code with the *generated* version's number (e.g.
+  "INVTPL-STD-A4 v2" after generated v2 is activated on layout v1). Billing settings
+  uses "CODE vN" for layout versions, so this can name a layout version that does not
+  exist. That works against Inv. #18 (never imply a binding the invoice does not use).
+  The spec mandates the current format, so it is unchanged. Decide the wording before
+  cm21 reuses the label.

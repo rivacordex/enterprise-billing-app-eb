@@ -2,9 +2,13 @@
 // three live balances. Display only; values come from the read service.
 
 import { AmountCell } from "@/components/accounts/amount-cell";
+import { BanStateChip } from "@/components/customers/ban-state-chip";
+import { cn } from "@/lib/utils";
+import type { AccountState } from "@/types/accounts";
 
 export interface FinancialAccountSummaryCardProps {
   financialAccountId: string;
+  state: AccountState;
   currency: string;
   receivableBalance: string;
   unappliedCashBalance: string;
@@ -34,6 +38,7 @@ function Amount({
 
 export function FinancialAccountSummaryCard({
   financialAccountId,
+  state,
   currency,
   receivableBalance,
   unappliedCashBalance,
@@ -42,12 +47,18 @@ export function FinancialAccountSummaryCard({
   return (
     <section
       aria-label={`Financial account ${financialAccountId}`}
-      className="rounded-md border border-border bg-[color:var(--surface-card)] p-4"
+      className={cn(
+        "rounded-md border border-border bg-[color:var(--surface-card)] p-4",
+        state === "closed" && "opacity-60",
+      )}
     >
-      <h2 className="text-h3 font-semibold text-foreground">
-        Financial Account{" "}
-        <span className="font-mono text-mono">{financialAccountId}</span>
-      </h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-h3 font-semibold text-foreground">
+          Financial Account{" "}
+          <span className="font-mono text-mono">{financialAccountId}</span>
+        </h2>
+        <BanStateChip state={state} />
+      </div>
       <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-3">
         <Amount
           label="Receivable"

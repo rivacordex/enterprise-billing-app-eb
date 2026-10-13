@@ -13,6 +13,9 @@ import type { CustomerAccountsSummary } from "@/types/accounts";
 export interface CustomerAccountsTabProps {
   partyRoleId: string;
   summary: CustomerAccountsSummary;
+  // accounts_transactions : READ — the document links open
+  // /accounts/transactions, which requires it; without it the ids are plain.
+  canOpenDocuments: boolean;
   locale: string;
   timezone: string;
 }
@@ -20,6 +23,7 @@ export interface CustomerAccountsTabProps {
 export function CustomerAccountsTab({
   partyRoleId,
   summary,
+  canOpenDocuments,
   locale,
   timezone,
 }: CustomerAccountsTabProps): React.JSX.Element {
@@ -33,6 +37,7 @@ export function CustomerAccountsTab({
         <div key={fa.financialAccountId} className="space-y-4">
           <FinancialAccountSummaryCard
             financialAccountId={fa.financialAccountId}
+            state={fa.state}
             currency={fa.currency}
             receivableBalance={fa.receivableBalance}
             unappliedCashBalance={fa.unappliedCashBalance}
@@ -47,7 +52,7 @@ export function CustomerAccountsTab({
               billCycleName={ban.billCycleName}
               paymentTermDays={ban.paymentTermDays}
               receivableBalance={ban.receivableBalance}
-              currency={fa.currency}
+              currency={ban.currency}
               templateLabel={ban.templateLabel}
             />
           ))}
@@ -62,6 +67,7 @@ export function CustomerAccountsTab({
               total={fa.documents.total}
               page={fa.documents.page}
               pageSize={fa.documents.pageSize}
+              linkDocuments={canOpenDocuments}
               locale={locale}
               timezone={timezone}
             />

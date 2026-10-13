@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { AccountsLockedCard } from "@/components/customers/accounts-locked-card";
 import { CustomerAccountsTab } from "@/components/customers/customer-accounts-tab";
 import type {
+  AccountState,
   CustomerAccountsSummary,
   TransactionDocumentRow,
 } from "@/types/accounts";
@@ -36,14 +37,15 @@ function doc(n: number): TransactionDocumentRow {
 
 function onboarded(
   documents: { rows: TransactionDocumentRow[]; total: number; page: number },
-  banState: "active" | "suspended" | "closed" = "active",
+  banState: AccountState = "active",
+  faState: AccountState = "active",
 ): CustomerAccountsSummary {
   return {
     kind: "onboarded",
     financialAccounts: [
       {
         financialAccountId: "FIN00000001",
-        state: "active",
+        state: faState,
         currency: "MYR",
         receivableBalance: "1250.00",
         unappliedCashBalance: "-40.00",
@@ -53,6 +55,7 @@ function onboarded(
             billingAccountId: "BAN00000001",
             name: "Master Billing Account",
             state: banState,
+            currency: "USD",
             billCycleName: "Monthly – Day 1",
             paymentTermDays: 30,
             receivableBalance: "1250.00",
@@ -66,11 +69,15 @@ function onboarded(
   };
 }
 
-function renderTab(summary: CustomerAccountsSummary): void {
+function renderTab(
+  summary: CustomerAccountsSummary,
+  canOpenDocuments = true,
+): void {
   render(
     <CustomerAccountsTab
       partyRoleId="PTRL00000001"
       summary={summary}
+      canOpenDocuments={canOpenDocuments}
       locale="en-US"
       timezone="UTC"
     />,
@@ -106,6 +113,9 @@ describe("Accounts tab states", () => {
     expect(within(banCard).getByText("Monthly – Day 1")).toBeInTheDocument();
     expect(within(banCard).getByText("30 days")).toBeInTheDocument();
     expect(within(banCard).getByText("1,250.00")).toBeInTheDocument();
+    // The BAN receivable is in the BAN's own currency, not the FA's.
+    expect(within(banCard).getByText("USD")).toBeInTheDocument();
+    expect(within(banCard).queryByText("MYR")).not.toBeInTheDocument();
     expect(
       within(banCard).getByText(
         (_, el) =>
@@ -130,8 +140,31 @@ describe("Accounts tab states", () => {
     expect(screen.getAllByText("Debit Note — LATE_FEE")).toHaveLength(2);
     expect(screen.getAllByText("Posted")).toHaveLength(2);
     expect(
-      screen.queryByRole("navigation", { name: "Documents pagination" }),
+      screen.queryByRole("navigation", {
+        name: "Documents pagination for FIN00000001",
+      }),
     ).not.toBeInTheDocument();
+  });
+
+  it("without accounts_transactions : READ, document ids are plain text, not links", () => {
+    renderTab(onboarded({ rows: [doc(1), doc(2)], total: 2, page: 1 }), false);
+
+    expect(screen.getByText("DBN00000001")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "DBN00000001" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^DBN/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("the FA card shows its state chip and mutes when closed", () => {
+    renderTab(onboarded({ rows: [], total: 0, page: 1 }, "closed", "closed"));
+    const fa = screen.getByRole("region", {
+      name: "Financial account FIN00000001",
+    });
+    expect(fa).toHaveClass("opacity-60");
+    expect(within(fa).getByText("Closed")).toBeInTheDocument();
   });
 
   it("no action buttons are rendered in the tab", () => {
@@ -150,12 +183,12 @@ describe("Accounts tab states", () => {
 });
 
 describe("Accounts tab pagination", () => {
-  it("first page: Next only, keeping tab=accounts", () => {
+  it("first page: Next only, keeping tab=accounts and scoped to the FA", () => {
     renderTab(onboarded({ rows: [doc(1), doc(2)], total: 5, page: 1 }));
 
     expect(screen.getByRole("link", { name: "Next" })).toHaveAttribute(
       "href",
-      "?tab=accounts&page=2",
+      "?tab=accounts&fa=FIN00000001&page=2",
     );
     expect(
       screen.queryByRole("link", { name: "Previous" }),
@@ -167,11 +200,11 @@ describe("Accounts tab pagination", () => {
 
     expect(screen.getByRole("link", { name: "Previous" })).toHaveAttribute(
       "href",
-      "?tab=accounts&page=1",
+      "?tab=accounts&fa=FIN00000001&page=1",
     );
     expect(screen.getByRole("link", { name: "Next" })).toHaveAttribute(
       "href",
-      "?tab=accounts&page=3",
+      "?tab=accounts&fa=FIN00000001&page=3",
     );
   });
 
@@ -180,7 +213,7 @@ describe("Accounts tab pagination", () => {
 
     expect(screen.getByRole("link", { name: "Previous" })).toHaveAttribute(
       "href",
-      "?tab=accounts&page=2",
+      "?tab=accounts&fa=FIN00000001&page=2",
     );
     expect(
       screen.queryByRole("link", { name: "Next" }),

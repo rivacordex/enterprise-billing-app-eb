@@ -4,7 +4,8 @@
 // function wrapper beyond the ledger read methods below.
 //
 // Query budget per FA (expected 1): getFinancialAccountDetail (constant), BAN
-// rows, ONE grouped per-BAN receivables read, one document page; then one
+// rows, ONE grouped per-BAN receivables read, one document page (two when the
+// requested page is past the end and is clamped); then one
 // bill-cycle read per distinct cycle. Accounts are found by the party-role key,
 // never party_role.account (Inv. #13).
 
@@ -17,12 +18,18 @@ import { systemConfigRepository } from "@/db/repositories/system-config.reposito
 import { logger } from "@/lib/logger";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
 import { listTransactionDocuments } from "@/services/accounts/list-transaction-documents";
+import { sum } from "@/services/accounts/money";
 import {
   banTemplateLabel,
   resolveCurrentTemplateLabel,
 } from "@/services/accounts/resolve-ban-template-label";
 import { resolveTerm } from "@/services/accounts/term-resolution";
-import type { BillCycle, CustomerAccountsSummary } from "@/types/accounts";
+import type {
+  AccountState,
+  BillCycle,
+  CustomerAccountsSummary,
+  TransactionDocumentRow,
+} from "@/types/accounts";
 
 export const DEFAULT_CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE = 20;
 export const MAX_CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE = 100;
@@ -47,9 +54,42 @@ export async function resolveDocumentsPageSize(): Promise<number> {
   return Math.min(value, MAX_CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE);
 }
 
+// One page of an FA's documents. An out-of-range page (a stale link, a
+// hand-edited URL, or documents that have since dropped below the page) is
+// clamped to the last page, so the table never renders an empty header with
+// a Previous link that only steps back one page. Costs a second read only in
+// that case.
+async function documentsPage(
+  financialAccountId: string,
+  page: number,
+  pageSize: number,
+): Promise<{ rows: TransactionDocumentRow[]; total: number; page: number }> {
+  const read = (p: number) =>
+    listTransactionDocuments(
+      financialAccountId,
+      null,
+      {
+        type: null,
+        status: null,
+        rev: null,
+        q: "",
+        sort: "-event_at",
+        page: p,
+      },
+      pageSize,
+    );
+  const first = await read(page);
+  const lastPage = Math.max(1, Math.ceil(first.total / pageSize));
+  if (page <= lastPage) return { ...first, page };
+  return { ...(await read(lastPage)), page: lastPage };
+}
+
+// `page` applies to the FA named by `pageFinancialAccountId`; every other FA
+// shows page 1. `null` applies `page` to every FA (single-FA deep links).
 export async function getCustomerAccountsSummary(
   partyRoleId: string,
   page: number,
+  pageFinancialAccountId: string | null = null,
 ): Promise<CustomerAccountsSummary> {
   const fas = await financialAccountRepository.findByPartyRoleIds(db, [
     partyRoleId,
@@ -72,17 +112,11 @@ export async function getCustomerAccountsSummary(
         getFinancialAccountDetail(faId),
         billingAccountRepository.findByFinancialAccountId(db, faId),
         ledgerRepository.receivablesByFinancialAccount(db, faId),
-        listTransactionDocuments(
+        documentsPage(
           faId,
-          null,
-          {
-            type: null,
-            status: null,
-            rev: null,
-            q: "",
-            sort: "-event_at",
-            page,
-          },
+          pageFinancialAccountId === null || pageFinancialAccountId === faId
+            ? page
+            : 1,
           pageSize,
         ),
       ]);
@@ -109,9 +143,14 @@ export async function getCustomerAccountsSummary(
     financialAccounts: perFa.map(
       ({ fa, detail, bans, receivables, documents }) => ({
         financialAccountId: fa.financialAccountId,
-        state: fa.state,
+        state: fa.state as AccountState,
         currency: fa.currency,
-        receivableBalance: detail.receivableBalance,
+        // Summed from the same per-BAN read the BAN cards show, so the FA
+        // total always equals the sum of its BAN cards (one snapshot), rather
+        // than a second, separately timed ledger query.
+        receivableBalance: sum(
+          ...bans.map((ban) => receivables.get(ban.billingAccountId) ?? "0.00"),
+        ),
         unappliedCashBalance: detail.unappliedCashBalance,
         depositBalance: detail.depositBalance,
         bans: [...bans]
@@ -133,7 +172,8 @@ export async function getCustomerAccountsSummary(
             return {
               billingAccountId: ban.billingAccountId,
               name: ban.name,
-              state: ban.state as "active" | "suspended" | "closed",
+              state: ban.state as AccountState,
+              currency: ban.currency,
               billCycleName: cycle.name,
               paymentTermDays: resolveTerm(
                 ban.paymentDueDaysOverride ?? null,
@@ -150,7 +190,7 @@ export async function getCustomerAccountsSummary(
         documents: {
           rows: documents.rows,
           total: documents.total,
-          page,
+          page: documents.page,
           pageSize,
         },
       }),
