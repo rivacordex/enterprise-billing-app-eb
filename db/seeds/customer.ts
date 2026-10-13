@@ -11,6 +11,8 @@ import { systemConfig } from "@/db/schema/system-config";
 
 const CONFIG_GROUP = "customer";
 const CONFIG_KEY = "CUSTOMER_SEARCH_RESULT_LIMIT";
+// cm20 (O3) — rows per page in the View Customer Accounts tab document list.
+const DOCUMENTS_PAGE_SIZE_KEY = "CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE";
 
 // Standalone script (`npm run db:seed-customer`) — never imported by
 // application code. Depends on `seed-rbac.ts` having already run (the
@@ -44,6 +46,31 @@ async function main(): Promise<void> {
           configValue: "5",
           description:
             "Max rows returned by a Customer search before the refine-search hint shows.",
+          isSecret: false,
+          status: "ACTIVE",
+          modifiedBy: null,
+        });
+      }
+
+      const [existingPageSizeConfig] = await tx
+        .select({ configId: systemConfig.configId })
+        .from(systemConfig)
+        .where(
+          and(
+            eq(systemConfig.configGroup, CONFIG_GROUP),
+            eq(systemConfig.configKey, DOCUMENTS_PAGE_SIZE_KEY),
+          ),
+        )
+        .limit(1);
+
+      if (!existingPageSizeConfig) {
+        await tx.insert(systemConfig).values({
+          configGroup: CONFIG_GROUP,
+          configVersion: 1,
+          configKey: DOCUMENTS_PAGE_SIZE_KEY,
+          configValue: "20",
+          description:
+            "Rows per page in the View Customer Accounts tab document list.",
           isSecret: false,
           status: "ACTIVE",
           modifiedBy: null,

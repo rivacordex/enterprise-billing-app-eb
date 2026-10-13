@@ -27,7 +27,7 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 7. Add the first contact (name + contact role). It automatically becomes the preferred contact. Add its phone, email, and address; the first method filled automatically becomes the preferred contact method.
 8. Progress the lifecycle: set Customer status INITIALIZED → VALIDATED with a status reason, save; then VALIDATED → ACTIVE; set Organization REGISTERED → ACTIVE. Each dropdown offers only the valid next states from the transition map, and save is rejected without a reason.
 9. Save. The server compares the loaded `last_modified_datetime`; if another user changed the customer meanwhile, the save is rejected with a reload prompt. On success, audit rows record actor, timestamp, and before/after values.
-10. Any USER can now open **View Customer**, search for the customer, and see the three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details.
+10. Any USER can now open **View Customer**, search for the customer, and see the three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details (on the Profile and Contacts tabs since cm19).
 
 ## Features
 
@@ -35,7 +35,7 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 
 - Search-only landing page (empty start) on both View and Manage; case-insensitive partial match on `organization.name` and `organization.trading_name`.
 - Result limit read from `system_config` (`CUSTOMER_SEARCH_RESULT_LIMIT`, default 5) with match-count hint.
-- Read-only detail page with three sections: Party – Organization, Role – Customer (including read-only account reference and JSONB specification), Customer – Contact Details.
+- Read-only detail page with three sections: Party – Organization, Role – Customer (including read-only account reference and JSONB specification), Customer – Contact Details. Since the Invoice Template Binding update (cm19) they sit on URL-driven tabs (`?tab=`): **Profile** (Organization + Customer Role, the default), **Contacts** (Contact Details) and **Accounts** (billing accounts, cm20); the inconsistency banner shows above the tabs on every tab.
 - Inconsistency warning banner when statuses conflict (e.g. ACTIVE customer on a SUSPENDED organization) — warn only, no cascade.
 
 ### Customer lifecycle

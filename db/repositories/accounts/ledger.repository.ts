@@ -123,6 +123,27 @@ export const ledgerRepository = {
     return row?.total ?? "0.00";
   },
 
+  // cm20 — per-BAN receivable balances for one FA in a single query (the
+  // grouped form of sumReceivablesForFinancialAccount). BANs with no binding
+  // are absent from the map; callers default them to "0.00".
+  async receivablesByFinancialAccount(
+    db: Database,
+    financialAccountId: string,
+  ): Promise<Map<string, string>> {
+    const rows = await db.execute<{ ban_id: string; balance: string }>(sql`
+      SELECT ban.billing_account_id AS ban_id,
+             COALESCE(pav.balance, 0)::numeric(18,2)::text AS balance
+      FROM billing.billing_account ban
+      JOIN billing.ledger_binding lb
+        ON lb.owner_type = 'billing_account'
+       AND lb.owner_id   = ban.billing_account_id
+       AND lb.ledger_role = 'receivables'
+      JOIN billing.pgledger_accounts_view pav ON pav.id = lb.pgledger_account_id
+      WHERE ban.ref_financial_account_id = ${financialAccountId}
+    `);
+    return new Map(rows.map((r) => [r.ban_id, r.balance]));
+  },
+
   // The sole caller-facing entry point onto `pgledger_create_transfers`
   // (ac07-spec §3.9, code-standards §1.1/§6.3) — `post-document.ts` is the
   // only service that calls this. One call posts every leg of a document
