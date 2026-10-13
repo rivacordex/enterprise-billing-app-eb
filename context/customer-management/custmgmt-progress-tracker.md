@@ -38,7 +38,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 | cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | 6d243f9 |
 | cm20 | View Customer: Accounts tab                                 | APP      | In progress | e44f2c7 |
-| cm21 | Manage Customer: Billing account panel + template reset     | APP      | In progress | —      |
+| cm21 | Manage Customer: Billing account panel + template reset     | APP      | In progress | e2677bf |
 | cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
 
 ## Invoice Template Binding update — cm17 SIGNED OFF (2026-10-12)
@@ -403,7 +403,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   Result-code failure was fixed in cm21 (Accounts §9 catalog, user-approved).
 - **cm18:** the DB-gated item (1) passed during the cm21 run (2026-10-13); the ac04
   spec approval remains.
-- **cm21:** committed (see the table); all tests green incl. DB-gated. Open: the
+- **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Open: the
   `acctmgmt-architecture.md` `billing_account` row draft; code review.
 - **cm22 next** (ship gate).
 
