@@ -29,7 +29,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   fixes done, unit and DB-gated suites green, pending commit. Deviations: the loader
   placement and the review's `fa` page scope (both below).
 - **cm21 IN PROGRESS** (started 2026-10-13) — implemented, tests green incl. DB-gated;
-  committed; open: the `billing_account` row draft and review. Manage Customer Billing account panel +
+  committed; open: code review. Manage Customer Billing account panel +
   audited, CAS-guarded template reset.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
@@ -386,13 +386,13 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     lists all three (`BAN_NOT_FOUND` in §9.5; `BAN_CLOSED` and `TEMPLATE_NOT_BINDABLE`
     in §9.7), and the header and the test's count lock go 51 → 54. `grep-gates` is
     green (237/237). This also clears cm20's reported `grep-gates` failure.
-  - **Still a draft for approval (not edited):**
+  - **Applied with user approval (2026-10-13):**
     - `acctmgmt-architecture.md` `billing_account` row: `ref_bill_template_version_id`
       (nullable FK to `bill_template_version`, v1 `NULL` only) written at onboarding
       (cm18) and by `setBillingAccountTemplate` (cm21, CAS on the BAN's own
       `last_modified`, audited `BILLING_ACCOUNT_TEMPLATE_CHANGED`); posting never reads
       it.
-  - **OPEN:** approval of the `billing_account` row draft above; code review.
+  - **OPEN:** code review.
 
 ## Outstanding / Next
 
@@ -403,8 +403,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   Result-code failure was fixed in cm21 (Accounts §9 catalog, user-approved).
 - **cm18:** the DB-gated item (1) passed during the cm21 run (2026-10-13); the ac04
   spec approval remains.
-- **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Open: the
-  `acctmgmt-architecture.md` `billing_account` row draft; code review.
+- **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Accounts `billing_account` row applied (user-approved). Open:
+  code review.
 - **cm22 next** (ship gate).
 
 ## Key decisions (durable)
