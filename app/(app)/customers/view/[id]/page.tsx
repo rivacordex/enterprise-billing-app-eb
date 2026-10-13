@@ -161,7 +161,9 @@ export default async function CustomerDetailPage({
         <ContactDetailsSection contacts={detail.contacts} />
       )}
       {tab === "accounts" && (
-        <div aria-label="Accounts">
+        // A <section> (region role), not a <div>: ARIA prohibits aria-label on
+        // a generic element, so a labelled div exposes no name at all.
+        <section aria-label="Accounts">
           {canViewAccounts ? (
             <Suspense fallback={<AccountsTabSkeleton />}>
               <CustomerAccountsTabLoader
@@ -174,7 +176,7 @@ export default async function CustomerDetailPage({
           ) : (
             <AccountsLockedCard />
           )}
-        </div>
+        </section>
       )}
     </main>
   );

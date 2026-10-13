@@ -26,6 +26,7 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { getCustomerAccountsSummary } from "@/services/accounts/get-customer-accounts-summary";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import type { CustomerDetail } from "@/types/customer";
+import { CUSTOMER_DETAIL_TABS } from "@/validation/customer/search-params.schema";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockGetCustomerDetail = vi.mocked(getCustomerDetail);
@@ -209,6 +210,9 @@ describe("CustomerDetailPage", () => {
     expect(
       screen.queryByText("Customer – Contact Details"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Accounts" }),
+    ).toBeInTheDocument();
     expect(tabLink("Accounts")).toHaveAttribute("aria-current", "page");
     expect(tabLink("Profile")).not.toHaveAttribute("aria-current");
   });
@@ -231,7 +235,7 @@ describe("CustomerDetailPage", () => {
     expect(tabLink("Contacts")).toHaveAttribute("aria-current", "page");
   });
 
-  it.each(["profile", "contacts", "accounts"])(
+  it.each(CUSTOMER_DETAIL_TABS)(
     "the inconsistency banner renders above the tab strip on ?tab=%s for a conflicting status pairing",
     async (tab) => {
       mockGetCustomerDetail.mockResolvedValue(CONFLICTING);
@@ -247,7 +251,7 @@ describe("CustomerDetailPage", () => {
     },
   );
 
-  it.each(["profile", "contacts", "accounts"])(
+  it.each(CUSTOMER_DETAIL_TABS)(
     "the inconsistency banner does not render on ?tab=%s for an ordinary status pairing",
     async (tab) => {
       mockGetCustomerDetail.mockResolvedValue(FIXTURE);

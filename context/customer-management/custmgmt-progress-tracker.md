@@ -23,8 +23,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 - **cm18 IN PROGRESS** — committed (`12e9c03`, SonarQube fixes `832597c`). It was
   written before cm17 passed §9.8 (§9.2 deviation, now resolved by cm17's sign-off).
   Still open: its own DB-gated suite (disposable Postgres) and the ac04 spec approval.
-- **cm19 IN PROGRESS** (started 2026-10-12) — code, tests and docs done, all green;
-  awaiting review and commit.
+- **cm19 IN PROGRESS** (started 2026-10-12) — committed (`6d243f9`); code-review
+  fixes (tab focus ring, Accounts panel landmark, test oracles) pending commit.
 - **cm20 IN PROGRESS** (started 2026-10-12) — code, tests and docs done; unit and
   DB-gated suites green. Awaiting review and commit (one recorded deviation: the
   loader placement, below).
@@ -33,7 +33,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
 | cm17 | Billing Account template reference column                   | DB       | Done        | c0b2f97 |
 | cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
-| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | —      |
+| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | 6d243f9 |
 | cm20 | View Customer: Accounts tab                                 | APP      | In progress | —      |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
 | cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
@@ -165,8 +165,20 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   - **Verification:** `tsc`, ESLint, Prettier clean. 3 cm19 test files (+1 matched by
     the filter) green, 31 tests, under `--pool=threads --maxWorkers=1` (the default
     worker count timed out at startup while `tsc` was running in parallel).
-  - **OPEN:** review, then commit and record the hash above. No DB-gated work in this
-    unit.
+  - **Committed** as `6d243f9`.
+  - **Code review of `6d243f9` (2026-10-13), fixes in the working tree:**
+    - `CustomerDetailTabs` links gain the §9.1 keyboard focus ring
+      (`focus-visible:[box-shadow:var(--focus-ring)]`); the copied run-detail classes
+      had none.
+    - The Accounts panel is a `<section aria-label="Accounts">` (region) instead of a
+      `<div>`: ARIA prohibits `aria-label` on a generic element, so the name was never
+      exposed. The page test now asserts the region on `?tab=accounts`.
+    - The per-tab `it.each` cases iterate `CUSTOMER_DETAIL_TABS`, so the
+      banner-on-every-tab check (Inv. #14) covers any tab added later.
+    - Reported, not changed: the tab-strip markup is now the fourth verbatim copy
+      (bill-run list, run detail, invoice settings); every tab still loads the full
+      `getCustomerDetail` (protected file, §9.6 item 3).
+  - **OPEN:** commit the review fixes. No DB-gated work in this unit.
 
 ## Invoice Template Binding update — cm20 IN PROGRESS (started 2026-10-12)
 
@@ -247,7 +259,7 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 
 - **cm17:** signed off (`c0b2f97` + review follow-up `187d8cb`).
 - **cm18:** DB-gated run + ac04 spec approval above.
-- **cm19:** review + commit.
+- **cm19:** committed (`6d243f9`); commit the code-review fixes.
 - **cm20:** review + commit. The `grep-gates` Result-code failure (cm18's
   `TEMPLATE_NOT_BINDABLE`) is resolved with the ac04/cm18 Accounts doc approval.
 - **cm21 next** (Manage Customer Billing account panel; depends on cm20).
